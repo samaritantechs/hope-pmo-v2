@@ -35,16 +35,22 @@ export function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Tolerant date parser. Handles M/d/yyyy (the format the old system wrote everywhere)
-    and yyyy-MM-dd. Returns null rather than throwing on "No due date" or blank -- the
-    Sheets version's worst bugs all came from a date field silently becoming something
-    that WASN'T actually a date; this refuses to guess and just leaves it null instead. */
+/** Tolerant date parser. Handles d/M/yyyy -- the Tanzania/British convention your raw exports
+    actually use (confirmed from real rows: 20/04/2026, 23/07/2026 -- the first number being a
+    month would be impossible in either case) -- and yyyy-MM-dd. Returns null rather than
+    guessing on "No due date", blank, or a genuinely invalid combination -- the Sheets version's
+    worst bugs all came from a date field silently becoming something that WASN'T actually a
+    date; this refuses to guess and just leaves it null instead. */
 export function dateOrNull(v) {
   if (!v) return null;
   const s = String(v).trim();
   if (!s || /^no\s+due\s+date$/i.test(s)) return null;
   let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
+  if (m) {
+    const day = Number(m[1]), month = Number(m[2]), year = m[3];
+    if (day < 1 || day > 31 || month < 1 || month > 12) return null;   // not a valid date either way -- don't guess, just refuse it
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
   m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   return null;
