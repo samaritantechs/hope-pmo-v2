@@ -144,10 +144,27 @@ $('file').addEventListener('change', function(e){
     date columns still parse normally; D.S/D.C fall back to the cell's own original text
     instead of a reconstructed calendar date. Ported deliberately, not re-invented --
     this exact bug cost real time to find and fix once already. */
+/** Picks the sheet actually holding the data, instead of assuming it's always the first one.
+    Some exports put the real data on a sheet named "Data" (or similar) with something else --
+    a cover page, instructions, a blank sheet -- sitting first. Reading sheet 0 blindly in that
+    case silently returns 0 usable rows: the parse "succeeds" but finds no REF#/FULLNAME column
+    to key off, because it was never looking at the right sheet at all. */
+function pickDataSheet_(wb){
+  var byName = wb.SheetNames.find(function(n){ return String(n).trim().toLowerCase() === 'data'; });
+  if (byName) return byName;
+  var KEY_HEADERS = ['REF#', 'REF', 'FULLNAME', 'FULL NAME'];
+  for (var i = 0; i < wb.SheetNames.length; i++) {
+    var name = wb.SheetNames[i];
+    var aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+    var headerRow = (aoa[0] || []).map(function(h){ return String(h).trim().toUpperCase(); });
+    if (KEY_HEADERS.some(function(k){ return headerRow.indexOf(k) >= 0; })) return name;
+  }
+  return wb.SheetNames[0];   // nothing recognizable found anywhere -- fall back to the original behavior
+}
 function parseWorkbookToRows(file){
   return file.arrayBuffer().then(function(buf){
     var wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
-    var sn = wb.SheetNames[0];
+    var sn = pickDataSheet_(wb);
     var aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '' });
     aoa = aoa.filter(function(r){ return r.some(function(v){ return String(v).trim() !== ''; }); });
     if (!aoa.length) return [];
