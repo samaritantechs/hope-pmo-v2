@@ -81,3 +81,13 @@ export function textOrNull(v) {
   const s = v === null || v === undefined ? '' : String(v).trim();
   return s === '' ? null : s;
 }
+
+/** Team names are identifiers used for matching and foreign keys, not free text -- "Tunduru"
+    and "TUNDURU" are the same team to a person but different strings to an exact-match database
+    constraint. Normalizing every team value through this, everywhere a team gets read (Teams
+    upload AND every table that references it), means that mismatch can't happen again -- not
+    guarded against case by case, structurally not possible. */
+export function normTeam(v) {
+  const s = textOrNull(v);
+  return s ? s.toUpperCase().replace(/\s+/g, ' ') : null;
+}
