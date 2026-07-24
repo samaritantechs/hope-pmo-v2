@@ -1,4 +1,4 @@
-import { supabase } from './lib/supabase.js';
+import { supabase, fetchAll } from './lib/supabase.js';
 import { authCode, teamAllowed, withApi } from './lib/auth.js';
 
 // GET /api/expected?code=XXX&type=today&date=2026-07-22
@@ -7,22 +7,20 @@ export default withApi(async (req, res) => {
   const { code, type = 'today', date } = req.query;
   const user = await authCode(code);
 
-  let query = supabase.from('repayment_snapshots').select('*').eq('snapshot_type', type).order('snapshot_date', { ascending: false });
-
-  if (date) {
-    query = query.eq('snapshot_date', date);
-  } else {
+  let snapDate = date;
+  if (!snapDate) {
     const { data: latest } = await supabase
       .from('repayment_snapshots')
       .select('snapshot_date')
       .eq('snapshot_type', type)
       .order('snapshot_date', { ascending: false }).limit(1).maybeSingle();
-    if (latest) query = query.eq('snapshot_date', latest.snapshot_date);
+    snapDate = latest ? latest.snapshot_date : null;
   }
 
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  const data = snapDate
+    ? await fetchAll(() => supabase.from('repayment_snapshots').select('*').eq('snapshot_type', type).eq('snapshot_date', snapDate))
+    : [];
 
-  const rows = (data || []).filter(r => teamAllowed(user, r.team));
+  const rows = data.filter(r => teamAllowed(user, r.team));
   return { rows, count: rows.length };
 });
