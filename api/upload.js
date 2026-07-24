@@ -63,21 +63,23 @@ export default withApi(async (req, res) => {
 
   if (!records.length) return { inserted: 0, table, message: 'File parsed but no valid rows were found -- check the key column (REF#, FULLNAME, etc.) is present and populated.' };
 
-  // Tables that reference teams.team as a foreign key -- check for unknown team names BEFORE
-  // attempting the insert, so a mismatch becomes a specific, actionable list of exactly which
-  // names are the problem, rather than Postgres's generic "violates foreign key constraint"
-  // message, which names the constraint, not the data actually causing it.
+  // Tables that reference teams.team as a foreign key -- auto-create any team name that
+  // doesn't exist yet, rather than blocking the upload. Your team list grows over time; a new
+  // team's first Defaulters/Expected file shouldn't have to wait on someone remembering to
+  // register it first. New teams get blank role columns (no leader assigned yet) -- fill those
+  // in later via Leaders/Teams or a teams-editing screen.
   const TEAM_REF_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots', 'followup_status', 'loans']);
+  let newTeams = [];
   if (TEAM_REF_TABLES.has(table)) {
     const incomingTeams = [...new Set(records.map(r => r.team).filter(Boolean))];
     if (incomingTeams.length) {
       const { data: existingTeams, error: teamErr } = await supabase.from('teams').select('team').in('team', incomingTeams);
       if (teamErr) throw new Error('Could not verify team names: ' + teamErr.message);
       const known = new Set((existingTeams || []).map(t => t.team));
-      const missing = incomingTeams.filter(t => !known.has(t));
-      if (missing.length) {
-        const e = new Error(`${missing.length} team name(s) in this file aren't in your Teams table: ${missing.slice(0, 15).join(', ')}${missing.length > 15 ? ', and more' : ''}. Upload Leaders/Teams first with these included, or check for a spelling/capitalization difference between the two files.`);
-        e.status = 400; throw e;
+      newTeams = incomingTeams.filter(t => !known.has(t));
+      if (newTeams.length) {
+        const { error: createErr } = await supabase.from('teams').insert(newTeams.map(team => ({ team })));
+        if (createErr) throw new Error('Could not auto-create new team(s) (' + newTeams.join(', ') + '): ' + createErr.message);
       }
     }
   }
@@ -91,5 +93,8 @@ export default withApi(async (req, res) => {
     : await supabase.from(table).insert(records);
   if (result.error) throw new Error(result.error.message);
 
-  return { inserted: records.length, table };
+  return {
+    inserted: records.length, table,
+    message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
+  };
 });
