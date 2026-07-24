@@ -1,70 +1,123 @@
-import { supabase } from './lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './lib/auth.js';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HOPE PMO — Dashboard</title>
+<style>
+  :root{--bg:#0B1120;--card:#131C2E;--line:#22304A;--txt:#E5EAF2;--mut:#8B9AB3;--b500:#3B82F6;--b600:#2563EB;--ok:#4ADE80;--bad:#F87171}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:24px}
+  .wrap{max-width:1100px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:13px;margin:0 0 24px}
+  .setup{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px}
+  .setup label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px;font-weight:600}
+  .setup .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+  .setup .row>div{flex:1;min-width:200px}
+  input{width:100%;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:#0F1830;color:var(--txt);font-size:14px}
+  input:focus{outline:none;border-color:var(--b500)}
+  button{padding:9px 16px;border:0;border-radius:8px;background:var(--b600);color:#fff;font-size:13.5px;font-weight:700;cursor:pointer;white-space:nowrap}
+  button:hover{background:var(--b500)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .kpi .l{font-size:11.5px;color:var(--mut);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:6px}
+  .kpi .v{font-size:22px;font-weight:800}
+  .kpi .s{font-size:11.5px;color:var(--mut);margin-top:4px}
+  .good{color:var(--ok)}.bad{color:var(--bad)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:20px}
+  .card-h{padding:14px 18px;border-bottom:1px solid var(--line);font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center}
+  .card-h span{font-weight:400;color:var(--mut);font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;padding:10px 18px;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.03em;border-bottom:1px solid var(--line)}
+  td{padding:10px 18px;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:0}
+  .r{text-align:right}
+  .msg{padding:40px;text-align:center;color:var(--mut)}
+  .msg.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>HOPE PMO — Dashboard</h1>
+  <p class="sub">Live from Supabase.</p>
 
-// GET /api/dashboard?code=XXX
-// Returns today's Expected totals and current Defaulters totals, team-scoped, plus a
-// per-team breakdown. This is computed from whatever the LATEST snapshot_date is for
-// today's weekday -- same live-data behavior as the old defCur_(false)/defToday, just as
-// a query instead of a function that has to know which of 12 sheets to open.
-export default withApi(async (req, res) => {
-  const { code } = req.query;
-  const user = await authCode(code);
-  const wd = currentWeekday();
-  const today = new Date().toISOString().slice(0, 10);
+  <div class="setup">
+    <div class="row">
+      <div><label>Access code</label><input id="code" placeholder="Your HOPE PMO access code"></div>
+      <div><label>API endpoint</label><input id="apiBase" placeholder="https://your-project.vercel.app"></div>
+      <div style="flex:0"><button id="go">Load</button></div>
+    </div>
+  </div>
 
-  const [{ data: expected }, { data: defaulters }, { data: sales }, { data: received }] = await Promise.all([
-    latestSnapshot('repayment_snapshots', { snapshot_type: 'today' }),
-    latestSnapshot('defaulter_snapshots', { snapshot_type: 'current', weekday: wd }),
-    supabase.from('loans').select('team, principal_amt, loan_amt').eq('stage', 'approved'),
-    supabase.from('received_payments').select('team, amount_paid').eq('paid_at', today),
-  ]);
+  <div id="body"><div class="msg">Enter your access code and API endpoint above, then Load.</div></div>
+</div>
 
-  const exp = (expected || []).filter(r => teamAllowed(user, r.team));
-  const def = (defaulters || []).filter(r => teamAllowed(user, r.team));
-  const sal = (sales.data || []).filter(r => teamAllowed(user, r.team));
-  const rcv = (received.data || []).filter(r => teamAllowed(user, r.team));
+<script>
+var $ = function(id){ return document.getElementById(id); };
+$('apiBase').value = localStorage.getItem('hopeApiBase') || '';
+$('code').value = localStorage.getItem('hopeCode') || '';
+$('apiBase').addEventListener('change', function(){ localStorage.setItem('hopeApiBase', this.value.trim().replace(/\/$/, '')); });
+$('code').addEventListener('change', function(){ localStorage.setItem('hopeCode', this.value.trim()); });
 
-  const totals = {
-    expectedCustomers: exp.length,
-    expectedAmount: sum(exp, 'payment_expected'),
-    collected: sum(exp, 'todays_payment'),
-    uncollected: sum(exp, 'payment_expected') - sum(exp, 'todays_payment'),
-    defaulterCustomers: def.length,
-    defaulterArrears: sum(def, 'arrears'),
-    salesCount: sal.length,
-    salesAmount: sal.reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0),
-    receivedCount: rcv.length,
-    receivedAmount: sum(rcv, 'amount_paid'),
-  };
+function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString(); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-  const byTeam = {};
-  function team_(t) {
-    const k = t || '(no team)';
-    byTeam[k] = byTeam[k] || { team: k, expectedAmount: 0, collected: 0, defaulterArrears: 0, defaulterCustomers: 0, salesAmount: 0, receivedAmount: 0 };
-    return byTeam[k];
-  }
-  for (const r of exp) { const t = team_(r.team); t.expectedAmount += num(r.payment_expected); t.collected += num(r.todays_payment); }
-  for (const r of def) { const t = team_(r.team); t.defaulterArrears += num(r.arrears); t.defaulterCustomers += 1; }
-  for (const r of sal) { team_(r.team).salesAmount += (num(r.principal_amt) || num(r.loan_amt)); }
-  for (const r of rcv) { team_(r.team).receivedAmount += num(r.amount_paid); }
-
-  return { totals, teams: Object.values(byTeam).sort((a, b) => a.team.localeCompare(b.team)), asOfWeekday: wd };
-});
-
-async function latestSnapshot(table, filters) {
-  let q = supabase.from(table).select('snapshot_date').order('snapshot_date', { ascending: false }).limit(1);
-  for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
-  const { data: latest } = await q.maybeSingle();
-  if (!latest) return { data: [] };
-  let q2 = supabase.from(table).select('*').eq('snapshot_date', latest.snapshot_date);
-  for (const [k, v] of Object.entries(filters)) q2 = q2.eq(k, v);
-  return q2;
+function kpi(label, value, sub, cls){
+  return '<div class="kpi"><div class="l">'+esc(label)+'</div><div class="v'+(cls?' '+cls:'')+'">'+value+'</div>'
+    + (sub ? '<div class="s">'+esc(sub)+'</div>' : '') + '</div>';
 }
 
-function num(v) { return typeof v === 'number' ? v : Number(v) || 0; }
-function sum(rows, field) { return rows.reduce((s, r) => s + num(r[field]), 0); }
-
-function currentWeekday() {
-  const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-  return days[new Date().getDay()];
+function load(){
+  var apiBase = $('apiBase').value.trim().replace(/\/$/, '');
+  var code = $('code').value.trim();
+  var body = $('body');
+  if (!apiBase || !code){ body.innerHTML = '<div class="msg bad">Set both the access code and API endpoint first.</div>'; return; }
+  body.innerHTML = '<div class="msg">Loading\u2026</div>';
+  fetch(apiBase + '/api/dashboard?code=' + encodeURIComponent(code))
+    .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+    .then(function(res){
+      if (!(res.status >= 200 && res.status < 300) || res.body.ok === false){
+        body.innerHTML = '<div class="msg bad">Failed: ' + esc(res.body.error || 'unknown error') + '</div>';
+        return;
+      }
+      render(res.body);
+    })
+    .catch(function(e){ body.innerHTML = '<div class="msg bad">Failed: ' + esc(String(e)) + '</div>'; });
 }
+
+function render(d){
+  var t = d.totals || {};
+  var kpis = kpi('Expected customers', money(t.expectedCustomers), 'today \u00B7 ' + d.asOfWeekday)
+    + kpi('Expected amount', 'TZS ' + money(t.expectedAmount))
+    + kpi('Collected today', 'TZS ' + money(t.collected), null, 'good')
+    + kpi('Uncollected', 'TZS ' + money(t.uncollected), null, t.uncollected > 0 ? 'bad' : 'good')
+    + kpi('Defaulter customers', money(t.defaulterCustomers))
+    + kpi('Defaulter arrears', 'TZS ' + money(t.defaulterArrears), null, 'bad')
+    + kpi('Sales (approved)', money(t.salesCount) + ' loans', 'TZS ' + money(t.salesAmount))
+    + kpi('Received today', money(t.receivedCount) + ' payments', 'TZS ' + money(t.receivedAmount), 'good');
+
+  var teams = d.teams || [];
+  var rows = teams.map(function(r){
+    return '<tr><td><b>' + esc(r.team) + '</b></td>'
+      + '<td class="r">' + money(r.expectedAmount) + '</td>'
+      + '<td class="r good">' + money(r.collected) + '</td>'
+      + '<td class="r bad">' + money(r.defaulterArrears) + '</td>'
+      + '<td class="r">' + money(r.defaulterCustomers) + '</td>'
+      + '<td class="r good">' + money(r.receivedAmount) + '</td>'
+      + '<td class="r">' + money(r.salesAmount) + '</td></tr>';
+  }).join('');
+
+  $('body').innerHTML =
+    '<div class="kpis">' + kpis + '</div>'
+    + '<div class="card"><div class="card-h">By team<span>' + teams.length + ' team(s)</span></div>'
+    + '<table><thead><tr><th>Team</th><th class="r">Expected</th><th class="r">Collected</th>'
+    + '<th class="r">Arrears</th><th class="r">Defaulters</th><th class="r">Received</th><th class="r">Sales</th></tr></thead>'
+    + '<tbody>' + (rows || '<tr><td colspan="7" style="text-align:center;color:var(--mut)">No data yet for this scope.</td></tr>') + '</tbody></table></div>';
+}
+
+$('go').addEventListener('click', load);
+if ($('apiBase').value && $('code').value) load();
+</script>
+</body>
+</html>
