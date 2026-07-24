@@ -167,7 +167,7 @@ function parseWorkbookToRows(file){
     var sn = pickDataSheet_(wb);
     var aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '' });
     aoa = aoa.filter(function(r){ return r.some(function(v){ return String(v).trim() !== ''; }); });
-    if (!aoa.length) return [];
+    if (!aoa.length) return { rows: [], diag: { sheetNames: wb.SheetNames, selectedSheet: sn, headerRow: [] } };
     var headers = aoa[0].map(String);
     var dsCol = -1, dcCol = -1;
     headers.forEach(function(h, i){
@@ -191,7 +191,10 @@ function parseWorkbookToRows(file){
       return v == null ? '' : v;
     }
     var body = aoa.slice(1).map(function(r, ri){ return r.map(function(v, ci){ return cv(v, ri, ci); }); });
-    return [headers].concat(body);
+    return {
+      rows: [headers].concat(body),
+      diag: { sheetNames: wb.SheetNames, selectedSheet: sn, headerRow: headers }
+    };
   });
 }
 
@@ -210,19 +213,28 @@ $('go').addEventListener('click', function(){
   if (TYPE_META[type].indexOf('stageWrap') >= 0) meta.stage = $('stage').value;
 
   $('go').disabled = true; $('go').textContent = 'Reading file\u2026';
-  parseWorkbookToRows(chosenFile).then(function(rows){
+  var lastDiag = null;
+  parseWorkbookToRows(chosenFile).then(function(parsed){
+    lastDiag = parsed.diag;
     $('go').textContent = 'Uploading\u2026';
     return fetch(apiBase + '/api/upload', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code, type: type, meta: meta, rows: rows }),
+      body: JSON.stringify({ code: code, type: type, meta: meta, rows: parsed.rows }),
     });
   }).then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
     .then(function(res){
       $('go').disabled = false; $('go').textContent = 'Upload';
-      if (res.status >= 200 && res.status < 300 && res.body.ok !== false){
+      var zeroRows = res.body && (res.body.inserted === 0);
+      if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
         msg.className = 'msg ok';
-        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.' + (res.body.message ? '\n' + res.body.message : '');
+        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.';
+      } else if (res.status >= 200 && res.status < 300 && res.body.ok !== false && zeroRows){
+        msg.className = 'msg bad';
+        msg.innerHTML = 'Inserted 0 rows into ' + escHtml_(res.body.table) + '. Here is exactly what was found in the file, to see why:<br><br>'
+          + '<b>Sheets in this file:</b> ' + escHtml_((lastDiag && lastDiag.sheetNames || []).join(', ') || '(none found)') + '<br>'
+          + '<b>Sheet used:</b> ' + escHtml_((lastDiag && lastDiag.selectedSheet) || '(none)') + '<br>'
+          + '<b>Header row found there:</b> ' + escHtml_((lastDiag && lastDiag.headerRow || []).join(' | ') || '(empty)');
       } else {
         msg.className = 'msg bad';
         msg.textContent = 'Failed: ' + (res.body.error || 'unknown error');
@@ -233,6 +245,7 @@ $('go').addEventListener('click', function(){
       msg.textContent = 'Failed: ' + e;
     });
 });
+function escHtml_(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 </script>
 </body>
 </html>
