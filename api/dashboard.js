@@ -1,4 +1,4 @@
-import { supabase } from './lib/supabase.js';
+import { supabase, fetchAll } from './lib/supabase.js';
 import { authCode, teamAllowed, withApi } from './lib/auth.js';
 
 // GET /api/dashboard?code=XXX
@@ -12,17 +12,17 @@ export default withApi(async (req, res) => {
   const wd = currentWeekday();
   const today = new Date().toISOString().slice(0, 10);
 
-  const [{ data: expected }, { data: defaulters }, { data: sales }, { data: received }] = await Promise.all([
+  const [exp0, def0, sal0, rcv0] = await Promise.all([
     latestSnapshot('repayment_snapshots', { snapshot_type: 'today' }),
     latestSnapshot('defaulter_snapshots', { snapshot_type: 'current', weekday: wd }),
-    supabase.from('loans').select('team, principal_amt, loan_amt').eq('stage', 'approved'),
-    supabase.from('received_payments').select('team, amount_paid').eq('paid_at', today),
+    fetchAll(() => supabase.from('loans').select('team, principal_amt, loan_amt').eq('stage', 'approved')),
+    fetchAll(() => supabase.from('received_payments').select('team, amount_paid').eq('paid_at', today)),
   ]);
 
-  const exp = (expected || []).filter(r => teamAllowed(user, r.team));
-  const def = (defaulters || []).filter(r => teamAllowed(user, r.team));
-  const sal = (sales.data || []).filter(r => teamAllowed(user, r.team));
-  const rcv = (received.data || []).filter(r => teamAllowed(user, r.team));
+  const exp = exp0.filter(r => teamAllowed(user, r.team));
+  const def = def0.filter(r => teamAllowed(user, r.team));
+  const sal = sal0.filter(r => teamAllowed(user, r.team));
+  const rcv = rcv0.filter(r => teamAllowed(user, r.team));
 
   const totals = {
     expectedCustomers: exp.length,
@@ -55,10 +55,12 @@ async function latestSnapshot(table, filters) {
   let q = supabase.from(table).select('snapshot_date').order('snapshot_date', { ascending: false }).limit(1);
   for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
   const { data: latest } = await q.maybeSingle();
-  if (!latest) return { data: [] };
-  let q2 = supabase.from(table).select('*').eq('snapshot_date', latest.snapshot_date);
-  for (const [k, v] of Object.entries(filters)) q2 = q2.eq(k, v);
-  return q2;
+  if (!latest) return [];
+  return fetchAll(() => {
+    let q2 = supabase.from(table).select('*').eq('snapshot_date', latest.snapshot_date);
+    for (const [k, v] of Object.entries(filters)) q2 = q2.eq(k, v);
+    return q2;
+  });
 }
 
 function num(v) { return typeof v === 'number' ? v : Number(v) || 0; }
