@@ -63,6 +63,25 @@ export default withApi(async (req, res) => {
 
   if (!records.length) return { inserted: 0, table, message: 'File parsed but no valid rows were found -- check the key column (REF#, FULLNAME, etc.) is present and populated.' };
 
+  // Tables that reference teams.team as a foreign key -- check for unknown team names BEFORE
+  // attempting the insert, so a mismatch becomes a specific, actionable list of exactly which
+  // names are the problem, rather than Postgres's generic "violates foreign key constraint"
+  // message, which names the constraint, not the data actually causing it.
+  const TEAM_REF_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots', 'followup_status', 'loans']);
+  if (TEAM_REF_TABLES.has(table)) {
+    const incomingTeams = [...new Set(records.map(r => r.team).filter(Boolean))];
+    if (incomingTeams.length) {
+      const { data: existingTeams, error: teamErr } = await supabase.from('teams').select('team').in('team', incomingTeams);
+      if (teamErr) throw new Error('Could not verify team names: ' + teamErr.message);
+      const known = new Set((existingTeams || []).map(t => t.team));
+      const missing = incomingTeams.filter(t => !known.has(t));
+      if (missing.length) {
+        const e = new Error(`${missing.length} team name(s) in this file aren't in your Teams table: ${missing.slice(0, 15).join(', ')}${missing.length > 15 ? ', and more' : ''}. Upload Leaders/Teams first with these included, or check for a spelling/capitalization difference between the two files.`);
+        e.status = 400; throw e;
+      }
+    }
+  }
+
   // followup_status and teams are "current state per key" -- re-uploading updates in
   // place. Everything else (snapshots, loans, comments, payments) is append-only history:
   // a fresh "today" upload is a NEW today, never an overwrite of a previous one.
