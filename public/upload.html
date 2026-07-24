@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HOPE PMO — Upload</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{--bg:#0B1120;--card:#131C2E;--line:#22304A;--txt:#E5EAF2;--mut:#8B9AB3;--b500:#3B82F6;--b600:#2563EB;--ok:#4ADE80;--bad:#F87171}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;padding:24px}
+  .wrap{max-width:640px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--mut);font-size:13px;margin:0 0 24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px}
+  label{display:block;font-size:12.5px;color:var(--mut);margin-bottom:6px;font-weight:600}
+  input,select{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#0F1830;color:var(--txt);font-size:14px;margin-bottom:14px}
+  input:focus,select:focus{outline:none;border-color:var(--b500)}
+  .row{display:flex;gap:12px}
+  .row>*{flex:1}
+  button{width:100%;padding:12px;border:0;border-radius:8px;background:var(--b600);color:#fff;font-size:14.5px;font-weight:700;cursor:pointer}
+  button:hover{background:var(--b500)}
+  button:disabled{opacity:.5;cursor:default}
+  .hide{display:none !important}
+  .msg{margin-top:14px;padding:12px 14px;border-radius:8px;font-size:13.5px;white-space:pre-wrap}
+  .msg.ok{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:var(--ok)}
+  .msg.bad{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--bad)}
+  .hint{color:var(--mut);font-size:12px;margin-top:-8px;margin-bottom:14px}
+  .file-drop{border:1.5px dashed var(--line);border-radius:8px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;font-size:13.5px;color:var(--mut)}
+  .file-drop.has{border-color:var(--ok);color:var(--ok)}
+  .file-drop input{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>HOPE PMO — Upload</h1>
+  <p class="sub">Straight into Supabase. No Google Sheets in this path anymore.</p>
+
+  <div class="card">
+    <label>Access code</label>
+    <input id="code" placeholder="Your HOPE PMO access code" autocomplete="off">
+
+    <label>What are you uploading?</label>
+    <select id="type">
+      <optgroup label="Defaulters">
+        <option value="defaulters-current">Defaulters — Current</option>
+        <option value="defaulters-initial">Defaulters — Initial</option>
+      </optgroup>
+      <optgroup label="Expected repayment">
+        <option value="expected-today">Expected — Today</option>
+        <option value="expected-tomorrow">Expected — Tomorrow</option>
+        <option value="expected-yesterday">Expected — Yesterday</option>
+        <option value="expected-initial">Expected — Initial</option>
+      </optgroup>
+      <optgroup label="Loan pipeline">
+        <option value="loans">Loan pipeline (pick stage below)</option>
+      </optgroup>
+      <optgroup label="Other">
+        <option value="followup">Defaulters Followup</option>
+        <option value="comments">Comments Log</option>
+        <option value="teams">Leaders / Teams</option>
+        <option value="received">Received Payments</option>
+      </optgroup>
+    </select>
+
+    <div id="weekdayWrap" class="hide">
+      <label>Weekday</label>
+      <select id="weekday">
+        <option>MON</option><option>TUE</option><option>WED</option><option>THU</option>
+        <option>FRI</option><option>SAT</option><option>SUN</option>
+      </select>
+    </div>
+
+    <div id="dateWrap" class="hide">
+      <label>Snapshot date</label>
+      <input type="date" id="snapDate">
+      <div class="hint">The date this file's numbers are as-of — usually today.</div>
+    </div>
+
+    <div id="stageWrap" class="hide">
+      <label>Loan stage</label>
+      <select id="stage">
+        <option value="unassigned">Unassigned Applications</option>
+        <option value="assigned">Assigned Applications</option>
+        <option value="unassessed">Unassessed Applications</option>
+        <option value="assessed">Assessed Applications</option>
+        <option value="pending_approval">Pending Approval</option>
+        <option value="approved">Approved (Processed)</option>
+        <option value="pending_disb">Pending Disbursement</option>
+        <option value="disbursed">Disbursed Loans</option>
+      </select>
+    </div>
+
+    <label>File</label>
+    <label class="file-drop" id="drop">Click to choose an Excel or CSV file<input type="file" id="file" accept=".xlsx,.xls,.csv"></label>
+
+    <button id="go" style="margin-top:10px">Upload</button>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <label style="margin-bottom:4px">API endpoint</label>
+    <input id="apiBase" placeholder="https://your-project.vercel.app" value="">
+    <div class="hint" style="margin-bottom:0">Set this once — saved in this browser. Point it at your deployed Vercel project.</div>
+  </div>
+</div>
+
+<script>
+var $ = function(id){ return document.getElementById(id); };
+
+// Remember the API base + access code locally so this doesn't need retyping every upload.
+$('apiBase').value = localStorage.getItem('hopeApiBase') || '';
+$('code').value = localStorage.getItem('hopeCode') || '';
+$('apiBase').addEventListener('change', function(){ localStorage.setItem('hopeApiBase', this.value.trim().replace(/\/$/, '')); });
+$('code').addEventListener('change', function(){ localStorage.setItem('hopeCode', this.value.trim()); });
+
+var TYPE_META = {
+  'defaulters-current': ['weekdayWrap', 'dateWrap'],
+  'defaulters-initial': ['weekdayWrap', 'dateWrap'],
+  'expected-today': ['dateWrap'], 'expected-tomorrow': ['dateWrap'],
+  'expected-yesterday': ['dateWrap'], 'expected-initial': ['dateWrap'],
+  'loans': ['stageWrap'],
+  'followup': [], 'comments': [], 'teams': [], 'received': [],
+};
+function syncFields(){
+  var show = TYPE_META[$('type').value] || [];
+  ['weekdayWrap', 'dateWrap', 'stageWrap'].forEach(function(id){
+    $(id).classList.toggle('hide', show.indexOf(id) < 0);
+  });
+}
+$('type').addEventListener('change', syncFields);
+syncFields();
+$('snapDate').valueAsDate = new Date();
+
+var chosenFile = null;
+$('file').addEventListener('change', function(e){
+  chosenFile = e.target.files[0] || null;
+  $('drop').classList.toggle('has', !!chosenFile);
+  $('drop').firstChild.nodeValue = chosenFile ? chosenFile.name : 'Click to choose an Excel or CSV file';
+});
+
+/** Same column-aware date-coercion guard as app.html's doUpload(): D.S/D.C carry
+    "paid/target" text like "3/6", which Excel/Sheets readily misreads as a date. Genuine
+    date columns still parse normally; D.S/D.C fall back to the cell's own original text
+    instead of a reconstructed calendar date. Ported deliberately, not re-invented --
+    this exact bug cost real time to find and fix once already. */
+function parseWorkbookToRows(file){
+  return file.arrayBuffer().then(function(buf){
+    var wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+    var sn = wb.SheetNames[0];
+    var aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '' });
+    aoa = aoa.filter(function(r){ return r.some(function(v){ return String(v).trim() !== ''; }); });
+    if (!aoa.length) return [];
+    var headers = aoa[0].map(String);
+    var dsCol = -1, dcCol = -1;
+    headers.forEach(function(h, i){
+      var hU = String(h).trim().toUpperCase();
+      if (hU === 'D.S') dsCol = i; else if (hU === 'D.C') dcCol = i;
+    });
+    var wsRaw = wb.Sheets[sn];
+    function origText(wsRowIdx, colIdx){
+      var addr = XLSX.utils.encode_cell({ r: wsRowIdx, c: colIdx });
+      var cell = wsRaw[addr];
+      return (cell && cell.w != null) ? cell.w : null;
+    }
+    function cv(v, aoaRowIdx, colIdx){
+      if (v instanceof Date){
+        if (colIdx === dsCol || colIdx === dcCol){
+          var w = origText(aoaRowIdx + 1, colIdx);
+          if (w != null) return w;
+        }
+        return (v.getMonth()+1) + '/' + v.getDate() + '/' + v.getFullYear();
+      }
+      return v == null ? '' : v;
+    }
+    var body = aoa.slice(1).map(function(r, ri){ return r.map(function(v, ci){ return cv(v, ri, ci); }); });
+    return [headers].concat(body);
+  });
+}
+
+$('go').addEventListener('click', function(){
+  var msg = $('msg'); msg.className = 'msg'; msg.textContent = '';
+  var apiBase = $('apiBase').value.trim().replace(/\/$/, '');
+  var code = $('code').value.trim();
+  if (!apiBase){ msg.className = 'msg bad'; msg.textContent = 'Set the API endpoint below first.'; return; }
+  if (!code){ msg.className = 'msg bad'; msg.textContent = 'Enter your access code.'; return; }
+  if (!chosenFile){ msg.className = 'msg bad'; msg.textContent = 'Choose a file first.'; return; }
+
+  var type = $('type').value;
+  var meta = {};
+  if (TYPE_META[type].indexOf('weekdayWrap') >= 0) meta.weekday = $('weekday').value;
+  if (TYPE_META[type].indexOf('dateWrap') >= 0) meta.date = $('snapDate').value;
+  if (TYPE_META[type].indexOf('stageWrap') >= 0) meta.stage = $('stage').value;
+
+  $('go').disabled = true; $('go').textContent = 'Reading file\u2026';
+  parseWorkbookToRows(chosenFile).then(function(rows){
+    $('go').textContent = 'Uploading\u2026';
+    return fetch(apiBase + '/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code, type: type, meta: meta, rows: rows }),
+    });
+  }).then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+    .then(function(res){
+      $('go').disabled = false; $('go').textContent = 'Upload';
+      if (res.status >= 200 && res.status < 300 && res.body.ok !== false){
+        msg.className = 'msg ok';
+        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.' + (res.body.message ? '\n' + res.body.message : '');
+      } else {
+        msg.className = 'msg bad';
+        msg.textContent = 'Failed: ' + (res.body.error || 'unknown error');
+      }
+    }).catch(function(e){
+      $('go').disabled = false; $('go').textContent = 'Upload';
+      msg.className = 'msg bad';
+      msg.textContent = 'Failed: ' + e;
+    });
+});
+</script>
+</body>
+</html>
