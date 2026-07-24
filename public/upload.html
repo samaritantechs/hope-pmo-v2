@@ -228,7 +228,7 @@ $('go').addEventListener('click', function(){
       var zeroRows = res.body && (res.body.inserted === 0);
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
         msg.className = 'msg ok';
-        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.';
+        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.' + (res.body.message ? '\n' + res.body.message : '');
       } else if (res.status >= 200 && res.status < 300 && res.body.ok !== false && zeroRows){
         msg.className = 'msg bad';
         msg.innerHTML = 'Inserted 0 rows into ' + escHtml_(res.body.table) + '. Here is exactly what was found in the file, to see why:<br><br>'
