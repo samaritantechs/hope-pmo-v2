@@ -10,14 +10,19 @@ export default withApi(async (req, res) => {
   const { code } = req.query;
   const user = await authCode(code);
   const wd = currentWeekday();
+  const today = new Date().toISOString().slice(0, 10);
 
-  const [{ data: expected }, { data: defaulters }] = await Promise.all([
+  const [{ data: expected }, { data: defaulters }, { data: sales }, { data: received }] = await Promise.all([
     latestSnapshot('repayment_snapshots', { snapshot_type: 'today' }),
     latestSnapshot('defaulter_snapshots', { snapshot_type: 'current', weekday: wd }),
+    supabase.from('loans').select('team, principal_amt, loan_amt').eq('stage', 'approved'),
+    supabase.from('received_payments').select('team, amount_paid').eq('paid_at', today),
   ]);
 
   const exp = (expected || []).filter(r => teamAllowed(user, r.team));
   const def = (defaulters || []).filter(r => teamAllowed(user, r.team));
+  const sal = (sales.data || []).filter(r => teamAllowed(user, r.team));
+  const rcv = (received.data || []).filter(r => teamAllowed(user, r.team));
 
   const totals = {
     expectedCustomers: exp.length,
@@ -26,21 +31,22 @@ export default withApi(async (req, res) => {
     uncollected: sum(exp, 'payment_expected') - sum(exp, 'todays_payment'),
     defaulterCustomers: def.length,
     defaulterArrears: sum(def, 'arrears'),
+    salesCount: sal.length,
+    salesAmount: sal.reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0),
+    receivedCount: rcv.length,
+    receivedAmount: sum(rcv, 'amount_paid'),
   };
 
   const byTeam = {};
-  for (const r of exp) {
-    const t = r.team || '(no team)';
-    byTeam[t] = byTeam[t] || { team: t, expectedAmount: 0, collected: 0, defaulterArrears: 0, defaulterCustomers: 0 };
-    byTeam[t].expectedAmount += num(r.payment_expected);
-    byTeam[t].collected += num(r.todays_payment);
+  function team_(t) {
+    const k = t || '(no team)';
+    byTeam[k] = byTeam[k] || { team: k, expectedAmount: 0, collected: 0, defaulterArrears: 0, defaulterCustomers: 0, salesAmount: 0, receivedAmount: 0 };
+    return byTeam[k];
   }
-  for (const r of def) {
-    const t = r.team || '(no team)';
-    byTeam[t] = byTeam[t] || { team: t, expectedAmount: 0, collected: 0, defaulterArrears: 0, defaulterCustomers: 0 };
-    byTeam[t].defaulterArrears += num(r.arrears);
-    byTeam[t].defaulterCustomers += 1;
-  }
+  for (const r of exp) { const t = team_(r.team); t.expectedAmount += num(r.payment_expected); t.collected += num(r.todays_payment); }
+  for (const r of def) { const t = team_(r.team); t.defaulterArrears += num(r.arrears); t.defaulterCustomers += 1; }
+  for (const r of sal) { team_(r.team).salesAmount += (num(r.principal_amt) || num(r.loan_amt)); }
+  for (const r of rcv) { team_(r.team).receivedAmount += num(r.amount_paid); }
 
   return { totals, teams: Object.values(byTeam).sort((a, b) => a.team.localeCompare(b.team)), asOfWeekday: wd };
 });
