@@ -1,4 +1,4 @@
-import { supabase } from './lib/supabase.js';
+import { supabase, fetchAll } from './lib/supabase.js';
 import { authCode, teamAllowed, withApi } from './lib/auth.js';
 
 // GET /api/defaulters?code=XXX&type=current&weekday=WED&date=2026-07-22
@@ -11,16 +11,8 @@ export default withApi(async (req, res) => {
 
   const wd = weekday || currentWeekday();
 
-  let query = supabase
-    .from('defaulter_snapshots')
-    .select('*')
-    .eq('snapshot_type', type)
-    .eq('weekday', wd)
-    .order('snapshot_date', { ascending: false });
-
-  if (date) {
-    query = query.eq('snapshot_date', date);
-  } else {
+  let snapDate = date;
+  if (!snapDate) {
     // No date given -- take the latest snapshot_date available for this weekday, matching
     // "always show me the current one" without the caller needing to know what today's
     // date-key is. One extra round trip, worth it for callers not having to compute this.
@@ -29,13 +21,14 @@ export default withApi(async (req, res) => {
       .select('snapshot_date')
       .eq('snapshot_type', type).eq('weekday', wd)
       .order('snapshot_date', { ascending: false }).limit(1).maybeSingle();
-    if (latest) query = query.eq('snapshot_date', latest.snapshot_date);
+    snapDate = latest ? latest.snapshot_date : null;
   }
 
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  const data = snapDate
+    ? await fetchAll(() => supabase.from('defaulter_snapshots').select('*').eq('snapshot_type', type).eq('weekday', wd).eq('snapshot_date', snapDate))
+    : [];
 
-  const rows = (data || []).filter(r => teamAllowed(user, r.team));
+  const rows = data.filter(r => teamAllowed(user, r.team));
   return { rows, count: rows.length };
 });
 
