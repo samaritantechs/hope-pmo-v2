@@ -1,4 +1,4 @@
-import { buildHeaderMap, col, num, dateOrNull, dsText, normPhone, textOrNull } from './parse.js';
+import { buildHeaderMap, col, num, dateOrNull, dsText, normPhone, textOrNull, normTeam } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -35,7 +35,7 @@ export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate 
     arrears: num(col(r, h, 'ARREAS', 'ARREARS')),
     balance: num(col(r, h, 'BALANCE')),
     branch: textOrNull(col(r, h, 'BRANCH')),
-    team: textOrNull(col(r, h, 'TEAM')),
+    team: normTeam(col(r, h, 'TEAM')),
     zone: textOrNull(col(r, h, 'ZONE')),
     nearest_landmark: textOrNull(col(r, h, 'NEAREST LANDMARK')),
     snapshot_type: snapshotType,       // 'initial' | 'current'
@@ -67,7 +67,7 @@ export function importExpected(csvRows, { snapshotType, snapshotDate }) {
     total_amount: num(col(r, h, 'TOTAL AMOUNT')),
     balance: num(col(r, h, 'BALANCE')),
     branch: textOrNull(col(r, h, 'BRANCH')),
-    team: textOrNull(col(r, h, 'TEAM')),
+    team: normTeam(col(r, h, 'TEAM')),
     zone: textOrNull(col(r, h, 'ZONE')),
     snapshot_type: snapshotType,        // 'today' | 'tomorrow' | 'yesterday' | 'initial'
     snapshot_date: snapshotDate,
@@ -77,7 +77,7 @@ export function importExpected(csvRows, { snapshotType, snapshotDate }) {
 export function importFollowup(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, 'REF#')),
-    team: textOrNull(col(r, h, 'TEAM')),
+    team: normTeam(col(r, h, 'TEAM')),
     full_name: textOrNull(col(r, h, 'FULLNAME')),
     contact: normPhone(col(r, h, 'CONTACT#')),
     guarantor_name: textOrNull(col(r, h, 'GUARANTOR NAME')),
@@ -103,7 +103,7 @@ export function importComments(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, 'REF#')),
     docket_no: textOrNull(col(r, h, 'DOCKET#')),
-    team: textOrNull(col(r, h, 'TEAM')),
+    team: normTeam(col(r, h, 'TEAM')),
     full_name: textOrNull(col(r, h, 'FULLNAME')),
     comment: textOrNull(col(r, h, 'COMMENT')),
     fu_status: textOrNull(col(r, h, 'FU STATUS')),
@@ -168,7 +168,7 @@ export function importLoans(csvRows, stage) {
     const obj = { stage };
     for (const [field, candidates] of Object.entries(LOAN_STAGE_COLUMNS)) {
       const v = col(r, h, ...candidates);
-      obj[field] = NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v) : textOrNull(v);
+      obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v) : textOrNull(v);
     }
     return obj;
   }).filter(x => x.full_name);
@@ -176,7 +176,7 @@ export function importLoans(csvRows, stage) {
 
 export function importTeams(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    team: textOrNull(col(r, h, 'TEAM')),
+    team: normTeam(col(r, h, 'TEAM')),
     opm: textOrNull(col(r, h, 'OPM')),
     recovery: textOrNull(col(r, h, 'RECOVERY')),
     gmo: textOrNull(col(r, h, 'GMO')),
@@ -190,7 +190,7 @@ export function importTeams(csvRows) {
 export function importReceivedPayments(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     paid_at: dateOrNull(col(r, h, 'DATE')),
-    team: textOrNull(col(r, h, 'TEAM')),
+    team: normTeam(col(r, h, 'TEAM')),
     customer_name: textOrNull(col(r, h, 'CUSTOMER NAME')),
     customer_no: normPhone(col(r, h, 'CUSTOMER NO')),
     transaction_id: textOrNull(col(r, h, 'TRANSACTION ID')),
