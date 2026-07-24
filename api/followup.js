@@ -1,4 +1,4 @@
-import { supabase } from './lib/supabase.js';
+import { supabase, fetchAll } from './lib/supabase.js';
 import { authCode, teamAllowed, withApi } from './lib/auth.js';
 
 // GET  /api/followup?code=XXX             -> list, team-scoped
@@ -16,8 +16,7 @@ export default withApi(async (req, res) => {
 async function handleGet(req) {
   const { code } = req.query;
   const user = await authCode(code);
-  const { data, error } = await supabase.from('followup_status').select('*').order('arrears', { ascending: false });
-  if (error) throw new Error(error.message);
+  const data = await fetchAll(() => supabase.from('followup_status').select('*').order('arrears', { ascending: false }));
   const rows = (data || []).filter(r => teamAllowed(user, r.team));
   return { rows, count: rows.length };
 }
