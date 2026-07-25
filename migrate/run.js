@@ -17,6 +17,7 @@
 // for the full run order across all ~29 Expected/Defaulters day-keyed tabs.
 
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { parse } from 'csv-parse/sync';
 import { supabase, insertBatched } from './lib/supabase.js';
 import {
@@ -87,6 +88,14 @@ switch (type) {
 if (!records.length) {
   console.log('No rows to import (file was empty, or every row was missing its key field).');
   process.exit(0);
+}
+
+// Same batch stamping as api/upload.js: one uuid across the whole file, so a re-run of the
+// same file for the same date supersedes the earlier copy in every read instead of doubling it.
+if (table === 'defaulter_snapshots' || table === 'repayment_snapshots') {
+  const uploadBatch = randomUUID();
+  records = records.map(r => ({ ...r, upload_batch: uploadBatch }));
+  console.log(`Upload batch: ${uploadBatch}`);
 }
 
 console.log(`Parsed ${records.length} rows from ${file} -> ${table}`);

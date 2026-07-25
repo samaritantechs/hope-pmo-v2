@@ -34,7 +34,7 @@
 <body>
 <div class="wrap">
   <h1>HOPE PMO — Upload</h1>
-  <p class="sub">Straight into Supabase. No Google Sheets in this path anymore.</p>
+  <p class="sub">Straight into Supabase. No Google Sheets in this path anymore. &middot; <a href="/" style="color:var(--b500);text-decoration:none">&larr; Dashboard</a></p>
 
   <div class="card">
     <label>Access code</label>
@@ -99,9 +99,9 @@
   </div>
 
   <div class="card">
-    <label style="margin-bottom:4px">API endpoint</label>
-    <input id="apiBase" placeholder="https://your-project.vercel.app" value="">
-    <div class="hint" style="margin-bottom:0">Set this once — saved in this browser. Point it at your deployed Vercel project.</div>
+    <label style="margin-bottom:4px">API endpoint (optional)</label>
+    <input id="apiBase" placeholder="This site" value="">
+    <div class="hint" style="margin-bottom:0">Leave blank — uploads go to this site's own API. Only set this to point at a DIFFERENT deployment.</div>
   </div>
 </div>
 
@@ -200,9 +200,10 @@ function parseWorkbookToRows(file){
 
 $('go').addEventListener('click', function(){
   var msg = $('msg'); msg.className = 'msg'; msg.textContent = '';
-  var apiBase = $('apiBase').value.trim().replace(/\/$/, '');
+  // Served by the same Vercel app as the API -- same-origin is the default, the field
+  // below only matters when uploading to a DIFFERENT deployment than this page.
+  var apiBase = ($('apiBase').value.trim() || window.location.origin).replace(/\/$/, '');
   var code = $('code').value.trim();
-  if (!apiBase){ msg.className = 'msg bad'; msg.textContent = 'Set the API endpoint below first.'; return; }
   if (!code){ msg.className = 'msg bad'; msg.textContent = 'Enter your access code.'; return; }
   if (!chosenFile){ msg.className = 'msg bad'; msg.textContent = 'Choose a file first.'; return; }
 

@@ -1,5 +1,5 @@
-import { supabase } from './lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './lib/auth.js';
+import { supabase } from './_lib/supabase.js';
+import { authCode, teamAllowed, withApi } from './_lib/auth.js';
 
 // GET /api/comments?code=XXX&ref=2202981621
 export default withApi(async (req, res) => {

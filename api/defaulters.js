@@ -1,5 +1,6 @@
-import { supabase, fetchAll } from './lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './lib/auth.js';
+import { supabase, fetchAll } from './_lib/supabase.js';
+import { authCode, teamAllowed, withApi } from './_lib/auth.js';
+import { currentWeekday } from './_lib/time.js';
 
 // GET /api/defaulters?code=XXX&type=current&weekday=WED&date=2026-07-22
 //   type: 'current' | 'initial'
@@ -31,18 +32,3 @@ export default withApi(async (req, res) => {
   const rows = data.filter(r => teamAllowed(user, r.team));
   return { rows, count: rows.length };
 });
-
-/** Vercel's serverless runtime runs in UTC; HOPE runs in Africa/Dar_es_Salaam (UTC+3, no DST
-    anywhere in East Africa, so a fixed offset is correct here and does not drift). Reading the
-    date or the weekday straight off `new Date()` therefore returns the WRONG DAY for the first
-    three hours of every Tanzanian day: at 01:00 EAT on a Monday the server is still on Sunday,
-    so today's Received Payments came back empty and the defaulter weekday resolved to SUN. Every
-    "what day is it" decision in this file goes through these two helpers instead. */
-const TZ_OFFSET_MS = 3 * 60 * 60 * 1000;               // Africa/Dar_es_Salaam
-function localNow() { return new Date(Date.now() + TZ_OFFSET_MS); }
-function todayKey() { return localNow().toISOString().slice(0, 10); }
-
-function currentWeekday() {
-  const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-  return days[localNow().getUTCDay()];                 // getUTCDay on the shifted clock = the local weekday
-}

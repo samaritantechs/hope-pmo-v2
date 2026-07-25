@@ -1,5 +1,25 @@
 # HOPE PMO v2 — Supabase + Vercel foundation
 
+## Using the deployed system
+
+Once deployed, the whole thing lives at your Vercel domain:
+
+- **`/`** — the dashboard (KPIs, Recovery %, per-team table). Enter your access code, Load.
+- **`/upload`** — upload your Excel/CSV exports straight into Supabase (Defaulters,
+  Expected, loan pipeline, Received Payments, …). Same access code.
+
+Three one-time setup steps before first use:
+
+1. **Supabase → SQL Editor:** run `db/schema.sql` (fresh install) — or, on a database
+   created before 2026-07-25, run each file in `db/migrations/` once instead.
+2. **Supabase → SQL Editor:** open `db/seed.sql`, change `CHANGE-ME-1234` to your own
+   secret code, run it. That code is what you type into the dashboard/upload pages.
+3. **Vercel → your project → Settings → Environment Variables:** add `SUPABASE_URL`
+   and `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings → API), tick
+   Production *and* Preview, then redeploy.
+
+## For developers
+
 Start here, in this order:
 
 1. **[ARCHITECTURE.md](./ARCHITECTURE.md)** — what's built, what's deliberately not built

@@ -1,9 +1,10 @@
-import { supabase } from './lib/supabase.js';
-import { authCode, can, withApi } from './lib/auth.js';
+import { randomUUID } from 'node:crypto';
+import { supabase } from './_lib/supabase.js';
+import { authCode, can, withApi } from './_lib/auth.js';
 import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
-} from './lib/importers.js';
+} from './_lib/importers.js';
 
 // POST /api/upload   { code, type, meta, rows }
 //   rows: the parsed sheet as an array-of-arrays, header row included -- the SAME shape
@@ -63,6 +64,18 @@ export default withApi(async (req, res) => {
 
   if (!records.length) return { inserted: 0, table, message: 'File parsed but no valid rows were found -- check the key column (REF#, FULLNAME, etc.) is present and populated.' };
 
+  // One uuid per upload, stamped across every row of it. Snapshots are append-only -- a
+  // re-upload of the same date ADDS rows, never overwrites -- so without this, a corrected
+  // re-upload stacked both copies into every KPI. Readers resolve latest date -> latest
+  // batch within it (api/_lib/snapshots.js), so the newest upload wins while the full
+  // history stays underneath.
+  const SNAPSHOT_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots']);
+  let uploadBatch;
+  if (SNAPSHOT_TABLES.has(table)) {
+    uploadBatch = randomUUID();
+    records = records.map(r => ({ ...r, upload_batch: uploadBatch }));
+  }
+
   // Tables that reference teams.team as a foreign key -- auto-create any team name that
   // doesn't exist yet, rather than blocking the upload. Your team list grows over time; a new
   // team's first Defaulters/Expected file shouldn't have to wait on someone remembering to
@@ -94,7 +107,7 @@ export default withApi(async (req, res) => {
   if (result.error) throw new Error(result.error.message);
 
   return {
-    inserted: records.length, table,
+    inserted: records.length, table, uploadBatch,
     message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
   };
 });
