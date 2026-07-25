@@ -57,10 +57,15 @@ create table if not exists hints (
 -- just nullable until the loan gets there -- no data is lost by consolidating.
 -- =====================================================================================
 
-create type loan_stage as enum (
-  'unassigned','assigned','unassessed','assessed',
-  'pending_approval','approved','pending_disb','disbursed'
-);
+-- CREATE TYPE has no IF NOT EXISTS, which silently broke this file's safe-to-re-run promise:
+-- the second run died right here. Wrapping it keeps the whole file idempotent for real.
+do $$ begin
+  create type loan_stage as enum (
+    'unassigned','assigned','unassessed','assessed',
+    'pending_approval','approved','pending_disb','disbursed'
+  );
+exception when duplicate_object then null;
+end $$;
 
 create table if not exists loans (
   id uuid primary key default gen_random_uuid(),
@@ -142,10 +147,12 @@ create table if not exists repayment_snapshots (
   zone text,
   snapshot_type text not null check (snapshot_type in ('today','tomorrow','yesterday','initial')),
   snapshot_date date not null,
+  upload_batch uuid,                -- one uuid per upload; readers take the latest batch of the latest date, so a same-date re-upload supersedes instead of doubling. NULL = pre-batch legacy rows, resolved the same way.
   created_at timestamptz not null default now()
 );
 create index if not exists idx_repay_snap_lookup on repayment_snapshots(snapshot_type, snapshot_date, team);
 create index if not exists idx_repay_snap_ref on repayment_snapshots(ref, snapshot_date);
+create index if not exists idx_repay_snap_batch on repayment_snapshots(snapshot_type, snapshot_date, upload_batch);
 
 -- =====================================================================================
 -- DEFAULTER SNAPSHOTS -- replaces Defaulters/Defaulters Initial x7 weekdays x Initial/Current.
@@ -181,10 +188,12 @@ create table if not exists defaulter_snapshots (
   snapshot_type text not null check (snapshot_type in ('initial','current')),
   weekday text check (weekday in ('MON','TUE','WED','THU','FRI','SAT','SUN')),
   snapshot_date date not null,
+  upload_batch uuid,                -- same scheme as repayment_snapshots: latest batch of the latest date wins on read
   created_at timestamptz not null default now()
 );
 create index if not exists idx_def_snap_lookup on defaulter_snapshots(snapshot_type, weekday, snapshot_date, team);
 create index if not exists idx_def_snap_ref on defaulter_snapshots(ref, snapshot_date);
+create index if not exists idx_def_snap_batch on defaulter_snapshots(snapshot_type, weekday, snapshot_date, upload_batch);
 -- NOTE: the D.S "Excel turns 3/6 into a date" bug that ate several rounds of the old
 -- system simply can't happen here -- `ds` is a real TEXT column with no implicit type
 -- coercion. This entire bug class is structurally gone, not just guarded against.

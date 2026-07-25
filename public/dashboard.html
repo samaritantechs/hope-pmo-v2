@@ -35,6 +35,8 @@
   .r{text-align:right}
   .msg{padding:40px;text-align:center;color:var(--mut)}
   .msg.bad{color:var(--bad)}
+  .meta{color:var(--mut);font-size:12px;margin:0 0 12px}
+  .note{margin:0 0 20px;padding:10px 14px;border:1px solid var(--line);border-left:3px solid var(--bad);border-radius:8px;color:var(--mut);font-size:12.5px}
 </style>
 </head>
 <body>
@@ -88,20 +90,34 @@ function load(){
 
 function render(d){
   var t = d.totals || {};
-  var kpis = kpi('Expected customers', money(t.expectedCustomers), 'today \u00B7 ' + d.asOfWeekday)
+  var rec = t.recovery || {};
+  var dt = d.dates || {};
+  var wk = d.period === 'week';                       // weekends show week-to-date, matching the live system
+  var when = wk ? 'this week' : 'today';
+
+  var kpis = kpi('Expected customers', money(t.expectedCustomers), when + ' \u00B7 ' + d.asOfWeekday)
     + kpi('Expected amount', 'TZS ' + money(t.expectedAmount))
-    + kpi('Collected today', 'TZS ' + money(t.collected), null, 'good')
+    + kpi('Collected ' + when, 'TZS ' + money(t.collected), null, 'good')
     + kpi('Uncollected', 'TZS ' + money(t.uncollected), null, t.uncollected > 0 ? 'bad' : 'good')
+    + kpi('Recovery', rec.pct == null ? '\u2014' : rec.pct + '%',
+          'TZS ' + money(rec.recovered) + ' / ' + money(rec.denominator) + ' \u00B7 ' + (rec.basisLabel || ''))
     + kpi('Defaulter customers', money(t.defaulterCustomers))
     + kpi('Defaulter arrears', 'TZS ' + money(t.defaulterArrears), null, 'bad')
-    + kpi('Sales (approved)', money(t.salesCount) + ' loans', 'TZS ' + money(t.salesAmount))
-    + kpi('Received today', money(t.receivedCount) + ' payments', 'TZS ' + money(t.receivedAmount), 'good');
+    + kpi('Sales (approved)', money(t.salesCount) + ' loans', 'this week \u00B7 TZS ' + money(t.salesAmount))
+    + kpi('Received ' + when, money(t.receivedCount) + ' payments', 'TZS ' + money(t.receivedAmount), 'good');
+
+  var meta = 'As of ' + (dt.today || '')
+    + (wk ? ' \u00B7 week ' + (dt.weekMon || '') + ' \u2192 ' + (dt.weekFri || '') : '')
+    + ' \u00B7 expected snapshot(s): ' + ((dt.expected || []).join(', ') || '\u2014')
+    + ' \u00B7 recovery denominator: ' + ((dt.recoveryDen || []).join(', ') || '\u2014')
+    + (rec.yesterdaySource ? ' (' + rec.yesterdaySource + ')' : '');
 
   var teams = d.teams || [];
   var rows = teams.map(function(r){
     return '<tr><td><b>' + esc(r.team) + '</b></td>'
       + '<td class="r">' + money(r.expectedAmount) + '</td>'
       + '<td class="r good">' + money(r.collected) + '</td>'
+      + '<td class="r good">' + money(r.recovered) + '</td>'
       + '<td class="r bad">' + money(r.defaulterArrears) + '</td>'
       + '<td class="r">' + money(r.defaulterCustomers) + '</td>'
       + '<td class="r good">' + money(r.receivedAmount) + '</td>'
@@ -109,11 +125,13 @@ function render(d){
   }).join('');
 
   $('body').innerHTML =
-    '<div class="kpis">' + kpis + '</div>'
-    + '<div class="card"><div class="card-h">By team<span>' + teams.length + ' team(s)</span></div>'
-    + '<table><thead><tr><th>Team</th><th class="r">Expected</th><th class="r">Collected</th>'
+    '<div class="meta">' + esc(meta) + '</div>'
+    + '<div class="kpis">' + kpis + '</div>'
+    + (rec.note ? '<div class="note">' + esc(rec.note) + '</div>' : '')
+    + '<div class="card"><div class="card-h">By team<span>' + teams.length + ' team(s) \u00B7 ' + esc(when) + '</span></div>'
+    + '<table><thead><tr><th>Team</th><th class="r">Expected</th><th class="r">Collected</th><th class="r">Recovered</th>'
     + '<th class="r">Arrears</th><th class="r">Defaulters</th><th class="r">Received</th><th class="r">Sales</th></tr></thead>'
-    + '<tbody>' + (rows || '<tr><td colspan="7" style="text-align:center;color:var(--mut)">No data yet for this scope.</td></tr>') + '</tbody></table></div>';
+    + '<tbody>' + (rows || '<tr><td colspan="8" style="text-align:center;color:var(--mut)">No data yet for this scope.</td></tr>') + '</tbody></table></div>';
 }
 
 $('go').addEventListener('click', load);

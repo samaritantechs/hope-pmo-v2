@@ -9,6 +9,10 @@
 3. SQL Editor → paste the entire contents of `db/schema.sql` → Run. You should see
    "Success. No rows returned" and a full table list appear in the Table Editor.
 
+> **Already have a database from before 2026-07-25?** Run each file in `db/migrations/`
+> once (SQL Editor → paste → Run), oldest first. Fresh installs skip this — `db/schema.sql`
+> already includes everything the migrations add. Both are safe to re-run.
+
 ## 1. Export your current sheets to CSV
 
 For each tab you want to migrate: open it → File → Download → Comma Separated Values
