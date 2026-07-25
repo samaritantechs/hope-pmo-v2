@@ -3,29 +3,42 @@ package com.samaritantechs.hopecalls;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.DownloadManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.webkit.CookieManager;
+import android.webkit.DownloadListener;
+import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
 
 /**
- * HOPE Calls: a WebView around the portal's /call page, plus the one thing a browser cannot
- * do -- read the device call log so officers' calls sync automatically. The page detects the
- * {@code HopeCalls} JS interface and lights up sync; in a plain browser the same page still
- * works for dialing and follow-ups, so this app carries NO business logic of its own and
- * never needs an update when the page changes.
+ * HOPE PMO in one app: a WebView around the portal launcher, so a leader signs in once and
+ * chooses Calls or the system (dashboard, uploads) from the same place -- plus the two things
+ * a plain browser tab cannot do here:
+ *   1. read the device call log, so officers' calls sync automatically (HopeCallsBridge);
+ *   2. hand a real file picker to the page's &lt;input type=file&gt;, which is DEAD in a WebView
+ *      unless the host app implements onShowFileChooser -- that is what makes uploading the
+ *      daily Expected/Defaulters workbook from the phone work at all.
+ * The app carries no business logic, so the pages can change without shipping a new APK.
  */
 public class MainActivity extends Activity {
     private static final int REQ_CALL_LOG = 71;
+    private static final int REQ_FILE_PICK = 72;
+
     private WebView web;
     private SharedPreferences prefs;
+    private ValueCallback<Uri[]> pendingFileCallback;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -37,25 +50,71 @@ public class MainActivity extends Activity {
         setContentView(web);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);          // localStorage holds the device id + list cache
+        s.setDomStorageEnabled(true);          // localStorage holds the access code, device id, list cache
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setAllowFileAccess(false);           // the page never needs file:// -- keep it shut
         web.addJavascriptInterface(new HopeCallsBridge(this, prefs), "HopeCalls");
+
         web.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView v, WebResourceRequest req) {
                 Uri u = req.getUrl();
-                if ("tel".equals(u.getScheme())) {
+                String scheme = u.getScheme() == null ? "" : u.getScheme();
+                if ("tel".equals(scheme)) {
                     // ACTION_DIAL opens the dialer with the number filled in -- no CALL_PHONE
                     // permission needed, and the officer always presses the green button themselves.
                     startActivity(new Intent(Intent.ACTION_DIAL, u));
                     return true;
                 }
-                return false;                   // keep the portal itself inside the app
+                if ("mailto".equals(scheme) || "sms".equals(scheme) || "whatsapp".equals(scheme)) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, u));
+                    return true;
+                }
+                return false;                   // the portal itself stays inside the app
             }
 
             @Override
             public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
                 if (req.isForMainFrame()) showUrlScreen(String.valueOf(err.getDescription()));
+            }
+        });
+
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (pendingFileCallback != null) pendingFileCallback.onReceiveValue(null);
+                pendingFileCallback = callback;
+                try {
+                    // params.createIntent() honours the page's own accept="" list (.xlsx/.xls/.csv).
+                    startActivityForResult(params.createIntent(), REQ_FILE_PICK);
+                    return true;
+                } catch (Exception e) {
+                    pendingFileCallback = null;
+                    Toast.makeText(MainActivity.this, "Hakuna programu ya kuchagua faili.", Toast.LENGTH_LONG).show();
+                    return false;
+                }
+            }
+        });
+
+        // Reports the page offers for download go to the phone's Downloads folder via the
+        // system DownloadManager, so they can be re-opened (or re-uploaded) like any file.
+        web.setDownloadListener(new DownloadListener() {
+            @Override
+            public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long size) {
+                try {
+                    String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                    DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
+                    r.setMimeType(mimeType);
+                    r.addRequestHeader("User-Agent", userAgent);
+                    r.addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url));
+                    r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                    r.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name);
+                    DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                    if (dm != null) dm.enqueue(r);
+                    Toast.makeText(MainActivity.this, "Inapakua: " + name, Toast.LENGTH_LONG).show();
+                } catch (Exception e) {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));   // let the browser have it
+                }
             }
         });
 
@@ -78,7 +137,7 @@ public class MainActivity extends Activity {
         String current = startUrl();
         String html = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
                 + "<body style='font-family:sans-serif;background:#0B2A6B;color:#fff;padding:28px'>"
-                + "<h2 style='margin:0 0 6px'>HOPE Calls</h2>"
+                + "<h2 style='margin:0 0 6px'>HOPE PMO</h2>"
                 + "<p style='color:#93C5FD'>Imeshindikana kufungua mfumo. Angalia mtandao wako, kisha jaribu tena.<br>"
                 + "<small>" + android.text.TextUtils.htmlEncode(why == null ? "" : why) + "</small></p>"
                 + "<button onclick='HopeCalls.retry()' style='width:100%;padding:14px;border:0;border-radius:10px;font-weight:700'>Jaribu tena / Retry</button>"
@@ -100,6 +159,21 @@ public class MainActivity extends Activity {
         prefs.edit().putString("startUrl", u).apply();
         final String go = u;
         runOnUiThread(() -> web.loadUrl(go));
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQ_FILE_PICK) {
+            // The callback MUST be answered even on cancel, or the page's file input stays
+            // permanently stuck and no further pick is possible until a reload.
+            if (pendingFileCallback != null) {
+                pendingFileCallback.onReceiveValue(
+                        WebChromeClient.FileChooserParams.parseResult(resultCode, data));
+                pendingFileCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override

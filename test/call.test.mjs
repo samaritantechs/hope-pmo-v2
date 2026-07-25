@@ -21,7 +21,10 @@ function makeTables() {
       { team: 'KONGOWE', opm: null, recovery: 'ASHA JUMA', gmo: null, manager: 'BOB M', credit: null, expected: null, bike: null },
       { team: 'MBAGALA', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null },
     ],
-    access_codes: [{ code: 'LEAD1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] }],
+    access_codes: [
+      { code: 'LEAD1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] },
+      { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] },   // ALL teams
+    ],
     settings: [{ key: 'SALES_TARGET_WEEKLY', value: '1000000' }],
     repayment_snapshots: [
       { ref: '111', full_name: 'AMINA H', contact: '0712000001', guarantor_name: 'G ONE', guarantor_contact: '0713000001', team: 'KONGOWE', payment_expected: 1000, arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today', snapshot_date: '2026-07-24', upload_batch: 'b1', created_at: '2026-07-24T04:00:00Z' },
@@ -87,6 +90,36 @@ test('leader registration pulls name and scope from the access code', async () =
   assert.equal(d.name, 'ASHA JUMA');            // from the code, never typed
   assert.equal(d.leader, true);
   assert.equal(d.leaderTeams, 'KONGOWE');
+});
+
+test('ALL-teams admin registers: home team is NULL, not the literal "ALL"', async () => {
+  // call_users.team is a FK into teams; writing 'ALL' there used to violate the constraint
+  // and blocked admin registration outright ("violates foreign key constraint").
+  const db = fakeDb(makeTables());
+  const r = await callApi(db, 'api_callRegister', ['dA', '', '', 'ADMIN1', '0755000111'], NOW);
+  assert.equal(r.ok, true);
+  assert.equal(r.leaderTeams, 'ALL');
+  const row = db._dump('call_users').find(u => u.user_id === r.userId);
+  assert.equal(row.team, null);                  // no home team -- never a fake one
+  assert.equal(row.leader_teams, null);          // null scope = every team
+  const b = await callApi(db, 'api_callBoot', ['dA'], NOW);
+  assert.equal(b.ok, true);
+  assert.equal(b.name, 'THE ADMIN');
+  assert.equal(b.leaderTeams, 'ALL');
+});
+
+test('an ALL-teams admin sees every team in the lists', async () => {
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['dA', '', '', 'ADMIN1', '0755000111'], NOW);
+  const d = await callApi(db, 'api_callList', ['dA', 'today'], NOW);
+  assert.deepEqual(d.rows.map(r => r.ref).sort(), ['111', '222', '333']);   // MBAGALA included
+});
+
+test('team names register in their canonical spelling (FK-safe)', async () => {
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['dc', 'CASE TEST', ' kongowe ', '', '0766000111'], NOW);
+  const row = db._dump('call_users').find(u => u.name === 'CASE TEST');
+  assert.equal(row.team, 'KONGOWE');
 });
 
 test('same phone on a new device keeps ONE identity and releases the old device', async () => {

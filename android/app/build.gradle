@@ -2,10 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
-// The page the app wraps. Overridable per build (-PstartUrl=https://your-domain/call) so the
-// same source builds against any deployment; officers can also fix a wrong URL from inside
-// the app (a load failure opens a small built-in screen that saves an override).
-def startUrl = project.hasProperty('startUrl') ? project.property('startUrl') : 'https://hope-pmo-v2-samaritantechs.vercel.app/call'
+// The app opens the portal LAUNCHER (site root), not the calls page directly -- that is what
+// lets one install reach Calls, the dashboard and uploads. Overridable per build
+// (-PstartUrl=https://your-domain/) so the same source builds against any deployment;
+// officers can also fix a wrong URL from inside the app (a load failure opens a small
+// built-in screen that saves an override).
+//
+// Default is the git-main domain: it always points at the latest production deployment,
+// unlike a per-deployment URL (hope-pmo-v2-<hash>-...) which is frozen at one build.
+def startUrl = project.hasProperty('startUrl') ? project.property('startUrl') : 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app/'
 
 android {
     namespace 'com.samaritantechs.hopecalls'
@@ -15,8 +20,8 @@ android {
         applicationId 'com.samaritantechs.hopecalls'
         minSdk 23
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode 2
+        versionName '1.1'
         buildConfigField 'String', 'START_URL', "\"${startUrl}\""
     }
 

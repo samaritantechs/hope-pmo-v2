@@ -56,7 +56,8 @@ a{color:var(--b600)}
 #scrApp{display:none;flex-direction:column;height:100%}
 header.top{background:var(--b900);color:#fff;padding:14px 16px 12px;flex:0 0 auto}
 header.top .row1{display:flex;align-items:center;gap:10px}
-header.top img.logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:cover}
+header.top img.logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:cover;display:block}
+header.top a{flex:0 0 auto;line-height:0}
 header.top .who{flex:1;min-width:0}
 header.top .who b{display:block;font-size:14.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 header.top .who span{display:block;font-size:11px;color:var(--b300)}
@@ -180,7 +181,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 <div id="scrApp">
   <header class="top">
     <div class="row1">
-      <img class="logo" id="appLogo" src="" alt="">
+      <!-- The logo doubles as the way back to the launcher: inside the Android app there is
+           no browser chrome, so this is the only route from Calls to the rest of the system. -->
+      <a href="/" title="Menu"><img class="logo" id="appLogo" src="" alt="Menu"></a>
       <div class="who"><b id="appName">&#x2014;</b><span id="appTeam">&#x2014;</span></div>
       <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
       <button type="button" class="logoutBtn hide" id="logoutBtn" title="Toka / Log out"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
