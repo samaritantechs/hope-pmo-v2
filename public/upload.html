@@ -94,6 +94,12 @@
     <label>File</label>
     <label class="file-drop" id="drop">Click to choose an Excel or CSV file<input type="file" id="file" accept=".xlsx,.xls,.csv"></label>
 
+    <div id="sheetWrap" class="hide" style="margin-top:8px">
+      <label>Sheet in this workbook</label>
+      <select id="sheet"></select>
+      <div class="hint">This workbook has several sheets — the right one is suggested from your choices above, but double-check it before uploading.</div>
+    </div>
+
     <button id="go" style="margin-top:10px">Upload</button>
     <div id="msg"></div>
   </div>
@@ -133,11 +139,88 @@ syncFields();
 $('snapDate').valueAsDate = new Date();
 
 var chosenFile = null;
+var wbCache = null;   // parsed workbook of the chosen file -- read once, reused at upload time
 $('file').addEventListener('change', function(e){
   chosenFile = e.target.files[0] || null;
+  wbCache = null;
+  $('sheetWrap').classList.add('hide');
   $('drop').classList.toggle('has', !!chosenFile);
-  $('drop').firstChild.nodeValue = chosenFile ? chosenFile.name : 'Click to choose an Excel or CSV file';
+  $('drop').firstChild.nodeValue = chosenFile ? 'Reading ' + chosenFile.name + '…' : 'Click to choose an Excel or CSV file';
+  if (!chosenFile) return;
+  var f = chosenFile;
+  readWorkbook(f).then(function(wb){
+    if (f !== chosenFile) return;                    // another file was picked while this one parsed
+    wbCache = wb;
+    $('drop').firstChild.nodeValue = f.name;
+    // A whole portfolio workbook has dozens of sheets and MANY of them contain a REF#
+    // column, so auto-detection alone would happily upload the wrong one (e.g. Call Logs
+    // as Defaulters). With more than one sheet the user always sees and confirms the pick.
+    if (wb.SheetNames.length > 1){
+      var sel = $('sheet');
+      sel.innerHTML = '';
+      wb.SheetNames.forEach(function(n){
+        var o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o);
+      });
+      sel.value = suggestSheet(wb.SheetNames) || pickDataSheet_(wb);
+      $('sheetWrap').classList.remove('hide');
+    }
+  }).catch(function(err){
+    chosenFile = null;
+    $('drop').classList.remove('has');
+    $('drop').firstChild.nodeValue = 'Could not read that file — ' + err;
+  });
 });
+
+/** Best-guess sheet for the chosen upload type, matched against the live workbook's own
+    tab-naming (Def Current Friday, Expected Friday, Approved (Processed), Leaders, ...).
+    Only a suggestion -- the dropdown stays in charge. */
+var WD_NAME = { MON:'monday', TUE:'tuesday', WED:'wednesday', THU:'thursday', FRI:'friday', SAT:'saturday', SUN:'sunday' };
+function dateWeekday_(){
+  var v = $('snapDate').value;
+  if (!v) return null;
+  var d = new Date(v + 'T00:00:00');
+  return ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][d.getDay()];
+}
+function suggestSheet(names){
+  var type = $('type').value;
+  var low = names.map(function(n){ return String(n).trim().toLowerCase(); });
+  function find(){
+    for (var a = 0; a < arguments.length; a++){
+      var re = arguments[a];
+      if (!re) continue;
+      for (var i = 0; i < low.length; i++){ if (re.test(low[i])) return names[i]; }
+    }
+    return null;
+  }
+  var wd = type.indexOf('defaulters') === 0 ? WD_NAME[$('weekday').value]
+         : type.indexOf('expected') === 0 ? dateWeekday_() : null;
+  if (type === 'defaulters-current') return find(wd && new RegExp('^def.*current.*' + wd), /^def.*current/);
+  if (type === 'defaulters-initial') return find(wd && new RegExp('^def.*initial.*' + wd), /^def.*initial/);
+  if (type === 'expected-initial')   return find(wd && new RegExp('^expected initial.*' + wd), /^expected initial/);
+  if (type === 'expected-tomorrow')  return find(/^expected tomorrow/);
+  if (type === 'expected-yesterday') return find(/yesterday/);
+  if (type === 'expected-today')     return find(wd && new RegExp('^expected ' + wd + '$'), /^expected (mon|tues|wednes|thurs|fri|satur|sun)day$/, /^expected repayment$/);
+  if (type === 'followup')           return find(/followup/);
+  if (type === 'comments')           return find(/^comments log/);
+  if (type === 'teams')              return find(/^leaders/);
+  if (type === 'received')           return find(/^received payments$/, /^received/);
+  if (type === 'loans'){
+    var m = {
+      unassigned: /^unassigned applications$/, assigned: /^assigned applications$/,
+      unassessed: /^unassessed/, assessed: /^assessed applications$/,
+      pending_approval: /^pending approval$/, approved: /^approved/,
+      pending_disb: /^pending disbursement$/, disbursed: /^disbursed loans$/,
+    }[$('stage').value];
+    return find(m);
+  }
+  return null;
+}
+function resuggest_(){
+  if (!wbCache || $('sheetWrap').classList.contains('hide')) return;
+  var s = suggestSheet(wbCache.SheetNames);
+  if (s) $('sheet').value = s;
+}
+['type', 'weekday', 'stage', 'snapDate'].forEach(function(id){ $(id).addEventListener('change', resuggest_); });
 
 /** Same column-aware date-coercion guard as app.html's doUpload(): D.S/D.C carry
     "paid/target" text like "3/6", which Excel/Sheets readily misreads as a date. Genuine
@@ -161,10 +244,12 @@ function pickDataSheet_(wb){
   }
   return wb.SheetNames[0];   // nothing recognizable found anywhere -- fall back to the original behavior
 }
-function parseWorkbookToRows(file){
+function readWorkbook(file){
   return file.arrayBuffer().then(function(buf){
-    var wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
-    var sn = pickDataSheet_(wb);
+    return XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+  });
+}
+function sheetToRows(wb, sn){
     var aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '' });
     aoa = aoa.filter(function(r){ return r.some(function(v){ return String(v).trim() !== ''; }); });
     if (!aoa.length) return { rows: [], diag: { sheetNames: wb.SheetNames, selectedSheet: sn, headerRow: [] } };
@@ -195,7 +280,6 @@ function parseWorkbookToRows(file){
       rows: [headers].concat(body),
       diag: { sheetNames: wb.SheetNames, selectedSheet: sn, headerRow: headers }
     };
-  });
 }
 
 $('go').addEventListener('click', function(){
@@ -215,7 +299,9 @@ $('go').addEventListener('click', function(){
 
   $('go').disabled = true; $('go').textContent = 'Reading file\u2026';
   var lastDiag = null;
-  parseWorkbookToRows(chosenFile).then(function(parsed){
+  (wbCache ? Promise.resolve(wbCache) : readWorkbook(chosenFile)).then(function(wb){
+    var sn = (!$('sheetWrap').classList.contains('hide') && $('sheet').value) ? $('sheet').value : pickDataSheet_(wb);
+    var parsed = sheetToRows(wb, sn);
     lastDiag = parsed.diag;
     $('go').textContent = 'Uploading\u2026';
     return fetch(apiBase + '/api/upload', {
