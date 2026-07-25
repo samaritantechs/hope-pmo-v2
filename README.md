@@ -8,6 +8,16 @@ Once deployed, the whole thing lives at your Vercel domain:
 - **`/upload`** — upload your Excel/CSV exports straight into Supabase (Defaulters,
   Expected, loan pipeline, Received Payments, …). Same access code.
 
+- **`/call`** — HOPE Calls: the field officers' call lists (Leo/Kesho/Def/Exp/Chr), follow-up
+  logging, the leader Ripoti tab, and the Col/Sales/Recovery strip. Works in any browser;
+  the Android app (below) adds automatic call-log sync.
+
+**HOPE Calls Android app (APK):** built by GitHub Actions from `android/` and always
+downloadable at the fixed link `…/releases/tag/hope-calls-apk`. It is a thin WebView around
+`/call` plus the call-log bridge — the app itself never needs an update when the page
+changes. If the site's domain ever changes, run the "Build HOPE Calls APK" workflow with the
+new URL (Actions tab), or just type the new address into the app's built-in fallback screen.
+
 Three one-time setup steps before first use:
 
 1. **Supabase → SQL Editor:** run `db/schema.sql` (fresh install) — or, on a database

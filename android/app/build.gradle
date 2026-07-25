@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The page the app wraps. Overridable per build (-PstartUrl=https://your-domain/call) so the
+// same source builds against any deployment; officers can also fix a wrong URL from inside
+// the app (a load failure opens a small built-in screen that saves an override).
+def startUrl = project.hasProperty('startUrl') ? project.property('startUrl') : 'https://hope-pmo-v2-samaritantechs.vercel.app/call'
+
+android {
+    namespace 'com.samaritantechs.hopecalls'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.samaritantechs.hopecalls'
+        minSdk 23
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+        buildConfigField 'String', 'START_URL', "\"${startUrl}\""
+    }
+
+    // Sideload signing: a committed self-signed key so every APK built from this repo can
+    // UPDATE the previous install (Android requires matching signatures to update in place;
+    // losing the key would force every officer to uninstall/re-register). This key asserts
+    // nothing about identity -- before any wide rollout, move it to a CI secret and delete
+    // it from the repo. Generated with:
+    //   keytool -genkeypair -keystore sideload.keystore -alias hopecalls -keyalg RSA \
+    //           -keysize 2048 -validity 10950 -storepass hopecalls -keypass hopecalls
+    signingConfigs {
+        sideload {
+            storeFile rootProject.file('sideload.keystore')
+            storePassword 'hopecalls'
+            keyAlias 'hopecalls'
+            keyPassword 'hopecalls'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.sideload
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
