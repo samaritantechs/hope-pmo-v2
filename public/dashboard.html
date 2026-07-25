@@ -11,6 +11,8 @@
   .wrap{max-width:1100px;margin:0 auto}
   h1{font-size:20px;margin:0 0 4px}
   .sub{color:var(--mut);font-size:13px;margin:0 0 24px}
+  a{color:var(--b500);text-decoration:none}
+  a:hover{text-decoration:underline}
   .setup{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:20px}
   .setup label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px;font-weight:600}
   .setup .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
@@ -42,12 +44,12 @@
 <body>
 <div class="wrap">
   <h1>HOPE PMO — Dashboard</h1>
-  <p class="sub">Live from Supabase.</p>
+  <p class="sub">Live from Supabase. &middot; <a href="/upload">Upload files &rarr;</a></p>
 
   <div class="setup">
     <div class="row">
       <div><label>Access code</label><input id="code" placeholder="Your HOPE PMO access code"></div>
-      <div><label>API endpoint</label><input id="apiBase" placeholder="https://your-project.vercel.app"></div>
+      <div><label>API endpoint (optional &mdash; leave blank to use this site)</label><input id="apiBase" placeholder="This site"></div>
       <div style="flex:0"><button id="go">Load</button></div>
     </div>
   </div>
@@ -71,10 +73,12 @@ function kpi(label, value, sub, cls){
 }
 
 function load(){
-  var apiBase = $('apiBase').value.trim().replace(/\/$/, '');
+  // The dashboard is served by the same Vercel app as the API, so same-origin is the
+  // default -- the endpoint field only matters when pointing this page at ANOTHER deploy.
+  var apiBase = ($('apiBase').value.trim() || window.location.origin).replace(/\/$/, '');
   var code = $('code').value.trim();
   var body = $('body');
-  if (!apiBase || !code){ body.innerHTML = '<div class="msg bad">Set both the access code and API endpoint first.</div>'; return; }
+  if (!code){ body.innerHTML = '<div class="msg bad">Enter your access code first.</div>'; return; }
   body.innerHTML = '<div class="msg">Loading\u2026</div>';
   fetch(apiBase + '/api/dashboard?code=' + encodeURIComponent(code))
     .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
@@ -135,7 +139,8 @@ function render(d){
 }
 
 $('go').addEventListener('click', load);
-if ($('apiBase').value && $('code').value) load();
+$('code').addEventListener('keydown', function(e){ if (e.key === 'Enter') load(); });
+if ($('code').value) load();
 </script>
 </body>
 </html>
