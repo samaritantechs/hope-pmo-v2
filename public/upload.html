@@ -34,7 +34,9 @@
 <body>
 <div class="wrap">
   <h1>HOPE PMO — Upload</h1>
-  <p class="sub">Straight into Supabase. No Google Sheets in this path anymore. &middot; <a href="/" style="color:var(--b500);text-decoration:none">&larr; Dashboard</a></p>
+  <p class="sub">Straight into Supabase. No Google Sheets in this path anymore. &middot;
+    <a href="/" style="color:var(--b500);text-decoration:none">&larr; Menu</a> &middot;
+    <a href="/dashboard" style="color:var(--b500);text-decoration:none">Dashboard</a></p>
 
   <div class="card">
     <label>Access code</label>
@@ -140,6 +142,9 @@ function syncFields(){
   });
 }
 $('type').addEventListener('change', syncFields);
+// /upload?admin=1 comes from the launcher's "Access codes" tile -- land straight on the
+// sheet that tile promised rather than making an admin hunt for it in the dropdown.
+if (/[?&]admin=1\b/.test(window.location.search)) $('type').value = 'access-codes';
 syncFields();
 $('snapDate').valueAsDate = new Date();
 

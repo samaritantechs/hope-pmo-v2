@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">HOPE Calls</string>
+    <!-- The app now opens the whole portal (Calls + dashboard + uploads), so it is named for
+         the system rather than just the calls half. Package id is unchanged, so this installs
+         as an UPDATE over the earlier "HOPE Calls" build. -->
+    <string name="app_name">HOPE PMO</string>
 </resources>

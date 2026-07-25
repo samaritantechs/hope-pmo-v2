@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HOPE PMO</title>
+<style>
+  :root{--b950:#081C4A;--b900:#0B2A6B;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
+        --bg:#F6F8FC;--card:#FFFFFF;--ink:#0F172A;--mut:#64748B;--soft:#94A3B8;--line:#E2E8F0;--bad:#B42318;--badbg:#FDECEA;--badline:#F6CFCB}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);min-height:100%;
+    font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-tap-highlight-color:transparent}
+  .top{background:var(--b900);color:#fff;padding:26px 20px 46px}
+  .top h1{margin:0;font-size:19px;font-weight:800;letter-spacing:.01em}
+  .top p{margin:4px 0 0;font-size:12.5px;color:var(--b300)}
+  .wrap{max-width:520px;margin:-32px auto 0;padding:0 16px 40px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 10px 30px -18px rgba(8,28,74,.5)}
+  label{display:block;font-size:12px;font-weight:700;color:var(--mut);margin-bottom:6px}
+  input{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);font-size:15px;font-family:inherit}
+  input:focus{outline:none;border-color:var(--b500);box-shadow:0 0 0 3px var(--b100)}
+  .btn{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;border:0;cursor:pointer;border-radius:11px;
+    padding:14px 18px;font-weight:700;font-size:15px;font-family:inherit;background:var(--b700);color:#fff;margin-top:12px}
+  .btn:disabled{background:var(--b300)}
+  .btn.ghost{background:transparent;color:var(--mut);border:1.5px solid var(--line)}
+  .err{background:var(--badbg);border:1px solid var(--badline);color:var(--bad);padding:10px 12px;border-radius:10px;font-size:13px;margin-top:12px}
+  .who{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+  .who .av{width:42px;height:42px;border-radius:12px;background:var(--b50);color:var(--b700);display:flex;align-items:center;
+    justify-content:center;font-weight:800;font-size:16px;flex:0 0 auto}
+  .who b{display:block;font-size:15px}
+  .who span{display:block;font-size:12px;color:var(--mut)}
+  .tiles{display:grid;gap:12px;margin-top:16px}
+  a.tile{display:flex;align-items:center;gap:14px;background:var(--card);border:1px solid var(--line);border-radius:16px;
+    padding:16px;text-decoration:none;color:var(--ink);box-shadow:0 10px 30px -22px rgba(8,28,74,.5)}
+  a.tile:active{border-color:var(--b500);background:var(--b50)}
+  .tile .ico{width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:22px;flex:0 0 auto;background:var(--b50)}
+  .tile b{display:block;font-size:15.5px;font-weight:700}
+  .tile span{display:block;font-size:12.5px;color:var(--mut);margin-top:2px;line-height:1.45}
+  .tile .go{margin-left:auto;color:var(--soft);font-size:19px}
+  .hint{font-size:12px;color:var(--soft);margin-top:14px;line-height:1.55;text-align:center}
+  .sk{width:18px;height:18px;border:2.5px solid var(--b100);border-top-color:var(--b600);border-radius:50%;animation:sp .7s linear infinite;margin:0 auto}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .sep{display:flex;align-items:center;gap:10px;color:var(--soft);font-size:11.5px;margin:18px 0 4px}
+  .sep:before,.sep:after{content:"";flex:1;height:1px;background:var(--line)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <h1>HOPE MICROCREDIT CO. LTD</h1>
+  <p>MKOPO CHAP CHAP &middot; PMO</p>
+</div>
+
+<div class="wrap">
+  <div id="view"><div class="card"><div class="sk"></div></div></div>
+</div>
+
+<script>
+/* Deliberately ES5-plain and dependency-free: this page is the first thing the Android
+   WebView loads, so it must render on the oldest phone in the field, offline-tolerant. */
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function store(k, v){ try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch(e){} }
+function load(k){ try { return localStorage.getItem(k) || ''; } catch(e){ return ''; } }
+
+/* The calls app keeps its OWN identity (a registered device, name + team, no access code),
+   so Calls is always reachable -- a field officer never has a portal code at all. The
+   system side is what an access code unlocks. */
+function tile(href, icon, title, sub){
+  return '<a class="tile" href="' + href + '"><span class="ico">' + icon + '</span>'
+    + '<span><b>' + esc(title) + '</b><span>' + esc(sub) + '</span></span>'
+    + '<span class="go">&#8250;</span></a>';
+}
+
+function renderSignIn(err){
+  $('view').innerHTML =
+    '<div class="card">'
+    + '<label>Msimbo wako / Your access code</label>'
+    + '<input id="code" placeholder="Weka msimbo" autocomplete="off" autocapitalize="characters">'
+    + '<button class="btn" id="go">Ingia / Sign in</button>'
+    + (err ? '<div class="err">' + esc(err) + '</div>' : '')
+    + '</div>'
+    + '<div class="sep">au / or</div>'
+    + '<div class="tiles">' + tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu &middot; hauhitaji msimbo / no code needed') + '</div>'
+    + '<div class="hint">Maafisa wa simu hawahitaji msimbo &mdash; bofya HOPE Calls.<br>Field officers do not need a code &mdash; tap HOPE Calls.</div>';
+  $('code').value = load('hopeCode');
+  $('go').onclick = signIn;
+  $('code').onkeydown = function(e){ if (e.key === 'Enter') signIn(); };
+}
+
+function signIn(){
+  var code = $('code').value.trim();
+  if (!code){ renderSignIn('Weka msimbo wako. / Enter your code.'); return; }
+  $('go').disabled = true; $('go').textContent = 'Inaingia…';
+  fetch('/api/me?code=' + encodeURIComponent(code))
+    .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+    .then(function(res){
+      if (res.status < 200 || res.status >= 300 || res.body.ok === false){
+        renderSignIn(res.body.error || 'Msimbo si sahihi. / Invalid code.');
+        return;
+      }
+      store('hopeCode', code);            // dashboard.html and upload.html read this same key
+      renderHome(res.body);
+    })
+    .catch(function(e){ renderSignIn('Hakuna mtandao. / No connection. (' + e + ')'); });
+}
+
+function renderHome(me){
+  var scope = me.teams ? (me.teamCount + (me.teamCount === 1 ? ' team' : ' teams')) : 'Timu zote / All teams';
+  var initials = String(me.name || '?').trim().split(/\s+/).slice(0, 2).map(function(w){ return w.charAt(0); }).join('').toUpperCase();
+  var tiles =
+      tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu, ufuatiliaji, ripoti / call lists & follow-ups')
+    + tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, Recovery %, taarifa za timu / team figures')
+    + (me.can.upload ? tile('/upload', '&#128228;', 'Pakia faili / Upload', 'Expected, Defaulters, Received, mikopo / loan files') : '')
+    + (me.can.admin ? tile('/upload?admin=1', '&#128273;', 'Misimbo / Access codes', 'Pakia Access Codes na User Roles / manage who signs in') : '');
+  $('view').innerHTML =
+    '<div class="card">'
+    + '<div class="who"><span class="av">' + esc(initials) + '</span>'
+    + '<span><b>' + esc(me.name) + '</b><span>' + esc(me.role) + ' &middot; ' + esc(scope) + '</span></span></div>'
+    + '<button class="btn ghost" id="out">Toka / Sign out</button>'
+    + '</div>'
+    + '<div class="tiles">' + tiles + '</div>'
+    + '<div class="hint">Chagua sehemu unayotaka kuendelea nayo.<br>Choose which part of the system to open.</div>';
+  $('out').onclick = function(){ store('hopeCode', null); renderSignIn(); };
+}
+
+/* A saved code signs you straight back in, but a stale/revoked one must not strand the
+   launcher on a spinner -- it falls back to the sign-in card with the reason. */
+(function boot(){
+  var saved = load('hopeCode');
+  if (!saved){ renderSignIn(); return; }
+  fetch('/api/me?code=' + encodeURIComponent(saved))
+    .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+    .then(function(res){
+      if (res.status >= 200 && res.status < 300 && res.body.ok !== false) renderHome(res.body);
+      else { store('hopeCode', null); renderSignIn(res.body.error || ''); }
+    })
+    .catch(function(){ renderSignIn(); });
+})();
+</script>
+</body>
+</html>

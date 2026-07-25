@@ -4,19 +4,25 @@
 
 Once deployed, the whole thing lives at your Vercel domain:
 
-- **`/`** — the dashboard (KPIs, Recovery %, per-team table). Enter your access code, Load.
-- **`/upload`** — upload your Excel/CSV exports straight into Supabase (Defaulters,
-  Expected, loan pipeline, Received Payments, …). Same access code.
+- **`/`** — the launcher. Field officers tap **HOPE Calls** (no access code — they register
+  in the calls app with name + team). Signing in with a portal access code opens the rest,
+  showing only what that code may use.
+- **`/dashboard`** — KPIs, Recovery % with its basis, per-team table, snapshot audit line.
+- **`/upload`** — Excel/CSV exports straight into Supabase (Defaulters, Expected, loan
+  pipeline, Received Payments, and — with the `settings` permission — Access Codes/User Roles).
 
 - **`/call`** — HOPE Calls: the field officers' call lists (Leo/Kesho/Def/Exp/Chr), follow-up
   logging, the leader Ripoti tab, and the Col/Sales/Recovery strip. Works in any browser;
   the Android app (below) adds automatic call-log sync.
 
-**HOPE Calls Android app (APK):** built by GitHub Actions from `android/` and always
-downloadable at the fixed link `…/releases/tag/hope-calls-apk`. It is a thin WebView around
-`/call` plus the call-log bridge — the app itself never needs an update when the page
-changes. If the site's domain ever changes, run the "Build HOPE Calls APK" workflow with the
-new URL (Actions tab), or just type the new address into the app's built-in fallback screen.
+**Android app (APK):** built by GitHub Actions from `android/` and always downloadable at the
+fixed link `…/releases/tag/hope-calls-apk`. It opens the launcher, so one install reaches
+Calls, the dashboard and uploads. Beyond wrapping the site it does three things a browser tab
+cannot: reads the call log for automatic sync, hands the page a real file picker (`<input
+type=file>` is inert in a WebView without `onShowFileChooser`) so workbooks can be uploaded
+from the phone, and routes downloads to the Downloads folder. It carries no business logic,
+so page changes need no new APK. If the domain changes, re-run the workflow with the new URL
+(Actions tab) or type it into the app's built-in fallback screen.
 
 Three one-time setup steps before first use:
 

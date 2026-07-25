@@ -120,19 +120,26 @@ async function register(db, [dev, name, team, accessCode, phone], nowMs) {
   team = String(team == null ? '' : team).trim();
   const code = String(accessCode == null ? '' : accessCode).trim();
   let role = 'OFFICER', leader = false, leaderTeams = null;
+  const teams = await teamList(db);
   if (code) {
     const { data: u } = await db.from('access_codes').select('*').eq('code', code).maybeSingle();
     if (!u) throw new Error('Invalid access code.');
     leader = true;
     role = u.role || 'LEADER';
     leaderTeams = (u.teams && u.teams.length) ? u.teams : null;   // null = ALL, same convention as auth.js
-    if (!team) team = leaderTeams ? leaderTeams[0] : 'ALL';
+    // call_users.team is a FOREIGN KEY into teams -- it is the leader's display-only "home"
+    // team, never their scope (that's leader_teams). An ALL-teams code has no home team, and
+    // writing the literal 'ALL' there violated the constraint and blocked admin registration
+    // outright. Resolve it to a real team when the code names one, else leave it NULL.
+    const home = team || (leaderTeams && leaderTeams[0]) || '';
+    team = teams.find(t => K(t) === K(home)) || null;
     name = u.name || name;
   } else {
     if (!name) throw new Error('Enter your name.');
     if (!team) throw new Error('Choose your team.');
-    const teams = await teamList(db);
-    if (!teams.some(t => K(t) === K(team))) throw new Error('Unknown team. Ask your PMO officer.');
+    const match = teams.find(t => K(t) === K(team));
+    if (!match) throw new Error('Unknown team. Ask your PMO officer.');
+    team = match;                                                  // store the canonical spelling the FK expects
   }
   if (!name) throw new Error('Could not find a name on file for that access code.');
   const uid = 'U' + h36(phoneD);

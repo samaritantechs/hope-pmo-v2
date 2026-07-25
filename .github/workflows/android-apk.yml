@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       base_url:
-        description: 'Deployed site (the app opens <base_url>/call)'
+        description: 'Deployed site the app opens (its launcher screen)'
         required: false
-        default: 'https://hope-pmo-v2-samaritantechs.vercel.app'
+        default: 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app'
   push:
     branches: [main]
     paths: ['android/**', '.github/workflows/android-apk.yml']
@@ -38,7 +38,7 @@ jobs:
         run: |
           cd android
           ./gradlew assembleRelease --no-daemon \
-            -PstartUrl="${{ github.event.inputs.base_url || 'https://hope-pmo-v2-samaritantechs.vercel.app' }}/call"
+            -PstartUrl="${{ github.event.inputs.base_url || 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app' }}/"
           cp app/build/outputs/apk/release/app-release.apk HOPE-Calls.apk
 
       - uses: actions/upload-artifact@v4
@@ -54,10 +54,15 @@ jobs:
           prerelease: true
           files: android/HOPE-Calls.apk
           body: |
-            Latest HOPE Calls Android app. Download **HOPE-Calls.apk** below onto the phone,
-            open it, and allow install from unknown sources when asked.
+            Latest HOPE PMO Android app (the whole portal, not just calls). Download
+            **HOPE-Calls.apk** below onto the phone, open it, and allow install from unknown
+            sources when asked. It installs as an update over any earlier build.
 
-            First open: allow the call-log permission (that is what makes calls sync
-            automatically), register with your name + team (officers) or your portal access
-            code (leaders), and you are in. iPhone users: open the same /call page in Safari
-            instead -- Apple does not allow call-log access to any app.
+            It opens the launcher: **HOPE Calls** needs no access code (officers register with
+            name + team), while signing in with a portal access code also opens the
+            **dashboard** and, for those with upload rights, **file uploads** — so the daily
+            Expected/Defaulters workbooks can be uploaded straight from the phone.
+
+            On first open, allow the call-log permission — that is what makes calls sync
+            automatically. iPhone users: open the same site in Safari instead; Apple does not
+            allow call-log access to any app.
