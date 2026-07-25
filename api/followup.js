@@ -1,5 +1,5 @@
-import { supabase, fetchAll } from './lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './lib/auth.js';
+import { supabase, fetchAll } from './_lib/supabase.js';
+import { authCode, teamAllowed, withApi } from './_lib/auth.js';
 
 // GET  /api/followup?code=XXX             -> list, team-scoped
 // POST /api/followup  { code, ref, comment, fuStatus, promiseDate, promiseAmt, newNumber, dockNo, fullName, team }

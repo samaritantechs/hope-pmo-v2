@@ -1,6 +1,6 @@
-import { supabase, fetchAll } from './lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './lib/auth.js';
-import { currentWeekday } from './lib/time.js';
+import { supabase, fetchAll } from './_lib/supabase.js';
+import { authCode, teamAllowed, withApi } from './_lib/auth.js';
+import { currentWeekday } from './_lib/time.js';
 
 // GET /api/defaulters?code=XXX&type=current&weekday=WED&date=2026-07-22
 //   type: 'current' | 'initial'

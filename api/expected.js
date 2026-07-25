@@ -1,5 +1,5 @@
-import { supabase, fetchAll } from './lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './lib/auth.js';
+import { supabase, fetchAll } from './_lib/supabase.js';
+import { authCode, teamAllowed, withApi } from './_lib/auth.js';
 
 // GET /api/expected?code=XXX&type=today&date=2026-07-22
 //   type: 'today' | 'tomorrow' | 'yesterday' | 'initial'

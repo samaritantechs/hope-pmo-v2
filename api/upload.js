@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { supabase } from './lib/supabase.js';
-import { authCode, can, withApi } from './lib/auth.js';
+import { supabase } from './_lib/supabase.js';
+import { authCode, can, withApi } from './_lib/auth.js';
 import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
-} from './lib/importers.js';
+} from './_lib/importers.js';
 
 // POST /api/upload   { code, type, meta, rows }
 //   rows: the parsed sheet as an array-of-arrays, header row included -- the SAME shape
@@ -67,7 +67,7 @@ export default withApi(async (req, res) => {
   // One uuid per upload, stamped across every row of it. Snapshots are append-only -- a
   // re-upload of the same date ADDS rows, never overwrites -- so without this, a corrected
   // re-upload stacked both copies into every KPI. Readers resolve latest date -> latest
-  // batch within it (api/lib/snapshots.js), so the newest upload wins while the full
+  // batch within it (api/_lib/snapshots.js), so the newest upload wins while the full
   // history stays underneath.
   const SNAPSHOT_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots']);
   let uploadBatch;

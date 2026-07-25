@@ -10,15 +10,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-// api/lib/supabase.js creates its client at import time from env -- give it inert values
+// api/_lib/supabase.js creates its client at import time from env -- give it inert values
 // BEFORE the dynamic imports below (static imports would hoist above these assignments).
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { buildDashboard } = await import('../api/lib/dashboard-core.js');
-const { pickLatestBatch } = await import('../api/lib/snapshots.js');
-const { recoveryBasis, collectedOf } = await import('../api/lib/recovery.js');
-const { todayKey, currentWeekday, isoWeekday, weekMondayKey } = await import('../api/lib/time.js');
+const { buildDashboard } = await import('../api/_lib/dashboard-core.js');
+const { pickLatestBatch } = await import('../api/_lib/snapshots.js');
+const { recoveryBasis, collectedOf } = await import('../api/_lib/recovery.js');
+const { todayKey, currentWeekday, isoWeekday, weekMondayKey } = await import('../api/_lib/time.js');
 
 // ---------------------------------------------------------------------------------------
 // Fake PostgREST -- the exact query-builder subset the code under test uses.
