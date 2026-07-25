@@ -1,0 +1,63 @@
+# Builds the HOPE Calls Android app and publishes it to a fixed release tag, so the
+# download link never changes:
+#   https://github.com/samaritantechs/hope-pmo-v2/releases/tag/hope-calls-apk
+#
+# Runs automatically when anything under android/ lands on main, and can be run by hand
+# (Actions tab -> Build HOPE Calls APK -> Run workflow) with a different site URL if the
+# deployment ever moves. Officers can also fix the URL from inside the app itself, so a
+# wrong default never bricks an installed copy.
+
+name: Build HOPE Calls APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Deployed site (the app opens <base_url>/call)'
+        required: false
+        default: 'https://hope-pmo-v2-samaritantechs.vercel.app'
+  push:
+    branches: [main]
+    paths: ['android/**', '.github/workflows/android-apk.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Build release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon \
+            -PstartUrl="${{ github.event.inputs.base_url || 'https://hope-pmo-v2-samaritantechs.vercel.app' }}/call"
+          cp app/build/outputs/apk/release/app-release.apk HOPE-Calls.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hope-calls-apk
+          path: android/HOPE-Calls.apk
+
+      - name: Publish to the fixed download link
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: hope-calls-apk
+          name: HOPE Calls APK (latest)
+          prerelease: true
+          files: android/HOPE-Calls.apk
+          body: |
+            Latest HOPE Calls Android app. Download **HOPE-Calls.apk** below onto the phone,
+            open it, and allow install from unknown sources when asked.
+
+            First open: allow the call-log permission (that is what makes calls sync
+            automatically), register with your name + team (officers) or your portal access
+            code (leaders), and you are in. iPhone users: open the same /call page in Safari
+            instead -- Apple does not allow call-log access to any app.

@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HOPE Calls</title>
+<style>
+:root{
+  --b950:#081C4A; --b900:#0B2A6B; --b800:#10357F; --b700:#1D4ED8; --b600:#2563EB;
+  --b500:#3B82F6; --b300:#93C5FD; --b100:#DBEAFE; --b50:#EFF6FF;
+  --bg:#F6F8FC; --card:#FFFFFF; --ink:#0F172A; --mut:#64748B; --soft:#94A3B8; --line:#E2E8F0;
+  --ok:#067647; --okbg:#E7F6EE; --okline:#CFEADD;
+  --warn:#92400E; --warnbg:#FEF3DC; --warnline:#F6E3BC;
+  --bad:#B42318; --badbg:#FDECEA; --badline:#F6CFCB;
+  --rad:14px; --shadow:0 2px 10px -4px rgba(11,42,107,.18);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);height:100%;
+  font-family:'Inter',Arial,Helvetica,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior-y:contain}
+button,input,select,textarea{font-family:inherit;font-size:15px}
+a{color:var(--b600)}
+.hide{display:none !important}
+.center{display:flex;align-items:center;justify-content:center}
+.sk{width:16px;height:16px;border:2.5px solid var(--b100);border-top-color:var(--b600);border-radius:50%;animation:sp .7s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---- boot ---- */
+#scrBoot{position:fixed;inset:0;flex-direction:column;gap:14px;background:var(--b900)}
+#scrBoot .brand{color:#fff;font-weight:800;font-size:20px;letter-spacing:.02em}
+#scrBoot .sk{border-color:rgba(255,255,255,.25);border-top-color:#fff;width:26px;height:26px;border-width:3px}
+
+/* ---- register ---- */
+#scrRegister{min-height:100%;flex-direction:column;padding:28px 22px;background:linear-gradient(180deg,var(--b900),var(--b800) 220px,var(--bg) 220px)}
+.reg-card{width:100%;max-width:420px;margin:60px auto 0;background:var(--card);border-radius:18px;box-shadow:0 12px 34px -14px rgba(8,28,74,.35);padding:26px 22px}
+.reg-logo{width:52px;height:52px;border-radius:13px;object-fit:cover;background:#fff}
+.reg-title{font-size:19px;font-weight:800;margin-top:14px}
+.reg-sub{font-size:13px;color:var(--mut);margin-top:3px;line-height:1.5}
+.fld{margin-top:16px}
+.fld label{display:block;font-size:12px;font-weight:700;color:var(--mut);margin-bottom:6px}
+.fld input,.fld select{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:11px;background:#fff;color:var(--ink)}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--b500);box-shadow:0 0 0 3px var(--b100)}
+.fld .note{font-size:11.5px;color:var(--soft);margin-top:5px}
+.regToggle{display:flex;gap:8px}
+.regToggleBtn{flex:1;padding:11px 6px;border:1.5px solid var(--line);border-radius:11px;background:#fff;color:var(--mut);
+  font-weight:700;font-size:12.5px;text-align:center;line-height:1.5}
+.regToggleBtn span{display:block;font-weight:500;font-size:10.5px;color:var(--soft)}
+.regToggleBtn.on{border-color:var(--b600);background:var(--b50);color:var(--b800)}
+.regToggleBtn.on span{color:var(--b600)}
+.err{background:var(--badbg);border:1px solid var(--badline);color:var(--bad);padding:10px 12px;border-radius:10px;font-size:13px;margin-top:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;cursor:pointer;border-radius:11px;
+  padding:14px 18px;font-weight:700;font-size:15px;width:100%}
+.btn-pri{background:var(--b700);color:#fff}
+.btn-pri:disabled{background:var(--b300)}
+.btn-ghost{background:transparent;color:var(--mut);border:1.5px solid var(--line)}
+
+/* ---- app shell ---- */
+#scrApp{display:none;flex-direction:column;height:100%}
+header.top{background:var(--b900);color:#fff;padding:14px 16px 12px;flex:0 0 auto}
+header.top .row1{display:flex;align-items:center;gap:10px}
+header.top img.logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:cover}
+header.top .who{flex:1;min-width:0}
+header.top .who b{display:block;font-size:14.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header.top .who span{display:block;font-size:11px;color:var(--b300)}
+.pill{display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.16);cursor:pointer;
+  border-radius:50%;width:30px;height:30px;flex:0 0 auto}
+.pill .dot{width:9px;height:9px;border-radius:50%;background:var(--soft)}
+.pill.ok .dot{background:#4ADE80}
+.pill.err .dot{background:#F87171}
+.pill.syncing .dot{background:#FBBF24;animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.logoutBtn{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;
+  display:flex;align-items:center;justify-content:center;padding:0}
+.tabs{display:flex;gap:4px;margin-top:12px;overflow-x:auto}
+.tabs button{flex:1;background:rgba(255,255,255,.08);color:#cfe0ff;border:0;padding:9px 4px;border-radius:9px;
+  font-size:12.5px;font-weight:700;white-space:nowrap}
+.tabs button.on{background:#fff;color:var(--b800)}
+.daystrip{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;
+  font-size:12px;font-weight:600;color:var(--b300);flex-wrap:wrap}
+.daystrip b{color:#fff;font-weight:800;margin-left:3px}
+.daystrip .ds-tag{background:rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:1.5px 7px;font-size:10.5px;font-weight:800;letter-spacing:.02em}
+.daystrip .ds-dot{color:rgba(255,255,255,.35)}
+
+main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 12px 90px}
+.searchbar{position:relative;margin-bottom:10px}
+.searchbar input{width:100%;padding:11px 14px;border:1.5px solid var(--line);border-radius:11px;background:#fff}
+.searchbar input:focus{outline:none;border-color:var(--b500)}
+
+.crow{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:13px;
+  padding:12px 12px;margin-bottom:8px;box-shadow:var(--shadow)}
+.crow.called{opacity:.62}
+.crow-main{flex:1;min-width:0}
+.crow-name{font-size:14.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.crow-name .tick{color:var(--ok);font-weight:700;font-size:11px;margin-left:4px}
+.crow-sub{font-size:12px;color:var(--mut);margin-top:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.crow-chips{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.callbtn{flex:0 0 auto;width:44px;height:44px;border-radius:50%;background:var(--okbg);border:1.5px solid var(--okline);
+  display:flex;align-items:center;justify-content:center;font-size:19px;text-decoration:none}
+.chip{display:inline-block;padding:2.5px 8px;border-radius:999px;font-size:10px;font-weight:700;letter-spacing:.02em;
+  background:var(--chipbg,var(--b50));color:var(--b600);border:1px solid var(--b100)}
+.chip.ok{background:var(--okbg);color:var(--ok);border-color:var(--okline)}
+.chip.warn{background:var(--warnbg);color:var(--warn);border-color:var(--warnline)}
+.chip.bad{background:var(--badbg);color:var(--bad);border-color:var(--badline)}
+.chip.mut{background:#F1F5F9;color:var(--mut);border-color:var(--line)}
+.empty{text-align:center;padding:50px 20px;color:var(--mut)}
+.empty b{display:block;color:var(--ink);font-size:15px;margin-bottom:4px}
+
+/* ---- bottom sheet ---- */
+.sheet-backdrop{position:fixed;inset:0;background:rgba(8,17,34,.5);display:none;align-items:flex-end;z-index:40}
+.sheet-panel{background:var(--bg);width:100%;max-height:88vh;border-radius:18px 18px 0 0;overflow-y:auto;
+  padding:8px 16px calc(24px + env(safe-area-inset-bottom,0px))}
+.sheet-handle{width:38px;height:4px;background:var(--line);border-radius:99px;margin:6px auto 12px}
+.sheet-card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:14px;margin-bottom:12px}
+.sheet-title{font-size:17px;font-weight:800}
+.sheet-sub{font-size:12.5px;color:var(--mut);margin-top:2px}
+.factrow{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.factrow:last-child{border-bottom:0}
+.factrow span:first-child{color:var(--mut)}
+.callrow{display:flex;align-items:center;gap:10px;margin-top:8px}
+.callrow .btn{width:auto;flex:1;padding:11px}
+.hist-item{padding:9px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.hist-item:last-child{border-bottom:0}
+.hist-item .h-top{display:flex;justify-content:space-between;color:var(--mut);font-size:11px;margin-bottom:3px}
+.close-sheet{position:absolute;top:10px;right:14px;background:var(--card);border:1px solid var(--line);width:32px;height:32px;
+  border-radius:50%;font-size:15px;color:var(--mut)}
+
+/* ---- KPI + reports ---- */
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px}
+.kpi .k-l{font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
+.kpi .k-v{font-size:18px;font-weight:800;margin-top:3px}
+.rangebar{display:flex;gap:8px;margin-bottom:12px}
+.rangebar input{flex:1;padding:9px 10px;border:1.5px solid var(--line);border-radius:9px;background:#fff;font-size:13px}
+.otable{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.otable th,.otable td{padding:9px 10px;font-size:12.5px;text-align:left;border-bottom:1px solid var(--line)}
+.otable th{background:var(--b50);color:var(--b900);font-size:10.5px;text-transform:uppercase}
+.otable td.r,.otable th.r{text-align:right}
+.otable tr:last-child td{border-bottom:0}
+
+/* ---- follow-up form ---- */
+.toast{position:fixed;left:16px;right:16px;bottom:20px;background:var(--ink);color:#fff;padding:12px 16px;border-radius:11px;
+  font-size:13.5px;box-shadow:0 8px 24px -8px rgba(0,0,0,.4);z-index:60;display:none}
+.toast.bad{background:var(--bad)}
+.banner{background:var(--warnbg);border:1px solid var(--warnline);color:var(--warn);border-radius:11px;padding:10px 12px;
+  font-size:12px;margin-bottom:10px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<div id="scrBoot" class="center">
+  <div class="brand" id="bootBrand">HOPE Calls</div>
+  <div class="sk"></div>
+</div>
+
+<div id="scrRegister" class="center hide">
+  <div class="reg-card">
+    <img class="reg-logo" id="regLogo" src="" alt="">
+    <div class="reg-title" id="regTitle">Karibu HOPE Calls</div>
+    <div class="reg-sub">Jaza jina lako na timu ili uanze kupokea orodha za simu. / Enter your name and team to start receiving your call lists.</div>
+    <div id="regErr"></div>
+    <div class="fld">
+      <label>Mimi ni / I am</label>
+      <div class="regToggle">
+        <button type="button" class="regToggleBtn on" data-role="officer">Afisa<span>Field officer</span></button>
+        <button type="button" class="regToggleBtn" data-role="leader">Kiongozi<span>Leader</span></button>
+      </div>
+    </div>
+    <div class="fld" id="regNameWrap"><label>Jina lako / Your name</label><input id="regName" placeholder="e.g. Juma Issa"></div>
+    <div class="fld"><label>Namba ya simu / Phone number</label><input id="regPhone" placeholder="0712345678" type="tel">
+      <div class="note">Used to stop duplicate accounts &#x2014; each phone number is one identity.</div>
+    </div>
+    <div class="fld" id="regTeamWrap"><label>Timu / Team</label><select id="regTeam"><option value="">&#x2014;</option></select></div>
+    <div class="fld hide" id="regCodeWrap"><label>Msimbo wa uongozi / Leader access code</label>
+      <input id="regCode" placeholder="Enter your portal access code">
+      <div class="note">Your name and teams load automatically from your access code &#x2014; same as the portal. No need to type a name or pick a team.</div>
+    </div>
+    <div class="fld"><button class="btn btn-pri" id="regBtn">Endelea / Continue</button></div>
+  </div>
+</div>
+
+<div id="scrApp">
+  <header class="top">
+    <div class="row1">
+      <img class="logo" id="appLogo" src="" alt="">
+      <div class="who"><b id="appName">&#x2014;</b><span id="appTeam">&#x2014;</span></div>
+      <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
+      <button type="button" class="logoutBtn hide" id="logoutBtn" title="Toka / Log out"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
+    </div>
+    <div class="searchbar" style="margin:10px 0 0"><input id="listQ" placeholder="Tafuta jina / namba&#x2026; (kwenye orodha zote)"></div>
+    <div class="tabs" id="tabs">
+      <button data-v="today">Leo</button>
+      <button data-v="tomorrow">Kesho</button>
+      <button data-v="def">Def</button>
+      <button data-v="exp">Exp</button>
+      <button data-v="chr">Chr</button>
+      <button data-v="reports" id="tabReports" class="hide">Ripoti</button>
+    </div>
+    <div class="daystrip hide" id="dayStrip">
+      <span class="ds-tag" id="dsTag">Leo</span>
+      <span>Col <b id="dsCol">&mdash;</b></span>
+      <span class="ds-dot">&middot;</span>
+      <span>Sales <b id="dsSales">&mdash;</b></span>
+      <span class="ds-dot">&middot;</span>
+      <span>Recovery <b id="dsRec">&mdash;</b></span>
+    </div>
+  </header>
+  <main class="body" id="body"></main>
+</div>
+
+<div class="sheet-backdrop" id="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-handle"></div>
+    <button class="close-sheet" id="sheetClose">&#x2715;</button>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="sheet-backdrop" id="confirmModal" style="align-items:center;justify-content:center">
+  <div class="sheet-card" style="max-width:320px;margin:0 24px;padding:20px;border-radius:16px">
+    <div id="confirmMsg" style="font-size:15px;font-weight:700;line-height:1.4;margin-bottom:18px"></div>
+    <div style="display:flex;gap:10px">
+      <button type="button" class="btn btn-ghost" id="confirmNo">Ghairi</button>
+      <button type="button" class="btn btn-pri" id="confirmYes">Endelea</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= tiny helpers (self-contained -- call.html is its own HtmlService file) ================= */
+function $(s,r){ return (r||document).querySelector(s); }
+function $all(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function money(n){ n = Number(n)||0; return n.toLocaleString('en-US', {maximumFractionDigits:0}); }
+function pct(x){ if (x===''||x==null||isNaN(x)||!isFinite(x)) return '\u2014'; return (100*x).toFixed(1)+'%'; }
+function digits_(v){ return String(v==null?'':v).replace(/\D/g,''); }
+function telHref(v){ var d = digits_(v); if (!d) return '#'; return d.indexOf('255')===0 ? '+'+d : '+255'+d.replace(/^0+/,''); }
+function fmtDur(sec){ sec = Math.max(0, Math.round(Number(sec)||0)); var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  function p2(n){ return (n<10?'0':'')+n; } return h>0 ? (h+':'+p2(m)+':'+p2(s)) : (m+':'+p2(s)); }
+function isoToday(off){
+  var d = new Date(); d.setDate(d.getDate() + (off||0));
+  var m = ('0'+(d.getMonth()+1)).slice(-2), dd = ('0'+d.getDate()).slice(-2);
+  return d.getFullYear() + '-' + m + '-' + dd;
+}
+function toast(msg, bad){
+  var t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad?' bad':'');
+  t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(function(){ t.style.display='none'; }, 3400);
+}
+function srv(fn){
+  var args = Array.prototype.slice.call(arguments, 1);
+  // v2 transport: same fn names the GAS google.script.run bridge used, POSTed to this
+  // site's own /api/call -- the rest of this file neither knows nor cares which engine
+  // answers. Network failures retry twice; server-side errors reject with the message.
+  function attempt(tries){
+    return new Promise(function(res, rej){
+      fetch((window.HC_API_BASE || '') + '/api/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fn: fn, args: args })
+      }).then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+        .then(function(x){
+          if (x.status >= 200 && x.status < 300) res(x.body);
+          else rej((x.body && x.body.error) || ('HTTP ' + x.status));
+        })
+        .catch(function(e){
+          if (tries > 0) setTimeout(function(){ attempt(tries-1).then(res, rej); }, 1200);
+          else rej(String((e && e.message) || e));
+        });
+    });
+  }
+  return attempt(2);
+}
+function statusChip(s){
+  var raw = String(s||'').trim();
+  if (!raw) return '<span class="chip mut">Haijapigwa</span>';
+  var k = raw.toUpperCase(), cls = 'mut';
+  if (k==='PAID'||k==='OVERPAID'||k==='CLEARED'||k==='ANALIPA LEO') cls = 'ok';
+  else if (k==='UNDERPAID'||k==='AMETOA AHADI') cls = 'warn';
+  else if (k==='UNPAID'||k==='DEFAULTER'||k==='YEYE / MDHAMINI HANA USHIRIKIANO') cls = 'bad';
+  return '<span class="chip ' + cls + '">' + esc(raw) + '</span>';
+}
+
+/* ================= native bridge (Android WebView JS interface, absent in a plain browser) =================
+   Contract implemented by com.samaritantechs.hopecalls.HopeCallsBridge:
+     getDeviceId()            -> String, stable per install
+     getCalls(sinceMs, max)   -> JSON string [{ts,dur,dir:"in"|"out",num}, ...] from the Android call log
+     getWatermark()/setWatermark(ms) -> String, last-synced call timestamp (persisted so a JobScheduler
+                                        background sync and this foreground page never double-count)
+   In a plain browser none of this exists -- the page still works for dialing (tel: links) and logging
+   follow-ups, it just can't read the call log, so it shows a small "install the app" banner instead. */
+function nativeBridge(){ return (window.HopeCalls && window.HopeCalls.getCalls) ? window.HopeCalls : null; }
+function deviceId(){
+  var nb = nativeBridge();
+  if (nb && nb.getDeviceId) { try { var id = nb.getDeviceId(); if (id) return id; } catch(e){} }
+  var id = null;
+  try { id = localStorage.getItem('hcDev'); } catch(e){}
+  if (!id) { id = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2,10); try { localStorage.setItem('hcDev', id); } catch(e){} }
+  return id;
+}
+
+/* ================= state ================= */
+var DEV = deviceId();
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), syncEverySec:300, permOk:null };
+var LIST_SOURCE = { today:'today', tomorrow:'tomorrow', def:'defaulters', exp:'defaulters', chr:'defaulters' };
+
+/** Monday 00:00 of the current week, local device time. Re-sent every sync (dedup is by
+    deterministic id against what's already in the sheet -- see callSyncCore_ server-side), so
+    there's no fragile "since last watermark" cutoff that can silently drop calls. */
+function startOfWeekMs_(){
+  var d = new Date();
+  var day = d.getDay();                          // 0=Sun .. 6=Sat
+  var diff = (day === 0) ? 6 : day - 1;           // days since the most recent Monday
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - diff);
+  return d.getTime();
+}
+function weekStartIso_(){
+  var d = new Date(startOfWeekMs_());
+  var m = ('0'+(d.getMonth()+1)).slice(-2), dd = ('0'+d.getDate()).slice(-2);
+  return d.getFullYear() + '-' + m + '-' + dd;
+}
+function weekEndIso_(){
+  var d = new Date(startOfWeekMs_() + 6*86400000);
+  var m = ('0'+(d.getMonth()+1)).slice(-2), dd = ('0'+d.getDate()).slice(-2);
+  return d.getFullYear() + '-' + m + '-' + dd;
+}
+
+/* ================= sync status pill ================= */
+function setSyncStatus(kind){
+  var p = $('#syncPill');
+  p.className = 'pill' + (kind==='ok'?' ok':kind==='err'?' err':kind==='syncing'?' syncing':(kind==='noperm'?' err':''));
+}
+function doSync(){
+  if (!S.boot) return Promise.resolve({ ok:true, added:0 });
+  var nb = nativeBridge();
+  if (!nb){ setSyncStatus('none'); S.permOk = null; return Promise.resolve({ ok:true, added:0 }); }
+  try { S.permOk = nb.hasCallLogPermission ? (nb.hasCallLogPermission() === '1') : true; } catch(e){ S.permOk = true; }
+  if (!S.permOk){ setSyncStatus('noperm'); return Promise.resolve({ ok:true, added:0 }); }
+  setSyncStatus('syncing');
+  var raw = '[]';
+  try { raw = nb.getCalls(startOfWeekMs_(), 2000) || '[]'; } catch(e){}
+  var calls; try { calls = JSON.parse(raw); } catch(e){ calls = []; }
+  if (!calls.length){ setSyncStatus('ok'); return Promise.resolve({ ok:true, added:0 }); }
+  return srv('api_callSync', DEV, calls).then(function(r){
+    if (r && r.ok){
+      if (nb.setWatermark) { try { nb.setWatermark(String(r.watermark)); } catch(e){} }
+      setSyncStatus('ok');
+      // No forced list reload here on purpose. Freshness is a per-device rolling cooldown (see
+      // sourceFresh_ / setView) -- a call just made by the officer syncing successfully isn't
+      // reason enough to reload the list they're looking at, especially on unstable connections.
+    } else setSyncStatus('err');
+    return r;
+  }).catch(function(){ setSyncStatus('err'); });
+}
+var syncVisListenerAdded = false;
+function startSyncLoop(){
+  doSync();
+  if (S.syncTimer) clearInterval(S.syncTimer);
+  S.syncTimer = setInterval(function(){ if (!document.hidden) doSync(); }, Math.max(60, S.syncEverySec||300) * 1000);
+  if (!syncVisListenerAdded) {
+    syncVisListenerAdded = true;
+    document.addEventListener('visibilitychange', function(){ if (!document.hidden && S.boot) doSync(); });
+  }
+  $('#syncPill').onclick = doSync;
+}
+/** Xiaomi/Oppo/Vivo/Huawei/Samsung (and others) kill background sync unless the app is
+    specifically exempted -- this is a well-documented OEM-level restriction on top of Android's
+    own permission system, and is the most likely reason calls sync fine on some phones and never
+    on others. Standard battery-optimization exemption is the one part of this with a real API;
+    the rest is OEM-specific settings screens with no API, so we just point at them by name. */
+function batteryGuidanceHtml_(){
+  var nb = nativeBridge();
+  if (!nb || !nb.getManufacturer) return '';
+  var mfr = '';
+  try { mfr = String(nb.getManufacturer() || '').toLowerCase(); } catch(e){}
+  var ignoring = true;
+  try { ignoring = !nb.isIgnoringBatteryOptimizations || nb.isIgnoringBatteryOptimizations() === '1'; } catch(e){}
+  var extra = '';
+  if (mfr.indexOf('xiaomi') >= 0 || mfr.indexOf('redmi') >= 0 || mfr.indexOf('poco') >= 0)
+    extra = ' Kwenye Xiaomi/Redmi/POCO: fungua Settings \u2192 Apps \u2192 HOPE Calls, ruhusu Autostart, na weka Battery saver kuwa "No restrictions".';
+  else if (mfr.indexOf('oppo') >= 0 || mfr.indexOf('realme') >= 0)
+    extra = ' Kwenye Oppo/Realme: Settings \u2192 Battery \u2192 HOPE Calls \u2192 ruhusu "Allow background activity".';
+  else if (mfr.indexOf('vivo') >= 0)
+    extra = ' Kwenye Vivo: Settings \u2192 Battery \u2192 Background power consumption \u2192 ruhusu HOPE Calls.';
+  else if (mfr.indexOf('huawei') >= 0 || mfr.indexOf('honor') >= 0)
+    extra = ' Kwenye Huawei/Honor: Settings \u2192 Battery \u2192 App launch \u2192 HOPE Calls \u2192 chagua "Manage manually" na washa vyote.';
+  else if (mfr.indexOf('samsung') >= 0)
+    extra = ' Kwenye Samsung: Settings \u2192 Battery \u2192 Background usage limits \u2192 toa HOPE Calls kwenye orodha ya "Put unused apps to sleep".';
+  if (ignoring && !extra) return '';
+  return '<div class="banner" id="battBanner">\uD83D\uDD0B Baadhi ya simu huzima programu zinapokuwa nyuma, hivyo kukatiza sync ya simu.' + extra
+    + '<div style="margin-top:8px"><button type="button" class="btn btn-pri" id="battBtn" style="width:auto;padding:8px 16px;font-size:12.5px">Ruhusu kufanya kazi chinichini</button></div></div>';
+}
+
+/* ================= boot / register ================= */
+/** Data lives on the device now, not tied to a shared wall-clock hour. Each device tracks its
+    OWN last-synced-at per source; a source is trusted for CACHE_COOLDOWN_MS after that device's
+    own last fetch, whenever that was. Persisted to localStorage so reopening the app (even after
+    fully closing it) can render instantly from the last sync -- no network wait, no blank screen
+    -- rather than starting from zero every time the page loads. */
+var CACHE_COOLDOWN_MS = 60 * 60 * 1000;
+var CACHE_LS_KEY = 'hcListCache_v1';
+function loadCacheFromDevice_(){
+  try {
+    var raw = localStorage.getItem(CACHE_LS_KEY);
+    if (!raw) return;
+    var saved = JSON.parse(raw);
+    if (saved && typeof saved === 'object'){ S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {}; }
+  } catch (e) { /* corrupt or unavailable storage -- start empty, not fatal */ }
+}
+function saveCacheToDevice_(){
+  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt })); }
+  catch (e) { /* quota or storage unavailable -- app still works, just without persistence this session */ }
+}
+function sourceFresh_(src){
+  return !!(S.cache[src] && S.cacheAt[src] && (Date.now() - S.cacheAt[src] < CACHE_COOLDOWN_MS));
+}
+function boot(){
+  loadCacheFromDevice_();
+  var loggedOut = false;
+  try { loggedOut = localStorage.getItem('hcLoggedOut') === '1'; } catch(e){}
+  srv('api_callBoot', DEV).then(function(d){
+    if (d.brand){ $('#bootBrand').textContent = d.brand; $('#regTitle').textContent = 'Karibu ' + d.brand + ' Calls'; }
+    if (d.logo){ $('#regLogo').src = d.logo; $('#appLogo').src = d.logo; }
+    if (d.ok && !loggedOut) return enterApp(d);
+    // not registered yet, OR logged out on this device -> show registration (team list/branding still loaded above)
+    $('#regTeam').innerHTML = '<option value="">\u2014</option>' + (d.teams||[]).map(function(t){ return '<option>'+esc(t)+'</option>'; }).join('');
+    $('#scrBoot').classList.add('hide');
+    $('#scrRegister').classList.remove('hide');
+  }).catch(function(e){
+    $('#scrBoot').classList.add('hide');
+    $('#scrRegister').classList.remove('hide');
+    $('#regErr').innerHTML = '<div class="err">Imeshindikana kuunganisha. Angalia mtandao wako na ujaribu tena. (' + esc(String(e)) + ')</div>';
+  });
+}
+function doLogout(){
+  try { localStorage.setItem('hcLoggedOut', '1'); } catch(e){}
+  if (S.syncTimer) { clearInterval(S.syncTimer); S.syncTimer = null; }
+  S.boot = null; S.cache = {}; S.cacheAt = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
+  _sumAt = 0;
+  var _ds = $('#dayStrip'); if (_ds) _ds.classList.add('hide');
+  ['#dsCol','#dsSales','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
+  var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
+  try { localStorage.removeItem(CACHE_LS_KEY); } catch(e){}
+  $('#sheet').style.display = 'none';
+  $('#confirmModal').style.display = 'none';
+  var q = $('#listQ'); if (q) q.value = '';
+  $('#regName').value = ''; $('#regPhone').value = ''; $('#regCode').value = '';
+  regRole = 'officer';
+  $all('.regToggleBtn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-role')==='officer'); });
+  $('#regNameWrap').classList.remove('hide');
+  $('#regTeamWrap').classList.remove('hide');
+  $('#regCodeWrap').classList.add('hide');
+  $('#regErr').innerHTML = '';
+  $('#regBtn').disabled = false; $('#regBtn').textContent = 'Endelea / Continue';
+  $('#scrApp').style.display = 'none';
+  $('#scrBoot').classList.add('hide');
+  $('#scrRegister').classList.remove('hide');
+}
+function showConfirm_(msg, onYes){
+  $('#confirmMsg').textContent = msg;
+  $('#confirmModal').style.display = 'flex';
+  $('#confirmYes').onclick = function(){ $('#confirmModal').style.display = 'none'; onYes(); };
+  $('#confirmNo').onclick = function(){ $('#confirmModal').style.display = 'none'; };
+}
+var regRole = 'officer';
+$all('.regToggleBtn').forEach(function(b){
+  b.onclick = function(){
+    regRole = b.getAttribute('data-role');
+    $all('.regToggleBtn').forEach(function(x){ x.classList.toggle('on', x===b); });
+    // Leaders never type their own name or pick a team -- both come from their access code,
+    // same as the portal itself (Leaders sheet / access code owns that identity, not a form field).
+    $('#regNameWrap').classList.toggle('hide', regRole==='leader');
+    $('#regTeamWrap').classList.toggle('hide', regRole==='leader');
+    $('#regCodeWrap').classList.toggle('hide', regRole==='officer');
+  };
+});
+$('#regBtn').onclick = function(){
+  var name = regRole === 'officer' ? $('#regName').value.trim() : '';
+  var phone = $('#regPhone').value.trim();
+  var team = regRole === 'officer' ? $('#regTeam').value : '';
+  var code = regRole === 'leader' ? $('#regCode').value.trim() : '';
+  if (regRole === 'officer' && !name){ $('#regErr').innerHTML = '<div class="err">Andika jina lako.</div>'; return; }
+  if (!phone){ $('#regErr').innerHTML = '<div class="err">Andika namba yako ya simu.</div>'; return; }
+  if (regRole === 'officer' && !team){ $('#regErr').innerHTML = '<div class="err">Chagua timu.</div>'; return; }
+  if (regRole === 'leader' && !code){ $('#regErr').innerHTML = '<div class="err">Weka msimbo wako wa uongozi.</div>'; return; }
+  $('#regBtn').disabled = true; $('#regBtn').textContent = 'Inajiunga\u2026';
+  srv('api_callRegister', DEV, name, team, code, phone).then(function(){
+    return srv('api_callBoot', DEV);
+  }).then(function(d){
+    if (d.ok) { try { localStorage.removeItem('hcLoggedOut'); } catch(e){} return enterApp(d); }
+    throw new Error('Registration did not complete. Try again.');
+  }).catch(function(e){
+    $('#regBtn').disabled = false; $('#regBtn').textContent = 'Endelea / Continue';
+    $('#regErr').innerHTML = '<div class="err">' + esc(String(e)) + '</div>';
+  });
+};
+function enterApp(d){
+  S.boot = d; S.syncEverySec = d.syncEverySec || 300;
+  $('#scrBoot').classList.add('hide'); $('#scrRegister').classList.add('hide');
+  $('#scrApp').style.display = 'flex';
+  $('#appName').textContent = d.name || '\u2014';
+  $('#appTeam').textContent = d.leader ? ((d.role||'Leader') + ' \u00B7 ' + (d.leaderTeams==='ALL' || !d.leaderTeams ? 'All teams' : d.leaderTeams.split(',').length + ' teams')) : d.team;
+  if (d.leader) $('#tabReports').classList.remove('hide');
+  $('#logoutBtn').classList.toggle('hide', d.logoutEnabled === false);
+  $('#logoutBtn').onclick = function(){
+    showConfirm_('Toka kwenye akaunti hii? / Log out of this account?', doLogout);
+  };
+  $all('#tabs button').forEach(function(b){ b.onclick = function(){ exitSearch_(); setView(b.getAttribute('data-v')); }; });
+  setView('today');
+  startSyncLoop();
+  loadDaySummary(true);                                     // team % strip -- load once on entry
+  $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
+  document.addEventListener('visibilitychange', function(){ if (!document.hidden && S.boot) loadDaySummary(false); });   // throttled refresh on foreground return
+}
+/** Top-of-app team % strip (Col / Sales / Recovery for the officer's own team(s)). Numbers come
+    from api_callDailySummary, which reuses the portal dashboard's own formulas so this reconciles
+    with app.html. Kept off the sync interval on purpose -- refreshed only on entry, a manual sync
+    tap, or a throttled foreground return -- so it never adds to per-officer sync load. A failure
+    just leaves the strip hidden; it never surfaces an error into the header. */
+var _sumAt = 0;
+function pctW_(x){ return (x==null||isNaN(x)||!isFinite(x)) ? '\u2014' : Math.round(100*x) + '%'; }
+function loadDaySummary(force){
+  if (!S.boot) return;
+  if (!force && _sumAt && (Date.now() - _sumAt < 15*60*1000)) return;   // light cooldown, mirrors the list-cache feel
+  srv('api_callDailySummary', DEV).then(function(d){
+    if (!d || !d.ok) return;
+    _sumAt = Date.now();
+    $('#dsTag').textContent = (d.period === 'week') ? 'Wiki' : 'Leo';   // Sat/Sun the server returns week-to-date
+    $('#dsCol').textContent = pctW_(d.col && d.col.pct);
+    $('#dsSales').textContent = pctW_(d.sales && d.sales.pct);
+    $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct);
+    $('#dayStrip').classList.remove('hide');
+  }).catch(function(){ /* leave the strip hidden -- never show an error in the header */ });
+}
+
+/* ================= tabs / list =================
+   Def/Exp/Chr are three VIEWS over one SOURCE fetch (the full defaulters list) -- split
+   client-side by customer status, same "CHRON"/"EXPIR" substring rule the portal's own
+   assignment engine uses, so switching between them never needs a second round trip. */
+function classifyStatus_(s){
+  var k = String(s||'').toUpperCase();
+  if (k.indexOf('CHRON') >= 0) return 'chr';
+  if (k.indexOf('EXPIR') >= 0) return 'exp';
+  return 'def';
+}
+function filterForView_(rows, v){
+  if (v === 'today' || v === 'tomorrow') return rows;
+  return rows.filter(function(r){ return classifyStatus_(r.custStatus) === v; });
+}
+function segLabel_(src, r){
+  if (src === 'today') return 'Leo';
+  if (src === 'tomorrow') return 'Kesho';
+  var v = classifyStatus_(r.custStatus);
+  return v === 'chr' ? 'Chr' : (v === 'exp' ? 'Exp' : 'Def');
+}
+function cloneRow_(r){ var o = {}; for (var k in r) { if (r.hasOwnProperty(k)) o[k] = r[k]; } return o; }
+/** Loads whichever of today/tomorrow/defaulters aren't cached yet -- used so a search can look
+    across every segment the officer has, not just whichever tab happens to be open. */
+function ensureAllSources_(){
+  var need = ['today','tomorrow','defaulters'].filter(function(s){ return !sourceFresh_(s); });
+  if (!need.length) return Promise.resolve();
+  return Promise.all(need.map(function(s){
+    return srv('api_callList', DEV, s).then(function(d){ S.cache[s] = d.rows || []; S.cacheAt[s] = Date.now(); saveCacheToDevice_(); }).catch(function(){ S.cache[s] = S.cache[s] || []; });
+  }));
+}
+function globalSearchRows_(q){
+  q = q.trim().toUpperCase();
+  var out = [];
+  ['today','tomorrow','defaulters'].forEach(function(src){
+    (S.cache[src] || []).forEach(function(r){
+      var hay = (String(r.name)+' '+r.contact+' '+r.gName+' '+r.gContact+' '+r.ref).toUpperCase();
+      if (hay.indexOf(q) < 0) return;
+      var c = cloneRow_(r); c._seg = segLabel_(src, r);
+      out.push(c);
+    });
+  });
+  return out;
+}
+function exitSearch_(){
+  if (!S.q) return;
+  S.q = '';
+  var el = $('#listQ'); if (el) el.value = '';
+}
+function setView(v){
+  S.view = v;
+  $all('#tabs button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v')===v); });
+  if (v === 'reports') { renderReports(); return; }
+  var src = LIST_SOURCE[v];
+  if (!src) return;
+  if (S.cache[src]) {
+    S.rows = filterForView_(S.cache[src], v);
+    drawList();                 // instant -- already have this source's data, no spinner, no wait
+    if (!sourceFresh_(src)) fetchSource_(src, false);   // only refresh once this device's own cooldown has actually elapsed, not on every tab switch
+  } else {
+    fetchSource_(src, true);    // first time this source is needed this session -> show the spinner
+  }
+}
+/** myId + the S.view check together mean a slow response from a tab you've since swapped away
+    from gets thrown away instead of rendering on top of whatever tab you're actually looking at
+    now -- that swap-and-overlap glitch was two in-flight fetches racing to paint #body last. */
+function fetchSource_(src, showSpinner){
+  var myId = ++S.reqId;
+  if (showSpinner) {
+    $('#body').innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
+  }
+  srv('api_callList', DEV, src).then(function(d){
+    if (myId !== S.reqId) return;
+    S.cache[src] = d.rows || [];
+    S.cacheAt[src] = Date.now();
+    saveCacheToDevice_();
+    if (S.q.trim()) { S.rows = globalSearchRows_(S.q); drawList(); return; }
+    if (LIST_SOURCE[S.view] !== src) return;   // user moved to a tab backed by a different source while this was loading
+    S.rows = filterForView_(S.cache[src], S.view);
+    drawList();
+  }).catch(function(e){
+    if (myId !== S.reqId || LIST_SOURCE[S.view] !== src) return;
+    if (showSpinner) $('#body').innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>';
+  });
+}
+$('#listQ').addEventListener('input', function(){
+  S.q = this.value;
+  if (!S.q.trim()) { setView(S.view); return; }
+  var haveAny = S.cache.today || S.cache.tomorrow || S.cache.defaulters;
+  if (!haveAny) $('#body').innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
+  ensureAllSources_().then(function(){
+    if ($('#listQ').value !== S.q) return;   // query changed again while sources were loading
+    S.rows = globalSearchRows_(S.q);
+    drawList();
+  });
+});
+function isIOS_(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
+}
+function drawList(){
+  var body = $('#body');
+  var nb = nativeBridge();
+  var banner = !nb ? (isIOS_()
+      ? '<div class="banner">\uD83D\uDCF1 iPhone haiwezi kusoma kumbukumbu za simu moja kwa moja (kizuizi cha Apple, si tatizo la programu hii). Bofya "Piga" hapa chini kupiga \u2014 orodha na maoni yanafanya kazi kama kawaida, lakini muda wa simu hautarekodiwa kiotomatiki.</div>'
+      : '<div class="banner">\uD83D\uDCF1 Sakinisha programu ya HOPE Calls (APK) ili simu zako zirekodiwe kiotomatiki. Bofya "Piga" hapa chini bado kinafanya kazi.</div>')
+    : (S.permOk === false ? '<div class="banner" style="background:var(--badbg);border-color:var(--badline);color:var(--bad)">\u26A0 Ruhusa ya kusoma kumbukumbu za simu haijawezeshwa \u2014 simu zako HAZIREKODIWI. Nenda Settings \u2192 Apps \u2192 HOPE Calls \u2192 Permissions kuiwasha.</div>'
+       : batteryGuidanceHtml_());
+  var searching = !!S.q.trim();
+  body.innerHTML = banner
+    + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
+    + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : 'Orodha hii iko wazi.') + '</div>') + '</div>';
+  if ($('#battBtn')) $('#battBtn').onclick = function(){ var nb2 = nativeBridge(); if (nb2 && nb2.requestIgnoreBatteryOptimizations) nb2.requestIgnoreBatteryOptimizations(); };
+  $all('.crow').forEach(function(row){
+    row.addEventListener('click', function(e){
+      if (e.target.closest('.callbtn')) return;
+      openSheet(row.getAttribute('data-ref'));
+    });
+  });
+}
+function rowHtml(r, showSeg){
+  var href = telHref(r.contact);
+  var subBits = [esc(r.team), 'Deni TZS ' + money(r.amt)];
+  if (r.installment !== '' && r.installment != null) subBits.push('Rejesho TZS ' + money(r.installment));
+  var chips = (showSeg && r._seg ? '<span class="chip">' + esc(r._seg) + '</span>' : '')
+    + (r.custStatus ? statusChip(r.custStatus) : '') + (r.fuStatus ? statusChip(r.fuStatus) : '')
+    + (r.ds ? '<span class="chip mut">D.S ' + esc(r.ds) + '</span>' : '');
+  return '<div class="crow' + (r.called?' called':'') + '" data-ref="' + esc(r.ref) + '">'
+    + '<div class="crow-main">'
+    + '<div class="crow-name">' + esc(r.name) + (r.called ? ' <span class="tick">\u2713 Amepigiwa leo</span>' : '') + '</div>'
+    + '<div class="crow-sub">' + subBits.join(' \u00B7 ') + '</div>'
+    + (chips ? '<div class="crow-chips">' + chips + '</div>' : '')
+    + '</div>'
+    + (href!=='#' ? '<a class="callbtn" href="tel:' + href + '" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE</a>' : '<span class="callbtn" style="opacity:.3">\uD83D\uDCDE</span>')
+    + '</div>';
+}
+
+/* ================= bottom sheet: customer detail + follow-up ================= */
+function openSheet(ref){
+  var r = null;
+  for (var i=0;i<S.rows.length;i++){ if (String(S.rows[i].ref)===String(ref)) { r = S.rows[i]; break; } }
+  if (!r) return;
+  S.curRef = ref;
+  var sb = $('#sheetBody');
+  sb.innerHTML = sheetSkeleton(r) ;
+  $('#sheet').style.display = 'flex';
+  wireSheetForm(r);
+  srv('api_callComments', DEV, r.ref).then(function(d){
+    S.comments = (d && d.items) || [];
+    var h = $('#histBox'); if (h) h.innerHTML = historyHtml(S.comments);
+  }).catch(function(){});
+}
+function sheetSkeleton(r){
+  var cHref = telHref(r.contact), gHref = telHref(r.gContact);
+  return '<div class="sheet-card">'
+    + '<div class="sheet-title">' + esc(r.name) + '</div>'
+    + '<div class="sheet-sub">' + esc(r.team) + ' \u00B7 REF ' + esc(r.ref) + '</div>'
+    + '<div class="factrow"><span>Deni / Arrears</span><b>TZS ' + money(r.amt) + '</b></div>'
+    + (r.installment !== '' && r.installment != null ? '<div class="factrow"><span>Rejesho</span><span>TZS ' + money(r.installment) + '</span></div>' : '')
+    + (r.custStatus ? '<div class="factrow"><span>Hali ya mteja / Customer status</span>' + statusChip(r.custStatus) + '</div>' : '')
+    + (r.fuStatus ? '<div class="factrow"><span>Ufuatiliaji wa mwisho / Last follow-up</span>' + statusChip(r.fuStatus) + '</div>' : '')
+    + (r.ds ? '<div class="factrow"><span>D.S</span><span>' + esc(r.ds) + '</span></div>' : '')
+    + '<div class="factrow"><span>Mdhamini / Guarantor</span><span>' + esc(r.gName||'\u2014') + '</span></div>'
+    + '<div class="callrow">'
+    + (cHref!=='#' ? '<a class="btn btn-pri" href="tel:'+cHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mteja \u00B7 ' + esc(r.contact) + '</a>' : '<span class="btn btn-ghost">Hana namba</span>')
+    + '</div>'
+    + (gHref!=='#' ? '<div class="callrow"><a class="btn btn-ghost" href="tel:'+gHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mdhamini \u00B7 ' + esc(r.gContact) + '</a></div>' : '')
+    + '</div>'
+    + '<div class="sheet-card"><div class="sheet-title" style="font-size:14px">Historia / History</div>'
+    + '<div id="histBox" style="margin-top:6px"><div class="center" style="padding:16px"><div class="sk"></div></div></div></div>'
+    + '<div class="sheet-card">'
+    + '<div class="sheet-title" style="font-size:14px">Fuatilia / Log a follow-up</div>'
+    + '<div class="fld"><label>Hali ya ufuatiliaji / Follow-up status</label>'
+    + '<select id="fuStatus"><option value="">\u2014</option>' + (S.boot.fuStatuses||[]).map(function(s){ return '<option>'+esc(s)+'</option>'; }).join('') + '</select></div>'
+    + '<div class="fld hide" id="fuDateWrap"><label>Tarehe ya ahadi / Promise date</label><input type="date" id="fuDate"></div>'
+    + '<div class="fld hide" id="fuNoWrap"><label>Namba mpya / New number</label><input id="fuNo" placeholder="0712345678"></div>'
+    + '<div class="fld"><label>Maoni / Comment</label><textarea id="fuComment" rows="3" style="width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:11px"></textarea></div>'
+    + '<div class="fld"><button class="btn btn-pri" id="fuSave">Hifadhi / Save</button></div>'
+    + '</div>';
+}
+function historyHtml(items){
+  if (!items.length) return '<div class="hint" style="color:var(--soft);font-size:12.5px">Hakuna historia bado.</div>';
+  return items.map(function(c){
+    return '<div class="hist-item"><div class="h-top"><span>' + esc(c.by||'') + '</span><span>' + esc(c.at||'') + '</span></div>'
+      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + '</div>';
+  }).join('');
+}
+/** Updates fuStatus on the matching row wherever it's cached (a customer can appear in more than
+    one tab) and repaints from local state -- avoids a round trip just to reflect a save we
+    already know the result of, and sidesteps any server-side read-after-write lag entirely. */
+function applyLocalFuUpdate_(ref, fu){
+  Object.keys(S.cache).forEach(function(v){
+    (S.cache[v] || []).forEach(function(row){ if (String(row.ref) === String(ref)) row.fuStatus = fu; });
+  });
+  S.rows.forEach(function(row){ if (String(row.ref) === String(ref)) row.fuStatus = fu; });
+  drawList();
+}
+function wireSheetForm(r){
+  $('#sheetClose').onclick = function(){ $('#sheet').style.display = 'none'; };
+  $('#sheet').onclick = function(e){ if (e.target.id === 'sheet') $('#sheet').style.display = 'none'; };
+  $('#fuStatus').addEventListener('change', function(){
+    var v = this.value;
+    $('#fuDateWrap').classList.toggle('hide', (S.boot.fuNeedDate||[]).indexOf(v) < 0);
+    $('#fuNoWrap').classList.toggle('hide', (S.boot.fuNeedNumber||[]).indexOf(v) < 0);
+  });
+  $('#fuSave').onclick = function(){
+    var fu = $('#fuStatus').value, comment = $('#fuComment').value.trim(), pd = $('#fuDate').value, newNo = $('#fuNo').value.trim();
+    if (!fu && !comment){ toast('Chagua hali au andika maoni.', true); return; }
+    if ((S.boot.fuNeedDate||[]).indexOf(fu) >= 0 && !pd){ toast('Weka tarehe ya ahadi.', true); return; }
+    if ((S.boot.fuNeedNumber||[]).indexOf(fu) >= 0 && !newNo){ toast('Weka namba mpya.', true); return; }
+    $('#fuSave').disabled = true; $('#fuSave').textContent = 'Inahifadhi\u2026';
+    srv('api_callAddComment', DEV, { ref:r.ref, team:r.team, name:r.name, fu:fu, comment:comment, promiseDate:pd, newNo:newNo }).then(function(){
+      toast('Imehifadhiwa.');
+      $('#sheet').style.display = 'none';
+      applyLocalFuUpdate_(r.ref, fu);
+    }).catch(function(e){
+      $('#fuSave').disabled = false; $('#fuSave').textContent = 'Hifadhi / Save';
+      toast(String(e), true);
+    });
+  };
+}
+
+/* ================= leader reports ================= */
+function renderReports(){
+  var body = $('#body');
+  body.innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
+  srv('api_callReport', DEV, S.repFrom, S.repTo).then(function(d){
+    S.repData = d;
+    drawReports();
+  }).catch(function(e){ body.innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>'; });
+}
+var CALL_CAT_LABEL_ = { EXPECTED:'Expected', DEFAULTER:'Defaulter', UNCATEGORIZED:'Uncategorized', OTHER:'Nje ya portfolio' };
+function drawReports(){
+  var d = S.repData, t = d.totals || {calls:0,duration:0,portfolio:0,nonPortfolio:0,ratio:0};
+  var body = $('#body');
+  var scopeTxt = d.debugScope === 'ALL' ? 'Timu zote / All teams' : (Array.isArray(d.debugScope) ? d.debugScope.join(', ') : String(d.debugScope||''));
+  var cats = (d.byCategory || []).filter(function(c){ return c.category === 'EXPECTED' || c.category === 'DEFAULTER'; });
+  body.innerHTML =
+    '<div class="hint" style="color:var(--soft);font-size:11px;margin-bottom:8px">Wigo / Scope: ' + esc(scopeTxt) + ' \u00B7 Timu yako / Your team: ' + esc(d.debugHomeTeam||'\u2014') + '</div>'
+    + '<div class="rangebar"><input type="date" id="repFrom" value="' + S.repFrom + '"><input type="date" id="repTo" value="' + S.repTo + '"></div>'
+    + '<div class="kpis">'
+    + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Muda / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Portfolio</div><div class="k-v" style="color:var(--ok)">' + money(t.portfolio) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Nje ya portfolio</div><div class="k-v">' + money(t.nonPortfolio) + '</div></div>'
+    + '</div>'
+    + (cats.length ? '<div style="display:flex;gap:8px;margin:2px 0 12px;flex-wrap:wrap">' + cats.map(function(c){
+        return '<span class="chip" style="font-size:11.5px">' + esc(CALL_CAT_LABEL_[c.category] || c.category) + ': ' + money(c.calls) + ' \u00B7 ' + pct(c.connectRatio) + ' walipatikana</span>';
+      }).join('') + '</div>' : '')
+    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">Expected</th><th class="r">Defaulter</th></tr></thead><tbody>'
+    + (d.users||[]).map(function(u){
+        return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
+          + '<td class="r">' + money(u.calls) + '</td><td class="r">' + fmtDur(u.duration) + '</td>'
+          + '<td class="r" style="color:var(--ok)">' + money(u.expected) + '</td><td class="r">' + money(u.defaulter) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  $('#repFrom').onchange = function(){ S.repFrom = this.value; renderReports(); };
+  $('#repTo').onchange = function(){ S.repTo = this.value; renderReports(); };
+}
+
+boot();
+</script>
+</body>
+</html>
