@@ -200,3 +200,33 @@ export function importReceivedPayments(csvRows) {
     sender_name: textOrNull(col(r, h, 'SENDER NAME')),
   }));
 }
+
+/** 'ALL' or blank -> null (the ALL-teams convention auth.js already honors); otherwise a
+    comma/semicolon list -> text[]. Used by the two admin sheets below. */
+function listOrNull(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s || s.toUpperCase() === 'ALL') return null;
+  const items = s.split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  return items.length ? items : null;
+}
+
+/** The workbook's Access Codes tab (CODE | NAME | ROLE | TEAMS | TABS) -> access_codes
+    rows, so codes are managed by re-uploading the sheet instead of writing SQL. Rows
+    missing any of code/name/role are skipped rather than half-inserted. */
+export function importAccessCodes(csvRows) {
+  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+    code: textOrNull(col(r, h, 'CODE')),
+    name: textOrNull(col(r, h, 'NAME')),
+    role: textOrNull(col(r, h, 'ROLE')),
+    teams: listOrNull(col(r, h, 'TEAMS')),
+    tabs: listOrNull(col(r, h, 'TABS')) || [],
+  })).filter(x => x.code && x.name && x.role);
+}
+
+/** The workbook's User Roles tab (ROLE | TABS) -> roles rows. */
+export function importUserRoles(csvRows) {
+  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+    role: textOrNull(col(r, h, 'ROLE')),
+    tabs: listOrNull(col(r, h, 'TABS')) || [],
+  })).filter(x => x.role);
+}

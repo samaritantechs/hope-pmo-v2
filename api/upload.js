@@ -4,6 +4,7 @@ import { authCode, can, withApi } from './_lib/auth.js';
 import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
+  importAccessCodes, importUserRoles,
 } from './_lib/importers.js';
 
 // POST /api/upload   { code, type, meta, rows }
@@ -57,9 +58,25 @@ export default withApi(async (req, res) => {
       table = 'received_payments';
       records = importReceivedPayments(rows);
       break;
+    case 'access-codes':
+      table = 'access_codes';
+      records = importAccessCodes(rows);
+      break;
+    case 'user-roles':
+      table = 'roles';
+      records = importUserRoles(rows);
+      break;
     default: {
       const e = new Error(`Unknown upload type: ${type}`); e.status = 400; throw e;
     }
+  }
+
+  // Managing who can log in is a step above ordinary uploads. Gate it on the same
+  // permission that marks admins in the live system: the 'settings' tab (ADMIN/CUSTOM
+  // roles) -- the same people who could edit the Access Codes sheet in Google Sheets.
+  const ADMIN_TABLES = new Set(['access_codes', 'roles']);
+  if (ADMIN_TABLES.has(table) && !(await can(user, 'settings'))) {
+    const e = new Error('Managing access codes or roles requires the settings (admin) permission.'); e.status = 403; throw e;
   }
 
   if (!records.length) return { inserted: 0, table, message: 'File parsed but no valid rows were found -- check the key column (REF#, FULLNAME, etc.) is present and populated.' };
@@ -100,7 +117,7 @@ export default withApi(async (req, res) => {
   // followup_status and teams are "current state per key" -- re-uploading updates in
   // place. Everything else (snapshots, loans, comments, payments) is append-only history:
   // a fresh "today" upload is a NEW today, never an overwrite of a previous one.
-  const upsertTables = { followup_status: 'ref', teams: 'team' };
+  const upsertTables = { followup_status: 'ref', teams: 'team', access_codes: 'code', roles: 'role' };
   const result = upsertTables[table]
     ? await supabase.from(table).upsert(records, { onConflict: upsertTables[table] })
     : await supabase.from(table).insert(records);

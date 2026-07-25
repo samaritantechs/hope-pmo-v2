@@ -61,6 +61,10 @@
         <option value="teams">Leaders / Teams</option>
         <option value="received">Received Payments</option>
       </optgroup>
+      <optgroup label="Admin (settings permission required)">
+        <option value="access-codes">Access Codes</option>
+        <option value="user-roles">User Roles</option>
+      </optgroup>
     </select>
 
     <div id="weekdayWrap" class="hide">
@@ -127,6 +131,7 @@ var TYPE_META = {
   'expected-yesterday': ['dateWrap'], 'expected-initial': ['dateWrap'],
   'loans': ['stageWrap'],
   'followup': [], 'comments': [], 'teams': [], 'received': [],
+  'access-codes': [], 'user-roles': [],
 };
 function syncFields(){
   var show = TYPE_META[$('type').value] || [];
@@ -202,6 +207,8 @@ function suggestSheet(names){
   if (type === 'expected-today')     return find(wd && new RegExp('^expected ' + wd + '$'), /^expected (mon|tues|wednes|thurs|fri|satur|sun)day$/, /^expected repayment$/);
   if (type === 'followup')           return find(/followup/);
   if (type === 'comments')           return find(/^comments log/);
+  if (type === 'access-codes')       return find(/^access codes/);
+  if (type === 'user-roles')         return find(/^user roles/);
   if (type === 'teams')              return find(/^leaders/);
   if (type === 'received')           return find(/^received payments$/, /^received/);
   if (type === 'loans'){
