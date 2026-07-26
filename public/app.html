@@ -623,6 +623,18 @@ function wireBar(){
   });
   var ps = document.getElementById('presStart');
   if (ps) ps.onclick = function(){ S.presSecs = Number(document.getElementById('presSecs').value) || 15; presStart(0); };
+  // Segment and team choices persist -- the same meeting runs every week and nobody wants to
+  // re-tick nine boxes each Monday.
+  Array.prototype.forEach.call(document.querySelectorAll('.presSeg'), function(el){
+    el.onchange = function(){
+      S.presOff = Array.prototype.filter.call(document.querySelectorAll('.presSeg'), function(c){ return !c.checked; })
+        .map(function(c){ return c.value; });
+      store('hopePresOff', S.presOff.join(','));
+      render();
+    };
+  });
+  var pt = document.getElementById('presTeam');
+  if (pt) pt.onchange = function(){ S.presTeam = pt.value; store('hopePresTeam', pt.value); render(); };
   Array.prototype.forEach.call(document.querySelectorAll('[data-csv]'), function(el){
     el.onclick = function(e){ e.stopPropagation(); var id = el.getAttribute('data-csv');
       if (id === 'mainCard') exportCsv(); else exportBoard(id, 'csv'); };
@@ -1651,45 +1663,75 @@ VIEWS.present = function(){
   return Promise.all([srv('dashboardFull'), srv('officerBoards')]).then(function(r){
     var d = r[0], b = r[1], c = d.cards;
     var slides = [];
-    slides.push({ kind:'kpi', title:'HOPE PMO — ' + d.weekday, items:[
+    slides.push({ id:'kpi', kind:'kpi', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
       { l:'Recovered', v:'TZS '+money(c.recovered) },
       { l:'Defaulters', v:money(c.defaulters) },
       { l:'Sales this week', v:'TZS '+money(c.salesWeek) },
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
       { l:'Abnormal', v:money(c.abnormal) }]});
-    slides.push({ kind:'table', title:'Team performance', rows:d.teamPerf.slice(0,12),
+    slides.push({ id:'teams', kind:'table', title:'Team performance', rows:d.teamPerf.slice(0,12),
       cols:[col('team','Team'), col('recovery','Recovery'), col('curArrears','Current','money'),
         col('recovered','Recovered','money'), col('collPctToday','Coll %','pct'), col('defaulters','Def','num')] });
-    slides.push({ kind:'table', title:'Recovery by officer — this week', rows:b.recWeek.slice(0,12),
+    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — this week', rows:b.recWeek.slice(0,12),
       cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
         col('recovered','Recovered','money'), col('pct','Rec %','pct')] });
-    slides.push({ kind:'table', title:'Early collection — this week', rows:b.earlyWeek.slice(0,12),
+    slides.push({ id:'early', kind:'table', title:'Early collection — this week', rows:b.earlyWeek.slice(0,12),
       cols:[col('officer','Officer'), col('uncollected','Uncollected','money'),
         col('paidOver','Paid+over','num'), col('pct','Coll %','pct')] });
-    slides.push({ kind:'table', title:'Call agents — this week', rows:b.callWeek.slice(0,12),
+    slides.push({ id:'calls', kind:'table', title:'Call agents — this week', rows:b.callWeek.slice(0,12),
       cols:[col('agent','Agent'), col('calls','Calls','num'), col('duration','Talk time','dur'),
         col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
-    slides.push({ kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
+    slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
       cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
         col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
-    slides.push({ kind:'table', title:'Weekly collection trend', rows:d.colTrend,
+    slides.push({ id:'coltrend', kind:'table', title:'Weekly collection trend', rows:d.colTrend,
       cols:[col('weekday','Day'), col('expected','Expected','money'), col('collected','Collected','money'),
         col('uncollected','Uncollected','money'), col('pct','Coll %','pct')] });
-    slides.push({ kind:'table', title:'Follow-up status — all defaulters', rows:b.fuStatus.slice(0,12),
+    slides.push({ id:'fu', kind:'table', title:'Follow-up status — all defaulters', rows:b.fuStatus.slice(0,12),
       cols:[col('status','Status'), col('customers','Customers','num'), col('pct','% of book','pct'),
         col('arrears','Arrears','money')] });
-    S.slides = slides;
+    /* Not every meeting wants every board. A recovery review does not need the credit slide,
+       and an evaluation of one team should not project the whole company -- so segments are
+       selectable and the deck can be scoped to a single team. Both choices persist, because
+       the same meeting runs every week. */
+    if (!S.presOff) S.presOff = (load('hopePresOff') || '').split(',').filter(Boolean);
+    if (S.presTeam == null) S.presTeam = load('hopePresTeam') || '';
+    if (S.presTeam){
+      var only = function(list, key){
+        return (list || []).filter(function(x){ return String(x[key] || '') === S.presTeam; }); };
+      slides = slides.map(function(sl){
+        if (sl.kind !== 'table') return sl;
+        // Officer/analyst/agent boards belong to whoever covers the team, so they are scoped
+        // by team where the row carries one and left whole where it does not.
+        if (sl.rows.length && 'team' in sl.rows[0]) return { ...sl, rows: only(sl.rows, 'team') };
+        return sl;
+      });
+    }
+    var live = slides.filter(function(sl){ return S.presOff.indexOf(sl.id) < 0; });
+    S.slides = live.length ? live : slides;
 
-    HEAD = '<div class="kpis">' + kpi('Slides', money(slides.length), 'live figures, not a screenshot')
+    HEAD = '<div class="kpis">'
+      + kpi('Slides', money(S.slides.length), (S.presOff.length? money(S.presOff.length)+' hidden' : 'live figures, not a screenshot'))
       + kpi('Seconds per slide', String(S.presSecs || 15), 'change below')
       + kpi('Weekday', esc(d.weekday), d.weekOf) + '</div>'
+      + '<div class="card"><div class="card-h">Sehemu za kuonyesha / Segments to include</div>'
+      + '<div class="cleanbox"><div class="checks">'
+      + slides.map(function(sl){
+          return '<label><input type="checkbox" class="presSeg" value="'+esc(sl.id)+'"'
+            + (S.presOff.indexOf(sl.id)<0?' checked':'')+'> '+esc(sl.title)+'</label>'; }).join('')
+      + '</div>'
+      + '<div class="fld" style="max-width:280px;margin-top:10px"><label>Onyesha timu / Show data for</label>'
+      + '<select id="presTeam"><option value="">Timu zangu zote / All my teams</option>'
+      + (d.teamPerf||[]).map(function(t){
+          return '<option'+(S.presTeam===t.team?' selected':'')+'>'+esc(t.team)+'</option>'; }).join('')
+      + '</select></div></div></div>'
       + bar('<button class="btn" id="presStart">▶ Anza / Play on the TV</button>'
         + '<label style="font-size:12px;color:var(--mut)">Sekunde / Seconds</label>'
         + '<input type="number" id="presSecs" min="5" max="300" value="'+(S.presSecs||15)+'" style="width:80px">'
         + '<span style="font-size:12px;color:var(--mut)">Esc kutoka · ← → kubadili slaidi / Esc exits, arrows change slide</span>');
-    S.rows = slides.map(function(s,i){ return { n:i+1, slide:s.title, kind:s.kind,
-      rows: s.kind==='table' ? s.rows.length : s.items.length }; });
+    S.rows = S.slides.map(function(sl,i){ return { n:i+1, slide:sl.title, kind:sl.kind,
+      rows: sl.kind==='table' ? sl.rows.length : sl.items.length }; });
     S.cols = [col('slide','Slide'), col('kind','Type'), col('rows','Rows','num')];
     ONROW = function(r){ presStart(r.n - 1); };
   });
