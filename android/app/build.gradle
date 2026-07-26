@@ -2,6 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
+// ../../app-version.json is the single place the app's version is set; api/app-version.js
+// serves the very same file to the installed app so it can self-update.
+def appVersion = new groovy.json.JsonSlurper().parse(rootProject.file('../app-version.json'))
+
 // The app opens the portal LAUNCHER (site root), not the calls page directly -- that is what
 // lets one install reach Calls, the dashboard and uploads. Overridable per build
 // (-PstartUrl=https://your-domain/) so the same source builds against any deployment;
@@ -20,8 +24,11 @@ android {
         applicationId 'com.samaritantechs.hopecalls'
         minSdk 23
         targetSdk 35
-        versionCode 2
-        versionName '1.1'
+        // ONE source of truth for the version, shared with /api/app-version -- the app compares
+        // its own versionCode against what that endpoint reports, so if these two ever drifted
+        // phones would update in a loop (or never notice a release at all).
+        versionCode appVersion.versionCode
+        versionName appVersion.versionName
         buildConfigField 'String', 'START_URL', "\"${startUrl}\""
     }
 
@@ -56,4 +63,8 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.13.1'   // FileProvider, for handing the update APK to the installer
 }

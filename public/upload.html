@@ -63,9 +63,19 @@
         <option value="teams">Leaders / Teams</option>
         <option value="received">Received Payments</option>
       </optgroup>
+      <optgroup label="Registers">
+        <option value="abnormal">Abnormal Payments</option>
+        <option value="complaints">Complaints</option>
+        <option value="restructures">Loan Restructuring</option>
+        <option value="demand-notices">Demand Notices</option>
+      </optgroup>
       <optgroup label="Admin (settings permission required)">
         <option value="access-codes">Access Codes</option>
         <option value="user-roles">User Roles</option>
+        <option value="call-users">Call App Users</option>
+        <option value="call-logs">Call Logs</option>
+        <option value="settings">Settings</option>
+        <option value="hints">Hints</option>
       </optgroup>
     </select>
 
@@ -134,6 +144,8 @@ var TYPE_META = {
   'loans': ['stageWrap'],
   'followup': [], 'comments': [], 'teams': [], 'received': [],
   'access-codes': [], 'user-roles': [],
+  'abnormal': [], 'complaints': [], 'restructures': [], 'demand-notices': [],
+  'call-users': [], 'call-logs': [], 'settings': [], 'hints': [],
 };
 function syncFields(){
   var show = TYPE_META[$('type').value] || [];
@@ -214,6 +226,15 @@ function suggestSheet(names){
   if (type === 'comments')           return find(/^comments log/);
   if (type === 'access-codes')       return find(/^access codes/);
   if (type === 'user-roles')         return find(/^user roles/);
+  if (type === 'abnormal')           return find(/^abnormal/);
+  if (type === 'complaints')         return find(/^complaints/);
+  if (type === 'restructures')       return find(/restructur/);
+  if (type === 'demand-notices')     return find(/^demand notices/);
+  if (type === 'call-users')         return find(/^call app users/, /^call users/);
+  // "Call Logs" first, never a dated archive tab like "Call Logs 2026-07-20".
+  if (type === 'call-logs')          return find(/^call logs$/, /^call logs/);
+  if (type === 'settings')           return find(/^settings$/);
+  if (type === 'hints')              return find(/^hints$/);
   if (type === 'teams')              return find(/^leaders/);
   if (type === 'received')           return find(/^received payments$/, /^received/);
   if (type === 'loans'){
@@ -283,7 +304,14 @@ function sheetToRows(wb, sn){
           var w = origText(aoaRowIdx + 1, colIdx);
           if (w != null) return w;
         }
-        return (v.getMonth()+1) + '/' + v.getDate() + '/' + v.getFullYear();
+        // ISO, not M/d/yyyy. The old format was ambiguous against the d/m/yyyy that the CSV
+        // path carries, and the server read it the other way round: 23 July was thrown away
+        // as "month 23", and 5 July silently became 7 May. yyyy-mm-dd cannot be misread.
+        // A time-only cell lands on Excel's epoch day, so keep its clock too.
+        function p2(n){ return (n<10?'0':'') + n; }
+        var iso = v.getFullYear() + '-' + p2(v.getMonth()+1) + '-' + p2(v.getDate());
+        var hasClock = v.getHours() || v.getMinutes() || v.getSeconds();
+        return hasClock ? (iso + ' ' + p2(v.getHours()) + ':' + p2(v.getMinutes())) : iso;
       }
       return v == null ? '' : v;
     }

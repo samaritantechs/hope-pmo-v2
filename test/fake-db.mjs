@@ -19,6 +19,7 @@ class FakeQuery {
   insert(rows) { this.mode = 'insert'; this.payload = Array.isArray(rows) ? rows : [rows]; return this; }
   upsert(rows, opts) { this.mode = 'upsert'; this.payload = Array.isArray(rows) ? rows : [rows]; this.opts = opts || {}; return this; }
   update(patch) { this.mode = 'update'; this.payload = patch; return this; }
+  delete() { this.mode = 'delete'; return this; }
   _exec() {
     const rows = this.table.rows;
     if (this.mode === 'insert') {
@@ -34,6 +35,13 @@ class FakeQuery {
         else { rows.push({ ...r }); inserted.push({ ...r }); }
       }
       return { data: this.wantRows ? inserted : null, error: null };
+    }
+    if (this.mode === 'delete') {
+      const keep = rows.filter(r => !this.filters.every(f => f(r)));
+      const removed = rows.length - keep.length;
+      rows.length = 0;
+      for (const r of keep) rows.push(r);
+      return { data: null, error: null, count: removed };
     }
     if (this.mode === 'update') {
       let n = 0;
