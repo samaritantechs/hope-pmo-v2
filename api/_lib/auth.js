@@ -40,6 +40,11 @@ export function resolveTabs(user, roleTabs) {
 
 /** Same as can_() -- checks the role's tab permissions. Extend ROLE_TABS as roles are migrated. */
 export async function can(user, tab) {
+  // ADMIN holds every tab, same as resolveTabs and the live system's auth_(). Without this an
+  // ADMIN whose TABS cell is blank was refused by /api/upload ("Upload permission is required
+  // for your access code") even though the portal UI showed the tab -- the UI and the
+  // enforcement have to read the SAME rule, and this is the third caller of it.
+  if (String(user.role || '').trim().toUpperCase() === 'ADMIN') return true;
   if (user.tabs && user.tabs.includes(tab)) return true;
   const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
   return !!(data && data.tabs && data.tabs.includes(tab));
@@ -53,6 +58,14 @@ export class AuthError extends Error {
     response instead of a raw 500 -- every route below uses this. */
 export function withApi(handler) {
   return async (req, res) => {
+    // These endpoints are deliberately callable from another origin: the upload page carries an
+    // "API endpoint" field so one deployment can feed another, and a phone that saved a
+    // different site URL still has to reach this API. Without these headers the browser
+    // refuses the POST before it is ever sent and the page can only report "Failed to fetch".
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    if (req.method === 'OPTIONS') { res.status(204).end(); return; }
     try {
       const result = await handler(req, res);
       if (result !== undefined) res.status(200).json({ ok: true, ...result });

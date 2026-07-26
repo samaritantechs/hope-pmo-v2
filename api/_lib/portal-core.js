@@ -625,7 +625,7 @@ const FN = {
   restructures, addRestructure, decideRestructure,
   demandNotices, addDemandNotice, abnormal, received,
   par, weekly, teamProgress, commission, assignments, credit,
-  dashboardFull, expectedDay, saveTeam, deleteTeam, hints,
+  dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   teams, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
@@ -880,4 +880,156 @@ async function hints(db, user) {
     (sw[t] = sw[t] || []).push(s || m);
   }
   return { tips: { en, sw } };
+}
+
+/* =======================================================================================
+   THE OFFICER BOARDS -- the bottom half of the dashboard.
+
+   The headline cards say WHERE things stand; these say WHO. Every board pairs a "today"
+   view with a "this week" view, because a bad day is noise and a bad week is a problem.
+   Officers are resolved from the teams table's role columns, so the same reassignment that
+   re-points the recycling rotation also re-points these boards.
+   ======================================================================================= */
+
+function officerOf(teamBy, team, roleCol) {
+  const t = teamBy[K(team)];
+  return (t && t[roleCol]) ? String(t[roleCol]).trim() : '(unassigned)';
+}
+function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
+function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
+
+async function officerBoards(db, user, _args, nowMs) {
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), fri = addDaysKey(mon, 4), sun = addDaysKey(mon, 6);
+  const wd = currentWeekday(nowMs);
+
+  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*')),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
+    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
+    fetchAll(() => db.from('followup_status').select('*')),
+    fetchAll(() => db.from('loans').select('*')),
+    fetchAll(() => db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun)),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const myExp = scoped(user, expWeek), myDef = scoped(user, defWeek);
+  const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
+  const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
+  const onDate = (rows, d, type) => pickLatestBatchRows(rows.filter(r =>
+    String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
+
+  /* ---- EARLY COLLECTION: judged on tomorrow's (kesho) list, per Expected officer ---- */
+  function earlyBoard(rows) {
+    const m = {};
+    for (const r of rows) {
+      const b = bucket(m, officerOf(teamBy, r.team, 'expected'), { uncollected: 0, paidOver: 0, expected: 0, collected: 0 });
+      const c = collectedOf(r);
+      b.expected += num(r.payment_expected); b.collected += c;
+      b.uncollected += Math.max(0, num(r.payment_expected) - c);
+      if (['PAID', 'OVERPAID'].includes(K(r.todays_status))) b.paidOver += 1;
+    }
+    return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
+      expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
+      .sort((a, b) => b.uncollected - a.uncollected);
+  }
+  const earlyToday = earlyBoard(myTmrw);
+  const earlyWeek = earlyBoard(myExp);
+
+  /* ---- RECOVERY: per Recovery officer. Today = that day's initial vs current over the
+         WEEK's uncollected (the live system's own denominator for this card). Week = Monday's
+         initial vs today's current, with DEBT CRISIS showing new debt that landed mid-week
+         (current above initial) and RECOVERED summed from each day's own movement. ---- */
+  const weekUncol = WD5.reduce((s, w, i) => s + uncollectedOf(onDate(myExp, addDaysKey(mon, i))), 0);
+  function recBoard(iniRows, curRows, dailyRecovered) {
+    const m = {};
+    for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), { initial: 0, current: 0, recovered: 0, uncollected: 0 }).initial += num(r.arrears);
+    for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), { initial: 0, current: 0, recovered: 0, uncollected: 0 }).current += num(r.arrears);
+    for (const r of myExp) bucket(m, officerOf(teamBy, r.team, 'recovery'), { initial: 0, current: 0, recovered: 0, uncollected: 0 })
+      .uncollected += Math.max(0, num(r.payment_expected) - collectedOf(r));
+    if (dailyRecovered) for (const k of Object.keys(dailyRecovered)) bucket(m, k, { initial: 0, current: 0, recovered: 0, uncollected: 0 }).recovered += dailyRecovered[k];
+    return Object.values(m).map(b => {
+      const rec = dailyRecovered ? b.recovered : (b.initial - b.current);
+      return { officer: b.key, initial: b.initial, current: b.current, uncollected: b.uncollected,
+        debtCrisis: Math.min(0, b.initial - b.current), recovered: rec, pct: pctOf(rec, b.uncollected) };
+    }).sort((a, b) => b.recovered - a.recovered);
+  }
+  const iniToday = onDate(myDef, today, 'initial'), curToday = onDate(myDef, today, 'current');
+  const recToday = recBoard(iniToday, curToday, null).map(r => ({ ...r, uncollected: weekUncol && r.uncollected ? r.uncollected : r.uncollected, pct: pctOf(r.recovered, r.uncollected) }));
+  // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
+  const dailyRec = {};
+  for (let i = 0; i < 7; i++) {
+    const d = addDaysKey(mon, i);
+    const ini = onDate(myDef, d, 'initial'), cur = onDate(myDef, d, 'current');
+    if (!ini.length || !cur.length) continue;
+    const per = {};
+    for (const r of ini) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) + num(r.arrears);
+    for (const r of cur) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) - num(r.arrears);
+    for (const k of Object.keys(per)) dailyRec[k] = (dailyRec[k] || 0) + per[k];
+  }
+  const iniMon = onDate(myDef, mon, 'initial');
+  const recWeek = recBoard(iniMon, curToday, dailyRec);
+
+  /* ---- CREDIT ANALYSTS: applications they processed, against the sales target ---- */
+  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+  function creditBoard(from, to) {
+    const m = {};
+    for (const l of myLoans) {
+      const d = String(l.approved_date || '').slice(0, 10);
+      if (!d || d < from || d > to) continue;
+      const b = bucket(m, String(l.created_by || l.approved_by || '(unassigned)').trim() || '(unassigned)',
+        { apps: 0, amount: 0, teams: {} });
+      b.apps++; b.amount += num(l.principal_amt) || num(l.loan_amt);
+      if (l.team) b.teams[K(l.team)] = 1;
+    }
+    const span = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1);
+    const target = weeklyTarget * (span / 7);
+    return Object.values(m).map(b => {
+      // Their recovery share: the movement on the teams whose files they actually processed.
+      let ini = 0, cur = 0, unc = 0;
+      for (const r of iniToday) if (b.teams[K(r.team)]) ini += num(r.arrears);
+      for (const r of curToday) if (b.teams[K(r.team)]) cur += num(r.arrears);
+      for (const r of myExp) if (b.teams[K(r.team)]) unc += Math.max(0, num(r.payment_expected) - collectedOf(r));
+      const salesPct = pctOf(b.amount, target), recPct = pctOf(ini - cur, unc);
+      return { analyst: b.key, apps: b.apps, amount: b.amount, salesPct, recPct,
+        perf: (salesPct == null && recPct == null) ? null : Math.round(((salesPct || 0) + (recPct || 0)) / 2 * 10) / 10 };
+    }).sort((a, b) => b.apps - a.apps);
+  }
+  const creditToday = creditBoard(today, today);
+  const creditWeek = creditBoard(mon, sun);
+
+  /* ---- CALL AGENTS ---- */
+  function callBoard(from, to) {
+    const m = {};
+    for (const c of myCalls) {
+      const d = String(c.call_date || '').slice(0, 10);
+      if (!d || d < from || d > to) continue;
+      const b = bucket(m, String(c.officer || '(unknown)').trim() || '(unknown)',
+        { calls: 0, duration: 0, portfolio: 0, connected: 0, customers: {} });
+      b.calls++; b.duration += num(c.duration);
+      if (c.portfolio) { b.portfolio++; b.customers[String(c.ref || c.phone)] = 1; }
+      if (K(c.outcome) === 'CONNECTED' || !c.outcome) b.connected++;
+    }
+    return Object.values(m).map(b => ({ agent: b.key, calls: b.calls, duration: b.duration,
+      portfolio: b.portfolio, customers: Object.keys(b.customers).length,
+      connectPct: pctOf(b.connected, b.calls), portfolioPct: pctOf(b.portfolio, b.calls) }))
+      .sort((a, b) => b.calls - a.calls);
+  }
+  const callToday = callBoard(today, today);
+  const callWeek = callBoard(mon, sun);
+
+  /* ---- FOLLOW-UP STATUS across ALL defaulters (what the whole book looks like) ---- */
+  const real = myFu.filter(r => !(r.status == null && r.arrears == null));
+  const fsm = {};
+  for (const r of real) {
+    const b = bucket(fsm, K(r.fu_status) || 'HAIJAFUATILIWA / NOT TOUCHED', { customers: 0, arrears: 0 });
+    b.customers++; b.arrears += num(r.arrears);
+  }
+  const fuStatus = Object.values(fsm).map(b => ({ status: b.key, customers: b.customers, arrears: b.arrears,
+    pct: pctOf(b.customers, real.length) })).sort((a, b) => b.customers - a.customers);
+
+  return { weekday: wd, weekOf: mon, today,
+    earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek, callToday, callWeek,
+    fuStatus, fuTotal: real.length,
+    weekUncollected: weekUncol };
 }
