@@ -72,6 +72,8 @@
   tr:last-child td{border-bottom:0}
   tbody tr:hover{background:var(--b50)}
   .r{text-align:right}
+  th.sn,td.sn{width:1%;text-align:right;color:var(--soft);font-variant-numeric:tabular-nums;padding-right:6px}
+  td.sn{font-size:11.5px}
   .msg{padding:34px 18px;text-align:center;color:var(--mut);font-size:13px}
   .msg.bad{color:var(--bad)}
   .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--b50);color:var(--b600);border:1px solid var(--b100)}
@@ -104,18 +106,23 @@
     border-radius:10px;font-size:13px;z-index:80;display:none;max-width:90vw}
   .toast.bad{background:var(--bad)}
 
+  /* The menu stays on the LEFT at every size -- on a phone it slides in over the content
+     instead of becoming a row of tabs across the top, so the navigation is always in the
+     same place and the header stays readable. */
+  .menuBtn{display:none;flex:0 0 auto;width:36px;height:36px;border-radius:9px;border:1.5px solid var(--line);
+    background:#fff;color:var(--ink);font-size:17px;line-height:1;cursor:pointer;align-items:center;justify-content:center}
+  .scrim{display:none;position:fixed;inset:0;background:rgba(8,17,34,.45);z-index:39}
   @media (max-width:820px){
-    .shell{flex-direction:column;height:auto;min-height:100%}
-    .side{width:100%;flex-direction:row;align-items:center;gap:10px;padding:10px;overflow:auto}
-    .side .brand{flex:0 0 auto;font-size:12.5px}
-    .side .brand small{display:none}
-    .nav{flex-direction:row;margin:0;gap:4px;overflow:auto}
-    .nav button{white-space:nowrap;padding:8px 11px;font-size:12.5px}
-    .side .foot{border-top:0;border-left:1px solid rgba(255,255,255,.12);padding:0 0 0 10px;margin:0;flex:0 0 auto;display:flex;gap:6px}
-    .side .foot b,.side .foot span{display:none}
-    .side .foot a,.side .foot button{margin:0;white-space:nowrap}
+    .menuBtn{display:flex}
+    .side{position:fixed;top:0;bottom:0;left:0;z-index:40;width:230px;transform:translateX(-100%);
+      transition:transform .2s ease;box-shadow:0 0 40px rgba(0,0,0,.35)}
+    body.navopen .side{transform:none}
+    body.navopen .scrim{display:block}
+    .main{width:100%}
     .top{padding:10px 12px}
     .body{padding:12px}
+    .top h1{font-size:15px}
+    .top .q{min-width:0;flex:1}
   }
 </style>
 </head>
@@ -144,6 +151,7 @@
   </aside>
   <main class="main">
     <div class="top">
+      <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
       <input class="q" id="q" placeholder="Tafuta… / Search">
       <button class="btn sm ghost" id="csvBtn" title="Download this table as CSV">CSV</button>
@@ -153,6 +161,7 @@
   </main>
 </div>
 
+<div class="scrim" id="scrim"></div>
 <div class="drawer-bg" id="drawerBg"><div class="drawer" id="drawer"></div></div>
 <div class="toast" id="toast"></div>
 
@@ -254,6 +263,7 @@ function buildNav(){
 }
 function go(view){
   S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.args={};
+  document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
   var t = NAV.filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
@@ -265,6 +275,8 @@ function go(view){
 $('#q').addEventListener('input', function(){ S.q=this.value; paint(); });
 $('#refBtn').onclick = function(){ render(); };
 $('#csvBtn').onclick = function(){ exportCsv(); };
+$('#menuBtn').onclick = function(){ document.body.classList.toggle('navopen'); };
+$('#scrim').onclick = function(){ document.body.classList.remove('navopen'); };
 
 function start(me){
   S.me = me;
@@ -320,16 +332,21 @@ function sorted(rows){
   });
   return out;
 }
+/* Every table carries a serial number. These lists run to thousands of rows and get read
+   aloud in meetings ("number 42..."), so position has to be visible without counting. It is
+   the row's position in the CURRENT view, so it stays 1..n after a search or a re-sort. */
 function tableHtml(rows, cols, onRow){
   if (!rows.length) return '<div class="msg">Hakuna taarifa. / Nothing here yet.</div>';
-  var head = cols.map(function(c){
+  var head = '<th class="sn">S/N</th>' + cols.map(function(c){
     var arrow = S.sort===c.key ? (S.asc?' ↑':' ↓') : '';
     return '<th class="'+(isNum(c)?'r':'')+'" data-sort="'+esc(c.key)+'">'+esc(c.label)+arrow+'</th>';
   }).join('');
   var body = rows.map(function(r, i){
-    return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>' + cols.map(function(c){
-      return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>';
-    }).join('') + '</tr>';
+    return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
+      + '<td class="sn">'+(i+1)+'</td>'
+      + cols.map(function(c){
+          return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>';
+        }).join('') + '</tr>';
   }).join('');
   return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
@@ -348,9 +365,9 @@ function wireTable(rows, onRow){
 function exportCsv(){
   if (!S.rows.length){ toast('Hakuna cha kupakua.', true); return; }
   var rows = sorted(filtered());
-  var lines = [S.cols.map(function(c){ return '"'+String(c.label).replace(/"/g,'""')+'"'; }).join(',')];
-  rows.forEach(function(r){
-    lines.push(S.cols.map(function(c){ return '"'+cellText(r,c).replace(/"/g,'""')+'"'; }).join(','));
+  var lines = ['"S/N",' + S.cols.map(function(c){ return '"'+String(c.label).replace(/"/g,'""')+'"'; }).join(',')];
+  rows.forEach(function(r, i){
+    lines.push('"'+(i+1)+'",' + S.cols.map(function(c){ return '"'+cellText(r,c).replace(/"/g,'""')+'"'; }).join(','));
   });
   var blob = new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
   var a = document.createElement('a');
@@ -552,9 +569,9 @@ VIEWS.fureport = function(){
 /* Small static tables inside a head block (no search/sort -- those belong to the main table). */
 function tableSimple(rows, cols){
   if (!rows || !rows.length) return '<div class="msg">—</div>';
-  return '<div class="scroll"><table><thead><tr>'+cols.map(function(c){
+  return '<div class="scroll"><table><thead><tr><th class="sn">S/N</th>'+cols.map(function(c){
       return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
-    + rows.map(function(r){ return '<tr>'+cols.map(function(c){
+    + rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
         return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
     + '</tbody></table></div>';
 }

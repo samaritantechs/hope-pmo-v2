@@ -12,9 +12,10 @@ def appVersion = new groovy.json.JsonSlurper().parse(rootProject.file('../app-ve
 // officers can also fix a wrong URL from inside the app (a load failure opens a small
 // built-in screen that saves an override).
 //
-// Default is the git-main domain: it always points at the latest production deployment,
-// unlike a per-deployment URL (hope-pmo-v2-<hash>-...) which is frozen at one build.
-def startUrl = project.hasProperty('startUrl') ? project.property('startUrl') : 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app/'
+// Default is the PRODUCTION domain. The -git-main- and -<hash>- URLs are preview
+// deployments: Vercel's deployment protection makes those demand a Vercel login, which no
+// field officer has. Only the production domain is public.
+def startUrl = project.hasProperty('startUrl') ? project.property('startUrl') : 'https://hope-pmo-v2.vercel.app/'
 
 android {
     namespace 'com.samaritantechs.hopecalls'

@@ -47,6 +47,10 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("hopecalls", MODE_PRIVATE);
 
         web = new WebView(this);
+        // Leave the phone's own status bar (clock, battery, signal) visible and untouched:
+        // without this the page draws underneath it, so the time and battery sit on top of
+        // the app's header. fitsSystemWindows insets the WebView below the system bars.
+        web.setFitsSystemWindows(true);
         setContentView(web);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
