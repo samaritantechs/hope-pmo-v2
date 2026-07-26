@@ -22,19 +22,24 @@ const E = (ref, team, exp, status, arrears, date = TODAY, type = 'today') => ({
 });
 const D = (ref, team, arrears, type, days = 45, date = TODAY, wd = 'FRI') => ({
   ref, full_name: 'C' + ref, contact: '07140000' + ref, team, arrears, status: 'Defaulter',
-  ds: '3-6', dc: 3, days_elapsed: days, snapshot_type: type, weekday: wd, snapshot_date: date,
+  ds: '3-6', dc: 3, days_elapsed: days, disb_date: '2026-07-21',        // a Tuesday -> Day 1 Tue, Day 2 Fri
+  initial_inst: 100000, other_inst: 40000, balance: 500000,
+  snapshot_type: type, weekday: wd, snapshot_date: date,
   upload_batch: 'b' + type + date, created_at: date + 'T04:00:00Z',
 });
 
 function tables() {
   return {
     teams: [
-      { team: 'KONGOWE', opm: null, recovery: 'JUMA G', gmo: null, manager: 'BOSS', credit: null, expected: null, bike: null },
+      { team: 'KONGOWE', opm: null, recovery: 'JUMA G', gmo: null, manager: 'BOSS', credit: 'ANALYST A', expected: 'EARLY E', bike: null },
       { team: 'MBAGALA', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null },
     ],
     access_codes: [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] }],
     roles: [{ role: 'ADMIN', tabs: ['upload', 'settings'] }],
-    settings: [{ key: 'COMMISSION_RATE', value: '5' }],
+    settings: [{ key: 'COMMISSION_RATE', value: '5' },
+      { key: 'CMS_MODE', value: 'status' },
+      { key: 'CMS_STATUS_RATES', value: 'defaulter:10, expired:5, chronic:2' },
+      { key: 'CMS_PAID_TZS', value: '1000' }, { key: 'CMS_OVER_TZS', value: '1500' }],
     repayment_snapshots: [
       E('111', 'KONGOWE', 1000, 'UNPAID', 0),
       E('222', 'KONGOWE', 500, 'PAID', 0),
@@ -108,10 +113,32 @@ test('expected: totals, collection %, status split, batch-resolved date', async 
   assert.deepEqual(d.byStatus.find(s => s.status === 'UNPAID').count, 2);
 });
 
-test('expected defaulters: only customers in BOTH lists', async () => {
+test('expected defaulters place every customer on two weekdays', async () => {
   const d = await run('expectedDefaulters');
-  assert.deepEqual(d.rows.map(r => r.ref), ['111']);        // 222 is not a defaulter, 555 is not expected
-  assert.equal(d.rows[0].def_arrears, 300);
+  assert.deepEqual(d.rows.map(r => r.ref).sort(), ['111', '555', '999']);
+  const r = d.rows[0];
+  // Disbursed on a Tuesday -> Day 1 Tue, Day 2 three days later (Fri).
+  assert.equal(r.primaryName, 'Tue'); assert.equal(r.secondaryName, 'Fri');
+  // Each customer counts on BOTH days, so the distribution sums to twice the headcount.
+  assert.equal(d.dist[2], 3); assert.equal(d.dist[5], 3);
+  assert.equal(d.dist[2] + d.dist[5], 2 * d.count);
+  assert.equal(d.unplaced, 0);
+});
+
+test('a defaulter with no disbursement date is bucketed, never dropped', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push({ ref: '888', full_name: 'C888', team: 'KONGOWE', arrears: 400,
+    status: 'Defaulter', ds: '1-6', dc: 1, days_elapsed: 10, disb_date: null,
+    snapshot_type: 'current', weekday: 'FRI', snapshot_date: TODAY,
+    upload_batch: 'bcurrent' + TODAY, created_at: TODAY + 'T04:00:00Z' });
+  const d = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  // It cannot be placed on a weekday -- but losing a defaulter silently is the one outcome
+  // this tab must never produce, so it lands in day 0 and still shows up in the count.
+  assert.equal(d.count, 4);
+  assert.equal(d.unplaced, 1);
+  assert.equal(d.dist[0], 1);
+  const r = d.rows.find(x => x.ref === '888');
+  assert.equal(r.primary, 0); assert.equal(r.primaryName, '—');
 });
 
 test('followup drops FK stubs but keeps real defaulters', async () => {
@@ -193,11 +220,31 @@ test('team progress pairs initial and current decks per team', async () => {
   assert.equal(k.recovery, 'JUMA G');                       // joined from the teams table
 });
 
-test('commission applies the configured rate to recovered', async () => {
+test('commission pays the recovery officer a % and the early officer a flat rate', async () => {
   const d = await run('commission');
-  assert.equal(d.rate, 5);
-  assert.equal(d.totals.recovered, 400);                    // KONGOWE 300 + MBAGALA 100
-  assert.equal(d.totals.commission, 20);
+  assert.equal(d.mode, 'status');
+  // Recovery: KONGOWE's officer earns on 111 (500->300) and 555 (700->600) = 300 at 10%.
+  const juma = d.day.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.recovered, 300); assert.equal(juma.recComm, 30);
+  // MBAGALA names no recovery officer, so its 100 recovered is still counted, unassigned.
+  assert.equal(d.day.find(r => r.officer === '(unassigned)').recovered, 100);
+  // Early collection: one PAID client on KONGOWE's expected list at TZS 1,000 flat.
+  const early = d.day.find(r => r.officer === 'EARLY E');
+  assert.equal(early.paid, 1); assert.equal(early.over, 0); assert.equal(early.colComm, 1000);
+  assert.equal(d.totals.recovered, 400);
+});
+
+test('commission rates save, and a malformed rate saves nothing', async () => {
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'commissionSave', { mode: 'year', yearRates: '2024:5, 2025:2.5', paidTzs: 800 }, NOW);
+  const val = k => db._dump('settings').find(r => r.key === k).value;
+  assert.equal(val('CMS_MODE'), 'year');
+  assert.equal(val('CMS_YEAR_RATES'), '2024:5, 2025:2.5');
+  assert.equal(val('CMS_PAID_TZS'), '800');
+  // Validation happens before ANY write, so a bad list cannot half-save over a good one.
+  await assert.rejects(() => portalApi(db, ADMIN, 'commissionSave', { yearRates: 'nonsense!!' }, NOW),
+    e => e.status === 400);
+  assert.equal(val('CMS_YEAR_RATES'), '2024:5, 2025:2.5');
 });
 
 test('assignments flags customers nobody has followed up', async () => {
@@ -264,7 +311,7 @@ test('settings drive the rotation -- changing ASSIGN_ACTIVE changes the owner', 
 
 test('expected defaulters carry the same recycling leader', async () => {
   const d = await run('expectedDefaulters');
-  assert.equal(d.rows.length, 1);
+  assert.equal(d.rows.length, 3);
   assert.ok(d.rows[0].role, 'a role is assigned');
   assert.ok('leader' in d.rows[0], 'the leader name travels with the row');
   assert.ok(d.rows[0].cycle, 'the cycle label is shown');
@@ -292,10 +339,21 @@ test('registers: complaints, restructures, notices, abnormal, received', async (
   assert.equal(rcv.count, 2); assert.equal(rcv.amount, 2400);
 });
 
-test('credit groups the pipeline by analyst', async () => {
+test('credit scores analysts on their count 1-6 book and their sales', async () => {
   const d = await run('credit');
+  // KONGOWE's credit column names ANALYST A, so both its defaulters are their book.
   const a = d.rows.find(r => r.analyst === 'ANALYST A');
-  assert.equal(a.assessed, 2); assert.equal(a.approved, 2); assert.equal(a.disbursed, 1);
+  assert.equal(a.cnt, 2);                                   // 111 and 555, both paid < 6 of 12
+  assert.equal(a.reduced, 2);                               // 500->300 and 700->600
+  assert.equal(a.cleared, 0); assert.equal(a.bad, 0); assert.equal(a.stat, 0);
+  assert.equal(a.success, 100);                             // (cleared + reduced) / count 1-6
+  assert.equal(a.recovered, 300);
+  assert.equal(a.sales, 300000);                            // the one approved KONGOWE loan
+  // MBAGALA names no analyst, so its 999 lands on (unassigned) rather than vanishing.
+  assert.equal(d.rows.find(r => r.analyst === '(unassigned)').cnt, 1);
+  // The portfolio is the daily call list, built from TODAY's deck, not Monday's.
+  assert.equal(d.portfolio.length, 3);
+  assert.equal(d.portfolio.every(p => p.state === 'Reduced'), true);
 });
 
 test('settings and access codes need the settings permission', async () => {
@@ -363,4 +421,41 @@ test('phone users: list with call counts, sign-out keeps history, delete removes
 test('teams list is scoped too', async () => {
   assert.equal((await run('teams')).rows.length, 2);
   assert.deepEqual((await run('teams', {}, GMO)).rows.map(r => r.team), ['KONGOWE']);
+});
+
+test('storage usage reports what each date costs, per report type', async () => {
+  const d = await run('storageUsage');
+  assert.ok(d.totalRows > 0);
+  const today = d.dates.find(x => x.date === TODAY);
+  assert.equal(today.expected, 3);            // 3 rows uploaded for today
+  assert.equal(today.defaulters, 6);          // 3 initial + 3 current
+  assert.equal(d.newest, TODAY);
+  // Only an admin may see (or act on) the storage picture.
+  await assert.rejects(() => run('storageUsage', {}, GMO), e => e.status === 403);
+});
+
+test('cleanup deletes only the chosen types for the chosen date', async () => {
+  const db = fakeDb(tables());
+  const count = t => db._dump(t).length;
+  const before = { exp: count('repayment_snapshots'), def: count('defaulter_snapshots') };
+
+  // Check first: a dry run reports the damage and touches nothing.
+  const dry = await portalApi(db, ADMIN, 'purgeSnapshots',
+    { date: TODAY, types: ['expected'], dryRun: true }, NOW);
+  assert.equal(dry.deleted.expected, 3);
+  assert.equal(count('repayment_snapshots'), before.exp);
+
+  const done = await portalApi(db, ADMIN, 'purgeSnapshots', { date: TODAY, types: ['expected'] }, NOW);
+  assert.equal(done.total, 3);
+  assert.equal(count('repayment_snapshots'), before.exp - 3);   // yesterday's row survives
+  assert.equal(count('defaulter_snapshots'), before.def);       // defaulters were not chosen
+
+  // `through` reclaims a whole span at once.
+  await portalApi(db, ADMIN, 'purgeSnapshots', { date: TODAY, types: ['expected'], through: true }, NOW);
+  assert.equal(count('repayment_snapshots'), 0);
+
+  await assert.rejects(() => portalApi(db, ADMIN, 'purgeSnapshots', { date: TODAY, types: [] }, NOW),
+    e => e.status === 400);
+  await assert.rejects(() => portalApi(db, GMO, 'purgeSnapshots', { date: TODAY, types: ['expected'] }, NOW),
+    e => e.status === 403);
 });
