@@ -168,11 +168,13 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
         <button type="button" class="regToggleBtn" data-role="leader">Kiongozi<span>Leader</span></button>
       </div>
     </div>
-    <div class="fld" id="regNameWrap"><label>Jina lako / Your name</label><input id="regName" placeholder="e.g. Juma Issa"></div>
     <div class="fld"><label>Namba ya simu / Phone number</label><input id="regPhone" placeholder="0712345678" type="tel">
-      <div class="note">Used to stop duplicate accounts &#x2014; each phone number is one identity.</div>
+      <div class="note">Ndiyo unayoingia nayo &#x2014; lazima iwe ile PMO aliyosajili. / This is your login: it must be the number your PMO officer registered.</div>
     </div>
-    <div class="fld" id="regTeamWrap"><label>Timu / Team</label><select id="regTeam"><option value="">&#x2014;</option></select></div>
+    <div class="fld" id="regPassWrap"><label>Nenosiri / Passcode</label>
+      <input id="regPass" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off">
+      <div class="note">Umepewa na afisa wa PMO. Jina na timu yako vinatoka kwenye akaunti yako. / Issued by your PMO officer. Your name and team come from your account.</div>
+    </div>
     <div class="fld hide" id="regCodeWrap"><label>Msimbo wa uongozi / Leader access code</label>
       <input id="regCode" placeholder="Enter your portal access code">
       <div class="note">Your name and teams load automatically from your access code &#x2014; same as the portal. No need to type a name or pick a team.</div>
@@ -431,8 +433,10 @@ function boot(){
     if (d.brand){ $('#bootBrand').textContent = d.brand; $('#regTitle').textContent = 'Karibu ' + d.brand + ' Calls'; }
     if (d.logo){ $('#regLogo').src = d.logo; $('#appLogo').src = d.logo; }
     if (d.ok && !loggedOut) return enterApp(d);
-    // not registered yet, OR logged out on this device -> show registration (team list/branding still loaded above)
-    $('#regTeam').innerHTML = '<option value="">\u2014</option>' + (d.teams||[]).map(function(t){ return '<option>'+esc(t)+'</option>'; }).join('');
+    // Not registered yet, OR logged out on this device -> show sign-in. The team list is no
+    // longer sent to this screen: publishing every team name to an unauthenticated device was
+    // half of what made self-registration possible.
+
     $('#scrBoot').classList.add('hide');
     $('#scrRegister').classList.remove('hide');
   }).catch(function(e){
@@ -453,11 +457,10 @@ function doLogout(){
   $('#sheet').style.display = 'none';
   $('#confirmModal').style.display = 'none';
   var q = $('#listQ'); if (q) q.value = '';
-  $('#regName').value = ''; $('#regPhone').value = ''; $('#regCode').value = '';
+  $('#regPhone').value = ''; $('#regCode').value = ''; $('#regPass').value = '';
   regRole = 'officer';
   $all('.regToggleBtn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-role')==='officer'); });
-  $('#regNameWrap').classList.remove('hide');
-  $('#regTeamWrap').classList.remove('hide');
+  $('#regPassWrap').classList.remove('hide');
   $('#regCodeWrap').classList.add('hide');
   $('#regErr').innerHTML = '';
   $('#regBtn').disabled = false; $('#regBtn').textContent = 'Endelea / Continue';
@@ -478,22 +481,21 @@ $all('.regToggleBtn').forEach(function(b){
     $all('.regToggleBtn').forEach(function(x){ x.classList.toggle('on', x===b); });
     // Leaders never type their own name or pick a team -- both come from their access code,
     // same as the portal itself (Leaders sheet / access code owns that identity, not a form field).
-    $('#regNameWrap').classList.toggle('hide', regRole==='leader');
-    $('#regTeamWrap').classList.toggle('hide', regRole==='leader');
+    $('#regPassWrap').classList.toggle('hide', regRole==='leader');
     $('#regCodeWrap').classList.toggle('hide', regRole==='officer');
   };
 });
 $('#regBtn').onclick = function(){
-  var name = regRole === 'officer' ? $('#regName').value.trim() : '';
+  // Name and team are no longer typed by the officer -- they come from the account the PMO
+  // created. Typing them was how anyone with the APK gave themselves a team's portfolio.
   var phone = $('#regPhone').value.trim();
-  var team = regRole === 'officer' ? $('#regTeam').value : '';
+  var pass = regRole === 'officer' ? $('#regPass').value.trim() : '';
   var code = regRole === 'leader' ? $('#regCode').value.trim() : '';
-  if (regRole === 'officer' && !name){ $('#regErr').innerHTML = '<div class="err">Andika jina lako.</div>'; return; }
   if (!phone){ $('#regErr').innerHTML = '<div class="err">Andika namba yako ya simu.</div>'; return; }
-  if (regRole === 'officer' && !team){ $('#regErr').innerHTML = '<div class="err">Chagua timu.</div>'; return; }
+  if (regRole === 'officer' && !pass){ $('#regErr').innerHTML = '<div class="err">Weka nenosiri ulilopewa na PMO.</div>'; return; }
   if (regRole === 'leader' && !code){ $('#regErr').innerHTML = '<div class="err">Weka msimbo wako wa uongozi.</div>'; return; }
   $('#regBtn').disabled = true; $('#regBtn').textContent = 'Inajiunga\u2026';
-  srv('api_callRegister', DEV, name, team, code, phone).then(function(){
+  srv('api_callRegister', DEV, '', '', code, phone, pass).then(function(){
     return srv('api_callBoot', DEV);
   }).then(function(d){
     if (d.ok) { try { localStorage.removeItem('hcLoggedOut'); } catch(e){} return enterApp(d); }

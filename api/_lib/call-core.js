@@ -1,4 +1,5 @@
 import { fetchAll } from './supabase.js';
+import { verifyPasscode } from './passcode.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot } from './snapshots.js';
@@ -57,11 +58,17 @@ async function settingGet(db, key) {
 }
 
 /* ---------- users ---------- */
+/** Every request resolves the device to an account here, so this is the one place that has
+    to honour deactivation. Checking `active` only at registration would mean a revoked
+    officer kept working until they happened to sign out -- which they never do. */
 async function userByDevice(db, dev) {
   dev = String(dev == null ? '' : dev).trim();
   if (!dev) return null;
   const { data } = await db.from('call_users').select('*').eq('device_id', dev).limit(1);
-  return (data && data[0]) || null;
+  const cu = (data && data[0]) || null;
+  if (!cu) return null;
+  if (cu.active === false) return null;
+  return cu;
 }
 /** A call_users row -> the same {name, role, teams} shape authCode returns, so teamAllowed
     works identically whether the caller came from the portal or the calls app. */
@@ -83,7 +90,9 @@ async function boot(db, [dev], nowMs) {
   const cu = await userByDevice(db, dev);
   const brand = (await settingGet(db, 'CALL_BRAND')) || APP.BRAND;
   const logo = (await settingGet(db, 'CALL_LOGO_URL')) || '';
-  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED', teams, brand, motto: APP.MOTTO, logo };
+  // An unauthenticated device gets branding only. The team list used to be handed out here,
+  // which is half of what made self-registration work: pick a team off the list, get its book.
+  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED', teams: [], brand, motto: APP.MOTTO, logo };
   const today = todayKey(nowMs);
   const logs = await fetchAll(() => db.from('call_logs').select('duration, portfolio').eq('user_id', cu.user_id).eq('call_date', today));
   const syncSec = parseInt(await settingGet(db, 'CALL_SYNC_SECONDS'), 10);
@@ -111,7 +120,7 @@ async function boot(db, [dev], nowMs) {
     identity back up instead of forking a new one, and nobody spins up a second account to
     dodge their numbers. A portal access code grants leader status with that code's own team
     scope -- validated against access_codes, the one place codes live in v2 too. */
-async function register(db, [dev, name, team, accessCode, phone], nowMs) {
+async function register(db, [dev, name, team, accessCode, phone, passcode], nowMs) {
   dev = String(dev == null ? '' : dev).trim();
   if (!dev) throw new Error('Missing device id.');
   name = String(name == null ? '' : name).trim();
@@ -135,11 +144,26 @@ async function register(db, [dev, name, team, accessCode, phone], nowMs) {
     team = teams.find(t => K(t) === K(home)) || null;
     name = u.name || name;
   } else {
-    if (!name) throw new Error('Enter your name.');
-    if (!team) throw new Error('Choose your team.');
-    const match = teams.find(t => K(t) === K(team));
-    if (!match) throw new Error('Unknown team. Ask your PMO officer.');
-    team = match;                                                  // store the canonical spelling the FK expects
+    // An officer signs in against an account an ADMIN created for them, identified by their
+    // phone number and proved with a passcode. Before this, anyone holding the APK could type
+    // any name, pick any team off the public list, and be handed that team's whole portfolio.
+    const pass = String(passcode == null ? '' : passcode).trim();
+    if (!pass) throw new Error('Enter the passcode your PMO officer gave you.');
+    const { data: acct } = await db.from('call_users').select('*').eq('phone', phoneD).maybeSingle();
+    // One message for "no such account" and "wrong passcode": telling them apart turns this
+    // into a way to find out which staff phone numbers are registered.
+    const bad = () => new Error('That phone number and passcode do not match an account. Ask your PMO officer.');
+    if (!acct) throw bad();
+    if (acct.active === false) throw new Error('That account has been switched off. Ask your PMO officer.');
+    if (!verifyPasscode(pass, acct.passcode_hash, acct.passcode_salt)) throw bad();
+    // Name, team and role come from the ACCOUNT, never from what the phone typed -- otherwise
+    // an officer could re-register onto a richer team and keep their own passcode.
+    name = acct.name || name;
+    team = acct.team || null;
+    role = acct.role || 'OFFICER';
+    leader = !!acct.is_leader;
+    leaderTeams = acct.leader_teams && acct.leader_teams.length ? acct.leader_teams : null;
+    if (!team && !leader) throw new Error('That account has no team set. Ask your PMO officer.');
   }
   if (!name) throw new Error('Could not find a name on file for that access code.');
   const uid = 'U' + h36(phoneD);
@@ -152,6 +176,9 @@ async function register(db, [dev, name, team, accessCode, phone], nowMs) {
     last_sync: (existing && existing.last_sync) || null,
     last_ts: (existing && existing.last_ts) || null,
   };
+  // Never write passcode_hash / passcode_salt / active from here: registering must not be a
+  // way to clear your own passcode or re-enable an account an admin switched off.
+  
   // Same phone re-registering updates in place, never a second row (phone is UNIQUE, and
   // user_id is derived from it, so upserting by user_id covers both cases).
   const { error } = await db.from('call_users').upsert(vals, { onConflict: 'user_id' });
