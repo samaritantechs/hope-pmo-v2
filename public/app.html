@@ -724,31 +724,52 @@ VIEWS.defexp = function(){
       + kpi('Their arrears', money(d.arrears), null, 'bad')
       + '</div>';
     S.rows = d.rows;
-    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
-      col('payment_expected','Expected','money'),
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+      {key:'contact', label:'Contact', kind:'tel'}, col('payment_expected','Expected','money'),
       {key:'todays_status', label:'Today', kind:'chip', chip:function(r){ return chipFor(r.todays_status); }},
       col('def_arrears','Arrears','money'),
       {key:'status', label:'Deck status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      {key:'role', label:'Owner role', kind:'chip', chip:function(){ return 'ok'; }},
+      col('leader','Recycling leader'), col('cycle','Cycle'),
       col('ds','D.S'), col('dc','D.C','num')];
-    ONROW = null;
+    ONROW = openFollowup;
   });
 };
 
+/* Defaulter Assignment: who OWNS each customer this week (the recycling rotation) beside
+   whether anyone has actually called. The two questions a leader asks on this screen. */
 VIEWS.assignments = function(){
   return srv('assignments').then(function(d){
+    var st = d.strategy || {};
     HEAD = '<div class="kpis">'
       + kpi('In the deck', money(d.count), d.weekday+' · '+(d.date||''))
       + kpi('Not touched', money(d.untouched), 'no follow-up logged', d.untouched?'bad':'good')
       + kpi('Untouched arrears', money(d.untouchedArrears), null, 'bad')
-      + '</div>';
+      + kpi('No leader named', money(d.unassigned), 'fix in Teams & Staff', d.unassigned?'warnc':'good')
+      + '</div>'
+      + '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
+      + 'Mzunguko / rotation — <b>Active</b>: ' + esc((st.active||[]).join(' → ')) + ' kila siku ' + esc(st.bucketDays)
+      + ' · <b>Expired</b>: ' + esc((st.expired||[]).join(' → ')) + ' (grace ' + esc(st.graceWeeks) + ' wiki)'
+      + ' · <b>Chronic</b>: ' + esc((st.chronic||[]).join(' → ')) + ' kila wiki. Badilisha kwenye Settings.</div>'
+      + '<div class="card"><div class="card-h">Kwa wadhifa / By role</div>'
+      + tableSimple(d.byRole, [col('role','Role'), col('customers','Customers','num'),
+          col('touched','Touched','num'), col('arrears','Arrears','money')]) + '</div>'
+      + '<div class="card"><div class="card-h">Kwa kiongozi / By recycling leader</div>'
+      + tableSimple(d.byLeader, [col('leader','Leader'), col('role','Role'), col('customers','Customers','num'),
+          col('touched','Touched','num'), col('arrears','Arrears','money')]) + '</div>';
     S.rows = d.rows;
-    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
-      col('arrears','Arrears','money'),
-      {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+      {key:'contact', label:'Contact', kind:'tel'}, col('arrears','Arrears','money'),
+      {key:'phase', label:'Phase', kind:'chip', chip:function(r){
+        return r.phase==='CHRONIC'?'bad':r.phase==='EXPIRED'?'warn':'mut'; }},
+      col('cycle','Cycle'),
+      {key:'role', label:'Owner role', kind:'chip', chip:function(){ return 'ok'; }},
+      {key:'leader', label:'Recycling leader', cls:function(r){ return r.assigned?'':'bad'; }},
       {key:'fu_status', label:'Follow-up', kind:'chip', chip:function(r){ return r.fu_status?chipFor(r.fu_status):'bad'; },
        get:function(r){ return r.fu_status || 'NOT TOUCHED'; }},
-      col('officer','By'), col('touched_at','When','dt'), col('promise_date','Promise','date'), col('ds','D.S')];
+      col('officer','By'), col('touched_at','When','dt'), col('ds','D.S'), col('days_elapsed','Days','num')];
     ONROW = openFollowup;
+    S.foot = 'Deck ' + d.weekday + ' · ' + money(d.count) + ' customers · ' + money(d.untouched) + ' untouched';
   });
 };
 
