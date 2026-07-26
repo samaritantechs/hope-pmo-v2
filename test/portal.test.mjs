@@ -656,3 +656,61 @@ test('issuing a notice stores what it prints, under a citable reference', async 
   await assert.rejects(() => portalApi(db, ADMIN, 'addDemandNotice', { ref: 'NOPE' }, NOW),
     e => e.status === 400);
 });
+
+test('upload status says what is still missing for today', async () => {
+  const db = fakeDb(tables());
+  const d = await portalApi(db, ADMIN, 'uploadStatus', {}, NOW);
+  // The fixture has today's Expected and today's FRI current deck loaded.
+  assert.equal(d.weekday, 'FRI');
+  assert.equal(d.ready, true);
+  assert.deepEqual(d.missing, []);
+  const exp = d.items.find(i => i.key === 'expected-today');
+  assert.equal(exp.loadedToday, true);
+  assert.equal(exp.today, 3);
+  assert.equal(exp.latest, TODAY);
+  // A weekday deck that was never uploaded reads "never" rather than going unmentioned.
+  const mon = d.items.find(i => i.key === 'defaulters-current-MON');
+  assert.equal(mon.loadedToday, false);
+  assert.equal(mon.latest, null);
+
+  // Drop today's Expected and it becomes a named gap -- a missing upload never errors on its
+  // own, it just leaves yesterday's numbers on today's dashboard.
+  await portalApi(db, ADMIN, 'purgeSnapshots', { date: TODAY, types: ['expected'] }, NOW);
+  const after = await portalApi(db, ADMIN, 'uploadStatus', {}, NOW);
+  assert.equal(after.ready, false);
+  assert.deepEqual(after.missing, ['Expected — today']);
+
+  // It is the UPLOADER's panel, so upload permission is what gates it, not settings.
+  await assert.rejects(() => portalApi(db, GMO, 'uploadStatus', {}, NOW), e => e.status === 403);
+  const uploader = { ...GMO, tabs: ['upload'] };
+  assert.ok((await portalApi(db, uploader, 'uploadStatus', {}, NOW)).items.length > 0);
+});
+
+test('roles can be created, edited and safely deleted', async () => {
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'saveRole', { role: 'recovery', tabs: 'dashboard, followup, nonsense, calls' }, NOW);
+  const saved = db._dump('roles').find(r => r.role === 'RECOVERY');
+  // Name is normalised, and a tab that does not exist is dropped rather than stored and
+  // silently ignored at permission-check time.
+  assert.deepEqual(saved.tabs, ['dashboard', 'followup', 'calls']);
+
+  const t = await portalApi(db, ADMIN, 'teams', {}, NOW);
+  assert.ok(t.roles.some(r => r.role === 'RECOVERY'));
+  assert.ok(t.allTabs.includes('upload'));
+
+  // A role still in use cannot be deleted: codes with a blank tab list inherit from their
+  // role, so removing it would quietly strip those people back to the default set.
+  await assert.rejects(() => portalApi(db, ADMIN, 'deleteRole', { role: 'ADMIN' }, NOW),
+    e => e.status === 400);
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'R1', name: 'REC ONE', role: 'RECOVERY', teams: 'KONGOWE' }, NOW);
+  await assert.rejects(() => portalApi(db, ADMIN, 'deleteRole', { role: 'RECOVERY' }, NOW),
+    e => e.status === 400 && /still use/.test(e.message));
+
+  await portalApi(db, ADMIN, 'deleteAccessCode', { code: 'R1' }, NOW);
+  await portalApi(db, ADMIN, 'deleteRole', { role: 'RECOVERY' }, NOW);
+  assert.equal(db._dump('roles').some(r => r.role === 'RECOVERY'), false);
+
+  await assert.rejects(() => portalApi(db, GMO, 'saveRole', { role: 'X', tabs: 'dashboard' }, NOW),
+    e => e.status === 403);
+});

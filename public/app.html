@@ -153,6 +153,7 @@
   .checks input,.chk input{width:auto;margin:0}
   .chk{margin:6px 0 10px}
   .clact{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .clickrow{cursor:pointer}
   .kpis.sm .kpi{padding:8px 10px}
   .kpis.sm .kpi .v{font-size:16px}
   .rxsched{margin:10px 0 14px;max-height:280px;overflow:auto}
@@ -1545,8 +1546,23 @@ VIEWS.teams = function(){
   return srv('teams').then(function(d){
     var staffed = {};
     d.rows.forEach(function(r){ TEAM_ROLES.forEach(function(c){ if (r[c]) staffed[r[c]] = 1; }); });
+    S.roleMeta = d;
     HEAD = '<div class="kpis">' + kpi('Teams', money(d.rows.length))
-      + kpi('Supervisors named', money(Object.keys(staffed).length), 'across ' + TEAM_ROLES.length + ' roles') + '</div>'
+      + kpi('Supervisors named', money(Object.keys(staffed).length), 'across ' + TEAM_ROLES.length + ' roles')
+      + kpi('Roles', money((d.roles||[]).length), 'tab permissions per role') + '</div>'
+      // A role's tab list was readable but not editable anywhere, so onboarding a new kind of
+      // officer meant a trip to the SQL editor.
+      + (S.me.can.admin
+          ? '<div class="card" id="rolesCard"><div class="card-h">Wadhifa / Roles &amp; their tabs'
+            + '<span class="sub"><button class="btn sm" id="newRole">+ Wadhifa mpya / New role</button></span></div>'
+            + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Role</th><th>Tabs</th><th>Codes</th><th></th></tr></thead><tbody>'
+            + (d.roles||[]).map(function(r, i){
+                return '<tr class="clickrow" data-role="'+esc(r.role)+'"><td class="sn">'+(i+1)+'</td><td><b>'+esc(r.role)+'</b></td>'
+                  + '<td>'+esc((r.tabs||[]).join(', ') || '—')+'</td>'
+                  + '<td class="r">'+((r.tabs||[]).length)+' tabs</td>'
+                  + '<td class="r"><button class="btn sm ghost" data-role="'+esc(r.role)+'">Badili / Edit</button></td></tr>';
+              }).join('') + '</tbody></table></div></div>'
+          : '')
       + (S.me.can.admin ? bar('<button class="btn sm" id="newTeam">+ Timu mpya / New team</button>'
           + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
@@ -1555,6 +1571,34 @@ VIEWS.teams = function(){
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
 };
+function roleForm(x){
+  var isNew = !x;
+  var all = (S.roleMeta && S.roleMeta.allTabs) || [];
+  var have = (x && x.tabs) || [];
+  drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
+    + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
+    + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + '<div class="fld"><label>Tabs</label><div class="checks">'
+    + all.map(function(t){
+        return '<label><input type="checkbox" class="rTab" value="'+esc(t)+'"'
+          + (have.indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
+    + '</div></div>'
+    + '<button class="btn w" id="rSave">Hifadhi / Save</button>'
+    + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="rDel">Futa / Delete role</button>'));
+  $('#rSave').onclick = function(){
+    var tabs = Array.prototype.filter.call(document.querySelectorAll('.rTab'), function(c){ return c.checked; })
+      .map(function(c){ return c.value; }).join(',');
+    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs })
+      .then(function(){ toast('Imehifadhiwa. / Saved.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+  if (!isNew) $('#rDel').onclick = function(){
+    if (!confirm('Futa wadhifa "'+x.role+'"? / Delete this role?')) return;
+    srv('deleteRole', { role: x.role })
+      .then(function(){ toast('Imefutwa. / Deleted.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
 function teamForm(x){
   var isNew = !x;
   drawer('<h3>'+(isNew?'Timu mpya / New team':esc(x.team))+'</h3>'
@@ -2005,6 +2049,14 @@ function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'
 function wireForms(){
   // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
   // not be counted or filtered, and counting complaints by category is why the register exists.
+  var nrole = document.getElementById('newRole');
+  if (nrole) nrole.onclick = function(){ roleForm(null); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-role]'), function(el){
+    el.onclick = function(){
+      var r = ((S.roleMeta && S.roleMeta.roles) || []).filter(function(x){ return x.role === el.getAttribute('data-role'); })[0];
+      if (r) roleForm(r);
+    };
+  });
   var nc = document.getElementById('newComplaint');
   if (nc) nc.onclick = function(){ openComplaint(null); };
   // Restructuring starts from the CUSTOMER, not from a blank form: you cannot type an
