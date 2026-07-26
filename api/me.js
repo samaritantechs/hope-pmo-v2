@@ -1,5 +1,5 @@
 import { supabase } from './_lib/supabase.js';
-import { authCode, withApi } from './_lib/auth.js';
+import { authCode, withApi, resolveTabs } from './_lib/auth.js';
 
 // GET /api/me?code=XXX
 // Who is this code, and what may they open? The launcher (public/home.html) calls this to
@@ -11,7 +11,7 @@ import { authCode, withApi } from './_lib/auth.js';
 export default withApi(async (req, res) => {
   const user = await authCode(req.query.code);
   const { data: roleRow } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
-  const tabs = [...new Set([...(user.tabs || []), ...((roleRow && roleRow.tabs) || [])])];
+  const tabs = resolveTabs(user, roleRow && roleRow.tabs);
   return {
     name: user.name,
     role: user.role,

@@ -1,6 +1,6 @@
 {
-  "versionCode": 4,
-  "versionName": "1.3",
-  "notes": "Menyu upande wa kushoto, namba za mistari (S/N), na upau wa simu haufunikwi tena. / Left-side menu, row numbers, and the phone's status bar is no longer covered.",
+  "versionCode": 5,
+  "versionName": "1.4",
+  "notes": "Dashboard kamili, Expected Mon-Fri, lugha/giza/arifa, na anwani sahihi. / Full dashboard, Expected Mon-Fri tabs, language + dark mode + tips, and the correct address.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

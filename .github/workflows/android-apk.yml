@@ -15,7 +15,7 @@ on:
       base_url:
         description: 'Deployed site the app opens (its launcher screen)'
         required: false
-        default: 'https://hope-pmo-v2.vercel.app'
+        default: 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app'
   push:
     branches: [main]
     paths: ['android/**', '.github/workflows/android-apk.yml']
@@ -38,7 +38,7 @@ jobs:
         run: |
           cd android
           ./gradlew assembleRelease --no-daemon \
-            -PstartUrl="${{ github.event.inputs.base_url || 'https://hope-pmo-v2.vercel.app' }}/"
+            -PstartUrl="${{ github.event.inputs.base_url || 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app' }}/"
           cp app/build/outputs/apk/release/app-release.apk HOPE-Calls.apk
 
       - uses: actions/upload-artifact@v4

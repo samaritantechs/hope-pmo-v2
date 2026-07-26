@@ -23,6 +23,21 @@ export function teamAllowed(user, team) {
   return user.teams.some(t => String(t).trim().toUpperCase() === String(team || '').trim().toUpperCase());
 }
 
+/** ADMIN always holds every tab -- that is the rule the live system's auth_() uses
+    (isAdmin -> ADMIN_TABS), and it is why Upload/Settings can go missing here: an ADMIN
+    row whose TABS cell happens to be blank ends up with nothing granted. Resolving tabs in
+    ONE place keeps /api/me (which draws the UI) and /api/portal (which enforces) agreeing. */
+export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promises', 'fureport',
+  'complaints', 'restructure', 'legal', 'expected', 'defexp', 'credit', 'abnormal', 'reports',
+  'weekly', 'par', 'present', 'teams', 'commission', 'calls'];
+export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings']);
+
+export function resolveTabs(user, roleTabs) {
+  if (String(user.role || '').trim().toUpperCase() === 'ADMIN') return ADMIN_TABS.slice();
+  const merged = [...new Set([...(user.tabs || []), ...(roleTabs || [])])];
+  return merged.length ? merged : USER_TABS.slice();
+}
+
 /** Same as can_() -- checks the role's tab permissions. Extend ROLE_TABS as roles are migrated. */
 export async function can(user, tab) {
   if (user.tabs && user.tabs.includes(tab)) return true;
