@@ -246,6 +246,10 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
 function pct(v){ return (v==null||isNaN(v)) ? '—' : v + '%'; }
+function mb(b){ b = Number(b)||0;
+  if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
+  if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
+  return Math.round(b/1024)+' KB'; }
 function fmtDur(sec){ sec = Math.max(0, Math.round(Number(sec)||0)); var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
   function p2(n){ return (n<10?'0':'')+n; } return h>0 ? (h+':'+p2(m)+':'+p2(s)) : (m+':'+p2(s)); }
 function store(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v);}catch(e){} }
@@ -1473,7 +1477,13 @@ VIEWS.settings = function(){
     HEAD = '<div class="kpis">' + kpi('Settings', money(st.rows.length))
         + kpi('Access codes', money(ac.count)) + kpi('Phone users', money(cu.count))
         + kpi('Stored rows', money(sg.totalRows), (sg.oldest||'—')+' → '+(sg.newest||'—'))
+        + kpi('Database used', mb(sg.bytes), mb(sg.perMonth)+' / month at this rate')
         + '</div>'
+        + '<div class="note">Supabase Free ni <b>500 MB</b>, Pro ni <b>8 GB</b>.'
+        + ' / Free tier holds 500 MB, Pro holds 8 GB. Kwa kasi ya sasa (' + mb(sg.perDay) + ' kwa siku),'
+        + ' 8 GB inatosha takriban <b>' + (sg.perMonth>0 ? Math.floor(8*1024*1024*1024/sg.perMonth) : '∞')
+        + ' miezi</b> bila kusafisha. / at the current rate, 8 GB lasts about that many months with no cleanup.'
+        + ' Ukisafisha tarehe za zamani hapa chini, haitajaa kamwe. / Clean old dates below and it never fills.</div>'
       /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
          Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
          no cell ceiling), but the plan's disk is finite, so this is where old dates get let go. */

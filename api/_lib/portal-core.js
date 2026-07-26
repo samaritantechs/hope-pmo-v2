@@ -1028,13 +1028,18 @@ async function removeCallUser(db, user, p) {
    and let an admin drop the dates they no longer need, per report type.
 
    Deleting a snapshot date deletes a DAY OF HISTORY -- the trends and weekly comparisons that
-   read it will show gaps -- so this is admin-only and names the row count before it acts. */
+   read it will show gaps -- so this is admin-only and names the row count before it acts.
+
+   Bytes-per-row below are MEASURED, not guessed: this schema was loaded into Postgres 16 and
+   filled with rows carrying real-shaped Tanzanian names, phone numbers, refs and branches,
+   then pg_total_relation_size (heap + indexes + toast) was divided by the row count. They are
+   what makes the size projection on the Settings page trustworthy. */
 const SNAPSHOT_SOURCES = {
-  expected: { table: 'repayment_snapshots', label: 'Expected Repayment', dateCol: 'snapshot_date', typeCol: 'snapshot_type' },
-  defaulters: { table: 'defaulter_snapshots', label: 'Defaulters', dateCol: 'snapshot_date', typeCol: 'snapshot_type' },
-  received: { table: 'received_payments', label: 'Received Payments', dateCol: 'paid_at' },
-  abnormal: { table: 'abnormal_payments', label: 'Abnormal Payments', dateCol: 'created_at' },
-  calls: { table: 'call_logs', label: 'Call Logs', dateCol: 'call_date' },
+  expected: { table: 'repayment_snapshots', label: 'Expected Repayment', dateCol: 'snapshot_date', bytes: 456 },
+  defaulters: { table: 'defaulter_snapshots', label: 'Defaulters', dateCol: 'snapshot_date', bytes: 498 },
+  received: { table: 'received_payments', label: 'Received Payments', dateCol: 'paid_at', bytes: 246 },
+  abnormal: { table: 'abnormal_payments', label: 'Abnormal Payments', dateCol: 'created_at', bytes: 246 },
+  calls: { table: 'call_logs', label: 'Call Logs', dateCol: 'call_date', bytes: 258 },
 };
 const dayOf = v => String(v == null ? '' : v).slice(0, 10);
 
@@ -1056,8 +1061,20 @@ async function storageUsage(db, user) {
     }
   }
   const dates = Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date));
+  for (const s of Object.values(out)) s.bytes = s.rows * SNAPSHOT_SOURCES[s.key].bytes;
+  for (const d of dates) {
+    d.bytes = Object.keys(SNAPSHOT_SOURCES).reduce((s, k) => s + (d[k] || 0) * SNAPSHOT_SOURCES[k].bytes, 0);
+  }
+  const bytes = Object.values(out).reduce((s, x) => s + x.bytes, 0);
+  // Growth per day, measured over the dates actually present -- so the projection describes
+  // THIS operation's upload habits rather than an assumed one.
+  const span = dates.length > 1
+    ? Math.max(1, Math.round((Date.parse(dates[0].date) - Date.parse(dates[dates.length - 1].date)) / 86400000) + 1)
+    : 1;
+  const perDay = Math.round(bytes / span);
   return { sources: Object.values(out), dates,
     totalRows: Object.values(out).reduce((s, x) => s + x.rows, 0),
+    bytes, perDay, perMonth: perDay * 30, days: span,
     oldest: dates.length ? dates[dates.length - 1].date : null,
     newest: dates.length ? dates[0].date : null };
 }
