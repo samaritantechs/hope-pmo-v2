@@ -379,31 +379,140 @@ async function resolveComplaint(db, user, p, nowMs) {
 }
 const addComplaint = saveComplaint;
 
-async function restructures(db, user) {
-  const r = await listTable(db, user, 'restructures');
-  return { ...r, pending: r.rows.filter(x => K(x.status) === 'PENDING').length };
+/** Loan restructuring. A restructure is a written offer: the customer pays something now, and
+    whatever is left -- optionally with fresh interest -- is rescheduled into N weekly
+    installments. Every number is derived, so NONE of it is taken from the client:
+
+      remaining = arrears − first payment
+      interest  = remaining × RESTRUCTURE_INTEREST_PCT (only if applied)
+      total     = remaining + interest
+      per       = total ÷ count, rounded to the nearest 500 (the note sizes people actually pay)
+
+    The last installment absorbs the rounding so the schedule adds up to the total exactly.
+    Only defaulters who have missed RESTRUCTURE_MIN_DC installments qualify -- restructuring
+    someone who missed one payment just discounts the loan. */
+const RX_ROUND = 500;
+async function restructureStrategy(db) {
+  const months = Math.max(1, await settingNum(db, 'RESTRUCTURE_MAX_MONTHS', 4));
+  const interestPct = Math.max(0, await settingNum(db, 'RESTRUCTURE_INTEREST_PCT', 12));
+  const minDc = Math.max(1, await settingNum(db, 'RESTRUCTURE_MIN_DC', 4));
+  const { data: appr } = await db.from('settings').select('value').eq('key', 'RESTRUCTURE_APPROVERS').maybeSingle();
+  const approvers = String((appr && appr.value) || '').split(',').map(x => K(x)).filter(Boolean);
+  return { maxMonths: months, maxInstallments: months * 4, interestPct, minDc,
+    approvers: approvers.length ? approvers : ['MANAGER', 'ADMIN'] };
 }
+function canApproveRestructure(user, strat) {
+  if ((user.tabs || []).includes('settings')) return true;
+  return strat.approvers.includes(K(user.role));
+}
+function restructureCompute(arrears, firstAmt, count, interestOn, interestPct) {
+  arrears = Math.max(0, num(arrears));
+  firstAmt = Math.min(Math.max(0, num(firstAmt)), arrears);
+  const remaining = arrears - firstAmt;
+  const interest = interestOn ? Math.round(remaining * (interestPct / 100)) : 0;
+  const total = remaining + interest;
+  count = Math.max(1, Math.floor(num(count)));
+  // Rounding to the nearest 500 can land on ZERO when the count is large against a small
+  // total, which would print a schedule of 0, 0, 0, <everything>. An installment is never
+  // nothing: floor it at the rounding unit and let addRestructure reject a count that the
+  // total cannot actually carry.
+  const per = total > 0 ? Math.max(RX_ROUND, Math.round(total / count / RX_ROUND) * RX_ROUND) : 0;
+  return { arrears, first: firstAmt, remaining, interest, total, count, per,
+    last: total - per * (count - 1) };
+}
+/** Weekly dates from the first payment date, with the last one carrying the remainder. */
+function restructureSchedule(total, count, per, startKey) {
+  count = Math.max(1, Math.floor(num(count)));
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push({ n: i + 1, date: startKey ? addDaysKey(startKey, 7 * i) : null,
+      amount: i === count - 1 ? total - per * (count - 1) : per });
+  }
+  return out;
+}
+
+async function restructures(db, user, _args, nowMs) {
+  const [r, strat] = await Promise.all([listTable(db, user, 'restructures'), restructureStrategy(db)]);
+  const rows = r.rows.map(x => ({ ...x,
+    schedule: restructureSchedule(num(x.total), num(x.installments), num(x.inst_amt), x.start_date) }));
+  return { rows, count: rows.length, strategy: strat,
+    canApprove: canApproveRestructure(user, strat),
+    pending: rows.filter(x => K(x.status) === 'PENDING').length,
+    approved: rows.filter(x => K(x.status) === 'APPROVED').length,
+    rejected: rows.filter(x => K(x.status) === 'REJECTED').length };
+}
+
+/** Look a customer up by REF and say whether they can be restructured at all. */
+async function restructureEligible(db, user, { ref }, nowMs) {
+  if (!ref) throw badRequest('A customer REF# is required.');
+  const snap = await latestSnapshot(db, 'defaulter_snapshots',
+    { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) });
+  const found = snap.rows.find(d => K(d.ref) === K(ref));
+  if (!found) return { found: false };
+  if (!teamAllowed(user, found.team)) throw forbidden(`You do not have access to team ${found.team}.`);
+  const strat = await restructureStrategy(db);
+  const dc = num(found.dc) || paidCount(found);
+  return { found: true, ref: found.ref, full_name: found.full_name, team: found.team,
+    contact: found.contact, guarantor: found.guarantor_name, guarantor_contact: found.guarantor_contact,
+    arrears: num(found.arrears), dc, minDc: strat.minDc, eligible: dc >= strat.minDc, strategy: strat };
+}
+
 async function addRestructure(db, user, p, nowMs) {
-  if (!p || !p.ref) throw badRequest('ref is required');
+  if (!p || !p.ref) throw badRequest('Pick a customer (REF#).');
+  const elig = await restructureEligible(db, user, { ref: p.ref }, nowMs);
+  if (!elig.found) throw badRequest('That REF# is not in the current Defaulters list.');
+  const strat = elig.strategy;
+  if (!elig.eligible) {
+    throw badRequest(`Only defaulters with ${strat.minDc}+ missed installments can be restructured — this one has ${elig.dc}.`);
+  }
+  const count = Math.floor(num(p.installments ?? p.count));
+  if (count < 1) throw badRequest('Enter how many weekly installments.');
+  if (count > strat.maxInstallments) {
+    throw badRequest(`Maximum ${strat.maxInstallments} weekly installments (${strat.maxMonths} months). Reduce the count.`);
+  }
+  if (num(p.firstInst ?? p.first) > elig.arrears) throw badRequest('The first installment cannot exceed the arrears.');
+  // Recomputed from the CUSTOMER's own arrears, never from what the browser sent.
+  const c = restructureCompute(elig.arrears, p.firstInst ?? p.first, count, !!p.interestOn, strat.interestPct);
+  if (c.total <= 0) throw badRequest('Nothing left to reschedule after the first installment.');
+  // Spread too thin, the final installment would come out zero or negative -- the schedule
+  // would not add up to the total, which is the one thing the customer signs.
+  if (c.last <= 0) {
+    throw badRequest(`TZS ${Math.round(c.total).toLocaleString('en-US')} cannot be split into ${c.count} installments of at least TZS ${RX_ROUND}. Reduce the count.`);
+  }
+  const startDate = /^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate || p.start))
+    ? (p.startDate || p.start) : addDaysKey(todayKey(nowMs), 7);
   const { data, error } = await db.from('restructures').insert({
-    ref: p.ref, team: p.team || null, full_name: p.fullName || null, contact: p.contact || null,
-    guarantor: p.guarantor || null, guarantor_contact: p.guarantorContact || null,
-    arrears: p.arrears || null, dc: p.dc || null, first_inst: p.firstInst || null,
-    remaining: p.remaining || null, interest_on: p.interestOn || null, interest_amt: p.interestAmt || null,
-    total: p.total || null, installments: p.installments || null, inst_amt: p.instAmt || null,
-    start_date: p.startDate || null, status: 'Pending', requested_by: user.name,
-    notes: p.notes || null, created_at: new Date(nowMs).toISOString(),
+    ref: elig.ref, team: elig.team, full_name: elig.full_name, contact: elig.contact,
+    guarantor: elig.guarantor, guarantor_contact: elig.guarantor_contact,
+    arrears: c.arrears, dc: elig.dc, first_inst: c.first, remaining: c.remaining,
+    interest_on: p.interestOn ? 'YES' : 'NO', interest_amt: c.interest,
+    total: c.total, installments: c.count, inst_amt: c.per, start_date: startDate,
+    status: 'Pending', requested_by: user.name, notes: p.notes || null,
+    created_at: new Date(nowMs).toISOString(),
   }).select('*');
   if (error) throw new Error(error.message);
-  return { row: (data && data[0]) || null };
+  const row = (data && data[0]) || null;
+  return { row, computed: c, schedule: restructureSchedule(c.total, c.count, c.per, startDate) };
 }
+
 async function decideRestructure(db, user, p, nowMs) {
   if (!p || !p.id) throw badRequest('id is required');
+  const strat = await restructureStrategy(db);
+  // Approving a restructure writes off interest and rewrites a customer's obligations. Anyone
+  // could do it here before, which made the Pending state decorative.
+  if (!canApproveRestructure(user, strat)) {
+    throw forbidden(`Only ${strat.approvers.join(' / ')} (or an admin) can approve or reject a restructuring offer.`);
+  }
+  const { data: row } = await db.from('restructures').select('team, status').eq('id', p.id).maybeSingle();
+  if (!row) throw badRequest('That offer no longer exists.');
+  if (!teamAllowed(user, row.team)) throw forbidden(`You do not have access to team ${row.team}.`);
+  if (K(row.status) !== 'PENDING') throw badRequest(`This offer is already ${row.status}.`);
   const approve = String(p.decision || '').toLowerCase() === 'approve';
+  if (!approve && !String(p.reason || '').trim()) throw badRequest('Give a reason when rejecting.');
   const { error } = await db.from('restructures').update({
     status: approve ? 'Approved' : 'Rejected',
     approved_by: user.name, approved_at: new Date(nowMs).toISOString(),
-    reject_reason: approve ? null : (p.reason || null),
+    reject_reason: approve ? null : String(p.reason).trim(),
   }).eq('id', p.id);
   if (error) throw new Error(error.message);
   return { id: p.id, status: approve ? 'Approved' : 'Rejected' };
@@ -1188,7 +1297,7 @@ const FN = {
   loans, loanPipeline, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint,
-  restructures, addRestructure, decideRestructure,
+  restructures, addRestructure, decideRestructure, restructureEligible,
   demandNotices, addDemandNotice, abnormal, received,
   par, weekly, teamProgress, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,

@@ -506,3 +506,82 @@ test('complaints are date-ranged and carry their own vocabularies', async () => 
   const none = await portalApi(db, ADMIN, 'complaints', { from: MON, to: MON }, NOW);
   assert.equal(none.count, 0);
 });
+
+test('restructuring derives every number from the customer, not from the browser', async () => {
+  const db = fakeDb(tables());
+  // Give 555 a real-sized arrears and enough missed installments to qualify.
+  for (const r of db._dump('defaulter_snapshots')) if (r.ref === '555' && r.snapshot_type === 'current') {
+    r.dc = 5; r.arrears = 600000;
+  }
+
+  const e = await portalApi(db, ADMIN, 'restructureEligible', { ref: '555' }, NOW);
+  assert.equal(e.found, true); assert.equal(e.eligible, true);
+  assert.equal(e.arrears, 600000); assert.equal(e.minDc, 4);
+
+  // Client sends a flattering arrears figure and a total it made up -- both are ignored.
+  const made = await portalApi(db, ADMIN, 'addRestructure',
+    { ref: '555', firstInst: 100000, installments: 4, interestOn: true,
+      arrears: 999999999, total: 1, instAmt: 1, startDate: '2026-07-27' }, NOW);
+  const c = made.computed;
+  assert.equal(c.arrears, 600000);              // from the deck, not the payload
+  assert.equal(c.first, 100000);
+  assert.equal(c.remaining, 500000);
+  assert.equal(c.interest, 60000);              // 12% of the remaining
+  assert.equal(c.total, 560000);
+  assert.equal(c.per, 140000);                  // 140,000 is already a multiple of 500
+  // The last installment absorbs the rounding so the schedule sums to the total exactly.
+  assert.equal(made.schedule.reduce((s, x) => s + x.amount, 0), 560000);
+  assert.deepEqual(made.schedule.map(x => x.date),
+    ['2026-07-27', '2026-08-03', '2026-08-10', '2026-08-17']);
+  // And what was stored matches what was previewed.
+  assert.equal(made.row.total, 560000);
+  assert.equal(made.row.inst_amt, 140000);
+  assert.equal(made.row.status, 'Pending');
+});
+
+test('a total too small to split is refused rather than scheduled as zeroes', async () => {
+  const db = fakeDb(tables());
+  for (const r of db._dump('defaulter_snapshots')) if (r.ref === '555' && r.snapshot_type === 'current') r.dc = 5;
+  // 600 over 4 weekly installments rounds to 0 each; a schedule of 0/0/0/600 is not an offer.
+  await assert.rejects(() => portalApi(db, ADMIN, 'addRestructure',
+    { ref: '555', firstInst: 0, installments: 4 }, NOW),
+    e => e.status === 400 && /Reduce the count/.test(e.message));
+});
+
+test('restructuring refuses the ineligible, the oversized and the impossible', async () => {
+  const db = fakeDb(tables());
+  // 555 has dc 3 in the fixture -- below the 4 the policy requires.
+  await assert.rejects(() => portalApi(db, ADMIN, 'addRestructure',
+    { ref: '555', firstInst: 0, installments: 4 }, NOW), e => e.status === 400);
+
+  for (const r of db._dump('defaulter_snapshots')) if (r.ref === '555') r.dc = 5;
+  // 4 months x 4 weeks = 16 installments is the cap.
+  await assert.rejects(() => portalApi(db, ADMIN, 'addRestructure',
+    { ref: '555', firstInst: 0, installments: 20 }, NOW), e => e.status === 400);
+  // Paying the whole arrears up front leaves nothing to reschedule.
+  await assert.rejects(() => portalApi(db, ADMIN, 'addRestructure',
+    { ref: '555', firstInst: 600, installments: 4 }, NOW), e => e.status === 400);
+  // A REF that is not a current defaulter at all.
+  await assert.rejects(() => portalApi(db, ADMIN, 'addRestructure',
+    { ref: 'NOPE', installments: 4 }, NOW), e => e.status === 400);
+});
+
+test('only an approver can decide a restructuring offer', async () => {
+  const db = fakeDb(tables());
+  // GMO is not in RESTRUCTURE_APPROVERS and holds no settings tab -- approving a restructure
+  // rewrites a customer's obligations, and anyone could do it before.
+  await assert.rejects(() => portalApi(db, GMO, 'decideRestructure',
+    { id: 's1', decision: 'approve' }, NOW), e => e.status === 403);
+  // Rejecting without a reason leaves no record of why.
+  await assert.rejects(() => portalApi(db, ADMIN, 'decideRestructure',
+    { id: 's1', decision: 'reject' }, NOW), e => e.status === 400);
+
+  await portalApi(db, ADMIN, 'decideRestructure', { id: 's1', decision: 'reject', reason: 'hana uwezo' }, NOW);
+  const row = db._dump('restructures').find(r => r.id === 's1');
+  assert.equal(row.status, 'Rejected');
+  assert.equal(row.reject_reason, 'hana uwezo');
+  assert.equal(row.approved_by, 'THE ADMIN');
+  // A decided offer cannot be decided twice.
+  await assert.rejects(() => portalApi(db, ADMIN, 'decideRestructure',
+    { id: 's1', decision: 'approve' }, NOW), e => e.status === 400);
+});

@@ -153,6 +153,9 @@
   .checks input,.chk input{width:auto;margin:0}
   .chk{margin:6px 0 10px}
   .clact{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .kpis.sm .kpi{padding:8px 10px}
+  .kpis.sm .kpi .v{font-size:16px}
+  .rxsched{margin:10px 0 14px;max-height:280px;overflow:auto}
   /* Complaint audit trail. Deliberately NOT .hist -- that class already styles the follow-up
      comment history, and reusing it silently restyled both. */
   .cxhist{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
@@ -1342,18 +1345,31 @@ VIEWS.complaints = function(){
 
 VIEWS.restructure = function(){
   return srv('restructures').then(function(d){
+    var st = d.strategy;
+    S.rxMeta = d;
     HEAD = '<div class="kpis">'
       + kpi('Requests', money(d.count))
-      + kpi('Pending', money(d.pending), null, d.pending?'warnc':'good')
+      + kpi('Pending', money(d.pending), 'awaiting a decision', d.pending?'warnc':'good')
+      + kpi('Approved', money(d.approved), null, 'good')
+      + kpi('Rejected', money(d.rejected), null, d.rejected?'bad':'')
       + '</div>'
-      + bar('<button class="btn sm" id="newRestructure">+ Ombi jipya / New request</button>');
+      + '<div class="note">Wanaostahili / eligible: defaulters with <b>'+st.minDc+'+</b> missed installments (DC)'
+      + ' · upeo / max <b>'+st.maxInstallments+'</b> weekly installments ('+st.maxMonths+' months)'
+      + ' · riba mpya / new interest <b>'+st.interestPct+'%</b> on the remaining'
+      + ' · wanaoidhinisha / approvers: <b>'+esc(st.approvers.join(', '))+'</b> (Settings).</div>'
+      + bar('<button class="btn sm" id="newRestructure">+ Ombi jipya / New offer</button>'
+        + (d.canApprove ? '<span class="chip ok">You can approve</span>'
+                        : '<span class="chip mut">View only — you cannot approve</span>'));
     S.rows = d.rows;
-    S.cols = [col('created_at','Requested','dt'), col('ref','REF'), col('full_name','Customer'), col('team','Team'),
-      col('arrears','Arrears','money'), col('total','Total','money'), col('installments','Inst','num'),
+    S.cols = [col('created_at','Requested','dt'), col('ref','REF#'), col('full_name','Customer'), col('team','Team'),
+      col('dc','DC','num'), col('arrears','Arrears','money'), col('first_inst','First','money'),
+      col('remaining','Remaining','money'), col('interest_amt','Interest','money'),
+      col('total','Total','money'), col('installments','Inst','num'),
       col('inst_amt','Inst amt','money'), col('start_date','Start','date'),
       {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
-      col('requested_by','By'), col('approved_by','Decided by')];
+      col('requested_by','Requested by'), col('approved_by','Decided by'), col('reject_reason','Reason')];
     ONROW = openRestructure;
+    S.foot = money(d.pending)+' pending · '+money(d.approved)+' approved · '+money(d.rejected)+' rejected';
   });
 };
 
@@ -1764,6 +1780,83 @@ function openComplaint(r){
   }).catch(function(){ var el = $('#cxHist'); if (el){ el.className=''; el.innerHTML='<div class="hnote">History unavailable.</div>'; } });
 }
 
+/* Step 1 — find the customer. Eligibility is the deck's answer, not the officer's. */
+function rxLookup(){
+  drawer('<h3>Ombi jipya / New restructuring offer</h3>'
+    + '<div class="sub">Anza na REF# ya mteja. / Start with the customer’s REF#.</div>'
+    + '<div class="fld"><label>Customer REF#</label><input id="rxRef" placeholder="e.g. 111"></div>'
+    + '<button class="btn w" id="rxLoad">Tafuta / Load</button>');
+  var go = function(){
+    var ref = $('#rxRef').value.trim();
+    if (!ref){ toast('Weka REF#. / Enter a REF#.', true); return; }
+    srv('restructureEligible', { ref:ref }).then(function(e){
+      if (!e.found){ toast('Hakuna mteja mwenye REF# hiyo kwenye orodha ya wadaiwa. / No defaulter with that REF#.', true); return; }
+      rxOffer(e);
+    }).catch(function(err){ toast(String(err.message||err), true); });
+  };
+  $('#rxLoad').onclick = go;
+  $('#rxRef').onkeydown = function(ev){ if (ev.key === 'Enter') go(); };
+}
+/* Step 2 — the calculator. It previews exactly what the server will recompute and store, so
+   what the officer shows the customer and what gets written cannot drift apart. */
+function rxOffer(e){
+  var st = e.strategy;
+  if (!e.eligible){
+    drawer('<h3>'+esc(e.full_name||e.ref)+'</h3><div class="sub">'+esc(e.team||'')+' · REF '+esc(e.ref)+'</div>'
+      + '<div class="msg bad">Hastahili kupangiwa upya. / Not eligible — this customer has <b>'+e.dc
+      + '</b> missed installment(s); restructuring needs <b>'+st.minDc+'+</b>.</div>');
+    return;
+  }
+  drawer('<h3>'+esc(e.full_name||e.ref)+'</h3>'
+    + '<div class="sub">'+esc(e.team||'')+' · REF '+esc(e.ref)+' · '+esc(e.contact||'')+'</div>'
+    + '<div class="facts"><div class="frow"><span>Missed installments (DC)</span><b>'+e.dc+'</b></div>'
+    + '<div class="frow"><span>Arrears owed</span><b>TZS '+money(e.arrears)+'</b></div></div>'
+    + '<div class="fld"><label>Malipo ya kwanza sasa / First payment now</label>'
+      + '<input id="rxFirst" type="number" min="0" step="500" value="0"></div>'
+    + '<div class="fld"><label>Awamu za wiki / Weekly installments (max '+st.maxInstallments+')</label>'
+      + '<input id="rxCount" type="number" min="1" max="'+st.maxInstallments+'" step="1" placeholder="e.g. 10"></div>'
+    + '<div class="fld"><label>Tarehe ya kwanza / First payment date</label>'
+      + '<input id="rxStart" type="date" value="'+addDays(today(),7)+'"></div>'
+    + '<label class="chk"><input id="rxInt" type="checkbox"> Ongeza riba ya '+st.interestPct+'% / add '+st.interestPct+'% on the remaining</label>'
+    + '<div class="fld"><label>Maelezo / Notes</label><textarea id="rxNotes" rows="2"></textarea></div>'
+    + '<div id="rxPrev"></div>'
+    + '<button class="btn w" id="rxSubmit">Tuma kwa idhini / Submit for approval</button>');
+  var preview = function(){
+    var arrears = Number(e.arrears)||0;
+    var first = Math.min(Math.max(0, Number($('#rxFirst').value)||0), arrears);
+    var count = Math.max(1, Math.floor(Number($('#rxCount').value)||0));
+    var remaining = arrears - first;
+    var interest = $('#rxInt').checked ? Math.round(remaining * (st.interestPct/100)) : 0;
+    var total = remaining + interest;
+    var per = Math.round(total/count/500)*500;
+    var start = $('#rxStart').value;
+    var over = count > st.maxInstallments;
+    var rows = [];
+    for (var i=0;i<Math.min(count, st.maxInstallments);i++){
+      rows.push({ n:i+1, date:start?addDays(start, 7*i):'—', amount:(i===count-1? total-per*(count-1) : per) });
+    }
+    $('#rxPrev').innerHTML =
+      '<div class="kpis sm">'
+      + kpi('Remaining', money(remaining)) + kpi('New interest', money(interest))
+      + kpi('Total to repay', money(total)) + kpi('Per installment', money(per))
+      + '</div>'
+      + (over ? '<div class="msg bad">Exceeds the '+st.maxInstallments+'-installment cap — reduce the count.</div>' : '')
+      + (total > 0
+          ? tableSimple(rows, [col('date','Date','date'), col('amount','Installment','money')],
+              {date:'', amount:total})
+          : '<div class="msg">Hakuna kilichobaki. / Nothing left to reschedule.</div>');
+  };
+  ['rxFirst','rxCount','rxStart'].forEach(function(id){
+    $('#'+id).oninput = preview; $('#'+id).onchange = preview; });
+  $('#rxInt').onchange = preview;
+  preview();
+  $('#rxSubmit').onclick = function(){
+    srv('addRestructure', { ref:e.ref, firstInst:$('#rxFirst').value, installments:$('#rxCount').value,
+      startDate:$('#rxStart').value, interestOn:$('#rxInt').checked, notes:$('#rxNotes').value.trim() })
+      .then(function(){ toast('Ombi limetumwa. / Submitted for approval.'); closeDrawer(); render(); })
+      .catch(function(err){ toast(String(err.message||err), true); });
+  };
+}
 function openRestructure(r){
   if (String(r.status||'').toUpperCase()!=='PENDING'){
     drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.status)+'</div>'
@@ -1778,9 +1871,18 @@ function openRestructure(r){
     + '<div class="frow"><span>Total</span><span>'+money(r.total)+'</span></div>'
     + '<div class="frow"><span>Plan</span><span>'+esc(r.installments||'')+' × '+money(r.inst_amt)+' from '+esc(String(r.start_date||'').slice(0,10))+'</span></div>'
     + '<div class="frow"><span>Requested by</span><span>'+esc(r.requested_by||'')+'</span></div></div>'
-    + '<div class="fld"><label>Sababu (kama unakataa) / Reason if rejecting</label><input id="rReason"></div>'
-    + '<div style="display:flex;gap:8px"><button class="btn" style="flex:1" id="rOk">Kubali / Approve</button>'
-    + '<button class="btn ghost" style="flex:1" id="rNo">Kataa / Reject</button></div>');
+    + (r.schedule && r.schedule.length
+        ? '<div class="rxsched">' + tableSimple(r.schedule,
+            [col('date','Date','date'), col('amount','Installment','money')],
+            {date:'', amount:r.total}) + '</div>' : '')
+    + ((S.rxMeta && S.rxMeta.canApprove)
+        ? '<div class="fld"><label>Sababu (kama unakataa) / Reason if rejecting</label><input id="rReason"></div>'
+          + '<div style="display:flex;gap:8px"><button class="btn" style="flex:1" id="rOk">Kubali / Approve</button>'
+          + '<button class="btn ghost" style="flex:1" id="rNo">Kataa / Reject</button></div>'
+        : '<div class="msg">Unaweza kuona tu — huwezi kuidhinisha. / View only: approving is limited to '
+          + esc((S.rxMeta && S.rxMeta.strategy ? S.rxMeta.strategy.approvers.join(' / ') : 'the approvers'))
+          + ' or an admin.</div>'));
+  if (!(S.rxMeta && S.rxMeta.canApprove)) return;
   function decide(d){
     srv('decideRestructure', { id:r.id, decision:d, reason:$('#rReason').value.trim() })
       .then(function(){ toast(d==='approve'?'Imekubaliwa.':'Imekataliwa.'); closeDrawer(); render(); })
@@ -1797,25 +1899,12 @@ function wireForms(){
   // not be counted or filtered, and counting complaints by category is why the register exists.
   var nc = document.getElementById('newComplaint');
   if (nc) nc.onclick = function(){ openComplaint(null); };
+  // Restructuring starts from the CUSTOMER, not from a blank form: you cannot type an
+  // arrears figure that disagrees with the deck, and every derived number is computed rather
+  // than entered. The old form asked for arrears, total, installments AND per-installment by
+  // hand -- four chances to write an offer the books do not agree with.
   var nr = document.getElementById('newRestructure');
-  if (nr) nr.onclick = function(){
-    drawer('<h3>Ombi la kupanga upya / Restructure request</h3><div class="sub">Litakuwa Pending hadi kiongozi aidhinishe.</div>'
-      + fldRow('yRef','REF') + fldRow('yName','Jina / Customer') + fldRow('yTeam','Timu / Team')
-      + fldRow('yArr','Deni / Arrears','number') + fldRow('yTotal','Jumla / Total','number')
-      + fldRow('yInst','Awamu / Installments','number') + fldRow('yAmt','Kiasi kwa awamu / Inst amount','number')
-      + fldRow('yStart','Kuanzia / Start date','date')
-      + '<div class="fld"><label>Maelezo / Notes</label><textarea id="yNotes" rows="2"></textarea></div>'
-      + '<button class="btn w" id="ySave">Tuma ombi / Submit</button>');
-    document.getElementById('ySave').onclick = function(){
-      srv('addRestructure', { ref:document.getElementById('yRef').value.trim(), fullName:document.getElementById('yName').value.trim(),
-        team:document.getElementById('yTeam').value.trim(), arrears:document.getElementById('yArr').value||null,
-        total:document.getElementById('yTotal').value||null, installments:document.getElementById('yInst').value||null,
-        instAmt:document.getElementById('yAmt').value||null, startDate:document.getElementById('yStart').value||null,
-        notes:document.getElementById('yNotes').value.trim() })
-        .then(function(){ toast('Ombi limetumwa.'); closeDrawer(); render(); })
-        .catch(function(e){ toast(String(e.message||e), true); });
-    };
-  };
+  if (nr) nr.onclick = function(){ rxLookup(); };
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){
     drawer('<h3>Notisi ya madai / Demand notice</h3>'
