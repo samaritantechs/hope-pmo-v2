@@ -122,6 +122,9 @@ public class MainActivity extends Activity {
             requestPermissions(new String[]{Manifest.permission.READ_CALL_LOG}, REQ_CALL_LOG);
         }
         web.loadUrl(startUrl());
+        // Ask the portal whether a newer build exists. Off the UI thread, failures ignored --
+        // an update check must never be the reason the app does not open.
+        Updater.checkInBackground(this, startUrl());
     }
 
     /**

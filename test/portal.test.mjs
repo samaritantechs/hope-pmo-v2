@@ -254,6 +254,49 @@ test('call report reachable from the portal, scoped by the code', async () => {
   assert.equal(g.totals.calls, 2);
 });
 
+test('access codes: add, edit, delete -- and never your own', async () => {
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'NEW1', name: 'NEW OFFICER', role: 'GMO', teams: 'KONGOWE, MBAGALA', tabs: '' }, NOW);
+  let rows = (await portalApi(db, ADMIN, 'accessCodes', {}, NOW)).rows;
+  const added = rows.find(r => r.code === 'NEW1');
+  assert.deepEqual(added.teams, ['KONGOWE', 'MBAGALA']);
+  assert.deepEqual(added.tabs, []);
+  // Editing the same code updates in place rather than adding a second row.
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'NEW1', name: 'RENAMED', role: 'GMO', teams: 'ALL', tabs: 'upload' }, NOW);
+  rows = (await portalApi(db, ADMIN, 'accessCodes', {}, NOW)).rows;
+  assert.equal(rows.filter(r => r.code === 'NEW1').length, 1);
+  assert.equal(rows.find(r => r.code === 'NEW1').name, 'RENAMED');
+  assert.equal(rows.find(r => r.code === 'NEW1').teams, null);     // ALL -> null, the auth.js convention
+  await portalApi(db, ADMIN, 'deleteAccessCode', { code: 'NEW1' }, NOW);
+  assert.equal((await portalApi(db, ADMIN, 'accessCodes', {}, NOW)).rows.filter(r => r.code === 'NEW1').length, 0);
+  // Deleting the code you are holding would lock you out mid-migration.
+  await assert.rejects(() => portalApi(db, ADMIN, 'deleteAccessCode', { code: 'A' }, NOW), /signed in with/i);
+  await assert.rejects(() => portalApi(db, GMO, 'saveAccessCode', { code: 'X', name: 'x', role: 'y' }, NOW), e => e.status === 403);
+});
+
+test('phone users: list with call counts, sign-out keeps history, delete removes both', async () => {
+  const db = fakeDb(tables());
+  db._dump('call_users')[0].device_id = 'dev-1';
+  let d = await portalApi(db, ADMIN, 'callUsers', {}, NOW);
+  assert.equal(d.count, 1);
+  assert.equal(d.rows[0].calls, 2);                                // both fixture logs are theirs
+
+  // Sign-out: the row and its history stay, only the device is released.
+  await portalApi(db, ADMIN, 'removeCallUser', { userId: 'U1', mode: 'unregister' }, NOW);
+  d = await portalApi(db, ADMIN, 'callUsers', {}, NOW);
+  assert.equal(d.count, 1);
+  assert.equal(d.rows[0].device_id, null);
+  assert.equal(db._dump('call_logs').length, 2);
+
+  // Delete: registration AND logs go (logs first, or the FK would refuse).
+  await portalApi(db, ADMIN, 'removeCallUser', { userId: 'U1', mode: 'delete' }, NOW);
+  assert.equal((await portalApi(db, ADMIN, 'callUsers', {}, NOW)).count, 0);
+  assert.equal(db._dump('call_logs').length, 0);
+
+  await assert.rejects(() => portalApi(db, GMO, 'callUsers', {}, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, ADMIN, 'removeCallUser', {}, NOW), /userId is required/);
+});
+
 test('teams list is scoped too', async () => {
   assert.equal((await run('teams')).rows.length, 2);
   assert.deepEqual((await run('teams', {}, GMO)).rows.map(r => r.team), ['KONGOWE']);

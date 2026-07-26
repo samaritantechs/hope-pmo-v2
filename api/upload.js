@@ -5,6 +5,8 @@ import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
   importAccessCodes, importUserRoles,
+  importAbnormal, importComplaints, importRestructures, importDemandNotices,
+  importCallUsers, importCallLogs, importSettings, importHints,
 } from './_lib/importers.js';
 
 // POST /api/upload   { code, type, meta, rows }
@@ -66,6 +68,41 @@ export default withApi(async (req, res) => {
       table = 'roles';
       records = importUserRoles(rows);
       break;
+    case 'abnormal':
+      table = 'abnormal_payments';
+      records = importAbnormal(rows);
+      break;
+    case 'complaints':
+      table = 'complaints';
+      records = importComplaints(rows);
+      break;
+    case 'restructures':
+      table = 'restructures';
+      records = importRestructures(rows);
+      break;
+    case 'demand-notices':
+      table = 'demand_notices';
+      records = importDemandNotices(rows);
+      break;
+    case 'call-users': {
+      // team is a FK -- pass the real list so an unknown one is nulled instead of failing.
+      const { data: t } = await supabase.from('teams').select('team');
+      table = 'call_users';
+      records = importCallUsers(rows, (t || []).map(x => x.team));
+      break;
+    }
+    case 'call-logs':
+      table = 'call_logs';
+      records = importCallLogs(rows);
+      break;
+    case 'settings':
+      table = 'settings';
+      records = importSettings(rows);
+      break;
+    case 'hints':
+      table = 'hints';
+      records = importHints(rows);
+      break;
     default: {
       const e = new Error(`Unknown upload type: ${type}`); e.status = 400; throw e;
     }
@@ -74,7 +111,7 @@ export default withApi(async (req, res) => {
   // Managing who can log in is a step above ordinary uploads. Gate it on the same
   // permission that marks admins in the live system: the 'settings' tab (ADMIN/CUSTOM
   // roles) -- the same people who could edit the Access Codes sheet in Google Sheets.
-  const ADMIN_TABLES = new Set(['access_codes', 'roles']);
+  const ADMIN_TABLES = new Set(['access_codes', 'roles', 'settings', 'hints', 'call_users']);
   if (ADMIN_TABLES.has(table) && !(await can(user, 'settings'))) {
     const e = new Error('Managing access codes or roles requires the settings (admin) permission.'); e.status = 403; throw e;
   }
@@ -117,7 +154,12 @@ export default withApi(async (req, res) => {
   // followup_status and teams are "current state per key" -- re-uploading updates in
   // place. Everything else (snapshots, loans, comments, payments) is append-only history:
   // a fresh "today" upload is a NEW today, never an overwrite of a previous one.
-  const upsertTables = { followup_status: 'ref', teams: 'team', access_codes: 'code', roles: 'role' };
+  // Re-uploadable "current state per key" tables. call_logs is keyed by its deterministic id
+  // so a re-upload of the same history collapses instead of duplicating every call.
+  const upsertTables = {
+    followup_status: 'ref', teams: 'team', access_codes: 'code', roles: 'role',
+    settings: 'key', hints: 'tab', call_users: 'user_id', call_logs: 'id',
+  };
   const result = upsertTables[table]
     ? await supabase.from(table).upsert(records, { onConflict: upsertTables[table] })
     : await supabase.from(table).insert(records);

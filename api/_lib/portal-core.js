@@ -436,26 +436,98 @@ async function teams(db, user) {
   return { rows: rows.filter(r => teamAllowed(user, r.team)), count: rows.length };
 }
 async function settingsList(db, user) {
-  if (!(user.tabs || []).includes('settings')) throw forbidden('Settings permission required.');
+  requireAdmin(user);
   const rows = await fetchAll(() => db.from('settings').select('*').order('key', { ascending: true }));
   return { rows };
 }
 async function settingSet(db, user, p) {
-  if (!(user.tabs || []).includes('settings')) throw forbidden('Settings permission required.');
+  requireAdmin(user);
   if (!p || !p.key) throw badRequest('key is required');
   const { error } = await db.from('settings').upsert({ key: p.key, value: String(p.value == null ? '' : p.value) }, { onConflict: 'key' });
   if (error) throw new Error(error.message);
   return { key: p.key };
 }
 async function accessCodes(db, user) {
-  if (!(user.tabs || []).includes('settings')) throw forbidden('Settings permission required.');
-  const rows = await fetchAll(() => db.from('access_codes').select('code, name, role, teams, tabs').order('name', { ascending: true }));
-  return { rows, count: rows.length };
+  requireAdmin(user);
+  const [rows, roleRows] = await Promise.all([
+    fetchAll(() => db.from('access_codes').select('code, name, role, teams, tabs').order('name', { ascending: true })),
+    fetchAll(() => db.from('roles').select('*').order('role', { ascending: true })),
+  ]);
+  return { rows, count: rows.length, roles: roleRows };
+}
+/** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
+    'ALL' / blank teams means every team -- the same convention auth.js reads. */
+async function saveAccessCode(db, user, p) {
+  requireAdmin(user);
+  const code = String((p && p.code) || '').trim();
+  if (!code) throw badRequest('code is required');
+  if (!p.name || !p.role) throw badRequest('name and role are required');
+  const list = v => {
+    const s = String(v == null ? '' : v).trim();
+    if (!s || s.toUpperCase() === 'ALL') return null;
+    const items = s.split(/[;,]/).map(x => x.trim()).filter(Boolean);
+    return items.length ? items : null;
+  };
+  const { error } = await db.from('access_codes').upsert({
+    code, name: String(p.name).trim(), role: String(p.role).trim(),
+    teams: list(p.teams), tabs: list(p.tabs) || [],
+  }, { onConflict: 'code' });
+  if (error) throw new Error(error.message);
+  return { code };
+}
+async function deleteAccessCode(db, user, p) {
+  requireAdmin(user);
+  const code = String((p && p.code) || '').trim();
+  if (!code) throw badRequest('code is required');
+  // Locking yourself out mid-migration would mean another trip to the SQL editor.
+  if (code === user.code) throw badRequest('You cannot delete the code you are signed in with.');
+  const { error } = await db.from('access_codes').delete().eq('code', code);
+  if (error) throw new Error(error.message);
+  return { code };
+}
+
+/** Phone (calls app) registrations. Test devices and mistyped names accumulate fast during a
+    rollout, and every one of them shows up in call reports -- this is how they get cleaned up
+    without a database console. */
+async function callUsers(db, user) {
+  requireAdmin(user);
+  const [users, logs] = await Promise.all([
+    fetchAll(() => db.from('call_users').select('*').order('registered_at', { ascending: false })),
+    fetchAll(() => db.from('call_logs').select('user_id')),
+  ]);
+  const counts = {};
+  for (const l of logs) counts[l.user_id] = (counts[l.user_id] || 0) + 1;
+  return { rows: users.map(u => ({ ...u, calls: counts[u.user_id] || 0 })), count: users.length };
+}
+/** Two ways to remove someone, because they mean different things:
+      unregister -> keep the row and its call history, just release the device so the phone
+                    has to register again (the fix for "wrong name/team on the right phone");
+      delete     -> remove the registration entirely, and only then also drop its call logs,
+                    which is what a test account deserves. */
+async function removeCallUser(db, user, p) {
+  requireAdmin(user);
+  const id = String((p && p.userId) || '').trim();
+  if (!id) throw badRequest('userId is required');
+  if (String(p.mode || 'unregister') === 'unregister') {
+    const { error } = await db.from('call_users').update({ device_id: null }).eq('user_id', id);
+    if (error) throw new Error(error.message);
+    return { userId: id, mode: 'unregister' };
+  }
+  // call_logs.user_id references call_users -- the logs must go first or the delete is refused.
+  const { error: lErr } = await db.from('call_logs').delete().eq('user_id', id);
+  if (lErr) throw new Error(lErr.message);
+  const { error } = await db.from('call_users').delete().eq('user_id', id);
+  if (error) throw new Error(error.message);
+  return { userId: id, mode: 'delete' };
 }
 
 /* ------------------------------------------------------------------ dispatch */
 function badRequest(m) { const e = new Error(m); e.status = 400; return e; }
 function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
+/** Managing who can sign in is the one thing gated harder than team scope. */
+function requireAdmin(user) {
+  if (!(user.tabs || []).includes('settings')) throw forbidden('Settings (admin) permission required.');
+}
 
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
@@ -465,7 +537,8 @@ const FN = {
   restructures, addRestructure, decideRestructure,
   demandNotices, addDemandNotice, abnormal, received,
   par, weekly, teamProgress, commission, assignments, credit,
-  teams, settings: settingsList, settingSet, accessCodes,
+  teams, settings: settingsList, settingSet,
+  accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
 

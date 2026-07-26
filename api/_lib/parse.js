@@ -35,25 +35,46 @@ export function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Tolerant date parser. Handles d/M/yyyy -- the Tanzania/British convention your raw exports
-    actually use (confirmed from real rows: 20/04/2026, 23/07/2026 -- the first number being a
-    month would be impossible in either case) -- and yyyy-MM-dd. Returns null rather than
-    guessing on "No due date", blank, or a genuinely invalid combination -- the Sheets version's
-    worst bugs all came from a date field silently becoming something that WASN'T actually a
-    date; this refuses to guess and just leaves it null instead. */
+/** Slash dates arrive in BOTH orders and neither source announces which: a Sheets CSV export
+    follows the sheet's locale (d/m/yyyy here), while a browser-side XLSX parse used to render
+    Dates as m/d/yyyy. Reading one as the other is silent corruption, not a visible failure --
+    7/23/2026 was refused outright (month 23) and 7/5/2026 quietly became 7 May instead of
+    5 July. So: whichever component CANNOT be a month decides the order, and only when both
+    are <= 12 do we fall back to d/m/yyyy, the convention of the sheets this system reads.
+    (The browser path now sends yyyy-mm-dd, which is unambiguous and skips all of this.) */
 export function dateOrNull(v) {
   if (!v) return null;
   const s = String(v).trim();
   if (!s || /^no\s+due\s+date$/i.test(s)) return null;
-  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);                      // ISO first -- never ambiguous
   if (m) {
-    const day = Number(m[1]), month = Number(m[2]), year = m[3];
-    if (day < 1 || day > 31 || month < 1 || month > 12) return null;   // not a valid date either way -- don't guess, just refuse it
+    const month = Number(m[2]), day = Number(m[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${m[1]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]), year = m[3];
+    let day, month;
+    if (a > 12 && b <= 12) { day = a; month = b; }                      // 23/7 -> only d/m is possible
+    else if (b > 12 && a <= 12) { month = a; day = b; }                 // 7/23 -> only m/d is possible
+    else { day = a; month = b; }                                        // both <= 12 -> the sheets' own d/m
+    if (day < 1 || day > 31 || month < 1 || month > 12) return null;
     return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
-  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
   return null;
+}
+
+/** 'HH:MM' from a clock value. A time-only cell comes back from the XLSX parse as a Date on
+    Excel's epoch day, so the DATE part is meaningless and only the clock survives. */
+export function timeOrNull(v) {
+  if (v == null || v === '') return null;
+  const s = String(v).trim();
+  let m = s.match(/(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = Number(m[1]), min = Number(m[2]);
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
 /** D.S / D.C are "paid/target" TEXT, e.g. "3/6" -- this is the one field that broke
