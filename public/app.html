@@ -1313,13 +1313,45 @@ VIEWS.calls = function(){
       + kpi('Portfolio', money(t.portfolio), Math.round(100*(t.ratio||0))+'% of calls', 'good')
       + kpi('Non-portfolio', money(t.nonPortfolio))
       + '</div>'
-      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">'
-        + (d.byCategory||[]).map(function(c){ return '<span class="chip">'+esc(c.category)+': '+money(c.calls)+'</span>'; }).join(''));
+      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">')
+      // The backend already computed all five of v1's breakdowns; only the officer table was
+      // ever shown, so category, outcome, team and per-day were computed and thrown away.
+      // Category and outcome answer different questions and carry different columns, so they
+      // are two boards side by side rather than one shared shape.
+      + '<div class="pair">'
+      + board('clCat','Kwa aina / By category', 'what the calls were about', d.byCategory||[],
+          [col('category','Category'), col('calls','Calls','num'), col('duration','Talk time','dur'),
+           col('connected','Connected','num'),
+           {key:'connectRatio', label:'Connected %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }}],
+          sumRow(d.byCategory||[], ['calls','duration','connected']))
+      + board('clOut','Kwa matokeo / By outcome', 'what happened on the call', d.byOutcome||[],
+          [col('outcome','Outcome'), col('calls','Calls','num'), col('duration','Talk time','dur')],
+          sumRow(d.byOutcome||[], ['calls','duration']))
+      + '</div>'
+      + board('clTeam','Kwa timu / By team', 'portfolio vs non-portfolio per team', d.teams||[],
+          [col('team','Team'), col('calls','Calls','num'), col('duration','Talk time','dur'),
+           {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
+           col('nonPortfolio','Non-portfolio','num'),
+           {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }}],
+          sumRow(d.teams||[], ['calls','duration','portfolio','nonPortfolio']))
+      + board('clDay','Kwa siku / By day and officer', 'the daily record behind the totals', d.byDay||[],
+          [col('day','Date','date'), col('officer','Officer'), col('team','Team'),
+           col('calls','Calls','num'), col('dur','Talk time','dur'),
+           {key:'pf', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
+           col('npf','Non-portfolio','num')],
+          sumRow(d.byDay||[], ['calls','dur','pf','npf']));
     S.rows = d.users;
     S.cols = [col('name','Officer'), col('team','Team'), col('position','Position'), col('calls','Calls','num'),
-      col('duration','Talk time','dur'), col('expected','Expected','num'), col('defaulter','Defaulter','num'),
-      col('connected','Connected','num'), col('uniqCustomers','Customers','num'), col('days','Days','num')];
+      col('duration','Talk time','dur'),
+      {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
+      col('nonPortfolio','Non-portfolio','num'),
+      {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }},
+      col('expected','Expected','num'), col('defaulter','Defaulter','num'),
+      {key:'connectRatio', label:'Connected %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }},
+      col('uniqCustomers','Customers','num'), col('days','Days','num')];
     ONROW = null;
+    S.foot = money(t.calls)+' calls · '+fmtDur(t.duration)+' talk time · '
+      + money(t.portfolio)+' portfolio ('+Math.round(100*(t.ratio||0))+'%)';
   });
 };
 
