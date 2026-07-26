@@ -714,3 +714,28 @@ test('roles can be created, edited and safely deleted', async () => {
   await assert.rejects(() => portalApi(db, GMO, 'saveRole', { role: 'X', tabs: 'dashboard' }, NOW),
     e => e.status === 403);
 });
+
+test('leader reports roll teams up under each supervisor, not just per team', async () => {
+  const db = fakeDb(tables());
+  const d = await portalApi(db, ADMIN, 'leaderReports', {}, NOW);
+  const rec = d.sections.find(s => s.role === 'recovery');
+
+  // KONGOWE names JUMA G as recovery; MBAGALA names nobody. An unstaffed role is exactly
+  // what a leader report should surface, so it collects rather than disappearing.
+  const juma = rec.rows.find(r => r.leader === 'JUMA G');
+  assert.equal(juma.teams, 1);
+  assert.equal(juma.teamList, 'KONGOWE');
+  assert.equal(juma.initArrears, 1200);
+  assert.equal(juma.recovered, 300);
+  assert.equal(juma.progress, 25);
+  assert.equal(rec.rows.find(r => r.leader === '(unassigned)').teams, 1);
+  assert.equal(rec.unstaffed, 1);
+
+  // BOSS manages KONGOWE, so the SAME team appears again under the manager section.
+  const mgr = d.sections.find(s => s.role === 'manager');
+  assert.equal(mgr.rows.find(r => r.leader === 'BOSS').teamList, 'KONGOWE');
+
+  // Every section covers all the teams the viewer can see, so the totals agree across them.
+  for (const s of d.sections) assert.equal(s.totals.teams, d.totals.teams);
+  assert.equal(d.totals.recovered, 400);
+});

@@ -930,6 +930,52 @@ async function teamProgress(db, user, _args, nowMs) {
     note: paired ? null : `No matching initial ${wd} deck -- Recovered shows 0 rather than a whole-book figure.` };
 }
 
+/** Leader Reports. Per-team numbers answer "how is this team doing"; a leader report answers
+    "how is this PERSON doing" -- and most supervisors carry several teams, so their real
+    performance is the roll-up across all of them. The same teams therefore appear under a
+    different name in each section: one OPM's three teams, one GMO's five, and so on.
+
+    Teams with no one named in a role collect under "(unassigned)" rather than vanishing --
+    an unstaffed role is exactly the thing a leader report should make visible. */
+async function leaderReports(db, user, _args, nowMs) {
+  const tp = await teamProgress(db, user, {}, nowMs);
+  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+
+  const sections = TEAM_ROLE_COLS.map(roleCol => {
+    const by = {};
+    for (const r of tp.rows) {
+      const who = officerOf(teamBy, r.team, roleCol);
+      const b = bucket(by, who, { teams: 0, teamList: [], initArrears: 0, curArrears: 0,
+        recovered: 0, initCust: 0, curCust: 0, cleared: 0 });
+      b.teams++; b.teamList.push(r.team);
+      b.initArrears += r.initArrears; b.curArrears += r.curArrears;
+      b.recovered += r.recovered; b.initCust += r.initCust; b.curCust += r.curCust;
+      b.cleared += r.cleared;
+    }
+    const rows = Object.values(by).map(b => ({
+      leader: b.key, teams: b.teams, teamList: b.teamList.sort().join(', '),
+      initArrears: b.initArrears, curArrears: b.curArrears, recovered: b.recovered,
+      initCust: b.initCust, curCust: b.curCust, cleared: b.cleared,
+      progress: pctOf(b.recovered, b.initArrears),
+    })).sort((a, b) => b.recovered - a.recovered);
+    const sum = f => rows.reduce((s, r) => s + (r[f] || 0), 0);
+    return { role: roleCol, label: roleCol.toUpperCase(), rows,
+      totals: { teams: sum('teams'), initArrears: sum('initArrears'), curArrears: sum('curArrears'),
+        recovered: sum('recovered'), initCust: sum('initCust'), curCust: sum('curCust'),
+        cleared: sum('cleared'), progress: pctOf(sum('recovered'), sum('initArrears')) },
+      unstaffed: rows.filter(r => r.leader === '(unassigned)').reduce((s, r) => s + r.teams, 0) };
+  }).filter(s => s.rows.length);
+
+  return { weekday: tp.weekday, date: tp.date, paired: tp.paired, note: tp.note,
+    rows: tp.rows, sections,
+    totals: { teams: tp.rows.length,
+      initArrears: tp.rows.reduce((s, r) => s + r.initArrears, 0),
+      curArrears: tp.rows.reduce((s, r) => s + r.curArrears, 0),
+      recovered: tp.rows.reduce((s, r) => s + r.recovered, 0) } };
+}
+
 /** My Commission. Commission is earned by PEOPLE, not teams, and it comes from two separate
     jobs that pay on different rules:
 
@@ -1571,7 +1617,7 @@ const FN = {
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible,
   demandNotices, addDemandNotice, legalPreview, abnormal, received,
-  par, weekly, teamProgress, commission, commissionSave, assignments, credit,
+  par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   teams, saveRole, deleteRole, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,

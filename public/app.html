@@ -1238,15 +1238,33 @@ VIEWS.weekly = function(){
   });
 };
 
+/* Per-team numbers answer "how is this team doing". A leader report answers "how is this
+   PERSON doing" — and most supervisors carry several teams, so their real performance is the
+   roll-up across all of them. The same teams appear under a different name in each section. */
 VIEWS.reports = function(){
-  return srv('teamProgress').then(function(d){
+  return srv('leaderReports').then(function(d){
+    var t = d.totals;
     HEAD = (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
       + '<div class="kpis">'
-      + kpi('Teams', money(d.rows.length), d.weekday+' · '+(d.date||''))
-      + kpi('Initial arrears', money(d.rows.reduce(function(s,r){return s+r.initArrears;},0)))
-      + kpi('Current arrears', money(d.rows.reduce(function(s,r){return s+r.curArrears;},0)), null, 'bad')
-      + kpi('Recovered', money(d.rows.reduce(function(s,r){return s+r.recovered;},0)), null, 'good')
-      + '</div>';
+      + kpi('Teams', money(t.teams), d.weekday+' · '+(d.date||''))
+      + kpi('Initial arrears', money(t.initArrears))
+      + kpi('Current arrears', money(t.curArrears), null, 'bad')
+      + kpi('Recovered', money(t.recovered), null, 'good')
+      + '</div>'
+      + (d.sections||[]).map(function(sec){
+          return board('lr_'+sec.role, 'Kwa ' + sec.label + ' / By ' + sec.label,
+            money(sec.rows.length) + ' named · ' + money(sec.totals.teams) + ' teams'
+              + (sec.unstaffed ? ' · ' + money(sec.unstaffed) + ' with nobody named' : ''),
+            sec.rows,
+            [{key:'leader', label:sec.label, cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }},
+             col('teams','Teams','num'), col('teamList','Which teams'),
+             col('initArrears','Initial','money'), col('curArrears','Current','money'),
+             {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+             col('progress','Progress %','pct'), col('cleared','Cleared','num')],
+            {leader:'', teams:sec.totals.teams, teamList:'',
+             initArrears:sec.totals.initArrears, curArrears:sec.totals.curArrears,
+             recovered:sec.totals.recovered, progress:sec.totals.progress, cleared:sec.totals.cleared});
+        }).join('');
     S.rows = d.rows;
     S.cols = [col('team','Team'), col('recovery','Recovery officer'), col('gmo','GMO'), col('manager','Manager'),
       col('initArrears','Initial','money'), col('curArrears','Current','money'), col('recovered','Recovered','money'),
