@@ -74,6 +74,44 @@
   .r{text-align:right}
   th.sn,td.sn{width:1%;text-align:right;color:var(--soft);font-variant-numeric:tabular-nums;padding-right:6px}
   td.sn{font-size:11.5px}
+  /* weekday trend grids */
+  .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:12px 14px}
+  .tcell{background:var(--b50);border:1px solid var(--b100);border-radius:10px;padding:9px 10px;text-align:center}
+  .tcell.tot{background:var(--b900);border-color:var(--b900);color:#fff}
+  .tcell.tot .th,.tcell.tot .mutl{color:var(--b300)}
+  .tcell .th{font-size:11.5px;font-weight:800;letter-spacing:.03em;margin-bottom:4px}
+  .tcell .tl{font-size:12.5px;line-height:1.5}
+  .tcell .mutl{color:var(--mut);font-size:11px}
+  .tcell .badl{color:var(--bad);font-size:11px}
+  /* pipeline funnel */
+  .fun{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12.5px}
+  .fun .fl{width:150px;color:var(--mut);text-transform:capitalize}
+  .fun .fv{width:60px;text-align:right;font-weight:700}
+  .fun .fb{flex:1;height:8px;background:var(--b50);border-radius:99px;overflow:hidden}
+  .fun .fb i{display:block;height:100%;background:var(--b500)}
+  /* weekday pills + filters */
+  .pills{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .pills .pill{padding:7px 13px;border-radius:9px;border:1.5px solid var(--line);background:#fff;color:var(--mut);
+    font-weight:700;font-size:12.5px;cursor:pointer}
+  .pills .pill.on{background:var(--b700);border-color:var(--b700);color:#fff}
+  .pills select{padding:7px 10px;border:1.5px solid var(--line);border-radius:9px;background:#fff}
+  .tblfoot{padding:10px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--mut);background:var(--b50)}
+  a.tel{color:var(--b600);text-decoration:none}
+
+  /* dark mode -- one class on <body>, every colour comes from the variables above */
+  body.dark{--bg:#0B1120;--card:#131C2E;--line:#22304A;--ink:#E5EAF2;--mut:#8B9AB3;--soft:#64748B;
+    --b50:#16233C;--b100:#22304A;--b900:#060D1C;--b950:#040914;
+    --okbg:#12301F;--okline:#1D5136;--warnbg:#33260C;--warnline:#5C4517;--badbg:#3A1512;--badline:#6B2620}
+  body.dark input,body.dark select,body.dark textarea,body.dark .btn.ghost,body.dark .tcell{background:#0F1830;color:var(--ink)}
+  body.dark th{background:#101B31}
+  body.dark .menuBtn{background:#0F1830;color:var(--ink)}
+  body.dark #signin .box{background:var(--card)}
+  /* tips toast */
+  #tip{position:fixed;right:18px;bottom:18px;max-width:330px;background:var(--card);border:1px solid var(--line);
+    border-left:3px solid var(--b500);border-radius:12px;padding:12px 14px;font-size:12.5px;color:var(--ink);
+    box-shadow:0 14px 34px -18px rgba(8,28,74,.6);opacity:0;transform:translateY(12px);transition:all .3s ease;
+    pointer-events:none;z-index:70}
+  #tip.show{opacity:1;transform:none}
   .msg{padding:34px 18px;text-align:center;color:var(--mut);font-size:13px}
   .msg.bad{color:var(--bad)}
   .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--b50);color:var(--b600);border:1px solid var(--b100)}
@@ -154,7 +192,12 @@
       <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
       <input class="q" id="q" placeholder="Tafuta… / Search">
-      <button class="btn sm ghost" id="csvBtn" title="Download this table as CSV">CSV</button>
+      <button class="btn sm ghost" id="csvBtn" title="Download as CSV">CSV</button>
+      <button class="btn sm ghost" id="xlsBtn" title="Download as Excel">Excel</button>
+      <button class="btn sm ghost" id="jpgBtn" title="Save this screen as a picture">JPG</button>
+      <button class="btn sm ghost" id="langBtn" title="Lugha / Language">SW</button>
+      <button class="btn sm ghost" id="tipBtn" title="Vidokezo / Tips">&#128276;</button>
+      <button class="btn sm ghost" id="themeBtn" title="Dark mode">&#9789;</button>
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
     </div>
     <div class="body" id="view"></div>
@@ -162,6 +205,7 @@
 </div>
 
 <div class="scrim" id="scrim"></div>
+<div id="tip"></div>
 <div class="drawer-bg" id="drawerBg"><div class="drawer" id="drawer"></div></div>
 <div class="toast" id="toast"></div>
 
@@ -182,7 +226,9 @@ function toast(m, bad){ var t=$('#toast'); t.textContent=m; t.className='toast'+
 function today(){ var d=new Date(Date.now()+3*3600*1000); return d.toISOString().slice(0,10); }   // EAT
 function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
 
-var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true, args:{} };
+var WDFULL = { MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday' };
+var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true,
+          args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null };
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 function srv(fn, args){
@@ -262,7 +308,7 @@ function buildNav(){
   });
 }
 function go(view){
-  S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.args={};
+  S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.args={}; S.filters={}; S.foot='';
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
   var t = NAV.filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
@@ -275,6 +321,11 @@ function go(view){
 $('#q').addEventListener('input', function(){ S.q=this.value; paint(); });
 $('#refBtn').onclick = function(){ render(); };
 $('#csvBtn').onclick = function(){ exportCsv(); };
+$('#xlsBtn').onclick = function(){ exportXls(); };
+$('#jpgBtn').onclick = function(){ saveJpg(document.getElementById('view')); };
+$('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
+$('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
+$('#tipBtn').onclick = function(){ tipShow(); };
 $('#menuBtn').onclick = function(){ document.body.classList.toggle('navopen'); };
 $('#scrim').onclick = function(){ document.body.classList.remove('navopen'); };
 
@@ -285,6 +336,7 @@ function start(me){
   $('#meName').textContent = me.name;
   $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams');
   buildNav();
+  tipsStart();
   go('dashboard');
 }
 
@@ -306,15 +358,23 @@ function cellText(r, c){
 function cellHtml(r, c){
   var txt = cellText(r, c);
   if (c.kind==='chip') return txt ? '<span class="chip '+(c.chip? c.chip(r):'mut')+'">'+esc(txt)+'</span>' : '';
-  if (c.kind==='money'||c.kind==='pct'||c.kind==='num'||c.kind==='dur') return esc(txt);
+  // Phone numbers are dialable everywhere in v1 -- keep that, it is how officers actually work.
+  if (c.kind==='tel') return txt ? '<a class="tel" href="tel:'+esc(txt)+'" onclick="event.stopPropagation()">'+esc(txt)+'</a>' : '';
   return esc(txt);
 }
 function isNum(c){ return c.kind==='money'||c.kind==='num'||c.kind==='pct'||c.kind==='dur'; }
 
 function filtered(){
+  var rows = S.rows;
+  // Dropdown filters (team / status) narrow BEFORE the text search, so the footer totals and
+  // the CSV/Excel export always describe exactly what is on screen.
+  if (S.filters.team) rows = rows.filter(function(r){ return String(r.team||'')===S.filters.team; });
+  if (S.filters.status) rows = rows.filter(function(r){
+    return String(r.todays_status||'').trim().toUpperCase() === S.filters.status
+        || (!r.todays_status && S.filters.status === '(BLANK)'); });
   var q = S.q.trim().toUpperCase();
-  if (!q) return S.rows;
-  return S.rows.filter(function(r){
+  if (!q) return rows;
+  return rows.filter(function(r){
     for (var i=0;i<S.cols.length;i++){ if (cellText(r,S.cols[i]).toUpperCase().indexOf(q)>=0) return true; }
     return false;
   });
@@ -369,10 +429,111 @@ function exportCsv(){
   rows.forEach(function(r, i){
     lines.push('"'+(i+1)+'",' + S.cols.map(function(c){ return '"'+cellText(r,c).replace(/"/g,'""')+'"'; }).join(','));
   });
-  var blob = new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+  download(new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'}), S.view+'-'+today()+'.csv');
+}
+function download(blob, name){
   var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = S.view+'-'+today()+'.csv';
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 1500);
+}
+/* Excel: a real .xls workbook written as SpreadsheetML-flavoured HTML. Excel and WPS both
+   open it natively, it keeps numbers as numbers, and it needs no library -- which matters
+   because this has to work inside the Android WebView with no CDN. */
+function exportXls(){
+  if (!S.rows.length){ toast(t('nothing'), true); return; }
+  var rows = sorted(filtered());
+  function cell(v, numeric){
+    return '<td'+(numeric?' x:num':'')+'>'+esc(v)+'</td>';
+  }
+  var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+    + '<xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>'
+    + '<x:Name>'+esc(S.view)+'</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>1</x:SplitHorizontal>'
+    + '<x:TopRowBottomPane>1</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet>'
+    + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
+    + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+    + '</head><body><table><thead><tr><th>S/N</th>'
+    + S.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')
+    + '</tr></thead><tbody>'
+    + rows.map(function(r,i){
+        return '<tr>'+cell(i+1,true)+S.cols.map(function(c){
+          var raw = c.get ? c.get(r) : r[c.key];
+          return isNum(c) ? cell(Number(raw)||0, true) : cell(cellText(r,c), false);
+        }).join('')+'</tr>';
+      }).join('')
+    + '</tbody></table>' + (S.foot ? '<p>'+esc(S.foot)+'</p>' : '') + '</body></html>';
+  download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), S.view+'-'+today()+'.xls');
+}
+/* JPG: draws the element to a canvas by rasterising a cloned copy through an SVG
+   foreignObject -- no html2canvas, no CDN, so it works offline in the app. Falls back to a
+   clear message rather than a silent nothing if the browser refuses to taint-free render. */
+function saveJpg(el){
+  if (!el){ toast(t('nothing'), true); return; }
+  try {
+    var w = Math.min(el.scrollWidth, 1600), h = el.scrollHeight;
+    var clone = el.cloneNode(true);
+    Array.prototype.forEach.call(clone.querySelectorAll('button'), function(b){ b.remove(); });
+    var css = '';
+    Array.prototype.forEach.call(document.styleSheets, function(sh){
+      try { Array.prototype.forEach.call(sh.cssRules, function(r){ css += r.cssText; }); } catch(e){}
+    });
+    var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="'+document.body.className+'">'
+      + '<style>'+css+'</style><div style="background:var(--bg);padding:10px;width:'+w+'px">'
+      + clone.outerHTML + '</div></div>';
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+(h+24)+'">'
+      + '<foreignObject width="100%" height="100%">'+html+'</foreignObject></svg>';
+    var img = new Image();
+    img.onload = function(){
+      var cv = document.createElement('canvas');
+      cv.width = w; cv.height = h+24;
+      var ctx = cv.getContext('2d');
+      ctx.fillStyle = document.body.classList.contains('dark') ? '#0B1120' : '#F6F8FC';
+      ctx.fillRect(0,0,cv.width,cv.height);
+      ctx.drawImage(img,0,0);
+      cv.toBlob(function(b){
+        if (!b){ toast(t('jpgfail'), true); return; }
+        download(b, S.view+'-'+today()+'.jpg');
+      }, 'image/jpeg', 0.94);
+    };
+    img.onerror = function(){ toast(t('jpgfail'), true); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  } catch(e){ toast(t('jpgfail'), true); }
+}
+
+/* ---- language, theme, tips ---- */
+var STR = {
+  sw: { nothing:'Hakuna cha kupakua.', jpgfail:'Imeshindikana kutengeneza picha.', saved:'Imehifadhiwa.' },
+  en: { nothing:'Nothing to download.', jpgfail:'Could not build the picture.', saved:'Saved.' }
+};
+function t(k){ return (STR[S.lang] || STR.sw)[k] || k; }
+function applyLang(l){
+  S.lang = (l === 'en') ? 'en' : 'sw';
+  store('hopeLang', S.lang);
+  var b = $('#langBtn'); if (b) b.textContent = (S.lang === 'sw') ? 'SW' : 'EN';
+}
+function applyTheme(dark){
+  document.body.classList.toggle('dark', !!dark);
+  store('hopeTheme', dark ? 'dark' : 'light');
+  var b = $('#themeBtn'); if (b) b.innerHTML = dark ? '&#9788;' : '&#9789;';
+}
+function tipShow(){
+  if (!S.tips) return;
+  var byLang = S.tips[S.lang] || S.tips.en || S.tips.sw || {};
+  var pool = (byLang[S.view] || []).concat(byLang.all || []);
+  if (!pool.length) return;
+  var el = $('#tip');
+  el.textContent = pool[Math.floor(Math.random()*pool.length)];
+  el.classList.add('show');
+  clearTimeout(S.tipHide);
+  S.tipHide = setTimeout(function(){ el.classList.remove('show'); }, 7000);
+}
+function tipsStart(){
+  srv('hints').then(function(h){
+    S.tips = h.tips || {};
+    clearInterval(S.tipTimer);
+    setTimeout(tipShow, 3000);
+    S.tipTimer = setInterval(tipShow, 240000);
+  }).catch(function(){});
 }
 
 function kpi(l, v, s, cls){ return '<div class="kpi"><div class="l">'+esc(l)+'</div><div class="v'+(cls?' '+cls:'')+'">'+v+'</div>'
@@ -383,9 +544,12 @@ function bar(html){ return '<div class="bar">'+html+'</div>'; }
 var HEAD = '', ONROW = null;
 function paint(){
   var rows = sorted(filtered());
-  $('#view').innerHTML = HEAD + '<div class="card">'
-    + '<div class="card-h">Orodha / List<span class="sub">' + rows.length + ' / ' + S.rows.length + '</span></div>'
-    + tableHtml(rows, S.cols, ONROW) + '</div>';
+  $('#view').innerHTML = HEAD + '<div class="card" id="mainCard">'
+    + '<div class="card-h">Orodha / List<span class="sub">' + rows.length + ' / ' + S.rows.length
+    + ' <button class="btn sm ghost" data-jpg="mainCard">JPG</button></span></div>'
+    + tableHtml(rows, S.cols, ONROW)
+    + (S.foot ? '<div class="tblfoot">Showing '+rows.length+' of '+S.rows.length+' · '+esc(S.foot)+'</div>' : '')
+    + '</div>';
   wireTable(rows, ONROW);
   wireBar();
 }
@@ -394,6 +558,15 @@ function wireBar(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-arg]'), function(el){
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-wd]'), function(el){
+    el.onclick = function(){ S.args.weekday = el.getAttribute('data-wd'); render(); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-filter]'), function(el){
+    el.onchange = function(){ S.filters[el.getAttribute('data-filter')] = el.value; paint(); };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-jpg]'), function(el){
+    el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
+  });
 }
 function loading(){ $('#view').innerHTML = '<div class="sk"></div>'; }
 function failed(e){ $('#view').innerHTML = '<div class="msg bad">Imeshindikana: '+esc(String(e && e.message || e))+'</div>'; }
@@ -401,29 +574,78 @@ function failed(e){ $('#view').innerHTML = '<div class="msg bad">Imeshindikana: 
 /* ----------------------------------------------------------- per-tab renderers */
 var VIEWS = {};
 
+/* The dashboard the operation actually reads: five headline cards, the four weekday trend
+   grids, the pipeline funnel, then team performance with the leader names beside the
+   numbers -- a meeting asks "whose team is this?" before it asks "how much?". */
+function trendGrid(title, sub, id, cells, totalCell){
+  return '<div class="card" id="'+id+'"><div class="card-h">'+esc(title)
+    + '<span style="font-weight:400;color:var(--mut);font-size:12px">'+esc(sub||'')+'</span>'
+    + '<span class="sub"><button class="btn sm ghost" data-jpg="'+id+'">JPG</button></span></div>'
+    + '<div class="tgrid">' + cells.join('') + (totalCell||'') + '</div></div>';
+}
+function tcell(head, lines, cls){
+  return '<div class="tcell'+(cls?' '+cls:'')+'"><div class="th">'+esc(head)+'</div>'
+    + lines.map(function(l){ return '<div class="tl '+(l[1]||'')+'">'+l[0]+'</div>'; }).join('') + '</div>';
+}
+
 VIEWS.dashboard = function(){
-  return srv('dashboard').then(function(d){
-    var t=d.totals, rec=t.recovery||{};
+  return srv('dashboardFull').then(function(d){
+    var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
     HEAD = '<div class="kpis">'
-      + kpi('Expected customers', money(t.expectedCustomers), (d.period==='week'?'this week':'today')+' · '+d.asOfWeekday)
-      + kpi('Expected amount', money(t.expectedAmount))
-      + kpi('Collected', money(t.collected), null, 'good')
-      + kpi('Uncollected', money(t.uncollected), null, t.uncollected>0?'bad':'good')
-      + kpi('Recovery', rec.pct==null?'—':rec.pct+'%', money(rec.recovered)+' / '+money(rec.denominator)+' · '+(rec.basisLabel||''))
-      + kpi('Defaulters', money(t.defaulterCustomers), 'arrears '+money(t.defaulterArrears), 'bad')
-      + kpi('Sales (approved)', money(t.salesCount), 'this week · '+money(t.salesAmount))
-      + kpi('Received', money(t.receivedCount), money(t.receivedAmount), 'good')
+      + kpi('Current arrears', money(c.curArrears), 'initial upload: ' + money(c.initArrears))
+      + kpi('Recovered', money(c.recovered), 'initial − current · ' + money(c.cleared) + ' cleared', 'good')
+      + kpi('Defaulters', money(c.defaulters), 'of ' + money(c.defaultersInitial) + ' on the initial list')
+      + kpi('Sales this week', money(c.salesWeek),
+            (d.weeklyTarget>0 ? Math.round(1000*c.salesWeek/d.weeklyTarget)/10+'% of '+money(d.weeklyTarget)
+              +' weekly ('+d.teamCount+' teams) · ' : '') + money(c.salesLoans)+' loans this week')
+      + kpi('Abnormal payments', money(c.abnormal), 'TZS ' + money(c.abnormalAmount) + ' flagged', 'bad')
       + '</div>'
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
-      + '<div class="note" style="background:#fff;border-color:var(--line);color:var(--mut)">As of '+esc(d.dates.today)
-        + ' · expected snapshot(s): '+esc((d.dates.expected||[]).join(', ')||'—')
-        + ' · recovery denominator: '+esc((d.dates.recoveryDen||[]).join(', ')||'—')+'</div>';
-    S.rows = d.teams||[];
-    S.cols = [col('team','Team'), col('expectedAmount','Expected','money'), col('collected','Collected','money'),
-      col('uncollected','Uncollected','money'), col('recovered','Recovered','money'),
-      col('defaulterArrears','Arrears','money'), col('defaulterCustomers','Defaulters','num'),
-      col('receivedAmount','Received','money'), col('salesAmount','Sales','money')];
+      + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
+          d.appsTrend.map(function(x){ return tcell(x.weekday, [
+            ['U '+x.unassigned+' · A '+x.assigned, 'mutl'], ['<b>'+x.apps+' apps</b>'], ['TZS '+money(x.amount), 'mutl']]); }),
+          tcell('TOTAL', [
+            ['U '+d.appsTrend.reduce(function(s,x){return s+x.unassigned;},0)+' · A '+d.appsTrend.reduce(function(s,x){return s+x.assigned;},0), 'mutl'],
+            ['<b>'+d.appsTrend.reduce(function(s,x){return s+x.apps;},0)+' apps</b>'],
+            ['TZS '+money(d.appsTrend.reduce(function(s,x){return s+x.amount;},0)), 'mutl']], 'tot'))
+      + trendGrid('Sales trend (Mon–Fri)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
+          d.salesTrend.map(function(x){ return tcell(x.weekday, [
+            ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']]); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
+            [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
+            [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'))
+      + trendGrid('Weekly collection trend (Mon–Fri)', 'collected + expected per weekday', 'gCol',
+          d.colTrend.map(function(x){ return tcell(x.weekday, [
+            ['TZS '+money(x.collected)], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
+          tcell('TOTAL', [['TZS '+money(d.colTrend.reduce(function(s,x){return s+x.collected;},0))],
+            ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
+            ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
+      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % of that day’s uncollected', 'gRec',
+          d.recTrend.map(function(x){ return tcell(x.weekday, [
+            ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
+            [money(x.from)+' → '+money(x.to), 'mutl'],
+            [x.full ? '<span class="good">full recovery</span>' : (pct(x.pct)+' of uncol'), 'mutl']]); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
+            ['uncol TZS '+money(d.recTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'mutl'],
+            [pct((function(){var u=d.recTrend.reduce(function(s,x){return s+x.uncollected;},0),r=d.recTrend.reduce(function(s,x){return s+x.recovered;},0);return u>0?Math.round(1000*r/u)/10:null;})())+' of uncol', 'mutl']], 'tot'))
+      + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
+      + d.funnel.map(function(f){
+          var max = Math.max.apply(null, d.funnel.map(function(x){ return x.count; }).concat([1]));
+          return '<div class="fun"><span class="fl">'+esc(f.stage.replace(/_/g,' '))+'</span>'
+            + '<span class="fv">'+money(f.count)+'</span>'
+            + '<span class="fb"><i style="width:'+Math.round(100*f.count/max)+'%"></i></span></div>';
+        }).join('') + '</div></div>';
+    S.rows = d.teamPerf || [];
+    S.cols = [col('team','Team'), col('recovery','Recovery'), col('gmo','GMO'),
+      col('initArrears','Init arrears','money'), col('curArrears','Current','money'),
+      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+      col('sales','Sales','money'), col('salesPct','Sales %','pct'),
+      col('collPctToday','Coll % today','pct'), col('collPctEarly','Coll % early','pct'),
+      col('defaulters','Defaulters','num'),
+      {key:'abnormal', label:'ABN', kind:'num', cls:function(r){ return r.abnormal>0?'bad':''; }}];
     ONROW = null;
+    S.foot = 'Teams: '+money(d.teamCount)+' · Recovered: TZS '+money(c.recovered)
+      + ' · Sales: TZS '+money(c.salesWeek)+' · Uncollected today: TZS '+money(c.uncollectedToday);
   });
 };
 
@@ -446,25 +668,44 @@ VIEWS.apps = function(){
   });
 };
 
+/* Expected keeps its weekday pills: officers work Monday's list on Monday and are judged on
+   TOMORROW's for early collection, so "the latest snapshot" was never the right framing. */
 VIEWS.expected = function(){
+  var wd = S.args.weekday || '';
   var type = S.args.type || 'today';
-  return srv('expected', {type:type}).then(function(d){
+  return srv('expectedDay', {weekday:wd, type:type}).then(function(d){
+    S.args.weekday = d.weekday;
+    var t = d.totals;
     HEAD = '<div class="kpis">'
-      + kpi('Customers', money(d.count), d.date||'')
-      + kpi('Expected', money(d.totals.expected))
-      + kpi('Collected', money(d.totals.collected), null, 'good')
-      + kpi('Uncollected', money(d.totals.uncollected), null, 'bad')
-      + kpi('Collection %', pct(d.totals.pct))
+      + kpi('Expected ' + (WDFULL[d.weekday] || d.weekday), money(t.expected), money(t.installments) + ' installments')
+      + kpi('Collected', money(t.collected), 'PAID/OVERPAID = installment · UNDERPAID = expected − arrears', 'good')
+      + kpi('Uncollected', money(t.uncollected), money(t.unpaid)+' unpaid · '+money(t.underpaid)+' underpaid', 'bad')
+      + kpi('Collection', pct(t.pct), money(t.paid) + ' paid/overpaid')
       + '</div>'
-      + bar('<select data-arg="type">' + ['today','tomorrow','yesterday','initial'].map(function(t){
-          return '<option value="'+t+'"'+(t===type?' selected':'')+'>Expected '+t+'</option>'; }).join('') + '</select>'
-        + d.byStatus.map(function(s){ return '<span class="chip '+chipFor(s.status)+'">'+esc(s.status)+': '+s.count+'</span>'; }).join(''));
+      + '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">Leo ni <b>'
+        + esc(d.todayWeekday) + '</b>. Wakusanyaji wa mapema (early collection) wanapimwa kwa orodha ya <b>kesho</b>.'
+        + (d.fellBack ? ' <span class="bad">Orodha ya '+esc(d.weekday)+' haijapakiwa bado — inaonyesha ya '+esc(d.date||'—')+'.</span>' : '')
+        + '</div>'
+      + '<div class="pills">' + d.weekdays.map(function(w){
+          return '<button class="pill'+(w===d.weekday?' on':'')+'" data-wd="'+w+'">'+w
+            + (w===d.todayWeekday?' · leo':'') + '</button>'; }).join('')
+        + '<select data-arg="type" style="margin-left:auto">' + ['today','tomorrow','yesterday','initial'].map(function(x){
+            return '<option value="'+x+'"'+(x===type?' selected':'')+'>Expected '+x+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="team"><option value="">All teams</option>' + (d.teams||[]).map(function(x){
+            return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="status"><option value="">All statuses</option>' + (d.byStatus||[]).map(function(s){
+            return '<option value="'+esc(s.status)+'"'+(S.filters.status===s.status?' selected':'')+'>'+esc(s.status)+' ('+s.count+')</option>'; }).join('') + '</select>'
+        + '</div>';
     S.rows = d.rows;
-    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
-      col('payment_expected','Expected','money'), col('collected','Collected','money'), col('arrears','Arrears','money'),
+    S.cols = [col('ref','REF'), col('full_name','Fullname'),
+      {key:'contact', label:'Contact#', kind:'tel'}, col('team','Team'),
+      col('due_summary','Due summary'), col('initial_inst','Installment','money'),
+      col('payment_expected','Expected','money'), col('todays_payment','Paid','money'),
       {key:'todays_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.todays_status); }},
-      col('due_summary','D.S'), col('balance','Balance','money'), col('zone','Zone')];
-    ONROW = null;
+      col('arrears','Arrears','money'), col('balance','Balance','money'), col('zone','Zone')];
+    ONROW = openFollowup;
+    S.foot = 'Expected: TZS '+money(t.expected)+' · Collected: TZS '+money(t.collected)
+      + ' · Uncollected: TZS '+money(t.uncollected)+' · Collection: '+pct(t.pct);
   });
 };
 function chipFor(s){
@@ -737,15 +978,46 @@ VIEWS.credit = function(){
   });
 };
 
+/* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
+   report read these columns, so a reassignment has to be editable here, not re-uploaded. */
+var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
 VIEWS.teams = function(){
   return srv('teams').then(function(d){
-    HEAD = '<div class="kpis">' + kpi('Teams', money(d.rows.length)) + '</div>';
+    var staffed = {};
+    d.rows.forEach(function(r){ TEAM_ROLES.forEach(function(c){ if (r[c]) staffed[r[c]] = 1; }); });
+    HEAD = '<div class="kpis">' + kpi('Teams', money(d.rows.length))
+      + kpi('Supervisors named', money(Object.keys(staffed).length), 'across ' + TEAM_ROLES.length + ' roles') + '</div>'
+      + (S.me.can.admin ? bar('<button class="btn sm" id="newTeam">+ Timu mpya / New team</button>'
+          + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
     S.cols = [col('team','Team'), col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
       col('manager','Manager'), col('credit','Credit'), col('expected','Expected'), col('bike','Bike')];
-    ONROW = null;
+    ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
 };
+function teamForm(x){
+  var isNew = !x;
+  drawer('<h3>'+(isNew?'Timu mpya / New team':esc(x.team))+'</h3>'
+    + '<div class="sub">Wasimamizi hapa ndio wanaotumika kwenye ugawaji na ripoti zote. / These names drive assignment and every leader report.</div>'
+    + '<div class="fld"><label>Timu / Team</label><input id="tTeam" value="'+esc(x?x.team:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + TEAM_ROLES.map(function(c){
+        return '<div class="fld"><label>'+c.toUpperCase()+'</label><input id="t_'+c+'" value="'+esc(x&&x[c]?x[c]:'')+'"></div>';
+      }).join('')
+    + '<button class="btn w" id="tSave">Hifadhi / Save</button>'
+    + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="tDel">Futa timu / Delete team</button>'));
+  document.getElementById('tSave').onclick = function(){
+    var p = { team: document.getElementById('tTeam').value.trim() };
+    TEAM_ROLES.forEach(function(c){ p[c] = document.getElementById('t_'+c).value.trim(); });
+    srv('saveTeam', p).then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+  var del = document.getElementById('tDel');
+  if (del) del.onclick = function(){
+    if (!confirm('Futa timu '+x.team+'?\n\nDelete this team?')) return;
+    srv('deleteTeam', { team:x.team }).then(function(){ toast('Imefutwa.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
 
 VIEWS.settings = function(){
   return Promise.all([srv('settings'), srv('accessCodes'), srv('callUsers')]).then(function(r){
@@ -1078,6 +1350,9 @@ function settingForm(key, value){
 
 /* ----------------------------------------------------------- boot */
 (function(){
+  // Theme and language apply BEFORE anything renders, so there is no flash of the wrong one.
+  applyTheme(load('hopeTheme') === 'dark');
+  applyLang(load('hopeLang') || 'sw');
   var saved = load('hopeCode');
   if (!saved) return;
   S.code = saved;

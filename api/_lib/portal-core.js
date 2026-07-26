@@ -537,6 +537,7 @@ const FN = {
   restructures, addRestructure, decideRestructure,
   demandNotices, addDemandNotice, abnormal, received,
   par, weekly, teamProgress, commission, assignments, credit,
+  dashboardFull, expectedDay, saveTeam, deleteTeam, hints,
   teams, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
@@ -549,3 +550,246 @@ export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
 }
 
 export const PORTAL_FUNCTIONS = Object.keys(FN);
+
+/* =======================================================================================
+   THE v1 DASHBOARD, rebuilt on v2 data.
+
+   The generic KPI+table dashboard was not what the operation actually reads. The real one
+   is: five headline cards, four weekday trend grids (loan applications Mon-Sun, sales
+   Mon-Fri, collection Mon-Fri, recovery Mon-Sun), the loan pipeline funnel, and a team
+   performance table carrying the leader names beside the numbers -- because the meeting
+   asks "whose team is this?" before it asks "how much?".
+   ======================================================================================= */
+
+const WD5 = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+const WD7 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+
+/** Snapshot date of a given weekday inside the week containing nowMs. */
+function dateOfWeekday(nowMs, wd) { return addDaysKey(weekMondayKey(nowMs), WD7.indexOf(wd)); }
+
+async function settingNum(db, key, dflt) {
+  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
+  const n = parseInt(String((data && data.value) || '').replace(/[^0-9]/g, ''), 10);
+  return (!n || isNaN(n)) ? dflt : n;
+}
+
+async function dashboardFull(db, user, _args, nowMs) {
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
+  const wdToday = currentWeekday(nowMs);
+  const base = await buildDashboard(db, user, nowMs);
+
+  const [expWeek, defWeek, loansAll, abn, teamRows] = await Promise.all([
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, sun),
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
+    fetchAll(() => db.from('loans').select('*')),
+    fetchAll(() => db.from('abnormal_payments').select('team, paid')),
+    fetchAll(() => db.from('teams').select('*')),
+  ]);
+  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+
+  const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
+  const myLoans = scoped(user, loansAll), myAbn = scoped(user, abn);
+  const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
+  const dayRows = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
+
+  /* ---- loan applications per weekday: unassigned + assigned, by their own DATE column ---- */
+  const appsTrend = WD7.map((wd, i) => {
+    const d = addDaysKey(mon, i);
+    const on = myLoans.filter(l => String(l.created_at || '').slice(0, 10) === d);
+    const u = on.filter(l => l.stage === 'unassigned').length;
+    const a = on.filter(l => l.stage === 'assigned').length;
+    return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
+      amount: on.filter(l => l.stage === 'unassigned' || l.stage === 'assigned')
+        .reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
+  });
+
+  /* ---- sales trend Mon-Fri: approved principal per day against the daily target ---- */
+  const dailyTarget = Math.round(weeklyTarget * Math.max(myTeams.length, 1) / 5);
+  const salesTrend = WD5.map((wd, i) => {
+    const d = addDaysKey(mon, i);
+    const on = myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) === d);
+    const amt = on.reduce((s, l) => s + (num(l.principal_amt) || num(l.loan_amt)), 0);
+    return { weekday: wd, date: d, amount: amt, loans: on.length,
+      pct: dailyTarget > 0 ? Math.round((amt / dailyTarget) * 1000) / 10 : null };
+  });
+
+  /* ---- collection trend Mon-Fri: collected + uncollected per weekday ---- */
+  const colTrend = WD5.map((wd, i) => {
+    const d = addDaysKey(mon, i);
+    const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
+    const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
+    const col = rows.reduce((s, r) => s + collectedOf(r), 0);
+    return { weekday: wd, date: d, expected: exp, collected: col, uncollected: uncollectedOf(rows),
+      pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null };
+  });
+
+  /* ---- recovery trend Mon-Sun: each day's own initial - current, over that day's uncollected.
+          Sat/Sun have no collection baseline, so they read "full recovery" like v1. ---- */
+  const recTrend = WD7.map((wd, i) => {
+    const d = addDaysKey(mon, i);
+    const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial'));
+    const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current'));
+    const from = ini.reduce((s, r) => s + num(r.arrears), 0);
+    const to = cur.reduce((s, r) => s + num(r.arrears), 0);
+    const rec = (ini.length && cur.length) ? from - to : 0;
+    const unc = uncollectedOf(pickLatestBatchRows(dayRows(myExpWeek, d)));
+    return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
+      pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
+      full: i >= 5 && rec > 0 };
+  });
+
+  /* ---- pipeline funnel ---- */
+  const funnel = STAGES.map(st => ({ stage: st, count: myLoans.filter(l => l.stage === st).length }));
+
+  /* ---- team performance: numbers WITH the leader names beside them ---- */
+  const todayExp = pickLatestBatchRows(dayRows(myExpWeek, today));
+  const tomorrowSnap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today });
+  const earlyExp = scoped(user, tomorrowSnap.rows);
+  const iniToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'initial'));
+  const curToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'current'));
+  const pairedToday = !!(iniToday.length && curToday.length);
+
+  const T = {};
+  const slot = t => {
+    const k = t || '(no team)';
+    if (!T[k]) T[k] = { team: k, recovery: null, gmo: null, manager: null, opm: null, bike: null,
+      initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesPct: null,
+      expToday: 0, colToday: 0, collPctToday: null, expEarly: 0, colEarly: 0, collPctEarly: null,
+      defaulters: 0, abnormal: 0 };
+    return T[k];
+  };
+  for (const t of myTeams) {
+    const s = slot(t.team);
+    s.recovery = t.recovery || null; s.gmo = t.gmo || null; s.manager = t.manager || null;
+    s.opm = t.opm || null; s.bike = t.bike || null;
+  }
+  for (const r of iniToday) slot(r.team).initArrears += num(r.arrears);
+  for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears); s.defaulters += 1; }
+  for (const r of todayExp) { const s = slot(r.team); s.expToday += num(r.payment_expected); s.colToday += collectedOf(r); }
+  for (const r of earlyExp) { const s = slot(r.team); s.expEarly += num(r.payment_expected); s.colEarly += collectedOf(r); }
+  for (const l of myLoans) {
+    if (l.stage !== 'approved') continue;
+    const d = String(l.approved_date || '').slice(0, 10);
+    if (d < mon || d > sun) continue;
+    slot(l.team).sales += num(l.principal_amt) || num(l.loan_amt);
+  }
+  for (const a of myAbn) slot(a.team).abnormal += 1;
+
+  const teams = Object.values(T).map(s => ({
+    ...s,
+    recovered: pairedToday ? s.initArrears - s.curArrears : 0,
+    salesPct: weeklyTarget > 0 ? Math.round((s.sales / weeklyTarget) * 1000) / 10 : null,
+    collPctToday: s.expToday > 0 ? Math.round((s.colToday / s.expToday) * 1000) / 10 : null,
+    collPctEarly: s.expEarly > 0 ? Math.round((s.colEarly / s.expEarly) * 1000) / 10 : null,
+  })).sort((a, b) => b.curArrears - a.curArrears);
+
+  return {
+    ...base,
+    weekOf: mon, weekEnd: sun, weekday: wdToday, dailyTarget,
+    weeklyTarget: weeklyTarget * Math.max(myTeams.length, 1), teamCount: myTeams.length,
+    cards: {
+      curArrears: teams.reduce((s, t) => s + t.curArrears, 0),
+      initArrears: teams.reduce((s, t) => s + t.initArrears, 0),
+      recovered: teams.reduce((s, t) => s + t.recovered, 0),
+      defaulters: curToday.length,
+      defaultersInitial: iniToday.length,
+      cleared: Math.max(0, iniToday.length - curToday.length),
+      salesWeek: teams.reduce((s, t) => s + t.sales, 0),
+      salesLoans: myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
+      abnormal: myAbn.length,
+      abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
+      uncollectedToday: uncollectedOf(todayExp),
+    },
+    appsTrend, salesTrend, colTrend, recTrend, funnel,
+    teamPerf: teams,
+    paired: pairedToday,
+  };
+}
+/** Local copy of the batch rule for rows already fetched in bulk (one date at a time). */
+function pickLatestBatchRows(rows) {
+  if (!rows.length) return [];
+  let newest = rows[0];
+  for (const r of rows) if (String(r.created_at || '') > String(newest.created_at || '')) newest = r;
+  const win = newest.upload_batch || null;
+  return rows.filter(r => (r.upload_batch || null) === win);
+}
+
+/** Expected for ONE weekday of this week -- the Mon..Fri pills the officers actually use,
+    instead of only ever "the latest". Falls back to the latest snapshot when that weekday
+    has not been uploaded yet. */
+async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
+  // There are no weekend Expected sheets, so a Sat/Sun visit lands on FRIDAY -- the last
+  // working day that actually has a list -- instead of an empty day nobody uploads.
+  const asked = String(weekday || '').toUpperCase();
+  const wd = WD5.includes(asked) ? asked : (WD5.includes(currentWeekday(nowMs)) ? currentWeekday(nowMs) : 'FRI');
+  const date = dateOfWeekday(nowMs, wd);
+  let snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { onDate: date });
+  let fellBack = false;
+  if (!snap.rows.length) {
+    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs) });
+    fellBack = true;
+  }
+  const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r) }));
+  const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
+  const col = rows.reduce((s, r) => s + r.collected, 0);
+  const st = {};
+  for (const r of rows) { const k = K(r.todays_status) || '(BLANK)'; st[k] = (st[k] || 0) + 1; }
+  const teamsSeen = [...new Set(rows.map(r => r.team).filter(Boolean))].sort();
+  return {
+    weekday: wd, date: snap.date, requestedDate: date, fellBack, type,
+    weekdays: WD5, todayWeekday: currentWeekday(nowMs),
+    rows, count: rows.length, teams: teamsSeen,
+    totals: { expected: exp, collected: col, uncollected: uncollectedOf(rows),
+      pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null,
+      installments: rows.length,
+      paid: rows.filter(r => ['PAID', 'OVERPAID'].includes(K(r.todays_status))).length,
+      unpaid: rows.filter(r => K(r.todays_status) === 'UNPAID').length,
+      underpaid: rows.filter(r => K(r.todays_status) === 'UNDERPAID').length },
+    byStatus: Object.keys(st).sort().map(k => ({ status: k, count: st[k] })),
+  };
+}
+
+/* ---------------------------------------------------------------------------- teams & staff */
+/** The supervisory distribution is edited here, not re-uploaded: a team's Recovery/GMO/
+    Manager/OPM/Credit/Expected/Bike columns are exactly what the assignment rotation and
+    every leader report read, so a reassignment has to be a one-field edit. */
+async function saveTeam(db, user, p) {
+  requireAdmin(user);
+  const team = normTeamName(p && p.team);
+  if (!team) throw badRequest('team is required');
+  const row = { team };
+  for (const c of ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike']) {
+    if (p[c] !== undefined) row[c] = String(p[c] || '').trim() || null;
+  }
+  row.updated_at = new Date().toISOString();
+  const { error } = await db.from('teams').upsert(row, { onConflict: 'team' });
+  if (error) throw new Error(error.message);
+  return { team };
+}
+async function deleteTeam(db, user, p) {
+  requireAdmin(user);
+  const team = normTeamName(p && p.team);
+  if (!team) throw badRequest('team is required');
+  // Every snapshot, loan and call user references teams(team); deleting one with data would
+  // be refused by the database anyway, so say so in words the admin can act on.
+  const { data: used } = await db.from('loans').select('id').eq('team', team).limit(1);
+  if (used && used.length) throw badRequest(`Team ${team} still has loans attached -- reassign them first.`);
+  const { error } = await db.from('teams').delete().eq('team', team);
+  if (error) throw new Error(error.message);
+  return { team };
+}
+function normTeamName(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+
+/** Tips, from the Hints sheet: tab-scoped, bilingual, admin-editable without a deploy. */
+async function hints(db, user) {
+  const rows = await fetchAll(() => db.from('hints').select('*'));
+  const en = {}, sw = {};
+  for (const r of rows) {
+    const t = String(r.tab || '').trim().toLowerCase();
+    const m = String(r.message || '').trim(), s = String(r.sw_message || '').trim();
+    if (!t || (!m && !s)) continue;
+    (en[t] = en[t] || []).push(m || s);
+    (sw[t] = sw[t] || []).push(s || m);
+  }
+  return { tips: { en, sw } };
+}

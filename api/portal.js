@@ -1,5 +1,5 @@
 import { supabase } from './_lib/supabase.js';
-import { authCode, withApi } from './_lib/auth.js';
+import { authCode, withApi, resolveTabs } from './_lib/auth.js';
 import { portalApi } from './_lib/portal-core.js';
 
 // POST /api/portal   { code, fn, args }
@@ -13,6 +13,6 @@ export default withApi(async (req, res) => {
   // Merge the role's tabs in, exactly as /api/me does, so permission checks inside the
   // portal functions (settings, access codes) see the same tab list the UI gated on.
   const { data: roleRow } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
-  user.tabs = [...new Set([...(user.tabs || []), ...((roleRow && roleRow.tabs) || [])])];
+  user.tabs = resolveTabs(user, roleRow && roleRow.tabs);
   return portalApi(supabase, user, fn, args);
 });
