@@ -153,6 +153,14 @@
   .checks input,.chk input{width:auto;margin:0}
   .chk{margin:6px 0 10px}
   .clact{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  /* Complaint audit trail. Deliberately NOT .hist -- that class already styles the follow-up
+     comment history, and reusing it silently restyled both. */
+  .cxhist{margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+  .cxhist h4{margin:0 0 8px;font-size:11px;letter-spacing:.04em;color:var(--mut);text-transform:uppercase}
+  .cxhist .hrow{padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .cxhist .hrow:last-child{border-bottom:0}
+  .cxhist .hat{float:right;color:var(--mut);font-size:11px}
+  .cxhist .hnote{color:var(--mut);margin-top:2px;clear:both;font-size:12px}
   .btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
 
   /* drawer */
@@ -1300,18 +1308,35 @@ VIEWS.calls = function(){
 };
 
 VIEWS.complaints = function(){
-  return srv('complaints').then(function(d){
+  var from = S.args.from || '', to = S.args.to || '';
+  return srv('complaints', {from:from, to:to}).then(function(d){
+    S.cxMeta = d;
     HEAD = '<div class="kpis">'
-      + kpi('Complaints', money(d.count))
-      + kpi('Open', money(d.open), null, d.open?'bad':'good')
+      + kpi('Complaints in range', money(d.count), d.from+' → '+d.to)
+      + kpi('Open', money(d.open), 'not yet resolved', d.open?'bad':'good')
+      + kpi('Resolved', money(d.resolved), 'closed out', 'good')
+      + kpi('Logged today', money(d.loggedToday), 'received today')
       + '</div>'
-      + bar('<button class="btn sm" id="newComplaint">+ Malalamiko mapya / New complaint</button>');
+      + bar('<input type="date" data-arg="from" value="'+esc(d.from)+'">'
+        + '<input type="date" data-arg="to" value="'+esc(d.to)+'">'
+        + '<select data-filter="status"><option value="">All statuses</option>'
+        + d.statuses.map(function(s){
+            return '<option'+(S.filters.status===s?' selected':'')+'>'+esc(s)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="category"><option value="">All categories</option>'
+        + d.categories.map(function(s){
+            return '<option'+(S.filters.category===s?' selected':'')+'>'+esc(s)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="team"><option value="">All teams</option>'
+        + d.teams.map(function(s){
+            return '<option'+(S.filters.team===s?' selected':'')+'>'+esc(s)+'</option>'; }).join('') + '</select>'
+        + '<button class="btn sm" id="newComplaint">+ Malalamiko mapya / New complaint</button>');
     S.rows = d.rows;
-    S.cols = [col('created_at','Logged','dt'), col('complainant','Complainant'), col('team','Team'), col('ref','REF'),
-      col('phone','Phone'), col('category','Category'), col('channel','Channel'),
+    S.cols = [col('created_at','Date','dt'), col('complainant','Complainant'),
+      {key:'phone', label:'Phone', kind:'tel'}, col('ref','REF#'), col('team','Team'),
+      col('category','Category'), col('channel','Channel'),
       {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
-      col('details','Details'), col('logged_by','By'), col('resolution','Resolution')];
+      col('details','Details'), col('logged_by','Logged by'), col('resolution','Resolution')];
     ONROW = openComplaint;
+    S.foot = money(d.open)+' open · '+money(d.resolved)+' resolved';
   });
 };
 
@@ -1692,24 +1717,51 @@ function openFollowup(r){
   };
 }
 
+/* Every field stays correctable after the fact -- a register you cannot correct just gets
+   worked around on paper. The history under the form is the audit trail: who registered it,
+   who edited it, who closed it. */
 function openComplaint(r){
-  if (String(r.status||'').toUpperCase()==='RESOLVED' || String(r.status||'').toUpperCase()==='CLOSED'){
-    drawer('<h3>'+esc(r.complainant)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.category||'')+'</div>'
-      + '<div class="facts"><div class="frow"><span>Details</span><span>'+esc(r.details||'')+'</span></div>'
-      + '<div class="frow"><span>Resolution</span><span>'+esc(r.resolution||'')+'</span></div>'
-      + '<div class="frow"><span>Resolved by</span><span>'+esc(r.resolved_by||'')+'</span></div></div>');
-    return;
-  }
-  drawer('<h3>'+esc(r.complainant)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.category||'')+'</div>'
-    + '<div class="facts"><div class="frow"><span>Phone</span><span>'+esc(r.phone||'')+'</span></div>'
-    + '<div class="frow"><span>Details</span><span>'+esc(r.details||'')+'</span></div></div>'
-    + '<div class="fld"><label>Ufumbuzi / Resolution</label><textarea id="cRes" rows="3"></textarea></div>'
-    + '<button class="btn w" id="cSave">Funga malalamiko / Resolve</button>');
-  $('#cSave').onclick = function(){
-    srv('resolveComplaint', { id:r.id, resolution:$('#cRes').value.trim(), status:'Resolved' })
-      .then(function(){ toast('Imefungwa.'); closeDrawer(); render(); })
+  r = r || {};
+  var m = S.cxMeta || { categories:[], channels:[], statuses:['Open','In progress','Resolved'], teams:[] };
+  var opts = function(list, cur, blank){
+    return (blank ? '<option value="">— '+blank+' —</option>' : '')
+      + list.map(function(x){ return '<option'+(x===cur?' selected':'')+'>'+esc(x)+'</option>'; }).join('');
+  };
+  drawer('<h3>'+(r.id ? 'Badili / Edit complaint' : 'Sajili malalamiko / Register a complaint')+'</h3>'
+    + '<div class="sub">from a defaulter call, a walk-in, or any external party</div>'
+    + '<div class="fld"><label>Tarehe / Date</label><input id="cxDate" type="date" value="'
+      + esc(String(r.created_at||'').slice(0,10) || today())+'"></div>'
+    + '<div class="fld"><label>Mlalamikaji / Complainant *</label><input id="cxWho" value="'+esc(r.complainant||'')+'"></div>'
+    + '<div class="fld"><label>Simu / Phone</label><input id="cxPhone" inputmode="tel" value="'+esc(r.phone||'')+'"></div>'
+    + '<div class="fld"><label>REF# (kama ni mteja / if a customer)</label><input id="cxRef" value="'+esc(r.ref||'')+'"></div>'
+    + '<div class="fld"><label>Timu / Team</label><select id="cxTeam">'+opts(m.teams, r.team, 'none')+'</select></div>'
+    + '<div class="fld"><label>Aina / Category</label><select id="cxCat">'+opts(m.categories, r.category, 'none')+'</select></div>'
+    + '<div class="fld"><label>Njia / Channel</label><select id="cxChan">'+opts(m.channels, r.channel, 'none')+'</select></div>'
+    + '<div class="fld"><label>Hali / Status</label><select id="cxStatus">'+opts(m.statuses, r.status||'Open')+'</select></div>'
+    + '<div class="fld"><label>Maelezo / Details</label><textarea id="cxDetails" rows="3">'+esc(r.details||'')+'</textarea></div>'
+    + '<div class="fld"><label>Ufumbuzi / Resolution</label><textarea id="cxRes" rows="3">'+esc(r.resolution||'')+'</textarea></div>'
+    + '<button class="btn w" id="cxSave">Hifadhi / Save complaint</button>'
+    + (r.id ? '<div class="cxhist"><h4>Historia / History — who logged what</h4><div id="cxHist" class="sk"></div></div>' : ''));
+  $('#cxSave').onclick = function(){
+    var who = $('#cxWho').value.trim();
+    if (!who){ toast('Jina la mlalamikaji linahitajika. / Complainant name is required.', true); return; }
+    srv('saveComplaint', { id:r.id||'', date:$('#cxDate').value, complainant:who,
+      phone:$('#cxPhone').value.trim(), ref:$('#cxRef').value.trim(), team:$('#cxTeam').value,
+      category:$('#cxCat').value, channel:$('#cxChan').value, status:$('#cxStatus').value,
+      details:$('#cxDetails').value.trim(), resolution:$('#cxRes').value.trim() })
+      .then(function(){ toast('Imehifadhiwa. / Saved.'); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
+  if (r.id) srv('complaintLog', { id:r.id }).then(function(h){
+    var el = $('#cxHist'); if (!el) return;
+    el.className = '';
+    el.innerHTML = h.rows.length ? h.rows.map(function(x){
+      return '<div class="hrow"><b>'+esc(x.created_by||'—')+'</b> '+esc(x.action||'')
+        + (x.status ? ' → '+esc(x.status) : '')
+        + '<span class="hat">'+esc(String(x.created_at||'').replace('T',' ').slice(0,16))+'</span>'
+        + (x.note ? '<div class="hnote">'+esc(x.note)+'</div>' : '') + '</div>';
+    }).join('') : '<div class="hnote">Hakuna historia bado. / No history recorded yet.</div>';
+  }).catch(function(){ var el = $('#cxHist'); if (el){ el.className=''; el.innerHTML='<div class="hnote">History unavailable.</div>'; } });
 }
 
 function openRestructure(r){
@@ -1741,22 +1793,10 @@ function openRestructure(r){
 function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'</label><input id="'+id+'"'+(type?' type="'+type+'"':'')+'></div>'; }
 
 function wireForms(){
+  // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
+  // not be counted or filtered, and counting complaints by category is why the register exists.
   var nc = document.getElementById('newComplaint');
-  if (nc) nc.onclick = function(){
-    drawer('<h3>Malalamiko mapya / New complaint</h3><div class="sub">Yataonekana kwenye rejista mara moja.</div>'
-      + fldRow('xName','Mlalamikaji / Complainant') + fldRow('xPhone','Simu / Phone') + fldRow('xRef','REF (optional)')
-      + fldRow('xTeam','Timu / Team') + fldRow('xCat','Aina / Category') + fldRow('xChan','Njia / Channel')
-      + '<div class="fld"><label>Maelezo / Details</label><textarea id="xDet" rows="3"></textarea></div>'
-      + '<button class="btn w" id="xSave">Hifadhi / Save</button>');
-    document.getElementById('xSave').onclick = function(){
-      srv('addComplaint', { complainant:document.getElementById('xName').value.trim(), phone:document.getElementById('xPhone').value.trim(),
-        ref:document.getElementById('xRef').value.trim(), team:document.getElementById('xTeam').value.trim(),
-        category:document.getElementById('xCat').value.trim(), channel:document.getElementById('xChan').value.trim(),
-        details:document.getElementById('xDet').value.trim() })
-        .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
-        .catch(function(e){ toast(String(e.message||e), true); });
-    };
-  };
+  if (nc) nc.onclick = function(){ openComplaint(null); };
   var nr = document.getElementById('newRestructure');
   if (nr) nr.onclick = function(){
     drawer('<h3>Ombi la kupanga upya / Restructure request</h3><div class="sub">Litakuwa Pending hadi kiongozi aidhinishe.</div>'

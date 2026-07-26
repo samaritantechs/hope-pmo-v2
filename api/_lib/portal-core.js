@@ -291,30 +291,93 @@ async function listTable(db, user, table, order = 'created_at') {
   return { rows: mine, count: mine.length };
 }
 
-async function complaints(db, user) {
-  const r = await listTable(db, user, 'complaints');
-  const open = r.rows.filter(x => K(x.status) !== 'CLOSED' && K(x.status) !== 'RESOLVED').length;
-  return { ...r, open };
+/** The complaint register is an accountability record, so it is date-ranged like the rest of
+    the registers and carries its own controlled vocabularies -- a free-text category column
+    cannot be counted, and counting complaints by category is the entire point of keeping one. */
+const CX_CATEGORIES = ['Malipo / Payment', 'Riba / Interest', 'Mtaji / Principal', 'Afisa / Officer conduct',
+  'Muda / Turnaround', 'Simu / Phone or app', 'Nyingine / Other'];
+const CX_CHANNELS = ['Simu / Call', 'Ujumbe / SMS', 'WhatsApp', 'Ana kwa ana / Walk-in', 'Kiongozi / Via leader'];
+const CX_STATUSES = ['Open', 'In progress', 'Resolved'];
+const cxOpen = s => K(s) !== 'CLOSED' && K(s) !== 'RESOLVED';
+
+async function complaints(db, user, { from, to } = {}, nowMs) {
+  const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : addDaysKey(todayKey(nowMs), -30);
+  const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : todayKey(nowMs);
+  const all = await fetchAll(() => db.from('complaints').select('*').order('created_at', { ascending: false }));
+  const rows = scoped(user, all).filter(r => {
+    const d = dayOf(r.created_at);
+    return d >= fromKey && d <= toKey;
+  });
+  const today = todayKey(nowMs);
+  const teamRows = await fetchAll(() => db.from('teams').select('team'));
+  return { rows, count: rows.length, from: fromKey, to: toKey,
+    open: rows.filter(r => cxOpen(r.status)).length,
+    resolved: rows.filter(r => !cxOpen(r.status)).length,
+    loggedToday: rows.filter(r => dayOf(r.created_at) === today).length,
+    categories: CX_CATEGORIES, channels: CX_CHANNELS, statuses: CX_STATUSES,
+    teams: teamRows.map(t => t.team).filter(t => teamAllowed(user, t)).sort() };
 }
-async function addComplaint(db, user, p, nowMs) {
-  if (!p || !p.complainant) throw badRequest('A complainant name is required.');
-  const { data, error } = await db.from('complaints').insert({
-    ref: p.ref || null, team: p.team || null, complainant: p.complainant, phone: p.phone || null,
-    category: p.category || null, channel: p.channel || null, details: p.details || null,
-    status: 'Open', logged_by: user.name, created_at: new Date(nowMs).toISOString(),
-  }).select('*');
-  if (error) throw new Error(error.message);
-  return { row: (data && data[0]) || null };
+
+/** One saver for both new and existing complaints -- v1 let you correct any field afterwards,
+    and a register you cannot correct gets worked around on paper instead. Every save writes a
+    complaint_log row: the table existed from the start but nothing wrote to it, so the "who
+    changed this, and when" question the register exists to answer had no data behind it. */
+async function saveComplaint(db, user, p, nowMs) {
+  if (!p || !String(p.complainant || '').trim()) throw badRequest('A complainant name is required.');
+  if (p.team && !teamAllowed(user, p.team)) throw forbidden(`You do not have access to team ${p.team}.`);
+  const at = new Date(nowMs).toISOString();
+  const status = CX_STATUSES.includes(p.status) ? p.status : 'Open';
+  const fields = {
+    ref: p.ref || null, team: p.team || null, complainant: String(p.complainant).trim(),
+    phone: p.phone || null, category: p.category || null, channel: p.channel || null,
+    details: p.details || null, resolution: p.resolution || null, status,
+  };
+  let id = p.id || null, action;
+  if (id) {
+    const { data: prev } = await db.from('complaints').select('*').eq('id', id).maybeSingle();
+    if (!prev) throw badRequest('That complaint no longer exists.');
+    if (!teamAllowed(user, prev.team)) throw forbidden(`You do not have access to team ${prev.team}.`);
+    // Resolving is a distinct event from editing, and stamps who closed it.
+    if (!cxOpen(status) && cxOpen(prev.status)) { fields.resolved_by = user.name; fields.resolved_at = at; }
+    const { error } = await db.from('complaints').update(fields).eq('id', id);
+    if (error) throw new Error(error.message);
+    action = cxOpen(prev.status) && !cxOpen(status) ? 'resolved' : 'edited';
+  } else {
+    // created_at carries both the date and the time it came in. Back-dating a complaint should
+    // move the date; registering one today must NOT throw away the time of day, which stamping
+    // midnight did -- it also silently reordered the register against same-day entries.
+    const stamp = (p.date && p.date !== todayKey(nowMs)) ? p.date + 'T12:00:00Z' : at;
+    const { data, error } = await db.from('complaints').insert({
+      ...fields, logged_by: user.name, created_at: stamp,
+    }).select('*');
+    if (error) throw new Error(error.message);
+    id = data && data[0] && data[0].id;
+    action = 'registered';
+  }
+  const { error: lErr } = await db.from('complaint_log').insert({
+    complaint_id: id, team: fields.team, action, status,
+    note: fields.resolution || fields.details || null, created_by: user.name, created_at: at,
+  });
+  if (lErr) throw new Error(lErr.message);
+  return { id, action };
 }
+async function complaintLog(db, user, { id }) {
+  if (!id) throw badRequest('id is required');
+  const { data: cx } = await db.from('complaints').select('team').eq('id', id).maybeSingle();
+  if (cx && !teamAllowed(user, cx.team)) throw forbidden(`You do not have access to team ${cx.team}.`);
+  const rows = await fetchAll(() => db.from('complaint_log').select('*')
+    .eq('complaint_id', id).order('created_at', { ascending: false }));
+  return { rows, count: rows.length };
+}
+// Kept so an older cached page still resolves a complaint instead of erroring.
 async function resolveComplaint(db, user, p, nowMs) {
   if (!p || !p.id) throw badRequest('id is required');
-  const { error } = await db.from('complaints').update({
-    status: p.status || 'Resolved', resolution: p.resolution || null,
-    resolved_by: user.name, resolved_at: new Date(nowMs).toISOString(),
-  }).eq('id', p.id);
-  if (error) throw new Error(error.message);
-  return { id: p.id };
+  const { data: prev } = await db.from('complaints').select('*').eq('id', p.id).maybeSingle();
+  if (!prev) throw badRequest('That complaint no longer exists.');
+  return saveComplaint(db, user, { ...prev, id: p.id, status: p.status || 'Resolved',
+    resolution: p.resolution || null }, nowMs);
 }
+const addComplaint = saveComplaint;
 
 async function restructures(db, user) {
   const r = await listTable(db, user, 'restructures');
@@ -1124,7 +1187,7 @@ const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
   loans, loanPipeline, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
-  complaints, addComplaint, resolveComplaint,
+  complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint,
   restructures, addRestructure, decideRestructure,
   demandNotices, addDemandNotice, abnormal, received,
   par, weekly, teamProgress, commission, commissionSave, assignments, credit,

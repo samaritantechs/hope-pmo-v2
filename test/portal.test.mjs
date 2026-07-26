@@ -325,6 +325,7 @@ test('registers: complaints, restructures, notices, abnormal, received', async (
   assert.equal((await portalApi(db, ADMIN, 'complaints', {}, NOW)).count, 2);
   await portalApi(db, ADMIN, 'resolveComplaint', { id: 'k1', resolution: 'sorted' }, NOW);
   assert.equal((await portalApi(db, ADMIN, 'complaints', {}, NOW)).open, 1);
+  assert.equal((await portalApi(db, ADMIN, 'complaints', {}, NOW)).resolved, 1);
 
   const rs = await portalApi(db, ADMIN, 'restructures', {}, NOW);
   assert.equal(rs.pending, 1);
@@ -458,4 +459,50 @@ test('cleanup deletes only the chosen types for the chosen date', async () => {
     e => e.status === 400);
   await assert.rejects(() => portalApi(db, GMO, 'purgeSnapshots', { date: TODAY, types: ['expected'] }, NOW),
     e => e.status === 403);
+});
+
+test('every complaint save is written to the audit trail', async () => {
+  const db = fakeDb(tables());
+  // The complaint_log table existed from the start but nothing wrote to it, so "who changed
+  // this, and when" -- the question the register exists to answer -- had no data behind it.
+  const made = await portalApi(db, ADMIN, 'saveComplaint',
+    { complainant: 'MAMA D', team: 'KONGOWE', category: 'Malipo / Payment', details: 'hakupata risiti' }, NOW);
+  assert.equal(made.action, 'registered');
+
+  await portalApi(db, ADMIN, 'saveComplaint',
+    { id: made.id, complainant: 'MAMA D', team: 'KONGOWE', details: 'hakupata risiti mbili' }, NOW);
+  await portalApi(db, ADMIN, 'saveComplaint',
+    { id: made.id, complainant: 'MAMA D', team: 'KONGOWE', status: 'Resolved', resolution: 'risiti imetumwa' }, NOW);
+
+  const log = await portalApi(db, ADMIN, 'complaintLog', { id: made.id }, NOW);
+  assert.deepEqual(log.rows.map(r => r.action).sort(), ['edited', 'registered', 'resolved']);
+  assert.ok(log.rows.every(r => r.created_by === 'THE ADMIN'));
+
+  // Resolving stamps who closed it, and only on the transition.
+  const row = db._dump('complaints').find(r => r.id === made.id);
+  assert.equal(row.status, 'Resolved');
+  assert.equal(row.resolved_by, 'THE ADMIN');
+  assert.equal(row.complainant, 'MAMA D');
+});
+
+test('a complaint cannot be saved into, or read from, a team you cannot see', async () => {
+  const db = fakeDb(tables());
+  await assert.rejects(() => portalApi(db, GMO, 'saveComplaint',
+    { complainant: 'X', team: 'MBAGALA', details: 'y' }, NOW), e => e.status === 403);
+  const mine = await portalApi(db, GMO, 'saveComplaint',
+    { complainant: 'X', team: 'KONGOWE', details: 'y' }, NOW);
+  assert.ok(mine.id);
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveComplaint', { complainant: '  ' }, NOW),
+    e => e.status === 400);
+});
+
+test('complaints are date-ranged and carry their own vocabularies', async () => {
+  const db = fakeDb(tables());
+  const d = await portalApi(db, ADMIN, 'complaints', { from: TODAY, to: TODAY }, NOW);
+  assert.equal(d.count, 1);
+  assert.equal(d.loggedToday, 1);
+  assert.ok(d.categories.length && d.channels.length && d.statuses.includes('Resolved'));
+  // A window that excludes it returns nothing rather than everything.
+  const none = await portalApi(db, ADMIN, 'complaints', { from: MON, to: MON }, NOW);
+  assert.equal(none.count, 0);
 });
