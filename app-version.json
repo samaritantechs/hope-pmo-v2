@@ -1,6 +1,6 @@
 {
-  "versionCode": 3,
-  "versionName": "1.2",
-  "notes": "Portal ndani ya app: tabo zote, usimamizi wa watumiaji, na kujisasisha kiotomatiki. / Full portal in the app, user management, and automatic updates.",
+  "versionCode": 4,
+  "versionName": "1.3",
+  "notes": "Menyu upande wa kushoto, namba za mistari (S/N), na upau wa simu haufunikwi tena. / Left-side menu, row numbers, and the phone's status bar is no longer covered.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
