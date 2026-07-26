@@ -124,8 +124,23 @@ public class MainActivity extends Activity {
         web.loadUrl(startUrl());
     }
 
+    /**
+     * The saved override MUST NOT outlive the build that it was saved against. An install that
+     * once pointed itself at ".../call" (via the fallback screen, back when that was the app's
+     * whole job) kept loading the calls page straight after updating -- the launcher was in the
+     * APK but unreachable, so signing in appeared to "go directly to calls". An override is now
+     * stamped with the versionCode that saved it and is dropped when the app moves on; a stale
+     * ".../call" is additionally rewritten to the site root rather than simply discarded, so a
+     * genuinely different domain typed in the field survives the upgrade.
+     */
     private String startUrl() {
-        return prefs.getString("startUrl", BuildConfig.START_URL);
+        String saved = prefs.getString("startUrl", null);
+        if (saved == null) return BuildConfig.START_URL;
+        if (prefs.getInt("startUrlVersion", 0) >= BuildConfig.VERSION_CODE) return saved;
+        String migrated = saved.replaceAll("/call/?$", "/");
+        prefs.edit().putString("startUrl", migrated)
+                    .putInt("startUrlVersion", BuildConfig.VERSION_CODE).apply();
+        return migrated;
     }
 
     /**
@@ -156,7 +171,7 @@ public class MainActivity extends Activity {
     void setStartUrlFromBridge(String url) {
         String u = url == null ? "" : url.trim();
         if (!u.startsWith("http")) u = "https://" + u;
-        prefs.edit().putString("startUrl", u).apply();
+        prefs.edit().putString("startUrl", u).putInt("startUrlVersion", BuildConfig.VERSION_CODE).apply();
         final String go = u;
         runOnUiThread(() -> web.loadUrl(go));
     }
