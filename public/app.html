@@ -1609,9 +1609,14 @@ VIEWS.teams = function(){
     var staffed = {};
     d.rows.forEach(function(r){ TEAM_ROLES.forEach(function(c){ if (r[c]) staffed[r[c]] = 1; }); });
     S.roleMeta = d;
+    var noCode = d.rows.filter(function(r){ return !r.team_code; }).length;
     HEAD = '<div class="kpis">' + kpi('Teams', money(d.rows.length))
       + kpi('Supervisors named', money(Object.keys(staffed).length), 'across ' + TEAM_ROLES.length + ' roles')
-      + kpi('Roles', money((d.roles||[]).length), 'tab permissions per role') + '</div>'
+      + kpi('Roles', money((d.roles||[]).length), 'tab permissions per role')
+      + kpi('Bila msimbo / No code', money(noCode), 'officers cannot sign in', noCode?'bad':'good') + '</div>'
+      + '<div class="note">Msimbo wa timu ndio maafisa wanaingia nao. Ukibadilisha, simu zote za timu hiyo zinakatwa mara moja.'
+      + ' / The team code is what field officers sign in with. Changing it cuts every handset on that team immediately —'
+      + ' that is how you lock out someone who has left. To cut <b>one</b> person only, switch their account off in Settings.</div>'
       // A role's tab list was readable but not editable anywhere, so onboarding a new kind of
       // officer meant a trip to the SQL editor.
       + (S.me.can.admin
@@ -1628,7 +1633,12 @@ VIEWS.teams = function(){
       + (S.me.can.admin ? bar('<button class="btn sm" id="newTeam">+ Timu mpya / New team</button>'
           + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
-    S.cols = [col('team','Team'), col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
+    S.cols = [col('team','Team'),
+      // The code field officers sign in with. Shown in clear on purpose: the PMO reads it out
+      // over the phone, and changes it the moment it leaks.
+      {key:'team_code', label:'Msimbo / Code', cls:function(r){ return r.team_code?'':'bad'; },
+       get:function(r){ return r.team_code || 'HAKUNA / NONE'; }},
+      col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
       col('manager','Manager'), col('credit','Credit'), col('expected','Expected'), col('bike','Bike')];
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
@@ -1666,16 +1676,35 @@ function teamForm(x){
   drawer('<h3>'+(isNew?'Timu mpya / New team':esc(x.team))+'</h3>'
     + '<div class="sub">Wasimamizi hapa ndio wanaotumika kwenye ugawaji na ripoti zote. / These names drive assignment and every leader report.</div>'
     + '<div class="fld"><label>Timu / Team</label><input id="tTeam" value="'+esc(x?x.team:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + '<div class="fld"><label>Msimbo wa timu / Team code</label>'
+      + '<div style="display:flex;gap:8px"><input id="tCode" style="flex:1" value="'+esc(x&&x.team_code?x.team_code:'')+'">'
+      + '<button class="btn sm ghost" id="tGen" style="width:auto">Tengeneza / Generate</button></div>'
+      + '<div class="fldnote">Maafisa wa timu hii wanaingia nao. Ukiubadilisha, simu zao zote zinakatwa. / Field officers on this team sign in with this. Changing it releases every one of their handsets.</div></div>'
     + TEAM_ROLES.map(function(c){
         return '<div class="fld"><label>'+c.toUpperCase()+'</label><input id="t_'+c+'" value="'+esc(x&&x[c]?x[c]:'')+'"></div>';
       }).join('')
     + '<button class="btn w" id="tSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="tDel">Futa timu / Delete team</button>'));
+  // Generate fills the box so the code is visible BEFORE saving -- an admin has to be able to
+  // write it down or read it out, and a code that only appears after the drawer closes gets
+  // lost. Nothing is committed until Save.
+  document.getElementById('tGen').onclick = function(){
+    var A = '23456789ABCDEFGHJKMNPQRSTUVWXYZ', out = '';
+    var b = new Uint8Array(6);
+    (window.crypto || window.msCrypto).getRandomValues(b);
+    for (var i = 0; i < 6; i++) out += A[b[i] % A.length];
+    document.getElementById('tCode').value = out;
+  };
   document.getElementById('tSave').onclick = function(){
-    var p = { team: document.getElementById('tTeam').value.trim() };
+    var p = { team: document.getElementById('tTeam').value.trim(),
+              teamCode: document.getElementById('tCode').value.trim() };
     TEAM_ROLES.forEach(function(c){ p[c] = document.getElementById('t_'+c).value.trim(); });
-    srv('saveTeam', p).then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
-      .catch(function(e){ toast(String(e.message||e), true); });
+    srv('saveTeam', p).then(function(r){
+      toast(r.rotated
+        ? ('Msimbo umebadilishwa — simu ' + money(r.released) + ' zimekatwa. / Code changed, ' + money(r.released) + ' handset(s) released.')
+        : 'Imehifadhiwa. / Saved.');
+      closeDrawer(); render();
+    }).catch(function(e){ toast(String(e.message||e), true); });
   };
   var del = document.getElementById('tDel');
   if (del) del.onclick = function(){

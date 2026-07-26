@@ -18,8 +18,8 @@ const T1 = Date.parse('2026-07-24T05:00:00Z');    // this morning EAT -- calls s
 function makeTables() {
   return {
     teams: [
-      { team: 'KONGOWE', opm: null, recovery: 'ASHA JUMA', gmo: null, manager: 'BOB M', credit: null, expected: null, bike: null },
-      { team: 'MBAGALA', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null },
+      { team: 'KONGOWE', opm: null, recovery: 'ASHA JUMA', gmo: null, manager: 'BOB M', credit: null, expected: null, bike: null, team_code: 'KON123' },
+      { team: 'MBAGALA', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null, team_code: 'MBA456' },
     ],
     access_codes: [
       { code: 'LEAD1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] },
@@ -52,21 +52,13 @@ function makeTables() {
   };
 }
 
-// An officer can no longer conjure their own account: an ADMIN creates it against their
-// phone number and issues a passcode, and the officer signs in with the two together.
+// An officer signs in with their TEAM'S code. The code decides which team they get -- it is
+// not a team picker -- and their phone still decides who they are.
 const ADMIN_U = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
-async function issueAccount(db, { name, team, phone, leader }) {
-  const { portalApi } = await import('../api/_lib/portal-core.js');
-  const r = await portalApi(db, ADMIN_U, 'saveOfficerAccount',
-    { name, team, phone, isLeader: !!leader, issuePasscode: true }, NOW);
-  return r.passcode;
-}
 async function registeredDb() {
   const db = fakeDb(makeTables());
-  const pass = await issueAccount(db, { name: 'JUMA ISSA', team: 'KONGOWE', phone: '0712999999' });
-  await callApi(db, 'api_callRegister', ['d1', '', '', '', '0712999999', pass], NOW);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
-  db._pass = pass;
   return db;
 }
 
@@ -92,29 +84,28 @@ test('officer registration: boot resolves the device to the user', async () => {
   assert.deepEqual(d.today, { calls: 0, duration: 0, portfolio: 0 });
 });
 
-test('an officer cannot register without an account an admin created', async () => {
+test('an officer cannot register without their team code', async () => {
   const db = fakeDb(makeTables());
   // This is what the APK used to allow: a name, any team off the public list, and a phone.
   // It handed over that team's whole portfolio -- names, numbers, arrears, guarantors.
   await assert.rejects(() => callApi(db, 'api_callRegister', ['d9', 'X', 'KONGOWE', '', '0711111111'], NOW),
-    /passcode/i);
-  await assert.rejects(() => callApi(db, 'api_callRegister', ['d9', 'X', 'KONGOWE', '', '0711111111', 'GUESS-99'], NOW),
-    /do not match an account/);
-  // An admin creating the account with the wrong team is refused too.
-  await assert.rejects(() => issueAccount(db, { name: 'X', team: 'NOSUCH', phone: '0711111111' }),
-    /Unknown team/);
+    /team code/i);
+  await assert.rejects(() => callApi(db, 'api_callRegister', ['d9', 'X', '', '', '0711111111', 'WRONG9'], NOW),
+    /not correct/i);
+  // A name is still required -- the code says which team, the person says who they are.
+  await assert.rejects(() => callApi(db, 'api_callRegister', ['d9', '', '', '', '0711111111', 'KON123'], NOW),
+    /jina|name/i);
 });
 
-test('a wrong passcode is refused, and does not reveal whether the account exists', async () => {
-  const db = await registeredDb();
-  let unknownMsg = '', wrongMsg = '';
-  await callApi(db, 'api_callRegister', ['dz', '', '', '', '0700000000', 'AAAA-BBBB'], NOW)
-    .catch(e => { unknownMsg = e.message; });
-  await callApi(db, 'api_callRegister', ['dz', '', '', '', '0712999999', 'AAAA-BBBB'], NOW)
-    .catch(e => { wrongMsg = e.message; });
-  // Identical wording: telling them apart turns this into a way to enumerate staff phones.
-  assert.equal(unknownMsg, wrongMsg);
-  assert.match(wrongMsg, /do not match an account/);
+test('the team code decides the team -- a typed team name cannot override it', async () => {
+  const db = fakeDb(makeTables());
+  // Claiming MBAGALA while holding KONGOWE's code must land on KONGOWE, not MBAGALA.
+  await callApi(db, 'api_callRegister', ['dx', 'SNEAKY', 'MBAGALA', '', '0700000123', 'KON123'], NOW);
+  const row = db._dump('call_users').find(u => u.name === 'SNEAKY');
+  assert.equal(row.team, 'KONGOWE');
+  // Codes are matched loosely on case and punctuation -- they get read aloud over a phone.
+  await callApi(db, 'api_callRegister', ['dy', 'CASE TEST', '', '', '0700000124', ' kon-123 '], NOW);
+  assert.equal(db._dump('call_users').find(u => u.name === 'CASE TEST').team, 'KONGOWE');
 });
 
 test('leader registration pulls name and scope from the access code', async () => {
@@ -149,17 +140,12 @@ test('an ALL-teams admin sees every team in the lists', async () => {
   assert.deepEqual(d.rows.map(r => r.ref).sort(), ['111', '222', '333']);   // MBAGALA included
 });
 
-test('team names store in their canonical spelling (FK-safe)', async () => {
-  const db = fakeDb(makeTables());
-  await issueAccount(db, { name: 'CASE TEST', team: ' kongowe ', phone: '0766000111' });
-  const row = db._dump('call_users').find(u => u.name === 'CASE TEST');
-  assert.equal(row.team, 'KONGOWE');
-});
+
 
 test('same phone on a new device keeps ONE identity and releases the old device', async () => {
   const db = await registeredDb();
   const r1 = await callApi(db, 'api_callBoot', ['d1'], NOW);
-  await callApi(db, 'api_callRegister', ['d3', '', '', '', '0712999999', db._pass], NOW);
+  await callApi(db, 'api_callRegister', ['d3', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   const r3 = await callApi(db, 'api_callBoot', ['d3'], NOW);
   assert.equal(r3.userId, r1.userId);            // phone-keyed identity survived the device swap
   const old = await callApi(db, 'api_callBoot', ['d1'], NOW);
@@ -276,79 +262,58 @@ test('dsFmt: coerced M/d/yyyy dates render back as paid/target; real text passes
   assert.equal(dsFmt(''), '');
 });
 
-test('switching an account off cuts the live session, not just the next sign-in', async () => {
+
+
+
+
+test('rotating a team code cuts the handsets that had the old one', async () => {
   const db = await registeredDb();
   const { portalApi } = await import('../api/_lib/portal-core.js');
   assert.equal((await callApi(db, 'api_callBoot', ['d1'], NOW)).ok, true);
 
-  // An officer who walks out on Friday must not still be pulling the portfolio on Monday.
-  // Checking `active` only at registration would leave them working until they sign out --
-  // which they never do.
-  await portalApi(db, ADMIN_U, 'saveOfficerAccount',
-    { name: 'JUMA ISSA', team: 'KONGOWE', phone: '0712999999', active: false }, NOW);
+  // "Someone left -- change the code" has to actually lock them out, or nothing changed for
+  // whoever is holding that handset.
+  const r = await portalApi(db, ADMIN_U, 'saveTeam', { team: 'KONGOWE', teamCode: 'NEW777' }, NOW);
+  assert.equal(r.rotated, true);
+  assert.equal(r.released, 1);
 
   const after = await callApi(db, 'api_callBoot', ['d1'], NOW);
   assert.equal(after.ok, false);
   assert.equal(after.error, 'DEVICE_NOT_REGISTERED');
-  // Every scoped read goes through the same device lookup, so the whole surface is closed.
-  // These answer ok:false rather than throwing -- that is the signal the app re-registers on.
-  const list = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
-  assert.equal(list.ok, false);
-  assert.equal(list.error, 'DEVICE_NOT_REGISTERED');
-  assert.equal(list.rows, undefined, 'no customer rows leak alongside the refusal');
-  assert.equal((await callApi(db, 'api_callSync', ['d1', []], NOW)).ok, false);
-  assert.equal((await callApi(db, 'api_callReport', ['d1'], NOW)).ok, false);
-  // And they cannot sign back in, even with the passcode they still remember.
-  await assert.rejects(() => callApi(db, 'api_callRegister', ['d1', '', '', '', '0712999999', db._pass], NOW),
-    /switched off/);
+  await assert.rejects(() => callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW),
+    /not correct/i);
+  assert.equal((await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'NEW777'], NOW)).ok, true);
+
+  // The leader signed in with a portal access code, not the team code -- rotating must not
+  // knock them out alongside the field officers.
+  assert.equal((await callApi(db, 'api_callBoot', ['d2'], NOW)).ok, true);
 });
 
-test('re-issuing a passcode releases the phone that already had the old one', async () => {
+test('one officer can be cut without changing the whole team code', async () => {
   const db = await registeredDb();
   const { portalApi } = await import('../api/_lib/portal-core.js');
-  const old = db._pass;
+  await portalApi(db, ADMIN_U, 'saveOfficerAccount',
+    { name: 'JUMA ISSA', team: 'KONGOWE', phone: '0712999999', active: false }, NOW);
 
-  const r = await portalApi(db, ADMIN_U, 'saveOfficerAccount',
-    { name: 'JUMA ISSA', team: 'KONGOWE', phone: '0712999999', issuePasscode: true }, NOW);
-  assert.ok(r.passcode && r.passcode !== old);
-
-  // Re-issuing after a leak has to invalidate the session the leaked code already created,
-  // or nothing changes for whoever is holding that handset.
   assert.equal((await callApi(db, 'api_callBoot', ['d1'], NOW)).ok, false);
-  await assert.rejects(() => callApi(db, 'api_callRegister', ['d1', '', '', '', '0712999999', old], NOW),
-    /do not match an account/);
-  assert.equal((await callApi(db, 'api_callRegister', ['d1', '', '', '', '0712999999', r.passcode], NOW)).ok, true);
+  // And the still-valid team code does not let them back in.
+  await assert.rejects(() => callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW),
+    /switched off/i);
+  // A colleague on the same team is unaffected -- that is the point of cutting one person.
+  assert.equal((await callApi(db, 'api_callRegister', ['dq', 'OTHER OFFICER', '', '', '0712888888', 'KON123'], NOW)).ok, true);
 });
 
-test('registering never rewrites its own passcode, team or leader status', async () => {
-  const db = await registeredDb();
-  const before = db._dump('call_users').find(u => u.phone === '712999999');
-  // The phone sends a name, a team and even an is-leader hint; none of it may override the
-  // account, or an officer could re-register onto a richer team and keep their passcode.
-  await callApi(db, 'api_callRegister', ['d1', 'SOMEONE ELSE', 'MBAGALA', '', '0712999999', db._pass], NOW);
-  const after = db._dump('call_users').find(u => u.phone === '712999999');
-  assert.equal(after.name, 'JUMA ISSA');
-  assert.equal(after.team, 'KONGOWE');
-  assert.equal(after.is_leader, false);
-  assert.equal(after.passcode_hash, before.passcode_hash);
-  assert.equal(after.active, true);
-});
-
-test('an admin can never read a passcode back, only replace it', async () => {
+test('team codes must be unique and long enough to not be guessed', async () => {
   const db = await registeredDb();
   const { portalApi } = await import('../api/_lib/portal-core.js');
-  const list = await portalApi(db, ADMIN_U, 'officerAccounts', {}, NOW);
-  const row = list.rows.find(u => u.phone === '712999999');
-  assert.equal(row.hasPasscode, true);
-  assert.equal(row.active, true);
-  assert.equal(row.signedIn, true);
-  // The hash and salt must never leave the server, not even to an admin's browser.
-  assert.equal('passcode_hash' in row, false);
-  assert.equal('passcode_salt' in row, false);
-  assert.equal('passcode' in row, false);
-
-  const GMO_U = { code: 'G', name: 'A GMO', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
-  await assert.rejects(() => portalApi(db, GMO_U, 'officerAccounts', {}, NOW), e => e.status === 403);
-  await assert.rejects(() => portalApi(db, GMO_U, 'saveOfficerAccount',
-    { name: 'X', team: 'KONGOWE', phone: '0700000001', issuePasscode: true }, NOW), e => e.status === 403);
+  // Two teams on one code would silently put officers on the wrong book.
+  await assert.rejects(() => portalApi(db, ADMIN_U, 'saveTeam', { team: 'MBAGALA', teamCode: 'KON123' }, NOW),
+    e => e.status === 400 && /already used by team KONGOWE/.test(e.message));
+  await assert.rejects(() => portalApi(db, ADMIN_U, 'saveTeam', { team: 'MBAGALA', teamCode: 'AB' }, NOW),
+    e => e.status === 400 && /at least 4/.test(e.message));
+  // Generating one gives a code that actually works on the phone.
+  const g = await portalApi(db, ADMIN_U, 'saveTeam', { team: 'MBAGALA', generateCode: true }, NOW);
+  assert.ok(g.teamCode && g.teamCode.length >= 6);
+  assert.equal((await callApi(db, 'api_callRegister', ['dm', 'MB OFFICER', '', '', '0799000111', g.teamCode], NOW)).ok, true);
+  assert.equal(db._dump('call_users').find(u => u.name === 'MB OFFICER').team, 'MBAGALA');
 });
