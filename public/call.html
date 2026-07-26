@@ -171,9 +171,10 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     <div class="fld"><label>Namba ya simu / Phone number</label><input id="regPhone" placeholder="0712345678" type="tel">
       <div class="note">Ndiyo unayoingia nayo &#x2014; lazima iwe ile PMO aliyosajili. / This is your login: it must be the number your PMO officer registered.</div>
     </div>
-    <div class="fld" id="regPassWrap"><label>Nenosiri / Passcode</label>
-      <input id="regPass" placeholder="XXXX-XXXX" autocapitalize="characters" autocomplete="off">
-      <div class="note">Umepewa na afisa wa PMO. Jina na timu yako vinatoka kwenye akaunti yako. / Issued by your PMO officer. Your name and team come from your account.</div>
+    <div class="fld" id="regNameWrap"><label>Jina lako / Your name</label><input id="regName" placeholder="e.g. Juma Issa"></div>
+    <div class="fld" id="regPassWrap"><label>Msimbo wa timu / Team code</label>
+      <input id="regPass" placeholder="XXXXXX" autocapitalize="characters" autocomplete="off">
+      <div class="note">Umepewa na afisa wa PMO. Msimbo ndio unaonyesha timu yako &#x2014; hakuna haja ya kuichagua. / Issued by your PMO officer. The code identifies your team, so there is nothing to pick.</div>
     </div>
     <div class="fld hide" id="regCodeWrap"><label>Msimbo wa uongozi / Leader access code</label>
       <input id="regCode" placeholder="Enter your portal access code">
@@ -457,9 +458,10 @@ function doLogout(){
   $('#sheet').style.display = 'none';
   $('#confirmModal').style.display = 'none';
   var q = $('#listQ'); if (q) q.value = '';
-  $('#regPhone').value = ''; $('#regCode').value = ''; $('#regPass').value = '';
+  $('#regPhone').value = ''; $('#regCode').value = ''; $('#regPass').value = ''; $('#regName').value = '';
   regRole = 'officer';
   $all('.regToggleBtn').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-role')==='officer'); });
+  $('#regNameWrap').classList.remove('hide');
   $('#regPassWrap').classList.remove('hide');
   $('#regCodeWrap').classList.add('hide');
   $('#regErr').innerHTML = '';
@@ -481,6 +483,7 @@ $all('.regToggleBtn').forEach(function(b){
     $all('.regToggleBtn').forEach(function(x){ x.classList.toggle('on', x===b); });
     // Leaders never type their own name or pick a team -- both come from their access code,
     // same as the portal itself (Leaders sheet / access code owns that identity, not a form field).
+    $('#regNameWrap').classList.toggle('hide', regRole==='leader');
     $('#regPassWrap').classList.toggle('hide', regRole==='leader');
     $('#regCodeWrap').classList.toggle('hide', regRole==='officer');
   };
@@ -489,13 +492,15 @@ $('#regBtn').onclick = function(){
   // Name and team are no longer typed by the officer -- they come from the account the PMO
   // created. Typing them was how anyone with the APK gave themselves a team's portfolio.
   var phone = $('#regPhone').value.trim();
+  var name = regRole === 'officer' ? $('#regName').value.trim() : '';
   var pass = regRole === 'officer' ? $('#regPass').value.trim() : '';
   var code = regRole === 'leader' ? $('#regCode').value.trim() : '';
   if (!phone){ $('#regErr').innerHTML = '<div class="err">Andika namba yako ya simu.</div>'; return; }
-  if (regRole === 'officer' && !pass){ $('#regErr').innerHTML = '<div class="err">Weka nenosiri ulilopewa na PMO.</div>'; return; }
+  if (regRole === 'officer' && !name){ $('#regErr').innerHTML = '<div class="err">Andika jina lako.</div>'; return; }
+  if (regRole === 'officer' && !pass){ $('#regErr').innerHTML = '<div class="err">Weka msimbo wa timu yako.</div>'; return; }
   if (regRole === 'leader' && !code){ $('#regErr').innerHTML = '<div class="err">Weka msimbo wako wa uongozi.</div>'; return; }
   $('#regBtn').disabled = true; $('#regBtn').textContent = 'Inajiunga\u2026';
-  srv('api_callRegister', DEV, '', '', code, phone, pass).then(function(){
+  srv('api_callRegister', DEV, name, '', code, phone, pass).then(function(){
     return srv('api_callBoot', DEV);
   }).then(function(d){
     if (d.ok) { try { localStorage.removeItem('hcLoggedOut'); } catch(e){} return enterApp(d); }

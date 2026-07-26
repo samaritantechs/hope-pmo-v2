@@ -1936,6 +1936,9 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
 /** The supervisory distribution is edited here, not re-uploaded: a team's Recovery/GMO/
     Manager/OPM/Credit/Expected/Bike columns are exactly what the assignment rotation and
     every leader report read, so a reassignment has to be a one-field edit. */
+/** The team code is what field officers sign in with. It is editable in plain text on
+    purpose: the PMO has to read it out over the phone, and change it the moment it leaks. */
+const codeKeyOf = v => K(v).replace(/[^0-9A-Z]/g, '');
 async function saveTeam(db, user, p) {
   requireAdmin(user);
   const team = normTeamName(p && p.team);
@@ -1944,10 +1947,41 @@ async function saveTeam(db, user, p) {
   for (const c of ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike']) {
     if (p[c] !== undefined) row[c] = String(p[c] || '').trim() || null;
   }
+  const existing = (await fetchAll(() => db.from('teams').select('*'))) || [];
+  const mine = existing.find(t => K(t.team) === K(team));
+  if (p.generateCode) {
+    row.team_code = generatePasscode(6).replace('-', '');
+  } else if (p.teamCode !== undefined) {
+    const code = String(p.teamCode || '').trim();
+    if (code && codeKeyOf(code).length < 4) {
+      throw badRequest('A team code needs at least 4 characters — a short one gets guessed.');
+    }
+    row.team_code = code || null;
+  }
+  // Two teams sharing a code would silently put officers on the wrong book.
+  if (row.team_code) {
+    const clash = existing.find(t => K(t.team) !== K(team) && codeKeyOf(t.team_code) === codeKeyOf(row.team_code));
+    if (clash) throw badRequest(`That code is already used by team ${clash.team}.`);
+  }
+  // Changing a code is how "someone left, lock them out" is done, so it has to cut the
+  // handsets that were signed in on the old one -- otherwise nothing actually changes.
+  const rotated = row.team_code !== undefined && mine && codeKeyOf(mine.team_code) !== codeKeyOf(row.team_code);
   row.updated_at = new Date().toISOString();
   const { error } = await db.from('teams').upsert(row, { onConflict: 'team' });
   if (error) throw new Error(error.message);
-  return { team };
+  let released = 0;
+  if (rotated) {
+    const users = await fetchAll(() => db.from('call_users').select('user_id, team, device_id, is_leader'));
+    // Leaders sign in with a portal access code, not the team code, so rotating must not
+    // knock them out along with the field officers.
+    const hit = users.filter(u => K(u.team) === K(team) && u.device_id && !u.is_leader);
+    for (const u of hit) {
+      const { error: e } = await db.from('call_users').update({ device_id: null }).eq('user_id', u.user_id);
+      if (e) throw new Error(e.message);
+    }
+    released = hit.length;
+  }
+  return { team, teamCode: row.team_code, rotated: !!rotated, released };
 }
 async function deleteTeam(db, user, p) {
   requireAdmin(user);

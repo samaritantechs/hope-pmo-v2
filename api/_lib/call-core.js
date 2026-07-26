@@ -1,5 +1,4 @@
 import { fetchAll } from './supabase.js';
-import { verifyPasscode } from './passcode.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot } from './snapshots.js';
@@ -144,26 +143,28 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
     team = teams.find(t => K(t) === K(home)) || null;
     name = u.name || name;
   } else {
-    // An officer signs in against an account an ADMIN created for them, identified by their
-    // phone number and proved with a passcode. Before this, anyone holding the APK could type
-    // any name, pick any team off the public list, and be handed that team's whole portfolio.
+    // An officer signs in with their TEAM'S CODE. Before this, anyone holding the APK could
+    // type any name, pick any team off the public list, and be handed that team's whole
+    // portfolio -- no code at all.
+    //
+    // The code decides which team they get; it is NOT a team picker, so the team list is
+    // never published to a handset that has not signed in. Identity still comes from the
+    // phone number, so a shared code does not mean a shared identity: call attribution,
+    // watermarks and per-officer reports keep working per person.
     const pass = String(passcode == null ? '' : passcode).trim();
-    if (!pass) throw new Error('Enter the passcode your PMO officer gave you.');
-    const { data: acct } = await db.from('call_users').select('*').eq('phone', phoneD).maybeSingle();
-    // One message for "no such account" and "wrong passcode": telling them apart turns this
-    // into a way to find out which staff phone numbers are registered.
-    const bad = () => new Error('That phone number and passcode do not match an account. Ask your PMO officer.');
-    if (!acct) throw bad();
-    if (acct.active === false) throw new Error('That account has been switched off. Ask your PMO officer.');
-    if (!verifyPasscode(pass, acct.passcode_hash, acct.passcode_salt)) throw bad();
-    // Name, team and role come from the ACCOUNT, never from what the phone typed -- otherwise
-    // an officer could re-register onto a richer team and keep their own passcode.
-    name = acct.name || name;
-    team = acct.team || null;
-    role = acct.role || 'OFFICER';
-    leader = !!acct.is_leader;
-    leaderTeams = acct.leader_teams && acct.leader_teams.length ? acct.leader_teams : null;
-    if (!team && !leader) throw new Error('That account has no team set. Ask your PMO officer.');
+    if (!pass) throw new Error('Weka msimbo wa timu yako. / Enter your team code.');
+    const codeKey = K(pass).replace(/[^0-9A-Z]/g, '');
+    const teamRows = await fetchAll(() => db.from('teams').select('*'));
+    const match = teamRows.find(t => K(t.team_code || '').replace(/[^0-9A-Z]/g, '') === codeKey && codeKey);
+    if (!match) throw new Error('Msimbo wa timu si sahihi. / That team code is not correct. Ask your PMO officer.');
+    if (!name) throw new Error('Andika jina lako. / Enter your name.');
+    team = match.team;
+    role = 'OFFICER';
+
+    // An officer an admin switched off cannot walk back in on the team code -- that is what
+    // "cut this ONE person without changing everyone's code" has to mean.
+    const { data: acct } = await db.from('call_users').select('active').eq('phone', phoneD).maybeSingle();
+    if (acct && acct.active === false) throw new Error('Akaunti yako imezimwa. / Your account has been switched off. Ask your PMO officer.');
   }
   if (!name) throw new Error('Could not find a name on file for that access code.');
   const uid = 'U' + h36(phoneD);
