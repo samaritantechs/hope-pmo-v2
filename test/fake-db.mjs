@@ -5,6 +5,7 @@
 const PAGE_CAP = 1000;
 
 class FakeQuery {
+  static _seq = 0;
   constructor(table) { this.table = table; this.filters = []; this.ord = null; this.lim = null; this.rng = null; this.single = false; this.mode = 'select'; this.payload = null; this.opts = null; this.wantRows = false; }
   select() { if (this.mode !== 'select') this.wantRows = true; return this; }
   eq(k, v) { this.filters.push(r => String(r[k]) === String(v)); return this; }
@@ -23,8 +24,12 @@ class FakeQuery {
   _exec() {
     const rows = this.table.rows;
     if (this.mode === 'insert') {
-      for (const r of this.payload) rows.push({ ...r });
-      return { data: this.wantRows ? this.payload.map(r => ({ ...r })) : null, error: null };
+      // Postgres fills `id` from `default gen_random_uuid()`, and code that inserts a parent
+      // then writes a child row keyed on the returned id depends on getting one back. Without
+      // this the fake handed back an undefined id and that whole path was untestable.
+      const made = this.payload.map(r => (r.id == null ? { ...r, id: 'gen-' + (++FakeQuery._seq) } : { ...r }));
+      for (const r of made) rows.push({ ...r });
+      return { data: this.wantRows ? made.map(r => ({ ...r })) : null, error: null };
     }
     if (this.mode === 'upsert') {
       const key = this.opts.onConflict || 'id';
