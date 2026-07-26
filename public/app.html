@@ -141,6 +141,19 @@
   .bar select,.bar input{padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;background:#fff}
   .bar select:focus,.bar input:focus{outline:none;border-color:var(--b500)}
   .note{padding:10px 13px;border:1px solid var(--warnline);background:var(--warnbg);color:var(--warn);border-radius:10px;font-size:12.5px;margin-bottom:12px}
+  .note.bad{border-color:var(--badline);background:var(--badbg);color:var(--bad)}
+
+  /* commission rate editor + report cleanup: forms that live INSIDE a card, not a drawer,
+     because typing a rate and watching the numbers move is the whole point of both. */
+  .cmsrates,.cleanbox{padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+  .cmsrates{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 14px;align-items:end}
+  .cmsrates .note,.cleanbox .note{grid-column:1/-1;margin:0}
+  .checks{display:flex;flex-wrap:wrap;gap:6px 16px}
+  .checks label,.chk{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink)}
+  .checks input,.chk input{width:auto;margin:0}
+  .chk{margin:6px 0 10px}
+  .clact{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
 
   /* drawer */
   .drawer-bg{position:fixed;inset:0;background:rgba(8,17,34,.45);display:none;z-index:60;align-items:flex-end;justify-content:center}
@@ -385,6 +398,12 @@ function filtered(){
   if (S.filters.status) rows = rows.filter(function(r){
     return String(r.todays_status||'').trim().toUpperCase() === S.filters.status
         || (!r.todays_status && S.filters.status === '(BLANK)'); });
+  // Any other data-filter="x" narrows on the row property of the same name, so a tab can add
+  // a dropdown (analyst, state, officer, follow-up status) without touching this function.
+  Object.keys(S.filters).forEach(function(k){
+    if (k==='team' || k==='status' || !S.filters[k]) return;
+    rows = rows.filter(function(r){ return String(r[k]==null?'':r[k]).trim() === S.filters[k]; });
+  });
   var q = S.q.trim().toUpperCase();
   if (!q) return rows;
   return rows.filter(function(r){
@@ -593,6 +612,57 @@ function wireBar(){
     el.onclick = function(e){ e.stopPropagation(); var id = el.getAttribute('data-csv');
       if (id === 'mainCard') exportCsv(); else exportBoard(id, 'csv'); };
   });
+  // Expected Defaulters' weekday tabs -- the customer set changes, so this re-renders.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-day]'), function(el){
+    el.onclick = function(){ S.args.day = Number(el.getAttribute('data-day')); render(); };
+  });
+  var cmSave = document.getElementById('cmSave');
+  if (cmSave) cmSave.onclick = function(){
+    srv('commissionSave', { mode: $('#cmMode').value, yearRates: $('#cmYear').value,
+      statusRates: $('#cmStatus').value, paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value })
+      .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
+      .catch(function(e){ toast(String(e.message || e), true); });
+  };
+  wireClean();
+}
+/* Cleaning old reports deletes a DAY OF HISTORY, so the flow is deliberately two-step: Check
+   counts the rows without touching anything, Clean asks once more and names the number. */
+function wireClean(){
+  var run = document.getElementById('clRun'), chk = document.getElementById('clCheck');
+  if (!run && !chk) return;
+  var chosen = function(){
+    return Array.prototype.filter.call(document.querySelectorAll('.clType'), function(c){ return c.checked; })
+      .map(function(c){ return c.value; });
+  };
+  var out = document.getElementById('clOut');
+  var say = function(html, bad){ out.style.display='block'; out.className = 'note'+(bad?' bad':''); out.innerHTML = html; };
+  var call = function(dryRun){
+    var types = chosen();
+    if (!types.length){ say('Chagua angalau aina moja ya ripoti. / Choose at least one report type.', true); return; }
+    var date = document.getElementById('clDate').value;
+    var through = document.getElementById('clThrough').checked;
+    srv('purgeSnapshots', { date: date, types: types, through: through, dryRun: dryRun })
+      .then(function(r){
+        var detail = Object.keys(r.deleted).map(function(k){ return k+': '+money(r.deleted[k]); }).join(' · ');
+        if (dryRun){
+          say('<b>'+money(r.total)+'</b> rows would be deleted for <b>'+esc(r.date)+'</b>'
+            + (r.through?' and everything before it':'') + '.<br>'+esc(detail));
+        } else {
+          say('<b>'+money(r.total)+'</b> rows deleted. '+esc(detail));
+          S.storage = null; render();
+        }
+      })
+      .catch(function(e){ say(esc(String(e.message || e)), true); });
+  };
+  if (chk) chk.onclick = function(){ call(true); };
+  if (run) run.onclick = function(){
+    var types = chosen(), date = document.getElementById('clDate').value;
+    var through = document.getElementById('clThrough').checked;
+    if (!types.length){ say('Chagua angalau aina moja ya ripoti. / Choose at least one report type.', true); return; }
+    if (!confirm('Futa ' + types.join(', ') + ' ya ' + date
+      + (through ? ' na zote za kabla yake' : '') + '?\n\nHistoria ya siku hiyo itapotea. / That day’s history will be gone.')) return;
+    call(false);
+  };
 }
 function exportBoard(id, kind){
   var b = BOARDS[id];
@@ -801,23 +871,64 @@ function chipFor(s){
   return 'mut';
 }
 
+/* Expected Defaulters is a WEEKLY CYCLE, not a one-day list. Each customer is visited twice:
+   on the weekday their loan was disbursed (Day 1) and three days later (Day 2), with Sunday
+   rolled onto Monday. Hence the Mon–Sat day tabs — a customer appears under two of the six. */
 VIEWS.defexp = function(){
   return srv('expectedDefaulters').then(function(d){
+    // 0 is a real selection (the "no disbursement date" bucket), so it must not be treated
+    // as "nothing chosen" -- `||` would silently bounce the user back to today's tab.
+    var day = (S.args.day == null || S.args.day === '') ? Number(d.todayIndex || 1) : Number(S.args.day);
+    S.args.day = day;
+    var names = d.dayNames || ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    // Day 0 is the "no disbursement date" bucket -- those customers cannot be placed on a
+    // weekday, and they must still be reachable rather than quietly missing.
+    var onDay = d.rows.filter(function(r){
+      return day===0 ? !r.primary : (r.primary===day || r.secondary===day); });
     HEAD = '<div class="kpis">'
-      + kpi('Customers', money(d.count), 'on Expected AND in the current deck')
-      + kpi('Expected today', money(d.expected))
+      + kpi('In the weekly cycle', money(d.count), 'chronic + expired + defaulters needing follow-up')
+      + kpi('Expected ' + (names[day]||''), money(onDay.length), 'due on the selected day', onDay.length?'warnc':'good')
+      + kpi('Chronic', money(d.chronic), 'past the grace weeks', d.chronic?'bad':'good')
+      + kpi('Expired', money(d.expired), 'within grace weeks')
       + kpi('Their arrears', money(d.arrears), null, 'bad')
-      + '</div>';
-    S.rows = d.rows;
-    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'),
-      {key:'contact', label:'Contact', kind:'tel'}, col('payment_expected','Expected','money'),
-      {key:'todays_status', label:'Today', kind:'chip', chip:function(r){ return chipFor(r.todays_status); }},
-      col('def_arrears','Arrears','money'),
-      {key:'status', label:'Deck status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      + '</div>'
+      + (d.unplaced ? '<div class="note"><b>'+money(d.unplaced)+'</b> wateja hawana tarehe ya kutolewa mkopo,'
+          + ' hivyo hawawezi kupangwa siku. / customers carry no disbursement date, so they cannot be placed on a'
+          + ' weekday. They are under the <b>No date</b> tab — work them, and fix the upload.</div>' : '')
+      + board('dxDist','Mgawanyo wa wiki / Weekly distribution',
+          'each customer appears twice: disbursement weekday + 3 days (Sunday → Monday)',
+          [1,2,3,4,5,6].map(function(u){ return { day:names[u], customers:(d.dist[u]||0) }; })
+            .concat(d.unplaced ? [{ day:'No date', customers:d.unplaced }] : []),
+          [col('day','Day'), col('customers','Customers','num')],
+          {day:'', customers:[1,2,3,4,5,6].reduce(function(s,u){ return s+(d.dist[u]||0); },0) + (d.unplaced||0)})
+      + '<div class="pills">' + [1,2,3,4,5,6].map(function(u){
+          return '<button class="pill'+(u===day?' on':'')+'" data-day="'+u+'">'+names[u]
+            + ' <b>('+(d.dist[u]||0)+')</b>' + (u===d.todayIndex?' · leo':'') + '</button>'; }).join('')
+        + (d.unplaced ? '<button class="pill'+(day===0?' on':'')+'" data-day="0">No date <b>('
+            + d.unplaced + ')</b></button>' : '')
+        + '<select data-filter="team" style="margin-left:auto"><option value="">All teams</option>'
+        + (d.teams||[]).map(function(x){
+            return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="status"><option value="">All statuses</option>'
+        + ['DEFAULTER','EXPIRED','CHRONIC'].map(function(s){
+            return '<option'+(S.filters.status===s?' selected':'')+'>'+s+'</option>'; }).join('') + '</select>'
+        + '</div>';
+    S.rows = onDay;
+    S.cols = [col('team','Team'), col('ref','REF#'), col('full_name','Fullname'),
+      {key:'contact', label:'Contact#', kind:'tel'},
+      {key:'slot', label:'Visit', kind:'chip', chip:function(r){ return !r.primary?'mut':(r.primary===day?'ok':'warn'); },
+       get:function(r){ return !r.primary ? 'No date' : (r.primary===day ? 'Day 1' : 'Day 2'); }},
+      {key:'status', label:'Status', kind:'chip', chip:function(r){
+        return r.status==='CHRONIC'?'bad':(r.status==='EXPIRED'?'warn':'mut'); }},
+      col('disb_date','Disb date','date'),
+      col('primaryName','Day 1'), col('secondaryName','Day 2'),
       {key:'role', label:'Owner role', kind:'chip', chip:function(){ return 'ok'; }},
-      col('leader','Recycling leader'), col('cycle','Cycle'),
-      col('ds','D.S'), col('dc','D.C','num')];
+      {key:'leader', label:'Recycling leader', cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }},
+      col('cycle','Cycle'), col('ds','D.S'),
+      {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }}];
     ONROW = openFollowup;
+    S.foot = names[day] + ': ' + money(onDay.length) + ' customers · Arrears: TZS '
+      + money(onDay.reduce(function(s,r){ return s + (Number(r.arrears)||0); }, 0));
   });
 };
 
@@ -875,21 +986,39 @@ VIEWS.followup = function(){
   });
 };
 
+/* A promise is only worth something if you can see whether it was KEPT, so every row carries
+   the arrears the customer had when they promised beside what they owe now. Someone who has
+   left the defaulter deck entirely reads CLEARED rather than a misleading zero. */
 VIEWS.promises = function(){
-  return srv('promises').then(function(d){
+  var from = S.args.from || '', to = S.args.to || '';
+  return srv('promises', {from:from, to:to}).then(function(d){
     HEAD = '<div class="kpis">'
       + kpi('Promises', money(d.count), 'TZS '+money(d.promised)+' promised')
-      + kpi('Overdue', money(d.counts.overdue), null, d.counts.overdue?'bad':'good')
-      + kpi('Today', money(d.counts.today), null, 'warnc')
-      + kpi('Upcoming', money(d.counts.upcoming))
-      + '</div>';
+      + kpi('Overdue', money(d.counts.overdue), 'follow before close of day', d.counts.overdue?'bad':'good')
+      + kpi('Due today', money(d.counts.today), null, 'warnc')
+      + kpi('Already cleared', money(d.cleared), 'no longer in the defaulters list', 'good')
+      + kpi('Recovered since', money(d.recovered), 'arrears before − arrears now', 'good')
+      + '</div>'
+      + bar('<label style="font-size:12px;color:var(--mut)">Promise date</label>'
+        + '<input type="date" data-arg="from" value="'+esc(from)+'">'
+        + '<input type="date" data-arg="to" value="'+esc(to)+'">'
+        + '<select data-filter="team"><option value="">All teams</option>'
+        + (d.teams||[]).map(function(x){
+            return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>');
     S.rows = d.rows;
     S.cols = [{key:'bucket', label:'When', kind:'chip', chip:function(r){
         return r.bucket==='overdue'?'bad':r.bucket==='today'?'warn':r.bucket==='upcoming'?'ok':'mut'; }},
-      col('promise_date','Promise date','date'), col('ref','REF'), col('full_name','Customer'), col('team','Team'),
-      col('contact','Contact'), col('promise_amt','Amount','money'), col('arrears','Arrears','money'),
-      col('comment_by','Taken by'), col('last_comment','Comment')];
+      col('promise_date','Promise date','date'), col('ref','REF#'), col('full_name','Fullname'), col('team','Team'),
+      {key:'contact', label:'Contact#', kind:'tel'},
+      col('arrears_before','Arrears before','money'),
+      col('promise_amt','Promise TZS','money'),
+      {key:'arrears_now', label:'Arrears now', kind:'num', cls:function(r){ return r.cleared?'good':''; },
+       get:function(r){ return r.cleared ? 'CLEARED' : money(r.arrears_now); }},
+      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+      col('taken_by','Promised to'), col('taken_at','Logged','dt'), col('last_comment','Comment')];
     ONROW = openFollowup;
+    S.foot = 'Promised: TZS '+money(d.promised)+' · Cleared: '+money(d.cleared)
+      + ' · Recovered: TZS '+money(d.recovered);
   });
 };
 
@@ -901,16 +1030,47 @@ VIEWS.fureport = function(){
       + kpi('Touched', money(d.totals.touched), d.totals.customers? Math.round(100*d.totals.touched/d.totals.customers)+'%':'')
       + kpi('Comments logged', money(d.totals.comments), d.from+' → '+d.to)
       + '</div>'
-      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">')
-      + '<div class="card"><div class="card-h">Kwa hali / By follow-up status</div>'
-      + tableSimple(d.byStatus, [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')])
-      + '</div>'
-      + '<div class="card"><div class="card-h">Kwa afisa / By officer</div>'
-      + tableSimple(d.byOfficer, [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')])
-      + '</div>';
-    S.rows = d.byTeam;
-    S.cols = [col('team','Team'), col('customers','Customers','num'), col('touched','Touched','num'), col('arrears','Arrears','money')];
+      /* The report a supervisor actually reads is a MATRIX — one row per officer, one column
+         per follow-up status — so "who is logging what" is answerable at a glance instead of
+         by cross-referencing two summary tables. */
+      + board('frMatrix','Takwimu za ufuatiliaji kwa afisa / Followup stats by officer',
+          'counts & types per user across your teams · '+d.byOfficerStatus.length
+            + ' officer'+(d.byOfficerStatus.length===1?'':'s'),
+          d.byOfficerStatus,
+          [col('officer','Officer'), col('total','Total','num')].concat(
+            (d.statuses||[]).map(function(s){ return col(s, s, 'num'); })),
+          sumRow(d.byOfficerStatus, ['total'].concat(d.statuses||[])))
+      + board('frStatus','Kwa hali / By follow-up status', null, d.byStatus,
+          [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')],
+          sumRow(d.byStatus, ['customers','arrears']))
+      + board('frOfficer','Kwa afisa / By officer', null, d.byOfficer,
+          [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')],
+          sumRow(d.byOfficer, ['comments','customers']))
+      + board('frTeam','Kwa timu / By team', null, d.byTeam,
+          [col('team','Team'), col('customers','Customers','num'), col('touched','Touched','num'), col('arrears','Arrears','money')],
+          sumRow(d.byTeam, ['customers','touched','arrears']))
+      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">'
+        + '<select data-filter="team"><option value="">All teams</option>'
+        + (d.teams||[]).map(function(x){
+            return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="by"><option value="">All officers</option>'
+        + (d.officers||[]).map(function(x){
+            return '<option'+(S.filters.by===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="fu_status"><option value="">All statuses</option>'
+        + (d.statuses||[]).map(function(x){
+            return '<option'+(S.filters.fu_status===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+        + '<span class="chip">'+money(d.rows.length)+' follow-ups logged</span>');
+    // The log itself is the evidence; every summary above is only an index into it.
+    S.rows = d.rows;
+    S.cols = [col('at','When','dt'), col('by','Officer'), col('team','Team'), col('ref','REF#'),
+      col('full_name','Fullname'),
+      {key:'fu_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
+      {key:'promise_date', label:'Promise', kind:'text', get:function(r){
+        return r.promise_date ? (String(r.promise_date).slice(0,10) + (r.promise_amt ? ' · '+money(r.promise_amt) : '')) : ''; }},
+      col('comment','Comment')];
     ONROW = null;
+    S.foot = money(d.rows.length)+' follow-ups · '+money(d.totals.touched)+' of '
+      + money(d.totals.customers)+' customers touched';
   });
 };
 /* Small static tables inside a head block (no search/sort -- those belong to the main table). */
@@ -949,21 +1109,37 @@ function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields
     + '</div>';
 }
 
+/* PAR reads two ways and the meeting uses both: how OLD the arrears are, and how BIG the
+   loans behind them are. The second is what gets acted on -- it says where the overdue money
+   is concentrated -- so it leads. */
 VIEWS.par = function(){
   return srv('par').then(function(d){
+    var t = d.totals;
     HEAD = '<div class="kpis">'
-      + kpi('Customers at risk', money(d.totals.customers), d.weekday+' · '+(d.date||''))
-      + kpi('Arrears', money(d.totals.arrears), null, 'bad')
+      + kpi('At-risk arrears', money(t.arrears), 'overdue across defaulters', 'bad')
+      + kpi('Outstanding balance', money(t.balance), 'remaining portfolio in default')
+      + kpi('Portfolio at risk', pct(t.par), 'arrears ÷ outstanding balance',
+            (t.par>=50?'bad':(t.par>=25?'warnc':'')))
+      + kpi('Defaulters', money(t.customers), d.weekday+' · '+(d.date||''))
+      + kpi('Average principal', money(t.avgLoan), 'mean principal in default (interest stripped)')
       + '</div>'
-      + '<div class="card"><div class="card-h">Kwa muda / By days in arrears</div>'
-      + tableSimple(d.bands, [col('band','Days'), col('customers','Customers','num'), col('arrears','Arrears','money')])
-      + '</div>'
-      + '<div class="card"><div class="card-h">Kwa hali / By status</div>'
-      + tableSimple(d.byStatus, [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')])
-      + '</div>';
+      + board('pBand','Kwa ukubwa wa mkopo / By principal band','where the overdue money sits by loan size', d.byBand,
+          [col('band','Band (principal)'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
+           {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
+           col('balance','Balance','money'), col('par','PAR %','pct'), col('share','Share of arrears','pct')],
+          {customers:t.customers, arrears:t.arrears, balance:t.balance, avgLoan:t.avgLoan, par:t.par, share:100})
+      + board('pAge','Kwa muda / By days in arrears','how long each customer has been overdue', d.bands,
+          [col('band','Days'), col('customers','Customers','num'), col('arrears','Arrears','money')],
+          sumRow(d.bands, ['customers','arrears']))
+      + board('pStat','Kwa hali / By status', null, d.byStatus,
+          [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')],
+          sumRow(d.byStatus, ['customers','arrears']));
     S.rows = d.byTeam;
-    S.cols = [col('team','Team'), col('customers','Customers','num'), col('arrears','Arrears','money')];
+    S.cols = [col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
+      {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
+      col('balance','Balance','money'), col('par','PAR %','pct')];
     ONROW = null;
+    S.foot = 'Defaulters: '+money(t.customers)+' · Arrears: TZS '+money(t.arrears)+' · PAR: '+pct(t.par);
   });
 };
 
@@ -980,12 +1156,57 @@ VIEWS.weekly = function(){
       + kpi('Sales', money(t.salesCount), money(t.salesAmount))
       + '</div>'
       + bar('<label style="font-size:12px;color:var(--mut)">Week starting (Monday)</label>'
-        + '<input type="date" data-arg="weekOf" value="'+esc(d.weekOf)+'">');
+        + '<input type="date" data-arg="weekOf" value="'+esc(d.weekOf)+'">')
+      + ((!d.hasMonday || !d.hasWeekEnd)
+          ? '<div class="note">Kwa wiki nzima pakia <b>Def Initial Monday</b> na <b>Def Current</b> ya mwisho wa wiki.'
+            + ' / For the full week upload Monday’s initial deck and the week-end current one — week-end currently = <b>'
+            + esc(d.weekEndDate || '—') + '</b>.</div>'
+          : '<div class="note">Msingi / baseline: <b>Monday initial</b> · mwisho wa wiki / week-end: <b>'
+            + esc(d.weekEndDate) + '</b> · lengo la kampuni / company target TZS '
+            + money(d.teamTotals.companyTarget) + ' (' + d.teamCount + ' teams).</div>')
+      /* The five sections the weekly meeting walks, per team, in this order. */
+      + board('wSales','Mauzo / Sales','approved principal vs per-team target', d.teams,
+          [col('team','Team'), col('sales','Sales','money'), col('salesPct','% of target','pct')],
+          {team:'', sales:d.teamTotals.sales, salesPct:d.teamTotals.salesPct})
+      + board('wC16','Count 1–6 progress','defaulters paid ≤ 6 of 12 · cleared & reduced are the wins',
+          d.teams.filter(function(r){ return r.c16>0; }),
+          [col('team','Team'), col('c16','Count 1–6','num'),
+           {key:'cleared', label:'Cleared', kind:'num', cls:function(){ return 'good'; }},
+           {key:'reduced', label:'Reduced', kind:'num', cls:function(){ return 'good'; }},
+           {key:'bad', label:'Bad', kind:'num', cls:function(){ return 'bad'; }},
+           col('stat','Static','num'), col('success','Success %','pct')],
+          {team:'', c16:d.teamTotals.c16, cleared:d.teamTotals.cleared, reduced:d.teamTotals.reduced,
+           bad:d.teamTotals.bad, stat:d.teamTotals.stat, success:d.teamTotals.success})
+      + board('wColl','Makusanyo / Collection (Mon–Fri expected)','collected vs expected', d.teams,
+          [col('team','Team'), col('expected','Expected','money'), col('collected','Collected','money'),
+           {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
+           col('collPct','Collection %','pct')],
+          {team:'', expected:d.teamTotals.expected, collected:d.teamTotals.collected,
+           uncollected:d.teamTotals.uncollected, collPct:d.teamTotals.collPct})
+      + board('wRec','Urejeshaji / Recovery','recovered ÷ the week’s uncollected', d.teams,
+          [col('team','Team'),
+           {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
+           {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':(r.recovered<0?'bad':''); }},
+           col('recPct','Recovery %','pct')],
+          {team:'', uncollected:d.teamTotals.uncollected, recovered:d.teamTotals.recovered, recPct:d.teamTotals.recPct})
+      /* Ongezeko la deni: Monday's debt against the week-end's. A POSITIVE change means the
+         debt fell, which is why it reads green with a minus sign in front of it. */
+      + board('wDebt','Ongezeko la deni (Monday → '+esc(d.weekEndDate||'week end')+')',
+          'green = debt fell (recovered) · red = debt rose', d.teams,
+          [col('team','Team'), col('mondayDebt','Monday debt','money'), col('curDebt','Current debt','money'),
+           // Pre-formatted, so kind stays 'num' (right-aligned) instead of being re-run
+           // through money() -- a leading minus sign would come back as NaN.
+           {key:'debtDelta', label:'Change', kind:'num', cls:function(r){ return r.debtDelta>=0?'good':'bad'; },
+            get:function(r){ return (r.debtDelta>=0?'−':'+') + money(Math.abs(r.debtDelta)); }}],
+          {team:'', mondayDebt:d.teamTotals.mondayDebt, curDebt:d.teamTotals.curDebt,
+           debtDelta:(d.teamTotals.debtDelta>=0?'−':'+') + money(Math.abs(d.teamTotals.debtDelta))});
     S.rows = d.days;
     S.cols = [col('weekday','Day'), col('date','Date','date'), col('customers','Customers','num'),
       col('expected','Expected','money'), col('collected','Collected','money'), col('uncollected','Uncollected','money'),
       col('pct','Collection %','pct'), col('recovered','Recovered','money'), col('received','Received','money')];
     ONROW = null;
+    S.foot = 'Sales: TZS '+money(d.teamTotals.sales)+' ('+pct(d.teamTotals.salesPct)+' of target)'
+      + ' · Collection: '+pct(d.teamTotals.collPct)+' · Recovery: '+pct(d.teamTotals.recPct);
   });
 };
 
@@ -1006,18 +1227,51 @@ VIEWS.reports = function(){
   });
 };
 
+/* Commission is earned by PEOPLE and from two different jobs: the recovery officer earns a
+   PERCENTAGE of what a customer's arrears fell by, the early-collection officer earns a FLAT
+   amount per client who came in PAID or OVERPAID. Both are summed day by day. Officers see
+   only their own row; admins see the company. */
+var CMS_COLS = [col('officer','Officer'), col('recovered','Recovered','money'),
+  col('recComm','Recovery comm.','money'), col('paid','Paid','num'), col('over','Overpaid','num'),
+  col('colComm','Collection comm.','money'),
+  {key:'total', label:'Total', kind:'money', cls:function(r){ return r.total>0?'good':''; }}];
 VIEWS.commission = function(){
   return srv('commission').then(function(d){
+    var noRates = !d.paidTzs && !d.overTzs;
     HEAD = '<div class="kpis">'
-      + kpi('Rate', d.rate+'%', 'settings: COMMISSION_RATE')
-      + kpi('Recovered', money(d.totals.recovered), d.weekday+' · '+(d.date||''), 'good')
-      + kpi('Commission', money(d.totals.commission), null, 'good')
+      + kpi(d.isAdmin?'Company total today':'My commission today', money(d.totals.day),
+            d.weekday+' · '+(d.date||''), d.totals.day?'good':'')
+      + kpi(d.isAdmin?'Company total this week':'My commission this week', money(d.totals.week),
+            'Mon–Sun, summed day by day', d.totals.week?'good':'')
+      + kpi('Recovery mode', d.mode==='status'?'By status':'By disb year',
+            esc((d.mode==='status'?d.statusRates:d.yearRates) || 'rates not set yet'),
+            (d.mode==='status'?d.statusRates:d.yearRates)?'':'warnc')
+      + kpi('Early collection', money(d.paidTzs)+' / '+money(d.overTzs),
+            'per PAID / per OVERPAID client', noRates?'warnc':'')
       + '</div>'
-      + (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
-      + (d.rate ? '' : '<div class="note">Weka COMMISSION_RATE kwenye Settings ili kuona kiasi. / Set COMMISSION_RATE in Settings to see amounts.</div>');
-    S.rows = d.rows;
-    S.cols = [col('team','Team'), col('recovered','Recovered','money'), col('progress','Progress %','pct'), col('commission','Commission','money')];
+      + (d.isAdmin ? '<div class="card"><div class="card-h">Viwango / Rates</div><div class="cmsrates">'
+          + '<div class="fld"><label>Mode</label><select id="cmMode">'
+          + ['year','status'].map(function(m){ return '<option value="'+m+'"'+(d.mode===m?' selected':'')+'>'
+              + (m==='year'?'By disbursement year':'By status')+'</option>'; }).join('') + '</select></div>'
+          + '<div class="fld"><label>Year rates (e.g. 2024:5, 2025:2.5, *:1)</label>'
+            + '<input id="cmYear" value="'+esc(d.yearRates||'')+'"></div>'
+          + '<div class="fld"><label>Status rates (defaulter:… expired:… chronic:…)</label>'
+            + '<input id="cmStatus" value="'+esc(d.statusRates||'')+'"></div>'
+          + '<div class="fld"><label>TZS per PAID client</label>'
+            + '<input id="cmPaid" type="number" min="0" step="50" value="'+(d.paidTzs||0)+'"></div>'
+          + '<div class="fld"><label>TZS per OVERPAID client</label>'
+            + '<input id="cmOver" type="number" min="0" step="50" value="'+(d.overTzs||0)+'"></div>'
+          + '<button class="btn sm" id="cmSave">Hifadhi / Save &amp; recalculate</button>'
+          + (noRates ? '<div class="note">Viwango vyote ni <b>0</b> — ndiyo maana Collection comm. inaonyesha 0.'
+              + ' / Both flat rates are <b>0</b>, which is exactly why Collection comm. reads 0 while the'
+              + ' PAID/OVERPAID counts flow. Type the amounts and press Save.</div>' : '')
+          + '</div></div>' : '')
+      + board('cmDay','Leo / Today','recovery: each customer’s recovered amount × their rate · early collection: PAID/OVERPAID counts',
+          d.day, CMS_COLS, sumRow(d.day, ['recovered','recComm','paid','over','colComm','total']));
+    S.rows = d.week;
+    S.cols = CMS_COLS;
     ONROW = null;
+    S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week);
   });
 };
 
@@ -1090,23 +1344,74 @@ VIEWS.legal = function(){
 
 VIEWS.abnormal = function(){
   return srv('abnormal').then(function(d){
-    HEAD = '<div class="kpis">' + kpi('Abnormal payments', money(d.count))
-      + kpi('Amount', money(d.rows.reduce(function(s,r){return s+(Number(r.paid)||0);},0))) + '</div>';
+    var amt = d.rows.reduce(function(s,r){ return s+(Number(r.paid)||0); }, 0);
+    HEAD = '<div class="kpis">'
+      + kpi('Flagged payments', money(d.count), 'amounts not in multiples of TZS 500 / 1,000', d.count?'bad':'good')
+      + kpi('Flagged amount', money(amt), 'verify with the field officers', d.count?'warnc':'good')
+      + '</div>';
     S.rows = d.rows;
-    S.cols = [col('created_at','Logged','dt'), col('team','Team'), col('gmo','GMO'), col('pmo','PMO'),
-      col('customer_name','Customer'), col('sender_name','Sender'), col('phone_number','Phone'),
-      col('ref_no','REF'), col('transaction_id','Transaction'), col('paid','Paid','money'), col('payment','Payment')];
+    S.cols = [col('gmo','GMO'), col('team','Team'), col('pmo','PMO'),
+      {key:'contact_no', label:'Customer No', kind:'tel'},
+      {key:'phone_number', label:'Payment No', kind:'tel'},
+      col('ref_no','REF No'), col('customer_name','Customer Name'),
+      col('transaction_id','Transaction ID'),
+      {key:'paid', label:'Paid', kind:'money', cls:function(){ return 'bad'; }},
+      col('sender_name','Sender Name'), col('payment','Payment')];
     ONROW = null;
+    S.foot = 'Total flagged: TZS ' + money(amt);
   });
 };
 
+/* Credit Analysts. The analyst is judged on their COUNT 1–6 book — defaulters who have paid
+   fewer than 6 of 12 and are therefore still winnable — plus sales. The scorecard is the
+   ranking; the portfolio under it is the call list. */
 VIEWS.credit = function(){
   return srv('credit').then(function(d){
-    HEAD = '<div class="kpis">' + kpi('Loans in pipeline', money(d.count)) + '</div>';
-    S.rows = d.rows;
-    S.cols = [col('analyst','Analyst / created by'), col('assessed','In pipeline','num'), col('approved','Approved','num'),
-      col('disbursed','Disbursed','num'), col('amount','Amount','money')];
-    ONROW = null;
+    var t = d.totals;
+    HEAD = '<div class="kpis">'
+      + kpi('Count 1–6 defaulters', money(t.cnt), 'paid 0–'+d.threshold+' of 12 (not past the 6th)')
+      + kpi('Success (1–6)', pct(t.success), money(t.cleared + t.reduced)+' cleared/reduced · '+money(t.bad)+' bad', 'good')
+      + kpi('Sales', money(t.sales), pct(t.salesPct)+' of target', (t.salesPct>=100?'good':''))
+      + kpi('Overall', pct(t.overall), 'success & sales averaged — this ranks the analyst')
+      + kpi('Below average', money(d.rows.filter(function(r){ return r.below; }).length),
+            'under '+pct(d.avgOverall)+' overall', 'warnc')
+      + '</div>'
+      + ((!d.hasInitial || !d.hasCurrent)
+          ? '<div class="note">Pakia <b>Defaulters Initial</b> na <b>Current Defaulters</b> ili kupima cleared / reduced / bad / static.'
+            + ' / Both uploads are needed to measure the four states.</div>'
+          : (d.usedMondayBaseline ? '' :
+             '<div class="note">Monday’s baseline haijapakiwa — inatumia orodha ya leo. / Monday’s initial deck is not uploaded yet, so today’s is standing in as the baseline.</div>'))
+      + board('crPerf','Ufanisi wa wachambuzi / Analyst performance',
+          d.analystCount+' analysts · Init 1–6 = the baseline deck, Now 1–6 = still defaulting today', d.rows,
+          [col('analyst','Analyst'), col('teams','Teams','num'), col('cnt','Init 1–6','num'), col('cntCur','Now 1–6','num'),
+           {key:'cleared', label:'Cleared', kind:'num', cls:function(){ return 'good'; }},
+           {key:'reduced', label:'Reduced', kind:'num', cls:function(){ return 'good'; }},
+           {key:'stat', label:'Static', kind:'num'},
+           {key:'bad', label:'Bad', kind:'num', cls:function(){ return 'bad'; }},
+           col('success','Success %','pct'), col('recovered','Recovered','money'),
+           col('sales','Sales','money'), col('salesPct','Sales %','pct'),
+           {key:'overall', label:'Overall %', kind:'pct', cls:function(r){ return r.below?'bad':'good'; }}],
+          {analyst:'', teams:'', cnt:t.cnt, cntCur:t.cntCur, cleared:t.cleared, reduced:t.reduced,
+           stat:t.stat, bad:t.bad, success:t.success, recovered:t.recovered, sales:t.sales,
+           salesPct:t.salesPct, overall:t.overall})
+      + bar('<label style="font-size:12px;color:var(--mut)">Analyst</label>'
+        + '<select data-filter="analyst"><option value="">All analysts</option>'
+        + (d.analysts||[]).map(function(a){
+            return '<option'+(S.filters.analyst===a?' selected':'')+'>'+esc(a)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="state"><option value="">All states</option>'
+        + ['Cleared','Reduced','Static','Bad'].map(function(s){
+            return '<option'+(S.filters.state===s?' selected':'')+'>'+s+'</option>'; }).join('') + '</select>'
+        + '<span class="chip">Count 1–6 portfolio · '+money(d.portfolio.length)+' customers</span>');
+    S.rows = d.portfolio;
+    S.cols = [col('ref','REF#'), col('full_name','Customer'), col('team','Team'), col('analyst','Analyst'),
+      {key:'paid', label:'Paid', kind:'num', get:function(r){ return (r.paid||0)+'/12'; }},
+      col('initArr','Init arrears','money'), col('curArr','Current','money'),
+      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+      {key:'state', label:'State', kind:'chip', chip:function(r){
+        return (r.state==='Cleared'||r.state==='Reduced') ? 'ok' : (r.state==='Static' ? 'warn' : 'bad'); }}];
+    ONROW = openFollowup;
+    S.foot = 'Count 1–6: '+money(d.portfolio.length)+' · Overall: '+pct(t.overall)
+      + ' · average '+pct(d.avgOverall);
   });
 };
 
@@ -1151,14 +1456,45 @@ function teamForm(x){
   };
 }
 
+var CLEAN_TYPES = [
+  { key:'expected',   label:'Expected Repayment' },
+  { key:'defaulters', label:'Defaulters (initial + current)' },
+  { key:'received',   label:'Received Payments' },
+  { key:'abnormal',   label:'Abnormal Payments' },
+  { key:'calls',      label:'Call Logs' },
+];
 VIEWS.settings = function(){
-  return Promise.all([srv('settings'), srv('accessCodes'), srv('callUsers')]).then(function(r){
-    var st=r[0], ac=r[1], cu=r[2];
+  return Promise.all([srv('settings'), srv('accessCodes'), srv('callUsers'), srv('storageUsage')]).then(function(r){
+    var st=r[0], ac=r[1], cu=r[2], sg=r[3];
     S.roles = ac.roles || [];
+    S.storage = sg;
     // Two registers live here because they answer the same question -- who may use this
     // system: an access code is a PORTAL login, a call user is a PHONE registration.
     HEAD = '<div class="kpis">' + kpi('Settings', money(st.rows.length))
-        + kpi('Access codes', money(ac.count)) + kpi('Phone users', money(cu.count)) + '</div>'
+        + kpi('Access codes', money(ac.count)) + kpi('Phone users', money(cu.count))
+        + kpi('Stored rows', money(sg.totalRows), (sg.oldest||'—')+' → '+(sg.newest||'—'))
+        + '</div>'
+      /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
+         Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
+         no cell ceiling), but the plan's disk is finite, so this is where old dates get let go. */
+      + '<div class="card"><div class="card-h">Kusafisha ripoti za zamani / Clean old reports'
+        + '<span class="sub">chagua tarehe na aina za ripoti / pick a date and the report types</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="fld"><label>Tarehe / Date</label><input type="date" id="clDate" value="'+esc(sg.oldest||'')+'"></div>'
+        + '<div class="fld"><label>Aina za ripoti / Report types</label><div class="checks">'
+        + CLEAN_TYPES.map(function(t){
+            return '<label><input type="checkbox" class="clType" value="'+t.key+'"> '+esc(t.label)+'</label>'; }).join('')
+        + '</div></div>'
+        + '<label class="chk"><input type="checkbox" id="clThrough"> Na zote za kabla yake / and everything on or before that date</label>'
+        + '<div class="clact"><button class="btn sm ghost" id="clCheck">Angalia / Check first</button>'
+        + ' <button class="btn sm danger" id="clRun">Futa / Clean</button></div>'
+        + '<div id="clOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+      + board('sgDates','Kilichohifadhiwa kwa tarehe / What is stored, by date',
+          'row counts per report type — delete a date and that day’s history goes with it',
+          sg.dates, [col('date','Date','date')].concat(CLEAN_TYPES.map(function(t){
+            return col(t.key, t.label, 'num'); })).concat([col('total','Total','num')]),
+          sumRow(sg.dates, CLEAN_TYPES.map(function(t){ return t.key; }).concat(['total'])))
       + '<div class="card"><div class="card-h">Misimbo ya kuingia / Access codes'
         + '<span class="sub"><button class="btn sm" id="newCode">+ Msimbo mpya / New code</button>'
         + ' <a href="/upload?admin=1" style="margin-left:8px">Pakia orodha / Upload a list &rarr;</a></span></div>'

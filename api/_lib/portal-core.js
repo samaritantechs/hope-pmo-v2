@@ -69,33 +69,60 @@ async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) 
     arrears: rows.reduce((s, r) => s + num(r.arrears), 0) };
 }
 
-/** Expected Defaulters: customers who are on today's Expected sheet AND in the current
-    defaulter deck -- the ones an officer can collect from twice over. Matched by REF. */
+/** Expected Defaulters -- the WEEKLY CYCLE, not a one-day list. Every defaulter is visited
+    twice a week and the two days are derived from the loan itself: the weekday it was
+    disbursed on (Day 1) and three days later (Day 2), with Sunday rolled onto Monday because
+    nobody works Sunday. That is why the tab is a Mon-Sat set of day tabs with a distribution
+    across them -- a customer appears under two of the six.
+
+    Each row also carries the recycling leader who currently owns the customer, because the
+    officer working this list needs to know who else is already on them. */
+const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+function rollSun(u) { return u === 7 ? 1 : u; }        // Sunday -> Monday
 async function expectedDefaulters(db, user, _args, nowMs) {
-  const [exp, def] = await Promise.all([
-    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: todayKey(nowMs) }),
+  const [def, teamRows, strat] = await Promise.all([
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) }),
+    fetchAll(() => db.from('teams').select('*')),
+    assignStrategy(db),
   ]);
-  const defBy = {};
-  for (const d of def.rows) defBy[String(d.ref)] = d;
-  // The same rotation decides who owns these customers -- they are on BOTH lists, and the
-  // officer working Expected needs to know which recycling leader already has the defaulter.
-  const [teamRows, strat] = await Promise.all([fetchAll(() => db.from('teams').select('*')), assignStrategy(db)]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
-  const rows = scoped(user, exp.rows).filter(e => defBy[String(e.ref)]).map(e => {
-    const d = defBy[String(e.ref)];
-    const a = assignFor(d, strat, nowMs);
-    const team = teamBy[K(e.team)] || {};
-    return { ref: e.ref, full_name: e.full_name, contact: e.contact, team: e.team,
-      payment_expected: num(e.payment_expected), todays_status: e.todays_status,
-      def_arrears: num(d.arrears), status: d.status, ds: d.ds, dc: d.dc,
-      phase: a.phase, role: a.role, cycle: a.label,
-      leader: team[ROLE_COLS[a.role]] || '(unassigned)' };
-  });
-  return { rows, count: rows.length,
-    expected: rows.reduce((s, r) => s + r.payment_expected, 0),
-    arrears: rows.reduce((s, r) => s + r.def_arrears, 0) };
+  const rows = scoped(user, def.rows)
+    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
+    .map(d => {
+      const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
+      const primary = raw ? rollSun(raw) : 0;
+      const secondary = primary ? rollSun(((primary - 1 + 3) % 7) + 1) : 0;
+      const a = assignFor(d, strat, nowMs);
+      const s = K(d.status);
+      const team = teamBy[K(d.team)] || {};
+      return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
+        arrears: num(d.arrears), balance: num(d.balance), ds: d.ds, dc: d.dc,
+        status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
+        disb_date: d.disb_date,
+        primary, secondary,
+        primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
+        phase: a.phase, role: a.role, cycle: a.label,
+        leader: team[ROLE_COLS[a.role]] || '(unassigned)' };
+    });
+  // Each customer counts on BOTH of their days, so the distribution sums to 2x the headcount.
+  // Day 0 holds anyone whose loan carries no disbursement date: they cannot be placed on a
+  // weekday, and the live system simply dropped them from the cycle. Silently losing a
+  // defaulter is the one outcome this tab must never produce, so they get their own bucket
+  // and their own tab instead of disappearing.
+  const dist = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  for (const r of rows) {
+    if (!r.primary) { dist[0]++; continue; }
+    dist[r.primary]++;
+    if (dist[r.secondary] != null) dist[r.secondary]++;
+  }
+  return { rows, count: rows.length, dist, dayNames: DAY_NAMES,
+    unplaced: dist[0],
+    todayIndex: rollSun(isoWeekday(nowMs)),
+    teams: [...new Set(rows.map(r => r.team).filter(Boolean))].sort(),
+    chronic: rows.filter(r => r.status === 'CHRONIC').length,
+    expired: rows.filter(r => r.status === 'EXPIRED').length,
+    arrears: rows.reduce((s, r) => s + r.arrears, 0) };
 }
 
 /* ------------------------------------------------------------------ followup + comments */
@@ -147,18 +174,50 @@ async function addComment(db, user, p, nowMs) {
 
 /** Promise to Pay: everyone who said AMETOA AHADI, bucketed against today so overdue
     promises surface first -- the whole point of the tab. */
-async function promises(db, user, _args, nowMs) {
+/** Promise to Pay. A promise is only worth anything if you can see whether it was KEPT, so
+    each row carries the arrears the customer had when they promised beside what they owe now
+    -- and a customer who has left the defaulter deck entirely reads CLEARED rather than 0. */
+async function promises(db, user, { from, to } = {}, nowMs) {
   const today = todayKey(nowMs);
-  const all = scoped(user, await fetchAll(() => db.from('followup_status').select('*').eq('fu_status', 'AMETOA AHADI')));
-  const rows = all.map(r => ({
-    ...r,
-    bucket: !r.promise_date ? 'no date' : String(r.promise_date) < today ? 'overdue' : String(r.promise_date) === today ? 'today' : 'upcoming',
-  }));
+  const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : null;
+  const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : null;
+  const [all, cm, curSnap] = await Promise.all([
+    fetchAll(() => db.from('followup_status').select('*').eq('fu_status', 'AMETOA AHADI')),
+    fetchAll(() => db.from('followup_comments').select('*').eq('fu_status', 'AMETOA AHADI')),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: today }),
+  ]);
+  const stillOwing = {};
+  for (const d of curSnap.rows) stillOwing[K(d.ref)] = num(d.arrears);
+  // The comment that CREATED the promise is where "arrears before" and "who took it" live.
+  const firstCm = {};
+  for (const c of cm.slice().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))) {
+    if (!firstCm[K(c.ref)]) firstCm[K(c.ref)] = c;
+  }
+  const rows = scoped(user, all).map(r => {
+    const k = K(r.ref);
+    const cleared = !Object.prototype.hasOwnProperty.call(stillOwing, k);
+    const curArr = cleared ? 0 : stillOwing[k];
+    const arrBefore = num(r.arrears);
+    return { ...r,
+      arrears_before: arrBefore, arrears_now: curArr, cleared,
+      recovered: Math.max(0, arrBefore - curArr),
+      taken_by: (firstCm[k] && firstCm[k].created_by) || r.comment_by || null,
+      taken_at: (firstCm[k] && firstCm[k].created_at) || r.comment_at || null,
+      bucket: !r.promise_date ? 'no date' : String(r.promise_date) < today ? 'overdue'
+        : String(r.promise_date) === today ? 'today' : 'upcoming' };
+  }).filter(r => {
+    if (fromKey && !(r.promise_date && String(r.promise_date) >= fromKey)) return false;
+    if (toKey && !(r.promise_date && String(r.promise_date) <= toKey)) return false;
+    return true;
+  });
   const order = { overdue: 0, today: 1, upcoming: 2, 'no date': 3 };
   rows.sort((a, b) => (order[a.bucket] - order[b.bucket]) || String(a.promise_date || '').localeCompare(String(b.promise_date || '')));
   const counts = { overdue: 0, today: 0, upcoming: 0, 'no date': 0 };
   for (const r of rows) counts[r.bucket]++;
-  return { rows, count: rows.length, counts,
+  return { rows, count: rows.length, counts, from: fromKey, to: toKey,
+    cleared: rows.filter(r => r.cleared).length,
+    recovered: rows.reduce((s, r) => s + r.recovered, 0),
+    teams: [...new Set(rows.map(r => r.team).filter(Boolean))].sort(),
     promised: rows.reduce((s, r) => s + num(r.promise_amt), 0) };
 }
 
@@ -189,12 +248,38 @@ async function followupReport(db, user, { from, to }, nowMs) {
     if (!byOfficer[who]) byOfficer[who] = { officer: who, comments: 0, customers: {} };
     byOfficer[who].comments++; byOfficer[who].customers[String(c.ref)] = 1;
   }
+  // The report the supervisor actually reads is a MATRIX: one row per officer, one column per
+  // follow-up status, so "who is logging what" is answerable at a glance instead of by
+  // cross-referencing two summary tables. And under it, every individual follow-up -- the log
+  // is the evidence; the counts above are only the index into it.
+  const statuses = [...new Set(mineCm.map(c => K(c.fu_status)).filter(Boolean))].sort();
+  const matrix = {};
+  for (const c of mineCm) {
+    const who = c.created_by || '(unknown)';
+    const b = bucket(matrix, who, { total: 0, by: {} });
+    b.total++;
+    const st = K(c.fu_status) || '—';
+    b.by[st] = (b.by[st] || 0) + 1;
+  }
+  const byOfficerStatus = Object.values(matrix)
+    .map(b => ({ officer: b.key, total: b.total, ...Object.fromEntries(statuses.map(s => [s, b.by[s] || 0])) }))
+    .sort((a, b) => b.total - a.total);
+
+  const log = mineCm.slice()
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+    .map(c => ({ at: c.created_at, by: c.created_by || '(unknown)', team: c.team, ref: c.ref,
+      full_name: c.full_name, fu_status: c.fu_status, promise_date: c.promise_date,
+      promise_amt: num(c.promise_amt), comment: c.comment }));
+
   return {
     from: fromKey, to: toKey,
     byStatus: Object.values(byStatus).sort((a, b) => b.customers - a.customers),
     byTeam: Object.values(byTeam).sort((a, b) => a.team.localeCompare(b.team)),
     byOfficer: Object.values(byOfficer).map(o => ({ officer: o.officer, comments: o.comments, customers: Object.keys(o.customers).length }))
       .sort((a, b) => b.comments - a.comments),
+    statuses, byOfficerStatus, rows: log,
+    officers: [...new Set(log.map(r => r.by))].sort(),
+    teams: [...new Set(log.map(r => r.team).filter(Boolean))].sort(),
     totals: { customers: mineFu.length, touched: mineFu.filter(r => r.fu_status).length, comments: mineCm.length },
   };
 }
@@ -294,27 +379,68 @@ const PAR_BANDS = [
   { key: '61-90', lo: 61, hi: 90 }, { key: '91-180', lo: 91, hi: 180 },
   { key: '180+', lo: 181, hi: Infinity },
 ];
+/** PAR is read two ways and the live system showed BOTH: by how long a customer has been in
+    arrears (the ageing bands above) and by how big their loan is (the principal bands below).
+    The second is the one the meeting acts on -- it says where the overdue money is
+    concentrated -- and it was missing here entirely. */
+const PRINCIPAL_BANDS = [
+  { label: '< 500K', lo: 0, hi: 500000 },
+  { label: '500K – 1M', lo: 500000, hi: 1000000 },
+  { label: '1M – 2M', lo: 1000000, hi: 2000000 },
+  { label: '2M – 3M', lo: 2000000, hi: 3000000 },
+  { label: '3M – 5M', lo: 3000000, hi: 5000000 },
+  { label: '≥ 5M', lo: 5000000, hi: Infinity },
+];
+/** Principal behind a defaulter row with the interest stripped: the schedule runs 12
+    installments and carries 36% interest, so principal = (first + 11 × other) ÷ 1.36. Falls
+    back to the outstanding balance when the schedule columns are blank. */
+function principalOf(r) {
+  const total = num(r.initial_inst) + 11 * num(r.other_inst);
+  return total > 0 ? Math.round(total / 1.36) : num(r.balance);
+}
+/** Installments paid, read the way the sheet did: "3/6" in D.S, else derived from what has
+    actually been paid against the schedule. */
+function paidCount(r) {
+  const m = String(r.ds == null ? (r.due_summary == null ? '' : r.due_summary) : r.ds).trim().match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (m) return Math.min(12, Math.max(0, Number(m[1])));
+  const initial = num(r.initial_inst), other = num(r.other_inst), paid = num(r.t_payment);
+  let pc = 0;
+  if (other > 0 && paid >= initial) pc = 1 + Math.floor((paid - initial) / other);
+  return Math.min(12, Math.max(0, pc));
+}
+
 async function par(db, user, _args, nowMs) {
   const snap = await latestSnapshot(db, 'defaulter_snapshots',
     { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) });
   const rows = scoped(user, snap.rows);
   const bands = PAR_BANDS.map(b => ({ band: b.key, customers: 0, arrears: 0 }));
+  const pbands = PRINCIPAL_BANDS.map(b => ({ band: b.label, customers: 0, arrears: 0, balance: 0, loanSum: 0 }));
   const byStatus = {}, byTeam = {};
+  let totArrears = 0, totBalance = 0, totLoan = 0;
   for (const r of rows) {
     const days = num(r.days_elapsed) || num(r.dc);
     const i = PAR_BANDS.findIndex(b => days >= b.lo && days <= b.hi);
     if (i >= 0) { bands[i].customers++; bands[i].arrears += num(r.arrears); }
+    const arr = num(r.arrears), bal = num(r.balance), loan = principalOf(r);
+    const j = PRINCIPAL_BANDS.findIndex(b => loan >= b.lo && loan < b.hi);
+    if (j >= 0) { pbands[j].customers++; pbands[j].arrears += arr; pbands[j].balance += bal; pbands[j].loanSum += loan; }
+    totArrears += arr; totBalance += bal; totLoan += loan;
     const st = r.status || '(none)';
     if (!byStatus[st]) byStatus[st] = { status: st, customers: 0, arrears: 0 };
-    byStatus[st].customers++; byStatus[st].arrears += num(r.arrears);
+    byStatus[st].customers++; byStatus[st].arrears += arr;
     const t = r.team || '(no team)';
-    if (!byTeam[t]) byTeam[t] = { team: t, customers: 0, arrears: 0 };
-    byTeam[t].customers++; byTeam[t].arrears += num(r.arrears);
+    if (!byTeam[t]) byTeam[t] = { team: t, customers: 0, arrears: 0, balance: 0, loanSum: 0 };
+    byTeam[t].customers++; byTeam[t].arrears += arr; byTeam[t].balance += bal; byTeam[t].loanSum += loan;
   }
+  const finish = b => ({ customers: b.customers, arrears: b.arrears, balance: b.balance,
+    avgLoan: b.customers ? Math.round(b.loanSum / b.customers) : 0,
+    par: pctOf(b.arrears, b.balance), share: pctOf(b.arrears, totArrears) });
   return { date: snap.date, weekday: currentWeekday(nowMs), bands,
+    byBand: pbands.map(b => ({ band: b.band, ...finish(b) })),
     byStatus: Object.values(byStatus).sort((a, b) => b.arrears - a.arrears),
-    byTeam: Object.values(byTeam).sort((a, b) => b.arrears - a.arrears),
-    totals: { customers: rows.length, arrears: rows.reduce((s, r) => s + num(r.arrears), 0) } };
+    byTeam: Object.values(byTeam).map(t => ({ team: t.team, ...finish(t) })).sort((a, b) => b.arrears - a.arrears),
+    totals: { customers: rows.length, arrears: totArrears, balance: totBalance,
+      avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance) } };
 }
 
 /** Weekly report: Mon-Fri collection per day plus the week's recovery and sales, all
@@ -345,7 +471,79 @@ async function weekly(db, user, { weekOf }, nowMs) {
     });
   }
   const sales = scoped(user, loansAll);
+
+  /* The weekly report is read PER TEAM, in five sections -- Sales, Count 1-6, Collection,
+     Recovery and Ongezeko la deni (debt movement). The day strip above answers "how did the
+     week go"; these answer "which team". Ongezeko compares Monday's initial deck against the
+     week-end current one, so a positive change means debt FELL. */
+  const [teamRows, monIni, endCur] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*')),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon }),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: addDaysKey(mon, 6) }),
+  ]);
+  const perTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+  const T = {};
+  const gt = team => bucket(T, String(team || '(no team)').trim() || '(no team)',
+    { sales: 0, expected: 0, collected: 0, uncollected: 0, recovered: 0,
+      mondayDebt: 0, curDebt: 0, c16: 0, cleared: 0, reduced: 0, bad: 0, stat: 0 });
+  for (const r of sales) gt(r.team).sales += num(r.principal_amt) || num(r.loan_amt);
+  for (const d of days) {
+    const dayRows = scoped(user, expAll.filter(r => String(r.snapshot_date) === d.date));
+    for (const r of pickLatestBatchRows(dayRows)) {
+      const b = gt(r.team), c = collectedOf(r);
+      b.expected += num(r.payment_expected); b.collected += c;
+      b.uncollected += Math.max(0, num(r.payment_expected) - c);
+    }
+    const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'initial')));
+    const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'current')));
+    if (!ini.length || !cur.length) continue;
+    for (const r of ini) gt(r.team).recovered += num(r.arrears);
+    for (const r of cur) gt(r.team).recovered -= num(r.arrears);
+  }
+  const myMonIni = scoped(user, monIni.rows), myEndCur = scoped(user, endCur.rows);
+  for (const r of myMonIni) gt(r.team).mondayDebt += num(r.arrears);
+  for (const r of myEndCur) gt(r.team).curDebt += num(r.arrears);
+  const endArrBy = {}, endHas = {};
+  for (const r of myEndCur) { endArrBy[K(r.ref)] = num(r.arrears); endHas[K(r.ref)] = true; }
+  for (const r of myMonIni) {
+    if (paidCount(r) >= CREDIT_HALF) continue;
+    const k = K(r.ref), initA = num(r.arrears);
+    const cur = endHas[k] ? endArrBy[k] : 0;
+    const b = gt(r.team);
+    b.c16++;
+    const st = creditState(initA, cur, !!endHas[k]);
+    if (st === 'Cleared') b.cleared++; else if (st === 'Reduced') b.reduced++; else if (st === 'Bad') b.bad++; else b.stat++;
+  }
+  const leadBy = {};
+  for (const t of teamRows) leadBy[K(t.team)] = t;
+  const teamsOut = Object.values(T).map(b => ({
+    team: b.key, lead: leadBy[K(b.key)] || {},
+    sales: b.sales, salesPct: pctOf(b.sales, perTarget),
+    expected: b.expected, collected: b.collected, uncollected: b.uncollected,
+    collPct: pctOf(b.collected, b.expected),
+    recovered: b.recovered, recPct: pctOf(b.recovered, b.uncollected),
+    mondayDebt: b.mondayDebt, curDebt: b.curDebt, debtDelta: b.mondayDebt - b.curDebt,
+    c16: b.c16, cleared: b.cleared, reduced: b.reduced, bad: b.bad, stat: b.stat,
+    success: pctOf(b.cleared + b.reduced, b.c16),
+  })).sort((a, b) => b.sales - a.sales);
+  const sum = f => teamsOut.reduce((s, r) => s + (r[f] || 0), 0);
+  const teamTotals = {
+    sales: sum('sales'), expected: sum('expected'), collected: sum('collected'),
+    uncollected: sum('uncollected'), recovered: sum('recovered'),
+    mondayDebt: sum('mondayDebt'), curDebt: sum('curDebt'),
+    c16: sum('c16'), cleared: sum('cleared'), reduced: sum('reduced'), bad: sum('bad'), stat: sum('stat'),
+  };
+  teamTotals.debtDelta = teamTotals.mondayDebt - teamTotals.curDebt;
+  teamTotals.salesPct = pctOf(teamTotals.sales, perTarget * Math.max(teamsOut.length, 1));
+  teamTotals.collPct = pctOf(teamTotals.collected, teamTotals.expected);
+  teamTotals.recPct = pctOf(teamTotals.recovered, teamTotals.uncollected);
+  teamTotals.success = pctOf(teamTotals.cleared + teamTotals.reduced, teamTotals.c16);
+  teamTotals.companyTarget = perTarget * Math.max(teamsOut.length, 1);
+
   return { weekOf: mon, weekEnd: fri, days,
+    teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
+    leadCols: TEAM_ROLE_COLS.slice(),
+    hasMonday: myMonIni.length > 0, hasWeekEnd: myEndCur.length > 0, weekEndDate: endCur.date,
     totals: {
       expected: days.reduce((s, d) => s + d.expected, 0),
       collected: days.reduce((s, d) => s + d.collected, 0),
@@ -356,6 +554,8 @@ async function weekly(db, user, { weekOf }, nowMs) {
       salesAmount: sales.reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0),
     } };
 }
+/** The supervisory roles a weekly report can be grouped by -- the teams table's own columns. */
+const TEAM_ROLE_COLS = ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike'];
 
 /** Leader Reports / Team Progress: per-team initial vs current arrears, recovered and
     progress %, mirroring the live Team Progress sheet. */
@@ -389,17 +589,136 @@ async function teamProgress(db, user, _args, nowMs) {
     note: paired ? null : `No matching initial ${wd} deck -- Recovered shows 0 rather than a whole-book figure.` };
 }
 
-/** My Commission: recovered per officer's team(s) times the configured rate. The rate lives
-    in settings (COMMISSION_RATE, a percentage) so finance can change it without a deploy. */
+/** My Commission. Commission is earned by PEOPLE, not teams, and it comes from two separate
+    jobs that pay on different rules:
+
+      RECOVERY   the Recovery officer of the customer's team earns a PERCENTAGE of whatever
+                 that customer's arrears fell by that day. The percentage can be set by
+                 disbursement YEAR (older loans pay more so nobody ignores them) or by STATUS
+                 (defaulter / expired / chronic) -- CMS_MODE picks which.
+      COLLECTION the Expected officer earns a FLAT TZS amount per client who came in PAID or
+                 OVERPAID that day (CMS_PAID_TZS / CMS_OVER_TZS).
+
+    Both are computed day by day and summed, never from a week-level total: a customer who
+    recovered on Tuesday and slipped back on Thursday earned Tuesday's commission, and a
+    week-level subtraction would erase it.
+
+    Officers see only their own row; anyone with settings/upload sees the whole company. */
+function cmsPairs(txt) {
+  const out = {};
+  for (let p of String(txt == null ? '' : txt).split(',')) {
+    p = p.trim(); if (!p) continue;
+    const m = p.match(/^([A-Za-z0-9*]+)[\s:=-]*([0-9]+(?:\.[0-9]+)?)\s*%?$/);
+    if (!m) throw badRequest('Rates must look like "2024:5, 2025:2.5" — could not read "' + p + '".');
+    let k = String(m[1]).toUpperCase();
+    if (k.startsWith('CHRON')) k = 'CHRONIC';
+    else if (k.startsWith('EXPIR')) k = 'EXPIRED';
+    else if (k.startsWith('DEFAULT')) k = 'DEFAULTER';
+    out[k] = parseFloat(m[2]);
+  }
+  return out;
+}
+async function cmsCfg(db) {
+  const rows = await fetchAll(() => db.from('settings').select('*'));
+  const get = k => { const r = rows.find(x => x.key === k); return r ? r.value : ''; };
+  let mode = String(get('CMS_MODE') || 'year');
+  if (mode !== 'status') mode = 'year';
+  let yearRates = {}, statusRates = {};
+  try { yearRates = cmsPairs(get('CMS_YEAR_RATES')); } catch { /* a malformed rate must not break the page */ }
+  try { statusRates = cmsPairs(get('CMS_STATUS_RATES')); } catch { /* same */ }
+  return { mode, yearRaw: String(get('CMS_YEAR_RATES') || ''), statusRaw: String(get('CMS_STATUS_RATES') || ''),
+    yearRates, statusRates,
+    paidTzs: num(get('CMS_PAID_TZS')) || 0, overTzs: num(get('CMS_OVER_TZS')) || 0 };
+}
+function cmsRateFor(cfg, row) {
+  if (cfg.mode === 'status') {
+    const s = K(row.status);
+    if (s.includes('CHRON')) return cfg.statusRates.CHRONIC || 0;
+    if (s.includes('EXPIR')) return cfg.statusRates.EXPIRED || 0;
+    return cfg.statusRates.DEFAULTER || 0;
+  }
+  const y = String(row.disb_date || '').slice(0, 4);
+  if (cfg.yearRates[y] != null) return cfg.yearRates[y];
+  return cfg.yearRates['*'] || 0;
+}
 async function commission(db, user, _args, nowMs) {
-  const tp = await teamProgress(db, user, {}, nowMs);
-  const { data: rateRow } = await db.from('settings').select('value').eq('key', 'COMMISSION_RATE').maybeSingle();
-  const rate = num(rateRow && rateRow.value) || 0;
-  const rows = tp.rows.map(r => ({ team: r.team, recovered: r.recovered, progress: r.progress,
-    commission: Math.max(0, r.recovered) * (rate / 100) }));
-  return { rate, weekday: tp.weekday, date: tp.date, paired: tp.paired, rows,
-    totals: { recovered: rows.reduce((s, r) => s + r.recovered, 0), commission: rows.reduce((s, r) => s + r.commission, 0) },
-    note: tp.note };
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6), fri = addDaysKey(mon, 4);
+  const [cfg, teamRows, defWeek, expWeek] = await Promise.all([
+    cmsCfg(db),
+    fetchAll(() => db.from('teams').select('*')),
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
+  const onDate = (rows, d, type) => pickLatestBatchRows(rows.filter(r =>
+    String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
+
+  const blank = { recovered: 0, recComm: 0, paid: 0, over: 0, colComm: 0 };
+  function recDay(dateKey, acc) {
+    const ini = onDate(myDef, dateKey, 'initial'), cur = onDate(myDef, dateKey, 'current');
+    if (!ini.length) return;
+    const left = {};
+    for (const r of cur) left[K(r.ref)] = (left[K(r.ref)] || 0) + num(r.arrears);
+    for (const r of ini) {
+      const k = K(r.ref);
+      // Gone from the current deck entirely = fully recovered, not "missing data".
+      const recA = num(r.arrears) - (left[k] == null ? 0 : left[k]);
+      if (recA <= 0) continue;
+      const b = bucket(acc, officerOf(teamBy, r.team, 'recovery'), blank);
+      b.recovered += recA;
+      b.recComm += recA * cmsRateFor(cfg, r) / 100;
+    }
+  }
+  function colDay(dateKey, acc) {
+    for (const r of onDate(myExp, dateKey)) {
+      const s = K(r.todays_status);
+      if (s !== 'PAID' && s !== 'OVERPAID') continue;
+      const b = bucket(acc, officerOf(teamBy, r.team, 'expected'), blank);
+      if (s === 'OVERPAID') { b.over++; b.colComm += cfg.overTzs; }
+      else { b.paid++; b.colComm += cfg.paidTzs; }
+    }
+  }
+  const dayAcc = {}, weekAcc = {};
+  recDay(today, dayAcc); colDay(today, dayAcc);
+  for (let i = 0; i < 7; i++) recDay(addDaysKey(mon, i), weekAcc);
+  for (let i = 0; i < 5; i++) colDay(addDaysKey(mon, i), weekAcc);
+
+  const isAdmin = (user.tabs || []).includes('upload') || (user.tabs || []).includes('settings');
+  const pack = acc => Object.values(acc)
+    .filter(b => isAdmin || K(b.key) === K(user.name))
+    .map(b => ({ officer: b.key, recovered: b.recovered, recComm: Math.round(b.recComm),
+      paid: b.paid, over: b.over, colComm: Math.round(b.colComm),
+      total: Math.round(b.recComm + b.colComm) }))
+    .sort((a, b) => b.total - a.total);
+
+  const day = pack(dayAcc), week = pack(weekAcc);
+  return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
+    paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, isAdmin, me: user.name,
+    weekday: currentWeekday(nowMs), date: today, weekOf: mon,
+    day, week,
+    totals: { day: day.reduce((s, r) => s + r.total, 0), week: week.reduce((s, r) => s + r.total, 0),
+      recovered: day.reduce((s, r) => s + r.recovered, 0) } };
+}
+/** The rate editor lives on the commission page itself, so cause and effect are one click
+    apart -- typing a rate and seeing the numbers move is the whole point. */
+async function commissionSave(db, user, p) {
+  requireAdmin(user);
+  const set = async (key, value) => {
+    const { error } = await db.from('settings').upsert({ key, value: String(value == null ? '' : value) }, { onConflict: 'key' });
+    if (error) throw new Error(error.message);
+  };
+  const out = {};
+  if (p.mode != null) { out.mode = String(p.mode) === 'status' ? 'status' : 'year'; await set('CMS_MODE', out.mode); }
+  // Validate BEFORE writing anything: a malformed year list must not half-save.
+  if (p.yearRates != null) { cmsPairs(p.yearRates); out.yearRates = String(p.yearRates); }
+  if (p.statusRates != null) { cmsPairs(p.statusRates); out.statusRates = String(p.statusRates); }
+  if (out.yearRates != null) await set('CMS_YEAR_RATES', out.yearRates);
+  if (out.statusRates != null) await set('CMS_STATUS_RATES', out.statusRates);
+  if (p.paidTzs != null) { out.paidTzs = Math.max(0, num(p.paidTzs) || 0); await set('CMS_PAID_TZS', out.paidTzs); }
+  if (p.overTzs != null) { out.overTzs = Math.max(0, num(p.overTzs) || 0); await set('CMS_OVER_TZS', out.overTzs); }
+  return out;
 }
 
 /** The rotation engine: which supervisory ROLE owns a defaulter right now, and therefore
@@ -502,20 +821,111 @@ async function assignments(db, user, _args, nowMs) {
     byLeader: Object.values(byLeader).sort((a, b) => b.arrears - a.arrears) };
 }
 
-/** Credit Analysts: throughput per assessor across the assessment stages. */
-async function credit(db, user) {
-  const rows = scoped(user, await fetchAll(() => db.from('loans').select('*')
-    .in('stage', ['assessed', 'pending_approval', 'approved', 'pending_disb', 'disbursed'])));
-  const by = {};
-  for (const r of rows) {
-    const who = r.created_by || r.assigned_by || '(unassigned)';
-    if (!by[who]) by[who] = { analyst: who, assessed: 0, approved: 0, disbursed: 0, amount: 0 };
-    by[who].assessed++;
-    if (r.stage === 'approved' || r.stage === 'pending_disb' || r.stage === 'disbursed') by[who].approved++;
-    if (r.stage === 'disbursed') by[who].disbursed++;
-    by[who].amount += num(r.principal_amt) || num(r.loan_amt);
+/** Credit Analysts. An analyst is judged on their COUNT 1-6 book -- defaulters who have paid
+    fewer than 6 of 12 installments, i.e. have not yet passed the halfway mark and are still
+    winnable -- and on sales. Each customer in that book lands in one of four states measured
+    Monday-initial vs current:
+
+      Cleared  gone from the current deck, or nothing left owing
+      Reduced  arrears fell
+      Bad      arrears rose
+      Static   arrears unchanged
+
+    Success % = (cleared + reduced) ÷ count 1-6, and Overall % averages success with sales %,
+    which is the single number the analyst is ranked on. The analyst for a customer is the
+    CREDIT column of their team, so a reassignment in Teams & Staff re-points this too.
+
+    The weekly SCORECARD is anchored to Monday's initial deck on purpose -- "progress since
+    Monday" only means something against a fixed weekly baseline. The PORTFOLIO list below is
+    built from TODAY's current deck instead, because that is who the analyst has to call
+    today: someone who started defaulting on Wednesday must appear, and someone who cleared on
+    Tuesday must not. */
+const CREDIT_HALF = 6;
+function creditState(initArr, curArr, inCurrent) {
+  if (!inCurrent || curArr <= 0) return 'Cleared';
+  if (curArr < initArr) return 'Reduced';
+  if (curArr > initArr) return 'Bad';
+  return 'Static';
+}
+async function credit(db, user, _args, nowMs) {
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs);
+  const wd = currentWeekday(nowMs);
+  const [teamRows, curSnap, monSnap, todaySnap, loansAll] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*')),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today }),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon }),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: today }),
+    fetchAll(() => db.from('loans').select('*').eq('stage', 'approved')),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const analystOf = team => officerOf(teamBy, team, 'credit');
+
+  const defCur = scoped(user, curSnap.rows);
+  // Until Monday's baseline is uploaded, fall back to today's initial rather than showing nothing.
+  const defIni = monSnap.rows.length ? scoped(user, monSnap.rows) : scoped(user, todaySnap.rows);
+
+  const curArrBy = {}, curPaidBy = {}, inCur = {};
+  for (const d of defCur) { const k = K(d.ref); curArrBy[k] = num(d.arrears); curPaidBy[k] = paidCount(d); inCur[k] = true; }
+  const iniArrBy = {};
+  for (const d of defIni) iniArrBy[K(d.ref)] = num(d.arrears);
+
+  const A = {};
+  const ga = name => bucket(A, name, { teams: {}, cnt: 0, cntCur: 0, cleared: 0, reduced: 0, bad: 0, stat: 0,
+    recovered: 0, sales: 0, salesCnt: 0 });
+  for (const d of defIni) {
+    if (paidCount(d) >= CREDIT_HALF) continue;
+    const k = K(d.ref), initA = num(d.arrears);
+    const cur = inCur[k] ? curArrBy[k] : 0;
+    const st = creditState(initA, cur, !!inCur[k]);
+    const a = ga(analystOf(d.team));
+    if (d.team) a.teams[K(d.team)] = String(d.team).trim();
+    a.cnt++;
+    if (inCur[k]) a.cntCur++;
+    if (st === 'Cleared') a.cleared++; else if (st === 'Reduced') a.reduced++; else if (st === 'Bad') a.bad++; else a.stat++;
+    a.recovered += Math.max(0, initA - cur);
   }
-  return { rows: Object.values(by).sort((a, b) => b.assessed - a.assessed), count: rows.length };
+  for (const l of scoped(user, loansAll)) {
+    const a = ga(analystOf(l.team));
+    a.sales += num(l.principal_amt) || num(l.loan_amt); a.salesCnt++;
+  }
+
+  const perTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+  const rows = Object.values(A).map(a => {
+    const teamList = Object.values(a.teams).filter(Boolean);
+    const success = pctOf(a.cleared + a.reduced, a.cnt);
+    const salesPct = pctOf(a.sales, perTarget * Math.max(teamList.length, 1));
+    return { analyst: a.key, teams: teamList.length, teamList: teamList.join(', '),
+      cnt: a.cnt, cntCur: a.cntCur, cleared: a.cleared, reduced: a.reduced, stat: a.stat, bad: a.bad,
+      recovered: a.recovered, sales: a.sales, salesCnt: a.salesCnt, success, salesPct,
+      overall: Math.round(((success || 0) + (salesPct || 0)) / 2 * 10) / 10 };
+  }).filter(r => r.cnt > 0 || r.sales > 0).sort((a, b) => b.overall - a.overall);
+
+  const avgOverall = rows.length ? Math.round(rows.reduce((s, r) => s + r.overall, 0) / rows.length * 10) / 10 : 0;
+  for (const r of rows) r.below = r.overall < avgOverall;
+
+  const portfolio = defCur.filter(d => paidCount(d) < CREDIT_HALF).map(d => {
+    const k = K(d.ref), cur = num(d.arrears);
+    // No Monday record means new this week -- 0 recovered rather than silently dropped.
+    const initA = Object.prototype.hasOwnProperty.call(iniArrBy, k) ? iniArrBy[k] : cur;
+    return { ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
+      analyst: analystOf(d.team), paid: curPaidBy[k], initArr: initA, curArr: cur,
+      recovered: Math.max(0, initA - cur), state: creditState(initA, cur, true) };
+  }).sort((a, b) => b.recovered - a.recovered);
+
+  const tot = { cnt: 0, cntCur: 0, cleared: 0, reduced: 0, bad: 0, stat: 0, recovered: 0, sales: 0 };
+  for (const r of rows) for (const f of Object.keys(tot)) tot[f] += r[f] || 0;
+  const teamCount = Math.max(Object.keys(teamBy).length, 1);
+  tot.success = pctOf(tot.cleared + tot.reduced, tot.cnt);
+  tot.salesPct = pctOf(tot.sales, perTarget * teamCount);
+  tot.overall = Math.round(((tot.success || 0) + (tot.salesPct || 0)) / 2 * 10) / 10;
+
+  return { rows, portfolio, count: rows.length, totals: tot, avgOverall, perTarget, teamCount,
+    threshold: CREDIT_HALF - 1, baselineDate: monSnap.rows.length ? monSnap.date : todaySnap.date,
+    usedMondayBaseline: monSnap.rows.length > 0,
+    hasInitial: defIni.length > 0, hasCurrent: defCur.length > 0,
+    analystCount: rows.filter(r => r.cnt > 0).length,
+    analysts: [...new Set(portfolio.map(p => p.analyst))].sort() };
 }
 
 /* ------------------------------------------------------------------ reference / admin */
@@ -609,6 +1019,82 @@ async function removeCallUser(db, user, p) {
   return { userId: id, mode: 'delete' };
 }
 
+/* ------------------------------------------------------------------ storage housekeeping
+
+   Every upload appends a dated snapshot rather than overwriting, which is what makes history,
+   trends and "recovery since Monday" possible at all -- but it also means the tables only ever
+   grow. Postgres has no cell ceiling the way the old workbook did, so nothing breaks; what
+   runs out eventually is the plan's disk quota. So: show what each date is actually costing,
+   and let an admin drop the dates they no longer need, per report type.
+
+   Deleting a snapshot date deletes a DAY OF HISTORY -- the trends and weekly comparisons that
+   read it will show gaps -- so this is admin-only and names the row count before it acts. */
+const SNAPSHOT_SOURCES = {
+  expected: { table: 'repayment_snapshots', label: 'Expected Repayment', dateCol: 'snapshot_date', typeCol: 'snapshot_type' },
+  defaulters: { table: 'defaulter_snapshots', label: 'Defaulters', dateCol: 'snapshot_date', typeCol: 'snapshot_type' },
+  received: { table: 'received_payments', label: 'Received Payments', dateCol: 'paid_at' },
+  abnormal: { table: 'abnormal_payments', label: 'Abnormal Payments', dateCol: 'created_at' },
+  calls: { table: 'call_logs', label: 'Call Logs', dateCol: 'call_date' },
+};
+const dayOf = v => String(v == null ? '' : v).slice(0, 10);
+
+/** What is stored, by date and report type, so a cleanup is an informed choice rather than a
+    guess. Also reports the total row count per source for the storage note in the UI. */
+async function storageUsage(db, user) {
+  requireAdmin(user);
+  const out = {};
+  const byDate = {};
+  for (const [key, src] of Object.entries(SNAPSHOT_SOURCES)) {
+    const rows = await fetchAll(() => db.from(src.table).select(src.dateCol));
+    out[key] = { key, label: src.label, table: src.table, rows: rows.length };
+    for (const r of rows) {
+      const d = dayOf(r[src.dateCol]);
+      if (!d) continue;
+      if (!byDate[d]) byDate[d] = { date: d, total: 0 };
+      byDate[d][key] = (byDate[d][key] || 0) + 1;
+      byDate[d].total++;
+    }
+  }
+  const dates = Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date));
+  return { sources: Object.values(out), dates,
+    totalRows: Object.values(out).reduce((s, x) => s + x.rows, 0),
+    oldest: dates.length ? dates[dates.length - 1].date : null,
+    newest: dates.length ? dates[0].date : null };
+}
+
+/** Delete the chosen report types for one date, or for everything on/before a date when
+    `through` is set -- which is how you reclaim a year of history in one action. */
+async function purgeSnapshots(db, user, p) {
+  requireAdmin(user);
+  const date = String((p && p.date) || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest('A date (yyyy-mm-dd) is required.');
+  const wanted = Array.isArray(p.types) ? p.types.filter(t => SNAPSHOT_SOURCES[t]) : [];
+  if (!wanted.length) throw badRequest('Choose at least one report type to clean.');
+  const through = !!p.through;
+  const deleted = {};
+  let total = 0;
+  for (const key of wanted) {
+    const src = SNAPSHOT_SOURCES[key];
+    // Count first: the caller is told exactly what went, and a dry run can ask without acting.
+    const before = await fetchAll(() => db.from(src.table).select(src.dateCol));
+    const hit = before.filter(r => {
+      const d = dayOf(r[src.dateCol]);
+      return d && (through ? d <= date : d === date);
+    }).length;
+    if (!p.dryRun && hit) {
+      const q = db.from(src.table).delete();
+      const { error } = await (through
+        ? q.lte(src.dateCol, date + (src.dateCol === 'created_at' ? 'T23:59:59.999Z' : ''))
+        : (src.dateCol === 'created_at'
+            ? q.gte(src.dateCol, date).lte(src.dateCol, date + 'T23:59:59.999Z')
+            : q.eq(src.dateCol, date)));
+      if (error) throw new Error(error.message);
+    }
+    deleted[key] = hit; total += hit;
+  }
+  return { date, through, dryRun: !!p.dryRun, deleted, total };
+}
+
 /* ------------------------------------------------------------------ dispatch */
 function badRequest(m) { const e = new Error(m); e.status = 400; return e; }
 function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
@@ -624,10 +1110,11 @@ const FN = {
   complaints, addComplaint, resolveComplaint,
   restructures, addRestructure, decideRestructure,
   demandNotices, addDemandNotice, abnormal, received,
-  par, weekly, teamProgress, commission, assignments, credit,
+  par, weekly, teamProgress, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   teams, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
+  storageUsage, purgeSnapshots,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
 
