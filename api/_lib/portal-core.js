@@ -1,10 +1,11 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS } from './auth.js';
+import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange } from './snapshots.js';
 import { collectedOf, uncollectedOf, num } from './recovery.js';
 import { buildDashboard } from './dashboard-core.js';
-import { reportCoreForPortal } from './call-core.js';
+import { reportCoreForPortal, pnorm, h36 } from './call-core.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -1422,6 +1423,100 @@ async function callUsers(db, user) {
   for (const l of logs) counts[l.user_id] = (counts[l.user_id] || 0) + 1;
   return { rows: users.map(u => ({ ...u, calls: counts[u.user_id] || 0 })), count: users.length };
 }
+/** Field officer accounts. An officer cannot create their own -- an admin creates it here,
+    against the officer's phone number, and issues a passcode. That passcode is shown ONCE, at
+    the moment it is generated, and is stored only as a scrypt hash: an admin can replace it,
+    never read it back. A passcode an admin can look up is one that leaks with their screen.
+
+    The two things this exists to make possible, both of which used to require a database
+    console:
+
+      someone leaves          -> switch the account off; the device is released immediately and
+                                 their next request fails, rather than their session running
+                                 until they choose to sign out (which they never do)
+      a passcode gets shared  -> issue a new one; the old device is released the same way
+
+    user_id is derived from the phone number, so creating the account in advance and the
+    officer registering later resolve to the SAME identity -- their call history stays theirs
+    across a lost phone, a reinstall or a new handset. */
+async function officerAccounts(db, user) {
+  requireAdmin(user);
+  const [rows, logs, teamRows] = await Promise.all([
+    fetchAll(() => db.from('call_users').select('*').order('name', { ascending: true })),
+    fetchAll(() => db.from('call_logs').select('user_id')),
+    fetchAll(() => db.from('teams').select('team')),
+  ]);
+  const counts = {};
+  for (const l of logs) counts[l.user_id] = (counts[l.user_id] || 0) + 1;
+  const out = rows.map(u => ({
+    user_id: u.user_id, name: u.name, team: u.team, role: u.role, phone: u.phone,
+    is_leader: !!u.is_leader, leader_teams: u.leader_teams,
+    active: u.active !== false,
+    // Never send the hash or the salt to a browser, not even an admin's.
+    hasPasscode: !!u.passcode_hash,
+    passcode_set_at: u.passcode_set_at, registered_at: u.registered_at,
+    signedIn: !!u.device_id, calls: counts[u.user_id] || 0, created_by: u.created_by,
+  }));
+  return { rows: out, count: out.length,
+    teams: teamRows.map(t => t.team).filter(Boolean).sort(),
+    // Accounts left over from before passcodes existed can still sign in on the device they
+    // already hold. Naming them is the whole point -- they are the open doors.
+    withoutPasscode: out.filter(u => !u.hasPasscode && u.signedIn).length };
+}
+
+/** Identity MUST be derived exactly as the calls app derives it. When the admin path and the
+    register path disagreed, creating an account here and signing in there produced two rows
+    for one phone -- and phone is UNIQUE in Postgres, so the officer's sign-in failed outright.
+    Both now go through the same pnorm/h36 pair. */
+function normPhone9(v) { return pnorm(v); }
+function officerId(phone9) { return 'U' + h36(phone9); }
+/** Create or update an account. Passing `issuePasscode` returns a fresh one exactly once. */
+async function saveOfficerAccount(db, user, p, nowMs) {
+  requireAdmin(user);
+  const phone = normPhone9(p && p.phone);
+  if (!phone) throw badRequest('A 9-digit phone number is required — it is how the officer signs in.');
+  const name = String((p && p.name) || '').trim();
+  if (!name) throw badRequest('A name is required.');
+  const leader = !!(p && p.isLeader);
+  let team = String((p && p.team) || '').trim() || null;
+  if (team) {
+    const teamRows = await fetchAll(() => db.from('teams').select('team'));
+    const match = teamRows.find(t => K(t.team) === K(team));
+    if (!match) throw badRequest(`Unknown team "${team}".`);
+    team = match.team;                       // canonical spelling the FK expects
+  }
+  if (!team && !leader) throw badRequest('Pick a team for a field officer.');
+  const { data: existing } = await db.from('call_users').select('*').eq('phone', phone).maybeSingle();
+  const uid = existing ? existing.user_id : officerId(phone);
+  const active = p.active === undefined ? (existing ? existing.active !== false : true) : !!p.active;
+
+  const vals = { user_id: uid, name, team, phone,
+    role: String((p && p.role) || (leader ? 'LEADER' : 'OFFICER')).trim(),
+    is_leader: leader,
+    leader_teams: leader && p.leaderTeams
+      ? String(p.leaderTeams).split(/[;,]/).map(x => x.trim()).filter(Boolean) : null,
+    active,
+    created_by: existing ? existing.created_by : user.name,
+    registered_at: existing ? existing.registered_at : new Date(nowMs).toISOString() };
+
+  let issued = null;
+  if (p && p.issuePasscode) {
+    issued = generatePasscode();
+    const { hash, salt } = hashPasscode(issued);
+    vals.passcode_hash = hash; vals.passcode_salt = salt;
+    vals.passcode_set_at = new Date(nowMs).toISOString();
+    // A new passcode invalidates the old sign-in, or re-issuing after a leak would change
+    // nothing for the person who already has the phone in their hand.
+    vals.device_id = null;
+  }
+  // Switching an account off must cut the live session, not just block the next sign-in.
+  if (!active) vals.device_id = null;
+
+  const { error } = await db.from('call_users').upsert(vals, { onConflict: 'user_id' });
+  if (error) throw new Error(error.message);
+  return { userId: uid, name, team, active, passcode: issued };
+}
+
 /** Two ways to remove someone, because they mean different things:
       unregister -> keep the row and its call history, just release the device so the phone
                     has to register again (the fix for "wrong name/team on the right phone");
@@ -1627,6 +1722,7 @@ const FN = {
   teams, saveRole, deleteRole, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
+  officerAccounts, saveOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
 

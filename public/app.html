@@ -153,6 +153,10 @@
   .checks input,.chk input{width:auto;margin:0}
   .chk{margin:6px 0 10px}
   .clact{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .passout{margin:12px 0;padding:12px 14px;border:1.5px solid var(--okline);background:var(--okbg);border-radius:10px;text-align:center}
+  .passout .pl{font-size:11.5px;color:var(--ok);font-weight:700;margin-bottom:6px}
+  .passout .pv{font-size:26px;font-weight:800;letter-spacing:.14em;font-family:ui-monospace,Menlo,monospace;color:var(--ok)}
+  .note.bad{border-color:var(--badline);background:var(--badbg);color:var(--bad)}
   .clickrow{cursor:pointer}
   .kpis.sm .kpi{padding:8px 10px}
   .kpis.sm .kpi .v{font-size:16px}
@@ -1689,8 +1693,9 @@ var CLEAN_TYPES = [
   { key:'calls',      label:'Call Logs' },
 ];
 VIEWS.settings = function(){
-  return Promise.all([srv('settings'), srv('accessCodes'), srv('callUsers'), srv('storageUsage')]).then(function(r){
+  return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage')]).then(function(r){
     var st=r[0], ac=r[1], cu=r[2], sg=r[3];
+    S.officers = cu;
     S.roles = ac.roles || [];
     S.storage = sg;
     // Two registers live here because they answer the same question -- who may use this
@@ -1737,17 +1742,29 @@ VIEWS.settings = function(){
             + '<td><code>'+esc(x.code)+'</code></td>'
             + '<td class="r"><button class="btn sm ghost" data-code="'+esc(x.code)+'">Badili / Edit</button></td></tr>';
         }).join('') + '</tbody></table></div></div>'
-      + '<div class="card"><div class="card-h">Watumiaji wa simu / Phone (HOPE Calls) users'
-        + '<span class="sub">Ondoa usajili usio sahihi au wa majaribio / remove test or wrong registrations</span></div>'
-      + '<div class="scroll"><table><thead><tr><th>Name</th><th>Team</th><th>Phone</th><th>Role</th><th class="r">Calls</th><th>Registered</th><th>Device</th><th></th></tr></thead><tbody>'
-      + (cu.rows.length ? cu.rows.map(function(u){
-          return '<tr><td>'+esc(u.name||'')+'</td><td>'+esc(u.team||'')+'</td><td>'+esc(u.phone||'')+'</td>'
+      /* Field officers cannot create their own accounts any more. An admin issues one against
+         the officer's phone number with a passcode, and can switch it off or re-issue the
+         passcode at any moment -- both of which release the handset immediately. */
+      + '<div class="card"><div class="card-h">Akaunti za maafisa / Field officer accounts'
+        + '<span class="sub"><button class="btn sm" id="newOfficer">+ Afisa mpya / New officer</button></span></div>'
+      + (cu.withoutPasscode
+          ? '<div class="note bad" style="margin:10px 14px"><b>'+money(cu.withoutPasscode)+'</b> akaunti bado zinatumia usajili wa zamani bila nenosiri.'
+            + ' / accounts are still signed in from the old passcode-free registration.'
+            + ' Issue each one a passcode to close it.</div>'
+          : '')
+      + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Name</th><th>Team</th><th>Phone</th><th>Role</th>'
+        + '<th>Passcode</th><th>Status</th><th class="r">Calls</th><th></th></tr></thead><tbody>'
+      + (cu.rows.length ? cu.rows.map(function(u, i){
+          return '<tr><td class="sn">'+(i+1)+'</td><td><b>'+esc(u.name||'')+'</b></td><td>'+esc(u.team||'')+'</td>'
+            + '<td>'+esc(u.phone||'')+'</td>'
             + '<td>'+esc(u.role||'')+(u.is_leader?' <span class="chip">leader</span>':'')+'</td>'
+            + '<td>'+(u.hasPasscode?'<span class="chip ok">set</span>':'<span class="chip bad">none</span>')+'</td>'
+            + '<td>'+(!u.active ? '<span class="chip bad">off</span>'
+                      : u.signedIn ? '<span class="chip ok">signed in</span>'
+                      : '<span class="chip mut">not signed in</span>')+'</td>'
             + '<td class="r">'+money(u.calls)+'</td>'
-            + '<td>'+esc(String(u.registered_at||'').replace('T',' ').slice(0,16))+'</td>'
-            + '<td>'+(u.device_id?'<span class="chip ok">signed in</span>':'<span class="chip mut">free</span>')+'</td>'
             + '<td class="r"><button class="btn sm ghost" data-user="'+esc(u.user_id)+'">Simamia / Manage</button></td></tr>';
-        }).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--mut);padding:20px">Hakuna aliyejisajili bado.</td></tr>')
+        }).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--mut);padding:20px">Hakuna akaunti bado. / No accounts yet.</td></tr>')
       + '</tbody></table></div></div>'
       + bar('<button class="btn sm" id="newSetting">+ Badili thamani / Set a value</button>');
     S.acRows = ac.rows; S.cuRows = cu.rows;
@@ -2141,9 +2158,54 @@ function wireForms(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-user]'), function(b){
     b.onclick = function(){
       var id = b.getAttribute('data-user');
-      userForm((S.cuRows||[]).filter(function(x){ return String(x.user_id)===id; })[0] || null);
+      officerForm(((S.officers&&S.officers.rows)||[]).filter(function(x){ return String(x.user_id)===id; })[0] || null);
     };
   });
+  var no = document.getElementById('newOfficer');
+  if (no) no.onclick = function(){ officerForm(null); };
+}
+
+/* A field officer account. The phone number IS the login name -- it is also what keys their
+   call history, so it stays fixed once set. The passcode is shown exactly once, when it is
+   generated: it is stored only as a hash, so nobody, including an admin, can read it back. */
+function officerForm(x){
+  var isNew = !x;
+  var teams = (S.officers && S.officers.teams) || [];
+  drawer('<h3>'+(isNew?'Afisa mpya / New field officer':esc(x.name||''))+'</h3>'
+    + '<div class="sub">Afisa hawezi kujisajili mwenyewe. / An officer cannot register themselves — you issue the account.</div>'
+    + '<div class="fld"><label>Jina / Name</label><input id="oName" value="'+esc(x?x.name:'')+'"></div>'
+    + '<div class="fld"><label>Simu / Phone (ndio anaingia nayo / this is the login)</label>'
+      + '<input id="oPhone" inputmode="tel" value="'+esc(x?x.phone:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + '<div class="fld"><label>Timu / Team</label><select id="oTeam"><option value="">— none —</option>'
+      + teams.map(function(t){ return '<option'+(x&&x.team===t?' selected':'')+'>'+esc(t)+'</option>'; }).join('')
+      + '</select></div>'
+    + '<div class="fld"><label>Wadhifa / Role</label><input id="oRole" value="'+esc(x&&x.role?x.role:'OFFICER')+'"></div>'
+    + '<label class="chk"><input id="oLeader" type="checkbox"'+(x&&x.is_leader?' checked':'')+'> Kiongozi / Leader (sees reports)</label>'
+    + '<label class="chk"><input id="oActive" type="checkbox"'+(!x||x.active?' checked':'')+'> Inatumika / Active</label>'
+    + '<div class="fldnote">Ukiizima, simu yake inakatwa mara moja. / Switching this off cuts their handset immediately.</div>'
+    + '<label class="chk"><input id="oIssue" type="checkbox"'+(isNew?' checked disabled':'')+'> '
+      + (isNew ? 'Tengeneza nenosiri / Issue a passcode' : 'Badilisha nenosiri / Issue a NEW passcode')+'</label>'
+    + (isNew ? '' : '<div class="fldnote">Nenosiri jipya linakata simu iliyokuwa na la zamani. / A new passcode releases the handset that had the old one.</div>')
+    + '<div id="oOut"></div>'
+    + '<button class="btn w" id="oSave">Hifadhi / Save</button>');
+  $('#oSave').onclick = function(){
+    srv('saveOfficerAccount', { name:$('#oName').value.trim(), phone:$('#oPhone').value.trim(),
+      team:$('#oTeam').value, role:$('#oRole').value.trim(),
+      isLeader:$('#oLeader').checked, active:$('#oActive').checked,
+      issuePasscode: isNew || $('#oIssue').checked })
+      .then(function(r){
+        if (r.passcode){
+          // Shown once, and only here. There is no screen anywhere that can show it again.
+          $('#oOut').innerHTML = '<div class="passout"><div class="pl">Nenosiri / Passcode — '
+            + 'andika sasa, halitaonekana tena / write it down now, it is never shown again</div>'
+            + '<div class="pv">'+esc(r.passcode)+'</div></div>';
+          $('#oSave').textContent = 'Nimeandika / Done';
+          $('#oSave').onclick = function(){ closeDrawer(); render(); };
+          toast('Imehifadhiwa. / Saved.');
+        } else { toast('Imehifadhiwa. / Saved.'); closeDrawer(); render(); }
+      })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
 }
 
 /** Add or edit a portal login. Editing keeps the code itself fixed -- changing it would
