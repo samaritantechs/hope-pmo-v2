@@ -28,6 +28,13 @@
   .hint{color:var(--mut);font-size:12px;margin-top:-8px;margin-bottom:14px}
   .file-drop{border:1.5px dashed var(--line);border-radius:8px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;font-size:13.5px;color:var(--mut)}
   .file-drop.has{border-color:var(--ok);color:var(--ok)}
+  .ok-line{color:var(--ok);font-weight:700;font-size:13px;margin-bottom:8px}
+  .warn-line{color:#B42318;font-weight:700;font-size:13px;margin-bottom:8px}
+  .stat-g{margin-top:10px}
+  .stat-h{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);font-weight:700;margin-bottom:3px}
+  .stat-r{display:flex;align-items:center;gap:6px;font-size:12.5px;padding:2px 0}
+  .stat-r .in{color:var(--ok)} .stat-r .out{color:#94A3B8}
+  .stat-m{margin-left:auto;color:var(--mut);font-size:11.5px}
   .file-drop input{display:none}
 </style>
 </head>
@@ -120,6 +127,14 @@
     <div id="msg"></div>
   </div>
 
+  <!-- A MISSING upload does not error -- it silently leaves yesterday's numbers on today's
+       dashboard. Showing what is already in for today turns that into something you can see
+       before the work starts, instead of after someone notices a figure looks wrong. -->
+  <div class="card">
+    <label style="margin-bottom:4px">Already uploaded today</label>
+    <div id="statusBox" class="hint">Enter your access code to see what is already in.</div>
+  </div>
+
   <div class="card">
     <label style="margin-bottom:4px">API endpoint (optional)</label>
     <input id="apiBase" placeholder="This site" value="">
@@ -159,6 +174,46 @@ $('type').addEventListener('change', syncFields);
 if (/[?&]admin=1\b/.test(window.location.search)) $('type').value = 'access-codes';
 syncFields();
 $('snapDate').valueAsDate = new Date();
+
+function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g, function(c){
+  return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
+function api(){ return ($('apiBase').value.trim().replace(/\/$/, '')) || ''; }
+function loadStatus(){
+  var code = $('code').value.trim();
+  var box = $('statusBox');
+  if (!code){ box.className = 'hint'; box.textContent = 'Enter your access code to see what is already in.'; return; }
+  box.className = 'hint'; box.textContent = 'Checking\u2026';
+  fetch(api() + '/api/portal', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ code: code, fn: 'uploadStatus', args: {} }) })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.ok){ box.className = 'hint'; box.textContent = d.error || 'Could not check.'; return; }
+      var groups = {};
+      d.items.forEach(function(i){ (groups[i.group] = groups[i.group] || []).push(i); });
+      // Only today's OWN weekday deck has to be in for the dashboard to be right; the other
+      // six are history, and flagging them would cry wolf every single morning.
+      box.className = '';
+      box.innerHTML =
+        (d.ready
+          ? '<div class="ok-line">\u2713 Today\u2019s Expected and ' + esc(d.weekday)
+            + ' current defaulters are loaded.</div>'
+          : '<div class="warn-line">\u26A0 Still needed for ' + esc(d.date) + ': <b>'
+            + esc(d.missing.join(', ')) + '</b></div>')
+        + Object.keys(groups).map(function(g){
+            return '<div class="stat-g"><div class="stat-h">' + esc(g) + '</div>'
+              + groups[g].map(function(i){
+                  return '<div class="stat-r"><span class="' + (i.loadedToday ? 'in' : 'out') + '">'
+                    + (i.loadedToday ? '\u25CF' : '\u25CB') + '</span> ' + esc(i.label)
+                    + '<span class="stat-m">' + (i.latest ? esc(i.latest) : 'never')
+                    + (i.today ? ' \u00B7 ' + i.today.toLocaleString('en-US') + ' rows today' : '')
+                    + '</span></div>';
+                }).join('') + '</div>';
+          }).join('');
+    })
+    .catch(function(e){ box.className='hint'; box.textContent = 'Could not check: ' + e.message; });
+}
+$('code').addEventListener('change', loadStatus);
+loadStatus();
 
 var chosenFile = null;
 var wbCache = null;   // parsed workbook of the chosen file -- read once, reused at upload time
@@ -356,6 +411,7 @@ $('go').addEventListener('click', function(){
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
         msg.className = 'msg ok';
         msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.' + (res.body.message ? '\n' + res.body.message : '');
+        loadStatus();          // tick this report off the list without a reload
       } else if (res.status >= 200 && res.status < 300 && res.body.ok !== false && zeroRows){
         msg.className = 'msg bad';
         msg.innerHTML = 'Inserted 0 rows into ' + escHtml_(res.body.table) + '. Here is exactly what was found in the file, to see why:<br><br>'

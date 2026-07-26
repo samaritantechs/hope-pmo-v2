@@ -1,5 +1,5 @@
 import { fetchAll } from './supabase.js';
-import { teamAllowed } from './auth.js';
+import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange } from './snapshots.js';
 import { collectedOf, uncollectedOf, num } from './recovery.js';
@@ -1271,8 +1271,41 @@ async function credit(db, user, _args, nowMs) {
 
 /* ------------------------------------------------------------------ reference / admin */
 async function teams(db, user) {
-  const rows = await fetchAll(() => db.from('teams').select('*').order('team', { ascending: true }));
-  return { rows: rows.filter(r => teamAllowed(user, r.team)), count: rows.length };
+  const [rows, roleRows] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
+    fetchAll(() => db.from('roles').select('*').order('role', { ascending: true })),
+  ]);
+  // Roles live beside the teams because they answer the same question -- who does what -- and
+  // a role's tab list was previously readable but not editable from anywhere in the UI, so
+  // onboarding a new kind of officer meant a trip to the SQL editor.
+  return { rows: rows.filter(r => teamAllowed(user, r.team)), count: rows.length,
+    roles: roleRows, allTabs: ADMIN_TABS.slice() };
+}
+async function saveRole(db, user, p) {
+  requireAdmin(user);
+  const role = String((p && p.role) || '').trim().toUpperCase();
+  if (!role) throw badRequest('A role name is required.');
+  const tabs = String((p && p.tabs) || '').split(/[;,]/).map(x => x.trim().toLowerCase())
+    .filter(x => ADMIN_TABS.includes(x));
+  const { error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' });
+  if (error) throw new Error(error.message);
+  return { role, tabs };
+}
+async function deleteRole(db, user, p) {
+  requireAdmin(user);
+  const role = String((p && p.role) || '').trim().toUpperCase();
+  if (!role) throw badRequest('A role name is required.');
+  if (role === 'ADMIN') throw badRequest('The ADMIN role cannot be deleted.');
+  // Codes inherit their tabs from the role when their own list is blank, so deleting a role
+  // still in use would silently strip those people back to the default tab set.
+  const codes = await fetchAll(() => db.from('access_codes').select('code, role'));
+  const inUse = codes.filter(c => K(c.role) === role);
+  if (inUse.length) {
+    throw badRequest(`${inUse.length} access code(s) still use the ${role} role. Move them to another role first.`);
+  }
+  const { error } = await db.from('roles').delete().eq('role', role);
+  if (error) throw new Error(error.message);
+  return { role };
 }
 async function settingsList(db, user) {
   requireAdmin(user);
@@ -1420,6 +1453,76 @@ async function storageUsage(db, user) {
     newest: dates.length ? dates[0].date : null };
 }
 
+/** What has already been uploaded for a given day. Someone loading five Expected files and
+    fourteen defaulter decks every morning cannot hold in their head which ones are already in,
+    and the failure is silent in the worst way: a MISSING upload does not error, it just makes
+    the dashboard quietly wrong -- yesterday's numbers presented as today's. This answers
+    "what still needs loading?" before the work starts rather than after someone notices a
+    figure looks off.
+
+    Gated on UPLOAD, not settings: the person doing the uploading is exactly who needs it. */
+const UPLOAD_EXPECTED_TYPES = ['today', 'tomorrow', 'yesterday', 'initial'];
+async function uploadStatus(db, user, { date } = {}, nowMs) {
+  if (!(user.tabs || []).includes('upload')) throw forbidden('Upload permission is required.');
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(date)) ? date : todayKey(nowMs);
+  const [rep, def, rcv, calls] = await Promise.all([
+    fetchAll(() => db.from('repayment_snapshots').select('snapshot_type, snapshot_date')),
+    fetchAll(() => db.from('defaulter_snapshots').select('snapshot_type, weekday, snapshot_date')),
+    fetchAll(() => db.from('received_payments').select('paid_at')),
+    fetchAll(() => db.from('call_logs').select('call_date')),
+  ]);
+  const tally = (rows, keyOf, dateOf) => {
+    const m = {};
+    for (const r of rows) {
+      const k = keyOf(r), d = dayOf(dateOf(r));
+      if (!k || !d) continue;
+      if (!m[k]) m[k] = { key: k, latest: null, today: 0, total: 0 };
+      m[k].total++;
+      if (!m[k].latest || d > m[k].latest) m[k].latest = d;
+      if (d === day) m[k].today++;
+    }
+    return m;
+  };
+  const repBy = tally(rep, r => r.snapshot_type, r => r.snapshot_date);
+  const defBy = tally(def, r => `${r.snapshot_type}:${r.weekday}`, r => r.snapshot_date);
+
+  const items = [];
+  for (const t of UPLOAD_EXPECTED_TYPES) {
+    const b = repBy[t] || { latest: null, today: 0, total: 0 };
+    items.push({ group: 'Expected repayment', label: `Expected — ${t}`, key: `expected-${t}`,
+      latest: b.latest, today: b.today, total: b.total, loadedToday: b.today > 0 });
+  }
+  for (const type of ['current', 'initial']) {
+    for (const wd of WD7) {
+      const b = defBy[`${type}:${wd}`] || { latest: null, today: 0, total: 0 };
+      items.push({ group: `Defaulters — ${type}`, label: `Defaulters ${type} — ${wd}`,
+        key: `defaulters-${type}-${wd}`, weekday: wd,
+        latest: b.latest, today: b.today, total: b.total, loadedToday: b.today > 0 });
+    }
+  }
+  const simple = (label, key, rows, dateOf) => {
+    let latest = null, today = 0;
+    for (const r of rows) {
+      const d = dayOf(dateOf(r));
+      if (!d) continue;
+      if (!latest || d > latest) latest = d;
+      if (d === day) today++;
+    }
+    items.push({ group: 'Other', label, key, latest, today, total: rows.length, loadedToday: today > 0 });
+  };
+  simple('Received Payments', 'received', rcv, r => r.paid_at);
+  simple('Call Logs', 'calls', calls, r => r.call_date);
+
+  // Today's OWN weekday is the one that actually has to be in for the dashboard to be right;
+  // the other six weekday decks are history and their absence is not a problem.
+  const wdToday = currentWeekday(nowMs);
+  const required = items.filter(i =>
+    i.key === 'expected-today' || i.key === `defaulters-current-${wdToday}`);
+  return { date: day, weekday: wdToday, items,
+    missing: required.filter(i => !i.loadedToday).map(i => i.label),
+    ready: required.every(i => i.loadedToday) };
+}
+
 /** Delete the chosen report types for one date, or for everything on/before a date when
     `through` is set -- which is how you reclaim a year of history in one action. */
 async function purgeSnapshots(db, user, p) {
@@ -1470,9 +1573,9 @@ const FN = {
   demandNotices, addDemandNotice, legalPreview, abnormal, received,
   par, weekly, teamProgress, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
-  teams, settings: settingsList, settingSet,
+  teams, saveRole, deleteRole, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
-  storageUsage, purgeSnapshots,
+  storageUsage, purgeSnapshots, uploadStatus,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
 
