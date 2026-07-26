@@ -1376,16 +1376,82 @@ VIEWS.restructure = function(){
 VIEWS.legal = function(){
   return srv('demandNotices').then(function(d){
     HEAD = '<div class="kpis">' + kpi('Notices issued', money(d.count))
-      + kpi('Total demanded', money(d.rows.reduce(function(s,r){return s+(Number(r.total_demand)||0);},0)), null, 'bad') + '</div>'
-      + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>');
+      + kpi('Total demanded', money(d.demanded), null, 'bad')
+      + kpi('Fines charged', money(d.fines), 'late-payment penalties', 'warnc')
+      + '</div>'
+      + '<div class="note">Faini huanza wiki <b>2</b> baada ya rejesho la kwanza kukosekana · '
+      + 'mikopo ya 2024 na kabla <b>2%</b>, baadaye <b>5%</b> kwa kila rejesho lililochelewa.'
+      + ' / The fine starts two weeks after the first missed installment; 2% for loans disbursed'
+      + ' in 2024 or earlier, 5% after that.</div>'
+      + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>'
+        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena. / Tap a row to reprint.</span>');
     S.rows = d.rows;
-    S.cols = [col('notice_date','Notice date','date'), col('ref','REF'), col('full_name','Customer'), col('team','Team'),
-      col('contact','Contact'), col('notice_days','Days','num'), col('arrears_at_notice','Arrears','money'),
-      col('fine','Fine','money'), col('principal_remaining','Principal left','money'),
-      col('total_demand','Total demand','money'), col('issued_by','Issued by')];
+    S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
+      col('ref','REF#'), col('full_name','Customer'), col('team','Team'),
+      {key:'contact', label:'Contact', kind:'tel'}, col('notice_days','Days','num'),
+      col('paid_count','Paid','num'), col('arrears_at_notice','Arrears','money'),
+      {key:'fine', label:'Fine', kind:'money', cls:function(){ return 'bad'; }},
+      col('principal_remaining','Principal left','money'),
+      {key:'total_demand', label:'Total demand', kind:'money', cls:function(){ return 'bad'; }},
+      col('issued_by','Issued by')];
     ONROW = null;
+    S.foot = 'Demanded: TZS '+money(d.demanded)+' · of which fines: TZS '+money(d.fines);
   });
 };
+/* Issuing a notice is a two-step: preview the arithmetic against the customer's own row, then
+   commit it. The letter that prints is built from the SAME figures that get stored, so the
+   register and the document in the customer's hands can never disagree. */
+function lgIssue(){
+  drawer('<h3>Notisi mpya / New demand notice</h3>'
+    + '<div class="sub">Anza na REF# ya mteja. / Start with the customer’s REF#.</div>'
+    + '<div class="fld"><label>Customer REF#</label><input id="lgRef"></div>'
+    + '<div class="fld"><label>Tarehe ya notisi / Notice date</label><input id="lgDate" type="date" value="'+today()+'"></div>'
+    + '<button class="btn w" id="lgLoad">Tafuta / Load</button>'
+    + '<div id="lgPrev"></div>');
+  var load = function(){
+    var ref = $('#lgRef').value.trim();
+    if (!ref){ toast('Weka REF#. / Enter a REF#.', true); return; }
+    srv('legalPreview', { ref:ref, noticeDate:$('#lgDate').value }).then(function(e){
+      if (!e.found){ toast('Hakuna mdaiwa mwenye REF# hiyo. / No defaulter with that REF#.', true); return; }
+      $('#lgPrev').innerHTML =
+        '<div class="facts"><div class="frow"><span>Customer</span><b>'+esc(e.full_name||'')+'</b></div>'
+        + '<div class="frow"><span>Team</span><span>'+esc(e.team||'')+'</span></div>'
+        + '<div class="frow"><span>Disbursed → expiry</span><span>'
+          + esc(String(e.disb_date||'—').slice(0,10))+' → '+esc(String(e.expire_date||'—').slice(0,10))+'</span></div></div>'
+        + '<div class="kpis sm">'
+        + kpi('Marejesho / Paid', (e.paidCount||0)+' / 12')
+        + kpi('Wiki za faini / Weeks late', (e.weeks||0)+' ('+e.ratePct+'%)')
+        + kpi('Faini / Fine', money(e.fine), null, e.fine?'bad':'good')
+        + kpi('Deni la msingi', money(e.principalRemaining))
+        + kpi('Jumla ya madai / Total demand', money(e.totalDemand), null, 'bad')
+        + '</div>'
+        + '<div class="fld"><label>Siku za notisi / Notice days</label><input id="lgDays" type="number" min="1" value="7"></div>'
+        + '<div class="fld"><label>Mdhamini / Guarantor</label><input id="lgG" value="'+esc(e.guarantor||'')+'"></div>'
+        + '<div class="fld"><label>Simu ya mdhamini / Guarantor phone</label><input id="lgGC" value="'+esc(e.guarantor_contact||'')+'"></div>'
+        + '<button class="btn w" id="lgGo">Toa notisi &amp; chapisha / Issue &amp; print</button>';
+      $('#lgGo').onclick = function(){
+        srv('addDemandNotice', { ref:e.ref, noticeDate:$('#lgDate').value, noticeDays:$('#lgDays').value,
+          guarantorName:$('#lgG').value.trim(), guarantorContact:$('#lgGC').value.trim() })
+          .then(function(r){
+            toast('Notisi '+r.noticeId+' imetolewa. / Issued.');
+            printHtml(r.html);
+            closeDrawer(); render();
+          })
+          .catch(function(err){ toast(String(err.message||err), true); });
+      };
+    }).catch(function(err){ toast(String(err.message||err), true); });
+  };
+  $('#lgLoad').onclick = load;
+  $('#lgRef').onkeydown = function(ev){ if (ev.key === 'Enter') load(); };
+}
+/* Opened as a document rather than downloaded: the officer prints it or saves it as PDF from
+   the browser's own print dialog, which is what produced the letter in v1 too. */
+function printHtml(html){
+  var w = window.open('', '_blank');
+  if (!w){ toast('Ruhusu pop-ups ili kuchapisha. / Allow pop-ups to print the notice.', true); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(function(){ try { w.focus(); w.print(); } catch(e){} }, 400);
+}
 
 VIEWS.abnormal = function(){
   return srv('abnormal').then(function(d){
@@ -1905,24 +1971,11 @@ function wireForms(){
   // hand -- four chances to write an offer the books do not agree with.
   var nr = document.getElementById('newRestructure');
   if (nr) nr.onclick = function(){ rxLookup(); };
+  // The old form asked the officer to TYPE the fine and the total demand. Those are the two
+  // numbers a demand notice exists to state correctly, and a mistyped one is a written demand
+  // for the wrong amount with the company's stamp on it. They are computed now.
   var nn = document.getElementById('newNotice');
-  if (nn) nn.onclick = function(){
-    drawer('<h3>Notisi ya madai / Demand notice</h3>'
-      + fldRow('zRef','REF') + fldRow('zName','Jina / Customer') + fldRow('zTeam','Timu / Team')
-      + fldRow('zContact','Simu / Contact') + fldRow('zDate','Tarehe / Notice date','date')
-      + fldRow('zDays','Siku / Days','number') + fldRow('zArr','Deni / Arrears','number')
-      + fldRow('zFine','Faini / Fine','number') + fldRow('zTotal','Jumla ya madai / Total demand','number')
-      + '<button class="btn w" id="zSave">Toa notisi / Issue</button>');
-    document.getElementById('zSave').onclick = function(){
-      srv('addDemandNotice', { ref:document.getElementById('zRef').value.trim(), fullName:document.getElementById('zName').value.trim(),
-        team:document.getElementById('zTeam').value.trim(), contact:document.getElementById('zContact').value.trim(),
-        noticeDate:document.getElementById('zDate').value||null, noticeDays:document.getElementById('zDays').value||null,
-        arrears:document.getElementById('zArr').value||null, fine:document.getElementById('zFine').value||null,
-        totalDemand:document.getElementById('zTotal').value||null })
-        .then(function(){ toast('Notisi imetolewa.'); closeDrawer(); render(); })
-        .catch(function(e){ toast(String(e.message||e), true); });
-    };
-  };
+  if (nn) nn.onclick = function(){ lgIssue(); };
   var ns = document.getElementById('newSetting');
   if (ns) ns.onclick = function(){ settingForm('', ''); };
   var nk = document.getElementById('newCode');

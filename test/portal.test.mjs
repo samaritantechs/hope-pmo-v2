@@ -585,3 +585,74 @@ test('only an approver can decide a restructuring offer', async () => {
   await assert.rejects(() => portalApi(db, ADMIN, 'decideRestructure',
     { id: 's1', decision: 'approve' }, NOW), e => e.status === 400);
 });
+
+test('demand notice: the fine only starts after the grace period, and scales with the year', async () => {
+  const db = fakeDb(tables());
+  const setDef = patch => {
+    for (const r of db._dump('defaulter_snapshots')) {
+      if (r.ref === '555' && r.snapshot_type === 'current') Object.assign(r, patch);
+    }
+  };
+  // Disbursed 2026-01-05, weekly installment 40,000, 3 of 12 paid.
+  // First missed due = disb + 7 x 4 days = 2026-02-02; grace ends two weeks later, 2026-02-16.
+  setDef({ disb_date: '2026-01-05', expire_date: '2026-03-30', other_inst: 40000,
+    initial_inst: 100000, t_payment: 220000, ds: '3/12' });
+
+  // Inside the grace window: no fine. Charging one here would be indefensible.
+  const early = await portalApi(db, ADMIN, 'legalPreview',
+    { ref: '555', noticeDate: '2026-02-10' }, NOW);
+  assert.equal(early.weeks, 0); assert.equal(early.fine, 0);
+
+  // Four weeks past the grace end, at 5% (disbursed after 2024).
+  const late = await portalApi(db, ADMIN, 'legalPreview',
+    { ref: '555', noticeDate: '2026-03-16' }, NOW);
+  assert.equal(late.ratePct, 5);
+  assert.equal(late.weeks, 4);
+  assert.equal(late.fine, 8000);                        // 4 x 0.05 x 40,000
+  // total loan = 100,000 + 11 x 40,000 = 540,000; paid 220,000 -> 320,000 remaining.
+  assert.equal(late.totalLoan, 540000);
+  assert.equal(late.principalRemaining, 320000);
+  assert.equal(late.totalDemand, 328000);               // remaining + fine, rounded up to 500
+
+  // The same loan written in 2024 carries the older 2% rate.
+  setDef({ disb_date: '2024-01-05', expire_date: '2024-03-30' });
+  const old = await portalApi(db, ADMIN, 'legalPreview', { ref: '555', noticeDate: '2024-03-16' }, NOW);
+  assert.equal(old.ratePct, 2);
+});
+
+test('issuing a notice stores what it prints, under a citable reference', async () => {
+  const db = fakeDb(tables());
+  for (const r of db._dump('defaulter_snapshots')) {
+    if (r.ref === '555' && r.snapshot_type === 'current') {
+      Object.assign(r, { disb_date: '2026-01-05', expire_date: '2026-03-30', other_inst: 40000,
+        initial_inst: 100000, t_payment: 220000, ds: '3/12', full_name: 'ASHA JUMA MOSHI' });
+    }
+  }
+  const a = await portalApi(db, ADMIN, 'addDemandNotice',
+    { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
+  assert.equal(a.noticeId, 'HMCL/AJM/16/03/2026');
+  assert.equal(a.totalDemand, 328000);
+
+  // The register row carries the same figures the letter states.
+  const row = db._dump('demand_notices').find(r => r.notice_id === a.noticeId);
+  assert.equal(row.total_demand, 328000);
+  assert.equal(row.fine, 8000);
+  assert.equal(row.paid_count, 3);
+  assert.equal(row.issued_by, 'THE ADMIN');
+
+  // And the letter itself states them, in words the customer reads.
+  assert.match(a.html, /Kumb\.Na\. HMCL\/AJM\/16\/03\/2026/);
+  assert.match(a.html, /SHILINGI 328,000\/= NDANI YA SIKU SABA/);
+  assert.match(a.html, /marejesho 3 kati ya 12/);
+
+  // Serving the same person again the same day gets its own reference, never a duplicate.
+  const b = await portalApi(db, ADMIN, 'addDemandNotice',
+    { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
+  assert.equal(b.noticeId, 'HMCL/AJM/16/03/2026-2');
+
+  // Team scoping holds: MBAGALA's 999 is not GMO's to serve.
+  await assert.rejects(() => portalApi(db, GMO, 'legalPreview', { ref: '999' }, NOW),
+    e => e.status === 403);
+  await assert.rejects(() => portalApi(db, ADMIN, 'addDemandNotice', { ref: 'NOPE' }, NOW),
+    e => e.status === 400);
+});

@@ -518,19 +518,188 @@ async function decideRestructure(db, user, p, nowMs) {
   return { id: p.id, status: approve ? 'Approved' : 'Rejected' };
 }
 
-async function demandNotices(db, user) { return listTable(db, user, 'demand_notices'); }
+/* ------------------------------------------------------------------ legal / demand notices
+
+   A demand notice is the last step before the auctioneers, and it is a legal document: it
+   states what was lent, what came back, what is still owed, the late-payment fine, and the
+   number of days the customer has left. Getting the arithmetic wrong here is not a reporting
+   error -- it is a demand for the wrong amount, in writing, with the company's stamp on it.
+   So every figure is derived here, on the server, from the customer's own row:
+
+     total loan          first installment + 11 x other        (the 12-week schedule)
+     principal           total loan / 1.36                     (36% interest stripped)
+     principal remaining total loan - what has actually been paid
+     fine                weeks late x rate x weekly installment
+     total demand        principal remaining + fine, rounded up to the next 500
+
+   The fine RATE depends on the disbursement year -- loans written in 2024 and earlier carry
+   2%, later ones 5% -- and it only starts after a two-week grace period past the first missed
+   due date. A customer who has missed one payment and is not yet past expiry owes no fine at
+   all; charging them one would be indefensible. */
+const LEGAL_GRACE_DAYS = 14;
+function roundUp500(v) { const n = num(v); return n % 500 === 0 ? n : Math.ceil(n / 500) * 500; }
+
+function legalFine(d, noticeMs) {
+  const disb = d.disb_date ? Date.parse(String(d.disb_date) + 'T00:00:00Z') : NaN;
+  const other = num(d.other_inst);
+  const paidCount = paidCount0(d);
+  const disbYear = isNaN(disb) ? new Date(noticeMs).getUTCFullYear() : new Date(disb).getUTCFullYear();
+  const rate = disbYear <= 2024 ? 0.02 : 0.05;
+  const none = { fine: 0, weeks: 0, paidCount, rate };
+  const missed = 12 - paidCount;
+  if (missed <= 0 || isNaN(disb)) return none;
+  const firstMissedDue = disb + 7 * (paidCount + 1) * 86400000;
+  const expiry = d.expire_date ? Date.parse(String(d.expire_date) + 'T00:00:00Z') : NaN;
+  const expired = !isNaN(expiry) && noticeMs > expiry;
+  // One missed payment on a loan that has not expired yet is not yet a fineable default.
+  if (missed < 2 && !expired) return none;
+  const graceEnd = firstMissedDue + LEGAL_GRACE_DAYS * 86400000;
+  if (noticeMs < graceEnd) return none;
+  const weeks = Math.ceil(Math.floor((noticeMs - graceEnd) / 86400000) / 7);
+  return { fine: weeks * rate * other, weeks, paidCount, rate };
+}
+/** paidCount reads D.S first; this is the same rule, kept separate so legal never silently
+    inherits a change made for the credit-analyst book. */
+function paidCount0(d) { return paidCount(d); }
+
+function legalAmounts(d, fine) {
+  const initial = num(d.initial_inst), other = num(d.other_inst), paid = num(d.t_payment);
+  const totalLoan = initial + 11 * other;
+  const principalRemaining = totalLoan - paid;
+  return { totalLoan, principal: roundUp500(totalLoan / 1.36), principalRemaining,
+    totalPaid: paid, weeklyInst: roundUp500(other),
+    totalDemand: roundUp500(principalRemaining + fine) };
+}
+
+async function findDefaulter(db, user, ref, nowMs) {
+  const snap = await latestSnapshot(db, 'defaulter_snapshots',
+    { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) });
+  const found = snap.rows.find(d => K(d.ref) === K(ref));
+  if (!found) return null;
+  if (!teamAllowed(user, found.team)) throw forbidden(`You do not have access to team ${found.team}.`);
+  return found;
+}
+
+async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
+  if (!ref) throw badRequest('A customer REF# is required.');
+  const d = await findDefaulter(db, user, ref, nowMs);
+  if (!d) return { found: false };
+  const noticeMs = /^\d{4}-\d{2}-\d{2}$/.test(String(noticeDate))
+    ? Date.parse(noticeDate + 'T00:00:00Z') : nowMs;
+  const f = legalFine(d, noticeMs);
+  const fine = roundUp500(f.fine);
+  const a = legalAmounts(d, fine);
+  return { found: true, ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
+    guarantor: d.guarantor_name, guarantor_contact: d.guarantor_contact,
+    arrears: num(d.arrears), paidCount: f.paidCount, weeks: f.weeks, rate: f.rate,
+    ratePct: Math.round(f.rate * 1000) / 10, fine,
+    disb_date: d.disb_date, expire_date: d.expire_date, landmark: d.nearest_landmark,
+    ...a, noticeDate: new Date(noticeMs).toISOString().slice(0, 10) };
+}
+
+/** HMCL/<initials>/<dd>/<mm>/<yyyy>, with -2, -3 ... when the same person is served again on
+    the same day. Stored, never recomputed: regenerating it later against a corrected name
+    would produce a different reference for a letter already in the customer's hands. */
+async function nextNoticeId(db, fullName, noticeKey) {
+  const initials = String(fullName || '').trim().split(/\s+/)
+    .map(p => p.charAt(0).toUpperCase()).join('') || 'XX';
+  const [y, m, dd] = String(noticeKey).split('-');
+  const base = `HMCL/${initials}/${dd}/${m}/${y}`;
+  const rows = await fetchAll(() => db.from('demand_notices').select('notice_id'));
+  const used = [];
+  for (const r of rows) {
+    const id = String(r.notice_id || '').trim();
+    if (id === base) used.push(1);
+    else if (id.startsWith(base + '-')) {
+      const n = parseInt(id.slice(base.length + 1), 10);
+      if (!isNaN(n)) used.push(n);
+    }
+  }
+  return used.length ? `${base}-${Math.max(...used) + 1}` : base;
+}
+
 async function addDemandNotice(db, user, p, nowMs) {
-  if (!p || !p.ref) throw badRequest('ref is required');
-  const { data, error } = await db.from('demand_notices').insert({
-    ref: p.ref, team: p.team || null, full_name: p.fullName || null, contact: p.contact || null,
-    notice_date: p.noticeDate || todayKey(nowMs), notice_days: p.noticeDays || null,
-    paid_count: p.paidCount || null, fine: p.fine || null,
-    principal_remaining: p.principalRemaining || null, total_demand: p.totalDemand || null,
-    arrears_at_notice: p.arrears || null, other_inst: p.otherInst || null,
+  if (!p || !p.ref) throw badRequest('Pick a customer (REF#).');
+  const d = await findDefaulter(db, user, p.ref, nowMs);
+  if (!d) throw badRequest('That REF# is not in the current Defaulters list.');
+  const noticeKey = /^\d{4}-\d{2}-\d{2}$/.test(String(p.noticeDate)) ? p.noticeDate : todayKey(nowMs);
+  const days = Math.max(1, Math.floor(num(p.noticeDays) || 7));
+  const f = legalFine(d, Date.parse(noticeKey + 'T00:00:00Z'));
+  const fine = roundUp500(f.fine);
+  const a = legalAmounts(d, fine);
+  const noticeId = await nextNoticeId(db, d.full_name, noticeKey);
+  const { error } = await db.from('demand_notices').insert({
+    notice_id: noticeId, ref: d.ref, team: d.team, full_name: d.full_name, contact: d.contact,
+    notice_date: noticeKey, notice_days: days, paid_count: f.paidCount, fine,
+    principal_remaining: a.principalRemaining, total_demand: a.totalDemand,
+    arrears_at_notice: num(d.arrears), other_inst: num(d.other_inst),
     issued_by: user.name, created_at: new Date(nowMs).toISOString(),
-  }).select('*');
+  });
   if (error) throw new Error(error.message);
-  return { row: (data && data[0]) || null };
+  const brand = await fetchAll(() => db.from('settings').select('*'));
+  const get = k => { const r = brand.find(x => x.key === k); return (r && r.value) || ''; };
+  return { noticeId, ref: d.ref, fine, ...a, paidCount: f.paidCount, ratePct: Math.round(f.rate * 1000) / 10,
+    html: demandNoticeHtml({
+      noticeId, noticeDate: noticeKey, days,
+      name: d.full_name, contact: d.contact, team: d.team,
+      location: d.nearest_landmark || 'Dar es Salaam',
+      disb: d.disb_date, expiry: d.expire_date,
+      guarantorName: String(p.guarantorName || '').trim() || d.guarantor_name || '',
+      guarantorContact: String(p.guarantorContact || '').trim() || d.guarantor_contact || '',
+      officer: user.name, fine, ratePct: Math.round(f.rate * 1000) / 10, paidCount: f.paidCount, ...a,
+      logo: get('BRAND_LOGO'), stamp: get('BRAND_STAMP'), sign: get('BRAND_SIGN'),
+    }) };
+}
+
+const esc_ = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmtM = n => Math.round(num(n)).toLocaleString('en-US');
+/** The letter itself, in Swahili, laid out for A4. Kept as one template so what is stored and
+    what is printed come from a single set of numbers. */
+function demandNoticeHtml(t) {
+  const daysWord = String(t.days) === '7' ? 'SABA' : String(t.days);
+  const commission = Math.round(t.totalDemand * 0.1);
+  const grand = t.totalDemand + 50000 + commission;
+  const img = (src, style, alt) => src ? `<img src="${esc_(src)}" style="${style}" alt="${alt}">` : '';
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc_(t.noticeId)}</title><style>
+@page{margin:14mm 16mm}body{font-family:Verdana,Arial,sans-serif;font-size:9.3pt;color:#000;line-height:1.35;text-align:justify}
+.blue{border-top:3px solid #0B3BA7;margin-bottom:12px}.bbot{border-bottom:3px solid #0B3BA7;margin-top:16px}
+.head{text-align:right;margin-bottom:14px}
+.subj{font-weight:bold;text-decoration:underline;text-align:center;margin:10px 0}
+table{width:100%;border-collapse:collapse;margin:12px 0}td,th{border:1px solid #000;padding:5px 7px;font-size:9.3pt;vertical-align:top}th{background:#f0f0f0}
+ol{padding-left:18px}.sig{margin-top:22px}
+</style></head><body><div class="blue"></div>
+<div class="head">${img(t.logo, 'height:52px;float:left', 'logo')}<b>HOPE MICROCREDIT COMPANY LIMITED</b><br>+255 659 077 770<br>info@hopemicrocredit.co.tz<br>www.hopemicrocredit.co.tz<br>P.O.Box 31623, Kijitonyama<br>Kinondoni, Dar es Salaam<br><br><b>${esc_(t.noticeDate)}</b></div>
+<p><b>Kumb.Na. ${esc_(t.noticeId)}</b></p><br>
+<p><b>${esc_(t.name)},</b><br>${esc_(t.contact)},<br>${esc_(t.location)} - ${esc_(t.team)}.</p>
+<p class="subj">YAH: NOTISI YA KUKUTAKA ULIPE DENI LA MKOPO, SHILINGI ${fmtM(t.totalDemand)}/= NDANI YA SIKU ${daysWord} TU.</p>
+<p>Tafadhali, rejea kichwa cha habari tajwa hapo juu. Kampuni ya Hope Microcredit inakuandikia notisi hii ya kukutaka ulipe deni lako ndani ya Siku ${esc_(t.days)} tangu ulipopewa notisi hii.</p>
+<ol>
+<li>Kwamba tarehe ${esc_(t.disb)} ulipatiwa mkopo wa Tsh. ${fmtM(t.principal)}/= uliopaswa kurejesha kila wiki Tsh ${fmtM(t.weeklyInst)}/= kwa wiki 12 (miezi 3), kumalizika tarehe ${esc_(t.expiry)}.</li>
+<li>Kwamba jumla ya mkopo na riba ilikuwa Tsh ${fmtM(t.totalLoan)}/=.</li>
+<li>Kwamba mpaka sasa umerejesha Tsh ${fmtM(t.totalPaid)}/= sawa na marejesho ${t.paidCount} kati ya 12.</li>
+<li>Hivyo unadaiwa Tsh. ${fmtM(t.principalRemaining)}/= deni la msingi, pamoja na faini ya ${t.ratePct}% kwa kila rejesho lililochelewa; jumla ya faini ni Tsh. ${fmtM(t.fine)}/=, na jumla kuu ya deni ni Tsh. ${fmtM(t.totalDemand)}/=.</li>
+<li>Notisi hii ni kukutaka ufanye malipo ya deni hilo lote ndani ya SIKU ${esc_(t.days)} TU.</li>
+<li>Kushindwa kulipa kunaweza kupelekea kufikishwa mahakamani au kukabidhi deni kwa kampuni ya udalali na ufilisi, na utalipa gharama zote zifuatazo:</li>
+</ol>
+<table><tr><th>SN</th><th>MAELEZO</th><th>KIASI</th></tr>
+<tr><td>i.</td><td>Deni lote la mkopo wako</td><td>Tsh. ${fmtM(t.totalDemand)}/=</td></tr>
+<tr><td>ii.</td><td>Gharama ya dalali kukufikia</td><td>50,000/=</td></tr>
+<tr><td>iii.</td><td>Kamisheni ya dalali 10% ya deni</td><td>${fmtM(commission)}/=</td></tr>
+<tr><td>iv.</td><td>Faini ya kuchelewesha (${t.ratePct}%)</td><td>${fmtM(t.fine)}/=</td></tr>
+<tr><th colspan="2">JUMLA</th><th>${fmtM(grand)}/=</th></tr></table>
+<p><b>NB:</b> Malipo yafanyike kupitia MIXX BY YAS piga *150*01# &gt; 4 (Lipa Bili) &gt; 3 (Namba ya Kampuni 373337) &gt; Ingiza Kumbukumbu No <b>${esc_(t.ref || t.noticeRef || '')}</b> &gt; hakikisha jina <b>${esc_(t.name)}</b> kabla ya kuthibitisha.</p>
+<p>Baada ya SIKU ${esc_(t.days)} hakutakuwa na notisi nyingine. Kupokea notisi hii hakumzuii mdai kuendelea kufuatilia deni kwa njia nyingine ikiwemo simu au kutembelewa na maafisa.</p>
+<p><b>Kwa maelezo zaidi piga simu: +255 659 077 770</b></p>
+<div class="sig"><p><b>Wako Katika Ujenzi wa Taifa</b><br>${img(t.sign, 'height:42px;display:block;margin:2px 0', 'sahihi')}<b>${esc_(t.officer)}</b><br>MWANASHERIA<br>HOPE MICROCREDIT COMPANY LIMITED</p>${img(t.stamp, 'height:88px;margin-top:2px', 'muhuri')}</div>
+<p><b>NAKALA KWA MDHAMINI WA MKOPAJI</b><br>JINA: ${esc_(t.guarantorName)}<br>SIMU: ${esc_(t.guarantorContact)}</p>
+<p><b>NAKALA KWA SERIKALI YA MTAA</b></p>
+<div class="bbot"></div></body></html>`;
+}
+
+async function demandNotices(db, user) {
+  const r = await listTable(db, user, 'demand_notices');
+  return { ...r, demanded: r.rows.reduce((s, x) => s + num(x.total_demand), 0),
+    fines: r.rows.reduce((s, x) => s + num(x.fine), 0) };
 }
 
 async function abnormal(db, user) { return listTable(db, user, 'abnormal_payments'); }
@@ -1298,7 +1467,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible,
-  demandNotices, addDemandNotice, abnormal, received,
+  demandNotices, addDemandNotice, legalPreview, abnormal, received,
   par, weekly, teamProgress, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   teams, settings: settingsList, settingSet,
