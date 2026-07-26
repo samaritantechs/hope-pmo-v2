@@ -106,6 +106,24 @@
   body.dark th{background:#101B31}
   body.dark .menuBtn{background:#0F1830;color:var(--ink)}
   body.dark #signin .box{background:var(--card)}
+  /* paired boards side by side on a wide screen, stacked on a phone */
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:1000px){ .pair{grid-template-columns:1fr} }
+  tr.totrow td{font-weight:800;background:var(--b50);border-top:2px solid var(--b100)}
+  /* presentation: a real projector deck, full screen, dark, readable across a room */
+  #pres{display:none;position:fixed;inset:0;z-index:200;background:#081C4A;color:#fff;padding:26px 34px;overflow:auto}
+  #pres .phead{display:flex;align-items:center;gap:14px;font-size:26px;font-weight:800;margin-bottom:18px}
+  #pres .pnum{margin-left:auto;font-size:15px;font-weight:600;color:#93C5FD}
+  #pres .pclose{background:rgba(255,255,255,.12);border:0;color:#fff;width:38px;height:38px;border-radius:50%;font-size:17px;cursor:pointer}
+  #pres .pkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+  #pres .pkpi{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:22px}
+  #pres .pl{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:#93C5FD}
+  #pres .pv{font-size:40px;font-weight:800;margin-top:8px}
+  #pres .ptable{width:100%;border-collapse:collapse;font-size:19px}
+  #pres .ptable th{text-align:left;padding:10px 12px;color:#93C5FD;font-size:14px;text-transform:uppercase;
+    border-bottom:1px solid rgba(255,255,255,.2);background:transparent}
+  #pres .ptable td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1)}
+  #pres .ptable .r{text-align:right}
   /* tips toast */
   #tip{position:fixed;right:18px;bottom:18px;max-width:330px;background:var(--card);border:1px solid var(--line);
     border-left:3px solid var(--b500);border-radius:12px;padding:12px 14px;font-size:12.5px;color:var(--ink);
@@ -192,9 +210,6 @@
       <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
       <input class="q" id="q" placeholder="Tafuta… / Search">
-      <button class="btn sm ghost" id="csvBtn" title="Download as CSV">CSV</button>
-      <button class="btn sm ghost" id="xlsBtn" title="Download as Excel">Excel</button>
-      <button class="btn sm ghost" id="jpgBtn" title="Save this screen as a picture">JPG</button>
       <button class="btn sm ghost" id="langBtn" title="Lugha / Language">SW</button>
       <button class="btn sm ghost" id="tipBtn" title="Vidokezo / Tips">&#128276;</button>
       <button class="btn sm ghost" id="themeBtn" title="Dark mode">&#9789;</button>
@@ -206,6 +221,7 @@
 
 <div class="scrim" id="scrim"></div>
 <div id="tip"></div>
+<div id="pres"></div>
 <div class="drawer-bg" id="drawerBg"><div class="drawer" id="drawer"></div></div>
 <div class="toast" id="toast"></div>
 
@@ -320,9 +336,6 @@ function go(view){
 }
 $('#q').addEventListener('input', function(){ S.q=this.value; paint(); });
 $('#refBtn').onclick = function(){ render(); };
-$('#csvBtn').onclick = function(){ exportCsv(); };
-$('#xlsBtn').onclick = function(){ exportXls(); };
-$('#jpgBtn').onclick = function(){ saveJpg(document.getElementById('view')); };
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
 $('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
 $('#tipBtn').onclick = function(){ tipShow(); };
@@ -546,7 +559,9 @@ function paint(){
   var rows = sorted(filtered());
   $('#view').innerHTML = HEAD + '<div class="card" id="mainCard">'
     + '<div class="card-h">Orodha / List<span class="sub">' + rows.length + ' / ' + S.rows.length
-    + ' <button class="btn sm ghost" data-jpg="mainCard">JPG</button></span></div>'
+    + ' <button class="btn sm ghost" data-xls="mainCard">Excel</button>'
+    + ' <button class="btn sm ghost" data-jpg="mainCard">JPG</button>'
+    + ' <button class="btn sm ghost" data-csv="mainCard">CSV</button></span></div>'
     + tableHtml(rows, S.cols, ONROW)
     + (S.foot ? '<div class="tblfoot">Showing '+rows.length+' of '+S.rows.length+' · '+esc(S.foot)+'</div>' : '')
     + '</div>';
@@ -567,6 +582,41 @@ function wireBar(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-jpg]'), function(el){
     el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
   });
+  // Excel/CSV on a board export THAT board; on the main card they export the filtered table.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-xls]'), function(el){
+    el.onclick = function(e){ e.stopPropagation(); var id = el.getAttribute('data-xls');
+      if (id === 'mainCard') exportXls(); else exportBoard(id, 'xls'); };
+  });
+  var ps = document.getElementById('presStart');
+  if (ps) ps.onclick = function(){ S.presSecs = Number(document.getElementById('presSecs').value) || 15; presStart(0); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-csv]'), function(el){
+    el.onclick = function(e){ e.stopPropagation(); var id = el.getAttribute('data-csv');
+      if (id === 'mainCard') exportCsv(); else exportBoard(id, 'csv'); };
+  });
+}
+function exportBoard(id, kind){
+  var b = BOARDS[id];
+  if (!b || !b.rows.length){ toast(t('nothing'), true); return; }
+  var name = b.title.replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'') + '-' + today();
+  if (kind === 'csv'){
+    var lines = ['"S/N",' + b.cols.map(function(c){ return '"'+String(c.label).replace(/"/g,'""')+'"'; }).join(',')];
+    b.rows.forEach(function(r,i){
+      lines.push('"'+(i+1)+'",' + b.cols.map(function(c){ return '"'+cellText(r,c).replace(/"/g,'""')+'"'; }).join(','));
+    });
+    download(new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'}), name+'.csv');
+    return;
+  }
+  var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+    + '<style>th{background:#0B2A6B;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body>'
+    + '<h3>'+esc(b.title)+'</h3><table><thead><tr><th>S/N</th>'
+    + b.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
+    + b.rows.map(function(r,i){
+        return '<tr><td>'+(i+1)+'</td>'+b.cols.map(function(c){
+          var raw = c.get ? c.get(r) : r[c.key];
+          return isNum(c) ? '<td x:num>'+(Number(raw)||0)+'</td>' : '<td>'+esc(cellText(r,c))+'</td>';
+        }).join('')+'</tr>'; }).join('')
+    + '</tbody></table></body></html>';
+  download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), name+'.xls');
 }
 function loading(){ $('#view').innerHTML = '<div class="sk"></div>'; }
 function failed(e){ $('#view').innerHTML = '<div class="msg bad">Imeshindikana: '+esc(String(e && e.message || e))+'</div>'; }
@@ -635,6 +685,41 @@ VIEWS.dashboard = function(){
             + '<span class="fv">'+money(f.count)+'</span>'
             + '<span class="fb"><i style="width:'+Math.round(100*f.count/max)+'%"></i></span></div>';
         }).join('') + '</div></div>';
+    // The officer boards load after the headline numbers so the page paints immediately --
+    // one execution never waits on all of it, which is what made v1's dashboard time out.
+    srv('officerBoards').then(function(b){
+      var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
+      var extra =
+          boardPair('bEarlyT','Early collection by officer — today','uncollected · paid+overpaid · collection %', b.earlyToday,
+                    'bEarlyW','Early collection — this week','Mon–Fri', b.earlyWeek,
+                    [col('officer','Officer'), col('uncollected','Uncollected','money'),
+                     col('paidOver','Paid+over','num'), col('pct','Coll %','pct')], ['uncollected','paidOver'])
+        + boardPair('bRecT','Recovery — today','initial · current · recovered · Rec % ÷ this week’s uncollected', b.recToday,
+                    'bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
+                    [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+                     {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
+                     {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+                     col('pct','Rec %','pct')], ['initial','current','debtCrisis','recovered'])
+        + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
+                    'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
+                    [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
+                     col('salesPct','Sales %','pct'), col('recPct','Rec %','pct'), col('perf','Perf','pct')], ['apps','amount'])
+        + boardPair('bCallT','Call agents — today','calls · talk time · portfolio', b.callToday,
+                    'bCallW','Call agents — this week','Mon–Sun', b.callWeek,
+                    [col('agent','Agent'), col('calls','Calls','num'), col('duration','Talk time','dur'),
+                     col('portfolio','Portfolio','num'), col('customers','Customers','num'),
+                     col('connectPct','Connected %','pct')], ['calls','duration','portfolio','customers'])
+        + board('bFu','Follow-up status — all defaulters', money(b.fuTotal)+' customers', b.fuStatus,
+                [col('status','Status'), col('customers','Customers','num'),
+                 col('pct','% of book','pct'), col('arrears','Arrears','money')],
+                sumRow(b.fuStatus, ['customers','arrears']));
+      var host = document.getElementById('boards');
+      if (host) { host.innerHTML = extra; wireBar(); }
+    }).catch(function(){
+      var host = document.getElementById('boards');
+      if (host) host.innerHTML = '<div class="msg bad">Officer boards could not load.</div>';
+    });
+    HEAD += '<div id="boards"><div class="sk"></div></div>';
     S.rows = d.teamPerf || [];
     S.cols = [col('team','Team'), col('recovery','Recovery'), col('gmo','GMO'),
       col('initArrears','Init arrears','money'), col('curArrears','Current','money'),
@@ -829,13 +914,39 @@ VIEWS.fureport = function(){
   });
 };
 /* Small static tables inside a head block (no search/sort -- those belong to the main table). */
-function tableSimple(rows, cols){
+function tableSimple(rows, cols, totalRow){
   if (!rows || !rows.length) return '<div class="msg">—</div>';
+  var body = rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
+        return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
+  // A TOTAL row is not decoration on these boards -- it is the number read out in the meeting.
+  if (totalRow) body += '<tr class="totrow"><td class="sn"></td>'+cols.map(function(c,i){
+      return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
   return '<div class="scroll"><table><thead><tr><th class="sn">S/N</th>'+cols.map(function(c){
       return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
-    + rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
-        return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
-    + '</tbody></table></div>';
+    + body + '</tbody></table></div>';
+}
+function sumRow(rows, fields){
+  var o = {};
+  fields.forEach(function(f){ o[f] = rows.reduce(function(s,r){ return s + (Number(r[f])||0); }, 0); });
+  return o;
+}
+/** Every board is its own card with its OWN Excel and JPG buttons -- exports belong to the
+    widget being read, not to a page-wide bar that cannot know which table you meant. */
+var BOARDS = {};
+function board(id, title, sub, rows, cols, totalRow){
+  BOARDS[id] = { title: title, rows: rows, cols: cols };
+  return '<div class="card" id="'+id+'"><div class="card-h">'+esc(title)
+    + (sub ? '<span style="font-weight:400;color:var(--mut);font-size:12px">'+esc(sub)+'</span>' : '')
+    + '<span class="sub"><button class="btn sm ghost" data-xls="'+id+'">Excel</button>'
+    + ' <button class="btn sm ghost" data-jpg="'+id+'">JPG</button>'
+    + ' <button class="btn sm ghost" data-csv="'+id+'">CSV</button></span></div>'
+    + tableSimple(rows, cols, totalRow) + '</div>';
+}
+function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields){
+  return '<div class="pair">'
+    + board(idA, titleA, subA, a, cols, totalFields ? sumRow(a, totalFields) : null)
+    + board(idB, titleB, subB, b, cols, totalFields ? sumRow(b, totalFields) : null)
+    + '</div>';
 }
 
 VIEWS.par = function(){
@@ -1079,40 +1190,98 @@ VIEWS.settings = function(){
   });
 };
 
-/* Presentation: the dashboard as full-screen cards that rotate -- the wall-display mode. */
+/* PRESENTATION — a real projector mode, not a card on a page: it goes full screen, plays
+   like a deck for the office TV, auto-advances, and takes arrow keys / Esc. Each slide is a
+   whole board (the same numbers the tabs show), so a meeting reads live figures rather than
+   a screenshot someone exported that morning. */
 VIEWS.present = function(){
-  return srv('dashboard').then(function(d){
-    var t=d.totals, rec=t.recovery||{};
-    var slides = [
-      { l:'Collection', v: (t.expectedAmount>0 ? Math.round(1000*t.collected/t.expectedAmount)/10 : 0)+'%', s:money(t.collected)+' / '+money(t.expectedAmount) },
-      { l:'Recovery', v: (rec.pct==null?'—':rec.pct+'%'), s:money(rec.recovered)+' / '+money(rec.denominator)+' · '+(rec.basisLabel||'') },
-      { l:'Uncollected', v: money(t.uncollected), s:money(t.expectedCustomers)+' customers expected' },
-      { l:'Defaulter arrears', v: money(t.defaulterArrears), s:money(t.defaulterCustomers)+' customers' },
-      { l:'Sales this week', v: money(t.salesAmount), s:money(t.salesCount)+' approved loans' },
-      { l:'Received', v: money(t.receivedAmount), s:money(t.receivedCount)+' payments' }
-    ];
-    HEAD = '<div id="slide" style="background:var(--b900);color:#fff;border-radius:16px;padding:44px 24px;text-align:center;margin-bottom:14px">'
-      + '<div id="sl" style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--b300)"></div>'
-      + '<div id="sv" style="font-size:46px;font-weight:800;margin:10px 0"></div>'
-      + '<div id="ss" style="font-size:13.5px;color:var(--b300)"></div></div>';
-    S.rows = d.teams||[];
-    S.cols = [col('team','Team'), col('expectedAmount','Expected','money'), col('collected','Collected','money'),
-      col('recovered','Recovered','money'), col('defaulterArrears','Arrears','money')];
-    ONROW = null;
-    setTimeout(function(){
-      var i = 0;
-      function show(){
-        if (!document.getElementById('sl')) { clearInterval(S.presentTimer); return; }
-        var s = slides[i % slides.length];
-        document.getElementById('sl').textContent = s.l;
-        document.getElementById('sv').textContent = s.v;
-        document.getElementById('ss').textContent = s.s;
-        i++;
-      }
-      clearInterval(S.presentTimer); show(); S.presentTimer = setInterval(show, 6000);
-    }, 30);
+  return Promise.all([srv('dashboardFull'), srv('officerBoards')]).then(function(r){
+    var d = r[0], b = r[1], c = d.cards;
+    var slides = [];
+    slides.push({ kind:'kpi', title:'HOPE PMO — ' + d.weekday, items:[
+      { l:'Current arrears', v:'TZS '+money(c.curArrears) },
+      { l:'Recovered', v:'TZS '+money(c.recovered) },
+      { l:'Defaulters', v:money(c.defaulters) },
+      { l:'Sales this week', v:'TZS '+money(c.salesWeek) },
+      { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
+      { l:'Abnormal', v:money(c.abnormal) }]});
+    slides.push({ kind:'table', title:'Team performance', rows:d.teamPerf.slice(0,12),
+      cols:[col('team','Team'), col('recovery','Recovery'), col('curArrears','Current','money'),
+        col('recovered','Recovered','money'), col('collPctToday','Coll %','pct'), col('defaulters','Def','num')] });
+    slides.push({ kind:'table', title:'Recovery by officer — this week', rows:b.recWeek.slice(0,12),
+      cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+        col('recovered','Recovered','money'), col('pct','Rec %','pct')] });
+    slides.push({ kind:'table', title:'Early collection — this week', rows:b.earlyWeek.slice(0,12),
+      cols:[col('officer','Officer'), col('uncollected','Uncollected','money'),
+        col('paidOver','Paid+over','num'), col('pct','Coll %','pct')] });
+    slides.push({ kind:'table', title:'Call agents — this week', rows:b.callWeek.slice(0,12),
+      cols:[col('agent','Agent'), col('calls','Calls','num'), col('duration','Talk time','dur'),
+        col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
+    slides.push({ kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
+      cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
+        col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
+    slides.push({ kind:'table', title:'Weekly collection trend', rows:d.colTrend,
+      cols:[col('weekday','Day'), col('expected','Expected','money'), col('collected','Collected','money'),
+        col('uncollected','Uncollected','money'), col('pct','Coll %','pct')] });
+    slides.push({ kind:'table', title:'Follow-up status — all defaulters', rows:b.fuStatus.slice(0,12),
+      cols:[col('status','Status'), col('customers','Customers','num'), col('pct','% of book','pct'),
+        col('arrears','Arrears','money')] });
+    S.slides = slides;
+
+    HEAD = '<div class="kpis">' + kpi('Slides', money(slides.length), 'live figures, not a screenshot')
+      + kpi('Seconds per slide', String(S.presSecs || 15), 'change below')
+      + kpi('Weekday', esc(d.weekday), d.weekOf) + '</div>'
+      + bar('<button class="btn" id="presStart">▶ Anza / Play on the TV</button>'
+        + '<label style="font-size:12px;color:var(--mut)">Sekunde / Seconds</label>'
+        + '<input type="number" id="presSecs" min="5" max="300" value="'+(S.presSecs||15)+'" style="width:80px">'
+        + '<span style="font-size:12px;color:var(--mut)">Esc kutoka · ← → kubadili slaidi / Esc exits, arrows change slide</span>');
+    S.rows = slides.map(function(s,i){ return { n:i+1, slide:s.title, kind:s.kind,
+      rows: s.kind==='table' ? s.rows.length : s.items.length }; });
+    S.cols = [col('slide','Slide'), col('kind','Type'), col('rows','Rows','num')];
+    ONROW = function(r){ presStart(r.n - 1); };
   });
 };
+function presStart(from){
+  if (!S.slides || !S.slides.length) return;
+  var el = document.getElementById('pres');
+  el.style.display = 'block';
+  S.presI = from || 0;
+  presDraw();
+  clearInterval(S.presTimer);
+  S.presTimer = setInterval(function(){ S.presI = (S.presI + 1) % S.slides.length; presDraw(); },
+    Math.max(5, Math.min(300, Number(S.presSecs) || 15)) * 1000);
+  // Real full screen: on the office TV the browser chrome should not be part of the picture.
+  if (el.requestFullscreen) { try { el.requestFullscreen(); } catch(e){} }
+}
+function presStop(){
+  clearInterval(S.presTimer);
+  document.getElementById('pres').style.display = 'none';
+  if (document.fullscreenElement && document.exitFullscreen) { try { document.exitFullscreen(); } catch(e){} }
+}
+function presDraw(){
+  var s = S.slides[S.presI], body;
+  if (s.kind === 'kpi'){
+    body = '<div class="pkpis">' + s.items.map(function(it){
+      return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+'</div></div>'; }).join('') + '</div>';
+  } else {
+    body = '<table class="ptable"><thead><tr><th>#</th>' + s.cols.map(function(c){
+        return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('') + '</tr></thead><tbody>'
+      + s.rows.map(function(r,i){ return '<tr><td>'+(i+1)+'</td>'+s.cols.map(function(c){
+          return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
+      + '</tbody></table>';
+  }
+  document.getElementById('pres').innerHTML =
+    '<div class="phead"><span>'+esc(s.title)+'</span>'
+    + '<span class="pnum">'+(S.presI+1)+' / '+S.slides.length+'</span>'
+    + '<button class="pclose" onclick="presStop()">&#10005;</button></div>'
+    + '<div class="pbody">'+body+'</div>';
+}
+document.addEventListener('keydown', function(e){
+  if (document.getElementById('pres').style.display !== 'block') return;
+  if (e.key === 'Escape') presStop();
+  else if (e.key === 'ArrowRight'){ S.presI = (S.presI+1) % S.slides.length; presDraw(); }
+  else if (e.key === 'ArrowLeft'){ S.presI = (S.presI-1+S.slides.length) % S.slides.length; presDraw(); }
+});
 
 function render(){
   clearInterval(S.presentTimer);
