@@ -20,9 +20,14 @@ const scoped = (user, rows) => rows.filter(r => teamAllowed(user, r.team));
 /* ------------------------------------------------------------------ loans (applications) */
 const STAGES = ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_approval', 'approved', 'pending_disb', 'disbursed'];
 
+/** The pipeline, filterable by stage -- but ALL stages is a real choice and the default,
+    because "where is every application right now" is the question this tab gets asked most,
+    and forcing a stage first meant a docket could only be found if you already knew which
+    stage it had reached. */
 async function loans(db, user, { stage }) {
-  const st = STAGES.includes(stage) ? stage : 'approved';
-  const rows = await fetchAll(() => db.from('loans').select('*').eq('stage', st).order('created_at', { ascending: false }));
+  const st = STAGES.includes(stage) ? stage : '';
+  const q = db.from('loans').select('*');
+  const rows = await fetchAll(() => (st ? q.eq('stage', st) : q).order('created_at', { ascending: false }));
   const mine = scoped(user, rows);
   return { stage: st, stages: STAGES, rows: mine, count: mine.length,
     amount: mine.reduce((s, r) => s + (num(r.principal_amt) || num(r.requested_amt) || num(r.loan_amt)), 0) };

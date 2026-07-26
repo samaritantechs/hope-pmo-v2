@@ -840,14 +840,22 @@ VIEWS.apps = function(){
         return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
       }).join('') + '</div>'
       + bar('<label style="font-size:12px;color:var(--mut)">Stage</label>'
-        + '<select data-arg="stage">' + d.stages.map(function(s){
+        + '<select data-arg="stage"><option value="">Hatua zote / All stages</option>'
+        + d.stages.map(function(s){
             return '<option value="'+s+'"'+(s===d.stage?' selected':'')+'>'+s.replace(/_/g,' ')+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="team"><option value="">All teams</option>'
+        + [...new Set(d.rows.map(function(r){ return r.team; }).filter(Boolean))].sort().map(function(x){
+            return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
         + '<span class="chip">'+money(d.count)+' loans · TZS '+money(d.amount)+'</span>');
     S.rows = d.rows;
-    S.cols = [col('full_name','Customer'), col('team','Team'), col('contact','Contact'), col('product','Product'),
+    S.cols = [{key:'stage', label:'Stage', kind:'chip', chip:function(){ return 'mut'; },
+        get:function(r){ return String(r.stage||'').replace(/_/g,' '); }},
+      col('docket_no','Docket'), col('full_name','Customer'),
+      {key:'contact', label:'Contact', kind:'tel'}, col('team','Team'), col('product','Product'),
       col('requested_amt','Requested','money'), col('principal_amt','Principal','money'), col('loan_amt','Loan','money'),
-      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'), col('branch','Branch'), col('docket_no','Docket')];
+      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'), col('branch','Branch')];
     ONROW = null;
+    S.foot = money(d.count)+' applications · TZS '+money(d.amount);
   });
 };
 

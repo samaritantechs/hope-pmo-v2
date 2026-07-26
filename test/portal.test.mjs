@@ -739,3 +739,18 @@ test('leader reports roll teams up under each supervisor, not just per team', as
   for (const s of d.sections) assert.equal(s.totals.teams, d.totals.teams);
   assert.equal(d.totals.recovered, 400);
 });
+
+test('loan applications default to the whole pipeline, not one stage', async () => {
+  const db = fakeDb(tables());
+  // "Where is every application right now" is what this tab gets asked most, and forcing a
+  // stage first meant a docket could only be found if you already knew its stage.
+  const all = await portalApi(db, ADMIN, 'loans', {}, NOW);
+  assert.equal(all.stage, '');
+  assert.equal(all.count, 4);                      // 2 approved + 1 disbursed + 1 unassigned
+  assert.equal(all.amount, 650000);
+  // A named stage still narrows it.
+  const appr = await portalApi(db, ADMIN, 'loans', { stage: 'approved' }, NOW);
+  assert.equal(appr.count, 2);
+  // Team scoping still applies to the unfiltered view.
+  assert.equal((await portalApi(db, GMO, 'loans', {}, NOW)).count, 3);
+});
