@@ -754,3 +754,28 @@ test('loan applications default to the whole pipeline, not one stage', async () 
   // Team scoping still applies to the unfiltered view.
   assert.equal((await portalApi(db, GMO, 'loans', {}, NOW)).count, 3);
 });
+
+test('an access code can be changed — it is the password, so it must be rotatable', async () => {
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'TEGETA', name: 'MR T', role: 'GMO', teams: 'KONGOWE' }, NOW);
+
+  const r = await portalApi(db, ADMIN, 'saveAccessCode',
+    { oldCode: 'TEGETA', code: 'TEGETA77', name: 'MR T', role: 'GMO', teams: 'KONGOWE' }, NOW);
+  assert.equal(r.renamedFrom, 'TEGETA');
+  const codes = db._dump('access_codes').map(c => c.code);
+  assert.ok(codes.includes('TEGETA77'));
+  assert.equal(codes.includes('TEGETA'), false);          // the old one stops working
+  assert.equal(db._dump('access_codes').find(c => c.code === 'TEGETA77').name, 'MR T');
+
+  // Renaming onto a code someone else holds would hand them that person's access.
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'OTHER', name: 'X', role: 'GMO' }, NOW);
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveAccessCode',
+    { oldCode: 'TEGETA77', code: 'OTHER', name: 'MR T', role: 'GMO' }, NOW),
+    e => e.status === 400 && /already in use/.test(e.message));
+
+  // And you cannot rename the code you are currently signed in with.
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveAccessCode',
+    { oldCode: 'A', code: 'A2', name: 'THE ADMIN', role: 'ADMIN' }, NOW),
+    e => e.status === 400 && /signed in with/.test(e.message));
+});

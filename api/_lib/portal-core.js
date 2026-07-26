@@ -1386,6 +1386,15 @@ async function saveAccessCode(db, user, p) {
   const code = String((p && p.code) || '').trim();
   if (!code) throw badRequest('code is required');
   if (!p.name || !p.role) throw badRequest('name and role are required');
+  // The code IS the password, so changing it has to be possible -- that is the only way to
+  // rotate one that has been shared around. It is the primary key, and nothing references
+  // access_codes, so a rename is an insert under the new code followed by dropping the old.
+  const oldCode = String((p && p.oldCode) || '').trim();
+  if (oldCode && oldCode !== code) {
+    if (oldCode === user.code) throw badRequest('You cannot change the code you are signed in with — sign in with another admin code first.');
+    const { data: clash } = await db.from('access_codes').select('code').eq('code', code).maybeSingle();
+    if (clash) throw badRequest(`The code "${code}" is already in use.`);
+  }
   const list = v => {
     const s = String(v == null ? '' : v).trim();
     if (!s || s.toUpperCase() === 'ALL') return null;
@@ -1397,7 +1406,13 @@ async function saveAccessCode(db, user, p) {
     teams: list(p.teams), tabs: list(p.tabs) || [],
   }, { onConflict: 'code' });
   if (error) throw new Error(error.message);
-  return { code };
+  if (oldCode && oldCode !== code) {
+    // Only after the new row exists -- a failure here leaves a duplicate, which an admin can
+    // see and delete, rather than deleting the old one first and locking someone out entirely.
+    const { error: dErr } = await db.from('access_codes').delete().eq('code', oldCode);
+    if (dErr) throw new Error(dErr.message);
+  }
+  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null };
 }
 async function deleteAccessCode(db, user, p) {
   requireAdmin(user);

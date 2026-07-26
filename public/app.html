@@ -2245,7 +2245,9 @@ function codeForm(x){
   if (x && roles.indexOf(x.role) < 0) roles.push(x.role);
   drawer('<h3>'+(isNew?'Msimbo mpya / New access code':'Badili / Edit '+esc(x.name))+'</h3>'
     + '<div class="sub">Msimbo ndio nywila -- usiushirikishe. / The code is the password.</div>'
-    + '<div class="fld"><label>Msimbo / Code</label><input id="kCode" value="'+esc(x?x.code:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + '<div class="fld"><label>Msimbo / Code</label><input id="kCode" value="'+esc(x?x.code:'')+'">'
+      + (isNew ? '' : '<div class="fldnote">Unaweza kuubadilisha — mtumiaji ataingia na mpya. / You can change this; the holder signs in with the new one from that moment.</div>')
+      + '</div>'
     + '<div class="fld"><label>Jina / Name</label><input id="kName" value="'+esc(x?x.name:'')+'"></div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="kRole" list="roleList" value="'+esc(x?x.role:'')+'">'
       + '<datalist id="roleList">'+roles.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist></div>'
@@ -2254,7 +2256,7 @@ function codeForm(x){
     + '<button class="btn w" id="kSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="kDel">Futa msimbo / Delete code</button>'));
   document.getElementById('kSave').onclick = function(){
-    srv('saveAccessCode', { code:document.getElementById('kCode').value.trim(), name:document.getElementById('kName').value.trim(),
+    srv('saveAccessCode', { code:document.getElementById('kCode').value.trim(), oldCode:(x?x.code:''), name:document.getElementById('kName').value.trim(),
       role:document.getElementById('kRole').value.trim(), teams:document.getElementById('kTeams').value.trim(),
       tabs:document.getElementById('kTabs').value.trim() })
       .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
