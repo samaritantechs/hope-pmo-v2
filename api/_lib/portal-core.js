@@ -78,11 +78,20 @@ async function expectedDefaulters(db, user, _args, nowMs) {
   ]);
   const defBy = {};
   for (const d of def.rows) defBy[String(d.ref)] = d;
+  // The same rotation decides who owns these customers -- they are on BOTH lists, and the
+  // officer working Expected needs to know which recycling leader already has the defaulter.
+  const [teamRows, strat] = await Promise.all([fetchAll(() => db.from('teams').select('*')), assignStrategy(db)]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
   const rows = scoped(user, exp.rows).filter(e => defBy[String(e.ref)]).map(e => {
     const d = defBy[String(e.ref)];
+    const a = assignFor(d, strat, nowMs);
+    const team = teamBy[K(e.team)] || {};
     return { ref: e.ref, full_name: e.full_name, contact: e.contact, team: e.team,
       payment_expected: num(e.payment_expected), todays_status: e.todays_status,
-      def_arrears: num(d.arrears), status: d.status, ds: d.ds, dc: d.dc };
+      def_arrears: num(d.arrears), status: d.status, ds: d.ds, dc: d.dc,
+      phase: a.phase, role: a.role, cycle: a.label,
+      leader: team[ROLE_COLS[a.role]] || '(unassigned)' };
   });
   return { rows, count: rows.length,
     expected: rows.reduce((s, r) => s + r.payment_expected, 0),
@@ -393,25 +402,104 @@ async function commission(db, user, _args, nowMs) {
     note: tp.note };
 }
 
-/** Defaulter Assignment: the current deck joined to who is following it up, so a leader can
-    see which customers nobody has touched. */
+/** The rotation engine: which supervisory ROLE owns a defaulter right now, and therefore
+    which named person on their team. Ported from assignFor_/assignStrategy_ in Code.gs --
+    the escalation policy is a business decision, so every parameter lives in settings:
+
+      ACTIVE  (still within term)  -> rotate ASSIGN_ACTIVE  every ASSIGN_BUCKET_DAYS days
+      EXPIRED (past expiry)        -> step   ASSIGN_EXPIRED  one role per week, then hold
+      CHRONIC (past grace weeks)   -> rotate ASSIGN_CHRONIC  weekly, forever
+
+    Recycling a customer between BIKE / MANAGER / GMO is the whole point: the same officer
+    calling the same person every week stops working, so ownership moves on a clock. */
+const ROLE_COLS = { BIKE: 'bike', MANAGER: 'manager', GMO: 'gmo', RECOVERY: 'recovery',
+  OPM: 'opm', CREDIT: 'credit', EXPECTED: 'expected' };
+
+function parseRoles(v, dflt) {
+  const list = String(v == null ? '' : v).split(',').map(x => K(x)).filter(x => ROLE_COLS[x]);
+  return list.length ? list : dflt;
+}
+function weeksSince(v, nowMs) {
+  const t = Date.parse(String(v || ''));
+  if (isNaN(t)) return 0;
+  const days = Math.max(0, Math.floor((nowMs - t) / 86400000));
+  return Math.floor(days / 7) + 1;
+}
+export function assignFor(rec, strat, nowMs) {
+  const status = K(rec.status);
+  if (status.indexOf('CHRON') >= 0) {
+    const n = weeksSince(rec.chronic_date, nowMs) || 1;
+    return { phase: 'CHRONIC', role: strat.chronic[(n - 1) % strat.chronic.length], label: 'C-W' + n };
+  }
+  if (status.indexOf('EXPIR') >= 0) {
+    let n = weeksSince(rec.expire_date, nowMs) || 1;
+    if (n > strat.graceWeeks) {                       // past grace -> it is chronic in practice
+      const c = n - strat.graceWeeks;
+      return { phase: 'CHRONIC', role: strat.chronic[(c - 1) % strat.chronic.length], label: 'C-W' + c };
+    }
+    if (n > strat.expired.length) n = strat.expired.length;
+    return { phase: 'EXPIRED', role: strat.expired[n - 1], label: 'E-W' + n };
+  }
+  const d = num(rec.days_elapsed) || 1;
+  const b = Math.ceil(Math.max(1, d) / strat.bucketDays);
+  return { phase: 'ACTIVE', role: strat.active[(b - 1) % strat.active.length], label: 'D' + d };
+}
+async function assignStrategy(db) {
+  const get = async k => { const { data } = await db.from('settings').select('value').eq('key', k).maybeSingle(); return data && data.value; };
+  const [a, c, e, g, b] = await Promise.all([get('ASSIGN_ACTIVE'), get('ASSIGN_CHRONIC'),
+    get('ASSIGN_EXPIRED'), get('ASSIGN_GRACE_WEEKS'), get('ASSIGN_BUCKET_DAYS')]);
+  return {
+    active: parseRoles(a, ['BIKE', 'MANAGER', 'GMO']),
+    chronic: parseRoles(c, ['BIKE', 'GMO', 'MANAGER']),
+    expired: parseRoles(e, ['MANAGER', 'GMO']),
+    graceWeeks: Math.max(1, Math.min(8, parseInt(g, 10) || 2)),
+    bucketDays: Math.max(1, Math.min(14, parseInt(b, 10) || 2)),
+  };
+}
+
+/** Defaulter Assignment: the current deck, each customer routed to the role that owns them
+    this week and named against that team's actual person, joined to whoever last followed
+    up -- so a leader sees both who SHOULD be calling and whether anyone HAS. */
 async function assignments(db, user, _args, nowMs) {
-  const [snap, fu] = await Promise.all([
+  const [snap, fu, teamRows, strat] = await Promise.all([
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) }),
     fetchAll(() => db.from('followup_status').select('ref, fu_status, comment_by, comment_at, promise_date')),
+    fetchAll(() => db.from('teams').select('*')),
+    assignStrategy(db),
   ]);
   const byRef = {};
   for (const f of fu) byRef[String(f.ref)] = f;
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+
   const rows = scoped(user, snap.rows).map(r => {
     const f = byRef[String(r.ref)] || {};
-    return { ref: r.ref, full_name: r.full_name, contact: r.contact, team: r.team, arrears: num(r.arrears),
-      status: r.status, ds: r.ds, dc: r.dc, days_elapsed: r.days_elapsed,
+    const a = assignFor(r, strat, nowMs);
+    const team = teamBy[K(r.team)] || {};
+    const leader = team[ROLE_COLS[a.role]] || '';
+    return { ref: r.ref, full_name: r.full_name, contact: r.contact, guarantor_contact: r.guarantor_contact,
+      team: r.team, arrears: num(r.arrears), status: r.status, ds: r.ds, dc: r.dc,
+      days_elapsed: r.days_elapsed, phase: a.phase, role: a.role, cycle: a.label,
+      leader: leader || '(unassigned)', assigned: !!leader,
       fu_status: f.fu_status || '', officer: f.comment_by || '', touched_at: f.comment_at || '',
       promise_date: f.promise_date || '' };
   }).sort((a, b) => b.arrears - a.arrears);
+
   const untouched = rows.filter(r => !r.fu_status);
+  const byRole = {}, byLeader = {};
+  for (const r of rows) {
+    if (!byRole[r.role]) byRole[r.role] = { role: r.role, customers: 0, arrears: 0, touched: 0 };
+    byRole[r.role].customers++; byRole[r.role].arrears += r.arrears; if (r.fu_status) byRole[r.role].touched++;
+    const k = r.leader;
+    if (!byLeader[k]) byLeader[k] = { leader: k, role: r.role, customers: 0, arrears: 0, touched: 0 };
+    byLeader[k].customers++; byLeader[k].arrears += r.arrears; if (r.fu_status) byLeader[k].touched++;
+  }
   return { date: snap.date, weekday: currentWeekday(nowMs), rows, count: rows.length,
-    untouched: untouched.length, untouchedArrears: untouched.reduce((s, r) => s + r.arrears, 0) };
+    untouched: untouched.length, untouchedArrears: untouched.reduce((s, r) => s + r.arrears, 0),
+    unassigned: rows.filter(r => !r.assigned).length,
+    strategy: strat,
+    byRole: Object.values(byRole).sort((a, b) => b.arrears - a.arrears),
+    byLeader: Object.values(byLeader).sort((a, b) => b.arrears - a.arrears) };
 }
 
 /** Credit Analysts: throughput per assessor across the assessment stages. */

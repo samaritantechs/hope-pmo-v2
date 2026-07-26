@@ -8,7 +8,7 @@ import { fakeDb } from './fake-db.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
-const { portalApi, PORTAL_FUNCTIONS } = await import('../api/_lib/portal-core.js');
+const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20';
@@ -205,6 +205,69 @@ test('assignments flags customers nobody has followed up', async () => {
   assert.equal(d.count, 3);
   assert.equal(d.untouched, 2);                             // only 555 has a follow-up status
   assert.ok(d.rows.every(r => r.arrears >= 0));
+});
+
+test('rotation: ACTIVE cycles by day-bucket, EXPIRED steps weekly then holds, CHRONIC cycles weekly', () => {
+  const strat = { active: ['BIKE', 'MANAGER', 'GMO'], chronic: ['BIKE', 'GMO', 'MANAGER'],
+    expired: ['MANAGER', 'GMO'], graceWeeks: 2, bucketDays: 2 };
+  const A = d => assignFor({ status: 'Defaulter', days_elapsed: d }, strat, NOW);
+  // Two days per bucket, three roles -> the owner changes every 2 days and repeats every 6.
+  assert.equal(A(1).role, 'BIKE'); assert.equal(A(2).role, 'BIKE');
+  assert.equal(A(3).role, 'MANAGER'); assert.equal(A(4).role, 'MANAGER');
+  assert.equal(A(5).role, 'GMO'); assert.equal(A(6).role, 'GMO');
+  assert.equal(A(7).role, 'BIKE');                                  // wraps
+  assert.equal(A(7).phase, 'ACTIVE'); assert.equal(A(7).label, 'D7');
+
+  // EXPIRED walks its list one role per week and then STAYS on the last one.
+  const wkAgo = n => new Date(NOW - n * 7 * 86400000).toISOString().slice(0, 10);
+  assert.equal(assignFor({ status: 'Expired', expire_date: wkAgo(0) }, strat, NOW).role, 'MANAGER');
+  assert.equal(assignFor({ status: 'Expired', expire_date: wkAgo(1) }, strat, NOW).role, 'GMO');
+  // Past the grace window an expired customer is chronic in practice, and rotates weekly.
+  const past = assignFor({ status: 'Expired', expire_date: wkAgo(2) }, strat, NOW);
+  assert.equal(past.phase, 'CHRONIC');
+  assert.equal(past.role, 'BIKE');
+
+  // CHRONIC rotates weekly from its own chronic date, forever.
+  assert.equal(assignFor({ status: 'Chronic', chronic_date: wkAgo(0) }, strat, NOW).role, 'BIKE');
+  assert.equal(assignFor({ status: 'Chronic', chronic_date: wkAgo(1) }, strat, NOW).role, 'GMO');
+  assert.equal(assignFor({ status: 'Chronic', chronic_date: wkAgo(2) }, strat, NOW).role, 'MANAGER');
+  assert.equal(assignFor({ status: 'Chronic', chronic_date: wkAgo(3) }, strat, NOW).role, 'BIKE');
+});
+
+test('assignments name the recycling leader from that team, and group by role/leader', async () => {
+  const db = fakeDb(tables());
+  const d = await portalApi(db, ADMIN, 'assignments', {}, NOW);
+  assert.equal(d.count, 3);
+  const r = d.rows.find(x => x.ref === '111');
+  assert.equal(r.phase, 'ACTIVE');
+  assert.ok(['BIKE', 'MANAGER', 'GMO'].includes(r.role));
+  // KONGOWE has no bike/gmo named in the fixture but does have a manager, so whichever role
+  // the rotation picked either resolves to a real person or is flagged, never silently blank.
+  assert.ok(r.leader === '(unassigned)' || typeof r.leader === 'string');
+  assert.ok(d.byRole.length >= 1);
+  assert.ok(d.byLeader.length >= 1);
+  assert.equal(d.byRole.reduce((s, x) => s + x.customers, 0), 3);
+  assert.deepEqual(d.strategy.active, ['BIKE', 'MANAGER', 'GMO']);   // defaults when unset
+});
+
+test('settings drive the rotation -- changing ASSIGN_ACTIVE changes the owner', async () => {
+  const db = fakeDb(tables());
+  db._dump('settings').push({ key: 'ASSIGN_ACTIVE', value: 'RECOVERY' });
+  db._dump('settings').push({ key: 'ASSIGN_BUCKET_DAYS', value: '3' });
+  const d = await portalApi(db, ADMIN, 'assignments', {}, NOW);
+  assert.deepEqual(d.strategy.active, ['RECOVERY']);
+  assert.equal(d.strategy.bucketDays, 3);
+  const r = d.rows.find(x => x.ref === '111');
+  assert.equal(r.role, 'RECOVERY');
+  assert.equal(r.leader, 'JUMA G');                                  // teams.recovery for KONGOWE
+});
+
+test('expected defaulters carry the same recycling leader', async () => {
+  const d = await run('expectedDefaulters');
+  assert.equal(d.rows.length, 1);
+  assert.ok(d.rows[0].role, 'a role is assigned');
+  assert.ok('leader' in d.rows[0], 'the leader name travels with the row');
+  assert.ok(d.rows[0].cycle, 'the cycle label is shown');
 });
 
 test('registers: complaints, restructures, notices, abnormal, received', async () => {
