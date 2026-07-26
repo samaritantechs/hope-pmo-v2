@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HOPE PMO — Portal</title>
+<style>
+  :root{--b950:#081C4A;--b900:#0B2A6B;--b800:#10357F;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
+        --bg:#F6F8FC;--card:#FFF;--ink:#0F172A;--mut:#64748B;--soft:#94A3B8;--line:#E2E8F0;
+        --ok:#067647;--okbg:#E7F6EE;--okline:#CFEADD;--warn:#92400E;--warnbg:#FEF3DC;--warnline:#F6E3BC;
+        --bad:#B42318;--badbg:#FDECEA;--badline:#F6CFCB;--rad:14px}
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);height:100%;
+    font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;-webkit-tap-highlight-color:transparent}
+  button,input,select,textarea{font-family:inherit;font-size:14px}
+  .hide{display:none !important}
+  .sk{width:20px;height:20px;border:2.5px solid var(--b100);border-top-color:var(--b600);border-radius:50%;animation:sp .7s linear infinite;margin:40px auto}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* sign-in */
+  #signin{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,var(--b900),var(--b800));padding:20px;z-index:50}
+  #signin .box{background:#fff;border-radius:18px;padding:26px 22px;width:100%;max-width:380px;box-shadow:0 20px 50px -20px rgba(0,0,0,.5)}
+  #signin h2{margin:0 0 4px;font-size:18px}
+  #signin p{margin:0 0 18px;font-size:13px;color:var(--mut)}
+  #signin input{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:11px;margin-bottom:12px}
+  #signin input:focus{outline:none;border-color:var(--b500);box-shadow:0 0 0 3px var(--b100)}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;cursor:pointer;border-radius:10px;
+    padding:11px 16px;font-weight:700;font-size:14px;background:var(--b700);color:#fff}
+  .btn.w{width:100%;padding:13px}
+  .btn.sm{padding:7px 12px;font-size:12.5px;border-radius:9px}
+  .btn.ghost{background:#fff;color:var(--mut);border:1.5px solid var(--line)}
+  .btn:disabled{opacity:.55}
+
+  /* shell */
+  .shell{display:flex;height:100%}
+  .side{width:225px;flex:0 0 auto;background:var(--b950);color:#cfe0ff;display:flex;flex-direction:column;padding:16px 12px}
+  .side .brand{color:#fff;font-weight:800;font-size:14px;line-height:1.35}
+  .side .brand small{display:block;color:var(--b300);font-weight:500;font-size:11px;margin-top:2px}
+  .nav{margin-top:18px;display:flex;flex-direction:column;gap:2px;flex:1;overflow:auto}
+  .nav button{display:block;width:100%;text-align:left;background:transparent;border:0;color:#cfe0ff;
+    padding:9px 11px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer}
+  .nav button:hover{background:rgba(255,255,255,.08);color:#fff}
+  .nav button.on{background:#fff;color:var(--b800)}
+  .side .foot{border-top:1px solid rgba(255,255,255,.12);padding-top:12px;margin-top:10px}
+  .side .foot b{color:#fff;font-size:12.5px;display:block}
+  .side .foot span{font-size:11px;color:var(--b300);display:block;margin-bottom:8px}
+  .side .foot a,.side .foot button{display:block;width:100%;text-align:center;margin-top:6px;font-size:12px;padding:8px;
+    border-radius:8px;text-decoration:none;background:rgba(255,255,255,.1);color:#fff;border:0;cursor:pointer;font-weight:600}
+
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .top{background:#fff;border-bottom:1px solid var(--line);padding:13px 18px;display:flex;align-items:center;gap:12px}
+  .top h1{margin:0;font-size:16.5px;font-weight:800;flex:1;min-width:0}
+  .top .q{padding:8px 12px;border:1.5px solid var(--line);border-radius:9px;min-width:150px}
+  .top .q:focus{outline:none;border-color:var(--b500)}
+  .body{flex:1;overflow:auto;padding:16px 18px 60px}
+
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px;margin-bottom:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 13px}
+  .kpi .l{font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
+  .kpi .v{font-size:19px;font-weight:800;margin-top:3px}
+  .kpi .s{font-size:11px;color:var(--soft);margin-top:2px}
+  .good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
+  .card-h{padding:11px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .card-h .sub{font-weight:400;color:var(--mut);font-size:12px;margin-left:auto}
+  .scroll{overflow-x:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;padding:8px 12px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;
+    border-bottom:1px solid var(--line);white-space:nowrap;background:var(--b50);cursor:pointer;user-select:none}
+  td{padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:var(--b50)}
+  .r{text-align:right}
+  .msg{padding:34px 18px;text-align:center;color:var(--mut);font-size:13px}
+  .msg.bad{color:var(--bad)}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--b50);color:var(--b600);border:1px solid var(--b100)}
+  .chip.ok{background:var(--okbg);color:var(--ok);border-color:var(--okline)}
+  .chip.warn{background:var(--warnbg);color:var(--warn);border-color:var(--warnline)}
+  .chip.bad{background:var(--badbg);color:var(--bad);border-color:var(--badline)}
+  .chip.mut{background:#F1F5F9;color:var(--mut);border-color:var(--line)}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .bar select,.bar input{padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;background:#fff}
+  .bar select:focus,.bar input:focus{outline:none;border-color:var(--b500)}
+  .note{padding:10px 13px;border:1px solid var(--warnline);background:var(--warnbg);color:var(--warn);border-radius:10px;font-size:12.5px;margin-bottom:12px}
+
+  /* drawer */
+  .drawer-bg{position:fixed;inset:0;background:rgba(8,17,34,.45);display:none;z-index:60;align-items:flex-end;justify-content:center}
+  .drawer{background:var(--bg);width:100%;max-width:560px;max-height:90vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+  .drawer h3{margin:0 0 4px;font-size:16px}
+  .drawer .sub{color:var(--mut);font-size:12.5px;margin-bottom:12px}
+  .fld{margin-bottom:11px}
+  .fld label{display:block;font-size:11.5px;font-weight:700;color:var(--mut);margin-bottom:5px}
+  .fld input,.fld select,.fld textarea{width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:10px;background:#fff}
+  .fld input:focus,.fld select:focus,.fld textarea:focus{outline:none;border-color:var(--b500)}
+  .facts{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px;margin-bottom:12px}
+  .frow{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+  .frow:last-child{border-bottom:0}
+  .frow span:first-child{color:var(--mut)}
+  .hist{font-size:12px;padding:8px 0;border-bottom:1px solid var(--line)}
+  .hist:last-child{border-bottom:0}
+  .hist .t{display:flex;justify-content:space-between;color:var(--soft);font-size:10.5px;margin-bottom:2px}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;background:var(--ink);color:#fff;padding:11px 18px;
+    border-radius:10px;font-size:13px;z-index:80;display:none;max-width:90vw}
+  .toast.bad{background:var(--bad)}
+
+  @media (max-width:820px){
+    .shell{flex-direction:column;height:auto;min-height:100%}
+    .side{width:100%;flex-direction:row;align-items:center;gap:10px;padding:10px;overflow:auto}
+    .side .brand{flex:0 0 auto;font-size:12.5px}
+    .side .brand small{display:none}
+    .nav{flex-direction:row;margin:0;gap:4px;overflow:auto}
+    .nav button{white-space:nowrap;padding:8px 11px;font-size:12.5px}
+    .side .foot{border-top:0;border-left:1px solid rgba(255,255,255,.12);padding:0 0 0 10px;margin:0;flex:0 0 auto;display:flex;gap:6px}
+    .side .foot b,.side .foot span{display:none}
+    .side .foot a,.side .foot button{margin:0;white-space:nowrap}
+    .top{padding:10px 12px}
+    .body{padding:12px}
+  }
+</style>
+</head>
+<body>
+
+<div id="signin">
+  <div class="box">
+    <h2>HOPE PMO</h2>
+    <p>Weka msimbo wako wa kuingia. / Enter your access code.</p>
+    <input id="code" placeholder="Access code" autocomplete="off">
+    <button class="btn w" id="inBtn">Ingia / Sign in</button>
+    <div id="inErr" style="color:var(--bad);font-size:12.5px;margin-top:10px"></div>
+    <a href="/" style="display:block;text-align:center;margin-top:14px;font-size:12.5px;color:var(--mut)">&larr; Menu</a>
+  </div>
+</div>
+
+<div class="shell hide" id="shell">
+  <aside class="side">
+    <div class="brand">HOPE MICROCREDIT<small>MKOPO CHAP CHAP</small></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="foot">
+      <b id="meName">—</b><span id="meRole">—</span>
+      <a href="/call" id="swapCalls" title="Badili kwenda simu">&#128222; Simu / Calls</a>
+      <button id="outBtn">Toka / Sign out</button>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="top">
+      <h1 id="title">Dashboard</h1>
+      <input class="q" id="q" placeholder="Tafuta… / Search">
+      <button class="btn sm ghost" id="csvBtn" title="Download this table as CSV">CSV</button>
+      <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
+    </div>
+    <div class="body" id="view"></div>
+  </main>
+</div>
+
+<div class="drawer-bg" id="drawerBg"><div class="drawer" id="drawer"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ES5-plain on purpose: this runs inside the Android WebView on whatever phone an officer
+   owns. No build step, no framework, no CDN. */
+var $ = function(s){ return document.querySelector(s); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
+function pct(v){ return (v==null||isNaN(v)) ? '—' : v + '%'; }
+function fmtDur(sec){ sec = Math.max(0, Math.round(Number(sec)||0)); var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  function p2(n){ return (n<10?'0':'')+n; } return h>0 ? (h+':'+p2(m)+':'+p2(s)) : (m+':'+p2(s)); }
+function store(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v);}catch(e){} }
+function load(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+function toast(m, bad){ var t=$('#toast'); t.textContent=m; t.className='toast'+(bad?' bad':'');
+  t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(function(){t.style.display='none';},3200); }
+function today(){ var d=new Date(Date.now()+3*3600*1000); return d.toISOString().slice(0,10); }   // EAT
+function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+
+var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true, args:{} };
+
+/* One call shape for the whole portal -- every tab goes through /api/portal. */
+function srv(fn, args){
+  return fetch('/api/portal', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ code:S.code, fn:fn, args:args||{} })
+  }).then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(function(x){
+      if (x.status>=200 && x.status<300 && x.body.ok!==false) return x.body;
+      throw new Error((x.body && x.body.error) || ('HTTP '+x.status));
+    });
+}
+
+/* ----------------------------------------------------------- sign in */
+function signIn(){
+  var code = $('#code').value.trim();
+  if (!code){ $('#inErr').textContent='Weka msimbo. / Enter your code.'; return; }
+  $('#inBtn').disabled = true; $('#inBtn').textContent = 'Inaingia…';
+  fetch('/api/me?code='+encodeURIComponent(code))
+    .then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(function(x){
+      $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in';
+      if (x.status<200||x.status>=300||x.body.ok===false){ $('#inErr').textContent = x.body.error||'Msimbo si sahihi.'; return; }
+      S.code = code; store('hopeCode', code); start(x.body);
+    })
+    .catch(function(e){ $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in'; $('#inErr').textContent='Hakuna mtandao. ('+e+')'; });
+}
+$('#inBtn').onclick = signIn;
+$('#code').onkeydown = function(e){ if (e.key==='Enter') signIn(); };
+$('#outBtn').onclick = function(){ store('hopeCode', null); location.reload(); };
+
+/* ----------------------------------------------------------- navigation */
+var NAV = [
+  { id:'dashboard',   label:'Dashboard' },
+  { id:'apps',        label:'Loan Applications' },
+  { id:'expected',    label:'Expected Repayment' },
+  { id:'defexp',      label:'Expected Defaulters' },
+  { id:'assignments', label:'Defaulter Assignment' },
+  { id:'followup',    label:'Defaulters Followup' },
+  { id:'promises',    label:'Promise to Pay' },
+  { id:'fureport',    label:'Followup Report' },
+  { id:'par',         label:'Portfolio at Risk' },
+  { id:'weekly',      label:'Weekly Report' },
+  { id:'reports',     label:'Leader Reports' },
+  { id:'commission',  label:'My Commission' },
+  { id:'calls',       label:'Call Reports' },
+  { id:'complaints',  label:'Complaint Register' },
+  { id:'restructure', label:'Loan Restructuring' },
+  { id:'legal',       label:'Legal / Demand Notices' },
+  { id:'abnormal',    label:'Abnormal Payments' },
+  { id:'credit',      label:'Credit Analysts' },
+  { id:'present',     label:'Presentation' },
+  { id:'teams',       label:'Teams & Staff' },
+  { id:'upload',      label:'Upload Reports' },
+  { id:'settings',    label:'Settings' }
+];
+/* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
+   visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
+   the gate that matters is upload/settings, which are checked on the server too. */
+var ALWAYS = ['dashboard','expected','defexp','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps'];
+
+function allowed(id){
+  if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
+  return ALWAYS.indexOf(id)>=0;
+}
+function buildNav(){
+  var el = $('#nav'); el.innerHTML='';
+  NAV.forEach(function(n){
+    if (!allowed(n.id)) return;
+    var b = document.createElement('button');
+    b.textContent = n.label; b.setAttribute('data-v', n.id);
+    b.onclick = function(){ go(n.id); };
+    el.appendChild(b);
+  });
+}
+function go(view){
+  S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.args={};
+  var t = NAV.filter(function(n){ return n.id===view; })[0];
+  $('#title').textContent = t ? t.label : view;
+  Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
+    b.classList.toggle('on', b.getAttribute('data-v')===view);
+  });
+  if (view==='upload'){ location.href='/upload'; return; }
+  render();
+}
+$('#q').addEventListener('input', function(){ S.q=this.value; paint(); });
+$('#refBtn').onclick = function(){ render(); };
+$('#csvBtn').onclick = function(){ exportCsv(); };
+
+function start(me){
+  S.me = me;
+  $('#signin').classList.add('hide');
+  $('#shell').classList.remove('hide');
+  $('#meName').textContent = me.name;
+  $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams');
+  buildNav();
+  go('dashboard');
+}
+
+/* ----------------------------------------------------------- table engine
+   Every list tab is the same thing: rows + a column spec. One renderer means a new tab is a
+   few lines of config instead of a new screen, and search/sort/CSV work everywhere for free. */
+function col(key, label, kind){ return { key:key, label:label, kind:kind||'text' }; }
+function cellText(r, c){
+  var v = r[c.key];
+  if (c.get) v = c.get(r);
+  if (v==null || v==='') return '';
+  if (c.kind==='money') return money(v);
+  if (c.kind==='pct') return pct(v);
+  if (c.kind==='dur') return fmtDur(v);
+  if (c.kind==='date') return String(v).slice(0,10);
+  if (c.kind==='dt') return String(v).replace('T',' ').slice(0,16);
+  return String(v);
+}
+function cellHtml(r, c){
+  var txt = cellText(r, c);
+  if (c.kind==='chip') return txt ? '<span class="chip '+(c.chip? c.chip(r):'mut')+'">'+esc(txt)+'</span>' : '';
+  if (c.kind==='money'||c.kind==='pct'||c.kind==='num'||c.kind==='dur') return esc(txt);
+  return esc(txt);
+}
+function isNum(c){ return c.kind==='money'||c.kind==='num'||c.kind==='pct'||c.kind==='dur'; }
+
+function filtered(){
+  var q = S.q.trim().toUpperCase();
+  if (!q) return S.rows;
+  return S.rows.filter(function(r){
+    for (var i=0;i<S.cols.length;i++){ if (cellText(r,S.cols[i]).toUpperCase().indexOf(q)>=0) return true; }
+    return false;
+  });
+}
+function sorted(rows){
+  if (!S.sort) return rows;
+  var c = S.cols.filter(function(x){ return x.key===S.sort; })[0];
+  if (!c) return rows;
+  var out = rows.slice();
+  out.sort(function(a,b){
+    var av = c.get?c.get(a):a[c.key], bv = c.get?c.get(b):b[c.key];
+    if (isNum(c)){ av=Number(av)||0; bv=Number(bv)||0; return S.asc ? av-bv : bv-av; }
+    av=String(av==null?'':av).toUpperCase(); bv=String(bv==null?'':bv).toUpperCase();
+    return S.asc ? (av<bv?-1:av>bv?1:0) : (av>bv?-1:av<bv?1:0);
+  });
+  return out;
+}
+function tableHtml(rows, cols, onRow){
+  if (!rows.length) return '<div class="msg">Hakuna taarifa. / Nothing here yet.</div>';
+  var head = cols.map(function(c){
+    var arrow = S.sort===c.key ? (S.asc?' ↑':' ↓') : '';
+    return '<th class="'+(isNum(c)?'r':'')+'" data-sort="'+esc(c.key)+'">'+esc(c.label)+arrow+'</th>';
+  }).join('');
+  var body = rows.map(function(r, i){
+    return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>' + cols.map(function(c){
+      return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>';
+    }).join('') + '</tr>';
+  }).join('');
+  return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+}
+function wireTable(rows, onRow){
+  Array.prototype.forEach.call(document.querySelectorAll('th[data-sort]'), function(th){
+    th.onclick = function(){
+      var k = th.getAttribute('data-sort');
+      if (S.sort===k) S.asc = !S.asc; else { S.sort=k; S.asc=false; }
+      paint();
+    };
+  });
+  if (onRow) Array.prototype.forEach.call(document.querySelectorAll('tbody tr[data-i]'), function(tr){
+    tr.onclick = function(){ onRow(rows[+tr.getAttribute('data-i')]); };
+  });
+}
+function exportCsv(){
+  if (!S.rows.length){ toast('Hakuna cha kupakua.', true); return; }
+  var rows = sorted(filtered());
+  var lines = [S.cols.map(function(c){ return '"'+String(c.label).replace(/"/g,'""')+'"'; }).join(',')];
+  rows.forEach(function(r){
+    lines.push(S.cols.map(function(c){ return '"'+cellText(r,c).replace(/"/g,'""')+'"'; }).join(','));
+  });
+  var blob = new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = S.view+'-'+today()+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function kpi(l, v, s, cls){ return '<div class="kpi"><div class="l">'+esc(l)+'</div><div class="v'+(cls?' '+cls:'')+'">'+v+'</div>'
+  + (s?'<div class="s">'+esc(s)+'</div>':'') + '</div>'; }
+function bar(html){ return '<div class="bar">'+html+'</div>'; }
+
+/* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
+var HEAD = '', ONROW = null;
+function paint(){
+  var rows = sorted(filtered());
+  $('#view').innerHTML = HEAD + '<div class="card">'
+    + '<div class="card-h">Orodha / List<span class="sub">' + rows.length + ' / ' + S.rows.length + '</span></div>'
+    + tableHtml(rows, S.cols, ONROW) + '</div>';
+  wireTable(rows, ONROW);
+  wireBar();
+}
+function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); }
+function wireBar(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-arg]'), function(el){
+    el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
+  });
+}
+function loading(){ $('#view').innerHTML = '<div class="sk"></div>'; }
+function failed(e){ $('#view').innerHTML = '<div class="msg bad">Imeshindikana: '+esc(String(e && e.message || e))+'</div>'; }
+
+/* ----------------------------------------------------------- per-tab renderers */
+var VIEWS = {};
+
+VIEWS.dashboard = function(){
+  return srv('dashboard').then(function(d){
+    var t=d.totals, rec=t.recovery||{};
+    HEAD = '<div class="kpis">'
+      + kpi('Expected customers', money(t.expectedCustomers), (d.period==='week'?'this week':'today')+' · '+d.asOfWeekday)
+      + kpi('Expected amount', money(t.expectedAmount))
+      + kpi('Collected', money(t.collected), null, 'good')
+      + kpi('Uncollected', money(t.uncollected), null, t.uncollected>0?'bad':'good')
+      + kpi('Recovery', rec.pct==null?'—':rec.pct+'%', money(rec.recovered)+' / '+money(rec.denominator)+' · '+(rec.basisLabel||''))
+      + kpi('Defaulters', money(t.defaulterCustomers), 'arrears '+money(t.defaulterArrears), 'bad')
+      + kpi('Sales (approved)', money(t.salesCount), 'this week · '+money(t.salesAmount))
+      + kpi('Received', money(t.receivedCount), money(t.receivedAmount), 'good')
+      + '</div>'
+      + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
+      + '<div class="note" style="background:#fff;border-color:var(--line);color:var(--mut)">As of '+esc(d.dates.today)
+        + ' · expected snapshot(s): '+esc((d.dates.expected||[]).join(', ')||'—')
+        + ' · recovery denominator: '+esc((d.dates.recoveryDen||[]).join(', ')||'—')+'</div>';
+    S.rows = d.teams||[];
+    S.cols = [col('team','Team'), col('expectedAmount','Expected','money'), col('collected','Collected','money'),
+      col('uncollected','Uncollected','money'), col('recovered','Recovered','money'),
+      col('defaulterArrears','Arrears','money'), col('defaulterCustomers','Defaulters','num'),
+      col('receivedAmount','Received','money'), col('salesAmount','Sales','money')];
+    ONROW = null;
+  });
+};
+
+VIEWS.apps = function(){
+  var stage = S.args.stage || 'approved';
+  return Promise.all([srv('loanPipeline'), srv('loans', {stage:stage})]).then(function(r){
+    var pipe=r[0], d=r[1];
+    HEAD = '<div class="kpis">' + pipe.stages.map(function(s){
+        return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
+      }).join('') + '</div>'
+      + bar('<label style="font-size:12px;color:var(--mut)">Stage</label>'
+        + '<select data-arg="stage">' + d.stages.map(function(s){
+            return '<option value="'+s+'"'+(s===d.stage?' selected':'')+'>'+s.replace(/_/g,' ')+'</option>'; }).join('') + '</select>'
+        + '<span class="chip">'+money(d.count)+' loans · TZS '+money(d.amount)+'</span>');
+    S.rows = d.rows;
+    S.cols = [col('full_name','Customer'), col('team','Team'), col('contact','Contact'), col('product','Product'),
+      col('requested_amt','Requested','money'), col('principal_amt','Principal','money'), col('loan_amt','Loan','money'),
+      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'), col('branch','Branch'), col('docket_no','Docket')];
+    ONROW = null;
+  });
+};
+
+VIEWS.expected = function(){
+  var type = S.args.type || 'today';
+  return srv('expected', {type:type}).then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Customers', money(d.count), d.date||'')
+      + kpi('Expected', money(d.totals.expected))
+      + kpi('Collected', money(d.totals.collected), null, 'good')
+      + kpi('Uncollected', money(d.totals.uncollected), null, 'bad')
+      + kpi('Collection %', pct(d.totals.pct))
+      + '</div>'
+      + bar('<select data-arg="type">' + ['today','tomorrow','yesterday','initial'].map(function(t){
+          return '<option value="'+t+'"'+(t===type?' selected':'')+'>Expected '+t+'</option>'; }).join('') + '</select>'
+        + d.byStatus.map(function(s){ return '<span class="chip '+chipFor(s.status)+'">'+esc(s.status)+': '+s.count+'</span>'; }).join(''));
+    S.rows = d.rows;
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
+      col('payment_expected','Expected','money'), col('collected','Collected','money'), col('arrears','Arrears','money'),
+      {key:'todays_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.todays_status); }},
+      col('due_summary','D.S'), col('balance','Balance','money'), col('zone','Zone')];
+    ONROW = null;
+  });
+};
+function chipFor(s){
+  var k = String(s||'').toUpperCase();
+  if (k==='PAID'||k==='OVERPAID'||k==='CLEARED'||k==='ANALIPA LEO'||k==='APPROVED'||k==='RESOLVED') return 'ok';
+  if (k==='UNDERPAID'||k==='AMETOA AHADI'||k==='PENDING'||k==='OPEN') return 'warn';
+  if (k==='UNPAID'||k==='DEFAULTER'||k==='REJECTED'||k.indexOf('HANA USHIRIKIANO')>=0) return 'bad';
+  return 'mut';
+}
+
+VIEWS.defexp = function(){
+  return srv('expectedDefaulters').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Customers', money(d.count), 'on Expected AND in the current deck')
+      + kpi('Expected today', money(d.expected))
+      + kpi('Their arrears', money(d.arrears), null, 'bad')
+      + '</div>';
+    S.rows = d.rows;
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
+      col('payment_expected','Expected','money'),
+      {key:'todays_status', label:'Today', kind:'chip', chip:function(r){ return chipFor(r.todays_status); }},
+      col('def_arrears','Arrears','money'),
+      {key:'status', label:'Deck status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      col('ds','D.S'), col('dc','D.C','num')];
+    ONROW = null;
+  });
+};
+
+VIEWS.assignments = function(){
+  return srv('assignments').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('In the deck', money(d.count), d.weekday+' · '+(d.date||''))
+      + kpi('Not touched', money(d.untouched), 'no follow-up logged', d.untouched?'bad':'good')
+      + kpi('Untouched arrears', money(d.untouchedArrears), null, 'bad')
+      + '</div>';
+    S.rows = d.rows;
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
+      col('arrears','Arrears','money'),
+      {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      {key:'fu_status', label:'Follow-up', kind:'chip', chip:function(r){ return r.fu_status?chipFor(r.fu_status):'bad'; },
+       get:function(r){ return r.fu_status || 'NOT TOUCHED'; }},
+      col('officer','By'), col('touched_at','When','dt'), col('promise_date','Promise','date'), col('ds','D.S')];
+    ONROW = openFollowup;
+  });
+};
+
+VIEWS.followup = function(){
+  return srv('followup').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Customers', money(d.count))
+      + kpi('Total arrears', money(d.arrears), null, 'bad')
+      + '</div>'
+      + '<div class="note" style="background:#fff;border-color:var(--line);color:var(--mut)">Bofya mstari kuandika maoni. / Tap a row to log a follow-up.</div>';
+    S.rows = d.rows;
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
+      col('arrears','Arrears','money'), col('rejesho','Rejesho','money'),
+      {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      {key:'fu_status', label:'Follow-up', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
+      col('promise_date','Promise','date'), col('ds','D.S'), col('comment_by','By'), col('comment_at','When','dt')];
+    ONROW = openFollowup;
+  });
+};
+
+VIEWS.promises = function(){
+  return srv('promises').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Promises', money(d.count), 'TZS '+money(d.promised)+' promised')
+      + kpi('Overdue', money(d.counts.overdue), null, d.counts.overdue?'bad':'good')
+      + kpi('Today', money(d.counts.today), null, 'warnc')
+      + kpi('Upcoming', money(d.counts.upcoming))
+      + '</div>';
+    S.rows = d.rows;
+    S.cols = [{key:'bucket', label:'When', kind:'chip', chip:function(r){
+        return r.bucket==='overdue'?'bad':r.bucket==='today'?'warn':r.bucket==='upcoming'?'ok':'mut'; }},
+      col('promise_date','Promise date','date'), col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+      col('contact','Contact'), col('promise_amt','Amount','money'), col('arrears','Arrears','money'),
+      col('comment_by','Taken by'), col('last_comment','Comment')];
+    ONROW = openFollowup;
+  });
+};
+
+VIEWS.fureport = function(){
+  var from = S.args.from || addDays(today(), -7), to = S.args.to || today();
+  return srv('followupReport', {from:from, to:to}).then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Customers', money(d.totals.customers))
+      + kpi('Touched', money(d.totals.touched), d.totals.customers? Math.round(100*d.totals.touched/d.totals.customers)+'%':'')
+      + kpi('Comments logged', money(d.totals.comments), d.from+' → '+d.to)
+      + '</div>'
+      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">')
+      + '<div class="card"><div class="card-h">Kwa hali / By follow-up status</div>'
+      + tableSimple(d.byStatus, [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')])
+      + '</div>'
+      + '<div class="card"><div class="card-h">Kwa afisa / By officer</div>'
+      + tableSimple(d.byOfficer, [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')])
+      + '</div>';
+    S.rows = d.byTeam;
+    S.cols = [col('team','Team'), col('customers','Customers','num'), col('touched','Touched','num'), col('arrears','Arrears','money')];
+    ONROW = null;
+  });
+};
+/* Small static tables inside a head block (no search/sort -- those belong to the main table). */
+function tableSimple(rows, cols){
+  if (!rows || !rows.length) return '<div class="msg">—</div>';
+  return '<div class="scroll"><table><thead><tr>'+cols.map(function(c){
+      return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
+    + rows.map(function(r){ return '<tr>'+cols.map(function(c){
+        return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
+    + '</tbody></table></div>';
+}
+
+VIEWS.par = function(){
+  return srv('par').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Customers at risk', money(d.totals.customers), d.weekday+' · '+(d.date||''))
+      + kpi('Arrears', money(d.totals.arrears), null, 'bad')
+      + '</div>'
+      + '<div class="card"><div class="card-h">Kwa muda / By days in arrears</div>'
+      + tableSimple(d.bands, [col('band','Days'), col('customers','Customers','num'), col('arrears','Arrears','money')])
+      + '</div>'
+      + '<div class="card"><div class="card-h">Kwa hali / By status</div>'
+      + tableSimple(d.byStatus, [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')])
+      + '</div>';
+    S.rows = d.byTeam;
+    S.cols = [col('team','Team'), col('customers','Customers','num'), col('arrears','Arrears','money')];
+    ONROW = null;
+  });
+};
+
+VIEWS.weekly = function(){
+  var weekOf = S.args.weekOf || '';
+  return srv('weekly', {weekOf:weekOf}).then(function(d){
+    var t=d.totals;
+    HEAD = '<div class="kpis">'
+      + kpi('Expected', money(t.expected), d.weekOf+' → '+d.weekEnd)
+      + kpi('Collected', money(t.collected), t.expected? Math.round(1000*t.collected/t.expected)/10+'%':'', 'good')
+      + kpi('Uncollected', money(t.uncollected), null, 'bad')
+      + kpi('Recovered', money(t.recovered), null, 'good')
+      + kpi('Received', money(t.received))
+      + kpi('Sales', money(t.salesCount), money(t.salesAmount))
+      + '</div>'
+      + bar('<label style="font-size:12px;color:var(--mut)">Week starting (Monday)</label>'
+        + '<input type="date" data-arg="weekOf" value="'+esc(d.weekOf)+'">');
+    S.rows = d.days;
+    S.cols = [col('weekday','Day'), col('date','Date','date'), col('customers','Customers','num'),
+      col('expected','Expected','money'), col('collected','Collected','money'), col('uncollected','Uncollected','money'),
+      col('pct','Collection %','pct'), col('recovered','Recovered','money'), col('received','Received','money')];
+    ONROW = null;
+  });
+};
+
+VIEWS.reports = function(){
+  return srv('teamProgress').then(function(d){
+    HEAD = (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
+      + '<div class="kpis">'
+      + kpi('Teams', money(d.rows.length), d.weekday+' · '+(d.date||''))
+      + kpi('Initial arrears', money(d.rows.reduce(function(s,r){return s+r.initArrears;},0)))
+      + kpi('Current arrears', money(d.rows.reduce(function(s,r){return s+r.curArrears;},0)), null, 'bad')
+      + kpi('Recovered', money(d.rows.reduce(function(s,r){return s+r.recovered;},0)), null, 'good')
+      + '</div>';
+    S.rows = d.rows;
+    S.cols = [col('team','Team'), col('recovery','Recovery officer'), col('gmo','GMO'), col('manager','Manager'),
+      col('initArrears','Initial','money'), col('curArrears','Current','money'), col('recovered','Recovered','money'),
+      col('progress','Progress %','pct'), col('initCust','Init cust','num'), col('curCust','Cur cust','num'), col('cleared','Cleared','num')];
+    ONROW = null;
+  });
+};
+
+VIEWS.commission = function(){
+  return srv('commission').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Rate', d.rate+'%', 'settings: COMMISSION_RATE')
+      + kpi('Recovered', money(d.totals.recovered), d.weekday+' · '+(d.date||''), 'good')
+      + kpi('Commission', money(d.totals.commission), null, 'good')
+      + '</div>'
+      + (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
+      + (d.rate ? '' : '<div class="note">Weka COMMISSION_RATE kwenye Settings ili kuona kiasi. / Set COMMISSION_RATE in Settings to see amounts.</div>');
+    S.rows = d.rows;
+    S.cols = [col('team','Team'), col('recovered','Recovered','money'), col('progress','Progress %','pct'), col('commission','Commission','money')];
+    ONROW = null;
+  });
+};
+
+VIEWS.calls = function(){
+  var from = S.args.from || addDays(today(), -7), to = S.args.to || today();
+  return srv('callReport', {from:from, to:to}).then(function(d){
+    var t=d.totals;
+    HEAD = '<div class="kpis">'
+      + kpi('Calls', money(t.calls), d.from+' → '+d.to)
+      + kpi('Talk time', fmtDur(t.duration))
+      + kpi('Portfolio', money(t.portfolio), Math.round(100*(t.ratio||0))+'% of calls', 'good')
+      + kpi('Non-portfolio', money(t.nonPortfolio))
+      + '</div>'
+      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">'
+        + (d.byCategory||[]).map(function(c){ return '<span class="chip">'+esc(c.category)+': '+money(c.calls)+'</span>'; }).join(''));
+    S.rows = d.users;
+    S.cols = [col('name','Officer'), col('team','Team'), col('position','Position'), col('calls','Calls','num'),
+      col('duration','Talk time','dur'), col('expected','Expected','num'), col('defaulter','Defaulter','num'),
+      col('connected','Connected','num'), col('uniqCustomers','Customers','num'), col('days','Days','num')];
+    ONROW = null;
+  });
+};
+
+VIEWS.complaints = function(){
+  return srv('complaints').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Complaints', money(d.count))
+      + kpi('Open', money(d.open), null, d.open?'bad':'good')
+      + '</div>'
+      + bar('<button class="btn sm" id="newComplaint">+ Malalamiko mapya / New complaint</button>');
+    S.rows = d.rows;
+    S.cols = [col('created_at','Logged','dt'), col('complainant','Complainant'), col('team','Team'), col('ref','REF'),
+      col('phone','Phone'), col('category','Category'), col('channel','Channel'),
+      {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      col('details','Details'), col('logged_by','By'), col('resolution','Resolution')];
+    ONROW = openComplaint;
+  });
+};
+
+VIEWS.restructure = function(){
+  return srv('restructures').then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Requests', money(d.count))
+      + kpi('Pending', money(d.pending), null, d.pending?'warnc':'good')
+      + '</div>'
+      + bar('<button class="btn sm" id="newRestructure">+ Ombi jipya / New request</button>');
+    S.rows = d.rows;
+    S.cols = [col('created_at','Requested','dt'), col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+      col('arrears','Arrears','money'), col('total','Total','money'), col('installments','Inst','num'),
+      col('inst_amt','Inst amt','money'), col('start_date','Start','date'),
+      {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+      col('requested_by','By'), col('approved_by','Decided by')];
+    ONROW = openRestructure;
+  });
+};
+
+VIEWS.legal = function(){
+  return srv('demandNotices').then(function(d){
+    HEAD = '<div class="kpis">' + kpi('Notices issued', money(d.count))
+      + kpi('Total demanded', money(d.rows.reduce(function(s,r){return s+(Number(r.total_demand)||0);},0)), null, 'bad') + '</div>'
+      + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>');
+    S.rows = d.rows;
+    S.cols = [col('notice_date','Notice date','date'), col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+      col('contact','Contact'), col('notice_days','Days','num'), col('arrears_at_notice','Arrears','money'),
+      col('fine','Fine','money'), col('principal_remaining','Principal left','money'),
+      col('total_demand','Total demand','money'), col('issued_by','Issued by')];
+    ONROW = null;
+  });
+};
+
+VIEWS.abnormal = function(){
+  return srv('abnormal').then(function(d){
+    HEAD = '<div class="kpis">' + kpi('Abnormal payments', money(d.count))
+      + kpi('Amount', money(d.rows.reduce(function(s,r){return s+(Number(r.paid)||0);},0))) + '</div>';
+    S.rows = d.rows;
+    S.cols = [col('created_at','Logged','dt'), col('team','Team'), col('gmo','GMO'), col('pmo','PMO'),
+      col('customer_name','Customer'), col('sender_name','Sender'), col('phone_number','Phone'),
+      col('ref_no','REF'), col('transaction_id','Transaction'), col('paid','Paid','money'), col('payment','Payment')];
+    ONROW = null;
+  });
+};
+
+VIEWS.credit = function(){
+  return srv('credit').then(function(d){
+    HEAD = '<div class="kpis">' + kpi('Loans in pipeline', money(d.count)) + '</div>';
+    S.rows = d.rows;
+    S.cols = [col('analyst','Analyst / created by'), col('assessed','In pipeline','num'), col('approved','Approved','num'),
+      col('disbursed','Disbursed','num'), col('amount','Amount','money')];
+    ONROW = null;
+  });
+};
+
+VIEWS.teams = function(){
+  return srv('teams').then(function(d){
+    HEAD = '<div class="kpis">' + kpi('Teams', money(d.rows.length)) + '</div>';
+    S.rows = d.rows;
+    S.cols = [col('team','Team'), col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
+      col('manager','Manager'), col('credit','Credit'), col('expected','Expected'), col('bike','Bike')];
+    ONROW = null;
+  });
+};
+
+VIEWS.settings = function(){
+  return Promise.all([srv('settings'), srv('accessCodes')]).then(function(r){
+    var st=r[0], ac=r[1];
+    HEAD = '<div class="kpis">' + kpi('Settings', money(st.rows.length)) + kpi('Access codes', money(ac.count)) + '</div>'
+      + '<div class="card"><div class="card-h">Misimbo / Access codes'
+        + '<span class="sub"><a href="/upload?admin=1">Pakia orodha mpya / Upload a new list &rarr;</a></span></div>'
+      + tableSimple(ac.rows, [col('name','Name'), col('role','Role'),
+          {key:'teams', label:'Teams', get:function(x){ return x.teams ? x.teams.join(', ') : 'ALL'; }},
+          {key:'tabs', label:'Tabs', get:function(x){ return (x.tabs||[]).join(', '); }}])
+      + '</div>'
+      + bar('<button class="btn sm" id="newSetting">+ Badili / Set a value</button>');
+    S.rows = st.rows;
+    S.cols = [col('key','Key'), col('value','Value')];
+    ONROW = function(r){ settingForm(r.key, r.value); };
+  });
+};
+
+/* Presentation: the dashboard as full-screen cards that rotate -- the wall-display mode. */
+VIEWS.present = function(){
+  return srv('dashboard').then(function(d){
+    var t=d.totals, rec=t.recovery||{};
+    var slides = [
+      { l:'Collection', v: (t.expectedAmount>0 ? Math.round(1000*t.collected/t.expectedAmount)/10 : 0)+'%', s:money(t.collected)+' / '+money(t.expectedAmount) },
+      { l:'Recovery', v: (rec.pct==null?'—':rec.pct+'%'), s:money(rec.recovered)+' / '+money(rec.denominator)+' · '+(rec.basisLabel||'') },
+      { l:'Uncollected', v: money(t.uncollected), s:money(t.expectedCustomers)+' customers expected' },
+      { l:'Defaulter arrears', v: money(t.defaulterArrears), s:money(t.defaulterCustomers)+' customers' },
+      { l:'Sales this week', v: money(t.salesAmount), s:money(t.salesCount)+' approved loans' },
+      { l:'Received', v: money(t.receivedAmount), s:money(t.receivedCount)+' payments' }
+    ];
+    HEAD = '<div id="slide" style="background:var(--b900);color:#fff;border-radius:16px;padding:44px 24px;text-align:center;margin-bottom:14px">'
+      + '<div id="sl" style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--b300)"></div>'
+      + '<div id="sv" style="font-size:46px;font-weight:800;margin:10px 0"></div>'
+      + '<div id="ss" style="font-size:13.5px;color:var(--b300)"></div></div>';
+    S.rows = d.teams||[];
+    S.cols = [col('team','Team'), col('expectedAmount','Expected','money'), col('collected','Collected','money'),
+      col('recovered','Recovered','money'), col('defaulterArrears','Arrears','money')];
+    ONROW = null;
+    setTimeout(function(){
+      var i = 0;
+      function show(){
+        if (!document.getElementById('sl')) { clearInterval(S.presentTimer); return; }
+        var s = slides[i % slides.length];
+        document.getElementById('sl').textContent = s.l;
+        document.getElementById('sv').textContent = s.v;
+        document.getElementById('ss').textContent = s.s;
+        i++;
+      }
+      clearInterval(S.presentTimer); show(); S.presentTimer = setInterval(show, 6000);
+    }, 30);
+  });
+};
+
+function render(){
+  clearInterval(S.presentTimer);
+  var fn = VIEWS[S.view];
+  if (!fn){ $('#view').innerHTML = '<div class="msg">—</div>'; return; }
+  loading();
+  fn().then(function(){
+    if (S.cols && S.cols.length) paint(); else paintHeadOnly();
+    wireForms();
+  }).catch(failed);
+}
+
+/* ----------------------------------------------------------- drawers / forms */
+function drawer(html){
+  $('#drawer').innerHTML = html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
+  $('#drawerBg').style.display = 'flex';
+}
+function closeDrawer(){ $('#drawerBg').style.display='none'; }
+$('#drawerBg').onclick = function(e){ if (e.target===$('#drawerBg')) closeDrawer(); };
+
+var FU_STATUSES = ['AMENASIA / WRONG REF','HAJAPATA MKOPO','HAPATIKANI YEYE & MDHAMINI','YEYE / MDHAMINI HANA USHIRIKIANO',
+  'AMETOA AHADI','ANALIPA LEO','AMETUMA KWA AFISA','REJESHO LIMELIWA','ANA NAMBA NYINGINE','OTHERS'];
+var FU_NEED_DATE=['AMETOA AHADI'], FU_NEED_NUMBER=['ANA NAMBA NYINGINE'];
+
+function openFollowup(r){
+  drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · REF '+esc(r.ref)+'</div>'
+    + '<div class="facts">'
+    + '<div class="frow"><span>Arrears</span><b>TZS '+money(r.arrears||r.def_arrears||0)+'</b></div>'
+    + (r.contact?'<div class="frow"><span>Contact</span><a href="tel:'+esc(r.contact)+'">'+esc(r.contact)+'</a></div>':'')
+    + (r.guarantor_contact?'<div class="frow"><span>Guarantor</span><a href="tel:'+esc(r.guarantor_contact)+'">'+esc(r.guarantor_name||r.guarantor_contact)+'</a></div>':'')
+    + (r.status?'<div class="frow"><span>Status</span><span>'+esc(r.status)+'</span></div>':'')
+    + (r.ds?'<div class="frow"><span>D.S</span><span>'+esc(r.ds)+'</span></div>':'')
+    + '</div>'
+    + '<div class="card" style="padding:12px"><b style="font-size:13px">Historia / History</b><div id="hist"><div class="sk" style="margin:14px auto"></div></div></div>'
+    + '<div class="fld"><label>Hali ya ufuatiliaji / Follow-up status</label><select id="fuStatus"><option value=""></option>'
+      + FU_STATUSES.map(function(s){ return '<option>'+esc(s)+'</option>'; }).join('') + '</select></div>'
+    + '<div class="fld hide" id="wDate"><label>Tarehe ya ahadi / Promise date</label><input type="date" id="fuDate"></div>'
+    + '<div class="fld hide" id="wAmt"><label>Kiasi / Promise amount</label><input type="number" id="fuAmt"></div>'
+    + '<div class="fld hide" id="wNo"><label>Namba mpya / New number</label><input id="fuNo"></div>'
+    + '<div class="fld"><label>Maoni / Comment</label><textarea id="fuComment" rows="3"></textarea></div>'
+    + '<button class="btn w" id="fuSave">Hifadhi / Save</button>');
+  srv('comments', {ref:r.ref}).then(function(d){
+    var h = $('#hist'); if (!h) return;
+    h.innerHTML = (d.rows||[]).length ? d.rows.map(function(c){
+      return '<div class="hist"><div class="t"><span>'+esc(c.created_by||'')+'</span><span>'+esc(String(c.created_at||'').replace('T',' ').slice(0,16))+'</span></div>'
+        + (c.fu_status?'<span class="chip '+chipFor(c.fu_status)+'">'+esc(c.fu_status)+'</span> ':'') + esc(c.comment||'') + '</div>';
+    }).join('') : '<div style="color:var(--soft);font-size:12.5px;padding:8px 0">Hakuna historia bado.</div>';
+  }).catch(function(){});
+  $('#fuStatus').onchange = function(){
+    var v=this.value;
+    $('#wDate').classList.toggle('hide', FU_NEED_DATE.indexOf(v)<0);
+    $('#wAmt').classList.toggle('hide', FU_NEED_DATE.indexOf(v)<0);
+    $('#wNo').classList.toggle('hide', FU_NEED_NUMBER.indexOf(v)<0);
+  };
+  $('#fuSave').onclick = function(){
+    var b = $('#fuSave'); b.disabled=true; b.textContent='Inahifadhi…';
+    srv('addComment', { ref:r.ref, team:r.team, fullName:r.full_name, fuStatus:$('#fuStatus').value,
+      comment:$('#fuComment').value.trim(), promiseDate:$('#fuDate').value||null,
+      promiseAmt:$('#fuAmt').value||null, newNumber:$('#fuNo').value.trim()||null })
+      .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
+      .catch(function(e){ b.disabled=false; b.textContent='Hifadhi / Save'; toast(String(e.message||e), true); });
+  };
+}
+
+function openComplaint(r){
+  if (String(r.status||'').toUpperCase()==='RESOLVED' || String(r.status||'').toUpperCase()==='CLOSED'){
+    drawer('<h3>'+esc(r.complainant)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.category||'')+'</div>'
+      + '<div class="facts"><div class="frow"><span>Details</span><span>'+esc(r.details||'')+'</span></div>'
+      + '<div class="frow"><span>Resolution</span><span>'+esc(r.resolution||'')+'</span></div>'
+      + '<div class="frow"><span>Resolved by</span><span>'+esc(r.resolved_by||'')+'</span></div></div>');
+    return;
+  }
+  drawer('<h3>'+esc(r.complainant)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.category||'')+'</div>'
+    + '<div class="facts"><div class="frow"><span>Phone</span><span>'+esc(r.phone||'')+'</span></div>'
+    + '<div class="frow"><span>Details</span><span>'+esc(r.details||'')+'</span></div></div>'
+    + '<div class="fld"><label>Ufumbuzi / Resolution</label><textarea id="cRes" rows="3"></textarea></div>'
+    + '<button class="btn w" id="cSave">Funga malalamiko / Resolve</button>');
+  $('#cSave').onclick = function(){
+    srv('resolveComplaint', { id:r.id, resolution:$('#cRes').value.trim(), status:'Resolved' })
+      .then(function(){ toast('Imefungwa.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
+
+function openRestructure(r){
+  if (String(r.status||'').toUpperCase()!=='PENDING'){
+    drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.status)+'</div>'
+      + '<div class="facts"><div class="frow"><span>Total</span><b>'+money(r.total)+'</b></div>'
+      + '<div class="frow"><span>Installments</span><span>'+esc(r.installments||'')+' × '+money(r.inst_amt)+'</span></div>'
+      + '<div class="frow"><span>Decided by</span><span>'+esc(r.approved_by||'')+'</span></div>'
+      + (r.reject_reason?'<div class="frow"><span>Reason</span><span>'+esc(r.reject_reason)+'</span></div>':'')+'</div>');
+    return;
+  }
+  drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · REF '+esc(r.ref)+'</div>'
+    + '<div class="facts"><div class="frow"><span>Arrears</span><b>'+money(r.arrears)+'</b></div>'
+    + '<div class="frow"><span>Total</span><span>'+money(r.total)+'</span></div>'
+    + '<div class="frow"><span>Plan</span><span>'+esc(r.installments||'')+' × '+money(r.inst_amt)+' from '+esc(String(r.start_date||'').slice(0,10))+'</span></div>'
+    + '<div class="frow"><span>Requested by</span><span>'+esc(r.requested_by||'')+'</span></div></div>'
+    + '<div class="fld"><label>Sababu (kama unakataa) / Reason if rejecting</label><input id="rReason"></div>'
+    + '<div style="display:flex;gap:8px"><button class="btn" style="flex:1" id="rOk">Kubali / Approve</button>'
+    + '<button class="btn ghost" style="flex:1" id="rNo">Kataa / Reject</button></div>');
+  function decide(d){
+    srv('decideRestructure', { id:r.id, decision:d, reason:$('#rReason').value.trim() })
+      .then(function(){ toast(d==='approve'?'Imekubaliwa.':'Imekataliwa.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  }
+  $('#rOk').onclick=function(){ decide('approve'); };
+  $('#rNo').onclick=function(){ decide('reject'); };
+}
+
+function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'</label><input id="'+id+'"'+(type?' type="'+type+'"':'')+'></div>'; }
+
+function wireForms(){
+  var nc = document.getElementById('newComplaint');
+  if (nc) nc.onclick = function(){
+    drawer('<h3>Malalamiko mapya / New complaint</h3><div class="sub">Yataonekana kwenye rejista mara moja.</div>'
+      + fldRow('xName','Mlalamikaji / Complainant') + fldRow('xPhone','Simu / Phone') + fldRow('xRef','REF (optional)')
+      + fldRow('xTeam','Timu / Team') + fldRow('xCat','Aina / Category') + fldRow('xChan','Njia / Channel')
+      + '<div class="fld"><label>Maelezo / Details</label><textarea id="xDet" rows="3"></textarea></div>'
+      + '<button class="btn w" id="xSave">Hifadhi / Save</button>');
+    document.getElementById('xSave').onclick = function(){
+      srv('addComplaint', { complainant:document.getElementById('xName').value.trim(), phone:document.getElementById('xPhone').value.trim(),
+        ref:document.getElementById('xRef').value.trim(), team:document.getElementById('xTeam').value.trim(),
+        category:document.getElementById('xCat').value.trim(), channel:document.getElementById('xChan').value.trim(),
+        details:document.getElementById('xDet').value.trim() })
+        .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
+        .catch(function(e){ toast(String(e.message||e), true); });
+    };
+  };
+  var nr = document.getElementById('newRestructure');
+  if (nr) nr.onclick = function(){
+    drawer('<h3>Ombi la kupanga upya / Restructure request</h3><div class="sub">Litakuwa Pending hadi kiongozi aidhinishe.</div>'
+      + fldRow('yRef','REF') + fldRow('yName','Jina / Customer') + fldRow('yTeam','Timu / Team')
+      + fldRow('yArr','Deni / Arrears','number') + fldRow('yTotal','Jumla / Total','number')
+      + fldRow('yInst','Awamu / Installments','number') + fldRow('yAmt','Kiasi kwa awamu / Inst amount','number')
+      + fldRow('yStart','Kuanzia / Start date','date')
+      + '<div class="fld"><label>Maelezo / Notes</label><textarea id="yNotes" rows="2"></textarea></div>'
+      + '<button class="btn w" id="ySave">Tuma ombi / Submit</button>');
+    document.getElementById('ySave').onclick = function(){
+      srv('addRestructure', { ref:document.getElementById('yRef').value.trim(), fullName:document.getElementById('yName').value.trim(),
+        team:document.getElementById('yTeam').value.trim(), arrears:document.getElementById('yArr').value||null,
+        total:document.getElementById('yTotal').value||null, installments:document.getElementById('yInst').value||null,
+        instAmt:document.getElementById('yAmt').value||null, startDate:document.getElementById('yStart').value||null,
+        notes:document.getElementById('yNotes').value.trim() })
+        .then(function(){ toast('Ombi limetumwa.'); closeDrawer(); render(); })
+        .catch(function(e){ toast(String(e.message||e), true); });
+    };
+  };
+  var nn = document.getElementById('newNotice');
+  if (nn) nn.onclick = function(){
+    drawer('<h3>Notisi ya madai / Demand notice</h3>'
+      + fldRow('zRef','REF') + fldRow('zName','Jina / Customer') + fldRow('zTeam','Timu / Team')
+      + fldRow('zContact','Simu / Contact') + fldRow('zDate','Tarehe / Notice date','date')
+      + fldRow('zDays','Siku / Days','number') + fldRow('zArr','Deni / Arrears','number')
+      + fldRow('zFine','Faini / Fine','number') + fldRow('zTotal','Jumla ya madai / Total demand','number')
+      + '<button class="btn w" id="zSave">Toa notisi / Issue</button>');
+    document.getElementById('zSave').onclick = function(){
+      srv('addDemandNotice', { ref:document.getElementById('zRef').value.trim(), fullName:document.getElementById('zName').value.trim(),
+        team:document.getElementById('zTeam').value.trim(), contact:document.getElementById('zContact').value.trim(),
+        noticeDate:document.getElementById('zDate').value||null, noticeDays:document.getElementById('zDays').value||null,
+        arrears:document.getElementById('zArr').value||null, fine:document.getElementById('zFine').value||null,
+        totalDemand:document.getElementById('zTotal').value||null })
+        .then(function(){ toast('Notisi imetolewa.'); closeDrawer(); render(); })
+        .catch(function(e){ toast(String(e.message||e), true); });
+    };
+  };
+  var ns = document.getElementById('newSetting');
+  if (ns) ns.onclick = function(){ settingForm('', ''); };
+}
+function settingForm(key, value){
+  drawer('<h3>Badili thamani / Set a value</h3><div class="sub">Mfano: COMMISSION_RATE = 5</div>'
+    + '<div class="fld"><label>Key</label><input id="sKey" value="'+esc(key)+'"'+(key?' readonly':'')+'></div>'
+    + '<div class="fld"><label>Value</label><input id="sVal" value="'+esc(value)+'"></div>'
+    + '<button class="btn w" id="sSave">Hifadhi / Save</button>');
+  document.getElementById('sSave').onclick = function(){
+    srv('settingSet', { key:document.getElementById('sKey').value.trim(), value:document.getElementById('sVal').value })
+      .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
+
+/* ----------------------------------------------------------- boot */
+(function(){
+  var saved = load('hopeCode');
+  if (!saved) return;
+  S.code = saved;
+  fetch('/api/me?code='+encodeURIComponent(saved))
+    .then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(function(x){
+      if (x.status>=200 && x.status<300 && x.body.ok!==false) start(x.body);
+      else { store('hopeCode', null); $('#code').value=''; }
+    })
+    .catch(function(){});
+})();
+</script>
+</body>
+</html>

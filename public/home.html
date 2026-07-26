@@ -110,7 +110,7 @@ function renderHome(me){
   var initials = String(me.name || '?').trim().split(/\s+/).slice(0, 2).map(function(w){ return w.charAt(0); }).join('').toUpperCase();
   var tiles =
       tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu, ufuatiliaji, ripoti / call lists & follow-ups')
-    + tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, Recovery %, taarifa za timu / team figures')
+    + tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, followup, PAR, ripoti zote / the full portal')
     + (me.can.upload ? tile('/upload', '&#128228;', 'Pakia faili / Upload', 'Expected, Defaulters, Received, mikopo / loan files') : '')
     + (me.can.admin ? tile('/upload?admin=1', '&#128273;', 'Misimbo / Access codes', 'Pakia Access Codes na User Roles / manage who signs in') : '');
   $('view').innerHTML =

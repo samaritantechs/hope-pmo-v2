@@ -68,6 +68,9 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 .pill.err .dot{background:#F87171}
 .pill.syncing .dot{background:#FBBF24;animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.swapBtn{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;text-decoration:none;
+  display:flex;align-items:center;justify-content:center}
 .logoutBtn{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);
   border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;
   display:flex;align-items:center;justify-content:center;padding:0}
@@ -186,6 +189,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <a href="/" title="Menu"><img class="logo" id="appLogo" src="" alt="Menu"></a>
       <div class="who"><b id="appName">&#x2014;</b><span id="appTeam">&#x2014;</span></div>
       <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
+      <!-- Swap into the portal. Sits right after the sync pill so the two "mode" controls are
+           together, and before logout so it is never mistaken for one. -->
+      <a class="swapBtn" href="/dashboard" title="Nenda kwenye mfumo / Switch to the system">&#128260;</a>
       <button type="button" class="logoutBtn hide" id="logoutBtn" title="Toka / Log out"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
     </div>
     <div class="searchbar" style="margin:10px 0 0"><input id="listQ" placeholder="Tafuta jina / namba&#x2026; (kwenye orodha zote)"></div>

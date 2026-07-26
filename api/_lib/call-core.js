@@ -482,6 +482,26 @@ async function report(db, [dev, from, to], nowMs) {
   return out;
 }
 
+/** The same report, reached from the PORTAL instead of a registered device: scope comes from
+    the access code's own teams (widened by any teams that person leads live off the teams
+    role columns), optionally narrowed to one team the caller may already see. Port of
+    api_callReportPortal -- one report implementation for both front ends. */
+export async function reportCoreForPortal(db, user, { from, to, team } = {}, nowMs = Date.now()) {
+  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const { teamsOf } = buildLeaderMaps(teamRows);
+  const live = Object.keys(teamsOf[K(user.name)] || {});
+  let scope = live.length ? live : user.teams;                 // null stays null = ALL
+  const want = String(team || '').trim();
+  if (want) {
+    const allowed = !scope || scope.some(t => K(t) === K(want));
+    if (allowed) scope = [want];                               // not allowed -> keep their normal scope
+  }
+  const out = await reportCore(db, scope, from, to, null, nowMs);
+  out.ok = true;
+  out.scope = scope || 'ALL';
+  return out;
+}
+
 /* ---------- dispatch ---------- */
 const HANDLERS = {
   api_callBoot: boot,

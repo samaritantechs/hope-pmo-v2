@@ -2,7 +2,9 @@
   "rewrites": [
     { "source": "/", "destination": "/home.html" },
     { "source": "/home", "destination": "/home.html" },
-    { "source": "/dashboard", "destination": "/dashboard.html" },
+    { "source": "/dashboard", "destination": "/app.html" },
+    { "source": "/portal", "destination": "/app.html" },
+    { "source": "/kpi", "destination": "/dashboard.html" },
     { "source": "/upload", "destination": "/upload.html" },
     { "source": "/call", "destination": "/call.html" }
   ]
