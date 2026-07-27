@@ -659,7 +659,17 @@ export async function reportCoreForPortal(db, user, { from, to, team } = {}, now
 }
 
 /* ---------- dispatch ---------- */
+/** The company's name and logo, with nothing else attached -- the launcher, the sign-in
+    screens and the upload page all show the brand before anyone has identified themselves,
+    and none of them should have to impersonate a handset to ask for it. One setting feeds
+    every surface, so uploading the logo once changes it everywhere. */
+async function brand(db) {
+  return { brand: (await settingGet(db, 'CALL_BRAND')) || APP.BRAND,
+    motto: APP.MOTTO, logo: (await settingGet(db, 'CALL_LOGO_URL')) || '' };
+}
+
 const HANDLERS = {
+  api_brand: brand,
   api_callBoot: boot,
   api_callRegister: register,
   api_callList: list,

@@ -389,3 +389,19 @@ test('KESHO is derived from the date, never a second upload of the same file', a
   assert.equal(s.kesho.customers, 1);
   assert.equal(s.kesho.pct, 0);           // TUE1 is UNPAID -- nothing collected early yet
 });
+
+// The launcher, the dashboard sign-in and the upload page all show the company before anyone
+// has identified themselves. They read the brand from here rather than hard-coding it, so this
+// endpoint must answer with no device and no code at all.
+test('the brand endpoint is public, and one setting feeds every surface', async () => {
+  const t = makeTables();
+  const bare = await callApi(fakeDb(t), 'api_brand', [], NOW);
+  assert.equal(bare.brand, 'HOPE MICROCREDIT CO. LTD');   // the built-in default
+  assert.equal(bare.logo, '');                            // nothing uploaded -> the drawn mark stands
+
+  t.settings.push({ key: 'CALL_BRAND', value: 'HOPE MICRO CREDIT' },
+    { key: 'CALL_LOGO_URL', value: 'data:image/png;base64,AAAA' });
+  const set = await callApi(fakeDb(t), 'api_brand', [], NOW);
+  assert.equal(set.brand, 'HOPE MICRO CREDIT');
+  assert.equal(set.logo, 'data:image/png;base64,AAAA');
+});
