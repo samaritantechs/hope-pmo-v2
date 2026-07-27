@@ -32,12 +32,11 @@ a{color:var(--b600)}
 #scrRegister{min-height:100%;flex-direction:column;padding:28px 22px;background:linear-gradient(180deg,var(--b900),var(--b800) 220px,var(--bg) 220px)}
 .reg-card{width:100%;max-width:420px;margin:60px auto 0;background:var(--card);border-radius:18px;box-shadow:0 12px 34px -14px rgba(8,28,74,.35);padding:26px 22px}
 .reg-logo{width:52px;height:52px;border-radius:13px;object-fit:cover;background:#fff}
-/* The stand-in mark, shown until a real logo loads. Same box as the image it replaces, so
-   swapping one for the other never moves the header. */
-.mark{display:flex;align-items:center;justify-content:center;background:#fff;color:#1D4ED8;
-  font-weight:900;letter-spacing:-.02em}
-.reg-logo.mark{font-size:26px}
-header.top span.logo.mark{display:flex;font-size:17px}
+/* The stand-in mark -- the HOPE wordmark and smile, drawn rather than fetched, so the app has
+   a brand even before CALL_LOGO_URL is set and never shows a broken picture. Same box as the
+   image it replaces, so swapping one for the other never moves the header. */
+.mark{display:flex;align-items:center;justify-content:center;background:#fff;overflow:hidden;padding:2px}
+.mark svg{width:100%;height:100%;display:block}
 .reg-title{font-size:19px;font-weight:800;margin-top:14px}
 .reg-sub{font-size:13px;color:var(--mut);margin-top:3px;line-height:1.5}
 .fld{margin-top:16px}
@@ -180,7 +179,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 
 <div id="scrRegister" class="center hide">
   <div class="reg-card">
-    <span class="reg-logo mark" id="regMark">H</span><img class="reg-logo hide" id="regLogo" alt="">
+    <span class="reg-logo mark" id="regMark">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><text x="32" y="33" text-anchor="middle" font-size="21" font-weight="800" letter-spacing="-1.4" fill="#3B30E6">HOPE</text><path d="M18 38 A 14 14 0 0 0 46 38" fill="none" stroke="#3B30E6" stroke-width="5" stroke-linecap="round"/></svg>
+    </span><img class="reg-logo hide" id="regLogo" alt="">
     <div class="reg-title" id="regTitle">Karibu HOPE Calls</div>
     <div class="reg-sub">Jaza jina lako na timu ili uanze kupokea orodha za simu. / Enter your name and team to start receiving your call lists.</div>
     <div id="regErr"></div>
@@ -216,7 +217,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
            browser, which is what the header showed whenever CALL_LOGO_URL was unset or the
            URL 404'd -- so the mark below is the default and the image only replaces it once
            it has loaded successfully. -->
-      <a href="/" title="Menu"><span class="logo mark" id="appMark">H</span><img class="logo hide" id="appLogo" alt="Menu"></a>
+      <a href="/" title="Menu"><span class="logo mark" id="appMark">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><text x="32" y="33" text-anchor="middle" font-size="21" font-weight="800" letter-spacing="-1.4" fill="#3B30E6">HOPE</text><path d="M18 38 A 14 14 0 0 0 46 38" fill="none" stroke="#3B30E6" stroke-width="5" stroke-linecap="round"/></svg>
+      </span><img class="logo hide" id="appLogo" alt="Menu"></a>
       <div class="who"><b id="appName">&#x2014;</b><span id="appTeam">&#x2014;</span></div>
       <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
       <!-- Swap into the portal. Sits right after the sync pill so the two "mode" controls are
@@ -451,11 +454,14 @@ function loadCacheFromDevice_(){
     var raw = localStorage.getItem(CACHE_LS_KEY);
     if (!raw) return;
     var saved = JSON.parse(raw);
-    if (saved && typeof saved === 'object'){ S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {}; }
+    // The Exp.Def summary travels WITH its rows. Left out, a restart restored the rows from
+    // the device and left the strip null -- so the tab had no totals and, when the list was
+    // empty, could not say which of the four reasons it was empty for.
+    if (saved && typeof saved === 'object'){ S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {}; S.expdf = saved.expdf || null; }
   } catch (e) { /* corrupt or unavailable storage -- start empty, not fatal */ }
 }
 function saveCacheToDevice_(){
-  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt })); }
+  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt, expdf: S.expdf })); }
   catch (e) { /* quota or storage unavailable -- app still works, just without persistence this session */ }
 }
 function sourceFresh_(src){
@@ -736,12 +742,15 @@ function setView(v){
   if (v === 'reports') { renderReports(); return; }
   var src = LIST_SOURCE[v];
   if (!src) return;
-  if (S.cache[src]) {
+  // An EMPTY cached source is not data, it is the absence of it -- and it was being served
+  // back from the device under the cooldown, so a tab that had once been empty stayed empty
+  // even after the missing report was uploaded. Empty always goes back to the server.
+  if (S.cache[src] && S.cache[src].length) {
     S.rows = filterForView_(S.cache[src], v);
     drawList(); drawExpdfStrip_();                 // instant -- already have this source's data, no spinner, no wait
     if (!sourceFresh_(src)) fetchSource_(src, false);   // only refresh once this device's own cooldown has actually elapsed, not on every tab switch
   } else {
-    fetchSource_(src, true);    // first time this source is needed this session -> show the spinner
+    fetchSource_(src, true);    // nothing worth showing yet -> spinner, and ask the server
   }
 }
 /** myId + the S.view check together mean a slow response from a tab you've since swapped away
