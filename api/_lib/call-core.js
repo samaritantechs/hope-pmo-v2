@@ -3,6 +3,7 @@ import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot } from './snapshots.js';
 import { buildDashboard } from './dashboard-core.js';
+import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 
 /** The HOPE Calls backend, ported from the api_call* family in the live Code.gs -- same
@@ -64,11 +65,20 @@ async function settingGet(db, key) {
 async function userByDevice(db, dev) {
   dev = String(dev == null ? '' : dev).trim();
   if (!dev) return null;
-  const { data } = await db.from('call_users').select('*').eq('device_id', dev).limit(1);
+  const { data, error } = await db.from('call_users').select('*').eq('device_id', dev).limit(1);
+  // The error was being dropped on the floor, so ANY database failure here surfaced to the
+  // officer as "device not registered" -- sending them to re-register, which cannot fix it.
+  if (error) throw new Error(error.message);
   const cu = (data && data[0]) || null;
   if (!cu) return null;
-  if (cu.active === false) return null;
+  if (cu.active === false) { const e = new Error('ACCOUNT_OFF'); e.accountOff = true; throw e; }
   return cu;
+}
+/** Callers that answer with ok:false rather than throwing need the two cases apart: a device
+    nobody has registered is a sign-in prompt, a switched-off account is not. */
+async function userByDeviceSoft(db, dev) {
+  try { return await userByDevice(db, dev); }
+  catch (e) { if (e && e.accountOff) return null; throw e; }
 }
 /** A call_users row -> the same {name, role, teams} shape authCode returns, so teamAllowed
     works identically whether the caller came from the portal or the calls app. */
@@ -95,12 +105,15 @@ async function teamList(db) {
 /* ---------- boot / register ---------- */
 async function boot(db, [dev], nowMs) {
   const teams = await teamList(db);
-  const cu = await userByDevice(db, dev);
+  let cu = null, accountOff = false;
+  try { cu = await userByDevice(db, dev); }
+  catch (e) { if (e && e.accountOff) accountOff = true; else throw e; }
   const brand = (await settingGet(db, 'CALL_BRAND')) || APP.BRAND;
   const logo = (await settingGet(db, 'CALL_LOGO_URL')) || '';
   // An unauthenticated device gets branding only. The team list used to be handed out here,
   // which is half of what made self-registration work: pick a team off the list, get its book.
-  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED', teams: [], brand, motto: APP.MOTTO, logo };
+  if (!cu) return { ok: false, error: accountOff ? 'ACCOUNT_OFF' : 'DEVICE_NOT_REGISTERED',
+    teams: [], brand, motto: APP.MOTTO, logo };
   const today = todayKey(nowMs);
   const logs = await fetchAll(() => db.from('call_logs').select('duration, portfolio').eq('user_id', cu.user_id).eq('call_date', today));
   const syncSec = parseInt(await settingGet(db, 'CALL_SYNC_SECONDS'), 10);
@@ -157,6 +170,12 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
     const home = team || (leaderTeams && leaderTeams[0]) || '';
     team = teams.find(t => K(t) === K(home)) || null;
     name = u.name || name;
+    // A switched-off account must not be able to walk back in through the leader door. This
+    // check existed only on the officer path, so a disabled handset re-registered happily and
+    // then boot refused it -- which reached the user as "Registration did not complete. Try
+    // again.", a message that sent them round the same loop forever.
+    const { data: off } = await db.from('call_users').select('active').eq('phone', phoneD).maybeSingle();
+    if (off && off.active === false) throw new Error('Akaunti yako imezimwa. / Your account has been switched off. Ask your PMO officer.');
   } else {
     // An officer signs in with their TEAM'S CODE. Before this, anyone holding the APK could
     // type any name, pick any team off the public list, and be handed that team's whole
@@ -214,7 +233,7 @@ async function calledTodaySet(db, nowMs) {
   return set;
 }
 async function list(db, [dev, which, which2], nowMs) {
-  const cu = await userByDevice(db, dev);
+  const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   const user = pseudoUser(cu);
   const called = await calledTodaySet(db, nowMs);
@@ -229,7 +248,8 @@ async function list(db, [dev, which, which2], nowMs) {
     return { ok: true, rows: d.rows.map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact,
       gName: r.guarantor_name, gContact: r.guarantor_contact,
-      amt: r.arrears, installment: r.recovered, custStatus: r.status, fuStatus: r.cycle,
+      amt: r.arrears, installment: r.rejesho, custStatus: r.status, fuStatus: r.cycle,
+      recovered: r.recovered,
       ds: dsFmt(r.ds), days: r.dc == null ? '' : r.dc, team: r.team,
       called: hit(r.contact, r.guarantor_contact),
       leader: r.leader, role: r.role,
@@ -292,7 +312,7 @@ async function list(db, [dev, which, which2], nowMs) {
     x team count month-to-date on weekdays, SALES_TARGET_WEEKLY x team count for the week on
     weekends. The client multiplies pct by 100, so everything here is a FRACTION or null. */
 async function dailySummary(db, [dev], nowMs) {
-  const cu = await userByDevice(db, dev);
+  const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   const user = pseudoUser(cu);
   const d = await buildDashboard(db, user, nowMs);
@@ -313,11 +333,23 @@ async function dailySummary(db, [dev], nowMs) {
   const teamCount = user.teams ? user.teams.length : (await teamList(db)).length;
   const salesDen = (weekend ? weekly : monthly) * Math.max(teamCount, 1);
 
+  /* KESHO % -- early collection. Officers are judged on TOMORROW's list, not today's, so the
+     strip has to carry it beside Col or the number they are actually measured on is the one
+     thing the phone never shows them. Same derivation as the Kesho tab: the sheet dated
+     tomorrow, with Friday and the weekend rolling on to Monday. */
+  const u2 = isoWeekday(nowMs);
+  const kesho = await latestSnapshot(db, 'repayment_snapshots',
+    { snapshot_type: 'today' }, { onDate: addDaysKey(today, u2 >= 5 ? (8 - u2) : 1) });
+  const kRows = kesho.rows.filter(r => teamAllowed(user, r.team));
+  const kExp = kRows.reduce((s, r) => s + num(r.payment_expected), 0);
+  const kCol = kRows.reduce((s, r) => s + collectedOf(r), 0);
+
   const rec = d.totals.recovery;
   return {
     ok: true,
     period: d.period,
     col: { pct: rat(d.totals.collected, d.totals.expectedAmount), num: d.totals.collected, den: d.totals.expectedAmount },
+    kesho: { pct: rat(kCol, kExp), num: kCol, den: kExp, customers: kRows.length },
     sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount },
     recovery: { pct: rat(rec.recovered, rec.denominator), num: rec.recovered, den: rec.denominator, basis: rec.basis },
   };
@@ -359,7 +391,7 @@ async function phoneIndex(db, nowMs) {
 }
 const OUTCOMES = { CONNECTED: 1, MISSED: 1, REJECTED: 1, BLOCKED: 1 };
 async function sync(db, [dev, calls], nowMs) {
-  const cu = await userByDevice(db, dev);
+  const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   calls = calls || [];
   let wm = num(cu.last_ts);
@@ -406,7 +438,7 @@ async function sync(db, [dev, calls], nowMs) {
 
 /* ---------- comments / follow-up ---------- */
 async function comments(db, [dev, ref]) {
-  const cu = await userByDevice(db, dev);
+  const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   const { data, error } = await db.from('followup_comments').select('*').eq('ref', String(ref)).order('created_at', { ascending: false });
   if (error) throw new Error(error.message);
@@ -417,7 +449,7 @@ async function comments(db, [dev, ref]) {
   return { ok: true, items };
 }
 async function addComment(db, [dev, p], nowMs) {
-  const cu = await userByDevice(db, dev);
+  const cu = await userByDeviceSoft(db, dev);
   if (!cu) throw new Error('Device not registered.');
   p = p || {};
   const ref = String(p.ref == null ? '' : p.ref).trim();
@@ -545,7 +577,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   };
 }
 async function report(db, [dev, from, to], nowMs) {
-  const cu = await userByDevice(db, dev);
+  const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   if (!cu.is_leader) throw new Error('Leader access only.');
   const teamRows = await fetchAll(() => db.from('teams').select('*'));

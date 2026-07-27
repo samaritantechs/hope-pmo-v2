@@ -68,6 +68,9 @@ export async function expdfCore(db, user, nowMs, { weekly = false } = {}) {
       return { ref: d.ref, full_name: d.full_name, contact: d.contact,
         guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
         team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),
+        // The WEEKLY installment, which is what "rejesho" means to an officer at the door --
+        // distinct from what has been recovered.
+        rejesho: num(d.other_inst),
         ds: d.ds, dc: d.dc, disb_date: d.disb_date,
         status: K(d.status).includes('CHRON') ? 'CHRONIC' : (K(d.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
         phase: a.phase, role: a.role, cycle: a.label,
