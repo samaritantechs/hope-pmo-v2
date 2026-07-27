@@ -6,6 +6,8 @@ import { latestSnapshot, snapshotsInRange } from './snapshots.js';
 import { collectedOf, uncollectedOf, num } from './recovery.js';
 import { buildDashboard } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36 } from './call-core.js';
+import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
+import { expdfMine, expdfReport } from './expdf.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -1124,50 +1126,7 @@ async function commissionSave(db, user, p) {
 
     Recycling a customer between BIKE / MANAGER / GMO is the whole point: the same officer
     calling the same person every week stops working, so ownership moves on a clock. */
-const ROLE_COLS = { BIKE: 'bike', MANAGER: 'manager', GMO: 'gmo', RECOVERY: 'recovery',
-  OPM: 'opm', CREDIT: 'credit', EXPECTED: 'expected' };
 
-function parseRoles(v, dflt) {
-  const list = String(v == null ? '' : v).split(',').map(x => K(x)).filter(x => ROLE_COLS[x]);
-  return list.length ? list : dflt;
-}
-function weeksSince(v, nowMs) {
-  const t = Date.parse(String(v || ''));
-  if (isNaN(t)) return 0;
-  const days = Math.max(0, Math.floor((nowMs - t) / 86400000));
-  return Math.floor(days / 7) + 1;
-}
-export function assignFor(rec, strat, nowMs) {
-  const status = K(rec.status);
-  if (status.indexOf('CHRON') >= 0) {
-    const n = weeksSince(rec.chronic_date, nowMs) || 1;
-    return { phase: 'CHRONIC', role: strat.chronic[(n - 1) % strat.chronic.length], label: 'C-W' + n };
-  }
-  if (status.indexOf('EXPIR') >= 0) {
-    let n = weeksSince(rec.expire_date, nowMs) || 1;
-    if (n > strat.graceWeeks) {                       // past grace -> it is chronic in practice
-      const c = n - strat.graceWeeks;
-      return { phase: 'CHRONIC', role: strat.chronic[(c - 1) % strat.chronic.length], label: 'C-W' + c };
-    }
-    if (n > strat.expired.length) n = strat.expired.length;
-    return { phase: 'EXPIRED', role: strat.expired[n - 1], label: 'E-W' + n };
-  }
-  const d = num(rec.days_elapsed) || 1;
-  const b = Math.ceil(Math.max(1, d) / strat.bucketDays);
-  return { phase: 'ACTIVE', role: strat.active[(b - 1) % strat.active.length], label: 'D' + d };
-}
-async function assignStrategy(db) {
-  const get = async k => { const { data } = await db.from('settings').select('value').eq('key', k).maybeSingle(); return data && data.value; };
-  const [a, c, e, g, b] = await Promise.all([get('ASSIGN_ACTIVE'), get('ASSIGN_CHRONIC'),
-    get('ASSIGN_EXPIRED'), get('ASSIGN_GRACE_WEEKS'), get('ASSIGN_BUCKET_DAYS')]);
-  return {
-    active: parseRoles(a, ['BIKE', 'MANAGER', 'GMO']),
-    chronic: parseRoles(c, ['BIKE', 'GMO', 'MANAGER']),
-    expired: parseRoles(e, ['MANAGER', 'GMO']),
-    graceWeeks: Math.max(1, Math.min(8, parseInt(g, 10) || 2)),
-    bucketDays: Math.max(1, Math.min(14, parseInt(b, 10) || 2)),
-  };
-}
 
 /** Defaulter Assignment: the current deck, each customer routed to the role that owns them
     this week and named against that team's actual person, joined to whoever last followed
@@ -1717,6 +1676,82 @@ async function purgeSnapshots(db, user, p) {
   return { date, through, dryRun: !!p.dryRun, deleted, total };
 }
 
+/** Email the week's expected-defaulter report to the admin address. Sent ONLY when someone
+    presses the button -- there is no schedule behind this on purpose. A report that arrives
+    every morning whether or not anyone wanted it stops being read within a fortnight, and
+    then the one that mattered gets deleted with the rest.
+
+    Needs two things set, and says which is missing rather than failing silently:
+      RESEND_API_KEY   environment variable on the deployment (not a setting -- it is a secret)
+      ADMIN_EMAIL      Settings, so finance can change the recipient without a deploy */
+function expdfEmailHtml(d, sentBy) {
+  const money0 = n => Math.round(num(n)).toLocaleString('en-US');
+  const pctTxt = v => (v == null ? '—' : v + '%');
+  const t = d.totals;
+  const section = s => `
+    <h3 style="margin:22px 0 6px;font:600 14px system-ui;color:#0B2A6B">${esc_(s.role)}</h3>
+    <table style="width:100%;border-collapse:collapse;font:13px system-ui">
+      <thead><tr style="background:#0B2A6B;color:#fff">
+        <th align="left" style="padding:6px 8px">Leader</th>
+        <th align="right" style="padding:6px 8px">Customers</th>
+        <th align="right" style="padding:6px 8px">Initial</th>
+        <th align="right" style="padding:6px 8px">Arrears now</th>
+        <th align="right" style="padding:6px 8px">Recovered</th>
+        <th align="right" style="padding:6px 8px">Rec %</th>
+      </tr></thead><tbody>
+      ${s.rows.length ? s.rows.map(r => `<tr style="border-bottom:1px solid #e5e7eb">
+        <td style="padding:6px 8px">${esc_(r.leader)}</td>
+        <td align="right" style="padding:6px 8px">${money0(r.customers)}</td>
+        <td align="right" style="padding:6px 8px">${money0(r.initial)}</td>
+        <td align="right" style="padding:6px 8px">${money0(r.arrears)}</td>
+        <td align="right" style="padding:6px 8px;color:#067647;font-weight:700">${money0(r.recovered)}</td>
+        <td align="right" style="padding:6px 8px">${pctTxt(r.pct)}</td></tr>`).join('')
+        : '<tr><td colspan="6" style="padding:10px;color:#6b7280">No customers in this category.</td></tr>'}
+      </tbody>
+      <tfoot><tr style="background:#f1f5f9;font-weight:700">
+        <td style="padding:6px 8px">TOTAL</td>
+        <td align="right" style="padding:6px 8px">${money0(s.totals.customers)}</td>
+        <td align="right" style="padding:6px 8px">${money0(s.totals.initial)}</td>
+        <td align="right" style="padding:6px 8px">${money0(s.totals.arrears)}</td>
+        <td align="right" style="padding:6px 8px">${money0(s.totals.recovered)}</td>
+        <td align="right" style="padding:6px 8px">${pctTxt(s.totals.pct)}</td>
+      </tr></tfoot></table>`;
+  return `<div style="font:14px system-ui;color:#111;max-width:860px">
+    <h2 style="margin:0 0 2px;color:#0B2A6B">HOPE PMO — Expected Defaulters, weekly recovery</h2>
+    <div style="color:#6b7280;font-size:13px">Week of ${esc_(d.weekOf)} · as of ${esc_(d.date || '—')} (${esc_(d.weekday)}) · sent by ${esc_(sentBy)}</div>
+    ${d.hasBaseline ? '' : '<p style="color:#B42318"><b>Monday’s initial deck is not uploaded</b>, so recovery below reads 0. Upload it and resend.</p>'}
+    <p style="margin:14px 0 0"><b>Whole book:</b> ${money0(t.customers)} customers ·
+      initial ${money0(t.initial)} · now ${money0(t.arrears)} ·
+      recovered <b style="color:#067647">${money0(t.recovered)}</b> (${pctTxt(t.pct)})</p>
+    ${d.sections.map(section).join('')}
+  </div>`;
+}
+async function emailWeeklyExpdf(db, user, _args, nowMs) {
+  requireAdmin(user);
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw badRequest('Email is not configured yet: set RESEND_API_KEY on the deployment (Vercel → Settings → Environment Variables).');
+  const { data: toRow } = await db.from('settings').select('value').eq('key', 'ADMIN_EMAIL').maybeSingle();
+  const to = String((toRow && toRow.value) || '').trim();
+  if (!to) throw badRequest('Set ADMIN_EMAIL in Settings to say where the report should go.');
+  const { data: fromRow } = await db.from('settings').select('value').eq('key', 'EMAIL_FROM').maybeSingle();
+  const from = String((fromRow && fromRow.value) || '').trim() || 'HOPE PMO <onboarding@resend.dev>';
+
+  const d = await expdfReport(db, user, { weekly: true }, nowMs);
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from, to: to.split(/[;,]/).map(x => x.trim()).filter(Boolean),
+      subject: `HOPE PMO — Expected Defaulters weekly recovery (week of ${d.weekOf})`,
+      html: expdfEmailHtml(d, user.name) }),
+  });
+  const body = await res.json().catch(() => ({}));
+  // Surface the provider's own words: "domain not verified" is the usual first failure and
+  // guessing at it would send someone hunting in the wrong place.
+  if (!res.ok) throw badRequest(`Email provider refused it: ${body.message || res.status}`);
+  return { sent: true, to, weekOf: d.weekOf, id: body.id || null,
+    customers: d.totals.customers, recovered: d.totals.recovered };
+}
+
 /* ------------------------------------------------------------------ dispatch */
 function badRequest(m) { const e = new Error(m); e.status = 400; return e; }
 function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
@@ -1737,6 +1772,7 @@ const FN = {
   teams, saveRole, deleteRole, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
+  expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
@@ -1747,6 +1783,7 @@ export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
   return h(db, user, args || {}, nowMs);
 }
 
+export { assignFor };
 export const PORTAL_FUNCTIONS = Object.keys(FN);
 
 /* =======================================================================================

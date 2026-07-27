@@ -3,6 +3,7 @@ import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot } from './snapshots.js';
 import { buildDashboard } from './dashboard-core.js';
+import { expdfMine } from './expdf.js';
 
 /** The HOPE Calls backend, ported from the api_call* family in the live Code.gs -- same
     endpoints, same shapes, so call.html works against either system. Differences are all
@@ -78,6 +79,14 @@ export function pseudoUser(cu) {
     : lt.map(t => K(t)).filter(Boolean);
   return { name: cu.name, role: cu.role, teams };
 }
+/** The rotation names people by the teams table's role columns, so holding one of those
+    columns anywhere is what counts -- not the role on their access code. */
+async function isRecycleLeader(db, name) {
+  const n = K(name);
+  if (!n) return false;
+  const rows = await fetchAll(() => db.from('teams').select('gmo, manager, bike'));
+  return rows.some(t => K(t.gmo) === n || K(t.manager) === n || K(t.bike) === n);
+}
 async function teamList(db) {
   const rows = await fetchAll(() => db.from('teams').select('*'));
   return rows.filter(r => r.team).map(r => r.team).sort();
@@ -100,6 +109,9 @@ async function boot(db, [dev], nowMs) {
     ok: true,
     userId: cu.user_id, name: cu.name, team: cu.team, role: cu.role,
     leader: !!cu.is_leader,
+    // Whether the teams table names this person as a GMO / MANAGER / BIKE officer anywhere --
+    // that, not their login role, is what gives them a rotation list to work.
+    expdfLeader: await isRecycleLeader(db, cu.name),
     leaderTeams: cu.is_leader ? (!cu.leader_teams || !cu.leader_teams.length ? 'ALL' : cu.leader_teams.join(',')) : '',
     teams,
     watermark: num(cu.last_ts),
@@ -205,6 +217,21 @@ async function list(db, [dev, which], nowMs) {
   const called = await calledTodaySet(db, nowMs);
   const hit = (a, b) => !!(called[pnorm(a)] || called[pnorm(b)]);
   let rows;
+  if (which === 'expdf') {
+    // The recycling rotation's own list, for the GMO / MANAGER / BIKE signed in on this
+    // handset. Their assignment lived only in the portal before, so the three people who
+    // actually work it could not see it -- the rotation existed on paper and the follow-up
+    // did not happen.
+    const d = await expdfMine(db, user, {}, nowMs);
+    return { ok: true, rows: d.rows.map(r => ({
+      ref: r.ref, name: r.full_name, contact: r.contact,
+      gName: r.guarantor_name, gContact: r.guarantor_contact,
+      amt: r.arrears, installment: r.recovered, custStatus: r.status, fuStatus: r.cycle,
+      ds: dsFmt(r.ds), days: r.dc == null ? '' : r.dc, team: r.team,
+      called: hit(r.contact, r.guarantor_contact),
+    })), expdf: { totals: d.totals, byCycle: d.byCycle, dayName: d.dayName,
+      date: d.date, hasBaseline: d.hasBaseline } };
+  }
   if (which === 'defaulters') {
     const fu = await fetchAll(() => db.from('followup_status').select('*'));
     // Skip pure FK stubs (created so an EXPECTED customer's comment can reference

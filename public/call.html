@@ -146,6 +146,16 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 .toast.bad{background:var(--bad)}
 .banner{background:var(--warnbg);border:1px solid var(--warnline);color:var(--warn);border-radius:11px;padding:10px 12px;
   font-size:12px;margin-bottom:10px;line-height:1.5}
+
+  .expdfstrip{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 12px;background:var(--card);
+    border-bottom:1px solid var(--line)}
+  .expdfstrip .xstat{display:flex;flex-direction:column;min-width:62px}
+  .expdfstrip .xstat span{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
+  .expdfstrip .xstat b{font-size:15px;font-weight:800}
+  .expdfstrip .xstat b.ok{color:var(--ok)}
+  .expdfstrip .xnote{flex-basis:100%;font-size:11px;color:var(--bad)}
+  .expdfstrip .xcyc{flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+  .expdfstrip .xcyc span{font-size:10.5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
 </style>
 </head>
 <body>
@@ -204,8 +214,10 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <button data-v="def">Def</button>
       <button data-v="exp">Exp</button>
       <button data-v="chr">Chr</button>
+      <button data-v="expdf" id="tabExpdf" class="hide">Exp.Def</button>
       <button data-v="reports" id="tabReports" class="hide">Ripoti</button>
     </div>
+    <div class="expdfstrip hide" id="expdfStrip"></div>
     <div class="daystrip hide" id="dayStrip">
       <span class="ds-tag" id="dsTag">Leo</span>
       <span>Col <b id="dsCol">&mdash;</b></span>
@@ -313,7 +325,9 @@ function deviceId(){
 /* ================= state ================= */
 var DEV = deviceId();
 var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), syncEverySec:300, permOk:null };
-var LIST_SOURCE = { today:'today', tomorrow:'tomorrow', def:'defaulters', exp:'defaulters', chr:'defaulters' };
+var LIST_SOURCE = { today:'today', tomorrow:'tomorrow', def:'defaulters', exp:'defaulters', chr:'defaulters', expdf:'expdf' };
+// Exp.Def is the recycling rotation's own list and is already scoped to the signed-in leader
+// by the server, so it must NOT be re-filtered here by customer status the way def/exp/chr are.
 
 /** Monday 00:00 of the current week, local device time. Re-sent every sync (dedup is by
     deterministic id against what's already in the sheet -- see callSyncCore_ server-side), so
@@ -517,6 +531,9 @@ function enterApp(d){
   $('#appName').textContent = d.name || '\u2014';
   $('#appTeam').textContent = d.leader ? ((d.role||'Leader') + ' \u00B7 ' + (d.leaderTeams==='ALL' || !d.leaderTeams ? 'All teams' : d.leaderTeams.split(',').length + ' teams')) : d.team;
   if (d.leader) $('#tabReports').classList.remove('hide');
+  // The rotation list belongs to whoever the teams table names as a GMO, MANAGER or BIKE
+  // officer. Showing the tab to everyone would just hand most officers an empty screen.
+  if (d.expdfLeader) $('#tabExpdf').classList.remove('hide');
   $('#logoutBtn').classList.toggle('hide', d.logoutEnabled === false);
   $('#logoutBtn').onclick = function(){
     showConfirm_('Toka kwenye akaunti hii? / Log out of this account?', doLogout);
@@ -560,12 +577,15 @@ function classifyStatus_(s){
   return 'def';
 }
 function filterForView_(rows, v){
-  if (v === 'today' || v === 'tomorrow') return rows;
+  if (v === 'today' || v === 'tomorrow' || v === 'expdf') return rows;
   return rows.filter(function(r){ return classifyStatus_(r.custStatus) === v; });
 }
 function segLabel_(src, r){
   if (src === 'today') return 'Leo';
   if (src === 'tomorrow') return 'Kesho';
+  // On the rotation list the useful badge is the CYCLE the customer is in (D3, E-W2, C-W1),
+  // not the word "Defaulter" again -- it is the only thing that changes week to week.
+  if (src === 'expdf') return r.fuStatus || 'Exp.Def';
   var v = classifyStatus_(r.custStatus);
   return v === 'chr' ? 'Chr' : (v === 'exp' ? 'Exp' : 'Def');
 }
@@ -592,6 +612,30 @@ function globalSearchRows_(q){
   });
   return out;
 }
+/* What the leader is owed on this list and what has come back. Sums first, because the
+   question at the door is "how much is on me today", and the cycle split under it because
+   D-buckets, E-W and C-W are worked differently. */
+function drawExpdfStrip_(){
+  var el = $('#expdfStrip');
+  if (!el) return;
+  if (S.view !== 'expdf' || !S.expdf){ el.classList.add('hide'); return; }
+  var t = S.expdf.totals || {};
+  var m = function(n){ n = Number(n)||0;
+    if (n >= 1e6) return (n/1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/,'') + 'm';
+    if (n >= 1e3) return Math.round(n/1e3) + 'k';
+    return String(Math.round(n)); };
+  el.classList.remove('hide');
+  el.innerHTML =
+    '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
+    + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
+    + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
+    + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : t.pct + '%') + '</b></div>'
+    + (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
+    + ((S.expdf.byCycle||[]).length
+        ? '<div class="xcyc">' + S.expdf.byCycle.map(function(c){
+            return '<span>' + esc(c.cycle) + ' \u00B7 ' + c.customers + ' \u00B7 ' + m(c.arrears) + '</span>'; }).join('') + '</div>'
+        : '');
+}
 function exitSearch_(){
   if (!S.q) return;
   S.q = '';
@@ -605,7 +649,7 @@ function setView(v){
   if (!src) return;
   if (S.cache[src]) {
     S.rows = filterForView_(S.cache[src], v);
-    drawList();                 // instant -- already have this source's data, no spinner, no wait
+    drawList(); drawExpdfStrip_();                 // instant -- already have this source's data, no spinner, no wait
     if (!sourceFresh_(src)) fetchSource_(src, false);   // only refresh once this device's own cooldown has actually elapsed, not on every tab switch
   } else {
     fetchSource_(src, true);    // first time this source is needed this session -> show the spinner
@@ -622,12 +666,14 @@ function fetchSource_(src, showSpinner){
   srv('api_callList', DEV, src).then(function(d){
     if (myId !== S.reqId) return;
     S.cache[src] = d.rows || [];
+    if (src === 'expdf') S.expdf = d.expdf || null;
     S.cacheAt[src] = Date.now();
     saveCacheToDevice_();
     if (S.q.trim()) { S.rows = globalSearchRows_(S.q); drawList(); return; }
     if (LIST_SOURCE[S.view] !== src) return;   // user moved to a tab backed by a different source while this was loading
     S.rows = filterForView_(S.cache[src], S.view);
     drawList();
+    drawExpdfStrip_();
   }).catch(function(e){
     if (myId !== S.reqId || LIST_SOURCE[S.view] !== src) return;
     if (showSpinner) $('#body').innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>';

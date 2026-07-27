@@ -779,3 +779,97 @@ test('an access code can be changed — it is the password, so it must be rotata
     { oldCode: 'A', code: 'A2', name: 'THE ADMIN', role: 'ADMIN' }, NOW),
     e => e.status === 400 && /signed in with/.test(e.message));
 });
+
+/* Expected defaulters, per recycling leader. KONGOWE names BOSS as manager and JUMA G as
+   recovery; give the deck a manager-owned and a gmo-owned customer so the split is real. */
+function expdfTables() {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], gmo: 'GMO GEE', manager: 'BOSS', bike: 'BIKE BEE' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' },
+    { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  const D = (ref, arrears, type, days, disb) => ({
+    ref, full_name: 'C' + ref, contact: '07140000' + ref, team: 'KONGOWE', arrears,
+    status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: days, disb_date: disb,
+    snapshot_type: type, weekday: 'FRI', snapshot_date: TODAY,
+    upload_batch: 'b' + type + TODAY, created_at: TODAY + 'T04:00:00Z',
+  });
+  // days_elapsed 1-2 -> bucket 1 -> BIKE; 3-4 -> bucket 2 -> MANAGER; 5-6 -> bucket 3 -> GMO.
+  // Disbursed 2026-07-21 (Tue) -> visited Tue and Fri; TODAY is a Friday.
+  t.defaulter_snapshots = [
+    D('A1', 1000, 'initial', 1, '2026-07-21'), D('A1', 600, 'current', 1, '2026-07-21'),
+    D('A2', 2000, 'initial', 3, '2026-07-21'), D('A2', 1500, 'current', 3, '2026-07-21'),
+    D('A3', 3000, 'initial', 5, '2026-07-21'), D('A3', 3000, 'current', 5, '2026-07-21'),
+  ];
+  return t;
+}
+
+test('a recycling leader sees only their own expected defaulters, with the cycle label', async () => {
+  const db = fakeDb(expdfTables());
+  const asLeader = n => ({ code: 'X', name: n, role: 'MANAGER', teams: null, tabs: [] });
+
+  const boss = await portalApi(db, asLeader('BOSS'), 'expdfMine', {}, NOW);
+  assert.deepEqual(boss.rows.map(r => r.ref), ['A2']);        // bucket 2 -> MANAGER
+  assert.equal(boss.rows[0].cycle, 'D3');                     // D<days elapsed>
+  assert.equal(boss.totals.initial, 2000);
+  assert.equal(boss.totals.arrears, 1500);
+  assert.equal(boss.totals.recovered, 500);
+  assert.equal(boss.totals.pct, 25);                          // 500 of 2000
+
+  const gmo = await portalApi(db, asLeader('GMO GEE'), 'expdfMine', {}, NOW);
+  assert.deepEqual(gmo.rows.map(r => r.ref), ['A3']);
+  assert.equal(gmo.totals.recovered, 0);                      // arrears unchanged
+  assert.equal(gmo.totals.pct, 0);
+
+  const bike = await portalApi(db, asLeader('BIKE BEE'), 'expdfMine', {}, NOW);
+  assert.deepEqual(bike.rows.map(r => r.ref), ['A1']);
+  assert.equal(bike.byCycle[0].cycle, 'D1');
+
+  // Somebody who holds none of the three roles gets an empty list, not everyone else's.
+  assert.equal((await portalApi(db, asLeader('NOBODY'), 'expdfMine', {}, NOW)).rows.length, 0);
+});
+
+test('expdf leaves out customers not due on the visit day, unless asked for all', async () => {
+  const db = fakeDb(expdfTables());
+  // Disbursed on a Wednesday -> visited Wed and Sat, so NOT due on this Friday.
+  for (const r of db._dump('defaulter_snapshots')) if (r.ref === 'A2') r.disb_date = '2026-07-22';
+  const me = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: [] };
+  assert.equal((await portalApi(db, me, 'expdfMine', {}, NOW)).rows.length, 0);
+  const all = await portalApi(db, me, 'expdfMine', { all: true }, NOW);
+  assert.equal(all.rows.length, 1);
+  assert.equal(all.totals.recovered, 500);
+});
+
+test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', async () => {
+  const db = fakeDb(expdfTables());
+  const d = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  assert.deepEqual(d.sections.map(s => s.role), ['GMO', 'MANAGER', 'BIKE']);
+  const mgr = d.sections.find(s => s.role === 'MANAGER');
+  assert.equal(mgr.rows[0].leader, 'BOSS');
+  assert.equal(mgr.totals.recovered, 500);
+  assert.equal(mgr.totals.pct, 25);
+  // 1000 + 2000 + 3000 initial, 400 + 500 + 0 recovered.
+  assert.equal(d.totals.initial, 6000);
+  assert.equal(d.totals.recovered, 900);
+  assert.equal(d.totals.pct, 15);
+  assert.equal(d.weekly, false);
+  // Weekly measures against MONDAY's deck; there is none here, so it falls back to the day's
+  // own initial rather than inventing a baseline.
+  const w = await portalApi(db, ADMIN, 'expdfReport', { weekly: true }, NOW);
+  assert.equal(w.weekly, true);
+  assert.equal(w.totals.recovered, 900);
+});
+
+test('the weekly email refuses clearly when it is not configured, and never sends daily', async () => {
+  const db = fakeDb(expdfTables());
+  delete process.env.RESEND_API_KEY;
+  await assert.rejects(() => portalApi(db, ADMIN, 'emailWeeklyExpdf', {}, NOW),
+    e => e.status === 400 && /RESEND_API_KEY/.test(e.message));
+
+  process.env.RESEND_API_KEY = 'test-key';
+  await assert.rejects(() => portalApi(db, ADMIN, 'emailWeeklyExpdf', {}, NOW),
+    e => e.status === 400 && /ADMIN_EMAIL/.test(e.message));
+  delete process.env.RESEND_API_KEY;
+
+  // It is admin-only, and there is deliberately no scheduled sender anywhere in the codebase.
+  await assert.rejects(() => portalApi(db, GMO, 'emailWeeklyExpdf', {}, NOW), e => e.status === 403);
+});
