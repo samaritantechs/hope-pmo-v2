@@ -105,11 +105,24 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
   const isLeaderOfSome = own.length > 0;
   const useOwn = scope === 'mine' ? true : (scope === 'team' ? false : isLeaderOfSome);
   const mine = useOwn ? own : assigned;
-  const scopeRows = all ? mine : mine.filter(r => r.onToday);
+
+  /* The 2-day cycle is read off DISB DATE. When the deck carries none -- a column renamed in
+     the export, a sheet that never had it -- every row's cycle day is unknown, `onToday` is
+     false for all of them, and the leader gets an empty screen with a full book behind it.
+     A list nobody can see is worse than a list on the wrong day, so in that case the whole
+     assigned book shows and the strip says why. */
+  const dated = mine.filter(r => r.primary > 0);
+  const noCycleDates = mine.length > 0 && dated.length === 0;
+  const scopeRows = (all || noCycleDates) ? mine : mine.filter(r => r.onToday);
   scopeRows.sort((a, b) => b.arrears - a.arrears);
   return { rows: scopeRows, weekday: core.weekday, date: core.date,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     scope: useOwn ? 'mine' : 'team', canSwitch: isLeaderOfSome,
+    /* Exactly where the list got to zero. An empty screen that cannot say WHY it is empty
+       costs a phone call and a day; these five numbers answer it on the spot. */
+    diag: { deck: core.rows.length, assigned: assigned.length, mine: mine.length,
+      dated: dated.length, onToday: mine.filter(r => r.onToday).length,
+      deckWeekday: core.weekday, deckDate: core.date, noCycleDates },
     totals: sumExpdf(scopeRows), allTotals: sumExpdf(mine),
     // Who is carrying what, so anyone looking at the list can see the split without leaving it.
     byLeader: Object.values(scopeRows.reduce((m, r) => {
