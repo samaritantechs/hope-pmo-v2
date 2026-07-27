@@ -78,8 +78,10 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 .tabs button{flex:1;background:rgba(255,255,255,.08);color:#cfe0ff;border:0;padding:9px 4px;border-radius:9px;
   font-size:12.5px;font-weight:700;white-space:nowrap}
 .tabs button.on{background:#fff;color:var(--b800)}
-.daystrip{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;
-  font-size:12px;font-weight:600;color:var(--b300);flex-wrap:wrap}
+/* Five figures on a phone: wrap freely, but never break a label away from its number. */
+.daystrip{display:flex;align-items:center;justify-content:center;gap:4px 7px;margin-top:10px;
+  font-size:11.5px;font-weight:600;color:var(--b300);flex-wrap:wrap}
+.daystrip span{white-space:nowrap}
 .daystrip b{color:#fff;font-weight:800;margin-left:3px}
 .daystrip .ds-tag{background:rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:1.5px 7px;font-size:10.5px;font-weight:800;letter-spacing:.02em}
 .daystrip .ds-dot{color:rgba(255,255,255,.35)}
@@ -225,12 +227,14 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     <div class="expdfstrip hide" id="expdfStrip"></div>
     <div class="daystrip hide" id="dayStrip">
       <span class="ds-tag" id="dsTag">Leo</span>
-      <span>Col <b id="dsCol">&mdash;</b></span>
-      <span>Kesho <b id="dsKesho">&mdash;</b></span>
+      <span>Col leo <b id="dsCol">&mdash;</b></span>
+      <span>Col wiki <b id="dsWeek">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
       <span>Sales <b id="dsSales">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
-      <span>Recovery <b id="dsRec">&mdash;</b></span>
+      <span>Exp.Def <b id="dsExpdf">&mdash;</b></span>
+      <span class="ds-dot">&middot;</span>
+      <span>Rec <b id="dsRec">&mdash;</b></span>
     </div>
   </header>
   <main class="body" id="body"></main>
@@ -472,7 +476,7 @@ function doLogout(){
   S.boot = null; S.cache = {}; S.cacheAt = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
   _sumAt = 0;
   var _ds = $('#dayStrip'); if (_ds) _ds.classList.add('hide');
-  ['#dsCol','#dsSales','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
+  ['#dsCol','#dsWeek','#dsSales','#dsExpdf','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
   try { localStorage.removeItem(CACHE_LS_KEY); } catch(e){}
   $('#sheet').style.display = 'none';
@@ -551,7 +555,8 @@ function enterApp(d){
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
   document.addEventListener('visibilitychange', function(){ if (!document.hidden && S.boot) loadDaySummary(false); });   // throttled refresh on foreground return
 }
-/** Top-of-app team % strip (Col / Sales / Recovery for the officer's own team(s)). Numbers come
+/** Top-of-app team % strip -- Col leo / Col wiki / Sales (month-to-date) / Exp.Def / Rec for the
+    officer's own team(s). Numbers come
     from api_callDailySummary, which reuses the portal dashboard's own formulas so this reconciles
     with app.html. Kept off the sync interval on purpose -- refreshed only on entry, a manual sync
     tap, or a throttled foreground return -- so it never adds to per-officer sync load. A failure
@@ -566,9 +571,11 @@ function loadDaySummary(force){
     _sumAt = Date.now();
     $('#dsTag').textContent = (d.period === 'week') ? 'Wiki' : 'Leo';   // Sat/Sun the server returns week-to-date
     $('#dsCol').textContent = pctW_(d.col && d.col.pct);
-    // Early collection is judged on TOMORROW's list, so it sits right beside today's Col.
-    $('#dsKesho').textContent = pctW_(d.kesho && d.kesho.pct);
+    // The week beside the day: one bad morning is not a bad week, and the week is what is chased.
+    $('#dsWeek').textContent = pctW_(d.weekCol && d.weekCol.pct);
+    // Sales is month-to-date against the monthly target -- the label stays short on purpose.
     $('#dsSales').textContent = pctW_(d.sales && d.sales.pct);
+    $('#dsExpdf').textContent = pctW_(d.expdf && d.expdf.pct);
     $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct);
     $('#dayStrip').classList.remove('hide');
   }).catch(function(){ /* leave the strip hidden -- never show an error in the header */ });

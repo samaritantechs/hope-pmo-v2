@@ -10,6 +10,9 @@ class FakeQuery {
   select() { if (this.mode !== 'select') this.wantRows = true; return this; }
   eq(k, v) { this.filters.push(r => String(r[k]) === String(v)); return this; }
   neq(k, v) { this.filters.push(r => String(r[k]) !== String(v)); return this; }
+  // PostgREST spells "everything with a value here" as .not(col, 'is', null) -- the idiom for
+  // a delete-all, which needs a filter to be accepted at all.
+  not(k, op, v) { this.filters.push(r => !(op === 'is' && v === null ? r[k] == null : String(r[k]) === String(v))); return this; }
   gte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) >= String(v)); return this; }
   lte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) <= String(v)); return this; }
   in(k, arr) { this.filters.push(r => arr.map(String).includes(String(r[k]))); return this; }

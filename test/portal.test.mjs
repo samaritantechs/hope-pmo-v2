@@ -999,3 +999,21 @@ test('call agents are the CREATED BY agents on applications, TRACK# 1 only', asy
   assert.equal(db._dump('call_agents').some(a => a.user_id === 'Callagent9'), false);
   await assert.rejects(() => portalApi(db, GMO, 'saveCallAgent', { userId: 'X' }, NOW), e => e.status === 403);
 });
+
+// A tab has MANY tips -- that is the whole point of rotating them -- so the reader must group
+// rather than pick one. This is the read side of the fix that stopped hints being keyed on tab.
+test('hints group many tips per tab, and fall back across languages', async () => {
+  const db = fakeDb({
+    hints: [
+      { id: 'h1', tab: 'all', message: 'Upload daily.', sw_message: 'Pakia kila siku.' },
+      { id: 'h2', tab: 'ALL', message: 'Check the deck.', sw_message: '' },        // same tab, different case
+      { id: 'h3', tab: 'followup', message: '', sw_message: 'Piga simu mapema.' }, // Swahili only
+      { id: 'h4', tab: '', message: 'orphan', sw_message: '' },                    // no tab -- dropped
+    ],
+  });
+  const d = await portalApi(db, ADMIN, 'hints', {}, NOW);
+  assert.deepEqual(d.tips.en.all, ['Upload daily.', 'Check the deck.']);
+  assert.deepEqual(d.tips.sw.all, ['Pakia kila siku.', 'Check the deck.']);   // no Swahili -> English stands in
+  assert.deepEqual(d.tips.en.followup, ['Piga simu mapema.']);                // no English -> Swahili stands in
+  assert.equal('' in d.tips.en, false);
+});
