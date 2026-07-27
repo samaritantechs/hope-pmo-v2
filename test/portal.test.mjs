@@ -936,3 +936,23 @@ test('uploading the current deck rebuilds the officers working list', async () =
   const fu = await portalApi(db, ADMIN, 'followup', {}, NOW);
   assert.deepEqual(fu.rows.map(r => r.ref).sort(), ['D1', 'D2']);
 });
+
+test('officer accounts can be deleted outright, taking their call history with them', async () => {
+  const db = fakeDb({
+    ...tables(),
+    call_users: [{ user_id: 'U1', name: 'TEST ACCT', team: 'KONGOWE', phone: '712000111', active: true }],
+    call_logs: [{ id: 'l1', user_id: 'U1', call_date: TODAY }, { id: 'l2', user_id: 'U1', call_date: TODAY }],
+  });
+  // Switching off is right for someone who left; deleting is for accounts that should never
+  // have existed -- a test, a typo, a duplicate.
+  const r = await portalApi(db, ADMIN, 'deleteOfficerAccount', { userId: 'U1' }, NOW);
+  assert.equal(r.deleted, true);
+  assert.equal(db._dump('call_users').length, 0);
+  // call_logs references call_users, so the logs must go first or the delete just fails.
+  assert.equal(db._dump('call_logs').length, 0);
+
+  await assert.rejects(() => portalApi(db, ADMIN, 'deleteOfficerAccount', { userId: 'U1' }, NOW),
+    e => e.status === 400 && /no longer exists/.test(e.message));
+  await assert.rejects(() => portalApi(db, GMO, 'deleteOfficerAccount', { userId: 'U1' }, NOW),
+    e => e.status === 403);
+});

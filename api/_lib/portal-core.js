@@ -1491,6 +1491,24 @@ async function saveOfficerAccount(db, user, p, nowMs) {
   return { userId: uid, name, team, active, passcode: issued };
 }
 
+/** Delete an account outright. Switching one off keeps the person's call history attached
+    and is the right move for someone who has left; deleting is for the ones that should never
+    have existed -- a test registration, a typo'd phone number, a duplicate. Their call logs
+    go first because call_logs references call_users, and a delete that leaves orphaned logs
+    would just fail. */
+async function deleteOfficerAccount(db, user, p) {
+  requireAdmin(user);
+  const id = String((p && p.userId) || '').trim();
+  if (!id) throw badRequest('userId is required');
+  const { data: acct } = await db.from('call_users').select('user_id, name').eq('user_id', id).maybeSingle();
+  if (!acct) throw badRequest('That account no longer exists.');
+  const { error: lErr } = await db.from('call_logs').delete().eq('user_id', id);
+  if (lErr) throw new Error(lErr.message);
+  const { error } = await db.from('call_users').delete().eq('user_id', id);
+  if (error) throw new Error(error.message);
+  return { userId: id, name: acct.name, deleted: true };
+}
+
 /** Two ways to remove someone, because they mean different things:
       unregister -> keep the row and its call history, just release the device so the phone
                     has to register again (the fix for "wrong name/team on the right phone");
@@ -1792,7 +1810,7 @@ const FN = {
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
   expdfMine, expdfReport, emailWeeklyExpdf,
-  officerAccounts, saveOfficerAccount,
+  officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
 
@@ -2116,8 +2134,15 @@ async function officerBoards(db, user, _args, nowMs) {
   const myExp = scoped(user, expWeek), myDef = scoped(user, defWeek);
   const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
   const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
-  const onDate = (rows, d, type) => pickLatestBatchRows(rows.filter(r =>
-    String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
+  /* Resolve a deck the SAME way the dashboard card does: by date, type AND WEEKDAY.
+     Ignoring weekday here was the bug behind "initial right, current bigger, recovery
+     negative". A day can carry decks stamped with more than one weekday -- Monday's baseline
+     re-uploaded today, say -- and pickLatestBatch then chose a DIFFERENT deck for initial than
+     for current. Comparing two different populations reports the gap between them as
+     recovery, which is how a matching pair of files produced -194m. */
+  const onDate = (rows, d, type, weekday) => pickLatestBatchRows(rows.filter(r =>
+    String(r.snapshot_date) === d && (!type || r.snapshot_type === type)
+    && (!weekday || r.weekday === weekday)));
 
   /* ---- EARLY COLLECTION: judged on tomorrow's (kesho) list, per Expected officer ---- */
   function earlyBoard(rows) {
@@ -2157,20 +2182,23 @@ async function officerBoards(db, user, _args, nowMs) {
         recovered: rec, pct: pctOf(rec, b.uncollected) };
     }).sort((a, b) => b.recovered - a.recovered);
   }
-  const iniToday = onDate(myDef, today, 'initial'), curToday = onDate(myDef, today, 'current');
+  const iniToday = onDate(myDef, today, 'initial', wd), curToday = onDate(myDef, today, 'current', wd);
   const recToday = recBoard(iniToday, curToday, null).map(r => ({ ...r, uncollected: weekUncol && r.uncollected ? r.uncollected : r.uncollected, pct: pctOf(r.recovered, r.uncollected) }));
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
   for (let i = 0; i < 7; i++) {
     const d = addDaysKey(mon, i);
-    const ini = onDate(myDef, d, 'initial'), cur = onDate(myDef, d, 'current');
+    // Each day pairs its own initial against its own current, matched on weekday so the two
+    // sides are always the same population.
+    const dwd = WD7[i];
+    const ini = onDate(myDef, d, 'initial', dwd), cur = onDate(myDef, d, 'current', dwd);
     if (!ini.length || !cur.length) continue;
     const per = {};
     for (const r of ini) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) + num(r.arrears);
     for (const r of cur) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) - num(r.arrears);
     for (const k of Object.keys(per)) dailyRec[k] = (dailyRec[k] || 0) + per[k];
   }
-  const iniMon = onDate(myDef, mon, 'initial');
+  const iniMon = onDate(myDef, mon, 'initial', 'MON');
   const recWeek = recBoard(iniMon, curToday, dailyRec);
 
   /* Recovery is initial MINUS current, so if one of the two decks is short the difference is
