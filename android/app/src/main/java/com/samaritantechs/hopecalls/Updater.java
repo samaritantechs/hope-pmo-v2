@@ -11,6 +11,7 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.Settings;
 import android.widget.Toast;
 
 import androidx.core.content.FileProvider;
@@ -34,6 +35,7 @@ import java.net.URL;
  */
 class Updater {
     private static final String PREF_SKIPPED = "skippedVersion";
+    private static final String PREF_TRIED = "triedVersion";
 
     static void checkInBackground(final MainActivity activity, final String baseUrl) {
         new Thread(() -> {
@@ -50,7 +52,14 @@ class Updater {
                 // for a build the user has already declined -- but a NEWER build still asks.
                 int skipped = activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE).getInt(PREF_SKIPPED, 0);
                 if (skipped == remote) return;
-                activity.runOnUiThread(() -> prompt(activity, remote, name, notes, url));
+                // Have we already been round this loop for THIS version and come back still
+                // running the old build? Then the install did not take -- a download that
+                // served a stale file, or "install unknown apps" never granted -- and asking
+                // again in the same words just teaches people to dismiss the dialog. Say what
+                // actually happened instead.
+                int tried = activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE).getInt(PREF_TRIED, 0);
+                final boolean failedBefore = tried == remote;
+                activity.runOnUiThread(() -> prompt(activity, remote, name, notes, url, failedBefore));
             } catch (Exception ignored) {
                 // An update check must never break the app: no network, bad JSON, anything -> skip.
             }
@@ -75,12 +84,28 @@ class Updater {
     }
 
     private static void prompt(final MainActivity activity, final int versionCode,
-                               String versionName, String notes, final String url) {
+                               String versionName, String notes, final String url,
+                               boolean failedBefore) {
+        String body = "HOPE PMO " + versionName + "\n\n" + notes;
+        if (failedBefore) {
+            body = "Usasishaji uliopita haukukamilika — bado unatumia toleo la zamani.\n"
+                 + "Ruhusu \"Sakinisha programu zisizojulikana\" kwa HOPE PMO, kisha jaribu tena.\n\n"
+                 + "The last update did not finish, so this is still the old build. Allow "
+                 + "\"Install unknown apps\" for HOPE PMO, then try again.\n\n"
+                 + "HOPE PMO " + versionName + "\n" + notes;
+        }
         new AlertDialog.Builder(activity)
-                .setTitle("Toleo jipya / Update available")
-                .setMessage("HOPE PMO " + versionName + "\n\n" + notes)
+                .setTitle(failedBefore ? "Usasishaji haukukamilika / Update did not finish"
+                                       : "Toleo jipya / Update available")
+                .setMessage(body)
                 .setCancelable(false)
-                .setPositiveButton("Sasisha / Update", (d, w) -> download(activity, url))
+                .setPositiveButton("Sasisha / Update", (d, w) -> {
+                    // Remembered BEFORE the download, so a launch that comes back on the old
+                    // build knows the attempt was made and can say so.
+                    activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE)
+                            .edit().putInt(PREF_TRIED, versionCode).apply();
+                    download(activity, url);
+                })
                 .setNegativeButton("Baadaye / Later", (d, w) ->
                         activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE)
                                 .edit().putInt(PREF_SKIPPED, versionCode).apply())
@@ -133,6 +158,30 @@ class Updater {
     /** A file:// URI would throw FileUriExposedException on modern Android -- the installer
         gets a content:// URI from our FileProvider plus a one-shot read grant instead. */
     private static void install(Activity activity, File apk) {
+        // Android 8+ will not let a sideloaded app install anything until the user has turned
+        // on "Install unknown apps" FOR THAT APP. Without it the installer intent simply
+        // returns, the officer sees the app reappear, and assumes it updated. Send them to the
+        // one screen that fixes it rather than letting the attempt fail silently.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && !activity.getPackageManager().canRequestPackageInstalls()) {
+            new AlertDialog.Builder(activity)
+                    .setTitle("Ruhusa inahitajika / Permission needed")
+                    .setMessage("Ili kusakinisha toleo jipya, washa \"Sakinisha programu zisizojulikana\" kwa HOPE PMO.\n\n"
+                            + "To install the update, allow \"Install unknown apps\" for HOPE PMO, then press Update again.")
+                    .setPositiveButton("Fungua mipangilio / Open settings", (d, w) -> {
+                        try {
+                            activity.startActivity(new Intent(
+                                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                    Uri.parse("package:" + activity.getPackageName())));
+                        } catch (Exception ignored) {
+                            Toast.makeText(activity, "Mipangilio > Programu > HOPE PMO > Sakinisha programu zisizojulikana.",
+                                    Toast.LENGTH_LONG).show();
+                        }
+                    })
+                    .setNegativeButton("Baadaye / Later", null)
+                    .show();
+            return;
+        }
         try {
             Uri uri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", apk);
             Intent i = new Intent(Intent.ACTION_VIEW);
