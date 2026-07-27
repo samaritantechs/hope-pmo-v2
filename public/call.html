@@ -155,6 +155,8 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
   .expdfstrip .xstat b.ok{color:var(--ok)}
   .expdfstrip .xnote{flex-basis:100%;font-size:11px;color:var(--bad)}
   .expdfstrip .xcyc{flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+  .expdfstrip .xtoggle{flex-basis:100%;text-align:left;background:transparent;border:0;color:var(--mut);font-size:11px;font-weight:700;padding:0 0 2px}
+  .expdfstrip.shut{padding:6px 12px}
   .expdfstrip .xscope{flex-basis:100%;display:flex;gap:6px;margin-bottom:2px}
   .expdfstrip .xscope button{flex:1;padding:5px 8px;border:1px solid var(--line);background:transparent;color:var(--mut);border-radius:8px;font-size:11.5px;font-weight:700}
   .expdfstrip .xscope button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
@@ -628,7 +630,12 @@ function drawExpdfStrip_(){
     if (n >= 1e3) return Math.round(n/1e3) + 'k';
     return String(Math.round(n)); };
   el.classList.remove('hide');
+  if (S.expdfOpen == null) { try { S.expdfOpen = localStorage.getItem('hcXdOpen') !== '0'; } catch(e){ S.expdfOpen = true; } }
+  el.classList.toggle('shut', !S.expdfOpen);
   el.innerHTML =
+    '<button class="xtoggle" data-xtog="1">' + (S.expdfOpen ? '\u25B4' : '\u25BE') + ' Muhtasari'
+      + (S.expdfOpen ? '' : ' \u00B7 ' + (t.customers||0) + ' \u00B7 ' + m(t.arrears)) + '</button>'
+    + (!S.expdfOpen ? '' :
     (S.expdf.canSwitch
       ? '<div class="xscope">'
         + '<button data-xs="mine"' + (S.expdf.scope==='mine'?' class="on"':'') + '>Zangu</button>'
@@ -649,7 +656,14 @@ function drawExpdfStrip_(){
         ? '<div class="xcyc">' + S.expdf.byLeader.map(function(x){
             return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers + ' \u00B7 ' + m(x.recovered)
               + (x.pct==null?'':' \u00B7 '+x.pct+'%') + '</span>'; }).join('') + '</div>'
-        : '');
+        : ''));
+  $all('#expdfStrip [data-xtog]').forEach(function(b){
+    b.onclick = function(){
+      S.expdfOpen = !S.expdfOpen;
+      try { localStorage.setItem('hcXdOpen', S.expdfOpen ? '1' : '0'); } catch(e){}
+      drawExpdfStrip_();
+    };
+  });
   $all('#expdfStrip [data-xs]').forEach(function(b){
     b.onclick = function(){
       S.expdfScope = b.getAttribute('data-xs');
@@ -657,6 +671,16 @@ function drawExpdfStrip_(){
       fetchSource_('expdf', true);
     };
   });
+}
+/* "Orodha hii iko wazi" told an officer nothing they could act on. Each list is empty for a
+   specific reason -- almost always a report nobody has uploaded yet -- so say which one. */
+function emptyWhy_(v){
+  if (v === 'tomorrow') return 'Ripoti ya KESHO haijapakiwa bado. Mwambie afisa wa PMO apakie "Expected \u2014 Tomorrow".';
+  if (v === 'today') return 'Ripoti ya LEO haijapakiwa bado. Mwambie afisa wa PMO apakie "Expected \u2014 Today".';
+  if (v === 'expdf') return 'Hakuna wateja waliopangwa kwako leo. Jaribu "Timu yote", au orodha ya wadaiwa haijapakiwa.';
+  if (v === 'def' || v === 'exp' || v === 'chr')
+    return 'Orodha ya wadaiwa haijapakiwa bado. Mwambie afisa wa PMO apakie "Defaulters \u2014 Current".';
+  return 'Orodha hii iko wazi.';
 }
 function exitSearch_(){
   if (!S.q) return;
@@ -726,7 +750,7 @@ function drawList(){
   var searching = !!S.q.trim();
   body.innerHTML = banner
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
-    + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : 'Orodha hii iko wazi.') + '</div>') + '</div>';
+    + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>';
   if ($('#battBtn')) $('#battBtn').onclick = function(){ var nb2 = nativeBridge(); if (nb2 && nb2.requestIgnoreBatteryOptimizations) nb2.requestIgnoreBatteryOptimizations(); };
   $all('.crow').forEach(function(row){
     row.addEventListener('click', function(e){
