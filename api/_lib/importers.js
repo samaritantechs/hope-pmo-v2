@@ -144,6 +144,9 @@ const LOAN_STAGE_COLUMNS = {
   docket_no: ['DOCKET#', 'DOCKET #'],
   loan_id: ['LOAN ID'],
   track_no: ['TRACK#', 'TRK#', 'TRACK'],
+  // The CALL AGENT who took the application. It was in the schema but never imported, so the
+  // dashboard's call-agent board had nothing to group by and fell back to the calls app.
+  created_by: ['CREATED BY', 'CREATEDBY', 'AGENT', 'AGENT ID'],
   disb_status: ['DISB STATUS'],
   disb_date: ['DISB DATE'],
   approved_date: ['APPROVED DATE'],
