@@ -43,6 +43,7 @@
 </head>
 <body>
 <div class="wrap">
+  <div data-brandmark></div>
   <h1>HOPE PMO — Dashboard</h1>
   <p class="sub"><a href="/">&larr; Menu</a> &middot; <a href="/upload">Upload files</a> &middot; <a href="/call">HOPE Calls</a></p>
 
@@ -142,5 +143,6 @@ $('go').addEventListener('click', load);
 $('code').addEventListener('keydown', function(e){ if (e.key === 'Enter') load(); });
 if ($('code').value) load();
 </script>
+<script src="/brand.js"></script>
 </body>
 </html>
