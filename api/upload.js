@@ -158,8 +158,20 @@ export default withApi(async (req, res) => {
   // so a re-upload of the same history collapses instead of duplicating every call.
   const upsertTables = {
     followup_status: 'ref', teams: 'team', access_codes: 'code', roles: 'role',
-    settings: 'key', hints: 'tab', call_users: 'user_id', call_logs: 'id',
+    settings: 'key', call_users: 'user_id', call_logs: 'id',
   };
+
+  // Hints are the one sheet that is REPLACED wholesale. A tab has MANY tips -- the reader
+  // groups them into a list and rotates through it -- so 'tab' is not a key, and upserting on
+  // it made Postgres refuse the whole upload the moment two rows shared a tab:
+  //   ON CONFLICT DO UPDATE command cannot affect row a second time
+  // The sheet is the full set of tips by definition, so deleting first is also what makes a
+  // REMOVED tip actually disappear instead of lingering forever.
+  if (table === 'hints') {
+    const { error: delErr } = await supabase.from('hints').delete().not('tab', 'is', null);
+    if (delErr) throw new Error('Could not clear the previous hints: ' + delErr.message);
+  }
+
   const result = upsertTables[table]
     ? await supabase.from(table).upsert(records, { onConflict: upsertTables[table] })
     : await supabase.from(table).insert(records);

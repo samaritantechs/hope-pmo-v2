@@ -1,7 +1,7 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
-import { latestSnapshot } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, resolveLatestPerKey } from './snapshots.js';
 import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
@@ -305,52 +305,70 @@ async function list(db, [dev, which, which2], nowMs) {
 }
 
 /* ---------- daily summary strip ---------- */
-/** Col / Sales / Recovery for the officer's own team(s). Col and Recovery come straight out
-    of buildDashboard -- the SAME code path the portal dashboard uses, so the strip reconciles
-    with it by construction, recovery basis (Mon today / Tue-Fri yesterday / weekend week)
-    included. Sales keeps the live system's target framing: approvals vs SALES_TARGET_MONTHLY
-    x team count month-to-date on weekdays, SALES_TARGET_WEEKLY x team count for the week on
-    weekends. The client multiplies pct by 100, so everything here is a FRACTION or null. */
+/** The five numbers the phone's performance bar carries, for the officer's own team(s):
+      col       today's collection
+      weekCol   the week's collection, Mon-Fri to date
+      sales     approvals MONTH-to-date against the monthly target
+      expdf     recovery on the day's expected defaulters
+      recovery  the dashboard's own recovery figure
+
+    Col and Recovery come straight out of buildDashboard, and Exp.Def out of the same
+    expdfMine the Exp.Def tab renders -- the SAME code paths, so the strip reconciles with the
+    portal and with the screen below it by construction rather than by coincidence.
+
+    Sales is deliberately MONTHLY on every day of the week. A team's target is 5m a day across
+    5 working days -- 25m a week, 100m a month -- and the month is the period the business
+    actually judges, so a Monday reading is month-to-date progress, not a week that has barely
+    started. SALES_TARGET_MONTHLY overrides the 100m default.
+
+    The client multiplies pct by 100, so everything here is a FRACTION or null. */
 async function dailySummary(db, [dev], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   const user = pseudoUser(cu);
   const d = await buildDashboard(db, user, nowMs);
-  const weekend = isoWeekday(nowMs) >= 6;
   const rat = (n, den) => (den > 0 ? n / den : null);
+  const mine = rows => rows.filter(r => teamAllowed(user, r.team));
 
-  const weeklyRaw = parseInt(String((await settingGet(db, 'SALES_TARGET_WEEKLY')) || (await settingGet(db, 'SALES_TARGET')) || '').replace(/[^0-9]/g, ''), 10);
-  const weekly = (!weeklyRaw || isNaN(weeklyRaw) || weeklyRaw < 1) ? 100000000 : weeklyRaw;
   const monthlyRaw = parseInt(String((await settingGet(db, 'SALES_TARGET_MONTHLY')) || '').replace(/[^0-9]/g, ''), 10);
-  const monthly = (!monthlyRaw || isNaN(monthlyRaw) || monthlyRaw < 1) ? weekly * 4 : monthlyRaw;
+  const monthly = (!monthlyRaw || isNaN(monthlyRaw) || monthlyRaw < 1) ? 100000000 : monthlyRaw;
 
   const today = todayKey(nowMs);
-  const salesFrom = weekend ? weekMondayKey(nowMs) : today.slice(0, 8) + '01';   // week-to-date vs month-to-date
+  const monthFrom = today.slice(0, 8) + '01';
   const loans = await fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date')
-    .eq('stage', 'approved').gte('approved_date', salesFrom).lte('approved_date', today));
-  const salesNum = loans.filter(r => teamAllowed(user, r.team))
-    .reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0);
+    .eq('stage', 'approved').gte('approved_date', monthFrom).lte('approved_date', today));
+  const salesNum = mine(loans).reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0);
   const teamCount = user.teams ? user.teams.length : (await teamList(db)).length;
-  const salesDen = (weekend ? weekly : monthly) * Math.max(teamCount, 1);
+  const salesDen = monthly * Math.max(teamCount, 1);
 
-  /* KESHO % -- early collection. Officers are judged on TOMORROW's list, not today's, so the
-     strip has to carry it beside Col or the number they are actually measured on is the one
-     thing the phone never shows them. Same derivation as the Kesho tab: the sheet dated
-     tomorrow, with Friday and the weekend rolling on to Monday. */
-  const u2 = isoWeekday(nowMs);
-  const kesho = await latestSnapshot(db, 'repayment_snapshots',
-    { snapshot_type: 'today' }, { onDate: addDaysKey(today, u2 >= 5 ? (8 - u2) : 1) });
-  const kRows = kesho.rows.filter(r => teamAllowed(user, r.team));
-  const kExp = kRows.reduce((s, r) => s + num(r.payment_expected), 0);
-  const kCol = kRows.reduce((s, r) => s + collectedOf(r), 0);
+  /* WEEK COL -- collection Mon-Fri to date. A day on its own says nothing about whether the
+     week is being carried; the officers are chased on the week, so the week is on the bar.
+     Same per-day batch resolution the dashboard uses on weekends, so a re-upload of any day
+     supersedes rather than doubles. */
+  const weekAll = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' },
+    weekMondayKey(nowMs), addDaysKey(weekMondayKey(nowMs), 4));
+  const wRows = mine([...resolveLatestPerKey(weekAll, r => r.snapshot_date).values()].flatMap(s => s.rows));
+  const wExp = wRows.reduce((s, r) => s + num(r.payment_expected), 0);
+  const wCol = wRows.reduce((s, r) => s + collectedOf(r), 0);
+
+  /* EXP.DEF % -- what has come back off the day's expected defaulters against what they owed
+     at the start of it. A recycling leader sees their own book; everyone else sees the team's,
+     exactly as the Exp.Def tab below does. */
+  let expdf = { pct: null, num: 0, den: 0, customers: 0 };
+  try {
+    const x = await expdfMine(db, user, { scope: 'auto' }, nowMs);
+    expdf = { pct: rat(x.totals.recovered, x.totals.initial), num: x.totals.recovered,
+      den: x.totals.initial, customers: x.totals.customers, scope: x.scope };
+  } catch (e) { /* no decks yet -- the bar shows a dash, never an error */ }
 
   const rec = d.totals.recovery;
   return {
     ok: true,
     period: d.period,
     col: { pct: rat(d.totals.collected, d.totals.expectedAmount), num: d.totals.collected, den: d.totals.expectedAmount },
-    kesho: { pct: rat(kCol, kExp), num: kCol, den: kExp, customers: kRows.length },
-    sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount },
+    weekCol: { pct: rat(wCol, wExp), num: wCol, den: wExp, customers: wRows.length },
+    sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount, basis: 'month' },
+    expdf,
     recovery: { pct: rat(rec.recovered, rec.denominator), num: rec.recovered, den: rec.denominator, basis: rec.basis },
   };
 }

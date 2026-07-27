@@ -25,7 +25,7 @@ function makeTables() {
       { code: 'LEAD1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] },
       { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] },   // ALL teams
     ],
-    settings: [{ key: 'SALES_TARGET_WEEKLY', value: '1000000' }],
+    settings: [{ key: 'SALES_TARGET_MONTHLY', value: '4000000' }],
     repayment_snapshots: [
       { ref: '111', full_name: 'AMINA H', contact: '0712000001', guarantor_name: 'G ONE', guarantor_contact: '0713000001', team: 'KONGOWE', payment_expected: 1000, arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today', snapshot_date: '2026-07-24', upload_batch: 'b1', created_at: '2026-07-24T04:00:00Z' },
       { ref: '222', full_name: 'PILI S', contact: '0712000002', guarantor_name: '', guarantor_contact: '', team: 'KONGOWE', payment_expected: 500, arrears: 0, todays_status: 'PAID', due_summary: '3/6', snapshot_type: 'today', snapshot_date: '2026-07-24', upload_batch: 'b1', created_at: '2026-07-24T04:00:00Z' },
@@ -219,7 +219,22 @@ test('daily summary strip reconciles with the dashboard rule (Friday = yesterday
   assert.equal(d.recovery.num, 150);                            // FRI deck: initial 500 - current 350
   assert.equal(d.recovery.basis, 'yesterday');
   assert.ok(Math.abs(d.recovery.pct - 0.375) < 1e-9);
-  assert.ok(Math.abs(d.sales.pct - 200000 / 4000000) < 1e-9);   // month-to-date vs monthly target (weekly x 4) x 1 team
+  assert.ok(Math.abs(d.sales.pct - 200000 / 4000000) < 1e-9);   // month-to-date vs the MONTHLY target x 1 team
+  assert.equal(d.sales.basis, 'month');
+  // Col wiki: Thursday's 400 expected + Friday's 1500, none of Thursday's collected, 500 of Friday's.
+  assert.equal(d.weekCol.den, 1900);
+  assert.equal(d.weekCol.num, 500);
+});
+
+test('sales is month-to-date on the WEEKEND too, and defaults to 100m a team', async () => {
+  const db = fakeDb(makeTables());
+  db._dump('settings').length = 0;                              // no target configured -- the default stands
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const sat = Date.parse('2026-07-25T09:00:00Z');               // Saturday
+  const d = await callApi(db, 'api_callDailySummary', ['d1'], sat);
+  assert.equal(d.sales.basis, 'month');
+  assert.equal(d.sales.num, 200000);                            // still the month, not the week
+  assert.equal(d.sales.den, 100000000);                         // 5m x 5 days x 4 weeks, one team
 });
 
 test('follow-up: validations enforced; expected customers get a followup stub for the FK', async () => {
