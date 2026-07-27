@@ -489,6 +489,12 @@ function boot(){
 
     $('#scrBoot').classList.add('hide');
     $('#scrRegister').classList.remove('hide');
+    // Carried over from the launcher, where the officer already typed their team code. Typing
+    // the same code twice in a row is exactly the sort of step that loses people.
+    try {
+      var carried = localStorage.getItem('hcTeamCode');
+      if (carried){ $('#regPass').value = carried; localStorage.removeItem('hcTeamCode'); $('#regName').focus(); }
+    } catch(e2){}
   }).catch(function(e){
     $('#scrBoot').classList.add('hide');
     $('#scrRegister').classList.remove('hide');
@@ -588,6 +594,12 @@ function enterApp(d){
     just leaves the strip hidden; it never surfaces an error into the header. */
 var _sumAt = 0;
 function pctW_(x){ return (x==null||isNaN(x)||!isFinite(x)) ? '\u2014' : Math.round(100*x) + '%'; }
+/** Money at a glance: 10k, 210k, 1.4m. A percentage says how well the day is going; the
+    SHILLINGS say how much has actually come in, which is the number people talk about. */
+function mc_(n){ n = Number(n)||0;
+  if (n >= 1e6) return (n/1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/,'') + 'm';
+  if (n >= 1e3) return Math.round(n/1e3) + 'k';
+  return String(Math.round(n)); }
 function loadDaySummary(force){
   if (!S.boot) return;
   if (!force && _sumAt && (Date.now() - _sumAt < 15*60*1000)) return;   // light cooldown, mirrors the list-cache feel
@@ -602,8 +614,11 @@ function loadDaySummary(force){
     $('#dsWeek').textContent = pctW_(d.weekCol && d.weekCol.pct);
     // Sales is month-to-date against the monthly target -- the label stays short on purpose.
     $('#dsSales').textContent = pctW_(d.sales && d.sales.pct);
-    $('#dsExpdf').textContent = pctW_(d.expdf && d.expdf.pct);
-    $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct);
+    // The two recovery figures carry the SHILLINGS beside the percentage. A percentage on its
+    // own is an abstraction at the door; "1.4m" is the thing the team is actually chasing.
+    var amt_ = function(x){ return (x && Number(x.num) > 0) ? ' · ' + mc_(x.num) : ''; };
+    $('#dsExpdf').textContent = pctW_(d.expdf && d.expdf.pct) + amt_(d.expdf);
+    $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct) + amt_(d.recovery);
     $('#dayStrip').classList.remove('hide');
   }).catch(function(){ /* leave the strip hidden -- never show an error in the header */ });
 }
@@ -662,10 +677,7 @@ function drawExpdfStrip_(){
   if (!el) return;
   if (S.view !== 'expdf' || !S.expdf){ el.classList.add('hide'); return; }
   var t = S.expdf.totals || {};
-  var m = function(n){ n = Number(n)||0;
-    if (n >= 1e6) return (n/1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/,'') + 'm';
-    if (n >= 1e3) return Math.round(n/1e3) + 'k';
-    return String(Math.round(n)); };
+  var m = mc_;
   el.classList.remove('hide');
   if (S.expdfOpen == null) { try { S.expdfOpen = localStorage.getItem('hcXdOpen') !== '0'; } catch(e){ S.expdfOpen = true; } }
   el.classList.toggle('shut', !S.expdfOpen);
