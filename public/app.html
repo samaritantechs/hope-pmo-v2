@@ -814,7 +814,9 @@ VIEWS.dashboard = function(){
         }).join('') + '</div></div>';
     // The officer boards load after the headline numbers so the page paints immediately --
     // one execution never waits on all of it, which is what made v1's dashboard time out.
-    srv('officerBoards').then(function(b){
+    Promise.all([srv('officerBoards'), srv('callAgents').catch(function(){ return null; })]).then(function(r){
+      var b = r[0];
+      S.csAgents = r[1];
       var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
       var extra =
           (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
@@ -837,11 +839,19 @@ VIEWS.dashboard = function(){
                     'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
                     [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
                      col('salesPct','Sales %','pct'), col('recPct','Rec %','pct'), col('perf','Perf','pct')], ['apps','amount'])
-        + boardPair('bCallT','Call agents — today','calls · talk time · portfolio', b.callToday,
-                    'bCallW','Call agents — this week','Mon–Sun', b.callWeek,
-                    [col('agent','Agent'), col('calls','Calls','num'), col('duration','Talk time','dur'),
-                     col('portfolio','Portfolio','num'), col('customers','Customers','num'),
-                     col('connectPct','Connected %','pct')], ['calls','duration','portfolio','customers'])
+        // "Call agents" here means the CUSTOMER SERVICE agents named on loan applications --
+        // each application carries a CREATED BY agent id. How many phone calls a field
+        // officer made is a different question and lives on the Call Reports tab.
+        + board('bCS','Call agents — applications brought in',
+                'CREATED BY on the application reports · TRACK# 1 only (repeat customers are not a new win)',
+                (S.csAgents && S.csAgents.rows) || [],
+                [{key:'id', label:'Agent'},
+                 {key:'names', label:'Who', cls:function(r){ return r.names?'':'bad'; },
+                  get:function(r){ return r.names || 'not named — add in Teams & Staff'; }},
+                 col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
+                 col('total','Total apps','num'), col('amount','Requested','money')],
+                (S.csAgents && S.csAgents.totals)
+                  ? Object.assign({ id:'', names:'' }, S.csAgents.totals) : null)
         + board('bFu','Follow-up status — all defaulters', money(b.fuTotal)+' customers', b.fuStatus,
                 [col('status','Status'), col('customers','Customers','num'),
                  col('pct','% of book','pct'), col('arrears','Arrears','money')],
@@ -1674,7 +1684,8 @@ VIEWS.credit = function(){
    report read these columns, so a reassignment has to be editable here, not re-uploaded. */
 var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
 VIEWS.teams = function(){
-  return srv('teams').then(function(d){
+  return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; })]).then(function(rr){
+    var d = rr[0]; S.csAgents = rr[1];
     var staffed = {};
     d.rows.forEach(function(r){ TEAM_ROLES.forEach(function(c){ if (r[c]) staffed[r[c]] = 1; }); });
     S.roleMeta = d;
@@ -1699,6 +1710,22 @@ VIEWS.teams = function(){
                   + '<td class="r"><button class="btn sm ghost" data-role="'+esc(r.role)+'">Badili / Edit</button></td></tr>';
               }).join('') + '</tbody></table></div></div>'
           : '')
+      // The agent ids come from the application reports; the humans behind them are named
+      // here. One id can cover two people who share a desk and a login.
+      + (S.me.can.admin && S.csAgents
+          ? '<div class="card" id="agentsCard"><div class="card-h">Call agents (application reports)'
+            + '<span class="sub"><button class="btn sm" id="newAgent">+ Agent</button></span></div>'
+            + ((S.csAgents.unnamed||[]).length
+                ? '<div class="note bad" style="margin:10px 14px"><b>'+money(S.csAgents.unnamed.length)
+                  + '</b> agent id(s) appear on applications but have no name yet: '
+                  + esc(S.csAgents.unnamed.join(', ')) + '</div>' : '')
+            + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Agent ID</th><th>Who</th><th></th></tr></thead><tbody>'
+            + (S.csAgents.agents||[]).map(function(a, i){
+                return '<tr class="clickrow" data-agent="'+esc(a.user_id)+'"><td class="sn">'+(i+1)+'</td>'
+                  + '<td><b>'+esc(a.user_id)+'</b></td><td>'+esc(a.names||'—')+'</td>'
+                  + '<td class="r"><button class="btn sm ghost" data-agent="'+esc(a.user_id)+'">Badili / Edit</button></td></tr>';
+              }).join('') + '</tbody></table></div></div>'
+          : '')
       + (S.me.can.admin ? bar('<button class="btn sm" id="newTeam">+ Timu mpya / New team</button>'
           + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
@@ -1712,6 +1739,26 @@ VIEWS.teams = function(){
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
 };
+function agentForm(x){
+  var isNew = !x;
+  drawer('<h3>'+(isNew?'Call agent mpya / New agent':esc(x.user_id))+'</h3>'
+    + '<div class="sub">Agent ID lazima ilingane na CREATED BY kwenye ripoti ya maombi. / The id must match CREATED BY on the application report.</div>'
+    + '<div class="fld"><label>Agent ID</label><input id="agId" value="'+esc(x?x.user_id:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + '<div class="fld"><label>Majina / Who (comma-separated)</label><input id="agNames" value="'+esc(x&&x.names?x.names:'')+'"></div>'
+    + '<button class="btn w" id="agSave">Hifadhi / Save</button>'
+    + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="agDel">Ondoa / Remove</button>'));
+  $('#agSave').onclick = function(){
+    srv('saveCallAgent', { userId: $('#agId').value.trim(), names: $('#agNames').value.trim() })
+      .then(function(){ toast('Imehifadhiwa. / Saved.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+  if (!isNew) $('#agDel').onclick = function(){
+    if (!confirm('Ondoa "'+x.user_id+'"? / Remove this agent from the roster?')) return;
+    srv('saveCallAgent', { userId: x.user_id, remove: true })
+      .then(function(){ toast('Imeondolewa. / Removed.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
 function roleForm(x){
   var isNew = !x;
   var all = (S.roleMeta && S.roleMeta.allTabs) || [];
@@ -2222,6 +2269,15 @@ function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'
 function wireForms(){
   // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
   // not be counted or filtered, and counting complaints by category is why the register exists.
+  var nag = document.getElementById('newAgent');
+  if (nag) nag.onclick = function(){ agentForm(null); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-agent]'), function(el){
+    el.onclick = function(e){
+      e.stopPropagation();
+      var id = el.getAttribute('data-agent');
+      agentForm(((S.csAgents&&S.csAgents.agents)||[]).filter(function(a){ return a.user_id===id; })[0] || null);
+    };
+  });
   var nrole = document.getElementById('newRole');
   if (nrole) nrole.onclick = function(){ roleForm(null); };
   Array.prototype.forEach.call(document.querySelectorAll('[data-role]'), function(el){

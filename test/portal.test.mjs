@@ -956,3 +956,46 @@ test('officer accounts can be deleted outright, taking their call history with t
   await assert.rejects(() => portalApi(db, GMO, 'deleteOfficerAccount', { userId: 'U1' }, NOW),
     e => e.status === 403);
 });
+
+test('call agents are the CREATED BY agents on applications, TRACK# 1 only', async () => {
+  const t = tables();
+  const L = (id, stage, created_by, track, amt) => ({ id, team: 'KONGOWE', stage, created_by,
+    track_no: track, requested_amt: amt, full_name: 'C' + id });
+  t.loans = [
+    L('a', 'unassigned', 'Callagent1', 1, 100000),
+    L('b', 'assigned',   'Callagent1', '', 200000),   // blank track counts: old reports had no column
+    L('c', 'assigned',   'Callagent2', 1, 300000),
+    L('d', 'unassigned', 'Callagent2', 3, 900000),    // repeat customer -- not a new win
+    L('e', 'approved',   'Callagent1', 1, 500000),    // past the two stages this board counts
+    L('f', 'unassigned', 'Callagent9', 1, 50000),     // on applications but not in the roster
+  ];
+  t.call_agents = [
+    { user_id: 'Callagent1', names: 'Amina Mustafa, Nadhir Msangi' },
+    { user_id: 'Callagent2', names: 'Salehe Hamad' },
+  ];
+  const d = await portalApi(fakeDb(t), ADMIN, 'callAgents', {}, NOW);
+
+  const one = d.rows.find(r => r.id === 'Callagent1');
+  assert.equal(one.unassigned, 1);
+  assert.equal(one.assigned, 1);
+  assert.equal(one.total, 2);
+  assert.equal(one.amount, 300000);
+  assert.equal(one.names, 'Amina Mustafa, Nadhir Msangi');
+
+  // TRACK# 3 is a repeat customer, so Callagent2 keeps only the assigned one.
+  const two = d.rows.find(r => r.id === 'Callagent2');
+  assert.equal(two.total, 1);
+  assert.equal(two.amount, 300000);
+
+  // An id with no roster entry is still counted and is NAMED as missing, not hidden.
+  assert.deepEqual(d.unnamed, ['Callagent9']);
+  assert.equal(d.totals.total, 4);
+
+  // The roster is editable without SQL.
+  const db = fakeDb(t);
+  await portalApi(db, ADMIN, 'saveCallAgent', { userId: 'Callagent9', names: 'Leah Masali' }, NOW);
+  assert.equal(db._dump('call_agents').find(a => a.user_id === 'Callagent9').names, 'Leah Masali');
+  await portalApi(db, ADMIN, 'saveCallAgent', { userId: 'Callagent9', remove: true }, NOW);
+  assert.equal(db._dump('call_agents').some(a => a.user_id === 'Callagent9'), false);
+  await assert.rejects(() => portalApi(db, GMO, 'saveCallAgent', { userId: 'X' }, NOW), e => e.status === 403);
+});

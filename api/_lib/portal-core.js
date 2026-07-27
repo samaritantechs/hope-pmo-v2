@@ -1280,6 +1280,62 @@ async function credit(db, user, _args, nowMs) {
     analysts: [...new Set(portfolio.map(p => p.analyst))].sort() };
 }
 
+/** Call agents -- the CUSTOMER SERVICE agents named on loan applications, not the HOPE Calls
+    app users. Each application in the Unassigned and Assigned reports carries a CREATED BY
+    agent id, and this counts what each of them brought in. The per-agent PHONE statistics are
+    a different question entirely and live on the Call Reports tab.
+
+    Only TRACK# 1 customers count. A track of 2 or more is a repeat customer, and an agent did
+    not win that application -- crediting it would reward the same relationship twice. A blank
+    track counts, because the earliest reports had no such column. */
+const CS_STAGES = ['unassigned', 'assigned'];
+function isTrack1(r) {
+  const v = r.track_no;
+  if (v == null || String(v).trim() === '') return true;
+  return (num(v) || 0) < 2;
+}
+async function callAgents(db, user) {
+  const [loanRows, agentRows] = await Promise.all([
+    fetchAll(() => db.from('loans').select('*').in('stage', CS_STAGES)),
+    fetchAll(() => db.from('call_agents').select('*').order('user_id', { ascending: true })),
+  ]);
+  const names = {};
+  for (const a of agentRows) names[K(a.user_id)] = a.names || '';
+  const by = {};
+  for (const l of scoped(user, loanRows)) {
+    if (!isTrack1(l)) continue;
+    const id = String(l.created_by || '').trim() || '—';
+    const b = bucket(by, K(id), { id, unassigned: 0, assigned: 0, amount: 0 });
+    if (l.stage === 'assigned') b.assigned++; else b.unassigned++;
+    b.amount += num(l.requested_amt) || num(l.principal_amt);
+  }
+  const rows = Object.values(by).map(b => ({ id: b.id, names: names[b.key] || '',
+    unassigned: b.unassigned, assigned: b.assigned, total: b.unassigned + b.assigned,
+    amount: b.amount })).sort((a, b) => b.total - a.total);
+  const sum = f => rows.reduce((s, r) => s + r[f], 0);
+  return { rows, count: rows.length, agents: agentRows,
+    totals: { unassigned: sum('unassigned'), assigned: sum('assigned'),
+      total: sum('total'), amount: sum('amount') },
+    // An id that appears on applications but is not in the roster shows as bare id, which is
+    // the signal to add them rather than a reason to hide the row.
+    unnamed: rows.filter(r => !r.names && r.id !== '—').map(r => r.id) };
+}
+async function saveCallAgent(db, user, p) {
+  requireAdmin(user);
+  const id = String((p && p.userId) || '').trim();
+  if (!id) throw badRequest('An agent id is required — it must match CREATED BY on the application report.');
+  if (p.remove) {
+    const { error } = await db.from('call_agents').delete().eq('user_id', id);
+    if (error) throw new Error(error.message);
+    return { userId: id, removed: true };
+  }
+  const { error } = await db.from('call_agents').upsert(
+    { user_id: id, names: String((p && p.names) || '').trim() || null, updated_at: new Date().toISOString() },
+    { onConflict: 'user_id' });
+  if (error) throw new Error(error.message);
+  return { userId: id };
+}
+
 /* ------------------------------------------------------------------ reference / admin */
 async function teams(db, user) {
   const [rows, roleRows] = await Promise.all([
@@ -1806,7 +1862,7 @@ const FN = {
   demandNotices, addDemandNotice, legalPreview, abnormal, received,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
-  teams, saveRole, deleteRole, settings: settingsList, settingSet,
+  teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
   expdfMine, expdfReport, emailWeeklyExpdf,
