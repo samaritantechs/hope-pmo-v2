@@ -209,6 +209,35 @@ test('after a sync, the called-today tick shows on the list', async () => {
   assert.equal(d.rows.find(r => r.ref === '222').called, false);
 });
 
+test('the called-today tick needs a real conversation, not a dial attempt', async () => {
+  const db = await registeredDb();
+  // 111 rang out (2s); 222 was actually spoken to (30s).
+  await callApi(db, 'api_callSync', ['d1', [
+    { ts: T1, dur: 2, dir: 'out', num: '0712000001' },
+    { ts: T1, dur: 30, dir: 'out', num: '0712000002' },
+  ]], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(d.rows.find(r => r.ref === '111').called, false);   // 2s -- nobody was spoken to
+  assert.equal(d.rows.find(r => r.ref === '222').called, true);
+
+  // Direction does not matter: the customer ringing back and talking counts the same.
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1 + 1000, dur: 40, dir: 'in', num: '0712000001' }]], NOW);
+  assert.equal((await callApi(db, 'api_callList', ['d1', 'today'], NOW)).rows.find(r => r.ref === '111').called, true);
+
+  // Exactly at the threshold is still a dial attempt; a second past it is a call.
+  const db2 = await registeredDb();
+  await callApi(db2, 'api_callSync', ['d1', [{ ts: T1, dur: 5, dir: 'out', num: '0712000001' }]], NOW);
+  assert.equal((await callApi(db2, 'api_callList', ['d1', 'today'], NOW)).rows.find(r => r.ref === '111').called, false);
+  await callApi(db2, 'api_callSync', ['d1', [{ ts: T1 + 1000, dur: 6, dir: 'out', num: '0712000001' }]], NOW);
+  assert.equal((await callApi(db2, 'api_callList', ['d1', 'today'], NOW)).rows.find(r => r.ref === '111').called, true);
+
+  // The threshold is tunable without a deploy.
+  const db3 = await registeredDb();
+  db3._dump('settings').push({ key: 'CALL_MIN_SECS', value: '20' });
+  await callApi(db3, 'api_callSync', ['d1', [{ ts: T1, dur: 12, dir: 'out', num: '0712000001' }]], NOW);
+  assert.equal((await callApi(db3, 'api_callList', ['d1', 'today'], NOW)).rows.find(r => r.ref === '111').called, false);
+});
+
 test('daily summary strip reconciles with the dashboard rule (Friday = yesterday basis)', async () => {
   const db = await registeredDb();
   const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
