@@ -84,6 +84,7 @@
         <option value="call-logs">Call Logs</option>
         <option value="settings">Settings</option>
         <option value="hints">Hints</option>
+        <option value="logo">Logo ya kampuni / Company logo (PNG, JPG)</option>
       </optgroup>
     </select>
 
@@ -117,6 +118,8 @@
 
     <label>File</label>
     <label class="file-drop" id="drop">Click to choose an Excel or CSV file<input type="file" id="file" accept=".xlsx,.xls,.csv"></label>
+
+    <div id="logoPrev" class="hide" style="margin-top:10px"></div>
 
     <div id="sheetWrap" class="hide" style="margin-top:8px">
       <label>Sheet in this workbook</label>
@@ -162,12 +165,24 @@ var TYPE_META = {
   'access-codes': [], 'user-roles': [],
   'abnormal': [], 'complaints': [], 'restructures': [], 'demand-notices': [],
   'call-users': [], 'call-logs': [], 'settings': [], 'hints': [],
+  // The logo is the one upload that is not a spreadsheet. It goes to the CALL_LOGO_URL
+  // setting rather than a table, and from there to every screen in the system at once.
+  'logo': [],
 };
+function isLogo_(){ return $('type').value === 'logo'; }
 function syncFields(){
   var show = TYPE_META[$('type').value] || [];
   ['weekdayWrap', 'dateWrap', 'stageWrap'].forEach(function(id){
     $(id).classList.toggle('hide', show.indexOf(id) < 0);
   });
+  // A picture is not a workbook: take images, drop any sheet picker, and say so on the button.
+  var logo = isLogo_();
+  $('file').setAttribute('accept', logo ? 'image/*' : '.xlsx,.xls,.csv');
+  if (logo) $('sheetWrap').classList.add('hide');
+  $('logoPrev').classList.toggle('hide', !logo);
+  if (!$('drop').classList.contains('has'))
+    $('drop').firstChild.nodeValue = logo ? 'Click to choose the logo image (PNG or JPG)'
+                                          : 'Click to choose an Excel or CSV file';
 }
 $('type').addEventListener('change', syncFields);
 // /upload?admin=1 comes from the launcher's "Access codes" tile -- land straight on the
@@ -222,14 +237,56 @@ loadStatus();
 
 var chosenFile = null;
 var wbCache = null;   // parsed workbook of the chosen file -- read once, reused at upload time
+var logoData = null;  // the chosen logo, already downscaled, ready to save
+
+/** Reads an image file and returns it as a data: URL no larger than `n` px on its longest
+    side. Done in the browser so the original never leaves the machine at full size. */
+function shrinkImage_(file, n){
+  return new Promise(function(res, rej){
+    var rd = new FileReader();
+    rd.onerror = function(){ rej('could not read the file'); };
+    rd.onload = function(){
+      var im = new Image();
+      im.onerror = function(){ rej('that file is not an image'); };
+      im.onload = function(){
+        var s = Math.min(n / im.width, n / im.height, 1);
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(im.width * s); cv.height = Math.round(im.height * s);
+        cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+        res(cv.toDataURL('image/png'));
+      };
+      im.src = rd.result;
+    };
+    rd.readAsDataURL(file);
+  });
+}
 $('file').addEventListener('change', function(e){
   chosenFile = e.target.files[0] || null;
   wbCache = null;
   $('sheetWrap').classList.add('hide');
   $('drop').classList.toggle('has', !!chosenFile);
-  $('drop').firstChild.nodeValue = chosenFile ? 'Reading ' + chosenFile.name + '…' : 'Click to choose an Excel or CSV file';
+  $('drop').firstChild.nodeValue = chosenFile ? 'Reading ' + chosenFile.name + '…'
+    : (isLogo_() ? 'Click to choose the logo image (PNG or JPG)' : 'Click to choose an Excel or CSV file');
+  if (!chosenFile) $('logoPrev').innerHTML = '';
   if (!chosenFile) return;
   var f = chosenFile;
+  if (isLogo_()){
+    // Downscaled to 512px here, on the phone or laptop doing the upload, so a 2MB export
+    // never reaches the database and never travels to every handset on every boot.
+    logoData = null;
+    shrinkImage_(f, 512).then(function(url){
+      if (f !== chosenFile) return;
+      logoData = url;
+      $('drop').firstChild.nodeValue = f.name;
+      $('logoPrev').innerHTML = '<div class="hint" style="margin:0 0 6px">Hivi ndivyo itakavyoonekana / This is how it will look:</div>'
+        + '<img src="' + url + '" style="width:84px;height:84px;object-fit:contain;background:#fff;border-radius:16px;padding:5px">';
+    }).catch(function(err){
+      chosenFile = null;
+      $('drop').classList.remove('has');
+      $('drop').firstChild.nodeValue = 'Could not read that image — ' + err;
+    });
+    return;
+  }
   readWorkbook(f).then(function(wb){
     if (f !== chosenFile) return;                    // another file was picked while this one parsed
     wbCache = wb;
@@ -390,6 +447,29 @@ $('go').addEventListener('click', function(){
   var code = $('code').value.trim();
   if (!code){ msg.className = 'msg bad'; msg.textContent = 'Enter your access code.'; return; }
   if (!chosenFile){ msg.className = 'msg bad'; msg.textContent = 'Choose a file first.'; return; }
+
+  // The logo is a setting, not a table -- it goes through the portal's settingSet and lands
+  // on every screen at once: the calls app, the launcher, this page and the dashboard.
+  if (isLogo_()){
+    if (!logoData){ msg.className = 'msg bad'; msg.textContent = 'Still reading the image — try again in a moment.'; return; }
+    $('go').disabled = true; $('go').textContent = 'Saving logo…';
+    fetch(apiBase + '/api/portal', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code: code, fn: 'settingSet', args: { key: 'CALL_LOGO_URL', value: logoData } }) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        $('go').disabled = false; $('go').textContent = 'Upload';
+        if (!d.ok){ msg.className = 'msg bad'; msg.textContent = 'Failed: ' + (d.error || 'unknown error'); return; }
+        msg.className = 'msg ok';
+        msg.textContent = 'Logo imehifadhiwa. Itaonekana kwenye simu, dashboard na ukurasa huu.'
+          + '\nSaved. It now shows in the calls app, the launcher, the dashboard and this page.'
+          + '\nMaafisa waone: wafunge na wafungue app. / Officers: close and reopen the app.';
+      })
+      .catch(function(e){
+        $('go').disabled = false; $('go').textContent = 'Upload';
+        msg.className = 'msg bad'; msg.textContent = 'Failed: ' + e;
+      });
+    return;
+  }
 
   var type = $('type').value;
   var meta = {};

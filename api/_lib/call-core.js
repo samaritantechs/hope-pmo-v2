@@ -668,8 +668,26 @@ async function brand(db) {
     motto: APP.MOTTO, logo: (await settingGet(db, 'CALL_LOGO_URL')) || '' };
 }
 
+/** Is this a TEAM code? The launcher's sign-in box only understood portal access codes, so a
+    field officer who typed the one code they were given got "Msimbo si sahihi" and stopped --
+    when in fact their code was perfectly valid, just for the other door. This says which door
+    a code opens, so the launcher can simply take them through it.
+
+    It reveals nothing register() does not: the same code, typed there, already answers the
+    same question -- and without a name and a phone number it still hands over nothing. */
+async function teamCode(db, [code]) {
+  // Matched exactly as register() matches it -- same normalisation, so a code that opens the
+  // door there is a code this recognises here, and never the other way round.
+  const c = K(String(code == null ? '' : code)).replace(/[^0-9A-Z]/g, '');
+  if (!c) return { ok: false };
+  const teams = await fetchAll(() => db.from('teams').select('team, team_code'));
+  const hit = teams.find(t => K(t.team_code || '').replace(/[^0-9A-Z]/g, '') === c);
+  return hit ? { ok: true, team: hit.team } : { ok: false };
+}
+
 const HANDLERS = {
   api_brand: brand,
+  api_teamCode: teamCode,
   api_callBoot: boot,
   api_callRegister: register,
   api_callList: list,

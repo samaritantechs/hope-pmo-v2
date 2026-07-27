@@ -97,13 +97,32 @@ function signIn(){
     .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
     .then(function(res){
       if (res.status < 200 || res.status >= 300 || res.body.ok === false){
-        renderSignIn(res.body.error || 'Msimbo si sahihi. / Invalid code.');
+        // A field officer has exactly one code -- their TEAM code -- and typing it here used
+        // to end at "Msimbo si sahihi", which is both wrong and a dead end. It is a valid
+        // code, just for the other door: so open that door for them instead of teaching them
+        // which button they should have pressed.
+        tryTeamCode(code, function(){ renderSignIn(res.body.error || 'Msimbo si sahihi. / Invalid code.'); });
         return;
       }
       store('hopeCode', code);            // dashboard.html and upload.html read this same key
       renderHome(res.body);
     })
     .catch(function(e){ renderSignIn('Hakuna mtandao. / No connection. (' + e + ')'); });
+}
+
+/** A team code goes straight through to HOPE Calls, with the code carried across so the
+    officer never types it twice. `no` runs when it is not a team code either. */
+function tryTeamCode(code, no){
+  fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ fn:'api_teamCode', args:[code] }) })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d || !d.ok) { no(); return; }
+      store('hcTeamCode', code);          // call.html prefills its team-code box from this
+      $('go').textContent = 'Inafungua HOPE Calls…';
+      window.location.href = '/call';
+    })
+    .catch(no);
 }
 
 function renderHome(me){

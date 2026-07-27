@@ -405,3 +405,19 @@ test('the brand endpoint is public, and one setting feeds every surface', async 
   assert.equal(set.brand, 'HOPE MICRO CREDIT');
   assert.equal(set.logo, 'data:image/png;base64,AAAA');
 });
+
+// A field officer has exactly ONE code -- their team's -- and typing it into the launcher's
+// sign-in box used to dead-end at "invalid code". It is valid, just for the other door.
+test('a team code is recognised as a team code, however it is typed', async () => {
+  const db = fakeDb(makeTables());
+  assert.deepEqual(await callApi(db, 'api_teamCode', ['KON123'], NOW), { ok: true, team: 'KONGOWE' });
+  // Read aloud over a phone and typed back with whatever spacing and case land -- same rule
+  // register() itself applies, so a code that works there is recognised here.
+  assert.deepEqual(await callApi(db, 'api_teamCode', [' kon-123 '], NOW), { ok: true, team: 'KONGOWE' });
+  assert.deepEqual(await callApi(db, 'api_teamCode', ['MBA456'], NOW), { ok: true, team: 'MBAGALA' });
+  // An access code is NOT a team code: it belongs to the portal door, and must not be
+  // mistaken for this one.
+  assert.equal((await callApi(db, 'api_teamCode', ['ADMIN1'], NOW)).ok, false);
+  assert.equal((await callApi(db, 'api_teamCode', [''], NOW)).ok, false);
+  assert.equal((await callApi(db, 'api_teamCode', [null], NOW)).ok, false);
+});
