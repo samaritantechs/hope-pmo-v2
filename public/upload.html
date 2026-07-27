@@ -410,7 +410,10 @@ $('go').addEventListener('click', function(){
       var zeroRows = res.body && (res.body.inserted === 0);
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
         msg.className = 'msg ok';
-        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.' + (res.body.message ? '\n' + res.body.message : '');
+        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.'
+          + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
+              + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
+          + (res.body.message ? '\n' + res.body.message : '');
         loadStatus();          // tick this report off the list without a reload
       } else if (res.status >= 200 && res.status < 300 && res.body.ok !== false && zeroRows){
         msg.className = 'msg bad';

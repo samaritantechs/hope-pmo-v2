@@ -165,8 +165,71 @@ export default withApi(async (req, res) => {
     : await supabase.from(table).insert(records);
   if (result.error) throw new Error(result.error.message);
 
+  // The CURRENT defaulter deck is also the officers' working list. The phone's Def/Exp/Chr
+  // tabs and the portal's Followup tab both read followup_status, which only a separate
+  // "Defaulters Followup" upload ever filled -- so uploading the deck left every officer
+  // staring at an empty app, with nothing to say why. The live system rebuilt that list from
+  // the deck automatically; this restores it.
+  //
+  // It MERGES rather than replaces: fu_status, promise_date, promise_amt and the last
+  // comment are what officers typed and must survive an upload. Only the figures that come
+  // from the deck are refreshed.
+  let followupSynced = 0;
+  if (type === 'defaulters-current') {
+    followupSynced = await syncFollowupFromDeck(supabase, records);
+  }
+
   return {
     inserted: records.length, table, uploadBatch,
+    followupSynced,
     message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
   };
 });
+
+/** Refresh followup_status from a current-defaulter deck, keeping whatever the officers have
+    already entered. Customers who have left the deck keep their row (their history is still
+    worth reading) but stop looking like live defaulters, so they drop off the working list
+    instead of being called for a debt they have already cleared. */
+export async function syncFollowupFromDeck(db, records) {
+  const refs = records.map(r => String(r.ref)).filter(Boolean);
+  if (!refs.length) return 0;
+  const { data: existing, error: exErr } = await db
+    .from('followup_status').select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at');
+  if (exErr) throw new Error(exErr.message);
+  const prev = {};
+  for (const r of existing || []) prev[String(r.ref).trim().toUpperCase()] = r;
+
+  const rows = records.map(d => {
+    const k = String(d.ref).trim().toUpperCase();
+    const p = prev[k] || {};
+    return {
+      ref: String(d.ref), team: d.team || null, full_name: d.full_name || null,
+      contact: d.contact || null,
+      guarantor_name: d.guarantor_name || null, guarantor_contact: d.guarantor_contact || null,
+      disb_date: d.disb_date || null, last_trans: d.last_trans_date || null,
+      status: d.status || null, ds: d.ds || null, dc: d.dc == null ? null : d.dc,
+      days_elapsed: d.days_elapsed == null ? null : d.days_elapsed,
+      rejesho: d.other_inst == null ? null : d.other_inst,
+      arrears: d.arrears == null ? null : d.arrears,
+      // Everything below is the officer's own work -- never overwritten by an upload.
+      fu_status: p.fu_status || null, promise_date: p.promise_date || null,
+      promise_amt: p.promise_amt == null ? null : p.promise_amt,
+      last_comment: p.last_comment || null, comment_by: p.comment_by || null,
+      comment_at: p.comment_at || null,
+      updated_at: new Date().toISOString(),
+    };
+  });
+  // Customers no longer in the deck: blank the deck-derived figures so they stop showing as
+  // live defaulters, while their comment history stays attached to the ref.
+  const inDeck = new Set(rows.map(r => String(r.ref).trim().toUpperCase()));
+  const gone = (existing || [])
+    .filter(r => !inDeck.has(String(r.ref).trim().toUpperCase()))
+    .map(r => ({ ref: r.ref, status: null, arrears: null, updated_at: new Date().toISOString() }));
+
+  for (const batch of [rows, gone]) {
+    if (!batch.length) continue;
+    const { error } = await db.from('followup_status').upsert(batch, { onConflict: 'ref' });
+    if (error) throw new Error(error.message);
+  }
+  return rows.length;
+}

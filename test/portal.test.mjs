@@ -873,3 +873,54 @@ test('the weekly email refuses clearly when it is not configured, and never send
   // It is admin-only, and there is deliberately no scheduled sender anywhere in the codebase.
   await assert.rejects(() => portalApi(db, GMO, 'emailWeeklyExpdf', {}, NOW), e => e.status === 403);
 });
+
+test('uploading the current deck rebuilds the officers working list', async () => {
+  // The phone's Def/Exp/Chr tabs and the portal's Followup tab read followup_status, which
+  // only a separate "Defaulters Followup" upload ever filled -- so uploading the deck left
+  // every officer staring at an empty app with nothing to say why.
+  const { syncFollowupFromDeck } = await import('../api/upload.js');
+  const db = fakeDb({
+    followup_status: [
+      // This one is already being worked: the officer's own entries must survive the upload.
+      { ref: 'D1', team: 'KONGOWE', full_name: 'OLD NAME', arrears: 900, status: 'Defaulter',
+        fu_status: 'AMETOA AHADI', promise_date: TODAY, promise_amt: 250,
+        last_comment: 'ataleta kesho', comment_by: 'JUMA G', comment_at: TODAY + 'T06:00:00Z' },
+      // And this one has left the deck since the last upload.
+      { ref: 'GONE', team: 'KONGOWE', full_name: 'CLEARED C', arrears: 400, status: 'Defaulter',
+        fu_status: 'ANALIPA LEO', last_comment: 'analipa' },
+    ],
+  });
+  const deck = [
+    { ref: 'D1', team: 'KONGOWE', full_name: 'NEW NAME', contact: '0712000001', status: 'Defaulter',
+      ds: '3/6', dc: 3, days_elapsed: 40, other_inst: 40000, arrears: 700 },
+    { ref: 'D2', team: 'KONGOWE', full_name: 'FRESH ONE', contact: '0712000002', status: 'Chronic',
+      ds: '1/6', dc: 1, days_elapsed: 120, other_inst: 30000, arrears: 1500 },
+  ];
+  const n = await syncFollowupFromDeck(db, deck);
+  assert.equal(n, 2);
+
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  // Deck figures refresh...
+  assert.equal(by.D1.arrears, 700);
+  assert.equal(by.D1.full_name, 'NEW NAME');
+  assert.equal(by.D1.rejesho, 40000);
+  // ...but the officer's own work is never overwritten by an upload.
+  assert.equal(by.D1.fu_status, 'AMETOA AHADI');
+  assert.equal(by.D1.promise_amt, 250);
+  assert.equal(by.D1.last_comment, 'ataleta kesho');
+  assert.equal(by.D1.comment_by, 'JUMA G');
+
+  // A customer new to the deck simply appears, with no follow-up state yet.
+  assert.equal(by.D2.arrears, 1500);
+  assert.equal(by.D2.fu_status, null);
+
+  // One who has left the deck stops looking like a live defaulter (so nobody calls them for
+  // a debt they cleared) but keeps their row and their history.
+  assert.equal(by.GONE.arrears, null);
+  assert.equal(by.GONE.status, null);
+  assert.equal(by.GONE.last_comment, 'analipa');
+
+  // And the list the app actually reads now has exactly the two live ones.
+  const fu = await portalApi(db, ADMIN, 'followup', {}, NOW);
+  assert.deepEqual(fu.rows.map(r => r.ref).sort(), ['D1', 'D2']);
+});
