@@ -226,6 +226,7 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     <div class="daystrip hide" id="dayStrip">
       <span class="ds-tag" id="dsTag">Leo</span>
       <span>Col <b id="dsCol">&mdash;</b></span>
+      <span>Kesho <b id="dsKesho">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
       <span>Sales <b id="dsSales">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
@@ -565,6 +566,8 @@ function loadDaySummary(force){
     _sumAt = Date.now();
     $('#dsTag').textContent = (d.period === 'week') ? 'Wiki' : 'Leo';   // Sat/Sun the server returns week-to-date
     $('#dsCol').textContent = pctW_(d.col && d.col.pct);
+    // Early collection is judged on TOMORROW's list, so it sits right beside today's Col.
+    $('#dsKesho').textContent = pctW_(d.kesho && d.kesho.pct);
     $('#dsSales').textContent = pctW_(d.sales && d.sales.pct);
     $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct);
     $('#dayStrip').classList.remove('hide');
