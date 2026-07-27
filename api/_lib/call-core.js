@@ -305,8 +305,9 @@ async function list(db, [dev, which, which2], nowMs) {
 }
 
 /* ---------- daily summary strip ---------- */
-/** The five numbers the phone's performance bar carries, for the officer's own team(s):
+/** The six numbers the phone's performance bar carries, for the officer's own team(s):
       col       today's collection
+      kesho     TOMORROW's list -- early collection, what officers are actually judged on
       weekCol   the week's collection, Mon-Fri to date
       sales     approvals MONTH-to-date against the monthly target
       expdf     recovery on the day's expected defaulters
@@ -341,6 +342,17 @@ async function dailySummary(db, [dev], nowMs) {
   const teamCount = user.teams ? user.teams.length : (await teamList(db)).length;
   const salesDen = monthly * Math.max(teamCount, 1);
 
+  /* KESHO % -- early collection. Officers are judged on TOMORROW's list as much as today's,
+     so it sits right beside Col: leave it off and the number they are measured on is the one
+     thing the phone never shows them. Same derivation as the Kesho tab -- the sheet dated
+     tomorrow, with Friday and the weekend rolling on to Monday. */
+  const u = isoWeekday(nowMs);
+  const kSnap = await latestSnapshot(db, 'repayment_snapshots',
+    { snapshot_type: 'today' }, { onDate: addDaysKey(today, u >= 5 ? (8 - u) : 1) });
+  const kRows = mine(kSnap.rows);
+  const kExp = kRows.reduce((s, r) => s + num(r.payment_expected), 0);
+  const kCol = kRows.reduce((s, r) => s + collectedOf(r), 0);
+
   /* WEEK COL -- collection Mon-Fri to date. A day on its own says nothing about whether the
      week is being carried; the officers are chased on the week, so the week is on the bar.
      Same per-day batch resolution the dashboard uses on weekends, so a re-upload of any day
@@ -366,6 +378,7 @@ async function dailySummary(db, [dev], nowMs) {
     ok: true,
     period: d.period,
     col: { pct: rat(d.totals.collected, d.totals.expectedAmount), num: d.totals.collected, den: d.totals.expectedAmount },
+    kesho: { pct: rat(kCol, kExp), num: kCol, den: kExp, customers: kRows.length },
     weekCol: { pct: rat(wCol, wExp), num: wCol, den: wExp, customers: wRows.length },
     sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount, basis: 'month' },
     expdf,

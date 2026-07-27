@@ -353,4 +353,10 @@ test('KESHO is derived from the date, never a second upload of the same file', a
   assert.deepEqual((await callApi(db, 'api_callList', ['d1', 'tomorrow'], fri)).rows.map(r => r.ref), ['MON2']);
   const sun = Date.parse('2026-08-02T09:00:00Z');
   assert.deepEqual((await callApi(db, 'api_callList', ['d1', 'tomorrow'], sun)).rows.map(r => r.ref), ['MON2']);
+
+  // The bar's Kesho % reads the SAME sheet the Kesho tab does -- Monday's bar is Tuesday's list.
+  const s = await callApi(db, 'api_callDailySummary', ['d1'], mon);
+  assert.equal(s.kesho.den, 500);
+  assert.equal(s.kesho.customers, 1);
+  assert.equal(s.kesho.pct, 0);           // TUE1 is UNPAID -- nothing collected early yet
 });
