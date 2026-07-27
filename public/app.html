@@ -2438,10 +2438,41 @@ function userForm(u){
   };
 }
 function settingForm(key, value){
+  /* Any setting that holds a picture -- the app logo above all -- used to need a URL hosted
+     somewhere else, which is a deploy and a hosting decision for what is really just "here is
+     our logo". Pick the file and it is stored inline, downscaled to 128px first so a 2MB
+     export does not travel to every handset on every boot. */
   drawer('<h3>Badili thamani / Set a value</h3><div class="sub">Mfano: COMMISSION_RATE = 5</div>'
     + '<div class="fld"><label>Key</label><input id="sKey" value="'+esc(key)+'"'+(key?' readonly':'')+'></div>'
     + '<div class="fld"><label>Value</label><input id="sVal" value="'+esc(value)+'"></div>'
+    + '<div class="fld"><label>Au chagua picha / Or choose an image (logo)</label>'
+      + '<input type="file" id="sImg" accept="image/*"></div>'
+    + '<div id="sPrev" style="margin:0 0 10px"></div>'
     + '<button class="btn w" id="sSave">Hifadhi / Save</button>');
+  if (/^data:image\//.test(String(value||''))) document.getElementById('sPrev').innerHTML =
+    '<img src="'+esc(value)+'" style="width:64px;height:64px;object-fit:contain;border-radius:10px;background:#fff">';
+  document.getElementById('sImg').onchange = function(){
+    var f = this.files && this.files[0];
+    if (!f) return;
+    var rd = new FileReader();
+    rd.onload = function(){
+      var im = new Image();
+      im.onload = function(){
+        var n = 128, s = Math.min(n / im.width, n / im.height, 1);
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(im.width * s); cv.height = Math.round(im.height * s);
+        cv.getContext('2d').drawImage(im, 0, 0, cv.width, cv.height);
+        var url = cv.toDataURL('image/png');
+        document.getElementById('sVal').value = url;
+        document.getElementById('sPrev').innerHTML =
+          '<img src="'+esc(url)+'" style="width:64px;height:64px;object-fit:contain;border-radius:10px;background:#fff">';
+        toast('Picha imesomwa — bonyeza Hifadhi. / Image read — now press Save.');
+      };
+      im.onerror = function(){ toast('Faili hii si picha inayosomeka. / That file is not a readable image.', true); };
+      im.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  };
   document.getElementById('sSave').onclick = function(){
     srv('settingSet', { key:document.getElementById('sKey').value.trim(), value:document.getElementById('sVal').value })
       .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
