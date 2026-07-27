@@ -478,7 +478,8 @@ function boot(){
     if (d.logo) [['#regLogo', '#regMark'], ['#appLogo', '#appMark']].forEach(function(p){
       var img = $(p[0]), mk = $(p[1]);
       if (!img) return;
-      img.onload = function(){ img.classList.remove('hide'); if (mk) mk.classList.add('hide'); };
+      img.onload = function(){ img.classList.remove('hide'); if (mk) mk.classList.add('hide');
+        if (window.HOPEBrand) window.HOPEBrand.icon(d.logo); };   // tab + add-to-home-screen icon
       img.onerror = function(){ img.classList.add('hide'); if (mk) mk.classList.remove('hide'); };
       img.src = d.logo;
     });
@@ -964,5 +965,7 @@ function drawReports(){
 
 boot();
 </script>
+<script>window.HOPE_NO_BRAND_FETCH = true;</script>
+<script src="/brand.js"></script>
 </body>
 </html>
