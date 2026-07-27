@@ -111,7 +111,10 @@ async function boot(db, [dev], nowMs) {
     leader: !!cu.is_leader,
     // Whether the teams table names this person as a GMO / MANAGER / BIKE officer anywhere --
     // that, not their login role, is what gives them a rotation list to work.
-    expdfLeader: await isRecycleLeader(db, cu.name),
+    // Everyone follows up in this mode, so everyone gets the tab. The flag now only says
+    // whether this person ALSO has a list of their own to switch to.
+    expdfLeader: true,
+    expdfOwner: await isRecycleLeader(db, cu.name),
     leaderTeams: cu.is_leader ? (!cu.leader_teams || !cu.leader_teams.length ? 'ALL' : cu.leader_teams.join(',')) : '',
     teams,
     watermark: num(cu.last_ts),
@@ -210,7 +213,7 @@ async function calledTodaySet(db, nowMs) {
   for (const r of rows) { const d = pnorm(r.phone); if (d) set[d] = 1; }
   return set;
 }
-async function list(db, [dev, which], nowMs) {
+async function list(db, [dev, which, which2], nowMs) {
   const cu = await userByDevice(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   const user = pseudoUser(cu);
@@ -222,15 +225,16 @@ async function list(db, [dev, which], nowMs) {
     // handset. Their assignment lived only in the portal before, so the three people who
     // actually work it could not see it -- the rotation existed on paper and the follow-up
     // did not happen.
-    const d = await expdfMine(db, user, {}, nowMs);
+    const d = await expdfMine(db, user, { scope: which2 === 'team' ? 'team' : 'auto' }, nowMs);
     return { ok: true, rows: d.rows.map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact,
       gName: r.guarantor_name, gContact: r.guarantor_contact,
       amt: r.arrears, installment: r.recovered, custStatus: r.status, fuStatus: r.cycle,
       ds: dsFmt(r.ds), days: r.dc == null ? '' : r.dc, team: r.team,
       called: hit(r.contact, r.guarantor_contact),
-    })), expdf: { totals: d.totals, byCycle: d.byCycle, dayName: d.dayName,
-      date: d.date, hasBaseline: d.hasBaseline } };
+      leader: r.leader, role: r.role,
+    })), expdf: { totals: d.totals, byCycle: d.byCycle, byLeader: d.byLeader, dayName: d.dayName,
+      date: d.date, hasBaseline: d.hasBaseline, scope: d.scope, canSwitch: d.canSwitch } };
   }
   if (which === 'defaulters') {
     const fu = await fetchAll(() => db.from('followup_status').select('*'));

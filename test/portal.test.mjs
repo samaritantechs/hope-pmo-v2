@@ -824,8 +824,20 @@ test('a recycling leader sees only their own expected defaulters, with the cycle
   assert.deepEqual(bike.rows.map(r => r.ref), ['A1']);
   assert.equal(bike.byCycle[0].cycle, 'D1');
 
-  // Somebody who holds none of the three roles gets an empty list, not everyone else's.
-  assert.equal((await portalApi(db, asLeader('NOBODY'), 'expdfMine', {}, NOW)).rows.length, 0);
+  // Somebody who holds none of the three roles is not left with an empty screen: the whole
+  // company follows up in this mode, so they see the day's list for the teams they may see,
+  // with the assigned leader named on every row.
+  const anyone = await portalApi(db, asLeader('NOBODY'), 'expdfMine', {}, NOW);
+  assert.equal(anyone.scope, 'team');
+  assert.deepEqual(anyone.rows.map(r => r.ref).sort(), ['A1', 'A2', 'A3']);
+  assert.ok(anyone.rows.every(r => r.leader && r.role));
+  assert.equal(anyone.canSwitch, false);
+  // And a leader can still ask for the wider list explicitly.
+  const wide = await portalApi(db, asLeader('BOSS'), 'expdfMine', { scope: 'team' }, NOW);
+  assert.equal(wide.rows.length, 3);
+  assert.equal(wide.canSwitch, true);
+  assert.deepEqual(wide.byLeader.map(x => x.leader).sort(),
+    ['BIKE BEE · BIKE', 'BOSS · MANAGER', 'GMO GEE · GMO']);
 });
 
 test('expdf leaves out customers not due on the visit day, unless asked for all', async () => {
