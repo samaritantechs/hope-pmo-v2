@@ -226,10 +226,24 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
 }
 
 /* ---------- lists ---------- */
+/** "Amepigiwa leo" -- a REAL conversation with that number today, by anyone, in either
+    direction. Android logs a call the moment it is placed, so a number that rang out, was
+    rejected, or was answered and dropped in two seconds all arrive as call_log rows with a
+    tiny duration. Ticking those off marked customers as done who had never been spoken to,
+    and the officer moved on. Anything at or under CALL_MIN_SECS seconds is a dial attempt,
+    not a call, and no longer counts. */
+const CALL_MIN_SECS_DEFAULT = 5;
 async function calledTodaySet(db, nowMs) {
-  const rows = await fetchAll(() => db.from('call_logs').select('phone').eq('call_date', todayKey(nowMs)));
+  const raw = parseInt(String(await settingGet(db, 'CALL_MIN_SECS') || '').replace(/[^0-9]/g, ''), 10);
+  const min = (isNaN(raw) || raw < 0) ? CALL_MIN_SECS_DEFAULT : raw;
+  // Filtered here rather than in the query: durations are numbers, and PostgREST-style range
+  // filters on this path compare as text, where '60' sorts below '6'.
+  const rows = await fetchAll(() => db.from('call_logs').select('phone, duration').eq('call_date', todayKey(nowMs)));
   const set = {};
-  for (const r of rows) { const d = pnorm(r.phone); if (d) set[d] = 1; }
+  for (const r of rows) {
+    if (num(r.duration) <= min) continue;
+    const d = pnorm(r.phone); if (d) set[d] = 1;
+  }
   return set;
 }
 async function list(db, [dev, which, which2], nowMs) {
