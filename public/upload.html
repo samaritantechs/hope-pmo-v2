@@ -205,7 +205,11 @@ function loadStatus(){
                   return '<div class="stat-r"><span class="' + (i.loadedToday ? 'in' : 'out') + '">'
                     + (i.loadedToday ? '\u25CF' : '\u25CB') + '</span> ' + esc(i.label)
                     + '<span class="stat-m">' + (i.latest ? esc(i.latest) : 'never')
-                    + (i.today ? ' \u00B7 ' + i.today.toLocaleString('en-US') + ' rows today' : '')
+                    + (i.today ? ' \u00B7 ' + i.today.toLocaleString('en-US') + ' rows live' : '')
+                    // Snapshots are append-only: a re-upload leaves the old copy underneath
+                    // while every read uses the newest. Saying so stops the stacked count
+                    // looking like the data doubled.
+                    + (i.uploads > 1 ? ' \u00B7 ' + i.uploads + ' uploads today (newest wins)' : '')
                     + '</span></div>';
                 }).join('') + '</div>';
           }).join('');

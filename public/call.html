@@ -155,6 +155,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
   .expdfstrip .xstat b.ok{color:var(--ok)}
   .expdfstrip .xnote{flex-basis:100%;font-size:11px;color:var(--bad)}
   .expdfstrip .xcyc{flex-basis:100%;display:flex;flex-wrap:wrap;gap:5px;margin-top:2px}
+  .expdfstrip .xscope{flex-basis:100%;display:flex;gap:6px;margin-bottom:2px}
+  .expdfstrip .xscope button{flex:1;padding:5px 8px;border:1px solid var(--line);background:transparent;color:var(--mut);border-radius:8px;font-size:11.5px;font-weight:700}
+  .expdfstrip .xscope button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
   .expdfstrip .xcyc span{font-size:10.5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
 </style>
 </head>
@@ -626,7 +629,13 @@ function drawExpdfStrip_(){
     return String(Math.round(n)); };
   el.classList.remove('hide');
   el.innerHTML =
-    '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
+    (S.expdf.canSwitch
+      ? '<div class="xscope">'
+        + '<button data-xs="mine"' + (S.expdf.scope==='mine'?' class="on"':'') + '>Zangu</button>'
+        + '<button data-xs="team"' + (S.expdf.scope==='team'?' class="on"':'') + '>Timu yote</button>'
+        + '</div>'
+      : '')
+    + '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
     + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
     + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
     + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : t.pct + '%') + '</b></div>'
@@ -634,7 +643,20 @@ function drawExpdfStrip_(){
     + ((S.expdf.byCycle||[]).length
         ? '<div class="xcyc">' + S.expdf.byCycle.map(function(c){
             return '<span>' + esc(c.cycle) + ' \u00B7 ' + c.customers + ' \u00B7 ' + m(c.arrears) + '</span>'; }).join('') + '</div>'
+        : '')
+    // Who is carrying what, so anyone on the list can see the split without leaving it.
+    + ((S.expdf.scope==='team' && (S.expdf.byLeader||[]).length)
+        ? '<div class="xcyc">' + S.expdf.byLeader.map(function(x){
+            return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers + ' \u00B7 ' + m(x.recovered)
+              + (x.pct==null?'':' \u00B7 '+x.pct+'%') + '</span>'; }).join('') + '</div>'
         : '');
+  $all('#expdfStrip [data-xs]').forEach(function(b){
+    b.onclick = function(){
+      S.expdfScope = b.getAttribute('data-xs');
+      delete S.cache.expdf; delete S.cacheAt.expdf;   // a different scope is different data
+      fetchSource_('expdf', true);
+    };
+  });
 }
 function exitSearch_(){
   if (!S.q) return;
@@ -663,7 +685,7 @@ function fetchSource_(src, showSpinner){
   if (showSpinner) {
     $('#body').innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
   }
-  srv('api_callList', DEV, src).then(function(d){
+  srv('api_callList', DEV, src, src === 'expdf' ? (S.expdfScope || 'auto') : '').then(function(d){
     if (myId !== S.reqId) return;
     S.cache[src] = d.rows || [];
     if (src === 'expdf') S.expdf = d.expdf || null;

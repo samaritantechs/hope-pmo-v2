@@ -89,15 +89,33 @@ const sumExpdf = list => ({
 /** ONE leader's own list. Called by the phone (where the signed-in leader is the subject) and
     by the portal. Matching is on the NAME the teams table carries for that role, so moving a
     person between teams in Teams & Staff re-points their list with no other change. */
-export async function expdfMine(db, user, { all = false, weekly = false } = {}, nowMs) {
+export async function expdfMine(db, user, { all = false, weekly = false, scope = 'auto' } = {}, nowMs) {
   const core = await expdfCore(db, user, nowMs, { weekly });
   const me = K(user.name);
-  const mine = core.rows.filter(r => K(r.leader) === me && RECYCLE_ROLES.includes(r.role));
+  const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role));
+  const own = assigned.filter(r => K(r.leader) === me);
+  // Everyone follows up in this mode, so everyone can see the day's expected defaulters for
+  // the teams they are allowed to see -- each row naming who is assigned. A recycling leader
+  // defaults to their OWN list because that is the work in front of them; anyone else (an
+  // officer, a supervisor, an admin) sees the whole scope, since a list of nobody's customers
+  // would be no list at all.
+  const isLeaderOfSome = own.length > 0;
+  const useOwn = scope === 'mine' ? true : (scope === 'team' ? false : isLeaderOfSome);
+  const mine = useOwn ? own : assigned;
   const scopeRows = all ? mine : mine.filter(r => r.onToday);
   scopeRows.sort((a, b) => b.arrears - a.arrears);
   return { rows: scopeRows, weekday: core.weekday, date: core.date,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
+    scope: useOwn ? 'mine' : 'team', canSwitch: isLeaderOfSome,
     totals: sumExpdf(scopeRows), allTotals: sumExpdf(mine),
+    // Who is carrying what, so anyone looking at the list can see the split without leaving it.
+    byLeader: Object.values(scopeRows.reduce((m, r) => {
+      const b = bucket(m, r.leader + ' · ' + r.role, { customers: 0, arrears: 0, initial: 0, recovered: 0 });
+      b.customers++; b.arrears += r.arrears; b.initial += r.initial; b.recovered += r.recovered;
+      return m;
+    }, {})).map(b => ({ leader: b.key, customers: b.customers, arrears: b.arrears,
+      initial: b.initial, recovered: b.recovered, pct: pctOf(b.recovered, b.initial) }))
+      .sort((a, b) => b.arrears - a.arrears),
     // The cycle breakdown is what makes the rotation legible on a small screen: D-buckets are
     // still inside term, E-W are expired, C-W are chronic.
     byCycle: Object.values(scopeRows.reduce((m, r) => {

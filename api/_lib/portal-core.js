@@ -1591,33 +1591,52 @@ async function uploadStatus(db, user, { date } = {}, nowMs) {
     fetchAll(() => db.from('received_payments').select('paid_at')),
     fetchAll(() => db.from('call_logs').select('call_date')),
   ]);
-  const tally = (rows, keyOf, dateOf) => {
+  // Snapshots are append-only, so a corrected re-upload leaves BOTH copies on disk while
+  // every read resolves to the latest batch. Counting raw rows therefore showed double after
+  // a re-upload and made it look like the data had doubled. Count what a read would actually
+  // see, and say separately how many uploads are stacked underneath.
+  const tally = (rows, keyOf, dateOf, batchOf) => {
     const m = {};
     for (const r of rows) {
       const k = keyOf(r), d = dayOf(dateOf(r));
       if (!k || !d) continue;
-      if (!m[k]) m[k] = { key: k, latest: null, today: 0, total: 0 };
+      if (!m[k]) m[k] = { key: k, latest: null, today: 0, total: 0, _day: {} };
       m[k].total++;
       if (!m[k].latest || d > m[k].latest) m[k].latest = d;
-      if (d === day) m[k].today++;
+      if (d === day) {
+        m[k].today++;
+        if (batchOf) {
+          const b = batchOf(r) || 'legacy';
+          m[k]._day[b] = (m[k]._day[b] || 0) + 1;
+        }
+      }
+    }
+    // today = the live count (newest batch), uploads = how many times it was loaded today.
+    for (const b of Object.values(m)) {
+      const keys = Object.keys(b._day);
+      if (keys.length) {
+        b.uploads = keys.length;
+        b.today = Math.max(...keys.map(k => b._day[k]));
+      } else { b.uploads = b.today ? 1 : 0; }
+      delete b._day;
     }
     return m;
   };
-  const repBy = tally(rep, r => r.snapshot_type, r => r.snapshot_date);
-  const defBy = tally(def, r => `${r.snapshot_type}:${r.weekday}`, r => r.snapshot_date);
+  const repBy = tally(rep, r => r.snapshot_type, r => r.snapshot_date, r => r.upload_batch);
+  const defBy = tally(def, r => `${r.snapshot_type}:${r.weekday}`, r => r.snapshot_date, r => r.upload_batch);
 
   const items = [];
   for (const t of UPLOAD_EXPECTED_TYPES) {
-    const b = repBy[t] || { latest: null, today: 0, total: 0 };
+    const b = repBy[t] || { latest: null, today: 0, total: 0, uploads: 0 };
     items.push({ group: 'Expected repayment', label: `Expected — ${t}`, key: `expected-${t}`,
-      latest: b.latest, today: b.today, total: b.total, loadedToday: b.today > 0 });
+      latest: b.latest, today: b.today, total: b.total, uploads: b.uploads, loadedToday: b.today > 0 });
   }
   for (const type of ['current', 'initial']) {
     for (const wd of WD7) {
-      const b = defBy[`${type}:${wd}`] || { latest: null, today: 0, total: 0 };
+      const b = defBy[`${type}:${wd}`] || { latest: null, today: 0, total: 0, uploads: 0 };
       items.push({ group: `Defaulters — ${type}`, label: `Defaulters ${type} — ${wd}`,
         key: `defaulters-${type}-${wd}`, weekday: wd,
-        latest: b.latest, today: b.today, total: b.total, loadedToday: b.today > 0 });
+        latest: b.latest, today: b.today, total: b.total, uploads: b.uploads, loadedToday: b.today > 0 });
     }
   }
   const simple = (label, key, rows, dateOf) => {
@@ -2132,7 +2151,10 @@ async function officerBoards(db, user, _args, nowMs) {
     return Object.values(m).map(b => {
       const rec = dailyRecovered ? b.recovered : (b.initial - b.current);
       return { officer: b.key, initial: b.initial, current: b.current, uncollected: b.uncollected,
-        debtCrisis: Math.min(0, b.initial - b.current), recovered: rec, pct: pctOf(rec, b.uncollected) };
+        // Debt crisis only means something across a WEEK: a customer cannot fall into default
+        // between breakfast and lunch, so on the daily board this is noise dressed as news.
+        debtCrisis: dailyRecovered ? Math.min(0, b.initial - b.current) : null,
+        recovered: rec, pct: pctOf(rec, b.uncollected) };
     }).sort((a, b) => b.recovered - a.recovered);
   }
   const iniToday = onDate(myDef, today, 'initial'), curToday = onDate(myDef, today, 'current');
@@ -2150,6 +2172,20 @@ async function officerBoards(db, user, _args, nowMs) {
   }
   const iniMon = onDate(myDef, mon, 'initial');
   const recWeek = recBoard(iniMon, curToday, dailyRec);
+
+  /* Recovery is initial MINUS current, so if one of the two decks is short the difference is
+     reported as money recovered. Uploading the same file as both should read as zero
+     recovery; a partial or wrong second upload instead shows a large, entirely fictional
+     recovery, and nothing on the screen says why. Compare the headcounts and say so. */
+  const deckWarning = (() => {
+    if (!iniToday.length || !curToday.length) return null;
+    const gap = Math.abs(iniToday.length - curToday.length);
+    if (gap / Math.max(iniToday.length, curToday.length) < 0.02) return null;
+    const short = curToday.length < iniToday.length ? 'current' : 'initial';
+    return `Today's initial deck has ${iniToday.length.toLocaleString('en-US')} customers but the current deck has `
+      + `${curToday.length.toLocaleString('en-US')} — the ${short} upload looks incomplete, so the recovery figures `
+      + `below are overstated by the difference. Re-upload it before reading these numbers.`;
+  })();
 
   /* ---- CREDIT ANALYSTS: applications they processed, against the sales target ---- */
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
@@ -2209,7 +2245,8 @@ async function officerBoards(db, user, _args, nowMs) {
   const fuStatus = Object.values(fsm).map(b => ({ status: b.key, customers: b.customers, arrears: b.arrears,
     pct: pctOf(b.customers, real.length) })).sort((a, b) => b.customers - a.customers);
 
-  return { weekday: wd, weekOf: mon, today,
+  return { weekday: wd, weekOf: mon, today, deckWarning,
+    initialCount: iniToday.length, currentCount: curToday.length,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek, callToday, callWeek,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };
