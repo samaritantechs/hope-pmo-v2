@@ -2173,6 +2173,20 @@ async function officerBoards(db, user, _args, nowMs) {
   const iniMon = onDate(myDef, mon, 'initial');
   const recWeek = recBoard(iniMon, curToday, dailyRec);
 
+  /* Recovery is initial MINUS current, so if one of the two decks is short the difference is
+     reported as money recovered. Uploading the same file as both should read as zero
+     recovery; a partial or wrong second upload instead shows a large, entirely fictional
+     recovery, and nothing on the screen says why. Compare the headcounts and say so. */
+  const deckWarning = (() => {
+    if (!iniToday.length || !curToday.length) return null;
+    const gap = Math.abs(iniToday.length - curToday.length);
+    if (gap / Math.max(iniToday.length, curToday.length) < 0.02) return null;
+    const short = curToday.length < iniToday.length ? 'current' : 'initial';
+    return `Today's initial deck has ${iniToday.length.toLocaleString('en-US')} customers but the current deck has `
+      + `${curToday.length.toLocaleString('en-US')} — the ${short} upload looks incomplete, so the recovery figures `
+      + `below are overstated by the difference. Re-upload it before reading these numbers.`;
+  })();
+
   /* ---- CREDIT ANALYSTS: applications they processed, against the sales target ---- */
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   function creditBoard(from, to) {
@@ -2231,7 +2245,8 @@ async function officerBoards(db, user, _args, nowMs) {
   const fuStatus = Object.values(fsm).map(b => ({ status: b.key, customers: b.customers, arrears: b.arrears,
     pct: pctOf(b.customers, real.length) })).sort((a, b) => b.customers - a.customers);
 
-  return { weekday: wd, weekOf: mon, today,
+  return { weekday: wd, weekOf: mon, today, deckWarning,
+    initialCount: iniToday.length, currentCount: curToday.length,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek, callToday, callWeek,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };

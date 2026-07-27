@@ -808,16 +808,22 @@ VIEWS.dashboard = function(){
     srv('officerBoards').then(function(b){
       var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
       var extra =
-          boardPair('bEarlyT','Early collection by officer — today','uncollected · paid+overpaid · collection %', b.earlyToday,
+          (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
+        + boardPair('bEarlyT','Early collection by officer — today','uncollected · paid+overpaid · collection %', b.earlyToday,
                     'bEarlyW','Early collection — this week','Mon–Fri', b.earlyWeek,
                     [col('officer','Officer'), col('uncollected','Uncollected','money'),
                      col('paidOver','Paid+over','num'), col('pct','Coll %','pct')], ['uncollected','paidOver'])
-        + boardPair('bRecT','Recovery — today','initial · current · recovered · Rec % ÷ this week’s uncollected', b.recToday,
-                    'bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
+        // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
+        // a customer does not fall into default between breakfast and lunch.
+        + board('bRecT','Recovery — today','initial · current · recovered · Rec % ÷ this week’s uncollected', b.recToday,
+                    [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+                     {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+                     col('pct','Rec %','pct')], sumRow(b.recToday, ['initial','current','recovered']))
+        + board('bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     col('pct','Rec %','pct')], ['initial','current','debtCrisis','recovered'])
+                     col('pct','Rec %','pct')], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
         + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
                     'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
                     [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
