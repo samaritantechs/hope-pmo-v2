@@ -1017,3 +1017,35 @@ test('hints group many tips per tab, and fall back across languages', async () =
   assert.deepEqual(d.tips.en.followup, ['Piga simu mapema.']);                // no English -> Swahili stands in
   assert.equal('' in d.tips.en, false);
 });
+
+// An Exp.Def screen that is empty for a reason the officer cannot see costs a phone call and
+// a day. Each of the four ways it empties out must be distinguishable from the response.
+test('expdf says WHY it is empty, and shows the book when the deck has no DISB DATE', async () => {
+  // 1. No deck for today's weekday at all.
+  const bare = tables();
+  bare.teams[0] = { ...bare.teams[0], gmo: 'GMO GEE', manager: 'BOSS', bike: 'BIKE BEE' };
+  bare.defaulter_snapshots = [];
+  const me = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: [] };
+  const none = await portalApi(fakeDb(bare), me, 'expdfMine', {}, NOW);
+  assert.equal(none.diag.deck, 0);
+  assert.equal(none.rows.length, 0);
+
+  // 2. A deck, assigned, but this leader's own customers are all on another cycle day.
+  const db2 = fakeDb(expdfTables());
+  for (const r of db2._dump('defaulter_snapshots')) if (r.ref === 'A2') r.disb_date = '2026-07-22';
+  const off = await portalApi(db2, me, 'expdfMine', {}, NOW);
+  assert.equal(off.rows.length, 0);
+  assert.equal(off.diag.deck, 3);            // the deck is there
+  assert.equal(off.diag.mine, 1);            // and one of them is this leader's
+  assert.equal(off.diag.onToday, 0);         // just not today
+  assert.equal(off.diag.noCycleDates, false);
+
+  // 3. No DISB DATE anywhere -> the 2-day cycle is unknowable, so the whole book shows rather
+  //    than an empty screen, and the flag says the rotation could not be applied.
+  const db3 = fakeDb(expdfTables());
+  for (const r of db3._dump('defaulter_snapshots')) r.disb_date = null;
+  const blind = await portalApi(db3, me, 'expdfMine', {}, NOW);
+  assert.equal(blind.diag.noCycleDates, true);
+  assert.equal(blind.diag.dated, 0);
+  assert.deepEqual(blind.rows.map(r => r.ref), ['A2']);   // MANAGER's own, shown despite no cycle day
+});

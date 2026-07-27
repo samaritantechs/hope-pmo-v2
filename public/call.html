@@ -32,6 +32,12 @@ a{color:var(--b600)}
 #scrRegister{min-height:100%;flex-direction:column;padding:28px 22px;background:linear-gradient(180deg,var(--b900),var(--b800) 220px,var(--bg) 220px)}
 .reg-card{width:100%;max-width:420px;margin:60px auto 0;background:var(--card);border-radius:18px;box-shadow:0 12px 34px -14px rgba(8,28,74,.35);padding:26px 22px}
 .reg-logo{width:52px;height:52px;border-radius:13px;object-fit:cover;background:#fff}
+/* The stand-in mark, shown until a real logo loads. Same box as the image it replaces, so
+   swapping one for the other never moves the header. */
+.mark{display:flex;align-items:center;justify-content:center;background:#fff;color:#1D4ED8;
+  font-weight:900;letter-spacing:-.02em}
+.reg-logo.mark{font-size:26px}
+header.top span.logo.mark{display:flex;font-size:17px}
 .reg-title{font-size:19px;font-weight:800;margin-top:14px}
 .reg-sub{font-size:13px;color:var(--mut);margin-top:3px;line-height:1.5}
 .fld{margin-top:16px}
@@ -56,7 +62,7 @@ a{color:var(--b600)}
 #scrApp{display:none;flex-direction:column;height:100%}
 header.top{background:var(--b900);color:#fff;padding:14px 16px 12px;flex:0 0 auto}
 header.top .row1{display:flex;align-items:center;gap:10px}
-header.top img.logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:cover;display:block}
+header.top .logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:cover;display:block}
 header.top a{flex:0 0 auto;line-height:0}
 header.top .who{flex:1;min-width:0}
 header.top .who b{display:block;font-size:14.5px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -174,7 +180,7 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 
 <div id="scrRegister" class="center hide">
   <div class="reg-card">
-    <img class="reg-logo" id="regLogo" src="" alt="">
+    <span class="reg-logo mark" id="regMark">H</span><img class="reg-logo hide" id="regLogo" alt="">
     <div class="reg-title" id="regTitle">Karibu HOPE Calls</div>
     <div class="reg-sub">Jaza jina lako na timu ili uanze kupokea orodha za simu. / Enter your name and team to start receiving your call lists.</div>
     <div id="regErr"></div>
@@ -206,7 +212,11 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     <div class="row1">
       <!-- The logo doubles as the way back to the launcher: inside the Android app there is
            no browser chrome, so this is the only route from Calls to the rest of the system. -->
-      <a href="/" title="Menu"><img class="logo" id="appLogo" src="" alt="Menu"></a>
+      <!-- No src until one actually loads. An <img src=""> is a BROKEN-IMAGE icon in every
+           browser, which is what the header showed whenever CALL_LOGO_URL was unset or the
+           URL 404'd -- so the mark below is the default and the image only replaces it once
+           it has loaded successfully. -->
+      <a href="/" title="Menu"><span class="logo mark" id="appMark">H</span><img class="logo hide" id="appLogo" alt="Menu"></a>
       <div class="who"><b id="appName">&#x2014;</b><span id="appTeam">&#x2014;</span></div>
       <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
       <!-- Swap into the portal. Sits right after the sync pill so the two "mode" controls are
@@ -229,7 +239,7 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <span class="ds-tag" id="dsTag">Leo</span>
       <span>Col leo <b id="dsCol">&mdash;</b></span>
       <span>Kesho <b id="dsKesho">&mdash;</b></span>
-      <span>Col wiki <b id="dsWeek">&mdash;</b></span>
+      <span>Wiki <b id="dsWeek">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
       <span>Sales <b id="dsSales">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
@@ -457,7 +467,15 @@ function boot(){
   try { loggedOut = localStorage.getItem('hcLoggedOut') === '1'; } catch(e){}
   srv('api_callBoot', DEV).then(function(d){
     if (d.brand){ $('#bootBrand').textContent = d.brand; $('#regTitle').textContent = 'Karibu ' + d.brand + ' Calls'; }
-    if (d.logo){ $('#regLogo').src = d.logo; $('#appLogo').src = d.logo; }
+    // Only a logo that actually LOADS replaces the mark -- a 404 or an unset setting leaves
+    // the mark standing rather than putting a broken-image icon in the header.
+    if (d.logo) [['#regLogo', '#regMark'], ['#appLogo', '#appMark']].forEach(function(p){
+      var img = $(p[0]), mk = $(p[1]);
+      if (!img) return;
+      img.onload = function(){ img.classList.remove('hide'); if (mk) mk.classList.add('hide'); };
+      img.onerror = function(){ img.classList.add('hide'); if (mk) mk.classList.remove('hide'); };
+      img.src = d.logo;
+    });
     if (d.ok && !loggedOut) return enterApp(d);
     // Not registered yet, OR logged out on this device -> show sign-in. The team list is no
     // longer sent to this screen: publishing every team name to an unauthenticated device was
@@ -660,6 +678,7 @@ function drawExpdfStrip_(){
     + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
     + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : t.pct + '%') + '</b></div>'
     + (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
+    + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '')
     + ((S.expdf.byCycle||[]).length
         ? '<div class="xcyc">' + S.expdf.byCycle.map(function(c){
             return '<span>' + esc(c.cycle) + ' \u00B7 ' + c.customers + ' \u00B7 ' + m(c.arrears) + '</span>'; }).join('') + '</div>'
@@ -690,7 +709,18 @@ function drawExpdfStrip_(){
 function emptyWhy_(v){
   if (v === 'tomorrow') return 'Ratiba ya kesho haijapakiwa bado \u2014 pakia laha ya Expected ya tarehe ya KESHO.';
   if (v === 'today') return 'Ripoti ya LEO haijapakiwa bado. Mwambie afisa wa PMO apakie "Expected \u2014 Today".';
-  if (v === 'expdf') return 'Hakuna wateja waliopangwa kwako leo. Jaribu "Timu yote", au orodha ya wadaiwa haijapakiwa.';
+  // Exp.Def can be empty for four quite different reasons and the officer can only act on
+  // one of them. The server says which; the message says what to do about it.
+  if (v === 'expdf'){
+    var g = (S.expdf && S.expdf.diag) || {};
+    if (!g.deck) return 'Deki ya wadaiwa ya ' + (g.deckWeekday || 'leo') + ' haijapakiwa. '
+      + 'Mwambie afisa wa PMO apakie "Defaulters — Current" akichagua siku ya LEO.';
+    if (!g.assigned) return 'Wadaiwa wapo (' + g.deck + '), lakini hakuna aliyepangwa kwa GMO / MANAGER / BIKE. '
+      + 'Angalia mgawanyo (ASSIGN_ACTIVE / EXPIRED / CHRONIC) kwenye Settings.';
+    if (!g.mine) return 'Hakuna aliyepangwa kwako. Bonyeza "Timu yote" kuona wa timu nzima (' + g.assigned + ').';
+    return 'Hakuna anayeangukia leo — wateja wako ' + g.mine + ' wapo kwenye siku nyingine za mzunguko. '
+      + 'Bonyeza "Timu yote" au subiri siku yao.';
+  }
   if (v === 'def' || v === 'exp' || v === 'chr')
     return 'Orodha ya wadaiwa haijapakiwa bado. Mwambie afisa wa PMO apakie "Defaulters \u2014 Current".';
   return 'Orodha hii iko wazi.';

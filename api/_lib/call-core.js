@@ -254,7 +254,8 @@ async function list(db, [dev, which, which2], nowMs) {
       called: hit(r.contact, r.guarantor_contact),
       leader: r.leader, role: r.role,
     })), expdf: { totals: d.totals, byCycle: d.byCycle, byLeader: d.byLeader, dayName: d.dayName,
-      date: d.date, hasBaseline: d.hasBaseline, scope: d.scope, canSwitch: d.canSwitch } };
+      date: d.date, hasBaseline: d.hasBaseline, scope: d.scope, canSwitch: d.canSwitch,
+      diag: d.diag } };
   }
   if (which === 'defaulters') {
     const fu = await fetchAll(() => db.from('followup_status').select('*'));
