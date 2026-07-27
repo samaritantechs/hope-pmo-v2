@@ -319,6 +319,7 @@ var NAV = [
   { id:'complaints',  label:'Complaint Register' },
   { id:'expected',    label:'Expected Repayment' },
   { id:'assignments', label:'Defaulter Assignment' },
+  { id:'expdfrep',    label:'Exp.Def Recovery' },
   { id:'defexp',      label:'Expected Defaulters' },
   { id:'followup',    label:'Defaulters Followup' },
   { id:'commission',  label:'My Commission' },
@@ -340,7 +341,7 @@ var NAV = [
 /* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
    visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
    the gate that matters is upload/settings, which are checked on the server too. */
-var ALWAYS = ['dashboard','expected','defexp','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps'];
+var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps'];
 
 function allowed(id){
   if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
@@ -610,8 +611,23 @@ function paint(){
 function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); }
 function wireBar(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-arg]'), function(el){
+    // A button carrying data-val sets the arg on CLICK; inputs and selects still use change.
+    if (el.hasAttribute('data-val')) {
+      el.onclick = function(){ S.args[el.getAttribute('data-arg')] = el.getAttribute('data-val'); render(); };
+      return;
+    }
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
+  var mw = document.getElementById('mailWeekly');
+  if (mw) mw.onclick = function(){
+    if (!confirm('Tuma ripoti ya wiki kwa admin? / Email this week’s report to the admin address?')) return;
+    mw.disabled = true; mw.textContent = 'Inatuma… / Sending…';
+    srv('emailWeeklyExpdf', {})
+      .then(function(r){ toast('Imetumwa kwa ' + r.to + '. / Sent.'); mw.disabled = false;
+        mw.textContent = '✉ Tuma wiki kwa admin / Email weekly report'; })
+      .catch(function(e){ toast(String(e.message||e), true); mw.disabled = false;
+        mw.textContent = '✉ Tuma wiki kwa admin / Email weekly report'; });
+  };
   Array.prototype.forEach.call(document.querySelectorAll('[data-wd]'), function(el){
     el.onclick = function(){ S.args.weekday = el.getAttribute('data-wd'); render(); };
   });
@@ -914,6 +930,44 @@ function chipFor(s){
 /* Expected Defaulters is a WEEKLY CYCLE, not a one-day list. Each customer is visited twice:
    on the weekday their loan was disbursed (Day 1) and three days later (Day 2), with Sunday
    rolled onto Monday. Hence the Mon–Sat day tabs — a customer appears under two of the six. */
+/* The three recycling categories, each leader with their own book and their own recovery.
+   Daily is what gets asked at the morning meeting; weekly is what gets emailed. */
+VIEWS.expdfrep = function(){
+  var weekly = S.args.scope === 'week';
+  return srv('expdfReport', { weekly: weekly }).then(function(d){
+    var t = d.totals;
+    HEAD = '<div class="kpis">'
+      + kpi('Wateja / Customers', money(t.customers), weekly ? ('week of '+d.weekOf) : (d.dayName+' · '+(d.date||'')))
+      + kpi('Deni la awali / Initial', money(t.initial))
+      + kpi('Deni sasa / Arrears now', money(t.arrears), null, 'bad')
+      + kpi('Marejesho / Recovered', money(t.recovered), null, 'good')
+      + kpi('Rec %', pct(t.pct), 'recovered ÷ initial')
+      + '</div>'
+      + (d.hasBaseline ? '' : '<div class="note bad">Orodha ya awali haijapakiwa — marejesho yanaonyesha 0.'
+          + ' / The baseline deck is not uploaded, so recovery reads 0.</div>')
+      + bar('<button class="pill'+(weekly?'':' on')+'" data-arg="scope" data-val="day">Leo / Daily</button>'
+        + '<button class="pill'+(weekly?' on':'')+'" data-arg="scope" data-val="week">Wiki / Weekly</button>'
+        + '<button class="btn sm" id="mailWeekly" style="margin-left:auto">✉ Tuma wiki kwa admin / Email weekly report</button>')
+      + d.sections.map(function(sec){
+          return board('xd_'+sec.role, 'Kwa ' + sec.role + ' / By ' + sec.role,
+            money(sec.rows.length) + ' named · ' + money(sec.totals.customers) + ' customers'
+              + (sec.unassigned ? ' · timu bila kiongozi / some teams name nobody' : ''),
+            sec.rows,
+            [{key:'leader', label:sec.role, cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }},
+             col('teams','Teams','num'), col('customers','Customers','num'),
+             col('initial','Initial','money'),
+             {key:'arrears', label:'Arrears now', kind:'money', cls:function(){ return 'bad'; }},
+             {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+             col('pct','Rec %','pct')],
+            {leader:'', teams:'', customers:sec.totals.customers, initial:sec.totals.initial,
+             arrears:sec.totals.arrears, recovered:sec.totals.recovered, pct:sec.totals.pct});
+        }).join('');
+    // The whole book behind the three boards, so a leader's row can be opened to the customer.
+    S.rows = [];
+    S.cols = [];
+    ONROW = null;
+  });
+};
 VIEWS.defexp = function(){
   return srv('expectedDefaulters').then(function(d){
     // 0 is a real selection (the "no disbursement date" bucket), so it must not be treated

@@ -28,7 +28,7 @@ export function teamAllowed(user, team) {
     row whose TABS cell happens to be blank ends up with nothing granted. Resolving tabs in
     ONE place keeps /api/me (which draws the UI) and /api/portal (which enforces) agreeing. */
 export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promises', 'fureport',
-  'complaints', 'restructure', 'legal', 'expected', 'defexp', 'credit', 'abnormal', 'reports',
+  'complaints', 'restructure', 'legal', 'expected', 'defexp', 'expdfrep', 'credit', 'abnormal', 'reports',
   'weekly', 'par', 'present', 'teams', 'commission', 'calls'];
 export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings']);
 
