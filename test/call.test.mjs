@@ -317,3 +317,25 @@ test('team codes must be unique and long enough to not be guessed', async () => 
   assert.equal((await callApi(db, 'api_callRegister', ['dm', 'MB OFFICER', '', '', '0799000111', g.teamCode], NOW)).ok, true);
   assert.equal(db._dump('call_users').find(u => u.name === 'MB OFFICER').team, 'MBAGALA');
 });
+
+test('KESHO is derived from the date, never a second upload of the same file', async () => {
+  const t = makeTables();
+  const E = (ref, date) => ({ ref, full_name: 'C' + ref, contact: '07120000' + ref, team: 'KONGOWE',
+    payment_expected: 500, arrears: 0, todays_status: 'UNPAID', due_summary: '2/6',
+    snapshot_type: 'today', snapshot_date: date, upload_batch: 'b' + date, created_at: date + 'T04:00:00Z' });
+  // The PMO uploads each day's sheet under its own date -- exactly as the live system worked.
+  t.repayment_snapshots = [E('MON1', '2026-07-27'), E('TUE1', '2026-07-28'), E('MON2', '2026-08-03')];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+
+  // Monday 2026-07-27 -> kesho is Tuesday's sheet.
+  const mon = Date.parse('2026-07-27T09:00:00Z');
+  assert.deepEqual((await callApi(db, 'api_callList', ['d1', 'tomorrow'], mon)).rows.map(r => r.ref), ['TUE1']);
+  assert.deepEqual((await callApi(db, 'api_callList', ['d1', 'today'], mon)).rows.map(r => r.ref), ['MON1']);
+
+  // There are no weekend sheets, so Friday's "tomorrow" is MONDAY -- and so is the weekend's.
+  const fri = Date.parse('2026-07-31T09:00:00Z');
+  assert.deepEqual((await callApi(db, 'api_callList', ['d1', 'tomorrow'], fri)).rows.map(r => r.ref), ['MON2']);
+  const sun = Date.parse('2026-08-02T09:00:00Z');
+  assert.deepEqual((await callApi(db, 'api_callList', ['d1', 'tomorrow'], sun)).rows.map(r => r.ref), ['MON2']);
+});

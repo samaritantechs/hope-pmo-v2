@@ -248,8 +248,27 @@ async function list(db, [dev, which, which2], nowMs) {
     }));
     rows.sort((a, b) => b.amt - a.amt);
   } else {
-    const snap = await latestSnapshot(db, 'repayment_snapshots',
-      { snapshot_type: which === 'tomorrow' ? 'tomorrow' : 'today' }, { notAfter: todayKey(nowMs) });
+    // KESHO is DERIVED, not a separate upload. The PMO uploads each day's Expected sheet
+    // under its own date, exactly as the live system worked -- so tomorrow's list is simply
+    // the sheet dated tomorrow, and asking anyone to upload the same file twice under a
+    // second label was a workflow this system invented for itself.
+    //
+    // There are no weekend sheets, so Friday's "tomorrow" is Monday, and so is the weekend's.
+    let snap;
+    if (which === 'tomorrow') {
+      const u = isoWeekday(nowMs);
+      const skip = u >= 5 ? (8 - u) : 1;          // Fri +3, Sat +2, Sun +1, otherwise +1
+      snap = await latestSnapshot(db, 'repayment_snapshots',
+        { snapshot_type: 'today' }, { onDate: addDaysKey(todayKey(nowMs), skip) });
+      // Older uploads that used the explicit "Expected - Tomorrow" type still work.
+      if (!snap.rows.length) {
+        snap = await latestSnapshot(db, 'repayment_snapshots',
+          { snapshot_type: 'tomorrow' }, { notAfter: todayKey(nowMs) });
+      }
+    } else {
+      snap = await latestSnapshot(db, 'repayment_snapshots',
+        { snapshot_type: 'today' }, { notAfter: todayKey(nowMs) });
+    }
     rows = snap.rows.filter(r => teamAllowed(user, r.team)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
       amt: num(r.arrears), installment: num(r.payment_expected), custStatus: r.todays_status || '', fuStatus: '',
