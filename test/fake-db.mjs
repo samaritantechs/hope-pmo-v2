@@ -45,11 +45,13 @@ class FakeQuery {
       return { data: this.wantRows ? inserted : null, error: null };
     }
     if (this.mode === 'delete') {
+      // PostgREST returns the deleted rows when the call asks for them, which is how a caller
+      // reports "12 rows replaced" rather than guessing.
+      const gone = rows.filter(r => this.filters.every(f => f(r))).map(r => ({ ...r }));
       const keep = rows.filter(r => !this.filters.every(f => f(r)));
-      const removed = rows.length - keep.length;
       rows.length = 0;
       for (const r of keep) rows.push(r);
-      return { data: null, error: null, count: removed };
+      return { data: this.wantRows ? gone : null, error: null, count: gone.length };
     }
     if (this.mode === 'update') {
       let n = 0;

@@ -16,6 +16,34 @@ import {
 //         same column-name mapping, same D.S/D.C text protection either way -- this
 //         endpoint is not a second implementation of the import logic, it's the same one.
 //   meta: { weekday, date } for defaulters/expected snapshots, { stage } for loans, else {}
+/** THE UPLOAD STAMP: which report a row belongs to, and what a second upload of that same
+    report does.
+
+    The snapshot tables answer this already through snapshot_date + batch. The tables that
+    ACCUMULATE could not: their rows only carried the dates INSIDE the file, and those are a
+    different thing entirely -- a loan applications report pulled on 27 July legitimately
+    contains applications dated in June. So the person uploading names the report's date, and
+    says whether this file adds to that date or replaces it.
+
+    Pure, so the decision is testable without a database: the route only carries it out. */
+export const STAMPED_TABLES = new Set(['loans', 'received_payments', 'abnormal_payments',
+  'complaints', 'restructures', 'demand_notices', 'followup_comments']);
+
+export function stampPlan(table, meta = {}, nowMs = Date.now()) {
+  if (!STAMPED_TABLES.has(table)) return { stamped: false, uploadDate: null, replace: false, scope: {} };
+  // Free-form on purpose: yesterday's report can be re-done today without pretending it is
+  // today's. Defaults to today on the EAT clock, not the server's UTC one.
+  const uploadDate = /^\d{4}-\d{2}-\d{2}$/.test(String(meta.uploadDate || ''))
+    ? String(meta.uploadDate)
+    : new Date(nowMs + 3 * 3600 * 1000).toISOString().slice(0, 10);
+  const replace = String(meta.mode || '').toLowerCase() === 'replace';
+  // The pipeline is uploaded one stage at a time, so replacing the 27th's APPROVED report must
+  // not take the 27th's Assigned report with it.
+  const scope = { upload_date: uploadDate };
+  if (table === 'loans' && meta.stage) scope.stage = meta.stage;
+  return { stamped: true, uploadDate, replace, scope };
+}
+
 export default withApi(async (req, res) => {
   if (req.method !== 'POST') { const e = new Error('Method not allowed'); e.status = 405; throw e; }
   const { code, type, meta = {}, rows } = req.body || {};
@@ -130,6 +158,32 @@ export default withApi(async (req, res) => {
     records = records.map(r => ({ ...r, upload_batch: uploadBatch }));
   }
 
+  /* THE UPLOAD STAMP, for the tables that accumulate.
+     A loan applications report pulled on 27 July legitimately contains applications dated in
+     June, so the dates INSIDE the file cannot say which report a row belongs to. The person
+     uploading says: this is the report FOR this date. That handle is what makes "replace the
+     27th, leave every other day alone" a thing anyone can ask for.
+     The date defaults to today but is deliberately free -- yesterday's report can be re-done
+     today without pretending it is today's. */
+  const plan = stampPlan(table, meta);
+  const { stamped, uploadDate } = plan;
+  let replaced = 0;
+  if (stamped) {
+    uploadBatch = randomUUID();
+    records = records.map(r => ({ ...r, upload_date: uploadDate, upload_batch: uploadBatch }));
+  }
+
+  // REPLACE ALL FOR THIS DATE. Only ever touches rows carrying this report's own stamp, so a
+  // wrong or short report can be redone without disturbing any other day -- and without the
+  // blunt alternative of clearing the whole table.
+  if (plan.replace) {
+    let q = supabase.from(table).delete();
+    for (const [k, v] of Object.entries(plan.scope)) q = q.eq(k, v);
+    const { data: gone, error: delErr } = await q.select('id');
+    if (delErr) throw new Error('Could not clear the previous report for that date: ' + delErr.message);
+    replaced = (gone || []).length;
+  }
+
   // Tables that reference teams.team as a foreign key -- auto-create any team name that
   // doesn't exist yet, rather than blocking the upload. Your team list grows over time; a new
   // team's first Defaulters/Expected file shouldn't have to wait on someone remembering to
@@ -200,7 +254,11 @@ export default withApi(async (req, res) => {
   // figures or corrects them, and there is no append-or-replace option to choose because the
   // answer is a property of the report, not of the moment. So the answer travels back with
   // every upload, in words.
-  const behaviour = uploadBatch
+  const behaviour = stamped
+    ? (replaced || String(meta.mode || '').toLowerCase() === 'replace'
+        ? { mode: 'replace-date', text: `Replaced the ${uploadDate} report: ${replaced} earlier row(s) removed, ${records.length} written. No other date was touched.` }
+        : { mode: 'append', text: `Added to the ${uploadDate} report. Uploading the same file again under this date would store it twice — choose "Replace all for this date" to redo a day instead.` })
+    : SNAPSHOT_TABLES.has(table)
     ? { mode: 'supersede', text: 'This date now reads from THIS upload. An earlier upload of the same date stays in history but no longer counts, so nothing is doubled.' }
     : table === 'hints'
       ? { mode: 'replace-all', text: 'The whole tip sheet was replaced. Tips you removed from the file are now gone from the app.' }
@@ -209,7 +267,7 @@ export default withApi(async (req, res) => {
         : { mode: 'append', text: 'These rows were ADDED to the history. Uploading the same file twice would store it twice.' };
 
   return {
-    inserted: records.length, table, uploadBatch,
+    inserted: records.length, table, uploadBatch, uploadDate, replaced,
     followupSynced, behaviour,
     message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
   };

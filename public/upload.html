@@ -36,6 +36,9 @@
   .stat-r .in{color:var(--ok)} .stat-r .out{color:#94A3B8}
   .stat-m{margin-left:auto;color:var(--mut);font-size:11.5px}
   .file-drop input{display:none}
+  .modebtn{background:transparent;border:1.5px solid var(--line);color:var(--mut);font-weight:700;font-size:13.5px;padding:10px}
+  .modebtn.on{background:var(--b600);border-color:var(--b600);color:#fff}
+  .modebtn.on.danger{background:#B42318;border-color:#B42318}
 </style>
 </head>
 <body>
@@ -116,9 +119,20 @@
       </select>
     </div>
 
-    <!-- There is no append-or-replace option because the answer is a property of the REPORT,
-         not of the moment: a daily snapshot must supersede, a register must accumulate. So
-         instead of a choice nobody can answer correctly, the page states what will happen. -->
+    <!-- For reports that ACCUMULATE, the upload stamp is the handle that makes a day
+         re-doable. It is not the dates inside the file: a loan applications report pulled on
+         27 July legitimately contains applications dated in June. The person uploading says
+         which report this is, and whether it adds to that day or replaces it. -->
+    <div id="stampWrap" class="hide">
+      <label>Tarehe ya ripoti / Report date <span style="font-weight:400">(the upload stamp, not the dates inside the file)</span></label>
+      <input type="date" id="uploadDate">
+      <label>Ikiwa tarehe hii tayari ina ripoti / If this date already has a report</label>
+      <div class="row" style="margin-bottom:14px">
+        <button type="button" id="modeAppend" class="modebtn">Ongeza / Append</button>
+        <button type="button" id="modeReplace" class="modebtn">Badilisha yote / Replace all</button>
+      </div>
+    </div>
+
     <div id="behaviour" class="hint" style="margin-top:-6px"></div>
 
     <label>File</label>
@@ -175,6 +189,24 @@ var TYPE_META = {
   'logo': [],
 };
 function isLogo_(){ return $('type').value === 'logo'; }
+/** The reports that carry an upload stamp, and can therefore be appended to or replaced for
+    one chosen date. Snapshots are absent on purpose: their snapshot date already supersedes,
+    so offering a choice there would be a second way to say the same thing. */
+var STAMPED = { 'loans':1, 'received':1, 'abnormal':1, 'complaints':1, 'restructures':1,
+                'demand-notices':1, 'comments':1 };
+function isStamped_(){ return !!STAMPED[$('type').value]; }
+var uploadMode = 'append';
+function setMode_(m){
+  uploadMode = (m === 'replace') ? 'replace' : 'append';
+  $('modeAppend').classList.toggle('on', uploadMode === 'append');
+  $('modeReplace').classList.toggle('on', uploadMode === 'replace');
+  $('modeReplace').classList.toggle('danger', uploadMode === 'replace');
+  var b = $('behaviour');
+  if (b && isStamped_()) b.textContent = uploadMode === 'replace'
+    ? 'Kila kitu kilichopakiwa kwa tarehe hii kitafutwa kwanza, kisha faili hii iwekwe. Tarehe nyingine haziguswi. / '
+      + 'Everything already uploaded under this report date is removed first, then this file is written. No other date is touched.'
+    : (BEHAVIOUR.append || '');
+}
 
 /** What a SECOND upload of the same report does. This is fixed per report -- it is not a
     choice, because getting it wrong silently doubles a figure or silently loses history. */
@@ -183,8 +215,8 @@ var BEHAVIOUR = {
     + 'Re-uploading the same date SUPERSEDES the earlier upload — nothing is doubled, and the old copy stays in history.',
   update:    'Kupakia tena kunasahihisha safu zilizopo. / '
     + 'Re-uploading UPDATES the rows that already exist — corrections land, duplicates do not.',
-  append:    'Kila upakiaji unaongeza kwenye historia. / '
-    + 'Every upload ADDS to the history. Uploading the same file twice stores it twice.',
+  append:    'Kila upakiaji unaongeza kwenye tarehe uliyochagua. Ukitaka kurudia siku, chagua "Badilisha yote". / '
+    + 'Each upload ADDS to the report date you chose. To redo a day, choose "Replace all" — only that date is touched.',
   replaceAll:'Inabadilisha laha nzima. Ukiondoa kidokezo kwenye faili, kinatoweka kwenye app. / '
     + 'Replaces the WHOLE sheet — a tip you delete from the file disappears from the app.',
   logo:      'Inabadilisha nembo kila mahali mara moja. / Replaces the logo everywhere at once.',
@@ -195,8 +227,9 @@ var TYPE_BEHAVIOUR = {
   'expected-yesterday': 'supersede', 'expected-initial': 'supersede',
   // One loan is ONE row whose stage moves, matched on its own number -- so the Approved file
   // can be re-uploaded without doubling sales, and a loan that advances a stage moves rather
-  // than being duplicated.
-  'loans': 'update',
+  // than being duplicated. It also carries an upload stamp, so a whole day's report can be
+  // redone without disturbing any other day.
+  'loans': 'append',
   'followup': 'update', 'teams': 'update', 'access-codes': 'update', 'user-roles': 'update',
   'call-users': 'update', 'call-logs': 'update', 'settings': 'update',
   'comments': 'append', 'received': 'append', 'abnormal': 'append',
@@ -213,13 +246,19 @@ function syncFields(){
   $('file').setAttribute('accept', logo ? 'image/*' : '.xlsx,.xls,.csv');
   if (logo) $('sheetWrap').classList.add('hide');
   $('logoPrev').classList.toggle('hide', !logo);
+  var stamp = isStamped_();
+  $('stampWrap').classList.toggle('hide', !stamp);
+  if (stamp && !$('uploadDate').value) $('uploadDate').valueAsDate = new Date();
   var b = $('behaviour');
   if (b) b.textContent = BEHAVIOUR[TYPE_BEHAVIOUR[$('type').value]] || '';
+  if (stamp) setMode_(uploadMode);
   if (!$('drop').classList.contains('has'))
     $('drop').firstChild.nodeValue = logo ? 'Click to choose the logo image (PNG or JPG)'
                                           : 'Click to choose an Excel or CSV file';
 }
 $('type').addEventListener('change', syncFields);
+$('modeAppend').onclick = function(){ setMode_('append'); };
+$('modeReplace').onclick = function(){ setMode_('replace'); };
 // /upload?admin=1 comes from the launcher's "Access codes" tile -- land straight on the
 // sheet that tile promised rather than making an admin hunt for it in the dropdown.
 if (/[?&]admin=1\b/.test(window.location.search)) $('type').value = 'access-codes';
@@ -511,6 +550,7 @@ $('go').addEventListener('click', function(){
   if (TYPE_META[type].indexOf('weekdayWrap') >= 0) meta.weekday = $('weekday').value;
   if (TYPE_META[type].indexOf('dateWrap') >= 0) meta.date = $('snapDate').value;
   if (TYPE_META[type].indexOf('stageWrap') >= 0) meta.stage = $('stage').value;
+  if (isStamped_()){ meta.uploadDate = $('uploadDate').value; meta.mode = uploadMode; }
 
   $('go').disabled = true; $('go').textContent = 'Reading file\u2026';
   var lastDiag = null;

@@ -616,28 +616,48 @@ so the system decides and **tells you, both before you upload and in the result 
 |---|---|---|
 | Defaulters — Current / Initial | **Supersedes** that date | Each upload carries one batch stamp; readers take the latest date, then the latest batch. The old copy stays in history but stops counting. Nothing doubles. |
 | Expected — Today / Tomorrow / Yesterday / Initial | **Supersedes** that date | Same batch rule. |
-| **Loan pipeline (all 8 stages)** | **Updates the same loan** | A loan is one row whose `stage` moves. Matched on the loan's own number: LOAN ID, else DOCKET#, else TRACK# + name + phone. So Approved can be re-uploaded without doubling sales, and a loan advancing a stage moves rather than being cloned. |
+| **Loan pipeline (all 8 stages)** | **Your choice: Append or Replace all for that report date** | A loan is one row whose `stage` moves, matched on the loan's own number (LOAN ID, else DOCKET#, else TRACK# + name + phone) — so Append never duplicates a loan. Replace removes everything uploaded under that report date **for that stage** and writes this file instead. |
 | Defaulters Followup | **Updates** each customer (`ref`) | |
 | Leaders / Teams | **Updates** each team | |
 | Access Codes / User Roles / Settings | **Updates** each code / role / key | |
 | Call App Users / Call Logs | **Updates** each user / call | Calls are keyed on a fingerprint, so the same call cannot be stored twice. |
 | Hints | **Replaces the whole sheet** | A tip you delete from the file disappears from the app. |
 | Company logo | **Replaces the logo everywhere** | |
-| Comments Log | **Adds** to history | A comment is an event; it happened. |
-| Received Payments | **Adds** | Each payment is an event. |
-| Abnormal Payments, Complaints, Loan Restructuring, Demand Notices | **Adds** | Registers accumulate. |
+| Comments Log | **Your choice: Append or Replace all for that report date** | A comment is an event, so the default adds — but a report pulled twice can be redone. |
+| Received Payments | **Your choice: Append or Replace all for that report date** | |
+| Abnormal Payments, Complaints, Loan Restructuring, Demand Notices | **Your choice: Append or Replace all for that report date** | |
 
-> **The one to be careful with is the "Adds" group.** Uploading the same Received Payments or
-> Comments file twice really does store it twice. If that happens, the fix is to clean the
-> affected date in Settings → Clean old reports and upload once.
+### The report date is the upload stamp, not the dates inside the file
+
+This is the important distinction. A **loan applications report pulled on 27 July legitimately
+contains applications dated in June** — so the dates in the file cannot say which report a row
+came from. The person uploading says it.
+
+On the upload page, every accumulating report shows:
+
+> **Tarehe ya ripoti / Report date** — defaults to today, but you can name any date, so
+> yesterday's report can be redone today without pretending it is today's.
+>
+> **Ongeza / Append** — adds to that date's report.
+> **Badilisha yote / Replace all** — removes everything already uploaded under **that date**
+> (and, for the pipeline, that **stage**) and writes this file instead. **No other date is
+> touched.**
+
+The result message then says exactly what happened — e.g. *"Replaced the 2026-07-27 report:
+412 earlier row(s) removed, 398 written. No other date was touched."*
+
+Snapshots (Expected and Defaulters) do not show this choice, because their snapshot date
+already supersedes automatically — offering a second way to say the same thing would only
+create a way to get it wrong.
 
 **Underneath, in database terms:**
 - **Batch-superseded**: `repayment_snapshots`, `defaulter_snapshots`
-- **Updated in place** (one row per key): `loans` (by loan identity), `followup_status` (`ref`),
-  `teams`, `access_codes`, `roles`, `settings`, `call_users`, `call_logs`
+- **Updated in place** (one row per key): `followup_status` (`ref`), `teams`, `access_codes`,
+  `roles`, `settings`, `call_users`, `call_logs`
 - **Replaced wholesale**: `hints`
-- **Append-only history**: `followup_comments`, `received_payments`, `abnormal_payments`,
-  `complaints`, `restructures`, `demand_notices`
+- **Stamped with `upload_date` + `upload_batch`, append or replace-by-date**: `loans`
+  (also keyed on loan identity), `followup_comments`, `received_payments`,
+  `abnormal_payments`, `complaints`, `restructures`, `demand_notices`
 
 ---
 
@@ -744,6 +764,8 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `db/migrations/2026-07-26-team-codes.sql` | The `team_code` column |
 | `db/migrations/2026-07-27-call-agents.sql` | The `call_agents` table and roster |
 | `db/migrations/2026-07-27-hints-many-per-tab.sql` | Many tips per tab |
+| `db/migrations/2026-07-28-loan-identity.sql` | One row per loan; removes duplicates that had been inflating sales |
+| `db/migrations/2026-07-28-upload-stamp.sql` | The report-date stamp that makes Append / Replace-by-date possible |
 
 > Migrations are run **in date order**, once each, by pasting into Supabase's SQL Editor.
 
