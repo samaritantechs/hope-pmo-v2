@@ -272,7 +272,11 @@ async function list(db, [dev, which, which2], nowMs) {
       diag: d.diag } };
   }
   if (which === 'defaulters') {
-    const fu = await fetchAll(() => db.from('followup_status').select('*'));
+    // Only the columns this list actually renders. The table carries promise dates, comment
+    // trails and timestamps the phone never shows, and every one of them was crossing a mobile
+    // connection for every customer, every load.
+    const fu = await fetchAll(() => db.from('followup_status').select(
+      'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team'));
     // Skip pure FK stubs (created so an EXPECTED customer's comment can reference
     // followup_status) -- a real defaulter row always carries status/arrears from its upload.
     rows = fu.filter(r => teamAllowed(user, r.team) && !(r.status == null && r.arrears == null)).map(r => ({
@@ -408,7 +412,8 @@ async function dailySummary(db, [dev], nowMs) {
 async function phoneIndex(db, nowMs) {
   const today = todayKey(nowMs);
   const [fu, eT, eM, cm] = await Promise.all([
-    fetchAll(() => db.from('followup_status').select('*')),
+    // The phone index needs names and numbers, nothing else.
+    fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today }),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
     fetchAll(() => db.from('followup_comments').select('ref, new_number, full_name, team')),

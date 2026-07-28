@@ -1207,7 +1207,7 @@ async function credit(db, user, _args, nowMs) {
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: today }),
-    fetchAll(() => db.from('loans').select('*').eq('stage', 'approved')),
+    fetchAll(() => db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').eq('stage', 'approved')),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -1296,7 +1296,7 @@ function isTrack1(r) {
 }
 async function callAgents(db, user) {
   const [loanRows, agentRows] = await Promise.all([
-    fetchAll(() => db.from('loans').select('*').in('stage', CS_STAGES)),
+    fetchAll(() => db.from('loans').select('team, stage, track_no, created_by, principal_amt, loan_amt, requested_amt').in('stage', CS_STAGES)),
     fetchAll(() => db.from('call_agents').select('*').order('user_id', { ascending: true })),
   ]);
   const names = {};
@@ -1909,7 +1909,7 @@ async function dashboardFull(db, user, _args, nowMs) {
   const [expWeek, defWeek, loansAll, abn, teamRows] = await Promise.all([
     snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, sun),
     snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
-    fetchAll(() => db.from('loans').select('*')),
+    fetchAll(() => db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')),
     fetchAll(() => db.from('abnormal_payments').select('team, paid')),
     fetchAll(() => db.from('teams').select('*')),
   ]);
@@ -2181,8 +2181,8 @@ async function officerBoards(db, user, _args, nowMs) {
     snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
     snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
-    fetchAll(() => db.from('followup_status').select('*')),
-    fetchAll(() => db.from('loans').select('*')),
+    fetchAll(() => db.from('followup_status').select('ref, team, status, fu_status, arrears')),
+    fetchAll(() => db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')),
     fetchAll(() => db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun)),
   ]);
   const teamBy = {};

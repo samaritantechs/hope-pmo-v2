@@ -773,6 +773,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `db/migrations/2026-07-27-hints-many-per-tab.sql` | Many tips per tab |
 | `db/migrations/2026-07-28-loan-identity.sql` | One row per loan; removes duplicates that had been inflating sales |
 | `db/migrations/2026-07-28-upload-stamp.sql` | The report-date stamp that makes Append / Replace-by-date possible |
+| `db/migrations/2026-07-28-speed-indexes.sql` | Indexes for the lookups every screen makes on load |
 
 > Migrations are run **in date order**, once each, by pasting into Supabase's SQL Editor.
 
