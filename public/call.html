@@ -174,7 +174,14 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 
 <div id="scrBoot" class="center">
   <div class="brand" id="bootBrand">HOPE Calls</div>
-  <div class="sk"></div>
+  <div class="sk" id="bootSpin"></div>
+  <!-- Shown only if the server does not answer. Without it the officer has a blue screen, no
+       message, and nothing to press -- so they restart the app over and over instead. -->
+  <div id="bootErr" class="hide" style="max-width:300px;text-align:center;color:#fff;padding:0 18px">
+    <div style="font-size:14px;line-height:1.5">Mfumo haujajibu kwa sasa. Angalia mtandao, kisha jaribu tena.<br>
+      <span style="color:rgba(255,255,255,.7);font-size:12.5px">The server is not answering. Check your connection, then try again.</span></div>
+    <button class="btn" id="bootRetry" style="margin-top:14px">Jaribu tena / Try again</button>
+  </div>
 </div>
 
 <div id="scrRegister" class="center hide">
@@ -301,18 +308,27 @@ function srv(fn){
   // answers. Network failures retry twice; server-side errors reject with the message.
   function attempt(tries){
     return new Promise(function(res, rej){
+      // A request with no deadline is how an officer ends up staring at a blue screen for ten
+      // minutes with nothing to press. If the server is not answering, say so and let them
+      // try again -- waiting silently forever is never the right behaviour in the field.
+      var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 25000);
       fetch((window.HC_API_BASE || '') + '/api/call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fn: fn, args: args })
-      }).then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+        body: JSON.stringify({ fn: fn, args: args }),
+        signal: ctl ? ctl.signal : undefined
+      }).then(function(r){ clearTimeout(timer); return r.json().then(function(d){ return { status: r.status, body: d }; }); })
         .then(function(x){
           if (x.status >= 200 && x.status < 300) res(x.body);
           else rej((x.body && x.body.error) || ('HTTP ' + x.status));
         })
         .catch(function(e){
+          clearTimeout(timer);
+          var aborted = e && (e.name === 'AbortError');
           if (tries > 0) setTimeout(function(){ attempt(tries-1).then(res, rej); }, 1200);
-          else rej(String((e && e.message) || e));
+          else rej(aborted ? 'Mfumo haujajibu. / The server did not answer.'
+                           : String((e && e.message) || e));
         });
     });
   }
@@ -512,9 +528,13 @@ function boot(){
       if (carried){ $('#regPass').value = carried; localStorage.removeItem('hcTeamCode'); $('#regName').focus(); }
     } catch(e2){}
   }).catch(function(e){
-    $('#scrBoot').classList.add('hide');
-    $('#scrRegister').classList.remove('hide');
-    $('#regErr').innerHTML = '<div class="err">Imeshindikana kuunganisha. Angalia mtandao wako na ujaribu tena. (' + esc(String(e)) + ')</div>';
+    // A connection failure is NOT "you are not registered". Sending the officer to the
+    // sign-in screen made them re-enter a team code that was never the problem -- and on a
+    // handset that is already registered, that is a dead end. Stay here, say what happened,
+    // and give them a button.
+    var spin = $('#bootSpin'); if (spin) spin.classList.add('hide');
+    $('#bootErr').classList.remove('hide');
+    if (window.console) console.error('[hope] boot failed:', e);
   });
 }
 function doLogout(){
@@ -978,6 +998,11 @@ function drawReports(){
   $('#repTo').onchange = function(){ S.repTo = this.value; renderReports(); };
 }
 
+$('#bootRetry').onclick = function(){
+  $('#bootErr').classList.add('hide');
+  var spin = $('#bootSpin'); if (spin) spin.classList.remove('hide');
+  boot();
+};
 boot();
 </script>
 <script>window.HOPE_NO_BRAND_FETCH = true;</script>
