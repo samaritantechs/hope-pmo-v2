@@ -59,11 +59,27 @@
     + '.brandmark svg,.brandmark img{width:100%;height:100%;display:block;object-fit:contain}';
   document.head.appendChild(css);
 
+  function paint(url, brandName) {
+    icon(url);
+    for (var k = 0; k < spots.length; k++) {
+      var c = spots[k]; c.innerHTML = '';
+      var el = new Image(); el.src = url; el.alt = brandName || '';
+      c.appendChild(el);
+    }
+  }
+
   var spots = document.querySelectorAll('[data-brandmark]');
   for (var i = 0; i < spots.length; i++) {
     spots[i].className = (spots[i].className ? spots[i].className + ' ' : '') + 'brandmark';
     spots[i].innerHTML = MARK;
   }
+
+  // Painted from the device first, so a returning visitor never watches the stand-in swap for
+  // the real logo a second later. The network still refreshes it below; this only decides what
+  // is on screen in the meantime.
+  var seen = null;
+  try { seen = localStorage.getItem('hopeLogo'); } catch (e) {}
+  if (seen) paint(seen, null);
   if (window.HOPE_NO_BRAND_FETCH) return;
 
   try {
@@ -78,15 +94,12 @@
         for (var j = 0; j < names.length; j++) names[j].textContent = d.brand;
       }
       if (!d.logo) return;
+      if (d.logo === seen) return;                 // already on screen from the device
       // The mark is only replaced by an image that has actually LOADED.
       var im = new Image();
       im.onload = function () {
-        icon(d.logo);
-        for (var k = 0; k < spots.length; k++) {
-          var c = spots[k]; c.innerHTML = '';
-          var el = new Image(); el.src = d.logo; el.alt = d.brand || '';
-          c.appendChild(el);
-        }
+        paint(d.logo, d.brand);
+        try { localStorage.setItem('hopeLogo', d.logo); } catch (e) {}
       };
       im.src = d.logo;
     }).catch(function () { /* offline or the API is down -- the drawn mark stands */ });
