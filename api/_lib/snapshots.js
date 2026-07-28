@@ -18,6 +18,13 @@ import { fetchAll } from './supabase.js';
 
 /** rows must all belong to one snapshot_date. Keeps only the rows of the batch that contains
     the newest created_at -- i.e. the most recent upload of that date wins, whole-batch. */
+/** Team names are stored UPPERCASE everywhere (normTeam does it on every write path), but the
+    list on an access code is typed by a person and may not be. Matching without normalising
+    would silently return NOTHING for that user -- an empty screen, no error, no clue. */
+export function upperTeams(teams) {
+  return [...new Set((teams || []).map(t => String(t == null ? '' : t).trim().toUpperCase()).filter(Boolean))];
+}
+
 export function pickLatestBatch(rows) {
   if (!rows || !rows.length) return [];
   let newest = rows[0];
@@ -44,9 +51,17 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
     if (!latest) return { rows: [], date: null, batch: null };
     date = latest.snapshot_date;
   }
+  /* opts.teams narrows the ROWS to the teams the caller may see -- at the database, not after
+     the fact. A field officer belongs to ONE team; downloading all forty and throwing away
+     thirty-nine is how 0.147 GB of data turned into 81 GB of transfer in a month.
+
+     Deliberately NOT applied to the date resolution above: the latest snapshot date must stay
+     a property of the whole upload, or a team with no rows that day would silently fall back
+     to an older date and the officer would work yesterday's list without being told. */
   const all = await fetchAll(() => {
     let q = db.from(table).select('*').eq('snapshot_date', date);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
+    if (opts.teams && opts.teams.length) q = q.in('team', upperTeams(opts.teams));
     return q;
   });
   const rows = pickLatestBatch(all);
@@ -57,10 +72,11 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
 /** One-query fetch of every snapshot row in [fromDate, toDate] matching `filters` -- raw,
     ungrouped. Pair with resolveLatestPerKey to batch-resolve per day/weekday without a round
     trip per group (the weekend dashboard reads a whole week in two queries this way). */
-export async function snapshotsInRange(db, table, filters, fromDate, toDate) {
+export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams) {
   return fetchAll(() => {
     let q = db.from(table).select('*').gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
+    if (teams && teams.length) q = q.in('team', upperTeams(teams));   // narrow at the database
     return q;
   });
 }
