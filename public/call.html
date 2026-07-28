@@ -629,6 +629,9 @@ function enterApp(d){
     tap, or a throttled foreground return -- so it never adds to per-officer sync load. A failure
     just leaves the strip hidden; it never surfaces an error into the header. */
 var _sumAt = 0;
+// Which DAY each list actually came from. An officer working yesterday's customers while the
+// screen says Leo is the worst kind of wrong: silently plausible.
+S.asOf = S.asOf || {};
 function pctW_(x){ return (x==null||isNaN(x)||!isFinite(x)) ? '\u2014' : Math.round(100*x) + '%'; }
 /** Money at a glance: 10k, 210k, 1.4m. A percentage says how well the day is going; the
     SHILLINGS say how much has actually come in, which is the number people talk about. */
@@ -760,6 +763,19 @@ function drawExpdfStrip_(){
 }
 /* "Orodha hii iko wazi" told an officer nothing they could act on. Each list is empty for a
    specific reason -- almost always a report nobody has uploaded yet -- so say which one. */
+/** Says so, loudly, when the list on screen is not the day it claims to be. */
+function staleNote_(){
+  var src = LIST_SOURCE[S.view], a = src && S.asOf[src];
+  if (!a || !a.stale || !a.date) return '';
+  var what = S.view === 'tomorrow' ? 'KESHO' : 'LEO';
+  return '<div class="empty" style="background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;'
+    + 'text-align:left;padding:10px 12px;margin-bottom:8px;border-radius:10px">'
+    + '<b>Angalia / Note:</b> orodha ya ' + what + ' haijapakiwa leo. '
+    + 'Hii ni ya <b>' + esc(a.date) + '</b>.<br>'
+    + '<span style="font-size:11.5px">This list was not uploaded for today — you are seeing '
+    + esc(a.date) + '. Tell your PMO officer before working it.</span></div>';
+}
+
 function emptyWhy_(v){
   if (v === 'tomorrow') return 'Ratiba ya kesho haijapakiwa bado \u2014 pakia laha ya Expected ya tarehe ya KESHO.';
   if (v === 'today') return 'Ripoti ya LEO haijapakiwa bado. Mwambie afisa wa PMO apakie "Expected \u2014 Today".';
@@ -812,6 +828,7 @@ function fetchSource_(src, showSpinner){
   srv('api_callList', DEV, src, src === 'expdf' ? (S.expdfScope || 'auto') : '').then(function(d){
     if (myId !== S.reqId) return;
     S.cache[src] = d.rows || [];
+    S.asOf[src] = { date: d.asOf || null, stale: !!d.stale };
     if (src === 'expdf') S.expdf = d.expdf || null;
     S.cacheAt[src] = Date.now();
     saveCacheToDevice_();
@@ -850,6 +867,7 @@ function drawList(){
   var searching = !!S.q.trim();
   body.innerHTML = banner
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
+    + staleNote_()
     + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>';
   if ($('#battBtn')) $('#battBtn').onclick = function(){ var nb2 = nativeBridge(); if (nb2 && nb2.requestIgnoreBatteryOptimizations) nb2.requestIgnoreBatteryOptimizations(); };
   $all('.crow').forEach(function(row){

@@ -574,6 +574,13 @@ $('go').addEventListener('click', function(){
           // "Inserted 412" never said whether a second upload of the same file doubles the
           // figures or corrects them. The server now answers that with every upload.
           + (res.body.behaviour ? '\n' + res.body.behaviour.text : '')
+          + (res.body.sameAsToday
+              ? '\n\u26A0 ANGALIA: ' + res.body.sameAsToday + ' kati ya wateja hawa tayari wapo kwenye '
+                + 'ripoti nyingine ya Expected ya tarehe hii. Leo na Kesho zitaonyesha watu wale wale. '
+                + 'Hakikisha umepakia faili sahihi kwa kila siku.'
+                + '\n\u26A0 WARNING: these are almost the same customers as the other Expected report for '
+                + 'this date. Leo and Kesho will show the same people, and one day will go uncalled.'
+              : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
           + (res.body.message ? '\n' + res.body.message : '');

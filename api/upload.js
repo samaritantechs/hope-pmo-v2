@@ -263,6 +263,30 @@ export default withApi(async (req, res) => {
   // It MERGES rather than replaces: fu_status, promise_date, promise_amt and the last
   // comment are what officers typed and must survive an upload. Only the figures that come
   // from the deck are refreshed.
+  /* LEO AND KESHO SHOWING THE SAME PEOPLE.
+     Kesho is the sheet dated tomorrow; where none exists it falls back to the older
+     "Expected - Tomorrow" upload type, which by the live system's convention is stamped with
+     TODAY's date. Both readings are correct -- but if the SAME file is uploaded under both
+     Today and Tomorrow for one date, the two tabs resolve to the same customers and officers
+     work one list twice while the other day goes uncalled.
+     The system cannot tell which of the two was the mistake, so it does not guess: it says
+     what it found, at the moment it can still be undone. */
+  let sameAsToday = 0;
+  if (type === 'expected-tomorrow' || type === 'expected-today') {
+    const other = type === 'expected-tomorrow' ? 'today' : 'tomorrow';
+    const { data: existing } = await supabase.from('repayment_snapshots')
+      .select('ref').eq('snapshot_type', other).eq('snapshot_date', meta.date).limit(2000);
+    if (existing && existing.length) {
+      const have = new Set(existing.map(r => String(r.ref)));
+      const mine = new Set(records.map(r => String(r.ref)));
+      let shared = 0;
+      for (const r of mine) if (have.has(r)) shared++;
+      // Two lists for different days share SOME customers; being all but identical is the
+      // signature of the same file uploaded twice.
+      if (shared / Math.max(mine.size, 1) >= 0.95) sameAsToday = shared;
+    }
+  }
+
   let followupSynced = 0;
   if (type === 'defaulters-current') {
     followupSynced = await syncFollowupFromDeck(supabase, records);
@@ -287,7 +311,7 @@ export default withApi(async (req, res) => {
 
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
-    followupSynced, behaviour,
+    followupSynced, behaviour, sameAsToday,
     message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
   };
 });
