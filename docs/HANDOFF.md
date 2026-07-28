@@ -643,6 +643,13 @@ On the upload page, every accumulating report shows:
 > (and, for the pipeline, that **stage**) and writes this file instead. **No other date is
 > touched.**
 
+**Replace never touches work your staff typed in the app.** Complaints logged at the desk,
+restructure requests, demand notices issued from the Legal screen and officers' follow-up
+comments all live in the same tables as their uploaded counterparts. A row that arrived in an
+upload carries a batch code; a row somebody typed does not — and replace only ever removes the
+first kind. The three upload-only reports (loan pipeline, received payments, abnormal payments)
+have no such work to protect, so a replace there clears the whole stamp.
+
 The result message then says exactly what happened — e.g. *"Replaced the 2026-07-27 report:
 412 earlier row(s) removed, 398 written. No other date was touched."*
 

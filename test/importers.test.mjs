@@ -114,4 +114,14 @@ test('the upload stamp decides what a second upload of the same report does', as
   // take the 27th's ASSIGNED report with it.
   const loans = stampPlan('loans', { uploadDate: '2026-07-27', mode: 'replace', stage: 'approved' }, NOON_EAT);
   assert.deepEqual(loans.scope, { upload_date: '2026-07-27', stage: 'approved' });
+
+  // Tables people also write INSIDE the app -- an officer's comment, a complaint logged at the
+  // desk, a restructure request, a demand notice -- must never lose that work to a replace.
+  for (const t of ['complaints', 'restructures', 'demand_notices', 'followup_comments']) {
+    assert.equal(stampPlan(t, { mode: 'replace' }, NOON_EAT).uploadedOnly, true, t + ' is app-writable');
+  }
+  // The upload-only tables have no such work to protect, so a replace there is unrestricted.
+  for (const t of ['loans', 'received_payments', 'abnormal_payments']) {
+    assert.equal(stampPlan(t, { mode: 'replace' }, NOON_EAT).uploadedOnly, false, t + ' is upload-only');
+  }
 });
