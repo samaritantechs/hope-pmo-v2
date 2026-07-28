@@ -271,6 +271,7 @@ async function list(db, [dev, which, which2], nowMs) {
       date: d.date, hasBaseline: d.hasBaseline, scope: d.scope, canSwitch: d.canSwitch,
       diag: d.diag } };
   }
+  let asOf = null, stale = false;
   if (which === 'defaulters') {
     // Only the columns this list actually renders. The table carries promise dates, comment
     // trails and timestamps the phone never shows, and every one of them was crossing a mobile
@@ -301,21 +302,30 @@ async function list(db, [dev, which, which2], nowMs) {
     // second label was a workflow this system invented for itself.
     //
     // There are no weekend sheets, so Friday's "tomorrow" is Monday, and so is the weekend's.
-    let snap;
+    let snap, wantDate;
     if (which === 'tomorrow') {
       const u = isoWeekday(nowMs);
       const skip = u >= 5 ? (8 - u) : 1;          // Fri +3, Sat +2, Sun +1, otherwise +1
+      wantDate = addDaysKey(todayKey(nowMs), skip);
       snap = await latestSnapshot(db, 'repayment_snapshots',
-        { snapshot_type: 'today' }, { onDate: addDaysKey(todayKey(nowMs), skip), teams: user.teams });
+        { snapshot_type: 'today' }, { onDate: wantDate, teams: user.teams });
       // Older uploads that used the explicit "Expected - Tomorrow" type still work.
       if (!snap.rows.length) {
         snap = await latestSnapshot(db, 'repayment_snapshots',
           { snapshot_type: 'tomorrow' }, { notAfter: todayKey(nowMs), teams: user.teams });
       }
     } else {
+      wantDate = todayKey(nowMs);
       snap = await latestSnapshot(db, 'repayment_snapshots',
-        { snapshot_type: 'today' }, { notAfter: todayKey(nowMs), teams: user.teams });
+        { snapshot_type: 'today' }, { notAfter: wantDate, teams: user.teams });
     }
+    /* WHICH DAY IS THE OFFICER ACTUALLY LOOKING AT.
+       When today's Expected file has not been uploaded, this read falls back to the most
+       recent one on or before today -- and said nothing. An officer then worked YESTERDAY's
+       customers believing they were today's, which is the "Leo inaonyesha wa jana" report.
+       Falling back is right (an old list beats no list); doing it silently is not. */
+    asOf = snap.date || null;
+    stale = !!(asOf && wantDate && String(asOf) !== String(wantDate));
     rows = snap.rows.filter(r => teamAllowed(user, r.team)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
       amt: num(r.arrears), installment: num(r.payment_expected), custStatus: r.todays_status || '', fuStatus: '',
@@ -328,7 +338,7 @@ async function list(db, [dev, which, which2], nowMs) {
       return pa !== pb ? pa - pb : b.amt - a.amt;   // unpaid first, then largest arrears
     });
   }
-  return { ok: true, rows };
+  return { ok: true, rows, asOf, stale };
 }
 
 /* ---------- daily summary strip ---------- */
