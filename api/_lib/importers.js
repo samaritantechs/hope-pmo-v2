@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { buildHeaderMap, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
@@ -152,7 +153,6 @@ const LOAN_STAGE_COLUMNS = {
   approved_date: ['APPROVED DATE'],
   approved_by: ['APPROVED BY'],
   disbursed_by: ['DISBURSED BY'],
-  created_by: ['CREATED BY'],
   assigned_by: ['ASSIGNED BY'],
 };
 
@@ -166,6 +166,31 @@ const DATE_LOAN_FIELDS = new Set(['disb_date', 'approved_date']);
     loan_stage enum ('unassigned', 'assigned', ... 'disbursed') and it maps whatever
     columns that particular sheet export actually has; every stage's CSV has a
     different subset of these columns, which is fine, everything else is left null. */
+/** WHAT MAKES TWO ROWS THE SAME LOAN.
+    The whole point of the loans table is that a loan is ONE row whose `stage` moves, instead
+    of the same loan living in eight separate sheets. That only holds if the system can
+    recognise a loan it has already seen -- otherwise uploading Unassigned, then Assigned, then
+    Approved for the same loan creates three rows, and re-uploading Approved doubles the
+    sales figure.
+
+    The identity is the loan's own number where the export carries one, and the customer plus
+    their loan sequence where it does not. Deliberately NOT including stage or any amount: a
+    loan that advances a stage, or whose amount is corrected, is still the same loan. */
+export function loanIdentity(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  return t(o.loan_id) || t(o.docket_no)
+    || [t(o.track_no), t(o.full_name), t(o.contact)].filter(Boolean).join('|');
+}
+
+/** The identity, turned into the row's primary key so the database itself refuses a
+    duplicate. Same trick call_logs already uses: dedup by construction, not by remembering
+    to check. md5 is used as a fingerprint here, never as security -- and the SQL migration
+    computes the identical value with md5(...)::uuid so existing rows re-key to match. */
+export function loanId(o) {
+  const hex = createHash('md5').update(loanIdentity(o)).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function importLoans(csvRows, stage) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => {
     const obj = { stage };
@@ -174,7 +199,7 @@ export function importLoans(csvRows, stage) {
       obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v) : textOrNull(v);
     }
     return obj;
-  }).filter(x => x.full_name);
+  }).filter(x => x.full_name).map(o => ({ ...o, id: loanId(o), updated_at: new Date().toISOString() }));
 }
 
 export function importTeams(csvRows) {

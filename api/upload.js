@@ -156,9 +156,14 @@ export default withApi(async (req, res) => {
   // a fresh "today" upload is a NEW today, never an overwrite of a previous one.
   // Re-uploadable "current state per key" tables. call_logs is keyed by its deterministic id
   // so a re-upload of the same history collapses instead of duplicating every call.
+  // `loans` is keyed on the loan's own identity (see loanId in importers.js), which is what
+  // makes the pipeline behave the way it was designed to: ONE row per loan whose stage moves.
+  // As a plain insert it appended, so uploading Unassigned then Assigned then Approved for the
+  // same loan made three rows, and re-uploading Approved doubled the sales figure -- with
+  // nothing on screen to say so.
   const upsertTables = {
     followup_status: 'ref', teams: 'team', access_codes: 'code', roles: 'role',
-    settings: 'key', call_users: 'user_id', call_logs: 'id',
+    settings: 'key', call_users: 'user_id', call_logs: 'id', loans: 'id',
   };
 
   // Hints are the one sheet that is REPLACED wholesale. A tab has MANY tips -- the reader
@@ -191,9 +196,21 @@ export default withApi(async (req, res) => {
     followupSynced = await syncFollowupFromDeck(supabase, records);
   }
 
+  // "Inserted 412" says nothing about whether a second upload of the same file doubles the
+  // figures or corrects them, and there is no append-or-replace option to choose because the
+  // answer is a property of the report, not of the moment. So the answer travels back with
+  // every upload, in words.
+  const behaviour = uploadBatch
+    ? { mode: 'supersede', text: 'This date now reads from THIS upload. An earlier upload of the same date stays in history but no longer counts, so nothing is doubled.' }
+    : table === 'hints'
+      ? { mode: 'replace-all', text: 'The whole tip sheet was replaced. Tips you removed from the file are now gone from the app.' }
+      : upsertTables[table]
+        ? { mode: 'update', text: `Existing rows were UPDATED in place (matched on ${upsertTables[table] === 'id' && table === 'loans' ? 'the loan\'s own number' : upsertTables[table]}). Re-uploading corrects rather than duplicates.` }
+        : { mode: 'append', text: 'These rows were ADDED to the history. Uploading the same file twice would store it twice.' };
+
   return {
     inserted: records.length, table, uploadBatch,
-    followupSynced,
+    followupSynced, behaviour,
     message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
   };
 });
