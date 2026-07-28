@@ -605,11 +605,39 @@ columns are ignored. Where two names are listed, either works.
 | **Hints** (admin) | `hints` | — | TAB, MESSAGE, SW-MESSAGE. **Replaces the whole tip sheet**, so deleting a tip from the sheet removes it. |
 | **Company logo** (admin) | `settings.CALL_LOGO_URL` | — | an image file, not a spreadsheet — shrunk to 512px in the browser and stored inline |
 
-**Which tables replace and which append:**
-- **Replace in place** (one row per key): `followup_status`, `teams`, `access_codes`, `roles`,
-  `settings`, `call_users`, `call_logs`.
-- **Replace wholesale**: `hints`.
-- **Append-only history**: both snapshot tables, `loans`, comments, payments, registers.
+### What a SECOND upload of the same report does
+
+This is fixed per report. There is no append-or-replace option to choose, because the right
+answer is a property of the report, not of the moment — a daily snapshot must supersede, a
+register must accumulate. Getting it wrong silently doubles a figure or silently loses history,
+so the system decides and **tells you, both before you upload and in the result message**.
+
+| Report | Second upload does | Why |
+|---|---|---|
+| Defaulters — Current / Initial | **Supersedes** that date | Each upload carries one batch stamp; readers take the latest date, then the latest batch. The old copy stays in history but stops counting. Nothing doubles. |
+| Expected — Today / Tomorrow / Yesterday / Initial | **Supersedes** that date | Same batch rule. |
+| **Loan pipeline (all 8 stages)** | **Updates the same loan** | A loan is one row whose `stage` moves. Matched on the loan's own number: LOAN ID, else DOCKET#, else TRACK# + name + phone. So Approved can be re-uploaded without doubling sales, and a loan advancing a stage moves rather than being cloned. |
+| Defaulters Followup | **Updates** each customer (`ref`) | |
+| Leaders / Teams | **Updates** each team | |
+| Access Codes / User Roles / Settings | **Updates** each code / role / key | |
+| Call App Users / Call Logs | **Updates** each user / call | Calls are keyed on a fingerprint, so the same call cannot be stored twice. |
+| Hints | **Replaces the whole sheet** | A tip you delete from the file disappears from the app. |
+| Company logo | **Replaces the logo everywhere** | |
+| Comments Log | **Adds** to history | A comment is an event; it happened. |
+| Received Payments | **Adds** | Each payment is an event. |
+| Abnormal Payments, Complaints, Loan Restructuring, Demand Notices | **Adds** | Registers accumulate. |
+
+> **The one to be careful with is the "Adds" group.** Uploading the same Received Payments or
+> Comments file twice really does store it twice. If that happens, the fix is to clean the
+> affected date in Settings → Clean old reports and upload once.
+
+**Underneath, in database terms:**
+- **Batch-superseded**: `repayment_snapshots`, `defaulter_snapshots`
+- **Updated in place** (one row per key): `loans` (by loan identity), `followup_status` (`ref`),
+  `teams`, `access_codes`, `roles`, `settings`, `call_users`, `call_logs`
+- **Replaced wholesale**: `hints`
+- **Append-only history**: `followup_comments`, `received_payments`, `abnormal_payments`,
+  `complaints`, `restructures`, `demand_notices`
 
 ---
 

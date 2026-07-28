@@ -116,6 +116,11 @@
       </select>
     </div>
 
+    <!-- There is no append-or-replace option because the answer is a property of the REPORT,
+         not of the moment: a daily snapshot must supersede, a register must accumulate. So
+         instead of a choice nobody can answer correctly, the page states what will happen. -->
+    <div id="behaviour" class="hint" style="margin-top:-6px"></div>
+
     <label>File</label>
     <label class="file-drop" id="drop">Click to choose an Excel or CSV file<input type="file" id="file" accept=".xlsx,.xls,.csv"></label>
 
@@ -170,6 +175,34 @@ var TYPE_META = {
   'logo': [],
 };
 function isLogo_(){ return $('type').value === 'logo'; }
+
+/** What a SECOND upload of the same report does. This is fixed per report -- it is not a
+    choice, because getting it wrong silently doubles a figure or silently loses history. */
+var BEHAVIOUR = {
+  supersede: 'Kupakia tena tarehe hii kunabadilisha ile ya awali (haiongezi mara mbili). / '
+    + 'Re-uploading the same date SUPERSEDES the earlier upload — nothing is doubled, and the old copy stays in history.',
+  update:    'Kupakia tena kunasahihisha safu zilizopo. / '
+    + 'Re-uploading UPDATES the rows that already exist — corrections land, duplicates do not.',
+  append:    'Kila upakiaji unaongeza kwenye historia. / '
+    + 'Every upload ADDS to the history. Uploading the same file twice stores it twice.',
+  replaceAll:'Inabadilisha laha nzima. Ukiondoa kidokezo kwenye faili, kinatoweka kwenye app. / '
+    + 'Replaces the WHOLE sheet — a tip you delete from the file disappears from the app.',
+  logo:      'Inabadilisha nembo kila mahali mara moja. / Replaces the logo everywhere at once.',
+};
+var TYPE_BEHAVIOUR = {
+  'defaulters-current': 'supersede', 'defaulters-initial': 'supersede',
+  'expected-today': 'supersede', 'expected-tomorrow': 'supersede',
+  'expected-yesterday': 'supersede', 'expected-initial': 'supersede',
+  // One loan is ONE row whose stage moves, matched on its own number -- so the Approved file
+  // can be re-uploaded without doubling sales, and a loan that advances a stage moves rather
+  // than being duplicated.
+  'loans': 'update',
+  'followup': 'update', 'teams': 'update', 'access-codes': 'update', 'user-roles': 'update',
+  'call-users': 'update', 'call-logs': 'update', 'settings': 'update',
+  'comments': 'append', 'received': 'append', 'abnormal': 'append',
+  'complaints': 'append', 'restructures': 'append', 'demand-notices': 'append',
+  'hints': 'replaceAll', 'logo': 'logo',
+};
 function syncFields(){
   var show = TYPE_META[$('type').value] || [];
   ['weekdayWrap', 'dateWrap', 'stageWrap'].forEach(function(id){
@@ -180,6 +213,8 @@ function syncFields(){
   $('file').setAttribute('accept', logo ? 'image/*' : '.xlsx,.xls,.csv');
   if (logo) $('sheetWrap').classList.add('hide');
   $('logoPrev').classList.toggle('hide', !logo);
+  var b = $('behaviour');
+  if (b) b.textContent = BEHAVIOUR[TYPE_BEHAVIOUR[$('type').value]] || '';
   if (!$('drop').classList.contains('has'))
     $('drop').firstChild.nodeValue = logo ? 'Click to choose the logo image (PNG or JPG)'
                                           : 'Click to choose an Excel or CSV file';
@@ -495,7 +530,10 @@ $('go').addEventListener('click', function(){
       var zeroRows = res.body && (res.body.inserted === 0);
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
         msg.className = 'msg ok';
-        msg.textContent = 'Done — inserted ' + res.body.inserted + ' row(s) into ' + res.body.table + '.'
+        msg.textContent = 'Done — ' + res.body.inserted + ' row(s) into ' + res.body.table + '.'
+          // "Inserted 412" never said whether a second upload of the same file doubles the
+          // figures or corrects them. The server now answers that with every upload.
+          + (res.body.behaviour ? '\n' + res.body.behaviour.text : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
           + (res.body.message ? '\n' + res.body.message : '');
