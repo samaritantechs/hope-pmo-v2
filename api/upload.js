@@ -29,8 +29,24 @@ import {
 export const STAMPED_TABLES = new Set(['loans', 'received_payments', 'abnormal_payments',
   'complaints', 'restructures', 'demand_notices', 'followup_comments']);
 
+/* Four of the stamped tables are ALSO written by people inside the app -- an officer's
+   follow-up comment, a complaint logged at the desk, a restructure request, a demand notice
+   issued from the Legal screen. Those rows are somebody's work, not part of any upload, and
+   "replace the 27th's report" must never take them.
+
+   They are told apart by upload_batch: a row that arrived in an upload has one, a row typed in
+   the app does not. Rows that predate the stamp do not have one either, which is the safe way
+   round -- they survive.
+
+   The other three are only ever uploaded, so replacing a date there can take everything
+   carrying that stamp, including rows backfilled when the stamp was introduced. */
+export const APP_WRITABLE_TABLES = new Set(['complaints', 'restructures', 'demand_notices',
+  'followup_comments']);
+
 export function stampPlan(table, meta = {}, nowMs = Date.now()) {
-  if (!STAMPED_TABLES.has(table)) return { stamped: false, uploadDate: null, replace: false, scope: {} };
+  if (!STAMPED_TABLES.has(table)) {
+    return { stamped: false, uploadDate: null, replace: false, scope: {}, uploadedOnly: false };
+  }
   // Free-form on purpose: yesterday's report can be re-done today without pretending it is
   // today's. Defaults to today on the EAT clock, not the server's UTC one.
   const uploadDate = /^\d{4}-\d{2}-\d{2}$/.test(String(meta.uploadDate || ''))
@@ -41,7 +57,7 @@ export function stampPlan(table, meta = {}, nowMs = Date.now()) {
   // not take the 27th's Assigned report with it.
   const scope = { upload_date: uploadDate };
   if (table === 'loans' && meta.stage) scope.stage = meta.stage;
-  return { stamped: true, uploadDate, replace, scope };
+  return { stamped: true, uploadDate, replace, scope, uploadedOnly: APP_WRITABLE_TABLES.has(table) };
 }
 
 export default withApi(async (req, res) => {
@@ -179,6 +195,8 @@ export default withApi(async (req, res) => {
   if (plan.replace) {
     let q = supabase.from(table).delete();
     for (const [k, v] of Object.entries(plan.scope)) q = q.eq(k, v);
+    // Never take what a person typed in the app.
+    if (plan.uploadedOnly) q = q.not('upload_batch', 'is', null);
     const { data: gone, error: delErr } = await q.select('id');
     if (delErr) throw new Error('Could not clear the previous report for that date: ' + delErr.message);
     replaced = (gone || []).length;
@@ -256,7 +274,8 @@ export default withApi(async (req, res) => {
   // every upload, in words.
   const behaviour = stamped
     ? (replaced || String(meta.mode || '').toLowerCase() === 'replace'
-        ? { mode: 'replace-date', text: `Replaced the ${uploadDate} report: ${replaced} earlier row(s) removed, ${records.length} written. No other date was touched.` }
+        ? { mode: 'replace-date', text: `Replaced the ${uploadDate} report: ${replaced} earlier row(s) removed, ${records.length} written. No other date was touched.`
+            + (plan.uploadedOnly ? ' Anything staff entered in the app was left alone — only uploaded rows were replaced.' : '') }
         : { mode: 'append', text: `Added to the ${uploadDate} report. Uploading the same file again under this date would store it twice — choose "Replace all for this date" to redo a day instead.` })
     : SNAPSHOT_TABLES.has(table)
     ? { mode: 'supersede', text: 'This date now reads from THIS upload. An earlier upload of the same date stays in history but no longer counts, so nothing is doubled.' }
