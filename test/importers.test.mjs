@@ -4,6 +4,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
+// upload.js builds its Supabase client at import time; these keep that from throwing in
+// tests that only exercise its pure helpers.
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
+
 const { importAccessCodes, importUserRoles } = await import('../api/_lib/importers.js');
 
 test('importAccessCodes: ALL -> null teams, comma lists -> arrays, incomplete rows skipped', () => {
@@ -74,4 +79,39 @@ test('the call agent is read from any of the names the exports use', async () =>
     const out = importLoans([[header, 'FULLNAME'], ['Callagent1', 'AMINA H']], 'assigned');
     assert.equal(out[0].created_by, 'Callagent1', header + ' should map to created_by');
   }
+});
+
+// The upload stamp: which report a row belongs to, so one day can be redone without touching
+// any other. Not the dates inside the file -- a 27 July applications report holds June dates.
+test('the upload stamp decides what a second upload of the same report does', async () => {
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-07-27T09:00:00Z');
+
+  // Snapshots already supersede by their own date, so they carry no stamp and no choice.
+  assert.equal(stampPlan('repayment_snapshots', {}, NOON_EAT).stamped, false);
+  assert.equal(stampPlan('defaulter_snapshots', {}, NOON_EAT).stamped, false);
+
+  // Accumulating reports do, and default to TODAY on the EAT clock.
+  const dflt = stampPlan('received_payments', {}, NOON_EAT);
+  assert.equal(dflt.stamped, true);
+  assert.equal(dflt.uploadDate, '2026-07-27');
+  assert.equal(dflt.replace, false);
+
+  // 01:00 EAT is still the 27th, though the server's UTC clock says the 26th.
+  assert.equal(stampPlan('received_payments', {}, Date.parse('2026-07-26T22:00:00Z')).uploadDate, '2026-07-27');
+
+  // A date can be named freely -- yesterday's report can be redone today.
+  assert.equal(stampPlan('complaints', { uploadDate: '2026-07-20' }, NOON_EAT).uploadDate, '2026-07-20');
+  // Anything that is not a real date falls back to today rather than writing rubbish.
+  assert.equal(stampPlan('complaints', { uploadDate: 'yesterday' }, NOON_EAT).uploadDate, '2026-07-27');
+
+  // Replace is scoped to that report's own stamp, never the whole table.
+  const rep = stampPlan('received_payments', { uploadDate: '2026-07-27', mode: 'replace' }, NOON_EAT);
+  assert.equal(rep.replace, true);
+  assert.deepEqual(rep.scope, { upload_date: '2026-07-27' });
+
+  // The pipeline uploads one stage at a time, so replacing the 27th's APPROVED report must not
+  // take the 27th's ASSIGNED report with it.
+  const loans = stampPlan('loans', { uploadDate: '2026-07-27', mode: 'replace', stage: 'approved' }, NOON_EAT);
+  assert.deepEqual(loans.scope, { upload_date: '2026-07-27', stage: 'approved' });
 });
