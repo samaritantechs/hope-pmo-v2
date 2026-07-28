@@ -421,3 +421,33 @@ test('a team code is recognised as a team code, however it is typed', async () =
   assert.equal((await callApi(db, 'api_teamCode', [''], NOW)).ok, false);
   assert.equal((await callApi(db, 'api_teamCode', [null], NOW)).ok, false);
 });
+
+// 0.147 GB of data became 81 GB of transfer in a month because every officer downloaded every
+// team's book on every load. Narrowing happens at the DATABASE now, so the wrong team's rows
+// never travel -- but under-matching here would show an officer an EMPTY list with no error,
+// which is worse than the waste. Both directions are pinned.
+test('an officer is served only their own team, and case never loses them their list', async () => {
+  const t = makeTables();
+  // MBAGALA's defaulter must never reach a KONGOWE officer, and KONGOWE's must always arrive.
+  t.followup_status.push({ ref: '777', team: 'MBAGALA', full_name: 'OTHER TEAM DEF',
+    contact: '0714000777', arrears: 500, status: 'Defaulter', ds: '2-6', days_elapsed: 5 });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+
+  const mine = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.deepEqual(mine.rows.map(r => r.ref), ['555']);
+  assert.equal(mine.rows.every(r => r.team === 'KONGOWE'), true);
+
+  // An ADMIN sees everything -- no team filter is applied at all when scope is ALL teams.
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788999000'], NOW);
+  const all = await callApi(db, 'api_callList', ['d3', 'defaulters'], NOW);
+  assert.deepEqual(all.rows.map(r => r.ref).sort(), ['555', '777']);
+
+  // A team spelled in lower case on the account must still match the stored UPPERCASE name.
+  // Getting this wrong is silent: the officer simply sees no customers.
+  const db2 = fakeDb(makeTables());
+  await callApi(db2, 'api_callRegister', ['d4', 'CASE OFFICER', '', '', '0712999888', 'KON123'], NOW);
+  db2._dump('call_users').find(u => u.name === 'CASE OFFICER').team = 'kongowe';
+  const lower = await callApi(db2, 'api_callList', ['d4', 'defaulters'], NOW);
+  assert.deepEqual(lower.rows.map(r => r.ref), ['555'], 'lower-case team must still find its list');
+});

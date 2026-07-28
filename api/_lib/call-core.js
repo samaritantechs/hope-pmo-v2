@@ -1,7 +1,7 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, resolveLatestPerKey } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
 import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
@@ -275,8 +275,16 @@ async function list(db, [dev, which, which2], nowMs) {
     // Only the columns this list actually renders. The table carries promise dates, comment
     // trails and timestamps the phone never shows, and every one of them was crossing a mobile
     // connection for every customer, every load.
-    const fu = await fetchAll(() => db.from('followup_status').select(
-      'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team'));
+    // Narrowed to this officer's team AT THE DATABASE. Team names are stored uppercase by
+    // normTeam on every path that writes them, and pseudoUser uppercases the officer's, so
+    // this matches exactly what the JS filter below would have kept -- it just no longer
+    // downloads the other thirty-nine teams first.
+    const fu = await fetchAll(() => {
+      let q = db.from('followup_status').select(
+        'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team');
+      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      return q;
+    });
     // Skip pure FK stubs (created so an EXPECTED customer's comment can reference
     // followup_status) -- a real defaulter row always carries status/arrears from its upload.
     rows = fu.filter(r => teamAllowed(user, r.team) && !(r.status == null && r.arrears == null)).map(r => ({
@@ -298,15 +306,15 @@ async function list(db, [dev, which, which2], nowMs) {
       const u = isoWeekday(nowMs);
       const skip = u >= 5 ? (8 - u) : 1;          // Fri +3, Sat +2, Sun +1, otherwise +1
       snap = await latestSnapshot(db, 'repayment_snapshots',
-        { snapshot_type: 'today' }, { onDate: addDaysKey(todayKey(nowMs), skip) });
+        { snapshot_type: 'today' }, { onDate: addDaysKey(todayKey(nowMs), skip), teams: user.teams });
       // Older uploads that used the explicit "Expected - Tomorrow" type still work.
       if (!snap.rows.length) {
         snap = await latestSnapshot(db, 'repayment_snapshots',
-          { snapshot_type: 'tomorrow' }, { notAfter: todayKey(nowMs) });
+          { snapshot_type: 'tomorrow' }, { notAfter: todayKey(nowMs), teams: user.teams });
       }
     } else {
       snap = await latestSnapshot(db, 'repayment_snapshots',
-        { snapshot_type: 'today' }, { notAfter: todayKey(nowMs) });
+        { snapshot_type: 'today' }, { notAfter: todayKey(nowMs), teams: user.teams });
     }
     rows = snap.rows.filter(r => teamAllowed(user, r.team)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
@@ -367,7 +375,7 @@ async function dailySummary(db, [dev], nowMs) {
      tomorrow, with Friday and the weekend rolling on to Monday. */
   const u = isoWeekday(nowMs);
   const kSnap = await latestSnapshot(db, 'repayment_snapshots',
-    { snapshot_type: 'today' }, { onDate: addDaysKey(today, u >= 5 ? (8 - u) : 1) });
+    { snapshot_type: 'today' }, { onDate: addDaysKey(today, u >= 5 ? (8 - u) : 1), teams: user.teams });
   const kRows = mine(kSnap.rows);
   const kExp = kRows.reduce((s, r) => s + num(r.payment_expected), 0);
   const kCol = kRows.reduce((s, r) => s + collectedOf(r), 0);
@@ -377,7 +385,7 @@ async function dailySummary(db, [dev], nowMs) {
      Same per-day batch resolution the dashboard uses on weekends, so a re-upload of any day
      supersedes rather than doubles. */
   const weekAll = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' },
-    weekMondayKey(nowMs), addDaysKey(weekMondayKey(nowMs), 4));
+    weekMondayKey(nowMs), addDaysKey(weekMondayKey(nowMs), 4), user.teams);
   const wRows = mine([...resolveLatestPerKey(weekAll, r => r.snapshot_date).values()].flatMap(s => s.rows));
   const wExp = wRows.reduce((s, r) => s + num(r.payment_expected), 0);
   const wCol = wRows.reduce((s, r) => s + collectedOf(r), 0);
