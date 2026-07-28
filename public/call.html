@@ -467,22 +467,37 @@ function saveCacheToDevice_(){
 function sourceFresh_(src){
   return !!(S.cache[src] && S.cacheAt[src] && (Date.now() - S.cacheAt[src] < CACHE_COOLDOWN_MS));
 }
+/** Puts a logo in both places. `instant` skips the load check, which is safe only for a logo
+    this device has already displayed successfully. */
+function setLogo_(url, instant){
+  [['#regLogo', '#regMark'], ['#appLogo', '#appMark']].forEach(function(p){
+    var img = $(p[0]), mk = $(p[1]);
+    if (!img || img.src === url) return;
+    var show = function(){ img.classList.remove('hide'); if (mk) mk.classList.add('hide');
+      if (window.HOPEBrand) window.HOPEBrand.icon(url); };       // tab + add-to-home-screen icon
+    // Only a logo that actually LOADS replaces the mark -- a 404 or an unset setting leaves
+    // the mark standing rather than putting a broken-image icon in the header.
+    img.onload = show;
+    img.onerror = function(){ img.classList.add('hide'); if (mk) mk.classList.remove('hide'); };
+    img.src = url;
+    if (instant) show();
+  });
+}
+
 function boot(){
   loadCacheFromDevice_();
   var loggedOut = false;
   try { loggedOut = localStorage.getItem('hcLoggedOut') === '1'; } catch(e){}
+  // The logo is painted from the device BEFORE the network is asked. Waiting for boot meant
+  // the drawn stand-in showed first and then visibly swapped a second or two later, on every
+  // single launch -- a flicker that reads like a glitch in an app people open all day.
+  try { var cached = localStorage.getItem('hcLogo'); if (cached) setLogo_(cached, true); } catch(e){}
   srv('api_callBoot', DEV).then(function(d){
     if (d.brand){ $('#bootBrand').textContent = d.brand; $('#regTitle').textContent = 'Karibu ' + d.brand + ' Calls'; }
-    // Only a logo that actually LOADS replaces the mark -- a 404 or an unset setting leaves
-    // the mark standing rather than putting a broken-image icon in the header.
-    if (d.logo) [['#regLogo', '#regMark'], ['#appLogo', '#appMark']].forEach(function(p){
-      var img = $(p[0]), mk = $(p[1]);
-      if (!img) return;
-      img.onload = function(){ img.classList.remove('hide'); if (mk) mk.classList.add('hide');
-        if (window.HOPEBrand) window.HOPEBrand.icon(d.logo); };   // tab + add-to-home-screen icon
-      img.onerror = function(){ img.classList.add('hide'); if (mk) mk.classList.remove('hide'); };
-      img.src = d.logo;
-    });
+    if (d.logo){
+      setLogo_(d.logo, false);
+      try { localStorage.setItem('hcLogo', d.logo); } catch(e){}   // instant on every later launch
+    }
     if (d.ok && !loggedOut) return enterApp(d);
     // Not registered yet, OR logged out on this device -> show sign-in. The team list is no
     // longer sent to this screen: publishing every team name to an unauthenticated device was

@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.5",
-  "notes": "Nembo ya HOPE kila mahali, Exp.Def kwa viongozi, sales ya mwezi, na msimbo mmoja kwa afisa. / The HOPE logo everywhere including the app icon, Exp.Def for recycling leaders, monthly sales, and one code that takes an officer straight to their calls.",
+  "versionCode": 7,
+  "versionName": "1.5.1",
+  "notes": "Nembo ya HOPE kila mahali pamoja na aikoni ya app, bila kupepesa. / The HOPE logo everywhere including the app icon, with no flicker on open.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

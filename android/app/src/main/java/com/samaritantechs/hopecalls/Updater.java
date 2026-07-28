@@ -36,6 +36,10 @@ import java.net.URL;
 class Updater {
     private static final String PREF_SKIPPED = "skippedVersion";
     private static final String PREF_TRIED = "triedVersion";
+    private static final String PREF_SKIPPED_AT = "skippedAt";
+    /** How long "Later" holds. A day: long enough not to nag, short enough that a
+        declined update is never a permanent dead end. */
+    private static final long SKIP_FOR_MS = 24L * 60 * 60 * 1000;
 
     static void checkInBackground(final MainActivity activity, final String baseUrl) {
         new Thread(() -> {
@@ -48,10 +52,14 @@ class Updater {
                 final String notes = j.optString("notes", "");
                 final String name = j.optString("versionName", String.valueOf(remote));
                 if (url.isEmpty()) return;
-                // "Later" is remembered per version, so the prompt does not nag on every launch
-                // for a build the user has already declined -- but a NEWER build still asks.
+                // "Later" quietens the prompt for this version -- but only for a day, not
+                // forever. It used to be permanent, and a single tap on Later (easy to give a
+                // prompt that was, at the time, offering a build that could not install) meant
+                // that handset would never be told about that version again. The officer is
+                // then stranded on an old build with no way back to the offer.
                 int skipped = activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE).getInt(PREF_SKIPPED, 0);
-                if (skipped == remote) return;
+                long skippedAt = activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE).getLong(PREF_SKIPPED_AT, 0);
+                if (skipped == remote && System.currentTimeMillis() - skippedAt < SKIP_FOR_MS) return;
                 // Have we already been round this loop for THIS version and come back still
                 // running the old build? Then the install did not take -- a download that
                 // served a stale file, or "install unknown apps" never granted -- and asking
@@ -108,7 +116,8 @@ class Updater {
                 })
                 .setNegativeButton("Baadaye / Later", (d, w) ->
                         activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE)
-                                .edit().putInt(PREF_SKIPPED, versionCode).apply())
+                                .edit().putInt(PREF_SKIPPED, versionCode)
+                                .putLong(PREF_SKIPPED_AT, System.currentTimeMillis()).apply())
                 .show();
     }
 
