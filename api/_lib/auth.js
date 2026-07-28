@@ -1,12 +1,15 @@
-import { supabase } from './supabase.js';
+import { supabase, runQuery, friendlyDbError } from './supabase.js';
 
 /** Same shape and job as auth_() in Code.gs: resolve an access code to
     {code, name, role, teams, tabs}. Throws on an invalid code -- callers don't need to
     re-check, same as before. */
 export async function authCode(code) {
   if (!code) throw new AuthError('Access code required.');
-  const { data, error } = await supabase.from('access_codes').select('*').eq('code', code).maybeSingle();
-  if (error) throw new AuthError('Auth lookup failed: ' + error.message);
+  // Sign-in is the one request EVERYTHING else waits behind, so it is the one that most needs
+  // to survive a momentary blip rather than turn the whole company away at the door.
+  const { data, error } = await runQuery(() =>
+    supabase.from('access_codes').select('code, name, role, teams, tabs').eq('code', code).maybeSingle());
+  if (error) throw new AuthError(friendlyDbError(error));
   if (!data) throw new AuthError('Invalid access code.');
   return {
     code: data.code,
