@@ -746,7 +746,20 @@ function exportBoard(id, kind){
   download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), name+'.xls');
 }
 function loading(){ $('#view').innerHTML = '<div class="sk"></div>'; }
-function failed(e){ $('#view').innerHTML = '<div class="msg bad">Imeshindikana: '+esc(String(e && e.message || e))+'</div>'; }
+/** A failure has to READ like a failure. This printed the raw server payload straight onto the
+    screen, so a backend error came out as a page of JSON -- unreadable, alarming, and it leaked
+    customer names and phone numbers onto a screen anyone nearby could see. The message is now
+    trimmed to something a person can act on, and anything that looks like raw data is dropped
+    rather than shown. */
+function failed(e){
+  var raw = String((e && e.message) || e || '');
+  var looksLikeData = raw.charAt(0) === '[' || raw.charAt(0) === '{' || raw.length > 300;
+  var msg = looksLikeData
+    ? 'Mfumo haukujibu vizuri. Jaribu tena baada ya sekunde chache. / The server did not answer properly — try again in a few seconds.'
+    : raw;
+  $('#view').innerHTML = '<div class="msg bad"><b>Imeshindikana / Could not load.</b><br>' + esc(msg) + '</div>';
+  if (looksLikeData && window.console) console.error('[hope] raw failure:', raw.slice(0, 2000));
+}
 
 /* ----------------------------------------------------------- per-tab renderers */
 var VIEWS = {};

@@ -18,38 +18,26 @@ const PAGE_SIZE = 1000;
     paginating with .range() until a page comes back short of a full page (the sign nothing's
     left). Takes a function that BUILDS the query, not a query object -- .range() needs to apply
     to a fresh copy each page, not a query that's already been sent. */
-const WAVE = 6;   // pages fetched at once
+/** Pages until a short page arrives -- ONE PAGE AT A TIME, deliberately.
 
+    A wave of six concurrent page requests was tried and reverted the same day. It made each
+    individual read finish sooner, but every screen fires several of these at once, and with
+    200+ users on a live system the multiplied concurrency exhausted the database's connection
+    pool: logins started failing with "failed to fetch", Settings would not open, and the
+    data-heavy tabs errored. Latency per read is a smaller problem than the whole system
+    falling over, so this stays sequential.
+
+    The real fix for a slow read is to ask for FEWER ROWS AND FEWER COLUMNS, which is what the
+    narrowed selects do -- not to ask for the same excess faster. */
 export async function fetchAll(buildQuery) {
-  const first = await buildQuery().range(0, PAGE_SIZE - 1);
-  if (first.error) throw first.error;
-  let all = first.data || [];
-  if (all.length < PAGE_SIZE) return all;    // the common case: one round trip, done
-
-  /* Beyond the first page the old loop fetched page after page ONE AT A TIME, each waiting for
-     the last. On a table with 40,000 rows that is forty round trips laid end to end -- and
-     every one of them crosses the internet from the serverless function to the database, so the
-     wait is dominated by latency rather than by the work. It is why officers were watching a
-     spinner: the phone's defaulter list reads the whole follow-up book, and the whole book was
-     arriving in single file.
-
-     Pages are independent, so they are fetched in waves instead. Same rows, same order (the
-     wave's results are concatenated in the order the pages were requested), a fraction of the
-     wall clock. The wave stops at the first short page, which is still the signal that there is
-     nothing left. */
-  let from = PAGE_SIZE;
-  for (;;) {
-    const pages = await Promise.all(
-      Array.from({ length: WAVE }, (_, i) =>
-        buildQuery().range(from + i * PAGE_SIZE, from + (i + 1) * PAGE_SIZE - 1)));
-    let done = false;
-    for (const p of pages) {
-      if (p.error) throw p.error;
-      const rows = p.data || [];
-      all = all.concat(rows);
-      if (rows.length < PAGE_SIZE) done = true;   // this page ran out; later pages are empty
-    }
-    if (done) return all;
-    from += WAVE * PAGE_SIZE;
+  let all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
   }
+  return all;
 }
