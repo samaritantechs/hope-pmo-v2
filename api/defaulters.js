@@ -19,16 +19,21 @@ export default withApi(async (req, res) => {
     snapDate = latest ? latest.snapshot_date : null;
   }
 
-  // OPTIMIZATION: Swapped select('*') with only the explicit columns your UI actually displays.
-  // Add or remove fields below (e.g., id, customer_name, amount_due) to match your frontend needs.
+  // OPTIMIZATION: Filter directly by team inside the database trip to prevent app slowness.
   const data = snapDate
-    ? await fetchAll(() => supabase
-        .from('defaulter_snapshots')
-        .select('id, team, customer_id, amount_due, phone_number') 
-        .eq('snapshot_type', type)
-        .eq('weekday', wd)
-        .eq('snapshot_date', snapDate)
-      )
+    ? await fetchAll(() => {
+        let q = supabase
+          .from('defaulter_snapshots')
+          .select('id, team, customer_id, amount_due, phone_number, full_name, arrears') 
+          .eq('snapshot_type', type)
+          .eq('weekday', wd)
+          .eq('snapshot_date', snapDate);
+
+        if (user && user.teams && user.teams.length) {
+          q = q.in('team', user.teams);
+        }
+        return q;
+      })
     : [];
 
   const rows = data.filter(r => teamAllowed(user, r.team));
