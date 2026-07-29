@@ -19,12 +19,13 @@ export default withApi(async (req, res) => {
     snapDate = latest ? latest.snapshot_date : null;
   }
 
-  // OPTIMIZATION: Filter directly by team inside the database trip to prevent app slowness.
+  // FIXED OPTIMIZATION: Removed 'payment_expected' (which caused the crash) 
+  // and included the real columns needed for the defaulter cards:
   const data = snapDate
     ? await fetchAll(() => {
         let q = supabase
           .from('defaulter_snapshots')
-          .select('id, team, customer_id, amount_due, phone_number, full_name, arrears') 
+          .select('id, ref, team, amount_due, weekday, snapshot_type, snapshot_date, full_name, contact, arrears') 
           .eq('snapshot_type', type)
           .eq('weekday', wd)
           .eq('snapshot_date', snapDate);
