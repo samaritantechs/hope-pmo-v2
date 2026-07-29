@@ -1,7 +1,6 @@
 import { fetchAll } from './supabase.js';
 
 /** Batch-aware snapshot reads.
-
     Snapshot tables are append-only BY DESIGN -- a re-upload never overwrites history. But the
     original reads fetched every row for the latest snapshot_date, so re-uploading a corrected
     file for the same day stacked BOTH copies into every KPI (double customers, double amounts).
@@ -58,8 +57,12 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
      Deliberately NOT applied to the date resolution above: the latest snapshot date must stay
      a property of the whole upload, or a team with no rows that day would silently fall back
      to an older date and the officer would work yesterday's list without being told. */
+  
+  // OPTIMIZATION: Swapped select('*') for a performance optimized column selection rule
+  const cols = opts.columns || 'id, team, snapshot_date, upload_batch, created_at, payment_expected, arrears, todays_payment, todays_status';
+  
   const all = await fetchAll(() => {
-    let q = db.from(table).select('*').eq('snapshot_date', date);
+    let q = db.from(table).select(cols).eq('snapshot_date', date);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
     if (opts.teams && opts.teams.length) q = q.in('team', upperTeams(opts.teams));
     return q;
@@ -72,9 +75,12 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
 /** One-query fetch of every snapshot row in [fromDate, toDate] matching `filters` -- raw,
     ungrouped. Pair with resolveLatestPerKey to batch-resolve per day/weekday without a round
     trip per group (the weekend dashboard reads a whole week in two queries this way). */
-export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams) {
+export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams, columns) {
+  // OPTIMIZATION: Replaced select('*') with specific columns for computing historical KPIs
+  const cols = columns || 'id, team, snapshot_date, upload_batch, created_at, payment_expected, arrears, todays_payment, todays_status';
+  
   return fetchAll(() => {
-    let q = db.from(table).select('*').gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
+    let q = db.from(table).select(cols).gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
     if (teams && teams.length) q = q.in('team', upperTeams(teams));   // narrow at the database
     return q;
