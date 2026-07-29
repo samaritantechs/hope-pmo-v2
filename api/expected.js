@@ -16,8 +16,7 @@ export default withApi(async (req, res) => {
     snapDate = latest ? latest.snapshot_date : null;
   }
 
-  // OPTIMIZATION: Filter by the user's specific team directly inside the database query!
-  // This prevents downloading all 30k customers and speeds up loading times to milliseconds.
+  // OPTIMIZATION: Filter by team and include ALL required phone dialing parameters
   const data = snapDate
     ? await fetchAll(() => {
         let q = supabase
@@ -26,7 +25,6 @@ export default withApi(async (req, res) => {
           .eq('snapshot_type', type)
           .eq('snapshot_date', snapDate);
         
-        // If the user's view permissions are constrained to specific branch groups, narrow it here
         if (user && user.teams && user.teams.length) {
           q = q.in('team', user.teams);
         }
