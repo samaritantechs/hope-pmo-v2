@@ -17,16 +17,17 @@ export default withApi(async (req, res) => {
     snapDate = latest ? latest.snapshot_date : null;
   }
 
-  // OPTIMIZATION: Swapped select('*') with only the explicit columns your UI actually displays.
-  // Add or remove fields below (e.g., id, customer_name, amount_due) to match your frontend needs.
+   // FIXED OPTIMIZATION: Added full_name, contact, and id columns back 
+  // so the mobile app can show customer names and make the bars clickable!
   const data = snapDate
     ? await fetchAll(() => supabase
         .from('repayment_snapshots')
-        .select('id, ref, team, due_summary, payment_expected, balance')
+        .select('id, ref, team, due_summary, payment_expected, balance, full_name, contact')
         .eq('snapshot_type', type)
         .eq('snapshot_date', snapDate)
       )
     : [];
+
 
   const rows = data.filter(r => teamAllowed(user, r.team));
   return { rows, count: rows.length };
