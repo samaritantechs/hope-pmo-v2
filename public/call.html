@@ -471,6 +471,13 @@ function batteryGuidanceHtml_(){
     -- rather than starting from zero every time the page loads. */
 var CACHE_COOLDOWN_MS = 60 * 60 * 1000;
 var CACHE_LS_KEY = 'hcListCache_v1';
+/* Who this handset belongs to, kept on the handset. Tapping a customer's number hands the
+   phone to the dialler, and Android is free to throw this page away while the officer talks --
+   on the cheap handsets in the field it usually does. Coming back then meant the blue screen
+   again, and a wait on the network, after EVERY call. The lists were already saved here; the
+   only thing standing between the officer and their work was asking the server who they are,
+   which it had already answered that morning. */
+var BOOT_LS_KEY = 'hcBoot_v1';
 function loadCacheFromDevice_(){
   try {
     var raw = localStorage.getItem(CACHE_LS_KEY);
@@ -514,13 +521,30 @@ function boot(){
   // the drawn stand-in showed first and then visibly swapped a second or two later, on every
   // single launch -- a flicker that reads like a glitch in an app people open all day.
   try { var cached = localStorage.getItem('hcLogo'); if (cached) setLogo_(cached, true); } catch(e){}
+
+  // Straight to work on a handset that has already been through this, without waiting for the
+  // network. The server is still asked, behind the screen -- see below for what happens when
+  // it disagrees. A handset that was logged out here is not let back in this way.
+  var warm = null;
+  if (!loggedOut) { try { warm = JSON.parse(localStorage.getItem(BOOT_LS_KEY) || 'null'); } catch(e){} }
+  if (warm && warm.ok) enterApp(warm);
+
   srv('api_callBoot', DEV).then(function(d){
     if (d.brand){ $('#bootBrand').textContent = d.brand; $('#regTitle').textContent = 'Karibu ' + d.brand + ' Calls'; }
     if (d.logo){
       setLogo_(d.logo, false);
       try { localStorage.setItem('hcLogo', d.logo); } catch(e){}   // instant on every later launch
     }
-    if (d.ok && !loggedOut) return enterApp(d);
+    if (d.ok && !loggedOut){
+      try { localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      return enterApp(d);                     // fresh name, team and tabs land on the open app
+    }
+    // The server says this handset is no longer signed in -- it was de-registered, or the
+    // officer left. Whatever we let them see a moment ago has to go. Clearing what we remember
+    // and starting over lands them on the sign-in screen by the ordinary path, with no second
+    // way in to keep correct: the next launch finds nothing saved, so this cannot loop.
+    try { localStorage.removeItem(BOOT_LS_KEY); } catch(e){}
+    if (S.entered){ try { localStorage.removeItem(CACHE_LS_KEY); } catch(e2){} location.reload(); return; }
     // Not registered yet, OR logged out on this device -> show sign-in. The team list is no
     // longer sent to this screen: publishing every team name to an unauthenticated device was
     // half of what made self-registration possible.
@@ -538,20 +562,23 @@ function boot(){
     // sign-in screen made them re-enter a team code that was never the problem -- and on a
     // handset that is already registered, that is a dead end. Stay here, say what happened,
     // and give them a button.
+    if (window.console) console.error('[hope] boot failed:', e);
+    // Already working from what is on the handset: a dead connection is not a dead end, and it
+    // is certainly not a reason to throw an officer off a screen full of their own customers.
+    if (S.entered) return;
     var spin = $('#bootSpin'); if (spin) spin.classList.add('hide');
     $('#bootErr').classList.remove('hide');
-    if (window.console) console.error('[hope] boot failed:', e);
   });
 }
 function doLogout(){
   try { localStorage.setItem('hcLoggedOut', '1'); } catch(e){}
   if (S.syncTimer) { clearInterval(S.syncTimer); S.syncTimer = null; }
-  S.boot = null; S.cache = {}; S.cacheAt = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
+  S.boot = null; S.entered = false; S.cache = {}; S.cacheAt = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
   _sumAt = 0;
   var _ds = $('#dayStrip'); if (_ds) _ds.classList.add('hide');
   ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
-  try { localStorage.removeItem(CACHE_LS_KEY); } catch(e){}
+  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); } catch(e){}
   $('#sheet').style.display = 'none';
   $('#confirmModal').style.display = 'none';
   var q = $('#listQ'); if (q) q.value = '';
@@ -600,24 +627,42 @@ $('#regBtn').onclick = function(){
   srv('api_callRegister', DEV, name, '', code, phone, pass).then(function(){
     return srv('api_callBoot', DEV);
   }).then(function(d){
-    if (d.ok) { try { localStorage.removeItem('hcLoggedOut'); } catch(e){} return enterApp(d); }
+    if (d.ok) {
+      // Remember who this handset is from the very first sign-in, so the NEXT launch -- and
+      // every return from a phone call -- goes straight in instead of waiting on the network.
+      try { localStorage.removeItem('hcLoggedOut'); localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      return enterApp(d);
+    }
     throw new Error('Registration did not complete. Try again.');
   }).catch(function(e){
     $('#regBtn').disabled = false; $('#regBtn').textContent = 'Endelea / Continue';
     $('#regErr').innerHTML = '<div class="err">' + esc(String(e)) + '</div>';
   });
 };
+/** Called twice on a warm start: once from what the handset remembers, so the officer is
+    working immediately, and again when the server answers. The second time must only correct
+    the name, team and tabs -- re-running the rest would re-wire every button, restart the sync
+    loop and throw away whatever list they had already started reading. */
 function enterApp(d){
   S.boot = d; S.syncEverySec = d.syncEverySec || 300;
   $('#scrBoot').classList.add('hide'); $('#scrRegister').classList.add('hide');
   $('#scrApp').style.display = 'flex';
   $('#appName').textContent = d.name || '\u2014';
   $('#appTeam').textContent = d.leader ? ((d.role||'Leader') + ' \u00B7 ' + (d.leaderTeams==='ALL' || !d.leaderTeams ? 'All teams' : d.leaderTeams.split(',').length + ' teams')) : d.team;
-  if (d.leader) $('#tabReports').classList.remove('hide');
+  // A leader demoted overnight must LOSE the tab, not merely fail to gain it -- so these are
+  // set both ways round rather than only ever revealed.
+  $('#tabReports').classList.toggle('hide', !d.leader);
   // The rotation list belongs to whoever the teams table names as a GMO, MANAGER or BIKE
   // officer. Showing the tab to everyone would just hand most officers an empty screen.
-  if (d.expdfLeader) $('#tabExpdf').classList.remove('hide');
+  $('#tabExpdf').classList.toggle('hide', !d.expdfLeader);
   $('#logoutBtn').classList.toggle('hide', d.logoutEnabled === false);
+  if (S.entered) {
+    // Tabs can appear or disappear here, and the one they are standing on may have just gone.
+    if (S.view === 'reports' && !d.leader) setView('today');
+    else if (S.view === 'expdf' && !d.expdfLeader) setView('today');
+    return;
+  }
+  S.entered = true;
   $('#logoutBtn').onclick = function(){
     showConfirm_('Toka kwenye akaunti hii? / Log out of this account?', doLogout);
   };
