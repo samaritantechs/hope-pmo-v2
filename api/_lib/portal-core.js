@@ -1602,12 +1602,34 @@ async function removeCallUser(db, user, p) {
    filled with rows carrying real-shaped Tanzanian names, phone numbers, refs and branches,
    then pg_total_relation_size (heap + indexes + toast) was divided by the row count. They are
    what makes the size projection on the Settings page trustworthy. */
+/* EVERY report that grows, not just the big five.
+
+   This list started as the tables that were obviously eating disk, which left the owner able
+   to clean five things and stuck with the rest. If a report accumulates, it belongs here.
+
+   `uploadedOnly` marks the four registers people ALSO type into from inside the app -- a
+   complaint logged at the desk, an officer's follow-up comment, a restructure request, a
+   demand notice issued from the Legal screen. Cleaning a date there takes only what arrived in
+   an upload. Somebody's typed work is not a report and must not vanish in a tidy-up. It is the
+   same rule Replace already follows.
+
+   followup_status is deliberately absent. It is not a report and has no date dimension: one
+   row per customer, rebuilt from each Current deck, holding the officers' live working list
+   with their promises and comments on it. "Delete a date" has no meaning there, and the
+   nearest thing it could mean would wipe the book everyone is working from. */
 const SNAPSHOT_SOURCES = {
   expected: { table: 'repayment_snapshots', label: 'Expected Repayment', dateCol: 'snapshot_date', bytes: 456 },
   defaulters: { table: 'defaulter_snapshots', label: 'Defaulters', dateCol: 'snapshot_date', bytes: 498 },
   received: { table: 'received_payments', label: 'Received Payments', dateCol: 'paid_at', bytes: 246 },
   abnormal: { table: 'abnormal_payments', label: 'Abnormal Payments', dateCol: 'created_at', bytes: 246 },
   calls: { table: 'call_logs', label: 'Call Logs', dateCol: 'call_date', bytes: 258 },
+  // The loan pipeline is dated by the report it came in on, not by the dates inside it -- an
+  // applications report pulled on the 27th is full of June applications.
+  loans: { table: 'loans', label: 'Loan Pipeline', dateCol: 'upload_date', bytes: 512 },
+  comments: { table: 'followup_comments', label: 'Comments Log', dateCol: 'created_at', bytes: 268, uploadedOnly: true },
+  complaints: { table: 'complaints', label: 'Complaints', dateCol: 'created_at', bytes: 288, uploadedOnly: true },
+  restructures: { table: 'restructures', label: 'Loan Restructuring', dateCol: 'created_at', bytes: 312, uploadedOnly: true },
+  demand_notices: { table: 'demand_notices', label: 'Demand Notices', dateCol: 'created_at', bytes: 296, uploadedOnly: true },
 };
 const dayOf = v => String(v == null ? '' : v).slice(0, 10);
 
@@ -1629,13 +1651,22 @@ const dayOf = v => String(v == null ? '' : v).slice(0, 10);
    so between a deploy and that being done, the function does not exist. Falling back means
    the Settings tab keeps working -- slowly, as it always did -- instead of breaking. */
 async function countsByDate(db) {
+  let rows = [];
   try {
     const { data, error } = await db.rpc('storage_usage_by_date');
     if (error) throw error;
-    if (Array.isArray(data)) return data;
-  } catch (e) { /* function not created yet -- fall through to the slow, always-available way */ }
-  const rows = [];
+    if (Array.isArray(data)) rows = data;
+  } catch (e) { /* function not created yet -- everything falls back below */ }
+
+  /* Whatever the database function did not answer for is counted the old way, source by
+     source. This matters because the list of reports grows: a database still running an
+     earlier version of the function knows nothing about, say, the loan pipeline, and the
+     alternative to filling that gap here would be a Settings tab that quietly under-reports
+     until somebody remembers to run some SQL. A source that is genuinely empty costs one
+     query returning nothing. */
+  const answered = new Set(rows.map(r => r.source));
   for (const [key, src] of Object.entries(SNAPSHOT_SOURCES)) {
+    if (answered.has(key)) continue;
     const all = await fetchAll(() => db.from(src.table).select(src.dateCol));
     const n = {};
     for (const r of all) { const d = dayOf(r[src.dateCol]); n[d] = (n[d] || 0) + 1; }
@@ -1781,26 +1812,35 @@ async function purgeSnapshots(db, user, p) {
   const through = !!p.through;
   const deleted = {};
   let total = 0;
+  let protectedRows = 0;
   for (const key of wanted) {
     const src = SNAPSHOT_SOURCES[key];
     // Count first: the caller is told exactly what went, and a dry run can ask without acting.
-    const before = await fetchAll(() => db.from(src.table).select(src.dateCol));
-    const hit = before.filter(r => {
+    const cols = src.uploadedOnly ? `${src.dateCol}, upload_batch` : src.dateCol;
+    const before = await fetchAll(() => db.from(src.table).select(cols));
+    const inRange = before.filter(r => {
       const d = dayOf(r[src.dateCol]);
       return d && (through ? d <= date : d === date);
-    }).length;
+    });
+    // On the registers people also type into, only uploaded rows are ever taken. The rest are
+    // counted so the answer can say plainly what was left alone rather than silently sparing it.
+    const hit = src.uploadedOnly ? inRange.filter(r => r.upload_batch != null).length : inRange.length;
+    if (src.uploadedOnly) protectedRows += inRange.length - hit;
+
     if (!p.dryRun && hit) {
-      const q = db.from(src.table).delete();
-      const { error } = await (through
+      let q = db.from(src.table).delete();
+      q = through
         ? q.lte(src.dateCol, date + (src.dateCol === 'created_at' ? 'T23:59:59.999Z' : ''))
         : (src.dateCol === 'created_at'
             ? q.gte(src.dateCol, date).lte(src.dateCol, date + 'T23:59:59.999Z')
-            : q.eq(src.dateCol, date)));
+            : q.eq(src.dateCol, date));
+      if (src.uploadedOnly) q = q.not('upload_batch', 'is', null);
+      const { error } = await q;
       if (error) throw new Error(error.message);
     }
     deleted[key] = hit; total += hit;
   }
-  return { date, through, dryRun: !!p.dryRun, deleted, total };
+  return { date, through, dryRun: !!p.dryRun, deleted, total, protectedRows };
 }
 
 /** Email the week's expected-defaulter report to the admin address. Sent ONLY when someone

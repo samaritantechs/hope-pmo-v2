@@ -739,6 +739,13 @@ function wireClean(){
   };
   var out = document.getElementById('clOut');
   var say = function(html, bad){ out.style.display='block'; out.className = 'note'+(bad?' bad':''); out.innerHTML = html; };
+  // Ten report types is too many to tick one by one when the answer is usually "all of them".
+  var setAll = function(on){
+    Array.prototype.forEach.call(document.querySelectorAll('.clType'), function(c){ c.checked = on; });
+  };
+  var all = document.getElementById('clAll'), none = document.getElementById('clNone');
+  if (all) all.onclick = function(){ setAll(true); };
+  if (none) none.onclick = function(){ setAll(false); };
   var call = function(dryRun){
     var types = chosen();
     if (!types.length){ say('Chagua angalau aina moja ya ripoti. / Choose at least one report type.', true); return; }
@@ -746,13 +753,22 @@ function wireClean(){
     var through = document.getElementById('clThrough').checked;
     srv('purgeSnapshots', { date: date, types: types, through: through, dryRun: dryRun })
       .then(function(r){
-        var detail = Object.keys(r.deleted).map(function(k){ return k+': '+money(r.deleted[k]); }).join(' · ');
+        // Only name the reports that actually had something. A line listing eight zeroes buries
+        // the one number that mattered.
+        var hits = Object.keys(r.deleted).filter(function(k){ return r.deleted[k] > 0; });
+        var detail = hits.length
+          ? hits.map(function(k){ return k+': '+money(r.deleted[k]); }).join(' · ')
+          : 'hakuna kitu kwa tarehe hiyo / nothing stored for that date';
+        var kept = r.protectedRows
+          ? '<br><span style="color:var(--mut)">' + money(r.protectedRows)
+            + ' iliyoandikwa ndani ya mfumo imeachwa / typed inside the app, left alone</span>'
+          : '';
         if (dryRun){
           say('<b>'+money(r.total)+'</b> rows would be deleted for <b>'+esc(r.date)+'</b>'
-            + (r.through?' and everything before it':'') + '.<br>'+esc(detail));
+            + (r.through?' and everything before it':'') + '.<br>'+esc(detail) + kept);
         } else {
-          say('<b>'+money(r.total)+'</b> rows deleted. '+esc(detail));
-          S.storage = null; render();
+          say('<b>'+money(r.total)+'</b> rows deleted. '+esc(detail) + kept);
+          S.storage = null; render({ force:true });
         }
       })
       .catch(function(e){ say(esc(String(e.message || e)), true); });
@@ -1889,12 +1905,22 @@ function teamForm(x){
   };
 }
 
+/* EVERY report that grows, not just the big five. This list used to stop at Call Logs, which
+   left an admin able to clean five things and stuck with the rest.
+   `kept` marks the four registers people ALSO type into from inside the app. Cleaning a date
+   there takes only what arrived in an upload -- a complaint logged at the desk or an officer's
+   comment is somebody's work, not a report, and must not vanish in a tidy-up. */
 var CLEAN_TYPES = [
-  { key:'expected',   label:'Expected Repayment' },
-  { key:'defaulters', label:'Defaulters (initial + current)' },
-  { key:'received',   label:'Received Payments' },
-  { key:'abnormal',   label:'Abnormal Payments' },
-  { key:'calls',      label:'Call Logs' },
+  { key:'expected',       label:'Expected Repayment' },
+  { key:'defaulters',     label:'Defaulters (initial + current)' },
+  { key:'received',       label:'Received Payments' },
+  { key:'abnormal',       label:'Abnormal Payments' },
+  { key:'calls',          label:'Call Logs' },
+  { key:'loans',          label:'Loan Pipeline (all stages)' },
+  { key:'comments',       label:'Comments Log', kept:1 },
+  { key:'complaints',     label:'Complaints', kept:1 },
+  { key:'restructures',   label:'Loan Restructuring', kept:1 },
+  { key:'demand_notices', label:'Demand Notices', kept:1 },
 ];
 VIEWS.settings = function(){
   return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage')]).then(function(r){
@@ -1923,7 +1949,13 @@ VIEWS.settings = function(){
         + '<div class="fld"><label>Tarehe / Date</label><input type="date" id="clDate" value="'+esc(sg.oldest||'')+'"></div>'
         + '<div class="fld"><label>Aina za ripoti / Report types</label><div class="checks">'
         + CLEAN_TYPES.map(function(t){
-            return '<label><input type="checkbox" class="clType" value="'+t.key+'"> '+esc(t.label)+'</label>'; }).join('')
+            return '<label><input type="checkbox" class="clType" value="'+t.key+'"> '+esc(t.label)
+              // Say it on the box itself, not only in the result. Somebody ticking "Complaints"
+              // deserves to know before they press Clean that desk-logged ones are staying.
+              + (t.kept ? ' <span style="color:var(--mut);font-size:11px">(zilizopakiwa tu / uploaded only)</span>' : '')
+              + '</label>'; }).join('')
+        + '<div style="margin-top:6px"><button type="button" class="btn sm ghost" id="clAll">Chagua zote / Select all</button>'
+          + ' <button type="button" class="btn sm ghost" id="clNone">Ondoa zote / Clear</button></div>'
         + '</div></div>'
         + '<label class="chk"><input type="checkbox" id="clThrough"> Na zote za kabla yake / and everything on or before that date</label>'
         + '<div class="clact"><button class="btn sm ghost" id="clCheck">Angalia / Check first</button>'
