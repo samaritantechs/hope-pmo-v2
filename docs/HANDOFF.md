@@ -8,6 +8,12 @@ hire in two years can pick the system up from this document alone.
 what every screen does, what every word in the loan vocabulary means, every file and what it is
 responsible for, and how to keep your own offline copy.
 
+**If you only read three things:** Part 5 (the screens, including the two new ones — the
+customer's own screen and the live wall display), Part 14 (everything that changed most
+recently, each item named after the complaint it answers), and Part 15 (what is still waiting
+on you). Part 13 is the honest account of a week where the system got worse before it got
+better, and what was changed so it does not happen again.
+
 ---
 
 ## Part 0 — Words you will see, in plain English
@@ -568,12 +574,72 @@ are not.
 Each customer row carries name, phone, guarantor, arrears, rejesho, D.S, status, and a
 ✓ **Amepigiwa leo** tick when the number has genuinely been spoken to today.
 
+### Mkopo Wangu (`/mkopo`) — the customer's own screen
+
+**The third door.** Leaders sign in with an access code. Officers sign in with a team code.
+Customers type a **reference number** and see their own loan — nothing else. No list, no
+search, no other customer, no totals.
+
+What a customer sees, in this order, because this is the order they care about:
+
+1. **Their own name** — so they know they typed their own reference and not a neighbour's.
+2. **The one number that matters** — what they owe today, or how far behind they are, as the
+   biggest thing on the screen.
+3. Balance, installment, paid today, arrears.
+4. **A promise they already gave an officer**, shown back to them — so nobody is chased for
+   something already agreed.
+5. **Their payments**, newest first, with receipt numbers.
+
+That last one is most of the point. *"Did my payment arrive?"* is the question this screen
+exists to answer, and answering it without phoning an officer is the whole value.
+
+**What it will never show, and why.** A reference number is the only thing being asked for, and
+references are short. Someone who tries ten thousand of them gets ten thousand answers. That is
+tolerable when each answer is *"your own balance"* — which the customer already knows. It is
+**not** tolerable when each answer is a name attached to a working phone number.
+
+So this screen never shows a phone number, a guarantor's name, or a guarantor's phone. Whoever
+holds the reference already knows the customer's number; printing it back only helps somebody
+who does not.
+
+**If you want it tighter:** set `CUSTOMER_LOGIN_VERIFY` to `phone4` in Settings, and the
+customer must also give the last four digits of the phone on their file. Guessing a reference
+becomes guessing a reference *and* four digits. A customer with no number on file is still let
+in on the reference alone — refusing would lock out exactly the people whose records are
+thinnest.
+
+### HOPE Live (`/live`) — the screen nobody is holding
+
+A widget's whole point is that **nobody opens anything**. Put this on a monitor in the office,
+or add it to a phone's home screen, and leave it. Six figures — Col leo, Kesho, Col wiki,
+Sales, Exp.Def, Rec — refreshing themselves every two minutes.
+
+- **It never asks for a login twice.** It takes the code the person already has: a leader's
+  access code *or* an officer's team code. Bookmark `/live?code=YOURCODE` and a wall display
+  comes straight back up after a power cut with nobody there to type anything.
+- **It stops asking entirely when nobody is looking at it.** That is what makes it cheap enough
+  to sit on every phone in the field — a pocketed phone costs nothing.
+- **When the network dies, the last known figures stay up.** Blanking a wall display over one
+  bad minute helps nobody.
+- **But the light goes amber the moment they stop being fresh**, and says how long ago in
+  words. A screen showing yesterday's collection as though it were today's is worse than a
+  blank one, and that is the entire trust model of a display nobody is watching.
+- **It carries no customer data at all** — six percentages and their totals, under 1200 bytes.
+  This ends up on lock screens and monitors in corridors.
+- Red below 50%, amber below 80% — the same thresholds the officers are held to, so the wall
+  and the phone tell the same story. A screen that flatters is worse than no screen.
+
+Six across on a wide monitor, two across on a phone, and the numbers are large enough on a wall
+screen to read from the door.
+
 ### The other pages
 
-- `/` — the launcher. Sign in with an access code for the system, or press HOPE Calls. **If a
-  field officer types their team code here, it takes them straight into HOPE Calls with the
-  code carried across** — they should not have to know which button was meant for them.
-- `/upload` — the upload page (also reachable inside the app).
+- `/` — the launcher. Sign in with an access code for the system, or press HOPE Calls, Mkopo
+  Wangu, or HOPE Live. **If a field officer types their team code here, it takes them straight
+  into HOPE Calls with the code carried across** — they should not have to know which button
+  was meant for them.
+- `/upload` — the upload page (also reachable inside the app). It prints its own age at the
+  bottom, so "am I looking at the new version?" is answerable.
 - `/dashboard` — the portal.
 
 ---
@@ -692,6 +758,11 @@ Set these in **Settings → the settings list** (or by uploading a Settings shee
 |---|---|---|
 | `CALL_BRAND` | HOPE MICROCREDIT CO. LTD | Company name shown in the app |
 | `CALL_LOGO_URL` | — | **The logo, everywhere.** Set it by uploading an image on the upload page. |
+
+### The customer's screen (`/mkopo`)
+| Key | Default | Meaning |
+|---|---|---|
+| `CUSTOMER_LOGIN_VERIFY` | *(off)* | Leave unset and a **reference number alone** opens a customer's own loan, as asked. Set it to `phone4` and they must also give the **last four digits of the phone on their file** — guessing a reference becomes guessing a reference *and* four digits, at the cost of four more characters typed. A customer with no number on file is still let in on the reference alone, because refusing would lock out exactly the people whose records are thinnest. |
 | `CALL_SYNC_SECONDS` | 300 | How often the phone syncs (60–3600) |
 | `CALL_LOGOUT_ENABLED` | on | Set `NO` to hide the logout button |
 | `CALL_MIN_SECS` | 5 | A call must last longer than this to count as "called today" |
@@ -774,6 +845,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `db/migrations/2026-07-28-loan-identity.sql` | One row per loan; removes duplicates that had been inflating sales |
 | `db/migrations/2026-07-28-upload-stamp.sql` | The report-date stamp that makes Append / Replace-by-date possible |
 | `db/migrations/2026-07-28-speed-indexes.sql` | Indexes for the lookups every screen makes on load |
+| `db/migrations/2026-08-01-storage-counts.sql` | **Makes the Settings tab open at once** — lets the database count rows instead of sending a million of them over the internet. Also pins `search_path` on both database functions, closing the security warning Supabase reports. |
 
 > Migrations are run **in date order**, once each, by pasting into Supabase's SQL Editor.
 
@@ -781,14 +853,15 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | File | Responsibility |
 |---|---|
 | `api/portal.js` | The single door for the whole portal — one route, one permission check |
-| `api/call.js` | The single door for the phone app |
+| `api/call.js` | The single door for the phone app — and, because it was already open to people with no login, the door for the customer screen and the live widget too |
 | `api/upload.js` | Receives every uploaded file, decides which table it belongs to, stamps the batch, and rebuilds the officers' working list from a Current deck |
 | `api/me.js` | Who am I / what may I open |
 | `api/dashboard.js`, `api/expected.js`, `api/defaulters.js`, `api/followup.js`, `api/comments.js` | Older single-purpose routes, still live |
 | `api/app-version.js` | Tells the phone which build is current |
 
-> Vercel's free plan allows **12 of these route files**. There are 10. New features ride on
-> `api/portal.js` rather than adding routes — that is why almost everything is one door.
+> Vercel's free plan allows **12 of these route files**. There are still 10, even after the
+> customer screen and the live widget. New features ride on `api/portal.js` or `api/call.js`
+> rather than adding routes — that is why almost everything is one door.
 
 ### The shared brain (`api/_lib/`)
 | File | Responsibility |
@@ -813,9 +886,21 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `public/app.html` | The whole portal — all 23 tabs |
 | `public/call.html` | The whole phone app |
 | `public/home.html` | The launcher |
-| `public/upload.html` | The upload page |
+| `public/upload.html` | The upload page. Prints its own age at the bottom, so "am I on the new version?" is answerable |
+| `public/mkopo.html` | **The customer's own screen.** A reference number in, one loan out |
+| `public/live.html` | **HOPE Live** — the six figures, refreshing themselves on a screen nobody is holding |
+| `public/live.webmanifest` | Lets HOPE Live be added to a phone's home screen with a real icon, opening without browser chrome |
 | `public/dashboard.html` | A simple read-only dashboard |
 | `public/brand.js` | Puts the logo and company name on every page, and sets the browser-tab icon |
+
+### Checking the system
+| File | What it is |
+|---|---|
+| `test/*.test.mjs` | 124 checks of the rules and the sums. `npm test`. This is what guards a deploy |
+| `test/fake-db.mjs` | A pretend database that lives in memory, so every rule can be checked with no Supabase and no network |
+| `tools/browser-checks/*.mjs` | The screens, driven in a **real browser** against a stub server. Kept out of `npm test` on purpose so a deploy never depends on having a browser installed. See the last section of this document for how to run them |
+| `tools/settings-load-bench.mjs` | Measures what opening the Settings tab actually costs, in rows and round trips |
+| `docs/why-no-cache.md` | Why every page says `no-cache`, and why that explanation is not inside `vercel.json` |
 
 ### The Android app
 | File | What it is |
@@ -913,30 +998,216 @@ Both are inside the ZIP, but keep a separate copy anyway.
 
 ---
 
-## Part 13 — Where things stand
+## Part 13 — The slow week, and what it taught
+
+This part exists because the system got worse before it got better, and anyone picking this up
+later deserves to know why rather than guessing from the commit log.
+
+### What went wrong
+
+**I took the system down.** To make the pages load faster, I changed the way data is fetched
+from the database — reading many pages at once instead of one after another. It was faster in
+theory. In practice it overwhelmed the database under real load: logins failed across the
+company, Settings would not open, and raw data appeared on screens where sentences should have
+been. It was reverted the same day.
+
+**The lesson, stated plainly:** never ship a performance change to a live system without
+testing it under something like real load. Reasoning about speed is not the same as measuring
+it. Everything in Part 14 was measured or driven in a real browser before it shipped.
+
+**Then the data-transfer bill exploded.** 0.147 GB of data was generating 81 GB of transfer —
+1,637% of the free allowance. The cause: every officer's phone was downloading **every team's**
+customers and then hiding the ones that were not theirs. The filtering now happens in the
+database, so a phone downloads only its own team.
+
+**Then some well-meant edits broke the app.** A shortened list of columns was applied to a
+function shared by three different screens, and customer rows arrived on officers' phones with
+no names and nothing to tap. Another edit asked the database for a column that does not exist,
+which makes the database reject the *whole* request rather than just leaving that field out —
+so the Defaulters tab failed every single time. Both are described in Part 14.
+
+### The rule that came out of it
+
+Anything that changes what people see is now driven in a **real browser against a real page**
+before it ships (`tools/browser-checks/`). Reading code is not enough for questions like *does
+the page stay put*, *does the dropdown say what the table is showing*, or *can you read this
+from across a room*. Those checks caught four genuine bugs during this round that reading had
+missed — including one that would have put phone-sized numbers on a wall display.
+
+---
+
+## Part 14 — What changed most recently
+
+Nine changes, in the order they shipped. Each one names the complaint it answers.
+
+### 1. Customer bars with no names, that could not be tapped
+
+`latestSnapshot` is used by three different screens with three different needs: the phone's
+Leo/Kesho lists need names and phone numbers, the Exp.Def rotation needs dates and statuses,
+the dashboard needs amounts. It had been changed to fetch a short fixed list of columns, which
+starved two of the three. Restored, with a note in the file saying why it must not be narrowed
+again.
+
+### 2. The Defaulters tab failing every time
+
+It asked for `amount_due`, a column that does not exist. When a requested column is missing the
+database rejects the **entire** request — it does not simply leave that field out. The real
+column is `arrears`.
+
+### 3. Ripoti: choose a team
+
+Three controls in one row — from, to, and **Team**. The list offered is what that leader is
+*allowed* to see, not who happened to make calls that week, so a quiet team is still pickable.
+Naming a team you do not lead is ignored, not obeyed. While one team is selected, a leader's
+own calls stay out unless it is their own team — otherwise a manager filtering to Team B would
+see their own Team A calls counted as Team B's.
+
+### 4. The whole system reloading on every click
+
+> *"Its not okay for the whole system to reload whenever something is clicked (it bores)"*
+
+Every tab click wiped the page to a spinner and went back to the server — even flicking between
+two tabs you had just read. Now a tab you have already opened comes back instantly, and the
+server is asked quietly behind it; a hairline slides across the top while that happens.
+
+Anything that **writes** — saving a setting, a team, a user, a comment — throws away everything
+remembered, because a save on one tab can move the numbers on any other. The reload button
+(the arrow, top right) still always goes to the server.
+
+### 5. The blue screen after every phone call
+
+> *"there is complains that after every call it loads again"*
+
+Tapping a customer's number hands the phone to the dialler, and Android is free to throw the
+page away while the officer talks — on cheap handsets it usually does. Every call ended on the
+blue screen and a wait on the network.
+
+The customer lists were already saved on the handset. The only thing missing was **who the
+officer is** — a question the server had already answered that morning. The phone now remembers
+that too, and goes straight to work. If the server later says the handset is no longer signed
+in, everything remembered is cleared and it starts over.
+
+### 6. A deploy that actually reaches the phones
+
+> *"am not seeing the replace / append in the uploading after choosing report type"*
+
+**It was never missing.** It had shipped weeks earlier. The phones were showing an old copy of
+the page.
+
+Every screen here is one file — when the page is old, the app is old. Nothing told a browser how
+long to keep it, so each browser decided for itself, and the Android app's browser decided
+"for ever". The pages now say **`no-cache`**, which does not mean *do not store* — it means
+*keep the copy, but ask before using it*. The answer is normally a few hundred bytes saying
+"unchanged".
+
+**This is the most important change in the list**, because every future fix depends on it. Ask
+people to close and reopen the app once. After that, a fix lands when it is deployed.
+
+### 7. Approvals and received payments go by the dates in the file
+
+> *"only loan approvals and received payments should use dates in data - not upload stamp but i
+> still choose to replace or append"*
+
+Every figure already read the dates in the data and always had. What did not was **Replace**:
+re-pull the approvals report for 27 July, upload it today, press Replace, and it removed what
+was uploaded under *today's* stamp while leaving the 27 July approvals sitting there. Backwards.
+
+Now, for loan approvals, disbursed loans and received payments, the days come from the file, and
+the page no longer asks for a report date for those three — the file already answered.
+
+Because this is the only code in the system that deletes anybody's figures, it clears the
+**exact set** of days found in the file, never the span between the earliest and latest — one
+mistyped year would otherwise turn "redo 27 July" into "delete everything since 1970". A file
+with no readable dates, or one claiming more than 62 different days, is **refused** rather than
+guessed at. A refused Replace deletes nothing.
+
+Every other report keeps the upload stamp, because it has to: an applications report pulled on
+27 July legitimately contains applications dated in June.
+
+### 8. Settings taking for ever
+
+> *"Saving / updating settings takes so long"*
+
+It was downloading **every row of five tables** — every snapshot, every payment, every call log
+— to count them. Measured over a year of an operation this size:
+
+```
+before   1,248,000 rows over the wire, 1254 round trips
+after        1,040 rows over the wire,    1 round trip
+```
+
+1254 separate requests, every time somebody opened Settings. That was the wait, and a large
+slice of the transfer bill. Counting is the database's job.
+
+*Reproduce it yourself:* `node tools/settings-load-bench.mjs`
+
+**This needs `db/migrations/2026-08-01-storage-counts.sql` run.** Until it is, Settings keeps
+working exactly as before — slowly. It never breaks. That migration also closes the security
+warning about `loan_identity_text`.
+
+### 9. and 10. The customer door and the live widget
+
+Both described in Part 5 above.
+
+---
+
+## Part 15 — Where things stand
 
 ### Done and live
 The whole v1 → v2 port: all 23 portal tabs, the phone app, uploads, the officer boards, the
 recycling rotation on the phone, storage cleanup, team codes, officer accounts, the logo
-everywhere including the app icon, and the self-updating APK.
+everywhere including the app icon, and the self-updating APK. Plus everything in Part 14:
+instant tab switching, no blue screen after calls, deploys that reach the phones, data-dated
+replace, a Settings tab that opens at once, the customer screen and the live widget.
 
-### Ten silent defects found and fixed along the way
+### Silent defects found and fixed along the way
 Vanishing defaulters after upload; an unwritten complaint log; restructures approvable by
 anyone; hand-typed legal fines; missing uploads that failed silently; discarded call
 breakdowns; roles that could not be edited; complaints stamped at midnight losing their
-time-of-day; hidden dockets; a day-0 value treated as missing.
+time-of-day; hidden dockets; a day-0 value treated as missing; loans appending instead of
+updating and doubling the sales figure; a Replace that would have taken staff-typed records;
+Leo showing yesterday's list; Leo and Kesho showing the same people; and the four found by the
+browser checks in this round.
 
 ### Waiting on you
+- Run `db/migrations/2026-08-01-storage-counts.sql` — makes Settings instant and closes the
+  `loan_identity_text` security warning.
 - Run `db/migrations/2026-07-27-hints-many-per-tab.sql`, then upload `docs/hints-v2.tsv` as
   Hints.
 - Run `db/migrations/2026-07-27-call-agents.sql`, then re-upload Unassigned/Assigned so the
   CREATED BY agent lands.
+- Run `db/migrations/2026-07-28-loan-identity.sql`, `2026-07-28-upload-stamp.sql` and
+  `2026-07-28-speed-indexes.sql` if they have not been run.
+- **Tell the field to close and reopen the app once**, so they pick up the new pages. After
+  that it is automatic.
 - Reactivate phone `0677115897` in Settings so that officer can sign in.
 - Set `RESEND_API_KEY` in Vercel and `ADMIN_EMAIL` in Settings for the weekly Exp.Def email.
 
-### Not started
-Direct integration with the HOPE core system. It needs either a sample export of each report
-(headers plus ~20 rows), API documentation, or a read-only service account.
+### Worth doing next
+- **A true Android home-screen widget** — the tile that draws outside any app, the way FotMob
+  does. `/live` covers the computer and the phone home screen; the native tile needs Java in the
+  APK and a rebuild, and it would read the same feed that already exists.
+- Direct integration with the HOPE core system. It needs either a sample export of each report
+  (headers plus ~20 rows), API documentation, or a read-only service account.
+
+---
+
+## How to check the system yourself
+
+```
+npm test                                    # 124 checks of the rules and the sums
+node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
+
+npm i --no-save playwright-core             # once, for the browser checks
+node tools/browser-checks/portal-nav.mjs        # the system does not blank on every click
+node tools/browser-checks/call-warmstart.mjs    # no blue screen after a phone call
+node tools/browser-checks/upload-mode.mjs       # Append / Replace on every report
+node tools/browser-checks/customer-login.mjs    # the customer screen, and what it never shows
+node tools/browser-checks/live-widget.mjs       # the wall display, including the network dying
+```
+
+The browser checks are kept out of `npm test` on purpose: `npm test` guards the deploy, and it
+must not depend on having a browser installed.
 
 ---
 
