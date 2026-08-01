@@ -140,7 +140,10 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 .kpi .k-l{font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
 .kpi .k-v{font-size:18px;font-weight:800;margin-top:3px}
 .rangebar{display:flex;gap:8px;margin-bottom:12px}
-.rangebar input{flex:1;padding:9px 10px;border:1.5px solid var(--line);border-radius:9px;background:#fff;font-size:13px}
+.rangebar input,.rangebar select{flex:1;min-width:0;padding:9px 10px;border:1.5px solid var(--line);border-radius:9px;background:#fff;font-size:13px;-webkit-appearance:none;appearance:none}
+/* Three controls on one narrow phone row: the dates are fixed-width by their own content, so
+   the team name gets whatever is left rather than squeezing the dates into unreadable stubs. */
+.rangebar select{flex:1.2;background-image:linear-gradient(45deg,transparent 50%,var(--soft) 50%),linear-gradient(135deg,var(--soft) 50%,transparent 50%);background-position:calc(100% - 14px) 52%,calc(100% - 9px) 52%;background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:24px}
 .otable{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .otable th,.otable td{padding:9px 10px;font-size:12.5px;text-align:left;border-bottom:1px solid var(--line)}
 .otable th{background:var(--b50);color:var(--b900);font-size:10.5px;text-transform:uppercase}
@@ -287,6 +290,9 @@ function $(s,r){ return (r||document).querySelector(s); }
 function $all(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return n.toLocaleString('en-US', {maximumFractionDigits:0}); }
+/* Team names are typed by hand in several places, so 'Kariakoo' and ' KARIAKOO ' are the same
+   team. Compare the tidied-up form, the way the server does, or the dropdown loses its tick. */
+function K_(s){ return String(s==null?'':s).trim().toUpperCase(); }
 function pct(x){ if (x===''||x==null||isNaN(x)||!isFinite(x)) return '\u2014'; return (100*x).toFixed(1)+'%'; }
 function digits_(v){ return String(v==null?'':v).replace(/\D/g,''); }
 function telHref(v){ var d = digits_(v); if (!d) return '#'; return d.indexOf('255')===0 ? '+'+d : '+255'+d.replace(/^0+/,''); }
@@ -364,7 +370,7 @@ function deviceId(){
 
 /* ================= state ================= */
 var DEV = deviceId();
-var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), syncEverySec:300, permOk:null };
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', syncEverySec:300, permOk:null };
 var LIST_SOURCE = { today:'today', tomorrow:'tomorrow', def:'defaulters', exp:'defaulters', chr:'defaulters', expdf:'expdf' };
 // Exp.Def is the recycling rotation's own list and is already scoped to the signed-in leader
 // by the server, so it must NOT be re-filtered here by customer status the way def/exp/chr are.
@@ -983,7 +989,7 @@ function wireSheetForm(r){
 function renderReports(){
   var body = $('#body');
   body.innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
-  srv('api_callReport', DEV, S.repFrom, S.repTo).then(function(d){
+  srv('api_callReport', DEV, S.repFrom, S.repTo, S.repTeam).then(function(d){
     S.repData = d;
     drawReports();
   }).catch(function(e){ body.innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>'; });
@@ -996,7 +1002,11 @@ function drawReports(){
   var cats = (d.byCategory || []).filter(function(c){ return c.category === 'EXPECTED' || c.category === 'DEFAULTER'; });
   body.innerHTML =
     '<div class="hint" style="color:var(--soft);font-size:11px;margin-bottom:8px">Wigo / Scope: ' + esc(scopeTxt) + ' \u00B7 Timu yako / Your team: ' + esc(d.debugHomeTeam||'\u2014') + '</div>'
-    + '<div class="rangebar"><input type="date" id="repFrom" value="' + S.repFrom + '"><input type="date" id="repTo" value="' + S.repTo + '"></div>'
+    + '<div class="rangebar"><input type="date" id="repFrom" value="' + S.repFrom + '"><input type="date" id="repTo" value="' + S.repTo + '">'
+    + '<select id="repTeam"><option value="">Timu zote</option>'
+    + (d.teamChoices || []).map(function(tm){
+        return '<option value="' + esc(tm) + '"' + (K_(tm) === K_(d.team) ? ' selected' : '') + '>' + esc(tm) + '</option>';
+      }).join('') + '</select></div>'
     + '<div class="kpis">'
     + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Muda / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
@@ -1014,6 +1024,7 @@ function drawReports(){
       }).join('') + '</tbody></table>';
   $('#repFrom').onchange = function(){ S.repFrom = this.value; renderReports(); };
   $('#repTo').onchange = function(){ S.repTo = this.value; renderReports(); };
+  $('#repTeam').onchange = function(){ S.repTeam = this.value; renderReports(); };
 }
 
 $('#bootRetry').onclick = function(){

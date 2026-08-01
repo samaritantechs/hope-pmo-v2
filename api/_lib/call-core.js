@@ -645,7 +645,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     totals,
   };
 }
-async function report(db, [dev, from, to], nowMs) {
+async function report(db, [dev, from, to, team], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   if (!cu.is_leader) throw new Error('Leader access only.');
@@ -653,9 +653,33 @@ async function report(db, [dev, from, to], nowMs) {
   const { teamsOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(cu.name)] || {});
   const lt = cu.leader_teams;
-  const scope = live.length ? live : ((!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null : lt);
-  const out = await reportCore(db, scope, from, to, cu.user_id, nowMs);
+  const full = live.length ? live : ((!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null : lt);
+
+  // The list that fills the Team dropdown on the phone: every team this leader is allowed to
+  // look at. A leader who sees ALL gets every team on the books; anyone else gets only theirs.
+  // It is built from the leader's PERMISSION, not from who happened to make calls this week --
+  // a team with a quiet week must still be pickable, otherwise it looks like it disappeared.
+  const choices = (full ? full : teamRows.map(r => r.team))
+    .map(t => String(t || '').trim()).filter(Boolean)
+    .filter((t, i, a) => a.findIndex(x => K(x) === K(t)) === i)
+    .sort();
+
+  // A team picked in the dropdown narrows the scope, but only to a team they could already see.
+  // An unrecognised or out-of-scope name is ignored rather than obeyed, so the dropdown can
+  // never be used to read a team the leader has no business reading.
+  const want = String(team == null ? '' : team).trim();
+  const picked = want && choices.find(t => K(t) === K(want)) || '';
+  const scope = picked ? [picked] : full;
+
+  // While looking at one chosen team, the leader's own calls stay out of it unless that IS
+  // their team. Otherwise a manager filtering to Team B would see their own Team A calls
+  // mixed in and think Team B made them.
+  const alwaysUid = picked ? (K(cu.team) === K(picked) ? cu.user_id : null) : cu.user_id;
+
+  const out = await reportCore(db, scope, from, to, alwaysUid, nowMs);
   out.ok = true;
+  out.teamChoices = choices;
+  out.team = picked;
   out.debugScope = scope || 'ALL';
   out.debugHomeTeam = cu.team || '';
   return out;
