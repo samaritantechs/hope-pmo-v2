@@ -106,14 +106,15 @@ test('the upload stamp decides what a second upload of the same report does', as
   assert.equal(stampPlan('complaints', { uploadDate: 'yesterday' }, NOON_EAT).uploadDate, '2026-07-27');
 
   // Replace is scoped to that report's own stamp, never the whole table.
-  const rep = stampPlan('received_payments', { uploadDate: '2026-07-27', mode: 'replace' }, NOON_EAT);
+  const rep = stampPlan('abnormal_payments', { uploadDate: '2026-07-27', mode: 'replace' }, NOON_EAT);
   assert.equal(rep.replace, true);
   assert.deepEqual(rep.scope, { upload_date: '2026-07-27' });
 
-  // The pipeline uploads one stage at a time, so replacing the 27th's APPROVED report must not
-  // take the 27th's ASSIGNED report with it.
-  const loans = stampPlan('loans', { uploadDate: '2026-07-27', mode: 'replace', stage: 'approved' }, NOON_EAT);
-  assert.deepEqual(loans.scope, { upload_date: '2026-07-27', stage: 'approved' });
+  // The pipeline uploads one stage at a time, so replacing the 27th's APPLICATIONS report must
+  // not take the 27th's ASSIGNED report with it. An applications report has no usable date of
+  // its own -- one pulled on the 27th is full of June dates -- so the stamp still rules there.
+  const loans = stampPlan('loans', { uploadDate: '2026-07-27', mode: 'replace', stage: 'unassigned' }, NOON_EAT);
+  assert.deepEqual(loans.scope, { upload_date: '2026-07-27', stage: 'unassigned' });
 
   // Tables people also write INSIDE the app -- an officer's comment, a complaint logged at the
   // desk, a restructure request, a demand notice -- must never lose that work to a replace.
@@ -124,4 +125,138 @@ test('the upload stamp decides what a second upload of the same report does', as
   for (const t of ['loans', 'received_payments', 'abnormal_payments']) {
     assert.equal(stampPlan(t, { mode: 'replace' }, NOON_EAT).uploadedOnly, false, t + ' is upload-only');
   }
+});
+
+// Approvals and received payments carry their own dates, and those dates are the truth. Redo
+// 27 July by uploading 27 July -- whatever today happens to be.
+test('approvals and received payments replace by the dates in the FILE, not the upload stamp', async () => {
+  const { stampPlan, dataDateColumn, datesInFile, MAX_REPLACE_DATES } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-07-27T09:00:00Z');
+
+  // The two the field asked for, by their own date columns.
+  assert.equal(dataDateColumn('received_payments'), 'paid_at');
+  assert.equal(dataDateColumn('loans', 'approved'), 'approved_date');
+  assert.equal(dataDateColumn('loans', 'disbursed'), 'disb_date');
+
+  // Everything else has no date of its own that means anything, so it keeps the stamp.
+  for (const s of ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_approval', 'pending_disb']) {
+    assert.equal(dataDateColumn('loans', s), null, s + ' has no data date');
+  }
+  assert.equal(dataDateColumn('complaints'), null);
+  assert.equal(dataDateColumn('abnormal_payments'), null);
+
+  // A data-dated report does NOT scope by the stamp -- that is the whole change.
+  const paid = stampPlan('received_payments', { uploadDate: '2026-08-01', mode: 'replace' }, NOON_EAT);
+  assert.equal(paid.dateCol, 'paid_at');
+  assert.deepEqual(paid.scope, {});                       // no upload_date -- the file decides
+  const appr = stampPlan('loans', { uploadDate: '2026-08-01', mode: 'replace', stage: 'approved' }, NOON_EAT);
+  assert.equal(appr.dateCol, 'approved_date');
+  assert.deepEqual(appr.scope, { stage: 'approved' });    // still one stage at a time
+  // The stamp is still recorded on the rows; it just no longer decides what gets cleared.
+  assert.equal(appr.uploadDate, '2026-08-01');
+
+  // The EXACT set of days in the file, sorted, deduped.
+  assert.deepEqual(datesInFile([
+    { paid_at: '2026-07-27' }, { paid_at: '2026-07-25' }, { paid_at: '2026-07-27' },
+  ], 'paid_at'), ['2026-07-25', '2026-07-27']);
+
+  // Timestamps are trimmed to the day; blanks, nulls and rubbish are dropped rather than
+  // guessed at. A row with no date of its own belongs to no day, so it can neither be replaced
+  // by date nor take a day down with it.
+  assert.deepEqual(datesInFile([
+    { paid_at: '2026-07-27T14:03:00Z' }, { paid_at: '' }, { paid_at: null },
+    { paid_at: 'N/A' }, { paid_at: '27/07/2026' }, {},
+  ], 'paid_at'), ['2026-07-27']);
+
+  // A file of nothing but unreadable dates yields nothing -- so the caller must refuse to
+  // replace rather than fall through to a delete with no date filter at all.
+  assert.deepEqual(datesInFile([{ paid_at: 'x' }, { paid_at: '' }], 'paid_at'), []);
+
+  // One report is one day, or a few. The cap exists so a column of rubbish read as dates
+  // cannot turn "redo 27 July" into a delete spanning years.
+  assert.ok(MAX_REPLACE_DATES >= 31 && MAX_REPLACE_DATES <= 200, 'cap is a sane number of days');
+});
+
+// The only code in the system that deletes anybody's figures. Worth watching row by row.
+test('a Replace takes exactly the days in the file and nothing else', async () => {
+  const { runReplace, stampPlan } = await import('../api/upload.js');
+  const { fakeDb } = await import('./fake-db.mjs');
+  const NOW = Date.parse('2026-08-01T09:00:00Z');
+  const book = () => ([
+    { id: 'p1', paid_at: '2026-07-25', amount_paid: 100, upload_date: '2026-07-25' },
+    { id: 'p2', paid_at: '2026-07-27', amount_paid: 200, upload_date: '2026-07-27' },
+    { id: 'p3', paid_at: '2026-07-27', amount_paid: 300, upload_date: '2026-08-01' },  // same day, uploaded later
+    { id: 'p4', paid_at: '2026-07-28', amount_paid: 400, upload_date: '2026-08-01' },
+  ]);
+
+  // Re-pull 27 July and upload it TODAY (1 August). The 27th goes -- both copies of it, no
+  // matter when they were uploaded -- and no other day is touched. Under the old rule this
+  // would have taken p3 and p4 (uploaded today) and left p2 (the actual 27 July row) behind:
+  // exactly backwards.
+  let db = fakeDb({ received_payments: book() });
+  let plan = stampPlan('received_payments', { uploadDate: '2026-08-01', mode: 'replace' }, NOW);
+  let out = await runReplace(db, 'received_payments', plan, [
+    { paid_at: '2026-07-27', amount_paid: 250 },
+  ]);
+  assert.equal(out.replaced, 2);
+  assert.deepEqual(out.replacedDates, ['2026-07-27']);
+  assert.deepEqual(db._dump('received_payments').map(r => r.id), ['p1', 'p4']);
+
+  // Nothing at all happens when the choice was Append.
+  db = fakeDb({ received_payments: book() });
+  plan = stampPlan('received_payments', { uploadDate: '2026-08-01', mode: 'append' }, NOW);
+  out = await runReplace(db, 'received_payments', plan, [{ paid_at: '2026-07-27' }]);
+  assert.equal(out.replaced, 0);
+  assert.equal(db._dump('received_payments').length, 4);
+
+  // A file whose date column is empty or unreadable is REFUSED. It must never fall through to
+  // a delete with no date filter, which would clear the whole table.
+  db = fakeDb({ received_payments: book() });
+  plan = stampPlan('received_payments', { mode: 'replace' }, NOW);
+  await assert.rejects(
+    () => runReplace(db, 'received_payments', plan, [{ paid_at: '' }, { paid_at: 'N/A' }]),
+    /no readable dates/i);
+  assert.equal(db._dump('received_payments').length, 4, 'a refused replace deletes nothing');
+
+  // A column of rubbish read as dates would span years. Refused, with the span quoted back.
+  db = fakeDb({ received_payments: book() });
+  const many = [];
+  for (let i = 0; i < 400; i++) many.push({ paid_at: '2025-' + String(1 + (i % 12)).padStart(2, '0') + '-' + String(1 + (i % 28)).padStart(2, '0') });
+  await assert.rejects(() => runReplace(db, 'received_payments', plan, many), /too much history/i);
+  assert.equal(db._dump('received_payments').length, 4, 'a refused replace deletes nothing');
+
+  // Loans: one stage at a time, still. Redoing the 27th's APPROVED report must not touch a
+  // disbursed loan that happens to carry the same date.
+  db = fakeDb({ loans: [
+    { id: 'l1', stage: 'approved',  approved_date: '2026-07-27' },
+    { id: 'l2', stage: 'approved',  approved_date: '2026-07-26' },
+    { id: 'l3', stage: 'disbursed', approved_date: '2026-07-27' },
+    { id: 'l4', stage: 'assigned',  approved_date: '2026-07-27' },
+  ] });
+  plan = stampPlan('loans', { uploadDate: '2026-08-01', mode: 'replace', stage: 'approved' }, NOW);
+  out = await runReplace(db, 'loans', plan, [{ approved_date: '2026-07-27' }]);
+  assert.equal(out.replaced, 1);
+  assert.deepEqual(db._dump('loans').map(r => r.id), ['l2', 'l3', 'l4']);
+
+  // An APPLICATIONS report has no date of its own worth trusting, so it still goes by the
+  // stamp -- and only its own stage.
+  db = fakeDb({ loans: [
+    { id: 'a1', stage: 'unassigned', upload_date: '2026-08-01' },
+    { id: 'a2', stage: 'unassigned', upload_date: '2026-07-27' },
+    { id: 'a3', stage: 'approved',   upload_date: '2026-08-01' },
+  ] });
+  plan = stampPlan('loans', { uploadDate: '2026-08-01', mode: 'replace', stage: 'unassigned' }, NOW);
+  out = await runReplace(db, 'loans', plan, [{}]);
+  assert.equal(out.replaced, 1);
+  assert.deepEqual(db._dump('loans').map(r => r.id), ['a2', 'a3']);
+
+  // And the protection for work people typed inside the app still holds.
+  db = fakeDb({ complaints: [
+    { id: 'c1', upload_date: '2026-08-01', upload_batch: 'b1' },   // came from an upload
+    { id: 'c2', upload_date: '2026-08-01', upload_batch: null },   // typed at the desk
+  ] });
+  plan = stampPlan('complaints', { uploadDate: '2026-08-01', mode: 'replace' }, NOW);
+  out = await runReplace(db, 'complaints', plan, [{}]);
+  assert.equal(out.replaced, 1);
+  assert.deepEqual(db._dump('complaints').map(r => r.id), ['c2']);
 });

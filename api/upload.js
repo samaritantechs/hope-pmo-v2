@@ -43,6 +43,91 @@ export const STAMPED_TABLES = new Set(['loans', 'received_payments', 'abnormal_p
 export const APP_WRITABLE_TABLES = new Set(['complaints', 'restructures', 'demand_notices',
   'followup_comments']);
 
+/* TWO REPORTS CARRY THEIR OWN DATES, AND THOSE DATES ARE THE TRUTH.
+   A loan approvals report says when each loan was approved. A received payments report says
+   when each payment came in. Every figure in the system already reads those columns and always
+   has -- sales, the weekly boards, commission, the officer boards. The upload stamp has never
+   been part of any number.
+
+   Where the stamp DID still rule was Replace, and that was wrong for these two. Re-pull the
+   approvals report for 27 July, upload it as a correction, and "Replace" would have removed
+   whatever was uploaded under today's stamp instead of the 27 July approvals you meant to
+   correct. So for these two, Replace now works off the dates in the file.
+
+   Deliberately the EXACT SET of dates found in the file, never the span between the earliest
+   and the latest. One mistyped year in one cell would otherwise turn "redo 27 July" into
+   "delete everything between 1970 and now". With a set, a stray date can only ever clear that
+   stray date -- almost always nothing at all.
+
+   Every other report keeps the stamp, because a loan APPLICATIONS report pulled on 27 July
+   legitimately contains applications dated in June: the dates inside cannot say which report a
+   row belongs to, so the person uploading has to. */
+export const DATA_DATED = {
+  received_payments: { col: 'paid_at' },
+  loans: { byStage: { approved: 'approved_date', disbursed: 'disb_date' } },
+};
+export function dataDateColumn(table, stage) {
+  const d = DATA_DATED[table];
+  if (!d) return null;
+  if (d.col) return d.col;
+  return (d.byStage && d.byStage[String(stage || '')]) || null;
+}
+/** The distinct dates this file is actually about. Blank and unreadable dates are dropped:
+    a row with no date of its own belongs to no day, so it can neither be replaced by date nor
+    take a day down with it -- it is simply added. */
+export function datesInFile(records, col) {
+  const seen = new Set();
+  for (const r of records) {
+    const v = String(r[col] == null ? '' : r[col]).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) seen.add(v);
+  }
+  return [...seen].sort();
+}
+/* One report is one day, or a few. A file claiming hundreds of distinct days is not a report
+   being corrected -- it is a whole history, or a column of rubbish being read as dates, and
+   turning that into a delete is not a risk worth taking. Append still works; only Replace
+   stops, and it says why. */
+export const MAX_REPLACE_DATES = 62;
+
+/** REPLACE ALL FOR THIS DAY. This is the only code in the system that deletes anybody's
+    figures, so every path out of it is deliberate:
+      - Not replacing? Touch nothing.
+      - Approvals / received payments? Clear exactly the days found in the file, and no others.
+        A file with no readable dates, or one claiming more days than any real report covers,
+        is REFUSED rather than guessed at -- refusing costs someone a second upload, guessing
+        costs them their records.
+      - Everything else? Clear that report's own stamp, one pipeline stage at a time.
+      - Tables people also type into inside the app? Never take a row that did not arrive in an
+        upload.
+    Takes the database as an argument so the deletes can be watched in a test. */
+export async function runReplace(db, table, plan, records) {
+  if (!plan || !plan.replace) return { replaced: 0, replacedDates: null };
+  let replacedDates = null;
+  if (plan.dateCol) {
+    replacedDates = datesInFile(records, plan.dateCol);
+    if (!replacedDates.length) {
+      const e = new Error('This file has no readable dates in its "' + plan.dateCol.replace(/_/g, ' ')
+        + '" column, so there is no day to replace. Upload it with "Ongeza / Append" instead, or check the file.');
+      e.status = 400; throw e;
+    }
+    if (replacedDates.length > MAX_REPLACE_DATES) {
+      const e = new Error('This file covers ' + replacedDates.length + ' different days ('
+        + replacedDates[0] + ' to ' + replacedDates[replacedDates.length - 1]
+        + '). That is too much history to replace in one go — it usually means the wrong column is being read as a date. '
+        + 'Upload it with "Ongeza / Append", or split it into single days.');
+      e.status = 400; throw e;
+    }
+  }
+  let q = db.from(table).delete();
+  for (const [k, v] of Object.entries(plan.scope)) q = q.eq(k, v);
+  if (replacedDates) q = q.in(plan.dateCol, replacedDates);
+  // Never take what a person typed in the app.
+  if (plan.uploadedOnly) q = q.not('upload_batch', 'is', null);
+  const { data: gone, error: delErr } = await q.select('id');
+  if (delErr) throw new Error('Could not clear the previous report for that date: ' + delErr.message);
+  return { replaced: (gone || []).length, replacedDates };
+}
+
 export function stampPlan(table, meta = {}, nowMs = Date.now()) {
   if (!STAMPED_TABLES.has(table)) {
     return { stamped: false, uploadDate: null, replace: false, scope: {}, uploadedOnly: false };
@@ -55,9 +140,14 @@ export function stampPlan(table, meta = {}, nowMs = Date.now()) {
   const replace = String(meta.mode || '').toLowerCase() === 'replace';
   // The pipeline is uploaded one stage at a time, so replacing the 27th's APPROVED report must
   // not take the 27th's Assigned report with it.
-  const scope = { upload_date: uploadDate };
+  const scope = {};
   if (table === 'loans' && meta.stage) scope.stage = meta.stage;
-  return { stamped: true, uploadDate, replace, scope, uploadedOnly: APP_WRITABLE_TABLES.has(table) };
+  // Approvals and received payments are matched on the dates in the file (filled in later, once
+  // the file has been read). Everything else is matched on the stamp the uploader chose.
+  const dateCol = dataDateColumn(table, meta.stage);
+  if (!dateCol) scope.upload_date = uploadDate;
+  return { stamped: true, uploadDate, replace, scope, dateCol,
+           uploadedOnly: APP_WRITABLE_TABLES.has(table) };
 }
 
 export default withApi(async (req, res) => {
@@ -189,18 +279,8 @@ export default withApi(async (req, res) => {
     records = records.map(r => ({ ...r, upload_date: uploadDate, upload_batch: uploadBatch }));
   }
 
-  // REPLACE ALL FOR THIS DATE. Only ever touches rows carrying this report's own stamp, so a
-  // wrong or short report can be redone without disturbing any other day -- and without the
-  // blunt alternative of clearing the whole table.
-  if (plan.replace) {
-    let q = supabase.from(table).delete();
-    for (const [k, v] of Object.entries(plan.scope)) q = q.eq(k, v);
-    // Never take what a person typed in the app.
-    if (plan.uploadedOnly) q = q.not('upload_batch', 'is', null);
-    const { data: gone, error: delErr } = await q.select('id');
-    if (delErr) throw new Error('Could not clear the previous report for that date: ' + delErr.message);
-    replaced = (gone || []).length;
-  }
+  const { replaced: nReplaced, replacedDates } = await runReplace(supabase, table, plan, records);
+  replaced = nReplaced;
 
   // Tables that reference teams.team as a foreign key -- auto-create any team name that
   // doesn't exist yet, rather than blocking the upload. Your team list grows over time; a new
@@ -296,11 +376,22 @@ export default withApi(async (req, res) => {
   // figures or corrects them, and there is no append-or-replace option to choose because the
   // answer is a property of the report, not of the moment. So the answer travels back with
   // every upload, in words.
+  // Which days this actually touched, said the way the uploader thinks about it. For approvals
+  // and received payments that is the days INSIDE the file, and naming them is the whole point:
+  // someone redoing 27 July needs to see "27 July" and not the day they pressed the button.
+  const dayPhrase = replacedDates
+    ? (replacedDates.length === 1 ? replacedDates[0]
+       : replacedDates.length <= 4 ? replacedDates.join(', ')
+       : `${replacedDates.length} days, ${replacedDates[0]} to ${replacedDates[replacedDates.length - 1]}`)
+    : uploadDate;
   const behaviour = stamped
     ? (replaced || String(meta.mode || '').toLowerCase() === 'replace'
-        ? { mode: 'replace-date', text: `Replaced the ${uploadDate} report: ${replaced} earlier row(s) removed, ${records.length} written. No other date was touched.`
+        ? { mode: 'replace-date', text: `Replaced ${dayPhrase}: ${replaced} earlier row(s) removed, ${records.length} written. No other day was touched.`
+            + (plan.dateCol ? ` The days come from the "${plan.dateCol.replace(/_/g, ' ')}" column in your file, not from the upload date.` : '')
             + (plan.uploadedOnly ? ' Anything staff entered in the app was left alone — only uploaded rows were replaced.' : '') }
-        : { mode: 'append', text: `Added to the ${uploadDate} report. Uploading the same file again under this date would store it twice — choose "Replace all for this date" to redo a day instead.` })
+        : { mode: 'append', text: plan.dateCol
+            ? `Added. Each row counts under its own "${plan.dateCol.replace(/_/g, ' ')}" from the file, so re-pulled dates land on the right day — but uploading the same file twice would store it twice. Choose "Badilisha yote / Replace all" to redo a day instead.`
+            : `Added to the ${uploadDate} report. Uploading the same file again under this date would store it twice — choose "Replace all for this date" to redo a day instead.` })
     : SNAPSHOT_TABLES.has(table)
     ? { mode: 'supersede', text: 'This date now reads from THIS upload. An earlier upload of the same date stays in history but no longer counts, so nothing is doubled.' }
     : table === 'hints'
