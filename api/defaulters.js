@@ -25,7 +25,10 @@ export default withApi(async (req, res) => {
     ? await fetchAll(() => {
         let q = supabase
           .from('defaulter_snapshots')
-          .select('id, ref, team, amount_due, weekday, snapshot_type, snapshot_date, full_name, contact, arrears') 
+          // amount_due and customer_id do not exist on this table -- asking for them makes
+          // PostgREST reject the whole request, which is an endpoint that always fails rather
+          // than a faster one. The real column is `arrears`.
+          .select('id, ref, team, weekday, snapshot_type, snapshot_date, full_name, contact, guarantor_name, guarantor_contact, status, ds, dc, days_elapsed, arrears, other_inst, balance, disb_date, expire_date, chronic_date, upload_batch, created_at')
           .eq('snapshot_type', type)
           .eq('weekday', wd)
           .eq('snapshot_date', snapDate);

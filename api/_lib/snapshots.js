@@ -58,11 +58,21 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
      a property of the whole upload, or a team with no rows that day would silently fall back
      to an older date and the officer would work yesterday's list without being told. */
   
-  // OPTIMIZATION: Swapped select('*') for a performance optimized column selection rule
-  const cols = opts.columns || 'id, team, snapshot_date, upload_batch, created_at, payment_expected, arrears, todays_payment, todays_status';
-  
+  /* THE COLUMN LIST IS NOT SAFE TO NARROW HERE, and an attempt to do so is what put customer
+     rows on officers' phones with no name and nothing to tap.
+
+     latestSnapshot is SHARED. The same function feeds the phone's Leo/Kesho lists (which need
+     ref, full_name, contact, guarantor_name, guarantor_contact, due_summary), the Exp.Def
+     rotation (status, disb_date, expire_date, chronic_date, days_elapsed, other_inst, ds, dc)
+     and the dashboard (payment_expected, arrears, todays_status). A single hard-coded list
+     cannot serve all three: whatever it leaves out, some screen silently loses.
+
+     Narrowing belongs where the caller knows what it needs -- which is what the per-caller
+     selects in call-core and portal-core already do. The real saving here was never the
+     columns anyway: it was opts.teams below, which stops an officer downloading forty teams
+     to read one. */
   const all = await fetchAll(() => {
-    let q = db.from(table).select(cols).eq('snapshot_date', date);
+    let q = db.from(table).select('*').eq('snapshot_date', date);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
     if (opts.teams && opts.teams.length) q = q.in('team', upperTeams(opts.teams));
     return q;
@@ -75,12 +85,11 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
 /** One-query fetch of every snapshot row in [fromDate, toDate] matching `filters` -- raw,
     ungrouped. Pair with resolveLatestPerKey to batch-resolve per day/weekday without a round
     trip per group (the weekend dashboard reads a whole week in two queries this way). */
-export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams, columns) {
-  // OPTIMIZATION: Replaced select('*') with specific columns for computing historical KPIs
-  const cols = columns || 'id, team, snapshot_date, upload_batch, created_at, payment_expected, arrears, todays_payment, todays_status';
-  
+export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams) {
+  // Same reasoning as latestSnapshot: shared by the weekly dashboard, the officer boards and
+  // the phone's week figure, each needing a different set. The team narrowing is the saving.
   return fetchAll(() => {
-    let q = db.from(table).select(cols).gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
+    let q = db.from(table).select('*').gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
     if (teams && teams.length) q = q.in('team', upperTeams(teams));   // narrow at the database
     return q;
