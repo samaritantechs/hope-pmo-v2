@@ -715,6 +715,97 @@ async function brand(db) {
     motto: APP.MOTTO, logo: (await settingGet(db, 'CALL_LOGO_URL')) || '' };
 }
 
+/* =====================================================================================
+   THE CUSTOMER'S OWN VIEW. Third door into this system, beside Leaders and Officers.
+
+   A customer types their reference number and sees their own loan. Nothing else: not a list,
+   not a search, not another customer, not a total. One ref in, one loan out.
+
+   WHAT IT DELIBERATELY DOES NOT RETURN, and why it matters:
+   A reference number is the only thing being asked for, and refs are short and sequential --
+   somebody who tries ten thousand of them gets ten thousand answers. That is tolerable when
+   each answer is "your own balance", which the customer already knows, and NOT tolerable when
+   each answer is a name attached to a working phone number. So no phone number, no guarantor
+   name, no guarantor phone, ever, on this door. Whoever is holding the ref already knows the
+   customer's number; printing it back only helps somebody who does not.
+
+   The name IS returned, because without it a customer cannot tell whether they typed their own
+   ref or their neighbour's, which is the one mistake this screen must not let pass quietly.
+
+   HARDENING, when the operation wants it: set CUSTOMER_LOGIN_VERIFY to 'phone4' and the
+   customer must also give the last four digits of the phone on their file. That turns
+   guessing a ref into guessing a ref AND four digits, and the customer types four more
+   characters. Off by default, because the ask was a reference number and nothing more. */
+function last4_(s) { const d = String(s == null ? '' : s).replace(/\D/g, ''); return d.slice(-4); }
+async function customerLookup(db, [ref, verify], nowMs) {
+  const key = String(ref == null ? '' : ref).trim();
+  if (!key) return { ok: false, error: 'NO_REF' };
+
+  // The customer's own row, wherever it is freshest. Their loan lives in the repayment book
+  // while it is being collected and in the follow-up book once it falls behind; a customer who
+  // has gone quiet must not be told "hakuna taarifa" simply because they stopped being on a
+  // daily list.
+  const [snaps, fu] = await Promise.all([
+    fetchAll(() => db.from('repayment_snapshots').select('*').eq('ref', key)),
+    fetchAll(() => db.from('followup_status').select('*').eq('ref', key)),
+  ]);
+  const latest = snaps.slice().sort((a, b) =>
+    String(a.snapshot_date || '').localeCompare(String(b.snapshot_date || ''))
+    || String(a.created_at || '').localeCompare(String(b.created_at || '')))
+    .filter(r => r.snapshot_type === 'today' || r.snapshot_type === 'initial').pop()
+    || snaps[snaps.length - 1] || null;
+  const f = fu[0] || null;
+  if (!latest && !f) return { ok: false, error: 'NOT_FOUND' };
+
+  const src = latest || f;
+  const mode = K(await settingGet(db, 'CUSTOMER_LOGIN_VERIFY') || '');
+  if (mode === 'PHONE4') {
+    const want = last4_(src.contact);
+    // No number on file means nothing to check against. Refusing would lock out the very
+    // customers whose records are thinnest, so the ref alone stands in that case.
+    if (want && last4_(verify) !== want) return { ok: false, error: 'VERIFY_FAILED' };
+  }
+
+  // Their payments, newest first. "Did my payment arrive?" is the question this screen exists
+  // to answer, and being able to answer it without phoning an officer is most of the point.
+  const paid = await fetchAll(() => db.from('received_payments')
+    .select('paid_at, amount_paid, transaction_id').eq('ref_no', key));
+  const payments = paid
+    .map(p => ({ date: String(p.paid_at || '').slice(0, 10), amount: num(p.amount_paid),
+                 receipt: String(p.transaction_id || '') }))
+    .filter(p => p.date)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 40);
+
+  const arrears = num(latest ? latest.arrears : f.arrears);
+  return {
+    ok: true,
+    ref: key,
+    name: src.full_name || '',
+    team: src.team || '',
+    asOf: latest ? String(latest.snapshot_date || '').slice(0, 10) : null,
+    loan: {
+      dueSummary: latest ? (latest.due_summary || '') : '',    // "4/6" -- paid of target
+      installment: num(latest && latest.initial_inst),
+      expectedToday: num(latest && latest.payment_expected),
+      paidToday: num(latest && latest.todays_payment),
+      statusToday: latest ? (latest.todays_status || '') : '',
+      balance: num(latest && latest.balance),
+      total: num(latest && latest.total_amount),
+      arrears,
+      disbDate: String((latest && latest.disb_date) || (f && f.disb_date) || '').slice(0, 10) || null,
+      lastPayment: String((latest && latest.last_trans_date) || (f && f.last_trans) || '').slice(0, 10) || null,
+    },
+    behind: arrears > 0,
+    // What the officer has already been told, so a customer who has promised a date sees that
+    // it was written down -- and does not get chased for something already agreed.
+    promise: f && f.promise_date
+      ? { date: String(f.promise_date).slice(0, 10), amount: num(f.promise_amt) } : null,
+    payments,
+    // Deliberately absent: contact, guarantor_name, guarantor_contact. See the note above.
+  };
+}
+
 /** Is this a TEAM code? The launcher's sign-in box only understood portal access codes, so a
     field officer who typed the one code they were given got "Msimbo si sahihi" and stopped --
     when in fact their code was perfectly valid, just for the other door. This says which door
@@ -735,6 +826,7 @@ async function teamCode(db, [code]) {
 const HANDLERS = {
   api_brand: brand,
   api_teamCode: teamCode,
+  api_customerLookup: customerLookup,
   api_callBoot: boot,
   api_callRegister: register,
   api_callList: list,

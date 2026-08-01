@@ -1,29 +1,74 @@
 {
   "rewrites": [
-    { "source": "/", "destination": "/home.html" },
-    { "source": "/home", "destination": "/home.html" },
-    { "source": "/dashboard", "destination": "/app.html" },
-    { "source": "/portal", "destination": "/app.html" },
-    { "source": "/kpi", "destination": "/dashboard.html" },
-    { "source": "/upload", "destination": "/upload.html" },
-    { "source": "/call", "destination": "/call.html" }
+    {
+      "source": "/",
+      "destination": "/home.html"
+    },
+    {
+      "source": "/home",
+      "destination": "/home.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/portal",
+      "destination": "/app.html"
+    },
+    {
+      "source": "/kpi",
+      "destination": "/dashboard.html"
+    },
+    {
+      "source": "/upload",
+      "destination": "/upload.html"
+    },
+    {
+      "source": "/call",
+      "destination": "/call.html"
+    },
+    {
+      "source": "/mkopo",
+      "destination": "/mkopo.html"
+    }
   ],
   "headers": [
     {
       "source": "/",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
     },
     {
-      "source": "/(home|dashboard|portal|kpi|upload|call)",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+      "source": "/(home|dashboard|portal|kpi|upload|call|mkopo)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
     },
     {
       "source": "/(.*).html",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
     },
     {
       "source": "/brand.js",
-      "headers": [{ "key": "Cache-Control", "value": "no-cache, must-revalidate" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
     }
   ]
 }
