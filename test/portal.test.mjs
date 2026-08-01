@@ -435,6 +435,62 @@ test('storage usage reports what each date costs, per report type', async () => 
   await assert.rejects(() => run('storageUsage', {}, GMO), e => e.status === 403);
 });
 
+/* The Settings tab used to download every row of five tables just to count them -- millions of
+   rows, over the internet, to work out a number Postgres already knew. It now asks the database
+   to count, and falls back to the old way while the migration has not been run by hand yet.
+   Both roads have to arrive at the same place, or the tab tells a different story depending on
+   whether somebody remembered to run some SQL. */
+test('storage counts: asking the database and counting by hand agree exactly', async () => {
+  // Stands in for storage_usage_by_date(): the same GROUP BY, done in JavaScript over the fake.
+  const COUNT_FN = (store) => {
+    const src = [
+      ['expected', 'repayment_snapshots', 'snapshot_date'],
+      ['defaulters', 'defaulter_snapshots', 'snapshot_date'],
+      ['received', 'received_payments', 'paid_at'],
+      ['abnormal', 'abnormal_payments', 'created_at'],
+      ['calls', 'call_logs', 'call_date'],
+    ];
+    const out = [];
+    for (const [key, table, col] of src) {
+      const n = {};
+      for (const r of (store[table] ? store[table].rows : [])) {
+        const d = String(r[col] == null ? '' : r[col]).slice(0, 10) || null;
+        n[d] = (n[d] || 0) + 1;
+      }
+      for (const [day, count] of Object.entries(n)) out.push({ source: key, day: day === 'null' ? null : day, n: count });
+    }
+    return out;
+  };
+
+  const slow = await portalApi(fakeDb(tables()), ADMIN, 'storageUsage', {}, NOW);
+  const fast = await portalApi(fakeDb(tables(), { rpc: { storage_usage_by_date: COUNT_FN } }),
+    ADMIN, 'storageUsage', {}, NOW);
+
+  assert.equal(fast.totalRows, slow.totalRows);
+  assert.equal(fast.bytes, slow.bytes);
+  assert.equal(fast.oldest, slow.oldest);
+  assert.equal(fast.newest, slow.newest);
+  assert.equal(fast.perDay, slow.perDay);
+  assert.deepEqual(fast.dates, slow.dates);
+  assert.deepEqual(fast.sources, slow.sources);
+
+  // A database where the function has not been created must NOT error -- that is every live
+  // database between a deploy and someone running the migration.
+  const notYet = await portalApi(fakeDb(tables(), { rpc: { storage_usage_by_date: null } }),
+    ADMIN, 'storageUsage', {}, NOW);
+  assert.deepEqual(notYet.dates, slow.dates);
+
+  // Rows with no date of their own still count towards the size, they just belong to no day --
+  // otherwise the disk figure would understate what is actually stored.
+  const t = tables();
+  t.abnormal_payments = (t.abnormal_payments || []).concat([{ id: 'x1', created_at: null }]);
+  const withNull = await portalApi(fakeDb(t, { rpc: { storage_usage_by_date: COUNT_FN } }),
+    ADMIN, 'storageUsage', {}, NOW);
+  const plain = await portalApi(fakeDb(t), ADMIN, 'storageUsage', {}, NOW);
+  assert.equal(withNull.totalRows, plain.totalRows);
+  assert.deepEqual(withNull.dates, plain.dates);
+});
+
 test('cleanup deletes only the chosen types for the chosen date', async () => {
   const db = fakeDb(tables());
   const count = t => db._dump(t).length;
