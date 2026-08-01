@@ -72,11 +72,24 @@ class FakeQuery {
   then(res, rej) { return Promise.resolve(this._exec()).then(res, rej); }
 }
 
-export function fakeDb(tables) {
+/** fakeDb(tables, opts)
+    opts.rpc  – { name: fn|null }. A function stands in for a Postgres function; null stands in
+                for one that has NOT been created yet, which is the state of every live database
+                between a deploy and someone running the migration by hand. Code that calls an
+                RPC has to survive that, so the fake has to be able to reproduce it. */
+export function fakeDb(tables, opts = {}) {
   const store = {};
   for (const [name, rows] of Object.entries(tables || {})) store[name] = { rows: rows.map(r => ({ ...r })) };
+  const rpcs = opts.rpc || {};
   return {
     from(name) { if (!store[name]) store[name] = { rows: [] }; return new FakeQuery(store[name]); },
+    async rpc(name, args) {
+      if (!Object.prototype.hasOwnProperty.call(rpcs, name) || rpcs[name] == null) {
+        // What PostgREST actually says when the function is missing.
+        return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.' + name } };
+      }
+      return { data: await rpcs[name](store, args), error: null };
+    },
     _dump(name) { return store[name] ? store[name].rows : []; },
   };
 }

@@ -1613,20 +1613,54 @@ const dayOf = v => String(v == null ? '' : v).slice(0, 10);
 
 /** What is stored, by date and report type, so a cleanup is an informed choice rather than a
     guess. Also reports the total row count per source for the storage note in the UI. */
+/* COUNTING IS THE DATABASE'S JOB.
+
+   This used to download every row of five tables -- every repayment snapshot, every defaulter
+   snapshot, every received payment, every abnormal payment, every call log -- one table after
+   another, and count them here. With thirty thousand customers and a snapshot every day, that
+   is millions of rows pulled across the internet to work out a number Postgres already knew.
+   It is why the Settings tab took so long to open, and it was quietly a large part of the
+   data-transfer bill.
+
+   storage_usage_by_date() does the same counting in one query, over indexes, and sends back a
+   few hundred rows. See db/migrations/2026-08-01-storage-counts.sql.
+
+   The old way is kept as a fallback, and this is not tidiness: the migration is run by hand,
+   so between a deploy and that being done, the function does not exist. Falling back means
+   the Settings tab keeps working -- slowly, as it always did -- instead of breaking. */
+async function countsByDate(db) {
+  try {
+    const { data, error } = await db.rpc('storage_usage_by_date');
+    if (error) throw error;
+    if (Array.isArray(data)) return data;
+  } catch (e) { /* function not created yet -- fall through to the slow, always-available way */ }
+  const rows = [];
+  for (const [key, src] of Object.entries(SNAPSHOT_SOURCES)) {
+    const all = await fetchAll(() => db.from(src.table).select(src.dateCol));
+    const n = {};
+    for (const r of all) { const d = dayOf(r[src.dateCol]); n[d] = (n[d] || 0) + 1; }
+    for (const [day, count] of Object.entries(n)) rows.push({ source: key, day, n: count });
+  }
+  return rows;
+}
+
 async function storageUsage(db, user) {
   requireAdmin(user);
   const out = {};
   const byDate = {};
   for (const [key, src] of Object.entries(SNAPSHOT_SOURCES)) {
-    const rows = await fetchAll(() => db.from(src.table).select(src.dateCol));
-    out[key] = { key, label: src.label, table: src.table, rows: rows.length };
-    for (const r of rows) {
-      const d = dayOf(r[src.dateCol]);
-      if (!d) continue;
-      if (!byDate[d]) byDate[d] = { date: d, total: 0 };
-      byDate[d][key] = (byDate[d][key] || 0) + 1;
-      byDate[d].total++;
-    }
+    out[key] = { key, label: src.label, table: src.table, rows: 0 };
+  }
+  for (const row of await countsByDate(db)) {
+    const key = row.source;
+    if (!out[key]) continue;                      // a source the app no longer knows about
+    const n = Number(row.n) || 0;
+    out[key].rows += n;                           // rows with no date still count towards size
+    const d = dayOf(row.day);
+    if (!d) continue;
+    if (!byDate[d]) byDate[d] = { date: d, total: 0 };
+    byDate[d][key] = (byDate[d][key] || 0) + n;
+    byDate[d].total += n;
   }
   const dates = Object.values(byDate).sort((a, b) => b.date.localeCompare(a.date));
   for (const s of Object.values(out)) s.bytes = s.rows * SNAPSHOT_SOURCES[s.key].bytes;
