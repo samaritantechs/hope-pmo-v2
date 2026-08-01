@@ -16,6 +16,14 @@
   .hide{display:none !important}
   .sk{width:20px;height:20px;border:2.5px solid var(--b100);border-top-color:var(--b600);border-radius:50%;animation:sp .7s linear infinite;margin:40px auto}
   @keyframes sp{to{transform:rotate(360deg)}}
+  /* A hairline that slides across the top while the screen you are already reading is quietly
+     brought up to date behind you. It replaces the old habit of wiping the page to a spinner
+     on every single click -- you keep your place, and the numbers change under you when they
+     are ready. Two pixels tall on purpose: it should be noticeable, not distracting. */
+  .busy{height:2px;background:transparent;overflow:hidden;flex:0 0 auto}
+  .busy.on{background:var(--b100)}
+  .busy.on::after{content:'';display:block;height:100%;width:40%;background:var(--b600);animation:bz 1.1s ease-in-out infinite}
+  @keyframes bz{0%{margin-left:-40%}100%{margin-left:100%}}
 
   /* sign-in */
   #signin{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,var(--b900),var(--b800));padding:20px;z-index:50}
@@ -247,6 +255,7 @@
       <button class="btn sm ghost" id="themeBtn" title="Dark mode">&#9789;</button>
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
     </div>
+    <div class="busy" id="busy"></div>
     <div class="body" id="view"></div>
   </main>
 </div>
@@ -280,10 +289,31 @@ function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTC
 
 var WDFULL = { MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday' };
 var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true,
-          args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null };
+          args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0 };
+
+/* Which portal calls only LOOK at data. Everything not on this list is treated as a change to
+   the books, which throws the whole remembered screen away -- a save on one tab can move the
+   numbers on any other, so it is never safe to keep showing what we had.
+   Fails safe on purpose: a name nobody listed here is assumed to write, so the worst a
+   forgotten entry can do is bring back the old behaviour of always asking the server. */
+var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
+  expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
+  weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
+  complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
+  demandNotices:1, abnormal:1, credit:1, teams:1, settings:1, storageUsage:1,
+  accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1 };
+// key = which remembered screen is on display right now. Views fill in their own defaults as
+// they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
+// the key you would work out from the state afterwards -- keep the real one, or later touches
+// like a team filter get written to a slot nobody reads.
+var VC = { store:{}, watch:null, key:'' };
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 function srv(fn, args){
+  if (!READ_FNS[fn]) {
+    VC.store = {};                       // something changed: nothing remembered is trustworthy
+    if (VC.watch) VC.watch.ok = false;   // and a screen built on top of a change is not either
+  }
   return fetch('/api/portal', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ code:S.code, fn:fn, args:args||{} })
@@ -378,7 +408,8 @@ function go(view){
   render();
 }
 $('#q').addEventListener('input', function(){ S.q=this.value; paint(); });
-$('#refBtn').onclick = function(){ render(); };
+// The reload button means RELOAD. It is the one place that must always go to the server.
+$('#refBtn').onclick = function(){ render({ force:true }); };
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
 $('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
 $('#tipBtn').onclick = function(){ tipShow(); };
@@ -619,6 +650,15 @@ function paint(){
 }
 function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); }
 function wireBar(){
+  // The bar's HTML is built once, when the tab is loaded, with whatever was chosen at that
+  // moment written into it. Anything picked afterwards -- a team filter, or a choice carried
+  // back when you return to a tab -- lives in S, not in that HTML. Put S back on the controls
+  // so the boxes say what the table is actually showing. A dropdown reading "All teams" over a
+  // table listing one team is worse than no filter at all.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-filter]'), function(el){
+    var want = S.filters[el.getAttribute('data-filter')] || '';
+    if (el.value !== want) el.value = want;
+  });
   Array.prototype.forEach.call(document.querySelectorAll('[data-arg]'), function(el){
     // A button carrying data-val sets the arg on CLICK; inputs and selects still use change.
     if (el.hasAttribute('data-val')) {
@@ -641,7 +681,13 @@ function wireBar(){
     el.onclick = function(){ S.args.weekday = el.getAttribute('data-wd'); render(); };
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-filter]'), function(el){
-    el.onchange = function(){ S.filters[el.getAttribute('data-filter')] = el.value; paint(); };
+    el.onchange = function(){
+      S.filters[el.getAttribute('data-filter')] = el.value;
+      // Narrowing the list needs no trip to the server -- but remember the choice with the
+      // screen, so coming back to this tab shows the same box ticked and the same rows.
+      if (VC.store[VC.key]) VC.store[VC.key].filters = JSON.parse(JSON.stringify(S.filters));
+      paint();
+    };
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-jpg]'), function(el){
     el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
@@ -2055,15 +2101,76 @@ document.addEventListener('keydown', function(e){
   else if (e.key === 'ArrowLeft'){ S.presI = (S.presI-1+S.slides.length) % S.slides.length; presDraw(); }
 });
 
-function render(){
+/* Clicking a tab used to wipe the screen to a spinner and go back to the server every single
+   time -- even flicking between two tabs you had just read. On a field connection that is a few
+   seconds of blank page per click, all day. Now a tab you have already opened comes back
+   instantly from what is already in hand, and the server is asked again quietly behind it.
+   Only what is on screen changes when the answer lands; the page never goes blank twice.
+
+   Held in memory only, and only for this sitting: it is a convenience, not a copy of the books.
+   Anything that writes empties it (see srv), and the reload button ignores it outright. */
+var VC_MS = 90000;                       // a minute and a half; a meeting-length attention span
+var VC_SKIP = { present:1 };             // the slideshow runs its own timers -- never replay it
+function viewKey_(){
+  var a = S.args || {};
+  return S.view + '|' + Object.keys(a).sort().map(function(k){ return k + '=' + a[k]; }).join('&');
+}
+function snapTake_(){
+  return { at:Date.now(), head:HEAD, onrow:ONROW, rows:S.rows, cols:S.cols, foot:S.foot,
+           args:JSON.parse(JSON.stringify(S.args || {})),
+           // The team/status dropdowns live inside the remembered HEAD, already ticked. Bring
+           // the choice back with them, or you return to a tab showing "Team KONGOWE" in the
+           // box while the table underneath quietly lists everybody.
+           filters:JSON.parse(JSON.stringify(S.filters || {})) };
+}
+function snapPut_(s){
+  HEAD = s.head; ONROW = s.onrow;
+  S.rows = s.rows; S.cols = s.cols; S.foot = s.foot;
+  S.args = JSON.parse(JSON.stringify(s.args || {}));
+  S.filters = JSON.parse(JSON.stringify(s.filters || {}));
+}
+function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
+function drawView_(){
+  if (S.cols && S.cols.length) paint(); else paintHeadOnly();
+  wireForms();
+}
+function render(opts){
   clearInterval(S.presentTimer);
   var fn = VIEWS[S.view];
   if (!fn){ $('#view').innerHTML = '<div class="msg">—</div>'; return; }
+  var key = viewKey_();
+  var hit = (opts && opts.force) ? null : VC.store[key];
+  VC.key = key;
+  if (hit && Date.now() - hit.at < VC_MS){
+    snapPut_(hit);
+    drawView_();
+    load_(fn, key, true);                // keep reading; we will fix the numbers underneath you
+    return;
+  }
   loading();
+  load_(fn, key, false);
+}
+/** quiet = there is already a good screen up. Two rules follow from that, and both matter:
+    a slow answer must not paint over a tab you have since moved to (hence the ticket), and a
+    failed refresh must not replace a page you are reading with an error -- the connection
+    dropping for one moment is not a reason to take the work off someone's screen. */
+function load_(fn, key, quiet){
+  var my = ++S.rid;
+  var watch = { ok:true };
+  VC.watch = watch;
+  busy_(true);
   fn().then(function(){
-    if (S.cols && S.cols.length) paint(); else paintHeadOnly();
-    wireForms();
-  }).catch(failed);
+    if (VC.watch === watch) VC.watch = null;
+    if (my !== S.rid) return;            // a newer click already owns the screen
+    busy_(false);
+    if (watch.ok && !VC_SKIP[S.view]) VC.store[key] = snapTake_();
+    drawView_();
+  }).catch(function(e){
+    if (VC.watch === watch) VC.watch = null;
+    if (my !== S.rid) return;
+    busy_(false);
+    if (!quiet) failed(e);
+  });
 }
 
 /* ----------------------------------------------------------- drawers / forms */
