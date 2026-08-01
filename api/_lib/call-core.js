@@ -734,6 +734,29 @@ async function brand(db) {
    same two the launcher understands -- and that code is what scopes the figures. Anyone
    holding a code can already see these numbers by opening the app; this only saves them the
    opening. */
+/* THE ANSWER IS THE SAME FOR EVERYONE ON THE SAME TEAMS, SO WORK IT OUT ONCE.
+
+   The widget's figures are a whole dashboard computation -- and for somebody who sees every
+   team, that is the heaviest question this system can be asked. Left uncached, a wall display
+   and ten phones on the same team would each pay for it in full, every two minutes, all day.
+   For a leader scoped to ALL teams it was slow enough that the platform cut the request off
+   before it could answer, which is what "mtandao haujibu" was really reporting.
+
+   The figures come from uploads that happen a few times a day, so a copy kept for two minutes
+   is never meaningfully behind, and every screen after the first gets its answer instantly.
+   Two minutes also matches how often a screen asks, so a room full of them costs about what
+   one of them costs.
+
+   Kept in the running process, which serverless hosting reuses between requests but may throw
+   away at any moment. That is fine: an empty cache just means doing the work, which is what
+   used to happen every time. */
+const WIDGET_TTL_MS = 120000;
+const widgetCache = new Map();
+function widgetKey_(user) {
+  return (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL');
+}
+export function _clearWidgetCache() { widgetCache.clear(); }   // tests only
+
 async function widget(db, [code], nowMs) {
   const raw = String(code == null ? '' : code).trim();
   if (!raw) return { ok: false, error: 'NO_CODE' };
@@ -756,20 +779,36 @@ async function widget(db, [code], nowMs) {
     who = hit.team;
   }
 
-  const s = await summaryFor(db, user, nowMs);
-  // Percentages and totals only. Deliberately no rows: a widget that carried customer data
-  // would be putting names and balances on a lock screen anyone walking past can read.
-  const trim = x => (x ? { pct: x.pct, num: x.num, den: x.den } : { pct: null, num: 0, den: 0 });
+  const key = widgetKey_(user);
+  const hit = widgetCache.get(key);
+  const fresh = hit && (nowMs - hit.at) < WIDGET_TTL_MS && hit.at <= nowMs;
+  let figures;
+  if (fresh) {
+    figures = hit.figures;
+  } else {
+    const s = await summaryFor(db, user, nowMs);
+    // Percentages and totals only. Deliberately no rows: a widget that carried customer data
+    // would be putting names and balances on a lock screen anyone walking past can read.
+    const trim = x => (x ? { pct: x.pct, num: x.num, den: x.den } : { pct: null, num: 0, den: 0 });
+    figures = {
+      col: trim(s.col), kesho: trim(s.kesho), weekCol: trim(s.weekCol),
+      sales: trim(s.sales), expdf: trim(s.expdf), recovery: trim(s.recovery),
+      day: todayKey(nowMs), at: new Date(nowMs).toISOString(),
+    };
+    widgetCache.set(key, { at: nowMs, figures });
+  }
+
   return {
     ok: true,
     who,
     scope: user.teams ? user.teams.join(', ') : 'All teams',
     brand: (await settingGet(db, 'CALL_BRAND')) || APP.BRAND,
     logo: (await settingGet(db, 'CALL_LOGO_URL')) || '',
-    day: todayKey(nowMs),
-    at: new Date(nowMs).toISOString(),
-    col: trim(s.col), kesho: trim(s.kesho), weekCol: trim(s.weekCol),
-    sales: trim(s.sales), expdf: trim(s.expdf), recovery: trim(s.recovery),
+    // The age of the FIGURES, not of this reply. A screen that says "live" over numbers worked
+    // out four minutes ago is lying by a small amount, which is the only kind of lying an
+    // unattended display gets away with for long.
+    ...figures,
+    cached: !!fresh,
   };
 }
 

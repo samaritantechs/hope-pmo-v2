@@ -25,13 +25,14 @@ const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linu
 
 const APP = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'utf8');
 const calls = [];               // every request the page makes, in order
+let lastPurge = null;           // what the Clean button actually asked for
 
 const teamRows = [
   { team: 'KONGOWE', ref: 'R1', full_name: 'AMINA JUMA', contact: '0712000001', payment_expected: 1000, todays_status: 'UNPAID', arrears: 0 },
   { team: 'MBAGALA', ref: 'R2', full_name: 'PILI SALUM', contact: '0714000001', payment_expected: 2000, todays_status: 'PAID', arrears: 0 },
 ];
 
-function answer(fn) {
+function answer(fn, args) {
   if (fn === 'expectedDay') return {
     ok: true, weekday: 'MON', todayWeekday: 'MON', date: '2026-08-01', weekdays: ['MON', 'TUE'],
     teams: ['KONGOWE', 'MBAGALA'], byStatus: [{ status: 'UNPAID', count: 1 }, { status: 'PAID', count: 1 }],
@@ -42,6 +43,17 @@ function answer(fn) {
   if (fn === 'dashboardFull') return { ok: true, kpis: {}, teams: [], weekdays: [], pipeline: {}, totals: {} };
   if (fn === 'officerBoards') return { ok: true, boards: [] };
   if (fn === 'settingSet') return { ok: true };
+  if (fn === 'settings') return { ok: true, rows: [] };
+  if (fn === 'accessCodes') return { ok: true, rows: [], count: 0, roles: [] };
+  if (fn === 'officerAccounts') return { ok: true, rows: [], count: 0 };
+  if (fn === 'storageUsage') return { ok: true, sources: [], dates: [], totalRows: 0, bytes: 0,
+    perDay: 0, perMonth: 0, days: 1, oldest: '2026-07-01', newest: '2026-08-01' };
+  if (fn === 'purgeSnapshots') {
+    lastPurge = args;
+    const per = {}; (args.types || []).forEach(t => { per[t] = 2; });
+    return { ok: true, date: args.date, through: !!args.through, dryRun: !!args.dryRun,
+             deleted: per, total: (args.types || []).length * 2, protectedRows: 3 };
+  }
   return { ok: true, rows: [], totals: {}, teams: [] };
 }
 
@@ -52,10 +64,10 @@ const srv = http.createServer((req, res) => {
   if (req.url === '/api/portal') {
     let b = ''; req.on('data', c => b += c);
     req.on('end', () => {
-      const { fn } = JSON.parse(b || '{}');
+      const { fn, args } = JSON.parse(b || '{}');
       calls.push(fn);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(answer(fn)));
+      res.end(JSON.stringify(answer(fn, args || {})));
     });
     return;
   }
@@ -171,6 +183,37 @@ const survived = await page.evaluate(() => ({
 check('a dropped connection does not take your page away',
   survived.rows >= 1 && !survived.err && !survived.busy, JSON.stringify(survived));
 await page.unroute('**/api/portal');
+
+// --- 7. CLEANING REPORTS. The list used to stop at five, and ticking ten boxes one at a time
+//        is its own reason not to bother, so there is a Select all.
+await page.evaluate(() => { VC.store = {}; go('settings'); });
+await page.waitForTimeout(600);
+const boxes = await page.evaluate(() => Array.from(document.querySelectorAll('.clType')).map(c => c.value));
+check('every report that grows can be cleaned, not just five', boxes.length === 10, boxes.join(','));
+for (const k of ['expected','defaulters','received','abnormal','calls','loans','comments','complaints','restructures','demand_notices'])
+  check('  ...including ' + k, boxes.includes(k));
+check('the four people also type into say so on the box itself',
+  await page.evaluate(() => {
+    const lbls = Array.from(document.querySelectorAll('.clType')).map(c => c.parentElement.textContent);
+    return lbls.filter(t => /uploaded only/.test(t)).length === 4;
+  }));
+
+await page.evaluate(() => document.getElementById('clAll').click());
+check('Select all ticks every one',
+  await page.evaluate(() => Array.from(document.querySelectorAll('.clType')).every(c => c.checked)));
+await page.evaluate(() => document.getElementById('clNone').click());
+check('Clear unticks every one',
+  await page.evaluate(() => Array.from(document.querySelectorAll('.clType')).every(c => !c.checked)));
+
+// Check first must be a DRY RUN -- nothing may be deleted by pressing it.
+lastPurge = null;
+await page.evaluate(() => { document.getElementById('clAll').click(); document.getElementById('clCheck').click(); });
+await page.waitForTimeout(400);
+check('"Check first" asks for a dry run, and for all ten types',
+  lastPurge && lastPurge.dryRun === true && (lastPurge.types || []).length === 10, JSON.stringify(lastPurge));
+const dryOut = await page.evaluate(() => document.getElementById('clOut').textContent);
+check('and it says how many typed rows are being left alone',
+  /3/.test(dryOut) && /left alone|imeachwa/.test(dryOut), dryOut.slice(0, 120));
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));

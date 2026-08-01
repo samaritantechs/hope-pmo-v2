@@ -441,7 +441,11 @@ test('storage usage reports what each date costs, per report type', async () => 
    Both roads have to arrive at the same place, or the tab tells a different story depending on
    whether somebody remembered to run some SQL. */
 test('storage counts: asking the database and counting by hand agree exactly', async () => {
-  // Stands in for storage_usage_by_date(): the same GROUP BY, done in JavaScript over the fake.
+  /* Stands in for storage_usage_by_date(): the same GROUP BY, done in JavaScript over the fake.
+     It deliberately knows only the ORIGINAL FIVE reports, which makes this the upgrade path as
+     well: a live database still running the earlier version of that function answers for five,
+     and the app must count the other five itself and arrive at exactly the same totals. Do not
+     "fix" this list to match the code -- that is the thing being tested. */
   const COUNT_FN = (store) => {
     const src = [
       ['expected', 'repayment_snapshots', 'snapshot_date'],
@@ -515,6 +519,68 @@ test('cleanup deletes only the chosen types for the chosen date', async () => {
     e => e.status === 400);
   await assert.rejects(() => portalApi(db, GMO, 'purgeSnapshots', { date: TODAY, types: ['expected'] }, NOW),
     e => e.status === 403);
+});
+
+/* The cleanup only ever knew five reports, which left an admin able to tidy five things and
+   stuck with everything else. Now it covers every report that grows -- and four of those are
+   registers people ALSO type into from inside the app, which is where this gets dangerous. */
+test('cleanup reaches every report, and never takes what somebody typed', async () => {
+  const t = tables();
+  const day = TODAY + 'T09:00:00Z';
+  t.loans = [
+    { id: 'l1', stage: 'approved', upload_date: TODAY },
+    { id: 'l2', stage: 'assigned', upload_date: '2020-01-01' },
+  ];
+  // Two of each: one that arrived in an upload, one somebody typed at the desk.
+  t.followup_comments = [{ id: 'c1', created_at: day, upload_batch: 'b1' },
+                         { id: 'c2', created_at: day, upload_batch: null }];
+  t.complaints = [{ id: 'p1', created_at: day, upload_batch: 'b1' },
+                  { id: 'p2', created_at: day, upload_batch: null }];
+  t.restructures = [{ id: 'r1', created_at: day, upload_batch: 'b1' },
+                    { id: 'r2', created_at: day, upload_batch: null }];
+  t.demand_notices = [{ id: 'd1', created_at: day, upload_batch: 'b1' },
+                      { id: 'd2', created_at: day, upload_batch: null }];
+  const db = fakeDb(t);
+  const ids = n => db._dump(n).map(r => r.id);
+
+  // All ten types are offered, and the storage picture accounts for the new ones.
+  const usage = await portalApi(db, ADMIN, 'storageUsage', {}, NOW);
+  const keys = usage.sources.map(s => s.key);
+  for (const k of ['expected', 'defaulters', 'received', 'abnormal', 'calls',
+                   'loans', 'comments', 'complaints', 'restructures', 'demand_notices']) {
+    assert.ok(keys.includes(k), k + ' is missing from the storage picture');
+  }
+  assert.equal(usage.sources.find(s => s.key === 'loans').rows, 2);
+
+  // A dry run first: it must report what WOULD go without taking anything.
+  const dry = await portalApi(db, ADMIN, 'purgeSnapshots',
+    { date: TODAY, types: ['loans', 'comments', 'complaints', 'restructures', 'demand_notices'],
+      dryRun: true }, NOW);
+  assert.equal(dry.deleted.loans, 1);              // only today's; the 2020 row is another day
+  assert.equal(dry.deleted.comments, 1);           // the uploaded one, not the typed one
+  assert.equal(dry.total, 5);
+  assert.equal(dry.protectedRows, 4, 'says how many typed rows it is leaving alone');
+  assert.equal(db._dump('complaints').length, 2, 'a dry run takes nothing');
+
+  const done = await portalApi(db, ADMIN, 'purgeSnapshots',
+    { date: TODAY, types: ['loans', 'comments', 'complaints', 'restructures', 'demand_notices'] }, NOW);
+  assert.equal(done.total, 5);
+  assert.equal(done.protectedRows, 4);
+
+  // THE LINE THAT MATTERS: every desk-typed row is still there, every uploaded one is gone.
+  assert.deepEqual(ids('followup_comments'), ['c2']);
+  assert.deepEqual(ids('complaints'), ['p2']);
+  assert.deepEqual(ids('restructures'), ['r2']);
+  assert.deepEqual(ids('demand_notices'), ['d2']);
+  assert.deepEqual(ids('loans'), ['l2']);          // the other day's pipeline row survives
+
+  // The officers' live working list is NOT a report and is never offered for deletion -- it is
+  // one row per customer carrying their promises and comments, not a day of history.
+  assert.equal(keys.includes('followup'), false);
+  await assert.rejects(
+    () => portalApi(db, ADMIN, 'purgeSnapshots', { date: TODAY, types: ['followup'] }, NOW),
+    e => e.status === 400);
+  assert.ok(db._dump('followup_status').length > 0, 'the working list is untouched');
 });
 
 test('every complaint save is written to the audit trail', async () => {

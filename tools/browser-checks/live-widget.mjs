@@ -26,6 +26,10 @@ const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linu
 const PAGE = fs.readFileSync(path.join(ROOT, 'public/live.html'), 'utf8');
 
 let up = true, asked = 0, col = 0.92;
+// 'gateway' reproduces the real failure the field hit: the platform kills a slow function and
+// answers with its OWN error page, which is not JSON. The page used to call that "mtandao
+// haujibu" -- no signal -- and send everyone looking at the wrong thing entirely.
+let mode = 'ok';                                   // ok | gateway | garbage
 const feed = () => ({
   ok: true, who: 'ASHA JUMA', scope: 'KONGOWE', brand: 'HOPE MICROCREDIT', logo: '',
   day: '2026-08-01', at: new Date().toISOString(),
@@ -52,6 +56,13 @@ const srv = http.createServer((req, res) => {
       if (fn !== 'api_widget') { res.writeHead(200, {'Content-Type':'application/json'}); res.end('{"ok":true}'); return; }
       asked++;
       if (!up) { req.socket.destroy(); return; }                       // the network is gone
+      if (mode === 'gateway') {
+        res.writeHead(504, { 'Content-Type': 'text/html' });
+        res.end('<html><body>An error occurred with your deployment</body></html>'); return;
+      }
+      if (mode === 'garbage') {
+        res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end('FUNCTION_INVOCATION_FAILED'); return;
+      }
       const code = String(args[0] || '');
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(code === 'BADCODE' ? { ok: false, error: 'BAD_CODE' } : feed()));
@@ -68,7 +79,8 @@ const ctx = await browser.newContext({ viewport: { width: 390, height: 780 } });
 const page = await ctx.newPage();
 const errs = [];
 page.on('pageerror', e => errs.push(String(e)));
-page.on('console', m => { if (m.type() === 'error' && !/favicon|404|ERR_|Failed to fetch/.test(m.text())) errs.push('console: ' + m.text()); });
+page.on('console', m => { // 504 and 500 are produced ON PURPOSE below, to reproduce the failure the field hit.
+  if (m.type() === 'error' && !/favicon|404|ERR_|Failed to fetch|status of 50[024]/.test(m.text())) errs.push('console: ' + m.text()); });
 
 const ok = [], fail = [];
 const check = (n, c, x) => (c ? ok : fail).push(n + (x ? ' -- ' + x : ''));
@@ -132,9 +144,12 @@ check('it recovers on its own when the network returns', s.values[0] === '77%' &
 // --- 7. it goes quiet when nobody is looking -- this is what makes it cheap to run all day
 //        on every phone in the field
 await page.evaluate(() => { EVERY_MS = 300; start(); });
-await page.waitForTimeout(600);
-const hiddenFrom = asked;
+await page.waitForTimeout(700);
+// Hide the page and read the counter in the SAME step. Done as two steps, a tick firing in
+// the gap between them counts against the hidden period and fails a page that is behaving.
 await page.evaluate(() => Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }));
+await page.waitForTimeout(120);            // let any request already in flight land
+const hiddenFrom = asked;
 await page.waitForTimeout(1500);
 check('it stops asking while the screen is not being looked at', asked === hiddenFrom,
   'asks while hidden: ' + (asked - hiddenFrom));
@@ -144,6 +159,31 @@ await page.goto(base + '/live?code=BADCODE');
 await page.waitForTimeout(600);
 check('an unrecognised code says so and asks again',
   /haufahamiki|not recognised/.test(await text()) && (await shown()).tiles === 0);
+
+// --- 8b. THE FAILURE THE FIELD ACTUALLY HIT. The server is cut off part-way and answers with
+//          a page that is not JSON. That is not "no signal", and must not say so.
+mode = 'gateway';
+await page.goto(base + '/live?code=LEAD1');
+await page.waitForTimeout(700);
+let msg = await text();
+check('a server cut off mid-answer says so, and does NOT blame the network',
+  /took too long|muda mrefu/.test(msg) && /504/.test(msg) && !/Mtandao haujibu/.test(msg), msg.slice(0, 130));
+
+mode = 'garbage';
+await page.goto(base + '/live?code=LEAD1');
+await page.waitForTimeout(700);
+msg = await text();
+check('any other unreadable answer is named as that, with its number',
+  /could not read|halieleweki/.test(msg) && /500/.test(msg), msg.slice(0, 130));
+
+// A real loss of signal still says exactly that -- the three causes stay told apart.
+mode = 'ok'; up = false;
+await page.goto(base + '/live?code=LEAD1');
+await page.waitForTimeout(700);
+msg = await text();
+check('and a genuine loss of signal still says the network is not answering',
+  /Mtandao haujibu|network is not answering/.test(msg), msg.slice(0, 130));
+up = true;
 
 // --- 9. it must read from across a room on a wide screen, and fit a phone with no sideways scroll
 await page.goto(base + '/live?code=LEAD1');
