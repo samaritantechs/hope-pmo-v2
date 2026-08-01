@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#062B54">
+<title>HOPE Live</title>
+<link rel="manifest" href="/live.webmanifest">
+<style>
+  :root{--ink:#EAF0F7;--dim:#93A6BD;--line:#1B2A3D;--card:#0F1B2B;--bg:#070E18;
+        --ok:#31C48D;--bad:#F87171;--warn:#FBBF24;--brandline:#1D4E8F}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);
+       font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;line-height:1.35;
+       display:flex;flex-direction:column;overflow:hidden}
+  .hide{display:none !important}
+
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line);flex:0 0 auto}
+  .mark{width:30px;height:30px;border-radius:8px;background:var(--brandline);color:#fff;flex:0 0 auto;
+        display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px}
+  .mark img{width:100%;height:100%;object-fit:contain;border-radius:8px;display:block}
+  .who b{font-size:13.5px;display:block;line-height:1.2}
+  .who span{font-size:11px;color:var(--dim)}
+  .live{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--dim)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .dot.stale{background:var(--warn)}
+  .dot.off{background:var(--bad)}
+  .dot.on{animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  main{flex:1 1 auto;min-height:0;display:grid;gap:10px;padding:12px;
+       grid-template-columns:repeat(2,1fr);grid-auto-rows:1fr}
+  .m{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:12px 14px;
+     display:flex;flex-direction:column;justify-content:center;min-width:0;position:relative;overflow:hidden}
+  .m .l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+  .m .v{font-size:min(13vw,42px);font-weight:800;line-height:1;margin:6px 0 3px;
+        font-variant-numeric:tabular-nums;letter-spacing:-1px}
+  .m .s{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .m .bar{position:absolute;left:0;right:0;bottom:0;height:3px;background:#16263A}
+  .m .bar i{display:block;height:100%;background:var(--ok);width:0;transition:width .6s ease}
+  .m.low .bar i{background:var(--bad)} .m.mid .bar i{background:var(--warn)}
+  .m.low .v{color:var(--bad)} .m.mid .v{color:var(--warn)}
+
+  /* Wide screens -- a monitor on a wall. These MUST come after the .m rules above: same
+     specificity, so whichever is written last wins, and written first they lost -- which put
+     phone-sized numbers on a wall display nobody could read from the door.
+     Original note follows.
+     Wide screens -- a monitor on a wall -- get all six across, and much bigger type. There is
+     no interaction to design for here; the only question is whether it reads from the door. */
+  @media (min-width:760px){
+    main{grid-template-columns:repeat(3,1fr);gap:16px;padding:18px}
+    .m .v{font-size:min(11vw,86px)}
+    .m .l{font-size:15px}
+    .m .s{font-size:14px}
+    header{padding:16px 22px}
+  }
+  @media (min-width:1200px){ main{grid-template-columns:repeat(6,1fr)} }
+
+
+  .msg{margin:auto;padding:24px;text-align:center;color:var(--dim);max-width:420px}
+  .msg b{color:var(--ink);display:block;margin-bottom:6px;font-size:16px}
+  input,button{font-family:inherit;font-size:15px}
+  input{width:100%;padding:13px;border-radius:11px;border:1.5px solid var(--line);
+        background:#0B1522;color:var(--ink);margin:12px 0 0}
+  button{width:100%;margin-top:10px;padding:13px;border:0;border-radius:11px;
+         background:var(--brandline);color:#fff;font-weight:700}
+  .lnk{background:none;border:0;color:var(--dim);font-size:12px;margin-top:14px;text-decoration:underline}
+</style>
+</head>
+<body>
+
+<header id="bar" class="hide">
+  <span class="mark" id="mark">H<img id="logo" class="hide" alt=""></span>
+  <span class="who"><b id="brand">HOPE</b><span id="scope">—</span></span>
+  <span class="live"><span class="dot on" id="dot"></span><span id="when">—</span></span>
+</header>
+<main id="grid" class="hide"></main>
+<div id="view"></div>
+
+<script>
+/* HOPE LIVE -- the numbers, on a screen nobody is holding.
+
+   Built to be left alone: opened once on a monitor in the office, or added to a phone's home
+   screen, and then never touched again. It refreshes itself, it survives the network dropping
+   out and coming back, and it never shows a dialog that would need somebody to walk over and
+   dismiss it.
+
+   Deliberately carries NO customer data -- six percentages and their totals. A screen that
+   sits in a corridor, or on a lock screen, must not have names and balances on it.
+
+   Polling is paced to be almost free: the figures come from uploads that happen a few times a
+   day, so asking every two minutes is already far finer than the data changes. It stops
+   entirely when the screen is not being looked at, which is most of the time on a phone. */
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function store(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){} }
+function load(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+
+var EVERY_MS = 120000;          // two minutes while being watched
+var STALE_MS = 15 * 60000;      // after this long with no answer, say so on the screen
+var code = '', timer = null, lastOk = 0, lastData = null;
+
+function srv(fn, args){
+  var ctl = window.AbortController ? new AbortController() : null;
+  var t = setTimeout(function(){ if (ctl) ctl.abort(); }, 20000);
+  return fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ fn:fn, args:args||[] }), signal: ctl ? ctl.signal : undefined })
+    .then(function(r){ return r.json(); })
+    .then(function(d){ clearTimeout(t); return d; }, function(e){ clearTimeout(t); throw e; });
+}
+
+function money(n){
+  n = Number(n)||0;
+  if (n >= 1e9) return (n/1e9).toFixed(1).replace(/\.0$/,'') + 'b';
+  if (n >= 1e6) return (n/1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/,'') + 'm';
+  if (n >= 1e3) return Math.round(n/1e3) + 'k';
+  return String(Math.round(n));
+}
+function pctTxt(p){ return (p == null || isNaN(p) || !isFinite(p)) ? '—' : Math.round(p*100) + '%'; }
+
+/* Below 50% is red, below 80% amber. The same thresholds the officers are held to, so the
+   wall and the phone tell the same story -- a screen that flatters is worse than no screen. */
+function tone(p){ return p == null ? '' : p < 0.5 ? 'low' : p < 0.8 ? 'mid' : ''; }
+function metric(label, x, sub){
+  var p = x ? x.pct : null;
+  return '<div class="m ' + tone(p) + '"><div class="l">' + esc(label) + '</div>'
+    + '<div class="v">' + pctTxt(p) + '</div>'
+    + '<div class="s">' + esc(sub || (x ? money(x.num) + ' / ' + money(x.den) : '')) + '</div>'
+    + '<div class="bar"><i style="width:' + Math.max(0, Math.min(100, Math.round((p||0)*100))) + '%"></i></div></div>';
+}
+
+function paint(d){
+  lastData = d;
+  $('brand').textContent = d.brand || 'HOPE';
+  $('scope').textContent = (d.who ? d.who + ' · ' : '') + (d.scope || '');
+  if (d.logo){
+    var img = $('logo');
+    img.onload = function(){ img.classList.remove('hide'); store('hopeLogo', d.logo); };
+    img.src = d.logo;
+  }
+  $('grid').innerHTML =
+      metric('Col leo', d.col)
+    + metric('Kesho', d.kesho)
+    + metric('Col wiki', d.weekCol)
+    + metric('Sales', d.sales)
+    + metric('Exp.Def', d.expdf)
+    + metric('Rec', d.recovery);
+  $('bar').classList.remove('hide');
+  $('grid').classList.remove('hide');
+  $('view').innerHTML = '';
+  markFresh();
+}
+
+/* The freshness light is the whole trust model of a screen nobody is watching. A wall display
+   showing yesterday's collection as though it were today's is worse than a blank one, so the
+   dot goes amber the moment the figures stop being refreshed and red when the network is gone
+   -- and the numbers STAY UP either way, because the last known truth still beats nothing. */
+function markFresh(){
+  var age = Date.now() - lastOk;
+  var dot = $('dot'), when = $('when');
+  if (!lastOk){ dot.className = 'dot off'; when.textContent = 'hakuna / no data'; return; }
+  var mins = Math.round(age / 60000);
+  dot.className = 'dot ' + (age > STALE_MS ? 'stale' : 'on');
+  when.textContent = age < 90000 ? 'sasa hivi / live'
+    : mins + ' dk zilizopita / ' + mins + ' min ago';
+}
+setInterval(markFresh, 20000);
+
+function tick(){
+  if (!code) return;
+  srv('api_widget', [code]).then(function(d){
+    if (d && d.ok){ lastOk = Date.now(); store('hopeWidgetCode', code); paint(d); return; }
+    // A code that has been withdrawn should send somebody back to the box, but ONLY if we have
+    // nothing good to show. A display that has been working for a week must not blank itself
+    // over one odd answer.
+    if (!lastData) ask(d && d.error === 'BAD_CODE'
+      ? 'Msimbo huu haufahamiki. / That code is not recognised.' : '');
+  }).catch(function(){
+    // Network gone. Say so with the dot, keep the numbers, try again on the next tick.
+    if (!lastData) ask('Mtandao haujibu. / The network is not answering.');
+    else markFresh();
+  });
+}
+function start(){
+  if (timer) clearInterval(timer);
+  tick();
+  timer = setInterval(function(){ if (!document.hidden) tick(); }, EVERY_MS);
+}
+// Coming back to a phone that has been in a pocket for an hour must show current figures at
+// once, not whatever was on screen when it went in.
+document.addEventListener('visibilitychange', function(){
+  if (!document.hidden && code && Date.now() - lastOk > 60000) tick();
+});
+
+function ask(err){
+  $('bar').classList.add('hide'); $('grid').classList.add('hide');
+  $('view').innerHTML =
+    '<div class="msg"><b>HOPE Live</b>'
+    + 'Weka msimbo wako wa uongozi au wa timu, kisha acha skrini hii wazi.'
+    + '<br>Enter your leader code or team code, then just leave this screen open.'
+    + '<input id="c" placeholder="Msimbo / Code" autocomplete="off" autocapitalize="characters" value="' + esc(load('hopeWidgetCode')) + '">'
+    + '<button id="b">Anza / Start</button>'
+    + (err ? '<div style="color:var(--bad);margin-top:10px;font-size:13px">' + esc(err) + '</div>' : '')
+    + '<div style="margin-top:16px;font-size:12px">Inajisasisha yenyewe kila baada ya dakika 2.'
+      + '<br>It updates itself every 2 minutes. Nothing to press.</div>'
+    + '</div>';
+  $('b').onclick = function(){
+    var v = $('c').value.trim();
+    if (!v) return;
+    code = v; lastData = null; lastOk = 0;
+    $('view').innerHTML = '<div class="msg">Inapakia… / Loading…</div>';
+    start();
+  };
+  $('c').onkeydown = function(e){ if (e.key === 'Enter') $('b').onclick(); };
+}
+
+/* ?code=XXX lets a code be baked into a bookmark or a home-screen shortcut, so a wall display
+   comes straight up after a power cut with nobody there to type anything. */
+var q = (location.search.match(/[?&]code=([^&]+)/) || [])[1];
+code = q ? decodeURIComponent(q) : load('hopeWidgetCode');
+try { var lg = load('hopeLogo'); if (lg){ $('logo').src = lg; $('logo').classList.remove('hide'); } } catch(e){}
+if (code){ $('view').innerHTML = '<div class="msg">Inapakia… / Loading…</div>'; start(); }
+else ask('');
+
+// Keeps a wall display awake. Silently unavailable on most phones and on older browsers, which
+// is fine -- it is a convenience, never a requirement.
+try { if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(function(){}); } catch(e){}
+</script>
+</body>
+</html>

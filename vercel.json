@@ -31,6 +31,10 @@
     {
       "source": "/mkopo",
       "destination": "/mkopo.html"
+    },
+    {
+      "source": "/live",
+      "destination": "/live.html"
     }
   ],
   "headers": [
@@ -44,7 +48,7 @@
       ]
     },
     {
-      "source": "/(home|dashboard|portal|kpi|upload|call|mkopo)",
+      "source": "/(home|dashboard|portal|kpi|upload|call|mkopo|live)",
       "headers": [
         {
           "key": "Cache-Control",
@@ -67,6 +71,19 @@
         {
           "key": "Cache-Control",
           "value": "no-cache, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/live.webmanifest",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        },
+        {
+          "key": "Content-Type",
+          "value": "application/manifest+json"
         }
       ]
     }

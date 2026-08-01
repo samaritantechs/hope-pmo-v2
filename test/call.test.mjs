@@ -334,6 +334,50 @@ test('Ripoti team dropdown: the list is what you may see, and picking one narrow
   assert.equal(kg.totals.calls, 1);
 });
 
+/* THE WIDGET FEED. It will be asked the same question all day by every screen that has it, so
+   what it costs and what it carries both matter more than usual. */
+test('the widget answers to a leader code or a team code, and carries no customer data', async () => {
+  const db = fakeDb(makeTables());
+
+  // A leader's access code. LEAD1 is ASHA JUMA, scoped to KONGOWE.
+  const lead = await callApi(db, 'api_widget', ['LEAD1'], NOW);
+  assert.equal(lead.ok, true);
+  assert.equal(lead.who, 'ASHA JUMA');
+  assert.equal(lead.scope, 'KONGOWE');
+  assert.ok(lead.brand);
+  for (const k of ['col', 'kesho', 'weekCol', 'sales', 'expdf', 'recovery']) {
+    assert.ok(k in lead, k + ' is on the widget');
+    assert.deepEqual(Object.keys(lead[k]).sort(), ['den', 'num', 'pct']);
+  }
+
+  // An officer's TEAM code opens it too -- an officer has no access code at all, and a widget
+  // cannot show a sign-in form.
+  const team = await callApi(db, 'api_widget', ['KON123'], NOW);
+  assert.equal(team.ok, true);
+  assert.equal(team.scope, 'KONGOWE');
+  assert.equal(team.col.den, lead.col.den, 'same team, same figures, whichever code was used');
+  // Written any way at all, exactly as registering a phone accepts it.
+  assert.equal((await callApi(db, 'api_widget', [' kon-123 '], NOW)).ok, true);
+
+  // An admin code with no teams sees everything.
+  const all = await callApi(db, 'api_widget', ['ADMIN1'], NOW);
+  assert.equal(all.scope, 'All teams');
+  assert.ok(all.col.den >= lead.col.den);
+
+  // NO CUSTOMER DATA. This ends up on lock screens and on monitors in corridors, so the whole
+  // reply is checked as text -- not just its field names.
+  const blob = JSON.stringify(lead);
+  for (const leak of ['AMINA', 'PILI', '0712000001', '0713000001', 'ref', 'rows', 'full_name']) {
+    assert.equal(blob.includes(leak), false, 'widget must not carry ' + leak);
+  }
+  // And it stays small enough to poll all day from every phone in the field.
+  assert.ok(blob.length < 1200, 'widget payload is ' + blob.length + ' bytes');
+
+  // A code nobody has is refused plainly; no code at all is a different, clearer answer.
+  assert.deepEqual(await callApi(db, 'api_widget', ['NOPE'], NOW), { ok: false, error: 'BAD_CODE' });
+  assert.deepEqual(await callApi(db, 'api_widget', ['  '], NOW), { ok: false, error: 'NO_CODE' });
+});
+
 /* THE CUSTOMER'S OWN DOOR. A reference number is the only thing being asked for, so the shape
    of what comes back is a security decision as much as a design one. */
 test('a customer sees their own loan, and nothing that would help anyone else', async () => {

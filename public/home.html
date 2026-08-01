@@ -139,6 +139,7 @@ function renderHome(me){
       tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu, ufuatiliaji, ripoti / call lists & follow-ups')
     + tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, followup, PAR, ripoti zote / the full portal')
     + (me.can.upload ? tile('/upload', '&#128228;', 'Pakia faili / Upload', 'Expected, Defaulters, Received, mikopo / loan files') : '')
+    + tile('/live', '&#128225;', 'HOPE Live', 'Ufaulu wa timu, unajisasisha wenyewe / live figures, updates itself')
     + (me.can.admin ? tile('/upload?admin=1', '&#128273;', 'Misimbo / Access codes', 'Pakia Access Codes na User Roles / manage who signs in') : '');
   $('view').innerHTML =
     '<div class="card">'
