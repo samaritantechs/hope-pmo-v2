@@ -102,13 +102,43 @@ var EVERY_MS = 120000;          // two minutes while being watched
 var STALE_MS = 15 * 60000;      // after this long with no answer, say so on the screen
 var code = '', timer = null, lastOk = 0, lastData = null;
 
+/* "Mtandao haujibu" used to be the answer to three completely different problems: the phone
+   really having no signal, the server answering with an error, and the server being killed
+   part-way through and returning a gateway page that is not JSON at all. Reading the same
+   sentence for all three is how a whole evening gets spent looking at the wrong thing.
+   Each one now says what it actually was. */
 function srv(fn, args){
   var ctl = window.AbortController ? new AbortController() : null;
-  var t = setTimeout(function(){ if (ctl) ctl.abort(); }, 20000);
+  var t = setTimeout(function(){ if (ctl) ctl.abort(); }, 45000);
   return fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ fn:fn, args:args||[] }), signal: ctl ? ctl.signal : undefined })
-    .then(function(r){ return r.json(); })
-    .then(function(d){ clearTimeout(t); return d; }, function(e){ clearTimeout(t); throw e; });
+    .then(function(r){
+      return r.text().then(function(body){
+        clearTimeout(t);
+        var d = null;
+        try { d = JSON.parse(body); } catch (e2) { d = null; }
+        if (d) {
+          if (r.status >= 200 && r.status < 300) return d;
+          throw new Error(d.error || ('HTTP ' + r.status));
+        }
+        // Not JSON. The server never got to answer -- almost always it was cut off for taking
+        // too long, and the reply is the hosting platform's own error page.
+        var e = new Error(r.status === 504 || r.status === 502 || r.status === 408
+          ? 'Mfumo umechukua muda mrefu kujibu (' + r.status + '). / The system took too long to answer ('
+            + r.status + ').'
+          : 'Jibu la mfumo halieleweki (' + r.status + '). / The system gave an answer we could not read ('
+            + r.status + ').');
+        e.serverSide = true;
+        throw e;
+      });
+    }, function(e){
+      clearTimeout(t);
+      var err = new Error(e && e.name === 'AbortError'
+        ? 'Mfumo haukujibu ndani ya sekunde 45. / The system did not answer within 45 seconds.'
+        : 'Mtandao haujibu. / The network is not answering.');
+      err.offline = !(e && e.name === 'AbortError');
+      throw err;
+    });
 }
 
 function money(n){
@@ -177,9 +207,10 @@ function tick(){
     // over one odd answer.
     if (!lastData) ask(d && d.error === 'BAD_CODE'
       ? 'Msimbo huu haufahamiki. / That code is not recognised.' : '');
-  }).catch(function(){
-    // Network gone. Say so with the dot, keep the numbers, try again on the next tick.
-    if (!lastData) ask('Mtandao haujibu. / The network is not answering.');
+  }).catch(function(e){
+    // Keep whatever good figures are up; the dot already says they are ageing. Only somebody
+    // who has nothing on screen yet needs to be told what went wrong -- and told WHICH thing.
+    if (!lastData) ask(String((e && e.message) || 'Imeshindikana. / Something went wrong.'));
     else markFresh();
   });
 }

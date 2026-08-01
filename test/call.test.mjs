@@ -378,6 +378,61 @@ test('the widget answers to a leader code or a team code, and carries no custome
   assert.deepEqual(await callApi(db, 'api_widget', ['  '], NOW), { ok: false, error: 'NO_CODE' });
 });
 
+/* Every screen with the widget on it asks the same question every two minutes. For a leader
+   who sees all teams that question is the heaviest one this system can be asked -- heavy
+   enough that the platform was cutting the request off before it answered. */
+test('the widget works the figures out once and hands the same answer to every screen', async () => {
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+
+  // Count what actually gets asked of the database.
+  const base = fakeDb(makeTables());
+  let reads = 0;
+  const counting = { from(n){ reads++; return base.from(n); }, rpc: base.rpc, _dump: n => base._dump(n) };
+
+  const first = await callApi(counting, 'api_widget', ['LEAD1'], NOW);
+  const afterFirst = reads;
+  assert.equal(first.ok, true);
+  assert.equal(first.cached, false);
+  assert.ok(afterFirst > 10, 'the first answer really is expensive: ' + afterFirst + ' reads');
+
+  // A second screen on the same teams pays almost nothing -- just enough to check the code and
+  // fetch the brand.
+  const second = await callApi(counting, 'api_widget', ['LEAD1'], NOW + 1000);
+  const cost = reads - afterFirst;
+  assert.equal(second.cached, true);
+  assert.ok(cost <= 4, 'a repeat costs ' + cost + ' reads, not ' + afterFirst);
+  assert.deepEqual(second.col, first.col);
+  assert.deepEqual(second.recovery, first.recovery);
+
+  // The figures carry the moment they were worked out, not the moment they were handed over --
+  // a screen must not say "live" over numbers that are four minutes old.
+  assert.equal(second.at, first.at);
+
+  // An officer's TEAM code lands on the same cached figures, because it is the same scope.
+  const viaTeam = await callApi(counting, 'api_widget', ['KON123'], NOW + 2000);
+  assert.equal(viaTeam.cached, true);
+  assert.deepEqual(viaTeam.col, first.col);
+
+  // A DIFFERENT scope is a different question and is worked out properly.
+  const before = reads;
+  const admin = await callApi(counting, 'api_widget', ['ADMIN1'], NOW + 3000);
+  assert.equal(admin.cached, false);
+  assert.ok(reads - before > 10, 'all-teams is computed, not served from the team cache');
+  assert.equal(admin.scope, 'All teams');
+
+  // And it stops being reused once it is old enough to be worth redoing.
+  const later = await callApi(counting, 'api_widget', ['LEAD1'], NOW + 130000);
+  assert.equal(later.cached, false);
+
+  // A clock that jumps backwards must not make an old copy look brand new.
+  _clearWidgetCache();
+  await callApi(counting, 'api_widget', ['LEAD1'], NOW);
+  assert.equal((await callApi(counting, 'api_widget', ['LEAD1'], NOW - 60000)).cached, false);
+
+  _clearWidgetCache();
+});
+
 /* THE CUSTOMER'S OWN DOOR. A reference number is the only thing being asked for, so the shape
    of what comes back is a security decision as much as a design one. */
 test('a customer sees their own loan, and nothing that would help anyone else', async () => {
