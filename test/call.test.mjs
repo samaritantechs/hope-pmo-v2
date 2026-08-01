@@ -299,6 +299,41 @@ test('reports are leader-only and live-scoped off the teams role columns', async
   assert.deepEqual(d.byCategory.map(c => c.category), ['EXPECTED', 'DEFAULTER', 'OTHER']);
 });
 
+test('Ripoti team dropdown: the list is what you may see, and picking one narrows the report', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+
+  // A leader tied to one team is offered only that team...
+  const one = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW);
+  assert.deepEqual(one.teamChoices, ['KONGOWE']);
+  assert.equal(one.team, '');
+
+  // ...and naming a team they do not lead changes nothing -- the dropdown is not a back door.
+  const sneak = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24', 'MBAGALA'], NOW);
+  assert.equal(sneak.team, '');
+  assert.deepEqual(sneak.debugScope, ['KONGOWE']);
+  assert.equal(sneak.totals.calls, one.totals.calls);
+
+  // Someone who sees everything is offered every team on the books, quiet ones included.
+  const all = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24'], NOW);
+  assert.deepEqual(all.teamChoices, ['KONGOWE', 'MBAGALA']);
+  assert.equal(all.debugScope, 'ALL');
+  assert.equal(all.totals.calls, 1);
+
+  // Picking one keeps only that team's calls. MBAGALA made none, so the report is empty --
+  // it must not fall back to showing everybody.
+  const mb = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24', 'MBAGALA'], NOW);
+  assert.equal(mb.team, 'MBAGALA');
+  assert.deepEqual(mb.debugScope, ['MBAGALA']);
+  assert.equal(mb.totals.calls, 0);
+
+  // Spelling and spacing are not a trap: ' kongowe ' is KONGOWE.
+  const kg = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24', ' kongowe '], NOW);
+  assert.equal(kg.team, 'KONGOWE');
+  assert.equal(kg.totals.calls, 1);
+});
+
 test('dsFmt: coerced M/d/yyyy dates render back as paid/target; real text passes through', () => {
   assert.equal(dsFmt('3/6/2026'), '3/6');
   assert.equal(dsFmt('11-12-2025'), '11/12');
