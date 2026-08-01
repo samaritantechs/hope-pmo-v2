@@ -3,11 +3,12 @@
    shipped on reasoning alone once took this system down in the field; UI behaviour like "does
    the page stay put" cannot be checked any other way than by looking at a page.
 
-   Deliberately NOT part of `npm test` and NOT a dependency in package.json -- it must not slow
-   or risk the deploy. To run it:
+   Lives OUTSIDE test/ on purpose: `node --test` sweeps that whole directory, so a check that
+   needs a browser installed would have made `npm test` fail on any machine without one -- and
+   npm test guards the deploy. playwright-core is likewise not in package.json. To run it:
 
        npm i --no-save playwright-core
-       CHROME=/path/to/chrome node test/browser/portal-nav.mjs
+       CHROME=/path/to/chrome node tools/browser-checks/portal-nav.mjs
 
    CHROME defaults to the Playwright chromium in this container. Exit code 0 = everything
    passed. Any timing check reads the screen in the SAME evaluate() as the click that causes
