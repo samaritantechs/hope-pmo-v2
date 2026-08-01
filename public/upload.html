@@ -163,6 +163,12 @@
     <input id="apiBase" placeholder="This site" value="">
     <div class="hint" style="margin-bottom:0">Leave blank — uploads go to this site's own API. Only set this to point at a DIFFERENT deployment.</div>
   </div>
+
+  <!-- "Am I looking at the new version?" was, for a while, a question nobody could answer, and
+       people spent days hunting for a control that was already deployed but not on their phone.
+       This is the page's own age, straight from the browser. If it is older than a fix you were
+       told about, you are on a stale copy: pull down to refresh, or close the app and reopen. -->
+  <div class="hint" id="pagever" style="text-align:center;margin:14px 0 0;opacity:.7"></div>
 </div>
 
 <script>
@@ -602,6 +608,20 @@ $('go').addEventListener('click', function(){
     });
 });
 function escHtml_(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* How old the page you are holding is. document.lastModified is the browser's own record of
+   when it got this file, so it tells the truth about a stale copy in a way a number we print
+   into the page never could -- a stale page would carry a stale number too. */
+(function(){
+  var el = $('pagever'); if (!el) return;
+  var d = new Date(document.lastModified);
+  if (isNaN(d.getTime())) return;
+  var p = function(n){ return (n < 10 ? '0' : '') + n; };
+  el.textContent = 'Toleo la ukurasa / Page version: '
+    + d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate())
+    + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
+    + ' · kama ni ya zamani, funga na ufungue tena / if this looks old, close and reopen';
+})();
 </script>
 <script src="/brand.js"></script>
 </body>
