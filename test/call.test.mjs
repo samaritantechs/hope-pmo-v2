@@ -334,6 +334,82 @@ test('Ripoti team dropdown: the list is what you may see, and picking one narrow
   assert.equal(kg.totals.calls, 1);
 });
 
+/* THE CUSTOMER'S OWN DOOR. A reference number is the only thing being asked for, so the shape
+   of what comes back is a security decision as much as a design one. */
+test('a customer sees their own loan, and nothing that would help anyone else', async () => {
+  const db = fakeDb(makeTables());
+  db._dump('received_payments').push(
+    { ref_no: '111', paid_at: '2026-07-22', amount_paid: 1000, transaction_id: 'TX1' },
+    { ref_no: '111', paid_at: '2026-07-24', amount_paid: 500, transaction_id: 'TX2' },
+    { ref_no: '222', paid_at: '2026-07-24', amount_paid: 900, transaction_id: 'TX9' },
+  );
+
+  const me = await callApi(db, 'api_customerLookup', ['111'], NOW);
+  assert.equal(me.ok, true);
+  assert.equal(me.name, 'AMINA H');
+  assert.equal(me.ref, '111');
+  assert.equal(me.team, 'KONGOWE');
+  assert.equal(me.loan.expectedToday, 1000);
+  assert.equal(me.loan.dueSummary, '2/6');
+
+  // A phone number is the one field that turns a leaked ref into something worth harvesting.
+  // It must not be here, on this door, in any form.
+  for (const k of ['contact', 'phone', 'guarantor_name', 'guarantor_contact', 'guarantorName']) {
+    assert.equal(k in me, false, k + ' must never be returned to a customer');
+  }
+  assert.equal(JSON.stringify(me).includes('0712000001'), false, 'no customer phone anywhere in the reply');
+  assert.equal(JSON.stringify(me).includes('0713000001'), false, 'no guarantor phone anywhere in the reply');
+  assert.equal(JSON.stringify(me).includes('G ONE'), false, 'no guarantor name anywhere in the reply');
+
+  // Their payments, newest first -- and ONLY theirs.
+  assert.deepEqual(me.payments.map(p => p.date), ['2026-07-24', '2026-07-22']);
+  assert.equal(me.payments.some(p => p.receipt === 'TX9'), false, "another customer's payment leaked");
+
+  // Nothing about anybody else, at all.
+  assert.equal(JSON.stringify(me).includes('PILI S'), false);
+  assert.equal(JSON.stringify(me).includes('OTHER TEAM'), false);
+
+  // A customer who has fallen behind is told so plainly, off the follow-up book -- they must
+  // not be turned away just because they dropped off the daily repayment list.
+  const late = await callApi(db, 'api_customerLookup', ['555'], NOW);
+  assert.equal(late.ok, true);
+  assert.equal(late.name, 'DEF GUY');
+  assert.equal(late.behind, true);
+  assert.equal(late.loan.arrears, 900);
+  assert.equal(JSON.stringify(late).includes('0714000001'), false, 'no phone on the follow-up path either');
+  assert.equal(JSON.stringify(late).includes('0715000001'), false);
+
+  // A ref nobody has is a plain "not found", not an error and not a hint.
+  const none = await callApi(db, 'api_customerLookup', ['999999'], NOW);
+  assert.deepEqual(none, { ok: false, error: 'NOT_FOUND' });
+  assert.deepEqual(await callApi(db, 'api_customerLookup', ['  '], NOW), { ok: false, error: 'NO_REF' });
+});
+
+test('customer login can be hardened with the last 4 digits of the phone', async () => {
+  const t = makeTables();
+  t.settings = (t.settings || []).concat([{ key: 'CUSTOMER_LOGIN_VERIFY', value: 'phone4' }]);
+  const db = fakeDb(t);
+
+  // The ref alone is no longer enough.
+  assert.deepEqual(await callApi(db, 'api_customerLookup', ['111'], NOW), { ok: false, error: 'VERIFY_FAILED' });
+  assert.deepEqual(await callApi(db, 'api_customerLookup', ['111', '9999'], NOW), { ok: false, error: 'VERIFY_FAILED' });
+
+  // The right four digits open it, however the number is written down.
+  assert.equal((await callApi(db, 'api_customerLookup', ['111', '0001'], NOW)).ok, true);
+  assert.equal((await callApi(db, 'api_customerLookup', ['111', '00 01'], NOW)).ok, true);
+
+  // A customer with no number on file has nothing to check against. Refusing them would lock
+  // out exactly the people whose records are thinnest, so the ref alone still stands.
+  db._dump('repayment_snapshots').push({ ref: '888', full_name: 'NO PHONE', contact: '', team: 'KONGOWE',
+    payment_expected: 100, arrears: 0, snapshot_type: 'today', snapshot_date: '2026-07-24',
+    upload_batch: 'b1', created_at: '2026-07-24T04:00:00Z' });
+  assert.equal((await callApi(db, 'api_customerLookup', ['888'], NOW)).ok, true);
+
+  // And with the setting off (the default), four digits are never asked for.
+  const open = fakeDb(makeTables());
+  assert.equal((await callApi(open, 'api_customerLookup', ['111'], NOW)).ok, true);
+});
+
 test('dsFmt: coerced M/d/yyyy dates render back as paid/target; real text passes through', () => {
   assert.equal(dsFmt('3/6/2026'), '3/6');
   assert.equal(dsFmt('11-12-2025'), '11/12');

@@ -82,7 +82,14 @@ function renderSignIn(err){
     + (err ? '<div class="err">' + esc(err) + '</div>' : '')
     + '</div>'
     + '<div class="sep">au / or</div>'
-    + '<div class="tiles">' + tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu &middot; hauhitaji msimbo / no code needed') + '</div>'
+    // Three doors, and only one of them wants a code. An officer has a team code and taps
+    // HOPE Calls; a customer has a reference number and taps Mkopo Wangu; a leader types the
+    // code above. Somebody who does not know which one they are should be able to work it out
+    // by reading the screen, not by being told.
+    + '<div class="tiles">'
+      + tile('/call', '&#128222;', 'HOPE Calls', 'Maafisa wa timu &middot; hauhitaji msimbo / officers, no code needed')
+      + tile('/mkopo', '&#128100;', 'Mkopo Wangu / My loan', 'Wateja: weka namba yako ya kumbukumbu / customers: your reference number')
+    + '</div>'
     + '<div class="hint">Maafisa wa simu hawahitaji msimbo &mdash; bofya HOPE Calls.<br>Field officers do not need a code &mdash; tap HOPE Calls.</div>';
   $('code').value = load('hopeCode');
   $('go').onclick = signIn;

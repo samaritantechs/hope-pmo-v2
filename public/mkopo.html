@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0B4A8F">
+<title>Mkopo Wangu · HOPE</title>
+<style>
+  :root{--b900:#062B54;--b800:#083A70;--b600:#0B4A8F;--b500:#1565C0;--b100:#CFE2F7;--b50:#EEF5FD;
+        --ink:#101828;--mut:#475467;--soft:#98A2B3;--line:#E4E7EC;--card:#fff;--bg:#F6F8FB;
+        --ok:#067647;--okbg:#ECFDF3;--bad:#B42318;--badbg:#FEF3F2;--warn:#B54708;--warnbg:#FFFAEB}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.5}
+  .wrap{max-width:520px;margin:0 auto;padding:18px 16px 48px}
+  .hide{display:none !important}
+
+  header{display:flex;align-items:center;gap:11px;margin-bottom:18px}
+  .mark{width:42px;height:42px;border-radius:12px;background:var(--b600);color:#fff;flex:0 0 auto;
+        display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;letter-spacing:.5px}
+  .mark img{width:100%;height:100%;object-fit:contain;border-radius:12px;display:block}
+  header b{font-size:16px;display:block}
+  header span{font-size:12px;color:var(--mut)}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px}
+  label{display:block;font-size:13px;font-weight:600;color:var(--mut);margin-bottom:6px}
+  input{width:100%;padding:14px;border:1.5px solid var(--line);border-radius:12px;font-size:17px;
+        font-family:inherit;background:#fff;color:var(--ink)}
+  input:focus{outline:none;border-color:var(--b500)}
+  .btn{width:100%;margin-top:12px;padding:14px;border:0;border-radius:12px;background:var(--b600);
+       color:#fff;font-size:16px;font-weight:700;font-family:inherit}
+  .btn:disabled{opacity:.6}
+  .btn.ghost{background:transparent;color:var(--b600);border:1.5px solid var(--line);font-weight:600}
+
+  .err{margin-top:10px;background:var(--badbg);color:var(--bad);border-radius:10px;padding:11px 12px;font-size:13.5px}
+  .hint{font-size:12.5px;color:var(--soft);margin-top:10px;line-height:1.55}
+
+  /* The answer, biggest thing on the screen. A customer opens this to learn one number. */
+  .head{background:var(--b600);color:#fff;border-radius:18px;padding:18px;margin-bottom:12px}
+  .head .nm{font-size:19px;font-weight:800;line-height:1.25}
+  .head .rf{font-size:12.5px;opacity:.85;margin-top:3px}
+  .verdict{margin-top:14px;background:rgba(255,255,255,.14);border-radius:12px;padding:12px}
+  .verdict .lbl{font-size:12px;opacity:.85}
+  .verdict .big{font-size:29px;font-weight:800;line-height:1.15;margin-top:2px}
+  .verdict .sub{font-size:12.5px;opacity:.9;margin-top:4px}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px}
+  .box .l{font-size:11.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px}
+  .box .v{font-size:19px;font-weight:800;margin-top:3px}
+  .box .s{font-size:11.5px;color:var(--soft);margin-top:2px}
+
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:700}
+  .pill.ok{background:var(--okbg);color:var(--ok)}
+  .pill.bad{background:var(--badbg);color:var(--bad)}
+  .pill.warn{background:var(--warnbg);color:var(--warn)}
+
+  .ttl{font-size:13px;font-weight:700;color:var(--mut);margin:18px 2px 8px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;font-size:11.5px;color:var(--soft);text-transform:uppercase;letter-spacing:.4px;
+     padding:0 0 7px;font-weight:600}
+  td{padding:9px 0;border-top:1px solid var(--line)}
+  td.r,th.r{text-align:right}
+  .rcpt{font-size:11px;color:var(--soft)}
+
+  .sk{width:22px;height:22px;border:2.5px solid var(--b100);border-top-color:var(--b600);
+      border-radius:50%;animation:sp .7s linear infinite;margin:36px auto}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  @media (prefers-color-scheme: dark){
+    :root{--ink:#E7EAEE;--mut:#98A2B3;--soft:#667085;--line:#26303C;--card:#141B24;--bg:#0B1017;
+          --b50:#111C2B;--b100:#1D3A5C;--okbg:#0C2A1C;--badbg:#2E1512;--warnbg:#2B1F08}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="mark" id="mark">H<img id="logo" class="hide" alt=""></span>
+    <span><b id="brand">HOPE MICROCREDIT</b><span>Mkopo wangu / My loan</span></span>
+  </header>
+  <div id="view"></div>
+</div>
+
+<script>
+/* MKOPO WANGU -- the customer's own door into the system.
+   Type a reference number, see your own loan. Nothing else is reachable from here: no list, no
+   search, no other customer, no totals. It is built to work on the oldest phone in the field
+   and on a slow connection, so it is one file with no frameworks and no fonts to wait for. */
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function money(n){ n = Number(n)||0; return n.toLocaleString('en-US',{maximumFractionDigits:0}); }
+function store(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){} }
+function load(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+
+function srv(fn, args){
+  // A customer on a bad connection must be TOLD it failed, not left on a spinner for ever.
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 25000);
+  return fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ fn:fn, args:args||[] }), signal: ctl ? ctl.signal : undefined })
+    .then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(function(x){
+      clearTimeout(timer);
+      if (x.status >= 200 && x.status < 300) return x.body;
+      throw new Error((x.body && x.body.error) || ('HTTP ' + x.status));
+    }, function(e){ clearTimeout(timer); throw e; });
+}
+
+/* The logo is painted from this device before the network is asked, so it does not visibly
+   swap a second after every open -- the same rule the calls app follows. */
+try { var lg = load('hopeLogo'); if (lg){ $('logo').src = lg; $('logo').classList.remove('hide'); } } catch(e){}
+srv('api_brand').then(function(d){
+  if (d.brand) $('brand').textContent = d.brand;
+  if (d.logo){
+    var img = $('logo');
+    img.onload = function(){ img.classList.remove('hide'); store('hopeLogo', d.logo); };
+    img.onerror = function(){ img.classList.add('hide'); };
+    img.src = d.logo;
+  }
+}).catch(function(){ /* the brand is decoration; never block the loan behind it */ });
+
+var needVerify = false;
+
+function renderAsk(err, ref){
+  $('view').innerHTML =
+    '<div class="card">'
+    + '<label>Namba ya kumbukumbu / Reference number</label>'
+    + '<input id="ref" inputmode="text" autocomplete="off" autocapitalize="characters" placeholder="mf. 12345" value="' + esc(ref||'') + '">'
+    + (needVerify
+        ? '<div style="margin-top:12px"><label>Tarakimu 4 za mwisho za simu yako / Last 4 digits of your phone</label>'
+          + '<input id="ver" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="0000"></div>'
+        : '')
+    + '<button class="btn" id="go">Angalia mkopo wangu / Check my loan</button>'
+    + (err ? '<div class="err">' + esc(err) + '</div>' : '')
+    + '<div class="hint">Namba ya kumbukumbu ipo kwenye risiti yako au muulize afisa wako.'
+      + '<br>Your reference number is on your receipt, or ask your officer.</div>'
+    + '</div>';
+  $('go').onclick = go;
+  $('ref').onkeydown = function(e){ if (e.key === 'Enter') go(); };
+  var v = $('ver'); if (v) v.onkeydown = function(e){ if (e.key === 'Enter') go(); };
+  $('ref').focus();
+}
+
+var MSG = {
+  NO_REF: 'Weka namba yako ya kumbukumbu. / Enter your reference number.',
+  NOT_FOUND: 'Hatujapata mkopo wenye namba hiyo. Angalia tena, au muulize afisa wako. / '
+    + 'No loan found with that reference. Check it again, or ask your officer.',
+  VERIFY_FAILED: 'Tarakimu 4 za mwisho hazilingani na simu iliyopo kwenye rekodi yako. / '
+    + 'Those last 4 digits do not match the phone on your record.',
+};
+
+function go(){
+  var ref = $('ref').value.trim();
+  var ver = $('ver') ? $('ver').value.trim() : '';
+  if (!ref){ renderAsk(MSG.NO_REF, ref); return; }
+  $('go').disabled = true; $('go').textContent = 'Inatafuta…';
+  srv('api_customerLookup', [ref, ver]).then(function(d){
+    if (d.ok){ store('hopeRef', ref); renderLoan(d); return; }
+    // Asking for four more digits is a normal answer here, not a failure -- show the extra box
+    // and let them finish, rather than telling them their reference was wrong.
+    if (d.error === 'VERIFY_FAILED' && !needVerify){ needVerify = true; renderAsk('', ref); return; }
+    if (d.error === 'VERIFY_FAILED') needVerify = true;
+    renderAsk(MSG[d.error] || 'Imeshindikana. Jaribu tena. / Something went wrong. Try again.', ref);
+  }).catch(function(){
+    renderAsk('Mtandao haujibu. Jaribu tena baada ya sekunde chache. / '
+      + 'The network is not answering. Try again in a few seconds.', ref);
+  });
+}
+
+function statusPill(s){
+  var k = String(s||'').toUpperCase();
+  if (k === 'PAID' || k === 'OVERPAID' || k === 'CLEARED') return '<span class="pill ok">' + esc(s) + '</span>';
+  if (k === 'UNDERPAID') return '<span class="pill warn">' + esc(s) + '</span>';
+  if (k === 'UNPAID') return '<span class="pill bad">' + esc(s) + '</span>';
+  return s ? '<span class="pill warn">' + esc(s) + '</span>' : '';
+}
+
+function renderLoan(d){
+  var L = d.loan || {};
+  // ONE number, biggest on the screen: what do I owe right now. Everything else is support.
+  var head = d.behind
+    ? { lbl:'Umebaki nyuma / You are behind by', big:'TZS ' + money(L.arrears),
+        sub:'Tafadhali lipa haraka uwezavyo. / Please pay as soon as you can.' }
+    : { lbl:'Kinachotakiwa leo / Due today', big:'TZS ' + money(L.expectedToday),
+        sub: L.statusToday ? ('Hali ya leo / Today: ' + L.statusToday) : 'Uko sawa. / You are up to date.' };
+
+  $('view').innerHTML =
+    '<div class="head">'
+      + '<div class="nm">' + esc(d.name || '—') + '</div>'
+      + '<div class="rf">Kumbukumbu / Ref: ' + esc(d.ref) + (d.team ? ' &middot; ' + esc(d.team) : '') + '</div>'
+      + '<div class="verdict"><div class="lbl">' + esc(head.lbl) + '</div>'
+        + '<div class="big">' + esc(head.big) + '</div>'
+        + '<div class="sub">' + esc(head.sub) + '</div></div>'
+    + '</div>'
+
+    + '<div class="grid">'
+      + box('Salio / Balance', 'TZS ' + money(L.balance), L.total ? 'Jumla / Total: TZS ' + money(L.total) : '')
+      + box('Rejesho / Installment', 'TZS ' + money(L.installment), L.dueSummary ? 'Umelipa / Paid: ' + L.dueSummary : '')
+      + box('Umelipa leo / Paid today', 'TZS ' + money(L.paidToday), '')
+      + box('Deni la nyuma / Arrears', 'TZS ' + money(L.arrears), L.lastPayment ? 'Malipo ya mwisho: ' + L.lastPayment : '')
+    + '</div>'
+
+    + (L.statusToday ? '<div style="margin-top:12px">' + statusPill(L.statusToday) + '</div>' : '')
+
+    + (d.promise
+        ? '<div class="card" style="margin-top:12px;background:var(--warnbg);border-color:#FEDF89">'
+          + '<b>Ahadi yako imeandikwa / Your promise is on record</b><div style="font-size:13.5px;margin-top:4px">'
+          + esc(d.promise.date) + (d.promise.amount ? ' &middot; TZS ' + money(d.promise.amount) : '') + '</div></div>'
+        : '')
+
+    + '<div class="ttl">Malipo yako / Your payments</div>'
+    + '<div class="card">'
+      + (d.payments && d.payments.length
+          ? '<table><thead><tr><th>Tarehe / Date</th><th class="r">Kiasi / Amount</th></tr></thead><tbody>'
+            + d.payments.map(function(p){
+                return '<tr><td>' + esc(p.date)
+                  + (p.receipt ? '<div class="rcpt">' + esc(p.receipt) + '</div>' : '')
+                  + '</td><td class="r">' + money(p.amount) + '</td></tr>';
+              }).join('') + '</tbody></table>'
+          : '<div style="color:var(--soft);font-size:13.5px">Hakuna malipo yaliyorekodiwa bado. / '
+            + 'No payments recorded yet.</div>')
+    + '</div>'
+
+    + (d.asOf ? '<div class="hint">Taarifa hizi ni za tarehe ' + esc(d.asOf)
+        + '. / These figures are as of that date.</div>' : '')
+    + '<button class="btn ghost" id="again" style="margin-top:14px">Angalia namba nyingine / Check another reference</button>';
+
+  $('again').onclick = function(){ renderAsk('', ''); };
+}
+function box(l, v, s){
+  return '<div class="box"><div class="l">' + esc(l) + '</div><div class="v">' + esc(v) + '</div>'
+    + (s ? '<div class="s">' + esc(s) + '</div>' : '') + '</div>';
+}
+
+renderAsk('', load('hopeRef'));
+</script>
+<script src="/brand.js"></script>
+</body>
+</html>
