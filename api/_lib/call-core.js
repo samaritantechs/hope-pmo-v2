@@ -363,7 +363,12 @@ async function list(db, [dev, which, which2], nowMs) {
 async function dailySummary(db, [dev], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const user = pseudoUser(cu);
+  return summaryFor(db, pseudoUser(cu), nowMs);
+}
+/** The six numbers on the phone's top strip, for whoever is asking. Split out from
+    dailySummary so the widget can serve the same figures to a screen nobody is holding --
+    one derivation, so a wall display and an officer's phone can never disagree. */
+async function summaryFor(db, user, nowMs) {
   const d = await buildDashboard(db, user, nowMs);
   const rat = (n, den) => (den > 0 ? n / den : null);
   const mine = rows => rows.filter(r => teamAllowed(user, r.team));
@@ -716,6 +721,59 @@ async function brand(db) {
 }
 
 /* =====================================================================================
+   THE WIDGET FEED. One small answer, for a screen nobody is holding.
+
+   The point of a widget is that nobody opens anything: it sits on a phone's home screen or on
+   a monitor in the office and stays right. That means it will be asked the same question over
+   and over, all day, by every device that has it -- so this answer has to be CHEAP. It is the
+   same six numbers the officers' phones already show, and nothing else: no customer rows, no
+   names, no phone numbers. A few hundred bytes.
+
+   It also means it must never need a login screen. A widget cannot show a form. So it takes
+   the code the person already has -- a leader's access code or an officer's team code, the
+   same two the launcher understands -- and that code is what scopes the figures. Anyone
+   holding a code can already see these numbers by opening the app; this only saves them the
+   opening. */
+async function widget(db, [code], nowMs) {
+  const raw = String(code == null ? '' : code).trim();
+  if (!raw) return { ok: false, error: 'NO_CODE' };
+
+  // A leader's access code first: it carries the wider scope of the two.
+  const rows = await fetchAll(() => db.from('access_codes').select('code, name, role, teams').eq('code', raw));
+  let user = null, who = '';
+  if (rows.length) {
+    const a = rows[0];
+    user = { name: a.name, role: a.role, teams: a.teams && a.teams.length ? a.teams : null };
+    who = a.name || '';
+  } else {
+    // Otherwise a team code, normalised exactly as register() and teamCode() normalise it, so
+    // a code that opens one door opens this one and never the other way round.
+    const c = K(raw).replace(/[^0-9A-Z]/g, '');
+    const teams = await fetchAll(() => db.from('teams').select('team, team_code'));
+    const hit = c && teams.find(t => K(t.team_code || '').replace(/[^0-9A-Z]/g, '') === c);
+    if (!hit) return { ok: false, error: 'BAD_CODE' };
+    user = { name: hit.team, role: 'TEAM', teams: [hit.team] };
+    who = hit.team;
+  }
+
+  const s = await summaryFor(db, user, nowMs);
+  // Percentages and totals only. Deliberately no rows: a widget that carried customer data
+  // would be putting names and balances on a lock screen anyone walking past can read.
+  const trim = x => (x ? { pct: x.pct, num: x.num, den: x.den } : { pct: null, num: 0, den: 0 });
+  return {
+    ok: true,
+    who,
+    scope: user.teams ? user.teams.join(', ') : 'All teams',
+    brand: (await settingGet(db, 'CALL_BRAND')) || APP.BRAND,
+    logo: (await settingGet(db, 'CALL_LOGO_URL')) || '',
+    day: todayKey(nowMs),
+    at: new Date(nowMs).toISOString(),
+    col: trim(s.col), kesho: trim(s.kesho), weekCol: trim(s.weekCol),
+    sales: trim(s.sales), expdf: trim(s.expdf), recovery: trim(s.recovery),
+  };
+}
+
+/* =====================================================================================
    THE CUSTOMER'S OWN VIEW. Third door into this system, beside Leaders and Officers.
 
    A customer types their reference number and sees their own loan. Nothing else: not a list,
@@ -827,6 +885,7 @@ const HANDLERS = {
   api_brand: brand,
   api_teamCode: teamCode,
   api_customerLookup: customerLookup,
+  api_widget: widget,
   api_callBoot: boot,
   api_callRegister: register,
   api_callList: list,
