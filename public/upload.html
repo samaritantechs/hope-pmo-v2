@@ -124,9 +124,14 @@
          27 July legitimately contains applications dated in June. The person uploading says
          which report this is, and whether it adds to that day or replaces it. -->
     <div id="stampWrap" class="hide">
-      <label>Tarehe ya ripoti / Report date <span style="font-weight:400">(the upload stamp, not the dates inside the file)</span></label>
-      <input type="date" id="uploadDate">
-      <label>Ikiwa tarehe hii tayari ina ripoti / If this date already has a report</label>
+      <!-- Hidden for the two reports that carry their own dates: there, the file says which
+           days it is about, so asking the uploader to pick one as well would be a second
+           answer to the same question -- and the one that gets it wrong. -->
+      <div id="stampDateWrap">
+        <label>Tarehe ya ripoti / Report date <span style="font-weight:400">(the upload stamp, not the dates inside the file)</span></label>
+        <input type="date" id="uploadDate">
+      </div>
+      <label id="modeLabel">Ikiwa tarehe hii tayari ina ripoti / If this date already has a report</label>
       <div class="row" style="margin-bottom:14px">
         <button type="button" id="modeAppend" class="modebtn">Ongeza / Append</button>
         <button type="button" id="modeReplace" class="modebtn">Badilisha yote / Replace all</button>
@@ -201,6 +206,21 @@ function isLogo_(){ return $('type').value === 'logo'; }
 var STAMPED = { 'loans':1, 'received':1, 'abnormal':1, 'complaints':1, 'restructures':1,
                 'demand-notices':1, 'comments':1 };
 function isStamped_(){ return !!STAMPED[$('type').value]; }
+/* Two reports carry their own dates, and for those the dates in the FILE decide everything --
+   including what "Replace all" clears. Re-pull the approvals report for 27 July, upload it as a
+   correction, and it is the 27 July approvals that get replaced, not whatever happened to be
+   uploaded today. Every other report has no usable date of its own (an applications report
+   pulled on the 27th is full of June dates), so there the stamp you choose is the handle. */
+function dataDateLabel_(){
+  var t = $('type').value;
+  if (t === 'received') return 'PAID AT / payment date';
+  if (t === 'loans'){
+    var s = $('stage').value;
+    if (s === 'approved') return 'APPROVED DATE';
+    if (s === 'disbursed') return 'DISB DATE';
+  }
+  return '';
+}
 var uploadMode = 'append';
 function setMode_(m){
   uploadMode = (m === 'replace') ? 'replace' : 'append';
@@ -208,10 +228,22 @@ function setMode_(m){
   $('modeReplace').classList.toggle('on', uploadMode === 'replace');
   $('modeReplace').classList.toggle('danger', uploadMode === 'replace');
   var b = $('behaviour');
-  if (b && isStamped_()) b.textContent = uploadMode === 'replace'
-    ? 'Kila kitu kilichopakiwa kwa tarehe hii kitafutwa kwanza, kisha faili hii iwekwe. Tarehe nyingine haziguswi. / '
-      + 'Everything already uploaded under this report date is removed first, then this file is written. No other date is touched.'
-    : (BEHAVIOUR.append || '');
+  if (!b || !isStamped_()) return;
+  var dl = dataDateLabel_();
+  if (uploadMode === 'replace'){
+    b.textContent = dl
+      ? 'Siku zilizomo kwenye faili (safu ya ' + dl + ') ndizo zitafutwa kwanza, kisha faili hii iwekwe. Siku nyingine haziguswi. / '
+        + 'The days found INSIDE the file (its ' + dl + ' column) are cleared first, then this file is written. '
+        + 'Only the days actually in the file are touched — redo 27 July by uploading 27 July, whatever today is.'
+      : 'Kila kitu kilichopakiwa kwa tarehe hii kitafutwa kwanza, kisha faili hii iwekwe. Tarehe nyingine haziguswi. / '
+        + 'Everything already uploaded under this report date is removed first, then this file is written. No other date is touched.';
+  } else {
+    b.textContent = dl
+      ? 'Kila safu inahesabiwa kwa siku yake yenyewe (' + dl + '). / '
+        + 'Each row counts under its OWN ' + dl + ' from the file, so a re-pulled report lands on the right days. '
+        + 'Uploading the same file twice would still store it twice — use "Badilisha yote" to redo a day.'
+      : (BEHAVIOUR.append || '');
+  }
 }
 
 /** What a SECOND upload of the same report does. This is fixed per report -- it is not a
@@ -255,6 +287,12 @@ function syncFields(){
   var stamp = isStamped_();
   $('stampWrap').classList.toggle('hide', !stamp);
   if (stamp && !$('uploadDate').value) $('uploadDate').valueAsDate = new Date();
+  // The two reports with their own dates do not ask for one: the file already answered.
+  var dl = dataDateLabel_();
+  $('stampDateWrap').classList.toggle('hide', !!dl);
+  $('modeLabel').textContent = dl
+    ? 'Ikiwa siku hizi tayari zina ripoti / If these days already have a report'
+    : 'Ikiwa tarehe hii tayari ina ripoti / If this date already has a report';
   var b = $('behaviour');
   if (b) b.textContent = BEHAVIOUR[TYPE_BEHAVIOUR[$('type').value]] || '';
   if (stamp) setMode_(uploadMode);
@@ -263,6 +301,9 @@ function syncFields(){
                                           : 'Click to choose an Excel or CSV file';
 }
 $('type').addEventListener('change', syncFields);
+// The stage matters as much as the type here: Approved and Disbursed go by the dates in the
+// file, the other six stages go by the stamp. Changing the stage has to redraw that.
+$('stage').addEventListener('change', syncFields);
 $('modeAppend').onclick = function(){ setMode_('append'); };
 $('modeReplace').onclick = function(){ setMode_('replace'); };
 // /upload?admin=1 comes from the launcher's "Access codes" tile -- land straight on the

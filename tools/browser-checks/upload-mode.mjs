@@ -44,10 +44,14 @@ await page.goto(base + '/upload');
 
 const ok = [], fail = [];
 const check = (n, c, x) => (c ? ok : fail).push(n + (x ? ' -- ' + x : ''));
-const pick = async (v) => {
-  await page.evaluate((t) => { const s = document.getElementById('type'); s.value = t; s.dispatchEvent(new Event('change')); }, v);
+const pick = async (v, stage) => {
+  await page.evaluate(([t, st]) => {
+    const s = document.getElementById('type'); s.value = t; s.dispatchEvent(new Event('change'));
+    if (st) { const g = document.getElementById('stage'); g.value = st; g.dispatchEvent(new Event('change')); }
+  }, [v, stage || null]);
   return page.evaluate(() => ({
     stamp: !document.getElementById('stampWrap').classList.contains('hide'),
+    askDate: !document.getElementById('stampDateWrap').classList.contains('hide'),
     date: document.getElementById('uploadDate').value,
     append: document.getElementById('modeAppend').classList.contains('on'),
     replace: document.getElementById('modeReplace').classList.contains('on'),
@@ -55,13 +59,27 @@ const pick = async (v) => {
   }));
 };
 
-// The two the field actually asked about, by name.
-for (const [type, label] of [['loans', 'Loan pipeline (approvals)'], ['received', 'Received Payments']]) {
-  const s = await pick(type);
-  check('choosing "' + label + '" shows the Append / Replace choice', s.stamp, JSON.stringify(s));
-  check('  ...with a report date already filled in', /^\d{4}-\d{2}-\d{2}$/.test(s.date), 'date=' + s.date);
+// THE TWO REPORTS THAT CARRY THEIR OWN DATES. These still offer Append / Replace, but they no
+// longer ask for a report date -- the file already answered that question, and asking twice is
+// how someone ends up redoing the wrong day.
+for (const [type, stage, label, col] of [
+  ['loans', 'approved', 'Loan pipeline / Approved', 'APPROVED DATE'],
+  ['loans', 'disbursed', 'Loan pipeline / Disbursed', 'DISB DATE'],
+  ['received', null, 'Received Payments', 'PAID AT'],
+]) {
+  const s = await pick(type, stage);
+  check('"' + label + '" still offers Append / Replace', s.stamp, JSON.stringify(s));
+  check('  ...but does NOT ask for a report date -- the file has one', !s.askDate, 'asks=' + s.askDate);
   check('  ...defaulting to Append, not Replace', s.append && !s.replace, JSON.stringify(s));
-  check('  ...and saying in words what it will do', /ADDS to the report date/.test(s.note), s.note.slice(0, 60));
+  check('  ...and names the column the days come from', s.note.indexOf(col) >= 0, s.note.slice(0, 110));
+}
+
+// The other six pipeline stages have no date of their own worth trusting, so they keep the
+// stamp -- an applications report pulled on the 27th is full of June dates.
+for (const stage of ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_approval', 'pending_disb']) {
+  const s = await pick('loans', stage);
+  check('loans/' + stage + ' still asks for a report date', s.stamp && s.askDate, JSON.stringify(s));
+  check('  ...and is dated ready to go', /^\d{4}-\d{2}-\d{2}$/.test(s.date), 'date=' + s.date);
 }
 
 // Every other register that accumulates gets it too.
@@ -78,7 +96,7 @@ for (const type of ['expected-today', 'defaulters-current', 'hints', 'logo', 'te
 }
 
 // Picking Replace has to say plainly that it deletes first, and mark itself as the dangerous one.
-await pick('loans');
+await pick('loans', 'unassigned');
 const danger = await page.evaluate(() => {
   document.getElementById('modeReplace').click();
   const b = document.getElementById('modeReplace');
@@ -93,9 +111,17 @@ check('Replace spells out that it deletes that date first, and only that date',
 
 // Switching to a type with no stamp and back must not leave a stale Replace armed on screen.
 await pick('expected-today');
-const backAgain = await pick('loans');
+const backAgain = await pick('loans', 'unassigned');
 check('coming back re-shows the choice, still on Replace as you left it',
   backAgain.stamp && backAgain.replace, JSON.stringify(backAgain));
+
+// And on a data-dated report, Replace must say the days come from the FILE -- not from a date
+// the uploader picked. This is the sentence that stops someone redoing the wrong day.
+const dataDanger = await pick('received');
+check('Replace on Received Payments says the days come from inside the file',
+  dataDanger.replace && /days found INSIDE the file/.test(dataDanger.note)
+  && /Only the days actually in the file are touched/.test(dataDanger.note),
+  dataDanger.note.slice(0, 140));
 
 // And the page must say how old it is, so "am I on the new version" is answerable.
 const ver = await page.evaluate(() => document.getElementById('pagever').textContent);
