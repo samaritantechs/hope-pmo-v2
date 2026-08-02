@@ -970,6 +970,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `tools/browser-checks/*.mjs` | The screens, driven in a **real browser** against a stub server. Kept out of `npm test` on purpose so a deploy never depends on having a browser installed. See the last section of this document for how to run them |
 | `tools/settings-load-bench.mjs` | Measures what opening the Settings tab actually costs, in rows and round trips |
 | `tools/load-bench.mjs` | Builds 30,000 customers in memory and counts the requests, rows and megabytes behind **every** screen. This is what turned "the system feels heavy" into the table in Part 14c |
+| `tools/make-handoff.mjs` | Builds the handoff **parcel** — the explanation, the whole database as one SQL file, and every line of code, zipped. Refuses to finish if the Android signing key or a `.env` has crept in |
 | `docs/why-no-cache.md` | Why every page says `no-cache`, and why that explanation is not inside `vercel.json` |
 
 ### The Android app
@@ -1063,6 +1064,36 @@ many of those customers are still live defaulters, and the confirmation says it 
 ---
 
 ## Part 12 — Keeping your own offline copy
+
+### The one command
+
+```
+node tools/make-handoff.mjs
+```
+
+Builds `handoff-build/hope-pmo-v2-handoff-<date>.zip` — about 700 KB — containing:
+
+| | |
+|---|---|
+| `00-START-HERE.md` | What to open first, and what is deliberately missing |
+| `1-READ-ME-FIRST/` | This document, plus the architecture notes and the v1 review pack |
+| `2-DATABASE/FULL-DATABASE.sql` | **The entire database in one paste** — schema, every migration in the right order, and the seed rows. Safe to run against a database that already exists |
+| `2-DATABASE/BACKUP-YOUR-DATA.md` | How to take a copy of the data, which no parcel can contain |
+| `2-DATABASE/RUN-ORDER.md` | The long way, file by file |
+| `3-SOURCE-CODE/` | Every file that runs the system |
+| `4-DATA-FILES/` | The tips sheet, ready to upload |
+| `MANIFEST.txt` | Every file and its size, plus what was left out and why |
+
+**It refuses to finish if the Android signing key or a `.env` file has crept in.** That check
+reads the finished parcel rather than trusting the list of things to skip — a parcel gets
+forwarded, and one carrying the signing key would let a stranger push an "update" onto every
+officer's phone.
+
+**It cannot contain your data.** That is the next section, and it matters more than the rest.
+
+---
+
+## Part 12b — The longer version
 
 Everything that *is* the system lives in the repository. Two things live outside it: your data
 (in Supabase) and your secrets (in Vercel).
@@ -1541,7 +1572,7 @@ being late** — the system falls back to the slower path until they are run.
 |---|---|
 | `2026-08-01-storage-counts.sql` | Settings opens instantly; closes a security warning |
 | `2026-08-02-storage-counts-all-reports.sql` | Fast counting for the newer report types |
-| `2026-08-02-followup-cleanup.sql` | Fast counting and cleanup of the follow-up list |
+| `2026-08-03-followup-cleanup.sql` | Fast counting and cleanup of the follow-up list. **Run this one after `2026-08-02-storage-counts-all-reports.sql`** — both define the same counting function, and the last one to run wins. Filename order is correct order. |
 | `2026-07-27-hints-many-per-tab.sql` | Then upload `docs/hints-v2.tsv` as Hints |
 | `2026-07-27-call-agents.sql` | Then re-upload Unassigned/Assigned so CREATED BY lands |
 | `2026-07-28-loan-identity.sql` | One row per loan instead of one per stage |
@@ -1597,7 +1628,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 165 checks of the rules and the sums
+npm test                                    # 164 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 
