@@ -8,11 +8,11 @@ hire in two years can pick the system up from this document alone.
 what every screen does, what every word in the loan vocabulary means, every file and what it is
 responsible for, and how to keep your own offline copy.
 
-**If you only read three things:** Part 5 (the screens, including the two new ones — the
-customer's own screen and the live wall display), Part 14 (everything that changed most
-recently, each item named after the complaint it answers), and Part 15 (what is still waiting
-on you). Part 13 is the honest account of a week where the system got worse before it got
-better, and what was changed so it does not happen again.
+**If you only read three things:** Part 5 (the screens, including the customer's own screen,
+the live wall display, the noticeboard, the bell and the customer finder), Part 14 and 14b
+(everything that changed most recently, each item named after the complaint it answers), and
+Part 15 (what is still waiting on you). Part 13 is the honest account of a week where the
+system got worse before it got better, and what was changed so it does not happen again.
 
 ---
 
@@ -632,6 +632,30 @@ Sales, Exp.Def, Rec — refreshing themselves every two minutes.
 Six across on a wide monitor, two across on a phone, and the numbers are large enough on a wall
 screen to read from the door.
 
+### Three things that sit on top of every tab
+
+**Find a customer** (the magnifying glass, top right). One reference number, name or phone
+number, and all eight books answer at once — Expected, Defaulters, Follow-up, the loan
+pipeline, received payments, restructuring, demand notices, complaints. It is not a tab because
+it belongs to none of them: an officer opens it while a customer is on the phone, reads what
+they need, and closes it. The search runs in the database, over its indexes, so it answers
+while somebody is holding. Team scoping applies — a search box is not a way around it.
+
+**The bell** (beside it). Complaints logged and follow-up comments written, merged, newest
+first, your own teams only. This is how a supervisor learns a complaint was raised without
+opening the complaints tab. Marking them read is per person — clearing your own bell does not
+clear anybody else's.
+
+**The noticeboard.** An admin posts a picture, a sentence or both from the Settings tab, and it
+covers every screen in the company until each person closes it. Waving away Monday's notice
+does not wave away Tuesday's, and Monday's does not come back on the next click.
+
+> **It is not private.** It has to reach the sign-in screen, where nobody has logged in yet,
+> so it is served without a code. Anyone who can reach the site can read it. It is a
+> noticeboard, not a message. It will not accept a picture over about 600 KB — every phone in
+> the field loads it, most of them on mobile data — and it will not accept a web address in
+> place of a picture, which would point every screen in the company at somebody else's server.
+
 ### The other pages
 
 - `/` — the launcher. Sign in with an access code for the system, or press HOPE Calls, Mkopo
@@ -1151,6 +1175,86 @@ Both described in Part 5 above.
 
 ---
 
+## Part 14b — Closing the gaps against the old system
+
+Somebody who knows the old Google Sheets system compared it against this one, function by
+function, and produced a list of nine things v2 had lost. Eight of those were worked through.
+
+**Seven items on that list turned out to already exist**, under different names or built in a
+way the comparison could not see. Each was checked against the code before anything was built,
+and skipped with a note rather than rebuilt:
+
+| Reported missing | Actually |
+|---|---|
+| `FU status` on Followup | There all along, headed **Follow-up** |
+| Search including guarantors | The table already searches every column that exists |
+| The demand notice document | Written since the legal tab was built — only the *printing* was broken |
+| My Commission's seven columns | On screen since the tab was built |
+| `At notice` on Legal | There, headed **Arrears** |
+| Call-agent delete | There, as a flag on the save |
+| The apps tab's KPI cards | Eight of them, one per pipeline stage |
+
+**Three of those were my own fault.** The inventory I generated for the review had a broken
+column reader: it missed shared column lists, missed cards whose labels are worked out as the
+page runs, and — worse — over-reported three tabs by swallowing code that belonged to their
+neighbours. Leader Reports, Presentation and Teams & Staff were declared complete on that bad
+evidence. **They have not been re-checked, and should be.** The reader is fixed and the
+corrected inventory is `docs/V1-REVIEW-PACK.md`.
+
+### What was genuinely missing, and is now done
+
+**Defaulters Followup** got eight columns back — the guarantor and their phone above all, which
+is who an officer rings when the customer will not answer. Plus a month filter, a two-level
+sort, and a custom order so a follow-up status can sit in the order the work happens rather
+than the order of the alphabet.
+
+**Printing works.** It used to open a new window — blocked by browsers, impossible in the
+Android app, where the button did nothing and said nothing. Documents now print from inside the
+page, and the browser's print dialog includes Save as PDF.
+
+**The restructuring contract** — the one document a customer signs. Swahili, A4, company stamp
+and signature, three signature lines. Only an approved offer gets one.
+
+**Demand notices now say whether they worked**: what was owed when the notice was served, what
+is owed now, and the difference. A customer who has left the deck entirely counts as cleared —
+but only if a deck was uploaded, or every customer would look cleared and the tab would report
+a triumph that never happened.
+
+**The noticeboard.** Post a picture, a sentence or both, and it covers every screen in the
+company until each person closes it. It reaches the sign-in screen, which means it is **not
+private** — anyone who can reach the site can read it.
+
+**The bell.** Complaints logged and follow-up comments written, newest first, your teams only.
+A supervisor finds out a complaint was raised without opening the complaints tab.
+
+**Find a customer** — the magnifying glass. One reference number, name or phone, and all eight
+books answer at once: Expected, Defaulters, Follow-up, the pipeline, payments, restructuring,
+notices, complaints. Built for an officer who has a customer on the phone.
+
+**A complaint can be deleted**, admin only. Every other register could lose a row and this one
+could not. The audit trail is written so that it survives the deletion — a delete whose own
+record deletes itself is worse than no delete.
+
+**Four settings became real**: seconds per slide, how long a screen stays before refreshing,
+and the two that pace the tips. **Five were refused**, most importantly `ARCH_KEEP_DAYS` —
+nothing in v2 enforces retention, and a setting saying "keep 90 days" that deletes nothing is
+worse than no setting, because somebody trusts it and stops cleaning.
+
+### Still open from that list
+
+- **The weekly report's section structure.** v1 was a multi-section document — Recovery
+  officers, Expected officers, Credit analysts, GMO, Managers, Ongezeko la deni. v2 is one
+  table with the right columns. The Monday meeting works; this is improvement, not repair.
+- The legal **payment report** and the **weekly** document (the print system they need now
+  exists, so both are smaller than they were).
+- An **Officer** column on demand notices — who is *working* a notice, as distinct from who
+  issued it. Needs a new column and a way to assign, so it is a schema change.
+- The **presentation scope picker** — present to these three teams rather than all of them.
+- A handful of columns on Expected, Assignment, defexp, complaints and Teams. Given seven of
+  seven flagged items turned out to be renames, each needs looking at on screen first.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1172,6 +1276,18 @@ browser checks in this round.
 ### Waiting on you
 - Run `db/migrations/2026-08-01-storage-counts.sql` — makes Settings instant and closes the
   `loan_identity_text` security warning.
+- Run `db/migrations/2026-08-02-storage-counts-all-reports.sql` — optional. The five newer
+  report types can already be cleaned without it; this only makes counting them fast.
+- **Send the corrected `docs/V1-REVIEW-PACK.md` back to the people who know the old system**,
+  and ask them to look again at **Leader Reports, Presentation and Teams & Staff**. Those three
+  were called complete on a column list that was wrong (Part 14b).
+- **The app's signing key is committed to a public repository**, and its password is in
+  `android/app/build.gradle` beside it. Anyone who downloads both can build an app that Android
+  will install as an *update* over HOPE Calls on any officer's phone. Three options, none free:
+  make the repository private (stops it getting worse, does not undo it); rotate the key (the
+  real fix — but every officer must uninstall and reinstall once, because Android will not
+  update across a different signature); or decide the risk is acceptable, deliberately rather
+  than by not knowing.
 - Run `db/migrations/2026-07-27-hints-many-per-tab.sql`, then upload `docs/hints-v2.tsv` as
   Hints.
 - Run `db/migrations/2026-07-27-call-agents.sql`, then re-upload Unassigned/Assigned so the
@@ -1184,6 +1300,8 @@ browser checks in this round.
 - Set `RESEND_API_KEY` in Vercel and `ADMIN_EMAIL` in Settings for the weekly Exp.Def email.
 
 ### Worth doing next
+- **The weekly report's sections** — the largest thing still outstanding from the comparison
+  against the old system. See Part 14b.
 - **A true Android home-screen widget** — the tile that draws outside any app, the way FotMob
   does. `/live` covers the computer and the phone home screen; the native tile needs Java in the
   APK and a rebuild, and it would read the same feed that already exists.
@@ -1195,7 +1313,7 @@ browser checks in this round.
 ## How to check the system yourself
 
 ```
-npm test                                    # 124 checks of the rules and the sums
+npm test                                    # 136 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 
 npm i --no-save playwright-core             # once, for the browser checks
@@ -1204,6 +1322,8 @@ node tools/browser-checks/call-warmstart.mjs    # no blue screen after a phone c
 node tools/browser-checks/upload-mode.mjs       # Append / Replace on every report
 node tools/browser-checks/customer-login.mjs    # the customer screen, and what it never shows
 node tools/browser-checks/live-widget.mjs       # the wall display, including the network dying
+
+node tools/make-review-pack.mjs             # regenerate the inventory for the v1 team
 ```
 
 The browser checks are kept out of `npm test` on purpose: `npm test` guards the deploy, and it
