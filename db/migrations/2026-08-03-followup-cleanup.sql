@@ -5,6 +5,13 @@
 -- row, deliberately, because their history is still worth reading. Nothing ever removed one.
 -- Importing a year of v1 comments adds a placeholder for every customer mentioned as well.
 --
+-- DATED THE 3rd, NOT THE 2nd, AND THAT IS DELIBERATE. This file redefines
+-- storage_usage_by_date(), and so does 2026-08-02-storage-counts-all-reports.sql. Whichever
+-- runs LAST wins. Under the same date the two sorted the wrong way round, so running the
+-- folder in filename order quietly dropped the follow-up list back out of the counting
+-- function -- no error, just a report that stopped being counted. Run these in filename order
+-- and this one is last, which is correct.
+--
 -- OPTIONAL, like every migration here. Without it the Settings tab still counts the follow-up
 -- list and still cleans it -- just the slow way, by reading the column rather than an index.
 -- Nothing breaks if this is never run.
