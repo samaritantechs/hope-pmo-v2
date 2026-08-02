@@ -24,6 +24,21 @@ export function upperTeams(teams) {
   return [...new Set((teams || []).map(t => String(t == null ? '' : t).trim().toUpperCase()).filter(Boolean))];
 }
 
+/** Whatever a caller asks for, a snapshot read also needs the two columns that decide WHICH
+    upload wins -- pickLatestBatch compares created_at and groups on upload_batch. Leaving them
+    out would make every row look like one nameless batch and quietly stack a re-upload on top
+    of the file it replaced, which is the exact double-counting the batch stamp exists to stop.
+    So they are added back rather than trusted to a caller's list. */
+const BATCH_KEYS = ['upload_batch', 'created_at'];
+function withBatchKeys(columns) {
+  if (!columns) return '*';
+  const list = (Array.isArray(columns) ? columns : String(columns).split(','))
+    .map(s => String(s).trim()).filter(Boolean);
+  if (list.includes('*')) return '*';
+  for (const k of BATCH_KEYS) if (!list.includes(k)) list.push(k);
+  return list.join(', ');
+}
+
 export function pickLatestBatch(rows) {
   if (!rows || !rows.length) return [];
   let newest = rows[0];
@@ -67,12 +82,13 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
      and the dashboard (payment_expected, arrears, todays_status). A single hard-coded list
      cannot serve all three: whatever it leaves out, some screen silently loses.
 
-     Narrowing belongs where the caller knows what it needs -- which is what the per-caller
-     selects in call-core and portal-core already do. The real saving here was never the
-     columns anyway: it was opts.teams below, which stops an officer downloading forty teams
-     to read one. */
+     Narrowing belongs where the caller knows what it needs -- so it is opt-in: opts.columns,
+     passed by a caller that has listed what it reads, and '*' for everyone else. A caller that
+     asks for too little gets nulls in that caller only, and the fake database in the tests
+     honours the projection so the missing column shows up as a red test rather than a blank
+     screen in the field. */
   const all = await fetchAll(() => {
-    let q = db.from(table).select('*').eq('snapshot_date', date);
+    let q = db.from(table).select(withBatchKeys(opts.columns)).eq('snapshot_date', date);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
     if (opts.teams && opts.teams.length) q = q.in('team', upperTeams(opts.teams));
     return q;
@@ -85,11 +101,13 @@ export async function latestSnapshot(db, table, filters, opts = {}) {
 /** One-query fetch of every snapshot row in [fromDate, toDate] matching `filters` -- raw,
     ungrouped. Pair with resolveLatestPerKey to batch-resolve per day/weekday without a round
     trip per group (the weekend dashboard reads a whole week in two queries this way). */
-export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams) {
-  // Same reasoning as latestSnapshot: shared by the weekly dashboard, the officer boards and
-  // the phone's week figure, each needing a different set. The team narrowing is the saving.
+export async function snapshotsInRange(db, table, filters, fromDate, toDate, teams, columns) {
+  /* Same reasoning as latestSnapshot: shared by the weekly dashboard, the officer boards and
+     the phone's week figure, each needing a different set -- so `columns` is opt-in and
+     defaults to everything. This one is where it matters most: a range read is a whole WEEK of
+     snapshots, so every column left out is dropped five to seven times over. */
   return fetchAll(() => {
-    let q = db.from(table).select('*').gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
+    let q = db.from(table).select(withBatchKeys(columns)).gte('snapshot_date', fromDate).lte('snapshot_date', toDate);
     for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
     if (teams && teams.length) q = q.in('team', upperTeams(teams));   // narrow at the database
     return q;

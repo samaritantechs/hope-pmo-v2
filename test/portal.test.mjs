@@ -1541,3 +1541,99 @@ test('expdf says WHY it is empty, and shows the book when the deck has no DISB D
   assert.equal(blind.diag.dated, 0);
   assert.deepEqual(blind.rows.map(r => r.ref), ['A2']);   // MANAGER's own, shown despite no cycle day
 });
+
+/* THE PRESENTATION DECK. Two server calls stand behind it -- the dashboard and these officer
+   boards -- and until now the boards half had no test at all, which is a poor state for the
+   screen that gets projected in front of the whole company every week.
+
+   They are also the reads that were narrowed hardest: a whole week of snapshots, cut down to
+   the handful of columns the sums actually touch. Every figure below is therefore also a check
+   that nothing was cut too far -- the fake database returns ONLY the columns asked for, so a
+   missing one shows up here as a zero rather than as a blank slide on the wall. */
+
+test('presentation boards: recovery, early collection, credit, calls and follow-up', async () => {
+  const b = await run('officerBoards');
+  assert.equal(b.weekday, 'FRI');
+  assert.equal(b.weekOf, MON);
+
+  // Recovery is initial minus current, per the team's recovery officer.
+  // KONGOWE -> JUMA G: (500+700) - (300+600) = 300. MBAGALA has no recovery officer named.
+  const juma = b.recWeek.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.recovered, 300, 'initial arrears minus current, not a whole-book figure');
+  const mbagala = b.recWeek.find(r => r.officer === '(unassigned)');
+  assert.equal(mbagala.recovered, 100);                       // 900 - 800
+  assert.equal(b.initialCount, 3);
+  assert.equal(b.currentCount, 3);
+  assert.equal(b.deckWarning, null, 'matched deck sizes raise no warning');
+
+  // Early collection is judged per the team's Expected officer, on payment_expected vs paid.
+  const early = b.earlyWeek.find(r => r.officer === 'EARLY E');
+  assert.equal(early.expected, 1900);                         // 1000 + 500 + 400 (KONGOWE, Mon-Fri)
+  assert.equal(early.collected, 500);                         // the one PAID row
+  assert.equal(early.uncollected, 1400);
+  assert.equal(early.paidOver, 1);
+
+  // Credit analysts: applications they processed, with an amount attached.
+  // Counted on the date they were approved, whatever became of them afterwards -- l3 was
+  // disbursed since, and that is still an application this analyst processed this week.
+  const analyst = b.creditWeek.find(r => r.analyst === 'ANALYST A');
+  assert.equal(analyst.apps, 2);                              // l1 approved Tue, l3 Mon
+  assert.equal(analyst.amount, 400000);
+
+  // Call agents.
+  const agent = b.callWeek.find(r => r.agent === 'JUMA G');
+  assert.equal(agent.calls, 2);
+  assert.equal(agent.duration, 70);
+  assert.equal(agent.portfolio, 1);
+
+  // Follow-up status across the book. The FK stub (no name, no arrears) is not a defaulter and
+  // must not be counted as one -- it would otherwise invent a "NOT TOUCHED" customer.
+  assert.equal(b.fuTotal, 2);
+  const promised = b.fuStatus.find(s => s.status === 'AMETOA AHADI');
+  assert.equal(promised.customers, 1);
+  assert.equal(promised.arrears, 600);
+});
+
+test('presentation boards never show an officer another team\'s money', async () => {
+  const b = await run('officerBoards', {}, GMO);
+  const names = JSON.stringify(b);
+  assert.ok(!names.includes('999'), 'MBAGALA customer must not reach a KONGOWE officer');
+  assert.ok(!names.includes('ANALYST B'), 'nor the analyst who processed their loans');
+  assert.equal(b.recWeek.length, 1);
+  assert.equal(b.recWeek[0].officer, 'JUMA G');
+  assert.equal(b.recWeek[0].recovered, 300);
+  assert.equal(b.fuTotal, 1);
+});
+
+test('a narrowed snapshot read still lets the newest upload win', async () => {
+  /* The boards ask for a short list of columns. upload_batch and created_at are NOT on that
+     list -- they are added back by the snapshot reader, because they are what decides which
+     upload counts. Leave them out and a corrected re-upload stacks on top of the file it
+     replaced instead of replacing it, doubling every figure on the wall. */
+  const t = tables();
+  for (const r of t.defaulter_snapshots.filter(x => x.snapshot_type === 'current')) {
+    t.defaulter_snapshots.push({ ...r, arrears: 0, upload_batch: 'redo', created_at: TODAY + 'T09:00:00Z' });
+  }
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.currentCount, 3, 'the re-upload replaces the earlier deck, it does not stack');
+  // Current arrears are now zero, so the whole 2100 of initial arrears reads as recovered.
+  assert.equal(b.recWeek.find(r => r.officer === 'JUMA G').recovered, 1200);
+});
+
+test('the presentation is worked out once a minute, per set of teams', async () => {
+  const db = fakeDb(tables());
+  const first = await portalApi(db, ADMIN, 'officerBoards', {}, NOW);
+  // Change the data underneath. A cached answer is meant not to notice for up to a minute.
+  db._dump('defaulter_snapshots').length = 0;
+  const again = await portalApi(db, ADMIN, 'officerBoards', {}, NOW + 30000);
+  assert.equal(again.recWeek.find(r => r.officer === 'JUMA G').recovered, 300, 'same minute, same answer');
+  assert.equal(again, first, 'and it was not worked out a second time');
+
+  const later = await portalApi(db, ADMIN, 'officerBoards', {}, NOW + 61000);
+  assert.equal(later.initialCount, 0, 'past a minute the figures are worked out afresh');
+
+  // An officer scoped to one team must never be handed the answer computed for everybody.
+  const scopedAns = await portalApi(db, GMO, 'officerBoards', {}, NOW + 61000);
+  assert.notEqual(scopedAns, later);
+  assert.equal(scopedAns.fuTotal, 1);
+});

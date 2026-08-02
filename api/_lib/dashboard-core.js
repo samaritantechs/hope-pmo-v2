@@ -2,6 +2,7 @@ import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { todayKey, currentWeekday, isoWeekday, addDaysKey, weekMondayKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
+import { cachedAnswer } from './answer-cache.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
@@ -10,6 +11,20 @@ const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(t
 import { recoveryBasis, collectedOf, uncollectedOf, num } from './recovery.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+
+/* WHAT THE DASHBOARD ACTUALLY READS. Every figure it returns is a sum or a count -- no
+   customer's name, phone or balance appears anywhere on it -- yet each snapshot row arrived
+   with all eighteen columns. On a weekend, when the reads cover Monday to Friday, that waste
+   is paid five times over.
+
+   These lists are the whole of it. `snapshot_date` and `weekday` are here because
+   resolveLatestPerKey groups on them, not because a KPI shows them; drop one and every row
+   collapses into a single nameless group. Add a column to a figure below and it must be added
+   here too -- the tests' fake database returns only what is asked for, so an omission fails a
+   test rather than quietly reporting zero. (upload_batch and created_at are appended by the
+   snapshot reader itself, since losing those would stack a re-upload on the file it replaced.) */
+const EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date';
+const DECK_COLS = 'team, arrears, snapshot_date, weekday';
 
 /** The whole dashboard computation, separated from the route so the full pipeline runs under
     tests against a fake PostgREST client. `db` is anything with the supabase-js query shape;
@@ -24,47 +39,11 @@ const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
     On weekends the dashboard switches to week-to-date (period: 'week'), matching
     api_callDailySummary in the live Code.gs: collections/received/defaulter decks aggregate
     Mon-Fri instead of showing an empty Saturday. */
-/* THE SAME QUESTION, ASKED ONCE.
-
-   The dashboard is the most expensive answer in the system -- measured at 555,000 rows for
-   somebody who sees every team. It is also the first thing everybody opens, and the figures
-   behind it change only when a report is uploaded, which happens a few times a day.
-
-   So the answer is kept for a minute, per set of teams. The first person through pays for it;
-   everyone else on the same teams, and the same person moving away and back, gets it at once.
-
-   ONE MINUTE IS THE PROMISE, and it is deliberately short: an upload made on another server
-   cannot reach in here to clear this, so a minute is the longest anybody waits to see their
-   own upload reflected. Long enough to be worth having, short enough that nobody is left
-   wondering whether the file went in.
-
-   Held in the running process, which the platform reuses between requests and may discard at
-   any moment. An empty cache just means doing the work -- which is what used to happen every
-   single time. */
-const DASH_TTL_MS = 60000;
-/* Kept against the DATABASE CLIENT, not in a single shared map. In production there is one
-   long-lived client, so this behaves exactly as one map would. In a test there is a fresh
-   fake per case -- and a shared map would have handed one test's figures to the next, which
-   is a test suite that passes while the system is wrong. Weak, so a discarded client takes
-   its cache with it. */
-const dashCache = new WeakMap();
-function dashBucket(db) {
-  let m = dashCache.get(db);
-  if (!m) { m = new Map(); dashCache.set(db, m); }
-  return m;
-}
-
+/* The dashboard was measured at 555,000 rows for somebody who sees every team, and it is the
+   first thing everybody opens. It is kept for a minute per set of teams -- see
+   answer-cache.js, which the officer boards share, since the Presentation deck waits on both. */
 export async function buildDashboard(db, user, nowMs = Date.now()) {
-  const key = (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL')
-    + '|' + todayKey(nowMs);
-  const bucket = dashBucket(db);
-  const hit = bucket.get(key);
-  // hit.at <= nowMs guards a clock that jumps backwards, which would otherwise make a stale
-  // answer look brand new for as long as the clock stayed behind.
-  if (hit && hit.at <= nowMs && (nowMs - hit.at) < DASH_TTL_MS) return hit.value;
-  const value = await buildDashboardUncached(db, user, nowMs);
-  bucket.set(key, { at: nowMs, value });
-  return value;
+  return cachedAnswer(db, 'dashboard', user, nowMs, () => buildDashboardUncached(db, user, nowMs));
 }
 
 async function buildDashboardUncached(db, user, nowMs) {
@@ -122,7 +101,7 @@ async function buildDashboardUncached(db, user, nowMs) {
     // A fresh Expected-Yesterday file wins. Its snapshot_date convention is ambiguous by
     // nature -- the file DESCRIBES yesterday but may be stamped with today's date -- so the
     // window [yesterday, today] accepts either convention.
-    const yFile = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'yesterday' }, { notBefore: yKey, notAfter: today, teams: user.teams });
+    const yFile = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'yesterday' }, { notBefore: yKey, notAfter: today, teams: user.teams, columns: EXP_COLS });
     if (yFile.rows.length) {
       recDen = uncollectedOf(scoped(yFile.rows));
       recDenDates = [yFile.date];
@@ -131,7 +110,7 @@ async function buildDashboardUncached(db, user, nowMs) {
       // Fall back to the previous 'today' snapshot. This actually improves on the live
       // system: a holiday gap falls back to the prior REAL working day instead of last
       // week's sheet, because "latest date before today" skips as far back as it needs to.
-      const prev = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: yKey, teams: user.teams });
+      const prev = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: yKey, teams: user.teams, columns: EXP_COLS });
       recDen = uncollectedOf(scoped(prev.rows));
       recDenDates = prev.date ? [prev.date] : [];
       yesterdaySource = 'previous-today-snapshot';
@@ -203,10 +182,10 @@ async function buildDashboardUncached(db, user, nowMs) {
    single figure is worked out. The platform gives up at 60. */
 async function loadExpected(db, { weekend, today, weekMon, weekFri, teams }) {
   if (!weekend) {
-    const snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today, teams: teams });
+    const snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today, teams: teams, columns: EXP_COLS });
     return { rows: snap.rows, dates: snap.date ? [snap.date] : [] };
   }
-  const all = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, weekMon, weekFri, teams);
+  const all = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, weekMon, weekFri, teams, EXP_COLS);
   const perDay = resolveLatestPerKey(all, r => r.snapshot_date);
   const dates = [...perDay.keys()].sort();
   return { rows: dates.flatMap(d => perDay.get(d).rows), dates };
@@ -219,18 +198,18 @@ async function loadExpected(db, { weekend, today, weekMon, weekFri, teams }) {
 async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
   const out = { currentRows: [], pairs: [], dates: {}, note: null };
   if (!weekend) {
-    const cur = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today, teams: teams });
+    const cur = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today, teams: teams, columns: DECK_COLS });
     if (!cur.rows.length) return out;
     out.currentRows = cur.rows;
     out.dates[wd] = cur.date;
-    const ini = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { onDate: cur.date, teams: teams });
+    const ini = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { onDate: cur.date, teams: teams, columns: DECK_COLS });
     if (ini.rows.length) out.pairs.push({ ini: ini.rows, cur: cur.rows });
     else out.note = `No initial ${wd} deck dated ${cur.date} -- Recovered is 0 rather than a whole-book figure.`;
     return out;
   }
   const [curAll, iniAll] = await Promise.all([
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, weekMon, weekFri, teams),
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, weekMon, weekFri, teams),
+    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, weekMon, weekFri, teams, DECK_COLS),
+    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, weekMon, weekFri, teams, DECK_COLS),
   ]);
   const curPer = resolveLatestPerKey(curAll, r => r.weekday);
   const iniPer = resolveLatestPerKey(iniAll, r => r.weekday);

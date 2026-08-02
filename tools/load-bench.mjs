@@ -77,45 +77,58 @@ console.log(`  ${TOTAL.toLocaleString()} rows in memory\n`);
 /* Wrap the fake so every .range() page is counted the way fetchAll actually issues them. */
 function counting(tables) {
   const db = fakeDb(tables);
-  let trips = 0, rows = 0;
+  let trips = 0, rows = 0, bytes = 0;
   const wrap = q => new Proxy(q, { get(o, p) {
     if (p === 'then') return (res, rej) => o.then(r => {
-      trips++; if (Array.isArray(r.data)) rows += r.data.length; return res(r);
+      trips++;
+      if (Array.isArray(r.data)) rows += r.data.length;
+      /* Rows alone hide half the cost. A row of every column is roughly three times the row a
+         board of sums actually needs, and it all has to cross the wire and be parsed into
+         objects before one shilling is added up -- which is where the memory goes. */
+      if (r.data) bytes += JSON.stringify(r.data).length;
+      return res(r);
     }, rej);
     const v = o[p];
     return typeof v === 'function' ? (...a) => { const out = v.apply(o, a); return out === o ? wrap(o) : out; } : v;
   } });
   return { db: { from: n => wrap(db.from(n)), rpc: async (n, a) => { trips++; return db.rpc(n, a); }, _dump: n => db._dump(n) },
-           stat: () => ({ trips, rows }) };
+           stat: () => ({ trips, rows, bytes }) };
 }
 
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
 const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
 
+/* A screen is what a PERSON opens, which is not always one server call. The Presentation deck
+   asks for the dashboard AND the officer boards before it can draw a single slide, so counting
+   either one alone understates what the user actually waits for. */
 const SCREENS = [
-  ['Dashboard (admin, all teams)', 'dashboardFull', {}, ADMIN],
-  ['Dashboard (one team)', 'dashboardFull', {}, OFFICER],
-  ['Defaulters Followup', 'followup', {}, ADMIN],
-  ['Expected Repayment', 'expectedDay', { type: 'today' }, ADMIN],
-  ['Loan Applications', 'loanPipeline', {}, ADMIN],
-  ['Promise to Pay', 'promises', {}, ADMIN],
-  ['Weekly report', 'weekly', {}, ADMIN],
+  ['Dashboard (admin, all teams)', ['dashboardFull'], {}, ADMIN],
+  ['Dashboard (one team)', ['dashboardFull'], {}, OFFICER],
+  ['Presentation (admin)', ['dashboardFull', 'officerBoards'], {}, ADMIN],
+  ['Presentation (one team)', ['dashboardFull', 'officerBoards'], {}, OFFICER],
+  ['Officer boards alone', ['officerBoards'], {}, ADMIN],
+  ['Defaulters Followup', ['followup'], {}, ADMIN],
+  ['Expected Repayment', ['expectedDay'], { type: 'today' }, ADMIN],
+  ['Loan Applications', ['loanPipeline'], {}, ADMIN],
+  ['Promise to Pay', ['promises'], {}, ADMIN],
+  ['Weekly report', ['weekly'], {}, ADMIN],
 ];
 
-console.log('screen                            trips      rows      ms');
-console.log('─'.repeat(62));
+console.log('screen                            trips      rows        MB      ms');
+console.log('─'.repeat(70));
 let worstTrips = 0;
-for (const [label, fn, args, user] of SCREENS) {
+for (const [label, fns, args, user] of SCREENS) {
   const c = counting(t);
   const t0 = Date.now();
   let err = '';
-  try { await portalApi(c.db, user, fn, args, NOW); }
+  // The browser fires a screen's calls together, so measure them together.
+  try { await Promise.all(fns.map(fn => portalApi(c.db, user, fn, args, NOW))); }
   catch (e) { err = ' (' + String(e.message).slice(0, 30) + ')'; }
   const ms = Date.now() - t0;
-  const { trips, rows } = c.stat();
+  const { trips, rows, bytes } = c.stat();
   worstTrips = Math.max(worstTrips, trips);
   console.log(label.padEnd(32) + String(trips).padStart(6) + String(rows.toLocaleString()).padStart(11)
-    + String(ms).padStart(8) + err);
+    + (bytes / 1048576).toFixed(1).padStart(10) + String(ms).padStart(8) + err);
 }
 
 console.log('\nPage size: ' + PAGE_SIZE.toLocaleString() + ' rows per request.');
