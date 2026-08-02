@@ -279,6 +279,7 @@
       <button class="btn sm ghost" id="langBtn" title="Lugha / Language">SW</button>
       <button class="btn sm ghost" id="tipBtn" title="Vidokezo / Tips">&#128276;</button>
       <button class="btn sm ghost" id="themeBtn" title="Dark mode">&#9789;</button>
+      <button class="btn sm ghost" id="findBtn" title="Tafuta mteja / Find a customer">&#128269;</button>
       <button class="btn sm ghost bell" id="bellBtn" title="Taarifa / Notifications">&#128276;</button>
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
     </div>
@@ -505,6 +506,53 @@ function bellOpen(){
   };
 }
 
+/* WHERE IS THIS CUSTOMER? -- one reference number, every book at once.
+
+   It is not a tab, because it does not belong to any one of them: an officer opens it while a
+   customer is on the phone, reads what they need, and closes it again. */
+function findOpen(prefill){
+  drawer('<h3 style="margin:0 0 2px">Tafuta mteja / Find a customer</h3>'
+    + '<div class="hint" style="margin-bottom:8px">Namba ya kumbukumbu, jina, au namba ya simu.'
+    + '<br>Reference number, name, or phone number — searches every book at once.</div>'
+    + '<input id="findQ" placeholder="mf. 12345" autocomplete="off" value="' + esc(prefill||'') + '">'
+    + '<button class="btn w" id="findGo" style="margin-top:8px">Tafuta / Search</button>'
+    + '<div id="findOut" style="margin-top:12px"></div>');
+  var out = function(html){ $('#findOut').innerHTML = html; };
+  var run = function(){
+    var q = $('#findQ').value.trim();
+    if (q.length < 3){ out('<div class="hint">Andika angalau herufi tatu. / Type at least three characters.</div>'); return; }
+    out('<div class="sk"></div>');
+    srv('customerSearch', { q: q }).then(function(d){
+      if (d.tooShort){ out('<div class="hint">Andika angalau herufi tatu. / Type at least three characters.</div>'); return; }
+      if (!d.total){ out('<div class="hint">Hakuna aliyepatikana kwa "' + esc(d.q) + '".'
+        + '<br>Nobody found. Check the reference, or they may belong to another team.</div>'); return; }
+      out(d.books.map(function(b){
+        if (b.failed) return '<div class="note bad">' + esc(b.label)
+          + ' — imeshindikana kusoma / could not be read</div>';
+        return '<div style="margin-bottom:12px"><b>' + esc(b.label) + '</b> ('+b.rows.length+')'
+          + b.rows.map(function(r){
+              // Show what each book actually knows, rather than a fixed shape that would be
+              // half empty in most of them.
+              var bits = [];
+              Object.keys(r).forEach(function(k){
+                if (r[k] == null || r[k] === '' || k === 'team') return;
+                bits.push('<span style="color:var(--mut)">'+esc(k.replace(/_/g,' '))+':</span> '+esc(String(r[k])));
+              });
+              return '<div class="nrow"><b>' + esc(r.full_name || r.customer_name || r.complainant || r.ref || '')
+                + '</b> <span class="chip mut">' + esc(r.team||'') + '</span>'
+                + '<div class="m">' + bits.join(' · ') + '</div></div>';
+            }).join('') + '</div>';
+      }).join('')
+      + (d.capped ? '<div class="hint">Kuna wengi zaidi — fanya utafutaji uwe mahususi zaidi.'
+          + ' / There are more matches than shown; narrow the search.</div>' : ''));
+    }).catch(function(e){ out('<div class="note bad">' + esc(String(e.message||e)) + '</div>'); });
+  };
+  $('#findGo').onclick = run;
+  $('#findQ').onkeydown = function(e){ if (e.key === 'Enter') run(); };
+  $('#findQ').focus();
+  if (prefill) run();
+}
+
 function start(me){
   S.me = me;
   // Before anything is drawn: the first tab load already uses the remembered-screen window.
@@ -519,6 +567,7 @@ function start(me){
   annCheck();
   bellRefresh();
   $('#bellBtn').onclick = bellOpen;
+  $('#findBtn').onclick = function(){ findOpen(''); };
   // Checked again when somebody comes back to the tab, so a notice posted mid-morning reaches
   // a screen that has been sitting open since eight.
   document.addEventListener('visibilitychange', function(){

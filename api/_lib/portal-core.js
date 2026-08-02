@@ -887,6 +887,83 @@ ol{padding-left:18px}.sig{margin-top:22px}
    so a recovery claimed here is the same recovery the dashboard counts. A customer who has
    left the deck entirely owes nothing on it, which is the strongest outcome a notice can have
    and must not be read as "no data". */
+/* ------------------------------------------------------------------ where is this customer?
+
+   An officer on the phone with a customer needs one thing: everything the company currently
+   knows about them. Until now that meant opening tabs one at a time and searching each --
+   Expected, then Defaulters, then Follow-up, then the pipeline -- while the customer waited.
+
+   One reference number, one answer, across every book at once.
+
+   THE SEARCH RUNS IN THE DATABASE, not here. Each book is asked "any row whose ref, name or
+   phone looks like this", over its indexes, and sends back the handful that match. The
+   alternative -- fetch every book and filter in JavaScript -- is the same mistake that made
+   the Settings tab take a minute to open, and this is a screen somebody uses while a customer
+   is holding.
+
+   Team scoping still applies to every book. A search box is not a way around it. */
+const SEARCH_BOOKS = [
+  { key: 'expected',   table: 'repayment_snapshots', label: 'Expected Repayment',
+    cols: 'ref, full_name, contact, team, arrears, payment_expected, todays_status, snapshot_date, snapshot_type' },
+  { key: 'defaulters', table: 'defaulter_snapshots',  label: 'Defaulters',
+    cols: 'ref, full_name, contact, team, arrears, status, ds, snapshot_date, snapshot_type' },
+  { key: 'followup',   table: 'followup_status',      label: 'Follow-up',
+    cols: 'ref, full_name, contact, team, arrears, fu_status, promise_date, last_comment' },
+  { key: 'loans',      table: 'loans',                label: 'Loan pipeline',
+    cols: 'docket_no, full_name, contact, team, stage, principal_amt, approved_date, disb_date',
+    refCol: 'docket_no' },
+  { key: 'payments',   table: 'received_payments',    label: 'Received payments',
+    cols: 'ref_no, customer_name, customer_no, team, amount_paid, paid_at, transaction_id',
+    refCol: 'ref_no', nameCol: 'customer_name', phoneCol: 'customer_no' },
+  { key: 'restructures', table: 'restructures',       label: 'Restructuring',
+    cols: 'ref, full_name, contact, team, arrears, total, installments, status, created_at' },
+  { key: 'notices',    table: 'demand_notices',       label: 'Demand notices',
+    cols: 'ref, full_name, contact, team, notice_id, notice_date, total_demand, arrears_at_notice' },
+  { key: 'complaints', table: 'complaints',           label: 'Complaints',
+    cols: 'ref, complainant, phone, team, category, status, created_at',
+    nameCol: 'complainant', phoneCol: 'phone' },
+];
+const SEARCH_PER_BOOK = 25;
+
+async function customerSearch(db, user, { q } = {}) {
+  const term = String(q == null ? '' : q).trim();
+  // The wildcards a LIKE understands are stripped, because a person typing % means the
+  // character, not "everything". Doing that FIRST matters: "%%%" strips to nothing, and a
+  // search for nothing wrapped in wildcards matches every customer in the company.
+  const clean = term.replace(/[%_]/g, '');
+
+  // Two characters matches half the book and answers nothing. Say so rather than returning a
+  // thousand rows and letting the officer scroll while somebody waits on the phone.
+  if (clean.length < 3) return { q: term, tooShort: true, books: [], total: 0 };
+
+  // A phone number is written a dozen ways. Searching for the digits finds all of them.
+  const digits = clean.replace(/\D/g, '');
+  const like = '%' + clean + '%';
+
+  const books = await Promise.all(SEARCH_BOOKS.map(async b => {
+    const refCol = b.refCol || 'ref', nameCol = b.nameCol || 'full_name', phoneCol = b.phoneCol || 'contact';
+    const clauses = [`${refCol}.ilike.${like}`, `${nameCol}.ilike.${like}`, `${phoneCol}.ilike.${like}`];
+    // Nine digits of a Tanzanian number, however it was typed in.
+    if (digits.length >= 6) clauses.push(`${phoneCol}.ilike.%${digits.slice(-9)}%`);
+    let rows = [];
+    try {
+      const { data, error } = await db.from(b.table).select(b.cols).or(clauses.join(',')).limit(SEARCH_PER_BOOK);
+      if (error) throw error;
+      rows = data || [];
+    } catch (e) {
+      // One book that will not answer must not take the whole search down. The officer gets
+      // everything else, and the book that failed says so instead of silently reading empty.
+      return { key: b.key, label: b.label, rows: [], failed: true };
+    }
+    return { key: b.key, label: b.label, rows: scoped(user, rows), failed: false };
+  }));
+
+  const found = books.filter(b => b.rows.length || b.failed);
+  return { q: term, tooShort: false, books: found,
+    total: found.reduce((s, b) => s + b.rows.length, 0),
+    capped: found.some(b => b.rows.length >= SEARCH_PER_BOOK) };
+}
+
 /* ------------------------------------------------------------------ the noticeboard
 
    Management puts something on every screen in the company at once -- a picture, a sentence,
@@ -2245,7 +2322,7 @@ const FN = {
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
-  announceSave, notifications, notifSeen,
+  announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),

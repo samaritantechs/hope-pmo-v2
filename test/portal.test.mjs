@@ -759,6 +759,58 @@ test('demand notices show whether they worked', async () => {
   assert.match(nd.rows[0].notice_state, /No deck/);
 });
 
+/* An officer on the phone with a customer, asking "where is this person right now?". Until
+   this it meant opening tabs one at a time while the customer waited. */
+test('one search finds a customer in every book at once', async () => {
+  const t = tables();
+  t.received_payments = [{ id: 'r1', ref_no: '555', customer_name: 'C555', customer_no: '0714000555',
+    team: 'KONGOWE', amount_paid: 200, paid_at: TODAY }];
+  t.restructures[0].contact = '0714000555';
+  const db = fakeDb(t);
+
+  // By reference number -- the thing an officer actually has in front of them.
+  const byRef = await portalApi(db, ADMIN, 'customerSearch', { q: '555' }, NOW);
+  const keys = byRef.books.map(b => b.key);
+  assert.ok(keys.includes('defaulters'), 'found in the defaulter deck');
+  assert.ok(keys.includes('followup'), 'found in the follow-up book');
+  assert.ok(keys.includes('payments'), 'found in received payments');
+  assert.ok(keys.includes('restructures'), 'found in restructuring');
+  assert.ok(byRef.total >= 4);
+  // Every book is named, so an officer can say where each figure came from.
+  assert.ok(byRef.books.every(b => b.label), 'each book says what it is');
+
+  // By NAME.
+  const byName = await portalApi(db, ADMIN, 'customerSearch', { q: 'c555' }, NOW);
+  assert.ok(byName.total > 0, 'a name finds them too');
+
+  // By PHONE, however it is written. 0714000555 typed with spaces, or with the country code.
+  for (const q of ['0714000555', '0714 000 555', '255714000555']) {
+    const byPhone = await portalApi(db, ADMIN, 'customerSearch', { q }, NOW);
+    assert.ok(byPhone.total > 0, 'a phone written as "' + q + '" must still find them');
+  }
+
+  // TEAM SCOPING IS NOT OPTIONAL. A search box is not a way around it.
+  const mbagala = { code: 'M', name: 'MB', role: 'GMO', teams: ['MBAGALA'], tabs: [] };
+  const blocked = await portalApi(db, mbagala, 'customerSearch', { q: '555' }, NOW);
+  assert.equal(blocked.total, 0, "another team's customer must not appear");
+  assert.equal(JSON.stringify(blocked).includes('C555'), false);
+
+  // Two characters matches half the book and answers nothing.
+  const tiny = await portalApi(db, ADMIN, 'customerSearch', { q: '55' }, NOW);
+  assert.equal(tiny.tooShort, true);
+  assert.equal(tiny.total, 0);
+  assert.equal((await portalApi(db, ADMIN, 'customerSearch', {}, NOW)).tooShort, true);
+
+  // Somebody nobody has is an empty answer, not an error.
+  const none = await portalApi(db, ADMIN, 'customerSearch', { q: 'ZZZNOBODY' }, NOW);
+  assert.equal(none.total, 0);
+  assert.equal(none.tooShort, false);
+
+  // A % typed into the box must not turn into "match everything".
+  const wild = await portalApi(db, ADMIN, 'customerSearch', { q: '%%%' }, NOW);
+  assert.equal(wild.total, 0, 'a wildcard typed by a person is text, not a query');
+});
+
 /* The noticeboard. Its table has been in the schema since the start and nothing ever wrote to
    it. It reaches the SIGN-IN screen, so what it will accept matters more than most things. */
 test('an announcement reaches every screen, and will not carry just anything', async () => {

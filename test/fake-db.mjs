@@ -4,6 +4,17 @@
 
 const PAGE_CAP = 1000;
 
+/** Postgres LIKE, near enough: % is anything, and the comparison ignores case. Regex
+    metacharacters in the pattern are escaped, so searching for "C++" or "(a)" matches those
+    characters rather than blowing up or matching everything. */
+function likeMatch(value, pattern) {
+  const v = String(value == null ? '' : value);
+  const rx = String(pattern == null ? '' : pattern)
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/%/g, '.*');
+  return new RegExp('^' + rx + '$', 'i').test(v);
+}
+
 class FakeQuery {
   static _seq = 0;
   constructor(table) { this.table = table; this.filters = []; this.ord = null; this.lim = null; this.rng = null; this.single = false; this.mode = 'select'; this.payload = null; this.opts = null; this.wantRows = false; }
@@ -16,6 +27,23 @@ class FakeQuery {
   gte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) >= String(v)); return this; }
   lte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) <= String(v)); return this; }
   in(k, arr) { this.filters.push(r => arr.map(String).includes(String(r[k]))); return this; }
+  // Case-insensitive LIKE, with % meaning "anything". What a search box compiles to.
+  ilike(k, pat) { this.filters.push(r => likeMatch(r[k], pat)); return this; }
+  /** PostgREST spells OR as one string: "ref.ilike.%X%,full_name.ilike.%X%". A search across
+      several columns is one request because of it, so the fake has to understand it or the
+      only way to test a search is to fetch whole tables and filter in JavaScript -- which is
+      the thing the search is written to avoid. */
+  or(expr) {
+    const parts = String(expr || '').split(',').map(p => {
+      const i = p.indexOf('.'), j = p.indexOf('.', i + 1);
+      if (i < 0 || j < 0) return null;
+      return { col: p.slice(0, i), op: p.slice(i + 1, j), val: p.slice(j + 1) };
+    }).filter(Boolean);
+    this.filters.push(r => parts.some(p => p.op === 'ilike'
+      ? likeMatch(r[p.col], p.val)
+      : String(r[p.col]) === p.val));
+    return this;
+  }
   order(k, opts) { this.ord = { k, asc: !opts || opts.ascending !== false }; return this; }
   limit(n) { this.lim = n; return this; }
   range(a, b) { this.rng = [a, b]; return this; }
