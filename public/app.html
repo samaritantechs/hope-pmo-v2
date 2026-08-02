@@ -1009,11 +1009,22 @@ function wireClean(){
           ? '<br><span style="color:var(--mut)">' + money(r.protectedRows)
             + ' iliyoandikwa ndani ya mfumo imeachwa / typed inside the app, left alone</span>'
           : '';
+        /* What ELSE goes. Removing a customer from the follow-up list takes their whole
+           comment history with them, and a cascade discovered afterwards is the worst kind of
+           surprise in a system holding the company's follow-up record. Said in red, before. */
+        var extra = '';
+        Object.keys(r.cascaded || {}).forEach(function(k){
+          var c = r.cascaded[k];
+          if (c.rows) extra += '<br><span style="color:var(--bad)"><b>' + money(c.rows) + '</b> '
+            + esc(c.label) + ' zitaondoka pamoja nao / go with them</span>';
+          if (c.stillDefaulters) extra += '<br><span style="color:var(--bad)"><b>' + money(c.stillDefaulters)
+            + '</b> kati yao bado ni wadaiwa hai / of these are still live defaulters</span>';
+        });
         if (dryRun){
           say('<b>'+money(r.total)+'</b> rows would be deleted for <b>'+esc(r.date)+'</b>'
-            + (r.through?' and everything before it':'') + '.<br>'+esc(detail) + kept);
+            + (r.through?' and everything before it':'') + '.<br>'+esc(detail) + kept + extra);
         } else {
-          say('<b>'+money(r.total)+'</b> rows deleted. '+esc(detail) + kept);
+          say('<b>'+money(r.total)+'</b> rows deleted. '+esc(detail) + kept + extra);
           S.storage = null; render({ force:true });
         }
       })
@@ -1024,8 +1035,13 @@ function wireClean(){
     var types = chosen(), date = document.getElementById('clDate').value;
     var through = document.getElementById('clThrough').checked;
     if (!types.length){ say('Chagua angalau aina moja ya ripoti. / Choose at least one report type.', true); return; }
+    var warn = types.indexOf('followup') >= 0
+      ? '\n\nONYO / WARNING: "Follow-up list" huondoa wateja NA maoni yao yote.'
+        + ' / removes customers AND every comment ever written about them.'
+      : '';
     if (!confirm('Futa ' + types.join(', ') + ' ya ' + date
-      + (through ? ' na zote za kabla yake' : '') + '?\n\nHistoria ya siku hiyo itapotea. / That day’s history will be gone.')) return;
+      + (through ? ' na zote za kabla yake' : '') + '?\n\nHistoria ya siku hiyo itapotea. / That day’s history will be gone.'
+      + warn)) return;
     call(false);
   };
 }
@@ -2278,6 +2294,10 @@ var CLEAN_TYPES = [
   { key:'complaints',     label:'Complaints', kept:1 },
   { key:'restructures',   label:'Loan Restructuring', kept:1 },
   { key:'demand_notices', label:'Demand Notices', kept:1 },
+  /* The one register that grew with no way to clean it: a customer who leaves the deck keeps
+     their row on purpose, so nothing ever removed one. It is last in the list and marked,
+     because unlike every other line here it takes comment history with it. */
+  { key:'followup',       label:'Follow-up list (customers + their comments)', cascade:1 },
 ];
 VIEWS.settings = function(){
   return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage'),
@@ -2333,6 +2353,7 @@ VIEWS.settings = function(){
               // Say it on the box itself, not only in the result. Somebody ticking "Complaints"
               // deserves to know before they press Clean that desk-logged ones are staying.
               + (t.kept ? ' <span style="color:var(--mut);font-size:11px">(zilizopakiwa tu / uploaded only)</span>' : '')
+              + (t.cascade ? ' <span style="color:var(--bad);font-size:11px">(huondoa na maoni yao / removes their comments too)</span>' : '')
               + '</label>'; }).join('')
         + '<div style="margin-top:6px"><button type="button" class="btn sm ghost" id="clAll">Chagua zote / Select all</button>'
           + ' <button type="button" class="btn sm ghost" id="clNone">Ondoa zote / Clear</button></div>'
@@ -2429,9 +2450,26 @@ VIEWS.present = function(){
     slides.push({ id:'early', kind:'table', title:'Early collection — this week', rows:b.earlyWeek.slice(0,12),
       cols:[col('officer','Officer'), col('uncollected','Uncollected','money'),
         col('paidOver','Paid+over','num'), col('pct','Coll %','pct')] });
-    slides.push({ id:'calls', kind:'table', title:'Call agents — this week', rows:b.callWeek.slice(0,12),
-      cols:[col('agent','Agent'), col('calls','Calls','num'), col('duration','Talk time','dur'),
-        col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
+    /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
+
+       "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
+       application reports. Nobody records their talk time or puts them on a team, and what
+       they are judged on is what they brought in -- TRACK# 1 only, because a repeat customer
+       is not a new win.
+
+       The HOPE Calls app officers are everybody in the field, and they get their own two
+       slides: who is on the phone most, and who is on it least. */
+    slides.push({ id:'cs', kind:'table', title:'Call agents — applications brought in', rows:b.csWeek.slice(0,12),
+      cols:[col('agent','Agent'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
+        col('brought','Brought in','num'), col('amount','Amount','money')] });
+    slides.push({ id:'calls', kind:'table', title:'HOPE Calls — busiest officers this week', rows:b.callWeek.slice(0,12),
+      cols:[col('agent','Officer'), col('team','Team'), col('calls','Calls','num'),
+        col('duration','Talk time','dur'), col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
+    /* The other end of the same list. An officer who never opened the app is IN this board at
+       zero rather than missing from it, which is the whole reason the slide is worth showing. */
+    slides.push({ id:'callsLow', kind:'table', title:'HOPE Calls — least active this week', rows:(b.callWeekWorst||[]).slice(0,12),
+      cols:[col('agent','Officer'), col('team','Team'), col('calls','Calls','num'),
+        col('duration','Talk time','dur'), col('portfolio','Portfolio','num')] });
     slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
       cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
         col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
@@ -3118,7 +3156,10 @@ function settingForm(key, value){
     + '<div class="fld"><label>Au chagua picha / Or choose an image (logo)</label>'
       + '<input type="file" id="sImg" accept="image/*"></div>'
     + '<div id="sPrev" style="margin:0 0 10px"></div>'
-    + '<button class="btn w" id="sSave">Hifadhi / Save</button>');
+    + '<button class="btn w" id="sSave">Hifadhi / Save</button>'
+    // Every other register here can lose a row. A key typed wrongly once used to stay forever,
+    // and a switch left behind by an old build kept quietly applying.
+    + (key ? '<button class="btn w ghost danger" id="sDel" style="margin-top:8px">Futa / Delete this setting</button>' : ''));
   if (/^data:image\//.test(String(value||''))) document.getElementById('sPrev').innerHTML =
     '<img src="'+esc(value)+'" style="width:64px;height:64px;object-fit:contain;border-radius:10px;background:#fff">';
   document.getElementById('sImg').onchange = function(){
@@ -3145,7 +3186,15 @@ function settingForm(key, value){
   };
   document.getElementById('sSave').onclick = function(){
     srv('settingSet', { key:document.getElementById('sKey').value.trim(), value:document.getElementById('sVal').value })
-      .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
+      .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render({ force:true }); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+  var sd = document.getElementById('sDel');
+  if (sd) sd.onclick = function(){
+    if (!confirm('Futa "'+key+'"? Mfumo utarudi kwenye thamani ya kawaida.\n\n'
+      + 'Delete this setting? The system falls back to its built-in default.')) return;
+    srv('settingDelete', { key: key })
+      .then(function(){ toast('Imefutwa.'); closeDrawer(); render({ force:true }); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
 }

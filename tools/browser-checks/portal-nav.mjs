@@ -248,9 +248,16 @@ await page.unroute('**/api/portal');
 await page.evaluate(() => { VC.store = {}; go('settings'); });
 await page.waitForTimeout(600);
 const boxes = await page.evaluate(() => Array.from(document.querySelectorAll('.clType')).map(c => c.value));
-check('every report that grows can be cleaned, not just five', boxes.length === 10, boxes.join(','));
-for (const k of ['expected','defaulters','received','abnormal','calls','loans','comments','complaints','restructures','demand_notices'])
+check('every report that grows can be cleaned, not just five', boxes.length === 11, boxes.join(','));
+for (const k of ['expected','defaulters','received','abnormal','calls','loans','comments','complaints','restructures','demand_notices','followup'])
   check('  ...including ' + k, boxes.includes(k));
+// The follow-up list is the one line here that takes a customer's whole comment history with
+// it, and a cascade nobody was warned about is the worst kind of surprise in this system.
+check('and the one that takes comments with it says so on the box',
+  await page.evaluate(() => {
+    const l = Array.from(document.querySelectorAll('.clType')).find(c => c.value === 'followup');
+    return l && /removes their comments too/.test(l.parentElement.textContent);
+  }));
 check('the four people also type into say so on the box itself',
   await page.evaluate(() => {
     const lbls = Array.from(document.querySelectorAll('.clType')).map(c => c.parentElement.textContent);
@@ -268,8 +275,8 @@ check('Clear unticks every one',
 lastPurge = null;
 await page.evaluate(() => { document.getElementById('clAll').click(); document.getElementById('clCheck').click(); });
 await page.waitForTimeout(400);
-check('"Check first" asks for a dry run, and for all ten types',
-  lastPurge && lastPurge.dryRun === true && (lastPurge.types || []).length === 10, JSON.stringify(lastPurge));
+check('"Check first" asks for a dry run, and for every type',
+  lastPurge && lastPurge.dryRun === true && (lastPurge.types || []).length === 11, JSON.stringify(lastPurge));
 const dryOut = await page.evaluate(() => document.getElementById('clOut').textContent);
 check('and it says how many typed rows are being left alone',
   /3/.test(dryOut) && /left alone|imeachwa/.test(dryOut), dryOut.slice(0, 120));

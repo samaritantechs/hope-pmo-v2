@@ -1819,6 +1819,20 @@ async function settingSet(db, user, p) {
   return { key: p.key };
 }
 
+/** A setting that should not be there. Every other register in this system can lose a row --
+    teams, roles, access codes, officer accounts, call agents, complaints -- and this one could
+    not, so a key typed wrongly once stayed forever, and a feature switch left behind by an
+    old build kept quietly applying. */
+async function settingDelete(db, user, p) {
+  requireAdmin(user);
+  const key = String((p && p.key) || '').trim();
+  if (!key) throw badRequest('Which setting? A key is required.');
+  const { error } = await db.from('settings').delete().eq('key', key);
+  if (error) throw new Error(error.message);
+  clearSystemOpenCache(db);
+  return { key, deleted: true };
+}
+
 /** The switch itself, given its own function so the Settings page can offer a real toggle
     rather than asking an admin to type YES into a key-value row and hope they spelled it the
     way the server reads it. */
@@ -2073,15 +2087,29 @@ const SNAPSHOT_SOURCES = {
   expected: { table: 'repayment_snapshots', label: 'Expected Repayment', dateCol: 'snapshot_date', bytes: 456 },
   defaulters: { table: 'defaulter_snapshots', label: 'Defaulters', dateCol: 'snapshot_date', bytes: 498 },
   received: { table: 'received_payments', label: 'Received Payments', dateCol: 'paid_at', bytes: 246 },
-  abnormal: { table: 'abnormal_payments', label: 'Abnormal Payments', dateCol: 'created_at', bytes: 246 },
+  abnormal: { table: 'abnormal_payments', label: 'Abnormal Payments', dateCol: 'created_at', ts: true, bytes: 246 },
   calls: { table: 'call_logs', label: 'Call Logs', dateCol: 'call_date', bytes: 258 },
   // The loan pipeline is dated by the report it came in on, not by the dates inside it -- an
   // applications report pulled on the 27th is full of June applications.
   loans: { table: 'loans', label: 'Loan Pipeline', dateCol: 'upload_date', bytes: 512 },
-  comments: { table: 'followup_comments', label: 'Comments Log', dateCol: 'created_at', bytes: 268, uploadedOnly: true },
-  complaints: { table: 'complaints', label: 'Complaints', dateCol: 'created_at', bytes: 288, uploadedOnly: true },
-  restructures: { table: 'restructures', label: 'Loan Restructuring', dateCol: 'created_at', bytes: 312, uploadedOnly: true },
-  demand_notices: { table: 'demand_notices', label: 'Demand Notices', dateCol: 'created_at', bytes: 296, uploadedOnly: true },
+  comments: { table: 'followup_comments', label: 'Comments Log', dateCol: 'created_at', ts: true, bytes: 268, uploadedOnly: true },
+  complaints: { table: 'complaints', label: 'Complaints', dateCol: 'created_at', ts: true, bytes: 288, uploadedOnly: true },
+  restructures: { table: 'restructures', label: 'Loan Restructuring', dateCol: 'created_at', ts: true, bytes: 312, uploadedOnly: true },
+  demand_notices: { table: 'demand_notices', label: 'Demand Notices', dateCol: 'created_at', ts: true, bytes: 296, uploadedOnly: true },
+  /* THE ONE REPORT THAT ACCUMULATED WITH NO WAY TO CLEAN IT.
+
+     Every other table here is either superseded by date or cleanable. followup_status is
+     neither: it is upserted per customer, so a re-upload corrects rather than duplicates --
+     but a customer who leaves the deck KEEPS their row, by design, because their history is
+     still worth reading. Nothing ever removed one. Import a year of v1 comments and it also
+     gains a placeholder for every customer mentioned.
+
+     Cleaning it is genuinely destructive in a way none of the others are: followup_comments
+     references it ON DELETE CASCADE, so removing a customer takes their whole comment history
+     with them. That is not a footnote -- so it is counted and reported BEFORE anything
+     happens, and the check step exists precisely for this. */
+  followup: { table: 'followup_status', label: 'Follow-up list', dateCol: 'updated_at', ts: true, bytes: 320,
+    cascades: { table: 'followup_comments', on: 'ref', label: 'comments' }, keyCol: 'ref' },
 };
 const dayOf = v => String(v == null ? '' : v).slice(0, 10);
 
@@ -2263,12 +2291,14 @@ async function purgeSnapshots(db, user, p) {
   if (!wanted.length) throw badRequest('Choose at least one report type to clean.');
   const through = !!p.through;
   const deleted = {};
+  const cascaded = {};
   let total = 0;
   let protectedRows = 0;
   for (const key of wanted) {
     const src = SNAPSHOT_SOURCES[key];
     // Count first: the caller is told exactly what went, and a dry run can ask without acting.
-    const cols = src.uploadedOnly ? `${src.dateCol}, upload_batch` : src.dateCol;
+    const cols = src.cascades ? `${src.dateCol}, ${src.keyCol}, status, arrears`
+      : src.uploadedOnly ? `${src.dateCol}, upload_batch` : src.dateCol;
     const before = await fetchAll(() => db.from(src.table).select(cols));
     const inRange = before.filter(r => {
       const d = dayOf(r[src.dateCol]);
@@ -2279,11 +2309,29 @@ async function purgeSnapshots(db, user, p) {
     const hit = src.uploadedOnly ? inRange.filter(r => r.upload_batch != null).length : inRange.length;
     if (src.uploadedOnly) protectedRows += inRange.length - hit;
 
+    /* What ELSE goes when these rows go. A cascade that is only discovered afterwards is the
+       worst kind of surprise in a system holding the company's follow-up history, so the count
+       is taken whether or not this is a dry run, and reported either way. */
+    if (src.cascades && hit) {
+      const doomedKeys = new Set(inRange
+        .filter(r => !src.uploadedOnly || r.upload_batch != null)
+        .map(r => String(r[src.keyCol])));
+      const kids = await fetchAll(() => db.from(src.cascades.table).select(src.cascades.on));
+      cascaded[key] = { label: src.cascades.label, rows: kids.filter(r => doomedKeys.has(String(r[src.cascades.on]))).length };
+      // And how many of the doomed rows are still live defaulters rather than dormant history.
+      const live = inRange.filter(r => !(r.status == null && r.arrears == null)).length;
+      if (live) cascaded[key].stillDefaulters = live;
+    }
+
     if (!p.dryRun && hit) {
       let q = db.from(src.table).delete();
+      /* A column carrying a CLOCK cannot be compared to a bare date: '2020-01-01T00:00:00Z'
+         is not equal to '2020-01-01', so an equality test on a timestamp silently matches
+         nothing and the clean reports success having deleted none of it. Timestamp columns get
+         a whole-day range; date columns get the plain comparison they always had. */
       q = through
-        ? q.lte(src.dateCol, date + (src.dateCol === 'created_at' ? 'T23:59:59.999Z' : ''))
-        : (src.dateCol === 'created_at'
+        ? q.lte(src.dateCol, date + (src.ts ? 'T23:59:59.999Z' : ''))
+        : (src.ts
             ? q.gte(src.dateCol, date).lte(src.dateCol, date + 'T23:59:59.999Z')
             : q.eq(src.dateCol, date));
       if (src.uploadedOnly) q = q.not('upload_batch', 'is', null);
@@ -2292,7 +2340,8 @@ async function purgeSnapshots(db, user, p) {
     }
     deleted[key] = hit; total += hit;
   }
-  return { date, through, dryRun: !!p.dryRun, deleted, total, protectedRows };
+  return { date, through, dryRun: !!p.dryRun, deleted, total, protectedRows,
+    cascaded: Object.keys(cascaded).length ? cascaded : undefined };
 }
 
 /** Email the week's expected-defaulter report to the admin address. Sent ONLY when someone
@@ -2389,7 +2438,7 @@ const FN = {
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
-  systemOpenGet, systemOpenSet,
+  systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
   announceSave, notifications, notifSeen, customerSearch,
@@ -2723,20 +2772,27 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      fails a test rather than quietly reporting zero. */
   const EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
   const DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
-  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs] = await Promise.all([
+  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
     snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, EXP_COLS),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today, teams: user.teams, columns: EXP_COLS }),
     snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, DEF_COLS),
     fetchAll(() => onTeams(db.from('followup_status').select('ref, team, status, fu_status, arrears'), user.teams)),
-    fetchAll(() => onTeams(db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt'), user.teams)),
+    fetchAll(() => onTeams(db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt, track_no, upload_date'), user.teams)),
     fetchAll(() => onTeams(db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun), user.teams)),
+    /* TWO DIFFERENT KINDS OF "AGENT", which the deck had been showing as one.
+       call_agents is the CUSTOMER CARE roster -- the people named as CREATED BY on application
+       reports. call_users is the HOPE Calls app roster -- field officers with a phone. They do
+       different jobs and are measured on different things. */
+    fetchAll(() => db.from('call_agents').select('user_id, names')),
+    fetchAll(() => onTeams(db.from('call_users').select('user_id, name, team, active'), user.teams)),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myExp = scoped(user, expWeek), myDef = scoped(user, defWeek);
   const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
   const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
+  const myPhoneUsers = scoped(user, phoneUsers);
   /* Resolve a deck the SAME way the dashboard card does: by date, type AND WEEKDAY.
      Ignoring weekday here was the bug behind "initial right, current bigger, recovery
      negative". A day can carry decks stamped with more than one weekday -- Monday's baseline
@@ -2846,25 +2902,83 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const creditToday = creditBoard(today, today);
   const creditWeek = creditBoard(mon, sun);
 
-  /* ---- CALL AGENTS ---- */
+  /* ---- CUSTOMER CARE AGENTS: applications brought in ----
+
+     These are the people in the customer care room, named as CREATED BY on the application
+     reports. They are NOT the HOPE Calls app users, and the deck had been showing the app
+     users under the heading "Call agents" -- talk time and connected percentages for one group
+     of people, presented as the performance of another. Nobody records talk time or a team for
+     a customer care agent; what they are judged on is what they brought in.
+
+     Only TRACK# 1 counts, exactly as the Call Agents tab already counts it: a track of 2 or
+     more is a repeat customer, and nobody won that application. The same rule in both places,
+     read from the same isTrack1 -- a second copy of it would drift.
+
+     An application report carries no date of its own -- one pulled on the 27th is full of June
+     applications -- so the week is measured on the upload stamp, which is the person uploading
+     saying "this is the report FOR this date". That is the only honest handle there is. */
+  function csBoard(from, to) {
+    const m = {};
+    for (const l of myLoans) {
+      if (!CS_STAGES.includes(String(l.stage || ''))) continue;
+      if (!isTrack1(l)) continue;
+      const d = String(l.upload_date || '').slice(0, 10);
+      if (!d || d < from || d > to) continue;
+      const b = bucket(m, K(String(l.created_by || '').trim() || '—'),
+        { id: String(l.created_by || '').trim() || '—', unassigned: 0, assigned: 0, amount: 0 });
+      if (l.stage === 'assigned') b.assigned++; else b.unassigned++;
+      b.amount += num(l.requested_amt) || num(l.principal_amt);
+    }
+    const names = {};
+    for (const a of csRoster) names[K(a.user_id)] = a.names || '';
+    return Object.values(m).map(b => ({
+      // The roster's name where there is one, the bare id where there is not -- an unnamed id
+      // is the signal to add them to the roster, not a reason to drop the row.
+      agent: names[b.key] || b.id, id: b.id,
+      unassigned: b.unassigned, assigned: b.assigned, brought: b.unassigned + b.assigned,
+      amount: b.amount })).sort((a, b) => b.brought - a.brought);
+  }
+  const csToday = csBoard(today, today);
+  const csWeek = csBoard(mon, sun);
+
+  /* ---- HOPE CALLS APP OFFICERS: who is actually on the phone ----
+
+     A different question and a different set of people. Everybody in the field calls, and this
+     is the record of it -- calls made, time spent, how much of it was portfolio work.
+
+     REGISTERED OFFICERS WHO MADE NO CALLS AT ALL ARE INCLUDED, at zero. Built only from the
+     call log, the officer who never opened the app simply does not appear -- and that is the
+     one name a meeting about underperformance most needs to see. An officer whose account is
+     switched off is left out: they are not expected to be calling. */
   function callBoard(from, to) {
     const m = {};
     for (const c of myCalls) {
       const d = String(c.call_date || '').slice(0, 10);
       if (!d || d < from || d > to) continue;
       const b = bucket(m, String(c.officer || '(unknown)').trim() || '(unknown)',
-        { calls: 0, duration: 0, portfolio: 0, connected: 0, customers: {} });
+        { calls: 0, duration: 0, portfolio: 0, connected: 0, customers: {}, team: c.team || '' });
       b.calls++; b.duration += num(c.duration);
       if (c.portfolio) { b.portfolio++; b.customers[String(c.ref || c.phone)] = 1; }
       if (K(c.outcome) === 'CONNECTED' || !c.outcome) b.connected++;
     }
-    return Object.values(m).map(b => ({ agent: b.key, calls: b.calls, duration: b.duration,
+    for (const u of myPhoneUsers) {
+      if (u.active === false) continue;
+      const name = String(u.name || '').trim();
+      if (!name) continue;
+      const b = bucket(m, name, { calls: 0, duration: 0, portfolio: 0, connected: 0, customers: {}, team: u.team || '' });
+      if (!b.team) b.team = u.team || '';
+    }
+    return Object.values(m).map(b => ({ agent: b.key, team: b.team, calls: b.calls, duration: b.duration,
       portfolio: b.portfolio, customers: Object.keys(b.customers).length,
       connectPct: pctOf(b.connected, b.calls), portfolioPct: pctOf(b.portfolio, b.calls) }))
       .sort((a, b) => b.calls - a.calls);
   }
   const callToday = callBoard(today, today);
   const callWeek = callBoard(mon, sun);
+  /* The other end of the same list, for the slide that asks who needs help. Deliberately the
+     same rows in the other order rather than a separate calculation -- two boards that could
+     disagree about the same week would be worse than no board at all. */
+  const callWeekWorst = callWeek.slice().reverse();
 
   /* ---- FOLLOW-UP STATUS across ALL defaulters (what the whole book looks like) ---- */
   const real = myFu.filter(r => !(r.status == null && r.arrears == null));
@@ -2878,7 +2992,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
 
   return { weekday: wd, weekOf: mon, today, deckWarning,
     initialCount: iniToday.length, currentCount: curToday.length,
-    earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek, callToday, callWeek,
+    earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
+    callToday, callWeek, callWeekWorst, csToday, csWeek,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };
 }

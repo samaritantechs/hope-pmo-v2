@@ -63,6 +63,7 @@ function tables() {
     followup_comments: [
       { id: 'c1', ref: '555', team: 'KONGOWE', comment: 'ataleta', fu_status: 'AMETOA AHADI', created_by: 'JUMA G', created_at: TODAY + 'T06:00:00Z' },
     ],
+    call_agents: [{ user_id: 'CS1', names: 'NEEMA CS' }],
     loans: [
       { id: 'l1', team: 'KONGOWE', stage: 'approved', principal_amt: 300000, approved_date: '2026-07-21', created_by: 'ANALYST A', full_name: 'L1' },
       { id: 'l2', team: 'MBAGALA', stage: 'approved', principal_amt: 200000, approved_date: '2026-07-22', created_by: 'ANALYST B', full_name: 'L2' },
@@ -630,13 +631,65 @@ test('cleanup reaches every report, and never takes what somebody typed', async 
   assert.deepEqual(ids('demand_notices'), ['d2']);
   assert.deepEqual(ids('loans'), ['l2']);          // the other day's pipeline row survives
 
-  // The officers' live working list is NOT a report and is never offered for deletion -- it is
-  // one row per customer carrying their promises and comments, not a day of history.
-  assert.equal(keys.includes('followup'), false);
-  await assert.rejects(
-    () => portalApi(db, ADMIN, 'purgeSnapshots', { date: TODAY, types: ['followup'] }, NOW),
-    e => e.status === 400);
-  assert.ok(db._dump('followup_status').length > 0, 'the working list is untouched');
+  assert.ok(keys.includes('followup'), 'the follow-up list is accounted for too');
+});
+
+/* THE FOLLOW-UP LIST WAS THE ONE REGISTER THAT ONLY EVER GREW.
+
+   It was deliberately left out of the cleanup at first, on the reasoning that it is a live
+   working list rather than a day of history -- one row per customer, carrying their promises
+   and comments. That reasoning is still true, and it is exactly why it accumulated: a customer
+   who leaves the deck keeps their row on purpose, so nothing ever removed one. Import a year of
+   v1 comments and it gains a placeholder for every customer mentioned as well.
+
+   So it is cleanable now, and the safety is that NOTHING IS HIDDEN: comments cascade, and both
+   the count of those and the count of customers who are still live defaulters come back before
+   anything is taken. */
+test('cleaning the follow-up list says what else goes before it goes', async () => {
+  const t = tables();
+  t.followup_status = [
+    { ref: '555', team: 'KONGOWE', full_name: 'C555', status: 'Defaulter', arrears: 600, updated_at: '2020-01-01T00:00:00Z' },
+    { ref: '999', team: 'MBAGALA', full_name: 'C999', status: null, arrears: null, updated_at: '2020-01-01T00:00:00Z' },
+    { ref: '111', team: 'KONGOWE', full_name: 'C111', status: 'Defaulter', arrears: 100, updated_at: TODAY + 'T09:00:00Z' },
+  ];
+  t.followup_comments = [
+    { id: 'c1', ref: '555', comment: 'one' }, { id: 'c2', ref: '555', comment: 'two' },
+    { id: 'c3', ref: '999', comment: 'three' },
+    { id: 'c4', ref: '111', comment: 'still current' },
+  ];
+  const db = fakeDb(t);
+
+  const dry = await portalApi(db, ADMIN, 'purgeSnapshots',
+    { date: '2020-01-01', types: ['followup'], dryRun: true }, NOW);
+  assert.equal(dry.deleted.followup, 2, 'the two dormant customers, not the one touched today');
+  // THE LINE THAT MATTERS: three comments would go with them, and it is said before, not after.
+  assert.equal(dry.cascaded.followup.rows, 3);
+  assert.equal(dry.cascaded.followup.stillDefaulters, 1, 'and one of them is still a live defaulter');
+  assert.equal(db._dump('followup_status').length, 3, 'a dry run takes nothing');
+  assert.equal(db._dump('followup_comments').length, 4);
+
+  const done = await portalApi(db, ADMIN, 'purgeSnapshots',
+    { date: '2020-01-01', types: ['followup'] }, NOW);
+  assert.equal(done.total, 2);
+  assert.equal(done.cascaded.followup.rows, 3);
+  assert.deepEqual(db._dump('followup_status').map(r => r.ref), ['111'],
+    'the customer touched today stays');
+});
+
+test('a stray setting can be removed, and only by an admin', async () => {
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'settingSet', { key: 'TYPO_KEY', value: 'oops' }, NOW);
+  assert.ok(db._dump('settings').some(r => r.key === 'TYPO_KEY'));
+
+  await assert.rejects(() => portalApi(db, GMO, 'settingDelete', { key: 'TYPO_KEY' }, NOW),
+    e => e.status === 403);
+  await assert.rejects(() => portalApi(db, ADMIN, 'settingDelete', {}, NOW), e => e.status === 400);
+
+  const r = await portalApi(db, ADMIN, 'settingDelete', { key: 'TYPO_KEY' }, NOW);
+  assert.equal(r.deleted, true);
+  assert.equal(db._dump('settings').some(x => x.key === 'TYPO_KEY'), false);
+  // The real ones are untouched.
+  assert.ok(db._dump('settings').some(x => x.key === 'COMMISSION_RATE'));
 });
 
 /* The one document here a customer actually SIGNS. The figures were already being worked out
@@ -1636,4 +1689,105 @@ test('the presentation is worked out once a minute, per set of teams', async () 
   const scopedAns = await portalApi(db, GMO, 'officerBoards', {}, NOW + 61000);
   assert.notEqual(scopedAns, later);
   assert.equal(scopedAns.fuTotal, 1);
+});
+
+
+/* CUSTOMER CARE AGENTS ARE NOT THE CALL APP OFFICERS.
+
+   The Presentation deck showed one under the other's name: talk time and connected
+   percentages for the field officers, on a slide headed "Call agents". They are two different
+   rooms doing two different jobs. Customer care agents bring in applications and nobody
+   records their talk time or puts them on a team; the app officers are everybody in the field
+   with a phone. Each now has its own board. */
+
+/* CS1/CS2 are CUSTOMER CARE agents -- the people named as CREATED BY on the application
+   reports. Kept OUT of the shared fixture: the loan-pipeline tests count what is in there, and
+   applications are a different question from the pipeline's stages. */
+function csTables() {
+  const t = tables();
+  t.loans = t.loans.concat([
+    { id: 'a1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 400000, track_no: '1', created_by: 'CS1', upload_date: TODAY, full_name: 'A1' },
+    { id: 'a2', team: 'KONGOWE', stage: 'assigned', requested_amt: 200000, track_no: '1', created_by: 'CS1', upload_date: MON, full_name: 'A2' },
+    // TRACK# 3 is a repeat customer -- nobody won that application.
+    { id: 'a3', team: 'KONGOWE', stage: 'unassigned', requested_amt: 900000, track_no: '3', created_by: 'CS1', upload_date: TODAY, full_name: 'A3 repeat' },
+    // A blank track counts: the earliest reports had no such column.
+    { id: 'a4', team: 'MBAGALA', stage: 'unassigned', requested_amt: 150000, track_no: '', created_by: 'CS2', upload_date: TODAY, full_name: 'A4' },
+    { id: 'a5', team: 'KONGOWE', stage: 'unassigned', requested_amt: 500000, track_no: '1', created_by: 'CS1', upload_date: '2026-07-10', full_name: 'A5 last month' },
+  ]);
+  return t;
+}
+
+test('call agents are measured on applications brought in, TRACK# 1 only', async () => {
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(csTables()));
+  const neema = b.csWeek.find(r => r.id === 'CS1');
+
+  // a1 (unassigned, today) + a2 (assigned, Monday). NOT a3 -- track 3 is a repeat customer,
+  // and crediting it would reward the same relationship twice. NOT a5 -- last month.
+  assert.equal(neema.brought, 2);
+  assert.equal(neema.unassigned, 1);
+  assert.equal(neema.assigned, 1);
+  assert.equal(neema.amount, 600000);
+  assert.equal(neema.agent, 'NEEMA CS', 'the roster supplies the name');
+
+  // A blank track counts -- the earliest reports had no such column.
+  const cs2 = b.csWeek.find(r => r.id === 'CS2');
+  assert.equal(cs2.brought, 1);
+  assert.equal(cs2.agent, 'CS2', 'an id with no roster entry shows as the bare id, not hidden');
+
+  // Nothing about talking on the phone appears on this board at all.
+  assert.equal('duration' in neema, false);
+  assert.equal('connectPct' in neema, false);
+});
+
+test('the call app board counts everybody who should be calling, including the ones who did not', async () => {
+  const b = await run('officerBoards');
+
+  const juma = b.callWeek.find(r => r.agent === 'JUMA G');
+  assert.equal(juma.calls, 2);
+  assert.equal(juma.duration, 70);
+  assert.equal(juma.team, 'KONGOWE');
+
+  /* The whole reason this board is worth showing. An officer built only from the call log who
+     never opened the app all week does not appear -- and that is the one name a meeting about
+     underperformance most needs. */
+  const db = fakeDb((function(){
+    const t = csTables();
+    t.call_users.push({ user_id: 'U2', name: 'SILENT S', team: 'KONGOWE', role: 'OFFICER', is_leader: false });
+    t.call_users.push({ user_id: 'U3', name: 'GONE G', team: 'KONGOWE', role: 'OFFICER', active: false });
+    return t;
+  })());
+  const b2 = await run('officerBoards', {}, ADMIN, db);
+  const silent = b2.callWeek.find(r => r.agent === 'SILENT S');
+  assert.ok(silent, 'an officer who made no calls is on the board');
+  assert.equal(silent.calls, 0);
+  assert.equal(silent.team, 'KONGOWE');
+  assert.equal(b2.callWeek.find(r => r.agent === 'GONE G'), undefined,
+    'a switched-off account is not expected to be calling and would only bury the ones who are');
+
+  // The "needs attention" slide is the same rows the other way up -- never a second
+  // calculation that could disagree with the first about the same week.
+  assert.deepEqual(b2.callWeekWorst, b2.callWeek.slice().reverse());
+  assert.equal(b2.callWeekWorst[0].calls, 0);
+});
+
+test('both agent boards stay inside the caller\'s teams', async () => {
+  const b = await run('officerBoards', {}, GMO, fakeDb(csTables()));
+  // CS2's only application is MBAGALA's.
+  assert.equal(b.csWeek.find(r => r.id === 'CS2'), undefined);
+  assert.equal(b.csWeek.length, 1);
+  assert.equal(b.csWeek[0].id, 'CS1');
+});
+
+test('the call report puts a silent officer on the list at zero', async () => {
+  const t = tables();
+  t.call_users.push({ user_id: 'U2', name: 'SILENT S', team: 'KONGOWE', role: 'OFFICER' });
+  t.call_users.push({ user_id: 'U9', name: 'OTHER TEAM O', team: 'MBAGALA', role: 'OFFICER' });
+  const d = await run('callReport', { from: MON, to: TODAY }, GMO, fakeDb(t));
+  const silent = d.users.find(u => u.name === 'SILENT S');
+  assert.ok(silent, 'the officer who never opened the app is on the report');
+  assert.equal(silent.calls, 0);
+  assert.equal(silent.duration, 0);
+  assert.equal(silent.days, 0);
+  // Still scoped: a KONGOWE leader does not learn about MBAGALA's quiet officers.
+  assert.equal(d.users.find(u => u.name === 'OTHER TEAM O'), undefined);
 });
