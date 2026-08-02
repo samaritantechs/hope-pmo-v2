@@ -111,7 +111,9 @@ page.on('console', m => { if (m.type() === 'error' && !BENIGN.test(m.text())) er
 await page.goto(base + '/');
 
 // Get past sign-in by driving the page's own state, the way start() does.
-await page.evaluate(() => { S.code = 'X'; start({ name: 'TESTER', role: 'ADMIN', teams: null, teamCount: 0, tabs: null }); });
+await page.evaluate(() => { S.code = 'X'; start({ name: 'TESTER', role: 'ADMIN', teams: null, teamCount: 0, tabs: null,
+  // The cadences an admin can now set, delivered with sign-in.
+  ui: { presentSeconds: 30, refreshSeconds: 20, hintIntervalSeconds: 600, hintLifetimeSeconds: 12 } }); });
 await page.waitForTimeout(400);
 
 const ok = [];
@@ -375,6 +377,24 @@ const printCss = await page.evaluate(() => {
 });
 check('on paper the app is hidden and only the document shows',
   printCss.hidesBody && printCss.showsFrame, JSON.stringify(printCss));
+
+// --- 10. The three cadences that used to be numbers typed into the page. They arrive with
+//         sign-in, because an officer cannot read the settings table but every officer needs
+//         them.
+const cad = await page.evaluate(() => ({ vc: VC_MS, pres: S.presSecs,
+  hintEvery: S.hintEverySec, hintHold: S.hintHoldSec }));
+check('a configured refresh window replaces the built-in ninety seconds', cad.vc === 20000, 'VC_MS=' + cad.vc);
+check('the slide timer comes from settings, not from 15 hard-coded', cad.pres === 30, 'presSecs=' + cad.pres);
+check('so does how often a tip appears', cad.hintEvery === 600, 'every=' + cad.hintEvery);
+check('and how long it stays on screen', cad.hintHold === 12, 'hold=' + cad.hintHold);
+
+// Signing in WITHOUT them must behave exactly as the app did before -- an older deployment,
+// or a settings table that will not answer, must not change how the portal runs.
+const dflt = await page.evaluate(() => {
+  applyCadences(undefined);
+  return { vc: VC_MS, pres: S.presSecs };
+});
+check('and with nothing configured, nothing changes', dflt.vc === 20000, 'VC_MS=' + dflt.vc);
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));

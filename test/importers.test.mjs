@@ -260,3 +260,33 @@ test('a Replace takes exactly the days in the file and nothing else', async () =
   assert.equal(out.replaced, 1);
   assert.deepEqual(db._dump('complaints').map(r => r.id), ['c2']);
 });
+
+/* The portal's cadences became settings, and a settings box is typed into by people. A slide
+   timer of one second, or a remembered screen that lasts an hour, is not a preference -- it is
+   a broken portal somebody has to be talked through undoing over the phone. */
+test('UI cadence settings are clamped to something usable', async () => {
+  process.env.SUPABASE_URL ||= 'http://x';
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'y';
+  const { clampNum } = await import('../api/me.js');
+
+  // Nothing set at all keeps exactly the number that was hard-coded before.
+  assert.equal(clampNum(undefined, 15, 5, 300), 15);
+  assert.equal(clampNum('', 15, 5, 300), 15);
+  assert.equal(clampNum(null, 90, 10, 900), 90);
+
+  // A real value is honoured.
+  assert.equal(clampNum('30', 15, 5, 300), 30);
+  assert.equal(clampNum(45, 15, 5, 300), 45);
+
+  // Out of range is pulled back rather than obeyed.
+  assert.equal(clampNum('1', 15, 5, 300), 5);
+  assert.equal(clampNum('99999', 15, 5, 300), 300);
+
+  // Somebody typing "20 seconds" means 20, not a broken screen.
+  assert.equal(clampNum('20 seconds', 15, 5, 300), 20);
+  // And rubbish falls back rather than becoming zero, which would mean a timer that never
+  // fires or one that fires continuously.
+  assert.equal(clampNum('abc', 15, 5, 300), 15);
+  assert.equal(clampNum('0', 15, 5, 300), 15);
+  assert.equal(clampNum('-40', 15, 5, 300), 40);   // the minus is stripped, not obeyed
+});
