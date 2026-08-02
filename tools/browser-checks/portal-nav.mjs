@@ -27,6 +27,7 @@ const APP = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'utf8');
 const calls = [];               // every request the page makes, in order
 let lastPurge = null;           // what the Clean button actually asked for
 let ANN = { on: false, ts: 0 }; // what the noticeboard currently says
+let lastSearch = null;          // what the search box actually asked for
 
 const teamRows = [
   { team: 'KONGOWE', ref: 'R1', full_name: 'AMINA JUMA', contact: '0712000001', payment_expected: 1000, todays_status: 'UNPAID', arrears: 0 },
@@ -73,6 +74,17 @@ function answer(fn, args) {
       { kind:'comment', id:'ff2', ref:'222', team:'KONGOWE', who:'C222', by:'JUMA G',
         what:'amelipa', at:'2026-08-01T08:00:00Z', unseen:false } ] };
   if (fn === 'notifSeen') return { ok: true, seenAt: '2026-08-02T10:00:00Z' };
+  if (fn === 'customerSearch') {
+    lastSearch = args.q;
+    if (String(args.q || '').length < 3) return { ok: true, q: args.q, tooShort: true, books: [], total: 0 };
+    if (/nobody/i.test(args.q)) return { ok: true, q: args.q, tooShort: false, books: [], total: 0 };
+    return { ok: true, q: args.q, tooShort: false, total: 3, capped: false, books: [
+      { key:'defaulters', label:'Defaulters', failed:false,
+        rows:[{ ref:'555', full_name:'AMINA JUMA', team:'KONGOWE', arrears:600, status:'Defaulter' }] },
+      { key:'payments', label:'Received payments', failed:false,
+        rows:[{ ref_no:'555', customer_name:'AMINA JUMA', team:'KONGOWE', amount_paid:200, paid_at:'2026-08-01' }] },
+      { key:'notices', label:'Demand notices', failed:true, rows:[] } ] };
+  }
   if (fn === 'restructureContract') return { ok: true, row: { id: 's1', ref: '555' },
     schedule: [{ n: 1, date: '2026-08-10', amount: 200 }],
     html: '<!DOCTYPE html><html><head><title>Mkataba</title></head><body>'
@@ -463,6 +475,35 @@ check('it lists complaints and comments together', bell.rows === 3, JSON.stringi
 check('newest first', /hakupewa risiti/.test(bell.first), bell.first.slice(0, 50));
 check('and marks which ones are new', bell.fresh === 2, 'new=' + bell.fresh);
 check('with a way to clear them', await page.evaluate(() => !!document.getElementById('notifSeen')));
+
+// --- 13. WHERE IS THIS CUSTOMER? Opened while somebody is on the phone, so what matters is
+//         that it answers in one go and never leaves the officer looking at a spinner.
+await page.evaluate(() => findOpen(''));
+await page.waitForTimeout(200);
+check('the finder opens with an empty box, focused', await page.evaluate(() =>
+  !!document.getElementById('findQ') && document.activeElement.id === 'findQ'));
+
+await page.evaluate(() => { document.getElementById('findQ').value = '55';
+  document.getElementById('findGo').click(); });
+await page.waitForTimeout(200);
+check('two characters is refused before it reaches the server',
+  /three characters|herufi tatu/.test(await page.evaluate(() => document.getElementById('findOut').innerText)));
+
+await page.evaluate(() => { document.getElementById('findQ').value = '555';
+  document.getElementById('findGo').click(); });
+await page.waitForTimeout(400);
+const found = await page.evaluate(() => document.getElementById('findOut').innerText);
+check('one search shows every book the customer is in',
+  /Defaulters/.test(found) && /Received payments/.test(found), found.slice(0, 90));
+check('with the customer named in each', (found.match(/AMINA JUMA/g) || []).length >= 2);
+check('and a book that could not be read says so rather than reading empty',
+  /could not be read|imeshindikana/.test(found));
+
+await page.evaluate(() => { document.getElementById('findQ').value = 'ZZNOBODY';
+  document.getElementById('findGo').click(); });
+await page.waitForTimeout(400);
+check('nobody found is a sentence, not an empty box',
+  /Nobody found|Hakuna aliyepatikana/.test(await page.evaluate(() => document.getElementById('findOut').innerText)));
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));
