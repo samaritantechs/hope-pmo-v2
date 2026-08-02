@@ -429,6 +429,8 @@ $('#scrim').onclick = function(){ document.body.classList.remove('navopen'); };
 
 function start(me){
   S.me = me;
+  // Before anything is drawn: the first tab load already uses the remembered-screen window.
+  applyCadences(me.ui);
   $('#signin').classList.add('hide');
   $('#shell').classList.remove('hide');
   $('#meName').textContent = me.name;
@@ -671,14 +673,15 @@ function tipShow(){
   el.textContent = pool[Math.floor(Math.random()*pool.length)];
   el.classList.add('show');
   clearTimeout(S.tipHide);
-  S.tipHide = setTimeout(function(){ el.classList.remove('show'); }, 7000);
+  S.tipHide = setTimeout(function(){ el.classList.remove('show'); },
+    Math.max(3, Number(S.hintHoldSec) || 7) * 1000);
 }
 function tipsStart(){
   srv('hints').then(function(h){
     S.tips = h.tips || {};
     clearInterval(S.tipTimer);
     setTimeout(tipShow, 3000);
-    S.tipTimer = setInterval(tipShow, 240000);
+    S.tipTimer = setInterval(tipShow, Math.max(30, Number(S.hintEverySec) || 240) * 1000);
   }).catch(function(){});
 }
 
@@ -2311,7 +2314,17 @@ document.addEventListener('keydown', function(e){
 
    Held in memory only, and only for this sitting: it is a convenience, not a copy of the books.
    Anything that writes empties it (see srv), and the reload button ignores it outright. */
-var VC_MS = 90000;                       // a minute and a half; a meeting-length attention span
+/* How long a remembered screen stays good before it is asked for again. Ninety seconds unless
+   an admin sets REFRESH_SECONDS -- a meeting-length attention span was a guess, and the people
+   running the meeting are better placed to say. */
+var VC_MS = 90000;
+function applyCadences(ui){
+  if (!ui) return;
+  VC_MS = Math.max(10, Number(ui.refreshSeconds) || 90) * 1000;
+  S.presSecs = Number(ui.presentSeconds) || 15;
+  S.hintEverySec = Number(ui.hintIntervalSeconds) || 240;
+  S.hintHoldSec = Number(ui.hintLifetimeSeconds) || 7;
+}
 var VC_SKIP = { present:1 };             // the slideshow runs its own timers -- never replay it
 function viewKey_(){
   var a = S.args || {};

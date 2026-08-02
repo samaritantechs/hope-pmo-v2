@@ -23,5 +23,37 @@ export default withApi(async (req, res) => {
       upload: tabs.includes('upload'),
       admin: tabs.includes('settings'),
     },
+    /* THE THREE CADENCES THE PORTAL RUNS ON, which were numbers typed into the page.
+
+       They ride along with sign-in because every user needs them and nobody but an admin may
+       read the settings table. An officer cannot ask for settings; they can ask who they are,
+       and this is part of who they are as far as the screen is concerned.
+
+       Each is clamped to a range that keeps the app usable: a slide timer of one second, or a
+       remembered screen that lasts an hour, is not a preference -- it is a broken portal that
+       somebody has to be talked through undoing over the phone. */
+    ui: await uiCadences(),
   };
 });
+
+export const clampNum = (raw, dflt, lo, hi) => {
+  const n = parseInt(String(raw == null ? '' : raw).replace(/[^0-9]/g, ''), 10);
+  return (!n || isNaN(n)) ? dflt : Math.max(lo, Math.min(hi, n));
+};
+async function uiCadences() {
+  const keys = ['PRESENT_SECONDS', 'REFRESH_SECONDS', 'HINT_INTERVAL', 'HINT_LIFETIME'];
+  let rows = [];
+  // A settings table that will not answer must not stop anybody signing in. The defaults are
+  // the numbers that were hard-coded before, so a failure here reads exactly like today.
+  try {
+    const { data } = await supabase.from('settings').select('key, value').in('key', keys);
+    rows = data || [];
+  } catch (e) { /* fall through to defaults */ }
+  const get = k => { const r = rows.find(x => x.key === k); return r && r.value; };
+  return {
+    presentSeconds: clampNum(get('PRESENT_SECONDS'), 15, 5, 300),
+    refreshSeconds: clampNum(get('REFRESH_SECONDS'), 90, 10, 900),
+    hintIntervalSeconds: clampNum(get('HINT_INTERVAL'), 240, 30, 3600),
+    hintLifetimeSeconds: clampNum(get('HINT_LIFETIME'), 7, 3, 60),
+  };
+}
