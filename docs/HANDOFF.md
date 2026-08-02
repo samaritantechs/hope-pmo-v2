@@ -8,11 +8,17 @@ hire in two years can pick the system up from this document alone.
 what every screen does, what every word in the loan vocabulary means, every file and what it is
 responsible for, and how to keep your own offline copy.
 
-**If you only read three things:** Part 5 (the screens, including the customer's own screen,
-the live wall display, the noticeboard, the bell and the customer finder), Part 14 and 14b
-(everything that changed most recently, each item named after the complaint it answers), and
-Part 15 (what is still waiting on you). Part 13 is the honest account of a week where the
-system got worse before it got better, and what was changed so it does not happen again.
+**If you read nothing else, read Part 15.** It says what is waiting on you, and it opens with
+the one thing that must be done immediately after this deploy: **the system ships closed** —
+everybody sees HOPE Calls only until you open it from Settings.
+
+**Then:** Part 8 (who can do what, starting with that switch), Part 11 (what can be deleted and
+what cannot, and the one cleanup that takes comment history with it), and Parts 14 through 14g
+— everything that changed recently, each item named after the complaint it answers. Part 13 is
+the honest account of a week where the system got worse before it got better, and what was
+changed so it does not happen again.
+
+**Part 5** is the tour of every screen, if you want the whole picture rather than the changes.
 
 ---
 
@@ -713,7 +719,7 @@ so the system decides and **tells you, both before you upload and in the result 
 | Call App Users / Call Logs | **Updates** each user / call | Calls are keyed on a fingerprint, so the same call cannot be stored twice. |
 | Hints | **Replaces the whole sheet** | A tip you delete from the file disappears from the app. |
 | Company logo | **Replaces the logo everywhere** | |
-| Comments Log | **Your choice: Append or Replace all for that report date** | A comment is an event, so the default adds — but a report pulled twice can be redone. |
+| Comments Log | **The same comment is never stored twice.** Send the file again as often as you like | A comment is recognised by who it was about, when, what was said and by whom. Importing years of v1 history is never one clean go, so re-uploading corrects rather than doubles. Customers not on the follow-up list get a placeholder so their history has somewhere to live; placeholders are never counted as defaulters. |
 | Received Payments | **Your choice: Append or Replace all for that report date** | |
 | Abnormal Payments, Complaints, Loan Restructuring, Demand Notices | **Your choice: Append or Replace all for that report date** | |
 
@@ -761,6 +767,14 @@ create a way to get it wrong.
 ## Part 7 — Every setting
 
 Set these in **Settings → the settings list** (or by uploading a Settings sheet).
+
+### The master switch — is the system open at all?
+| Key | Default | Meaning |
+|---|---|---|
+| `SYSTEM_OPEN` | **NO (closed)** | Whether anybody except an admin may open the portal or HOPE Live. |
+
+Do not type this one by hand — there is a real toggle at the **top of Settings**
+("Mfumo kwa watumiaji wote / The system, for everybody"). See Part 8.
 
 ### Targets
 | Key | Default | Meaning |
@@ -822,7 +836,36 @@ Set these in **Settings → the settings list** (or by uploading a Settings shee
 
 ## Part 8 — Who can do what
 
-There are **two separate doors** into the system, and this distinction matters:
+### Door 0 — the master switch, which decides whether Door 1 exists today
+
+**Settings → Mfumo kwa watumiaji wote / The system, for everybody.** One button. Closed,
+everybody in the company has HOPE Calls and nothing else: no portal, no HOPE Live, and no sign
+of either on their screen — the switch button in the Calls header disappears, the launcher stops
+drawing the System / Upload / HOPE Live tiles and says why, and a leader who already had the
+portal open is sent back to the launcher on their next click rather than left collecting red
+errors on every tab.
+
+**The default is closed.** A deployment that has never had this decided is one nobody has
+decided about, and the safe reading of that is "not yet". So after any fresh install you must
+open it deliberately.
+
+Hiding a button is a courtesy, not a lock, so the refusal is on the **server**: `/api/portal`,
+`/api/upload`, `/api/dashboard`, `/api/expected`, `/api/defaulters`, `/api/followup`,
+`/api/comments`, and HOPE Live's own feed. Typing an address directly gets the same answer.
+
+**An admin is never gated**, and is checked *before* the setting is read — otherwise the one
+person who can open the door would be locked out by the same failure that closed it. If the
+settings table cannot be read at all, the system stays closed for everybody else: a database
+having a bad minute must not throw the doors open.
+
+**HOPE Calls is never closed.** That is the whole point. Field officers carry on working.
+
+Use it when the portal is being repaired, while a day's figures are being re-uploaded, or when
+you simply are not ready for two hundred people to open it on the same morning.
+
+---
+
+There are then **two separate doors** into the system, and this distinction matters:
 
 ### Door 1 — the portal, for leaders and admin
 Sign in with an **access code**. The code carries the person's name, role, which **teams** they
@@ -902,7 +945,9 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `auth.js` | Access codes, team scoping, tab permissions |
 | `passcode.js` | Generating and checking passcodes (alphabet excludes 0/O/1/I/L so codes read aloud correctly) |
 | `time.js` | Every "what day is it" decision, on the EAT clock |
-| `supabase.js` | The database connection |
+| `supabase.js` | The database connection, and reading a big table in as few journeys as possible |
+| `system-gate.js` | The master switch: is the system open to anybody but an admin (Part 8, Door 0) |
+| `answer-cache.js` | Keeping the dashboard and the officer boards for one minute each, per set of teams |
 
 ### The screens
 | File | What it is |
@@ -924,6 +969,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `test/fake-db.mjs` | A pretend database that lives in memory, so every rule can be checked with no Supabase and no network |
 | `tools/browser-checks/*.mjs` | The screens, driven in a **real browser** against a stub server. Kept out of `npm test` on purpose so a deploy never depends on having a browser installed. See the last section of this document for how to run them |
 | `tools/settings-load-bench.mjs` | Measures what opening the Settings tab actually costs, in rows and round trips |
+| `tools/load-bench.mjs` | Builds 30,000 customers in memory and counts the requests, rows and megabytes behind **every** screen. This is what turned "the system feels heavy" into the table in Part 14c |
 | `docs/why-no-cache.md` | Why every page says `no-cache`, and why that explanation is not inside `vercel.json` |
 
 ### The Android app
@@ -985,7 +1031,34 @@ also means old dates eventually need clearing.
 types, optionally include everything before that date, press **Check first** to see exactly what
 would go, then **Clean**.
 
-Cleanable: Expected Repayment, Defaulters, Received Payments, Abnormal Payments, Call Logs.
+**Cleanable — eleven report types:** Expected Repayment · Defaulters (initial + current) ·
+Received Payments · Abnormal Payments · Call Logs · Loan Pipeline · Comments Log · Complaints ·
+Loan Restructuring · Demand Notices · Follow-up list.
+
+### "Some reports are not in the list — why?"
+
+Because they **overwrite** rather than accumulate, so there is nothing to clean up: re-uploading
+corrects the rows that are already there. Those are access codes, user roles, teams, field
+officer accounts, settings and hints. Five of the six have their own delete button on their own
+screen (Settings → the relevant register), and settings gained one too. Hints are replaced
+wholesale by the next upload, so a tip removed from the file disappears from the app.
+
+Four of the cleanable ones — Comments Log, Complaints, Loan Restructuring, Demand Notices — are
+registers your staff also type into directly. Cleaning those **only ever takes rows that arrived
+in an upload**. The box says so, and the result says how many typed rows it left alone.
+
+### The one that is different: Follow-up list
+
+This is the register that only ever grew. It is one row per customer, updated in place, and a
+customer who leaves the deck **keeps** their row on purpose — their history is still worth
+reading. Nothing ever removed one, and importing a year of v1 comments adds a placeholder for
+every customer mentioned as well.
+
+It can be cleaned now, and **it is the only line here that takes something else with it**:
+removing a customer removes every comment ever written about them. Nothing about that is hidden
+— the checkbox says it, **Check first** tells you exactly how many comments would go *and* how
+many of those customers are still live defaulters, and the confirmation says it again. Use
+**Check first** on this one. Always.
 
 ---
 
@@ -1255,6 +1328,185 @@ worse than no setting, because somebody trusts it and stops cleaning.
 
 ---
 
+## Part 14c — "The whole system is heavy"
+
+*"the system side navigating through pannels is heavy the def followup is heavy the dashbord and
+presentation aint even finishing loading the live app says 45 seconds no response… am a single
+user and experiencing this"*
+
+That is not a load problem. One person on an idle system waiting forty-five seconds means the
+work being done for one screen was enormous, and it was.
+
+### It was measured before anything was changed
+
+`node tools/load-bench.mjs` builds a real-sized operation in memory — 30,000 customers, a
+snapshot a day — and counts every request each screen would send to the database, and every row
+and megabyte that would come back. It runs in seconds and needs no database.
+
+| Screen | Before | After |
+|---|---|---|
+| Dashboard (all teams) | **567 requests**, 175 MB | **68 requests**, 136 MB |
+| Dashboard (one team) | 567 requests | **45 requests** |
+| Presentation (all teams) | 103 requests, **258 MB** | 103 requests, **182 MB** |
+| Presentation (one team) | 80 requests, 189 MB | **54 requests, 106 MB** |
+| Defaulters Followup | **76 requests** | **4** |
+| Weekly report | **246 requests** | **33** |
+| Expected Repayment | 31 requests | **4** |
+
+Each request is a separate journey from the web server to the database and back — 100–300
+thousandths of a second on a good day. **567 of them is eighty-five seconds of pure waiting**
+before a single figure is worked out, and the hosting platform gives up at sixty. That is why it
+never finished.
+
+### Four causes
+
+**1. A thousand rows at a time, one request after another.** Thirty thousand customers meant
+thirty separate journeys for *one* snapshot. Pages are now ten thousand rows: the same journey
+carrying ten times as much.
+
+Not *parallel* requests — that was tried once and it took the whole system down (Part 13).
+Bigger journeys, not more of them at once.
+
+A database can be configured to cap how much it returns, and it does so **silently** — a
+truncated answer with no error. Treating that as "the end" would drop every row past it while
+the totals still looked plausible, which is the worst way for this to fail. So a short page
+landing on a number somebody would actually configure (1000, 5000, 25000…) is treated as a cap
+and reading continues under it.
+
+**2. The dashboard fetched all forty teams and threw thirty-nine away.** An officer scoped to
+one team was downloading the whole company — 555,000 rows to look at 15,000. Every snapshot read
+on that path now narrows to the caller's teams **at the database**.
+
+**3. Followup read every comment ever written** — sixty thousand rows, to find the few hundred
+carrying a replacement phone number. That was a defect introduced with the "New no" column a day
+earlier. 76 requests → 4.
+
+**4. The Presentation asked for 825,000 rows to show sums.** Every slide is money and headcounts
+grouped by officer — not one customer's name, phone or balance appears anywhere on the deck —
+yet each row arrived with all eighteen columns. The dashboard and the officer boards now list
+what they actually read. On a weekend, when those reads cover Monday to Friday, that saving is
+paid five times over.
+
+### And the same answer is no longer worked out twice
+
+The dashboard and the officer boards are the two most expensive answers in the system, they are
+the first things everybody opens, and the Presentation waits on **both**. Each is now kept for
+**one minute**, per set of teams. The first person pays; everyone else on the same teams — and
+the same person navigating away and back — gets it at once.
+
+One minute is deliberately short: an upload made on another server cannot reach in and clear it,
+so a minute is the longest anybody waits to see their own upload reflected.
+
+### The safety net
+
+Narrowing which columns are fetched is exactly the kind of change that goes quietly wrong — ask
+for too few and a screen silently loses a field. So **the fake database used by the tests now
+returns only the columns asked for**. It used to hand back whole rows regardless, which meant a
+narrowed request that forgot a column passed every test and failed in the field. (That is
+precisely how customer rows once reached officers' phones with no name and nothing to tap.)
+Running the existing tests under the stricter fake found no column already being dropped.
+
+---
+
+## Part 14d — "I can't let app users into the system when I announce the app is back"
+
+The switch described in **Part 8, Door 0**. Built because the request was exact: let everybody
+use HOPE Calls, and let nobody see the system side — not the switch button, not its sign-in —
+until the admin turns it on from Settings.
+
+It ships **closed**, and it covers HOPE Live too, because that was asked for in the same breath.
+
+---
+
+## Part 14e — "I want to upload the v1 follow-up comments"
+
+The export with `TIMESTAMP · REF# · TEAM · FULLNAME · COMMENT · FU STATUS · PROMISE DATE ·
+PROMISE AMT · BY · NEW NUMBER · DOCKET#`. Upload it as **Comments Log**. Every column was
+already mapped. It was throwing away the one that matters.
+
+**Every row was being stamped with the moment of upload.** A v1 export writes `6/22/2026 11:29`,
+and the date reader could not cope with a date that has a clock attached — so it gave up and
+used "now". Years of follow-up history would have collapsed into one instant, in file order,
+with every date wrong, and nothing on screen would have said so.
+
+Three things were needed to make this import trustworthy:
+
+- **The clock is kept, and read as East Africa Time.** Both halves matter: the clock keeps an
+  afternoon's comments in the order they were made, and reading 11:29 as EAT rather than
+  Greenwich stops an evening comment landing on the previous day.
+
+- **Day/month order is read off the file, not assumed.** `23/07` can only be day-first, `07/23`
+  can only be month-first, and `06/07` is genuinely both — guessing wrong moves a comment by up
+  to eleven months while looking entirely reasonable. The whole column is examined: one
+  unambiguous value anywhere in the file decides every value in it. The same decision is applied
+  to PROMISE DATE, so one file is never read two ways. **If the file offers no clue either way,
+  the upload result tells you which way it was read** — check a few rows if it says that.
+
+- **Customers who are no longer on the follow-up list.** A comment must belong to somebody, and
+  over a year of history most of those customers have moved on. The whole upload used to be
+  refused because of it. Missing customers now get a **placeholder** — the same one the phone
+  app already creates when an officer comments on an Expected customer. Placeholders are never
+  counted as defaulters anywhere. The result says how many were made.
+
+**You can upload the file twice.** A comment is recognised by who it was about, when, what was
+said and by whom, so a history file that went in half-way can simply be sent again. Importing
+years of comments is never one clean go.
+
+---
+
+## Part 14f — "The call agents on the Presentation are the customer care ones"
+
+*"we dont record talk time nor team as the call app users… our customer care agents are the ones
+we call agents (applications brought in, CREATED BY on the application reports, TRACK# 1 only)"*
+
+Correct, and the deck was wrong. Its "Call agents" slide was built from the phone call log —
+talk time, connected percentages, portfolio counts — which is the **HOPE Calls app officers**.
+Two different rooms doing two different jobs, one being projected under the other's name.
+
+They are separate boards now:
+
+| Slide | Who | Measured on |
+|---|---|---|
+| **Call agents — applications brought in** | Customer care | `CREATED BY` on the application reports, **TRACK# 1 only** — a track of 2 or more is a repeat customer and nobody won it. A blank track counts, because the earliest reports had no such column. |
+| **HOPE Calls — busiest officers this week** | Field officers | Calls, talk time, portfolio, connected % |
+| **HOPE Calls — least active this week** | Field officers | The same list the other way up |
+
+An application report carries no date of its own — one pulled on the 27th is full of June
+applications — so the week is measured on the **upload stamp**, which is you saying "this is the
+report for this date". Names come from the Call Agents roster; an id with no roster entry shows
+as the bare id, which is the signal to add them rather than a reason to hide the row.
+
+**An officer who made no calls is the point of the third slide.** Built only from the call log,
+somebody who never opened the app all week simply did not appear — and that is the name a
+meeting about underperformance most needs to see. Every registered officer is now on the board,
+at zero if that is what they did. Switched-off accounts are left out: they are not expected to
+be calling, and listing them would bury the officers who are.
+
+The same gap was in the **Call Reports** tab's officer table, and is fixed there too. That tab is
+the fuller version of the same question — per officer, per team, per day, per category, per
+outcome, over any date range you pick.
+
+---
+
+## Part 14g — "I don't see some reports at cleaning/deleting"
+
+*"are they the ones that always overwrite? if its so okay but if they append then i need a
+delete option"*
+
+**Yes — with one exception, which has now been fixed.** The full answer is in Part 11.
+
+Two things were found while doing it, both worth knowing:
+
+- **A cleanup that reported success and deleted nothing.** Reports whose date column carries a
+  clock were being compared against a bare date, and `2020-01-01T00:00:00Z` is not equal to
+  `2020-01-01`. The comparison matched nothing, and the screen said it had worked.
+
+- **A setting could never be deleted.** Every other register here can lose a row, so a key typed
+  wrongly once stayed forever and an old build's switch kept quietly applying. Settings → tap
+  the row → Delete.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1262,7 +1514,9 @@ The whole v1 → v2 port: all 23 portal tabs, the phone app, uploads, the office
 recycling rotation on the phone, storage cleanup, team codes, officer accounts, the logo
 everywhere including the app icon, and the self-updating APK. Plus everything in Part 14:
 instant tab switching, no blue screen after calls, deploys that reach the phones, data-dated
-replace, a Settings tab that opens at once, the customer screen and the live widget.
+replace, a Settings tab that opens at once, the customer screen and the live widget — and in
+Parts 14c–14g: the speed work, the master switch, the v1 comment import, the two agent boards,
+and delete coverage for every report that grows.
 
 ### Silent defects found and fixed along the way
 Vanishing defaulters after upload; an unwritten complaint log; restructures approvable by
@@ -1270,54 +1524,85 @@ anyone; hand-typed legal fines; missing uploads that failed silently; discarded 
 breakdowns; roles that could not be edited; complaints stamped at midnight losing their
 time-of-day; hidden dockets; a day-0 value treated as missing; loans appending instead of
 updating and doubling the sales figure; a Replace that would have taken staff-typed records;
-Leo showing yesterday's list; Leo and Kesho showing the same people; and the four found by the
-browser checks in this round.
+Leo showing yesterday's list; Leo and Kesho showing the same people; the four found by the
+browser checks; a year of imported comment history all stamped with the moment of upload; a
+cleanup that reported success and deleted nothing; and a follow-up register that only ever grew.
+
+### FIRST THING TO DO AFTER THIS DEPLOY
+**The system ships closed.** Sign in as admin → Settings → the first card → **Fungua mfumo /
+Open the system**. Until you do, everybody except you sees HOPE Calls only. That is deliberate
+— it is what you asked for — but nothing will tell you it happened except this line.
 
 ### Waiting on you
-- Run `db/migrations/2026-08-01-storage-counts.sql` — makes Settings instant and closes the
-  `loan_identity_text` security warning.
-- Run `db/migrations/2026-08-02-storage-counts-all-reports.sql` — optional. The five newer
-  report types can already be cleaned without it; this only makes counting them fast.
-- **Send the corrected `docs/V1-REVIEW-PACK.md` back to the people who know the old system**,
-  and ask them to look again at **Leader Reports, Presentation and Teams & Staff**. Those three
-  were called complete on a column list that was wrong (Part 14b).
-- **The app's signing key is committed to a public repository**, and its password is in
-  `android/app/build.gradle` beside it. Anyone who downloads both can build an app that Android
-  will install as an *update* over HOPE Calls on any officer's phone. Three options, none free:
-  make the repository private (stops it getting worse, does not undo it); rotate the key (the
-  real fix — but every officer must uninstall and reinstall once, because Android will not
-  update across a different signature); or decide the risk is acceptable, deliberately rather
-  than by not knowing.
-- Run `db/migrations/2026-07-27-hints-many-per-tab.sql`, then upload `docs/hints-v2.tsv` as
-  Hints.
-- Run `db/migrations/2026-07-27-call-agents.sql`, then re-upload Unassigned/Assigned so the
-  CREATED BY agent lands.
-- Run `db/migrations/2026-07-28-loan-identity.sql`, `2026-07-28-upload-stamp.sql` and
-  `2026-07-28-speed-indexes.sql` if they have not been run.
-- **Tell the field to close and reopen the app once**, so they pick up the new pages. After
-  that it is automatic.
+Migrations are run by hand in the Supabase SQL editor, and **none of them break anything by
+being late** — the system falls back to the slower path until they are run.
+
+| File | What it buys you |
+|---|---|
+| `2026-08-01-storage-counts.sql` | Settings opens instantly; closes a security warning |
+| `2026-08-02-storage-counts-all-reports.sql` | Fast counting for the newer report types |
+| `2026-08-02-followup-cleanup.sql` | Fast counting and cleanup of the follow-up list |
+| `2026-07-27-hints-many-per-tab.sql` | Then upload `docs/hints-v2.tsv` as Hints |
+| `2026-07-27-call-agents.sql` | Then re-upload Unassigned/Assigned so CREATED BY lands |
+| `2026-07-28-loan-identity.sql` | One row per loan instead of one per stage |
+| `2026-07-28-upload-stamp.sql` | Replace-one-day on the accumulating reports |
+| `2026-07-28-speed-indexes.sql` | General speed |
+
+Other things only you can do:
+
+- **The app's signing key is committed to a public repository**, and its password sits beside it
+  in `android/app/build.gradle`. Anyone who downloads both can build an app that Android will
+  install as an *update* over HOPE Calls on any officer's phone. Three options, none free: make
+  the repository private (stops it getting worse, does not undo it); rotate the key (the real
+  fix — but every officer must uninstall and reinstall once, because Android will not update
+  across a different signature); or decide the risk is acceptable, deliberately rather than by
+  not knowing. **This is still undecided, and it is the most serious item on this page.**
+- **Send the corrected `docs/V1-REVIEW-PACK.md`** to the people who know the old system and ask
+  them to look again at **Leader Reports, Presentation and Teams & Staff**. Those three were
+  called complete on a column list that was wrong (Part 14b).
+- **Tell the field to close and reopen the app once**, so they pick up the new pages. After that
+  it is automatic.
 - Reactivate phone `0677115897` in Settings so that officer can sign in.
 - Set `RESEND_API_KEY` in Vercel and `ADMIN_EMAIL` in Settings for the weekly Exp.Def email.
+- Rotate the third-party credentials for `sync-book.net:8443` that appeared in an earlier chat.
+
+### The Android home-screen widget — a straight answer
+
+You expected to long-press the home screen, open **Widgets**, and find HOPE there. **You will
+not, and no amount of testing will change that.**
+
+`/live` is a web page. It has a manifest, so Chrome → menu → **Add to Home screen** gives you an
+icon that opens full-screen with no browser chrome — but that is a *shortcut*, not a live tile.
+Android's widget picker only ever lists widgets that are built into an installed app, in Java.
+
+A real widget — arrears and recovery updating on the home screen without opening anything —
+needs an `AppWidgetProvider` class added to `android/`, a layout, a manifest entry, an APK
+rebuild, and every officer taking the update. Roughly a day's work plus a redistribution round.
+It would read the same feed `/live` already uses, so the server side is done. **It has not been
+built.** Say the word and it will be.
 
 ### Worth doing next
-- **The weekly report's sections** — the largest thing still outstanding from the comparison
-  against the old system. See Part 14b.
-- **A true Android home-screen widget** — the tile that draws outside any app, the way FotMob
-  does. `/live` covers the computer and the phone home screen; the native tile needs Java in the
-  APK and a rebuild, and it would read the same feed that already exists.
-- Direct integration with the HOPE core system. It needs either a sample export of each report
-  (headers plus ~20 rows), API documentation, or a read-only service account.
+1. **The weekly report's sections** — the largest thing still outstanding from the comparison
+   against the old system. See Part 14b.
+2. **The native Android widget**, above.
+3. **The Presentation for somebody who sees every team** is still the heaviest screen at about
+   fifteen seconds of network waiting on first open (instant on the second, within the minute).
+   Getting it lower means having the database add the figures up rather than sending rows to be
+   added up here — a real change, worth doing deliberately rather than in a hurry.
+4. Direct integration with the HOPE core system. It needs either a sample export of each report
+   (headers plus ~20 rows), API documentation, or a read-only service account.
 
 ---
 
 ## How to check the system yourself
 
 ```
-npm test                                    # 136 checks of the rules and the sums
+npm test                                    # 165 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
+node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 
 npm i --no-save playwright-core             # once, for the browser checks
-node tools/browser-checks/portal-nav.mjs        # the system does not blank on every click
+node tools/browser-checks/portal-nav.mjs        # navigation, and the cleanup screen
 node tools/browser-checks/call-warmstart.mjs    # no blue screen after a phone call
 node tools/browser-checks/upload-mode.mjs       # Append / Replace on every report
 node tools/browser-checks/customer-login.mjs    # the customer screen, and what it never shows
