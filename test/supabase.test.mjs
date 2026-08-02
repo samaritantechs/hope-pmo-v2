@@ -36,16 +36,63 @@ test('a table that fits in one page costs exactly one round trip', async () => {
   }
 });
 
-test('big tables are read in waves, not one page at a time', async () => {
-  // 12,000 rows is twelve pages. Read one after another that is twelve waits laid end to end;
-  // in waves of six it is two. This is the difference an officer feels as a spinner.
+test('a big table is read in a few big journeys, not many small ones', async () => {
+  /* 12,000 rows used to be twelve separate journeys to the database, one after another, each a
+     full round trip from Vercel. Thirty thousand customers made it thirty, and the dashboard
+     needed 567 -- which is why it never finished.
+
+     Bigger pages, not parallel ones: firing them at once was tried and took the whole system
+     down by exhausting the connection pool. */
   const t = fakeTable(12000);
-  await fetchAll(t.build);
-  assert.equal(t.trips, 13);              // 1 first page + two waves of six
-  assert.ok(t.trips <= 13, 'should not be reading page by page');
+  const out = await fetchAll(t.build);
+  assert.equal(out.length, 12000, 'every row still arrives');
+  assert.ok(t.trips <= 3, 'twelve thousand rows in at most three journeys, not twelve: ' + t.trips);
 });
 
 test('an error on any page is raised, never silently swallowed as a short read', async () => {
   const boom = () => ({ range: async () => ({ data: null, error: { message: 'nope' } }) });
   await assert.rejects(() => fetchAll(boom));
+});
+
+/* Asking for a thousand rows at a time meant thirty journeys to the database for one snapshot
+   of thirty thousand customers. The dashboard needed 567 of them -- eighty-five seconds of
+   waiting before a figure was worked out, on a platform that gives up at sixty.
+
+   The fix is bigger pages, not parallel ones (that was tried and took the system down). But a
+   server may enforce a lower ceiling SILENTLY, and treating a truncated page as "the end"
+   would drop every row past it while the numbers still looked plausible. */
+test('bigger pages, and a server ceiling is learned rather than assumed', async () => {
+  const { fetchAll, MAX_PAGE } = await import('../api/_lib/supabase.js');
+  const { fakeDb, setPageCap } = await import('./fake-db.mjs');
+
+  const rows = Array.from({ length: 4500 }, (_, i) => ({ id: i }));
+  const db = fakeDb({ big: rows });
+
+  // A server with no ceiling: one request carries the lot.
+  setPageCap(100000);
+  let trips = 0;
+  const count = () => { trips = 0; return () => { trips++; return db.from('big'); }; };
+  let build = count();
+  let out = await fetchAll(build);
+  assert.equal(out.length, 4500, 'every row arrives');
+  assert.equal(trips, 1, '4500 rows in one journey, not five');
+
+  // A server that DOES cap, at a number below what we ask for. Every row must still arrive.
+  setPageCap(1000);
+  build = count();
+  out = await fetchAll(build);
+  assert.equal(out.length, 4500, 'a silent ceiling must not lose rows');
+  assert.ok(trips >= 5, 'it pages under the ceiling: ' + trips);
+
+  // The ceiling is NOT carried into the next read: a query that happened to return a round
+  // number must not pin every later read to that size for the life of the process.
+  setPageCap(100000);
+  build = count();
+  out = await fetchAll(build);
+  assert.equal(out.length, 4500);
+  assert.equal(trips, 1, 'the next read starts optimistic again');
+
+  // And it does not ask for less than the server allows on later reads.
+  assert.ok(MAX_PAGE >= 10000, 'the page we ask for is worth asking for');
+  setPageCap(100000);
 });

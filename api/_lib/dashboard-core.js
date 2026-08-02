@@ -1,7 +1,12 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { todayKey, currentWeekday, isoWeekday, addDaysKey, weekMondayKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, resolveLatestPerKey } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
+
+/** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
+    everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
+    looking rather than by remembering. */
+const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
 import { recoveryBasis, collectedOf, uncollectedOf, num } from './recovery.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
@@ -19,7 +24,50 @@ const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
     On weekends the dashboard switches to week-to-date (period: 'week'), matching
     api_callDailySummary in the live Code.gs: collections/received/defaulter decks aggregate
     Mon-Fri instead of showing an empty Saturday. */
+/* THE SAME QUESTION, ASKED ONCE.
+
+   The dashboard is the most expensive answer in the system -- measured at 555,000 rows for
+   somebody who sees every team. It is also the first thing everybody opens, and the figures
+   behind it change only when a report is uploaded, which happens a few times a day.
+
+   So the answer is kept for a minute, per set of teams. The first person through pays for it;
+   everyone else on the same teams, and the same person moving away and back, gets it at once.
+
+   ONE MINUTE IS THE PROMISE, and it is deliberately short: an upload made on another server
+   cannot reach in here to clear this, so a minute is the longest anybody waits to see their
+   own upload reflected. Long enough to be worth having, short enough that nobody is left
+   wondering whether the file went in.
+
+   Held in the running process, which the platform reuses between requests and may discard at
+   any moment. An empty cache just means doing the work -- which is what used to happen every
+   single time. */
+const DASH_TTL_MS = 60000;
+/* Kept against the DATABASE CLIENT, not in a single shared map. In production there is one
+   long-lived client, so this behaves exactly as one map would. In a test there is a fresh
+   fake per case -- and a shared map would have handed one test's figures to the next, which
+   is a test suite that passes while the system is wrong. Weak, so a discarded client takes
+   its cache with it. */
+const dashCache = new WeakMap();
+function dashBucket(db) {
+  let m = dashCache.get(db);
+  if (!m) { m = new Map(); dashCache.set(db, m); }
+  return m;
+}
+
 export async function buildDashboard(db, user, nowMs = Date.now()) {
+  const key = (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL')
+    + '|' + todayKey(nowMs);
+  const bucket = dashBucket(db);
+  const hit = bucket.get(key);
+  // hit.at <= nowMs guards a clock that jumps backwards, which would otherwise make a stale
+  // answer look brand new for as long as the clock stayed behind.
+  if (hit && hit.at <= nowMs && (nowMs - hit.at) < DASH_TTL_MS) return hit.value;
+  const value = await buildDashboardUncached(db, user, nowMs);
+  bucket.set(key, { at: nowMs, value });
+  return value;
+}
+
+async function buildDashboardUncached(db, user, nowMs) {
   const today = todayKey(nowMs);
   const wd = currentWeekday(nowMs);
   const iso = isoWeekday(nowMs);
@@ -32,15 +80,18 @@ export async function buildDashboard(db, user, nowMs = Date.now()) {
 
   // ---- Expected (collections), defaulter decks, sales, received -- independent reads ----
   const [expected, decks, sal0, rcv0] = await Promise.all([
-    loadExpected(db, { weekend, today, weekMon, weekFri }),
-    loadDecks(db, { weekend, today, wd, weekMon, weekFri }),
+    loadExpected(db, { weekend, today, weekMon, weekFri, teams: user.teams }),
+    loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams: user.teams }),
     // Sales = approved within the CURRENT WEEK, the same correction the live system's sales
     // KPI already made -- unbounded, this counted every approved loan ever (the whole book).
-    fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date')
-      .eq('stage', 'approved').gte('approved_date', weekMon).lte('approved_date', today)),
-    fetchAll(() => weekend
+    // Narrowed at the database like everything else on this path. scoped() below still runs --
+    // it is the rule, and a filter that quietly stopped working must not become a data leak --
+    // but by then there is almost nothing left for it to drop.
+    fetchAll(() => onTeams(db.from('loans').select('team, principal_amt, loan_amt, approved_date')
+      .eq('stage', 'approved').gte('approved_date', weekMon).lte('approved_date', today), user.teams)),
+    fetchAll(() => onTeams(weekend
       ? db.from('received_payments').select('team, amount_paid').gte('paid_at', weekMon).lte('paid_at', today)
-      : db.from('received_payments').select('team, amount_paid').eq('paid_at', today)),
+      : db.from('received_payments').select('team, amount_paid').eq('paid_at', today), user.teams)),
   ]);
 
   const expRows = scoped(expected.rows);
@@ -71,7 +122,7 @@ export async function buildDashboard(db, user, nowMs = Date.now()) {
     // A fresh Expected-Yesterday file wins. Its snapshot_date convention is ambiguous by
     // nature -- the file DESCRIBES yesterday but may be stamped with today's date -- so the
     // window [yesterday, today] accepts either convention.
-    const yFile = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'yesterday' }, { notBefore: yKey, notAfter: today });
+    const yFile = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'yesterday' }, { notBefore: yKey, notAfter: today, teams: user.teams });
     if (yFile.rows.length) {
       recDen = uncollectedOf(scoped(yFile.rows));
       recDenDates = [yFile.date];
@@ -80,7 +131,7 @@ export async function buildDashboard(db, user, nowMs = Date.now()) {
       // Fall back to the previous 'today' snapshot. This actually improves on the live
       // system: a holiday gap falls back to the prior REAL working day instead of last
       // week's sheet, because "latest date before today" skips as far back as it needs to.
-      const prev = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: yKey });
+      const prev = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: yKey, teams: user.teams });
       recDen = uncollectedOf(scoped(prev.rows));
       recDenDates = prev.date ? [prev.date] : [];
       yesterdaySource = 'previous-today-snapshot';
@@ -145,12 +196,17 @@ export async function buildDashboard(db, user, nowMs = Date.now()) {
 
 /** Weekday: the latest 'today' snapshot no later than today (batch-resolved). Weekend: every
     'today' snapshot of the week Mon-Fri, batch-resolved per day, in one query. */
-async function loadExpected(db, { weekend, today, weekMon, weekFri }) {
+/* `teams` is the whole reason these two are not slow. Every snapshot read below is narrowed
+   AT THE DATABASE to the teams the caller may see. Without it, an officer scoped to one team
+   still downloaded all forty and threw thirty-nine away after they arrived -- measured at 567
+   round trips and 555,000 rows for one dashboard, which is 85 seconds of waiting before a
+   single figure is worked out. The platform gives up at 60. */
+async function loadExpected(db, { weekend, today, weekMon, weekFri, teams }) {
   if (!weekend) {
-    const snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today });
+    const snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today, teams: teams });
     return { rows: snap.rows, dates: snap.date ? [snap.date] : [] };
   }
-  const all = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, weekMon, weekFri);
+  const all = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, weekMon, weekFri, teams);
   const perDay = resolveLatestPerKey(all, r => r.snapshot_date);
   const dates = [...perDay.keys()].sort();
   return { rows: dates.flatMap(d => perDay.get(d).rows), dates };
@@ -160,21 +216,21 @@ async function loadExpected(db, { weekend, today, weekMon, weekFri }) {
     SAME snapshot_date to count as a pair. Weekend: all five decks of the week, paired the
     same way per weekday. currentRows feeds the defaulter KPIs regardless of pairing; only
     the recovered figure insists on strict pairs. */
-async function loadDecks(db, { weekend, today, wd, weekMon, weekFri }) {
+async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
   const out = { currentRows: [], pairs: [], dates: {}, note: null };
   if (!weekend) {
-    const cur = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today });
+    const cur = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today, teams: teams });
     if (!cur.rows.length) return out;
     out.currentRows = cur.rows;
     out.dates[wd] = cur.date;
-    const ini = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { onDate: cur.date });
+    const ini = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { onDate: cur.date, teams: teams });
     if (ini.rows.length) out.pairs.push({ ini: ini.rows, cur: cur.rows });
     else out.note = `No initial ${wd} deck dated ${cur.date} -- Recovered is 0 rather than a whole-book figure.`;
     return out;
   }
   const [curAll, iniAll] = await Promise.all([
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, weekMon, weekFri),
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, weekMon, weekFri),
+    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, weekMon, weekFri, teams),
+    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, weekMon, weekFri, teams),
   ]);
   const curPer = resolveLatestPerKey(curAll, r => r.weekday);
   const iniPer = resolveLatestPerKey(iniAll, r => r.weekday);
