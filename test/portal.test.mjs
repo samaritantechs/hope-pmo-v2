@@ -710,6 +710,51 @@ test('the commission payout note reaches the officer who needs it', async () => 
   assert.equal(after.payText, 'imebadilika');
 });
 
+/* The register listed notices as issued and stopped there. So the one question it exists to
+   answer -- does serving a demand notice actually bring money back -- had no figures behind
+   it. */
+test('demand notices show whether they worked', async () => {
+  const t = tables();
+  const D = (ref, team, arrears, type) => ({ ref, team, arrears, snapshot_type: type,
+    weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'b' + type, full_name: 'C' + ref });
+  t.demand_notices = [
+    { id: 'n1', ref: '111', team: 'KONGOWE', notice_date: TODAY, arrears_at_notice: 1000, total_demand: 1200, fine: 200 },
+    { id: 'n2', ref: '555', team: 'KONGOWE', notice_date: TODAY, arrears_at_notice: 800, total_demand: 900, fine: 100 },
+    { id: 'n3', ref: '222', team: 'KONGOWE', notice_date: TODAY, arrears_at_notice: 500, total_demand: 600, fine: 100 },
+  ];
+  // 111 has paid some of it down, 555 has not moved, 222 is off the deck entirely.
+  t.defaulter_snapshots = [D('111', 'KONGOWE', 400, 'current'), D('555', 'KONGOWE', 800, 'current')];
+  const d = await portalApi(fakeDb(t), ADMIN, 'demandNotices', {}, NOW);
+  const by = Object.fromEntries(d.rows.map(r => [r.ref, r]));
+
+  assert.equal(by['111'].arrears_now, 400);
+  assert.equal(by['111'].recovered_since, 600);
+  assert.match(by['111'].notice_state, /Reducing/);
+
+  assert.equal(by['555'].arrears_now, 800);
+  assert.equal(by['555'].recovered_since, 0);
+  assert.match(by['555'].notice_state, /No movement/);
+
+  // Gone from the deck is the STRONGEST outcome a notice can have, not missing data.
+  assert.equal(by['222'].arrears_now, 0);
+  assert.equal(by['222'].recovered_since, 500);
+  assert.match(by['222'].notice_state, /Cleared/);
+
+  assert.equal(d.recoveredSince, 1100);
+  assert.equal(d.cleared, 1);
+  assert.equal(d.atNotice, 2300);
+
+  // WITH NO DECK UPLOADED, every customer would look cleared and the tab would report a
+  // triumph that never happened. It must say it does not know instead.
+  const noDeck = { ...t, defaulter_snapshots: [] };
+  const nd = await portalApi(fakeDb(noDeck), ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(nd.rows[0].arrears_now, null);
+  assert.equal(nd.rows[0].recovered_since, null);
+  assert.equal(nd.recoveredSince, 0);
+  assert.equal(nd.cleared, 0);
+  assert.match(nd.rows[0].notice_state, /No deck/);
+});
+
 test('every complaint save is written to the audit trail', async () => {
   const db = fakeDb(tables());
   // The complaint_log table existed from the start but nothing wrote to it, so "who changed
