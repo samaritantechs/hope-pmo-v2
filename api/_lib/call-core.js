@@ -720,6 +720,26 @@ async function brand(db) {
     motto: APP.MOTTO, logo: (await settingGet(db, 'CALL_LOGO_URL')) || '' };
 }
 
+/* THE ANNOUNCEMENT, READ BY ANYONE.
+
+   When management puts a notice up it has to reach the SIGN-IN screen, which is exactly the
+   place nobody has identified themselves yet -- so this cannot sit behind an access code. It
+   rides beside api_brand, which is unauthenticated for the same reason.
+
+   That is a deliberate decision with a cost: whatever is posted here is readable by anybody
+   who can reach the site. It is a company noticeboard, not a private message, and the save
+   side says so in as many words.
+
+   `ts` is the whole point of the shape. A phone polls this; an image does not. So the poll
+   carries a version stamp and the image only comes down when that stamp changes. */
+async function announcement(db) {
+  const rows = await fetchAll(() => db.from('announcement').select('*'));
+  const a = rows[0];
+  if (!a || !a.is_on) return { on: false, ts: 0 };
+  const ts = Date.parse(a.updated_at || '') || 0;
+  return { on: true, ts, text: String(a.text || ''), image: String(a.image_url || '') };
+}
+
 /* =====================================================================================
    THE WIDGET FEED. One small answer, for a screen nobody is holding.
 
@@ -925,6 +945,7 @@ const HANDLERS = {
   api_teamCode: teamCode,
   api_customerLookup: customerLookup,
   api_widget: widget,
+  api_announcement: announcement,
   api_callBoot: boot,
   api_callRegister: register,
   api_callList: list,

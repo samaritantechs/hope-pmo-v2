@@ -26,6 +26,7 @@ const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linu
 const APP = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'utf8');
 const calls = [];               // every request the page makes, in order
 let lastPurge = null;           // what the Clean button actually asked for
+let ANN = { on: false, ts: 0 }; // what the noticeboard currently says
 
 const teamRows = [
   { team: 'KONGOWE', ref: 'R1', full_name: 'AMINA JUMA', contact: '0712000001', payment_expected: 1000, todays_status: 'UNPAID', arrears: 0 },
@@ -63,6 +64,15 @@ function answer(fn, args) {
   if (fn === 'dashboardFull') return { ok: true, kpis: {}, teams: [], weekdays: [], pipeline: {}, totals: {} };
   if (fn === 'officerBoards') return { ok: true, boards: [] };
   if (fn === 'settingSet') return { ok: true };
+  if (fn === 'notifications') return { ok: true, unseen: 2, seenAt: '',
+    items: [
+      { kind:'complaint', id:'cp1', ref:'111', team:'KONGOWE', who:'AMINA', by:'DESK',
+        what:'hakupewa risiti', at:'2026-08-02T09:00:00Z', unseen:true },
+      { kind:'comment', id:'ff1', ref:'555', team:'KONGOWE', who:'C555', by:'JUMA G',
+        what:'ataleta kesho', at:'2026-08-02T08:00:00Z', unseen:true },
+      { kind:'comment', id:'ff2', ref:'222', team:'KONGOWE', who:'C222', by:'JUMA G',
+        what:'amelipa', at:'2026-08-01T08:00:00Z', unseen:false } ] };
+  if (fn === 'notifSeen') return { ok: true, seenAt: '2026-08-02T10:00:00Z' };
   if (fn === 'restructureContract') return { ok: true, row: { id: 's1', ref: '555' },
     schedule: [{ n: 1, date: '2026-08-10', amount: 200 }],
     html: '<!DOCTYPE html><html><head><title>Mkataba</title></head><body>'
@@ -85,6 +95,16 @@ function answer(fn, args) {
 const srv = http.createServer((req, res) => {
   if (req.url === '/' || req.url.startsWith('/app')) {
     res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(APP); return;
+  }
+  if (req.url === '/api/call') {
+    let b = ''; req.on('data', c => b += c);
+    req.on('end', () => {
+      const { fn } = JSON.parse(b || '{}');
+      calls.push(fn);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(fn === 'api_announcement' ? ANN : { ok: true }));
+    });
+    return;
   }
   if (req.url === '/api/portal') {
     let b = ''; req.on('data', c => b += c);
@@ -395,6 +415,54 @@ const dflt = await page.evaluate(() => {
   return { vc: VC_MS, pres: S.presSecs };
 });
 check('and with nothing configured, nothing changes', dflt.vc === 20000, 'VC_MS=' + dflt.vc);
+
+// --- 11. THE NOTICEBOARD. It covers every screen on purpose, so the thing that matters is
+//         that it can always be got past, and that waving one away does not wave away the next.
+ANN = { on: true, ts: 1000, text: 'Mkutano Jumatatu saa 2.', image: '' };
+await page.evaluate(() => { localStorage.removeItem('hopeAnnSeen_1000');
+  localStorage.removeItem('hopeAnnSeen_2000'); });
+await page.evaluate(() => annCheck());
+await page.waitForTimeout(300);
+check('an announcement covers the screen',
+  await page.evaluate(() => document.getElementById('annBg').classList.contains('on')));
+check('and says what was posted',
+  /Mkutano Jumatatu/.test(await page.evaluate(() => document.getElementById('annBox').innerText)));
+
+await page.evaluate(() => document.getElementById('annOk').click());
+check('it can always be got past -- a notice nobody can close is an outage',
+  !(await page.evaluate(() => document.getElementById('annBg').classList.contains('on'))));
+
+// Same notice again = stays down. This is what stops it reappearing on every tab click.
+await page.evaluate(() => annCheck());
+await page.waitForTimeout(250);
+check('the same notice does not come back',
+  !(await page.evaluate(() => document.getElementById('annBg').classList.contains('on'))));
+
+// A NEW notice does come back. Waving away Monday's must not wave away Tuesday's.
+ANN = { on: true, ts: 2000, text: 'Tangazo jipya.', image: '' };
+await page.evaluate(() => annCheck());
+await page.waitForTimeout(250);
+check('but a NEW one does -- dismissal is per notice, not for ever',
+  await page.evaluate(() => document.getElementById('annBg').classList.contains('on')));
+await page.evaluate(() => document.getElementById('annOk').click());
+ANN = { on: false, ts: 0 };
+
+// --- 12. THE BELL.
+await page.evaluate(() => bellRefresh());
+await page.waitForTimeout(300);
+check('the bell shows how many are unseen',
+  await page.evaluate(() => (document.querySelector('#bellBtn b') || {}).textContent === '2'));
+await page.evaluate(() => bellOpen());
+await page.waitForTimeout(200);
+const bell = await page.evaluate(() => ({
+  rows: document.querySelectorAll('#notifList .nrow').length,
+  fresh: document.querySelectorAll('#notifList .nrow.new').length,
+  first: (document.querySelector('#notifList .nrow') || {}).innerText || '',
+}));
+check('it lists complaints and comments together', bell.rows === 3, JSON.stringify(bell));
+check('newest first', /hakupewa risiti/.test(bell.first), bell.first.slice(0, 50));
+check('and marks which ones are new', bell.fresh === 2, 'new=' + bell.fresh);
+check('with a way to clear them', await page.evaluate(() => !!document.getElementById('notifSeen')));
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));

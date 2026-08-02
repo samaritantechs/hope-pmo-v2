@@ -887,6 +887,92 @@ ol{padding-left:18px}.sig{margin-top:22px}
    so a recovery claimed here is the same recovery the dashboard counts. A customer who has
    left the deck entirely owes nothing on it, which is the strongest outcome a notice can have
    and must not be read as "no data". */
+/* ------------------------------------------------------------------ the noticeboard
+
+   Management puts something on every screen in the company at once -- a picture, a sentence,
+   or both -- and it stays there until each person waves it away.
+
+   IT IS PUBLIC. It has to reach the sign-in screen, where nobody has identified themselves
+   yet, so it is served without an access code (api_announcement, beside api_brand). Anything
+   posted here is readable by anyone who can reach the site. That is a noticeboard, not a
+   message, and the guards below are what stop it becoming something worse.
+
+   The announcement table has been in the schema since the start and nothing ever wrote to it. */
+const ANNOUNCE_MAX_TEXT = 500;
+const ANNOUNCE_MAX_IMAGE = 600 * 1024;
+async function announceSave(db, user, p = {}, nowMs = Date.now()) {
+  // Whoever loads the company's reports is who posts to the company's noticeboard.
+  if (!(user.tabs || []).includes('upload')) throw forbidden('Upload permission is required to post an announcement.');
+
+  const text = String(p.text == null ? '' : p.text).trim().slice(0, ANNOUNCE_MAX_TEXT);
+  let image = String(p.image == null ? '' : p.image).trim();
+  if (image) {
+    // Only a picture, and only one carried in the request itself. A URL would let a
+    // noticeboard point every screen in the company at somebody else's server.
+    if (!/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(image)) {
+      throw badRequest('The announcement image must be a picture file (PNG, JPG, GIF or WEBP).');
+    }
+    if (image.length > ANNOUNCE_MAX_IMAGE) {
+      throw badRequest('That image is too large. Keep it under about 600 KB — it is loaded by every '
+        + 'phone in the field, most of them on mobile data.');
+    }
+  }
+  // Taking the picture off does not end the announcement if words remain. Two separate things
+  // were posted; removing one is not removing both.
+  const on = p.on === false ? false : !!(text || image);
+  const { error } = await db.from('announcement').upsert({
+    id: true, text: text || null, image_url: image || null, is_on: on,
+    updated_at: new Date(nowMs).toISOString(),
+  }, { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+  return { on, text, hasImage: !!image, ts: nowMs };
+}
+
+/* ------------------------------------------------------------------ the bell
+
+   How a supervisor finds out a complaint was logged without opening the complaints tab.
+
+   Two streams, one list: complaints raised and follow-up comments written. Team-scoped like
+   everything else, newest first. "Unseen" is a per-CODE stamp, so marking them read on one
+   person's screen does not mark them read on everybody's. */
+const NOTIF_LIMIT = 60;
+async function notifications(db, user) {
+  const [comp, cmts, seenRows] = await Promise.all([
+    fetchAll(() => db.from('complaints').select('id, ref, team, complainant, details, category, created_at, created_by')),
+    fetchAll(() => db.from('followup_comments').select('id, ref, team, full_name, comment, fu_status, created_at, created_by')),
+    fetchAll(() => db.from('settings').select('key, value').eq('key', notifKey_(user))),
+  ]);
+  const seenAt = (seenRows[0] && seenRows[0].value) || '';
+
+  const items = [
+    ...scoped(user, comp).map(c => ({
+      kind: 'complaint', id: 'c' + c.id, ref: c.ref, team: c.team,
+      who: c.complainant || '', by: c.created_by || '',
+      what: String(c.details || c.category || 'Complaint').slice(0, 160),
+      at: String(c.created_at || ''),
+    })),
+    ...scoped(user, cmts).map(c => ({
+      kind: 'comment', id: 'f' + c.id, ref: c.ref, team: c.team,
+      who: c.full_name || '', by: c.created_by || '',
+      what: String(c.comment || c.fu_status || 'Follow-up').slice(0, 160),
+      at: String(c.created_at || ''),
+    })),
+  ].filter(x => x.at)
+    .sort((a, b) => b.at.localeCompare(a.at))
+    .slice(0, NOTIF_LIMIT)
+    .map(x => ({ ...x, unseen: !seenAt || x.at > seenAt }));
+
+  return { items, unseen: items.filter(x => x.unseen).length, seenAt };
+}
+const notifKey_ = user => 'NOTIF_SEEN_' + String(user.code || user.name || '').toUpperCase();
+/** Marks everything currently visible as read, for THIS code only. */
+async function notifSeen(db, user, _p, nowMs = Date.now()) {
+  const at = new Date(nowMs).toISOString();
+  const { error } = await db.from('settings').upsert({ key: notifKey_(user), value: at }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  return { seenAt: at };
+}
+
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
   const [r, cur] = await Promise.all([
     listTable(db, user, 'demand_notices'),
@@ -2159,6 +2245,7 @@ const FN = {
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
+  announceSave, notifications, notifSeen,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
