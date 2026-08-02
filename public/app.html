@@ -1192,9 +1192,13 @@ VIEWS.apps = function(){
   var stage = S.args.stage || 'approved';
   return Promise.all([srv('loanPipeline'), srv('loans', {stage:stage})]).then(function(r){
     var pipe=r[0], d=r[1];
-    HEAD = '<div class="kpis">' + pipe.stages.map(function(s){
-        return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
-      }).join('') + '</div>'
+    // Eight stage cards answer "where are they" and never "how many". These two answer that.
+    HEAD = '<div class="kpis">'
+      + kpi('Applications in pipeline', money(pipe.total), 'hatua zote / every stage')
+      + kpi('Requested amount', money(pipe.requested), 'TZS')
+      + pipe.stages.map(function(s){
+          return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
+        }).join('') + '</div>'
       + bar('<label style="font-size:12px;color:var(--mut)">Stage</label>'
         + '<select data-arg="stage"><option value="">Hatua zote / All stages</option>'
         + d.stages.map(function(s){
@@ -1209,7 +1213,9 @@ VIEWS.apps = function(){
       col('docket_no','Docket'), col('full_name','Customer'),
       {key:'contact', label:'Contact', kind:'tel'}, col('team','Team'), col('product','Product'),
       col('requested_amt','Requested','money'), col('principal_amt','Principal','money'), col('loan_amt','Loan','money'),
-      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'), col('branch','Branch')];
+      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'), col('branch','Branch'),
+      // When the application was created and by whom -- both already stored, never shown.
+      col('created_at','Date','dt'), col('created_by','By')];
     ONROW = null;
     S.foot = money(d.count)+' applications · TZS '+money(d.amount);
   });
@@ -2723,6 +2729,25 @@ function openComplaint(r){
       .then(function(){ toast('Imehifadhiwa. / Saved.'); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
+  /* Removing one entirely. Every other register can lose a row; this one could not, so a
+     complaint logged against the wrong customer stayed in the register and in every count
+     built off it. Admin only, and it asks first -- there is no undo. */
+  if (r.id && S.me && S.me.can && S.me.can.admin){
+    var host = $('#cxHist');
+    if (host && host.parentNode){
+      var del = document.createElement('button');
+      del.className = 'btn ghost w'; del.id = 'cxDel'; del.style.marginTop = '10px';
+      del.innerHTML = '&#128465; Futa lalamiko / Delete this complaint';
+      host.parentNode.insertBefore(del, host);
+      del.onclick = function(){
+        if (!confirm('Futa lalamiko hili kabisa? Hakuna kurudi nyuma.\n\n'
+          + 'Delete this complaint permanently? This cannot be undone.')) return;
+        srv('deleteComplaint', { id: r.id })
+          .then(function(){ toast('Limefutwa. / Deleted.'); closeDrawer(); render({ force:true }); })
+          .catch(function(e){ toast(String(e.message||e), true); });
+      };
+    }
+  }
   if (r.id) srv('complaintLog', { id:r.id }).then(function(h){
     var el = $('#cxHist'); if (!el) return;
     el.className = '';

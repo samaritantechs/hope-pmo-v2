@@ -24,9 +24,9 @@ or wrong. The questions are at the end.
 
 ### Loan Applications  `apps`
 
-**Cards at the top:** none
+**Cards at the top:** Applications in pipeline · Requested amount · (1 more, built from the data — labels not readable here)
 
-**Columns in the table:** Docket · Customer · Team · Product · Requested · Principal · Loan · Approved · Disbursed · Branch · Stage · Contact
+**Columns in the table:** Docket · Customer · Team · Product · Requested · Principal · Loan · Approved · Disbursed · Branch · Date · By · Stage · Contact
 
 ### Complaint Register  `complaints`
 
@@ -66,7 +66,7 @@ or wrong. The questions are at the end.
 
 ### My Commission  `commission`
 
-**Cards at the top:** Recovery mode · Early collection
+**Cards at the top:** Recovery mode · Early collection · (2 more, built from the data — labels not readable here)
 
 **Columns in the table:** Officer · Recovered · Recovery comm. · Paid · Overpaid · Collection comm. · Total
 
@@ -182,16 +182,16 @@ same six figures as the phone bar, and nothing else. No customer data at all.
 
 ## 4. Everything the system can be asked for
 
-**Portal (63):**
+**Portal (68):**
 
 ```
-abnormal  accessCodes  addComment  addComplaint  addDemandNotice  addRestructure  assignments  callAgents  callReport  callUsers  comments  commission  commissionSave  complaintLog  complaints  credit  dashboard  dashboardFull  decideRestructure  defaulters  deleteAccessCode  deleteOfficerAccount  deleteRole  deleteTeam  demandNotices  emailWeeklyExpdf  expdfMine  expdfReport  expected  expectedDay  expectedDefaulters  followup  followupReport  hints  leaderReports  legalPreview  loanPipeline  loans  officerAccounts  officerBoards  par  promises  purgeSnapshots  received  removeCallUser  resolveComplaint  restructureContract  restructureEligible  restructures  saveAccessCode  saveCallAgent  saveComplaint  saveOfficerAccount  saveRole  saveTeam  settingSet  settings  settingsList  storageUsage  teamProgress  teams  uploadStatus  weekly
+abnormal  accessCodes  addComment  addComplaint  addDemandNotice  addRestructure  announceSave  assignments  callAgents  callReport  callUsers  comments  commission  commissionSave  complaintLog  complaints  credit  customerSearch  dashboard  dashboardFull  decideRestructure  defaulters  deleteAccessCode  deleteComplaint  deleteOfficerAccount  deleteRole  deleteTeam  demandNotices  emailWeeklyExpdf  expdfMine  expdfReport  expected  expectedDay  expectedDefaulters  followup  followupReport  hints  leaderReports  legalPreview  loanPipeline  loans  notifSeen  notifications  officerAccounts  officerBoards  par  promises  purgeSnapshots  received  removeCallUser  resolveComplaint  restructureContract  restructureEligible  restructures  saveAccessCode  saveCallAgent  saveComplaint  saveOfficerAccount  saveRole  saveTeam  settingSet  settings  settingsList  storageUsage  teamProgress  teams  uploadStatus  weekly
 ```
 
-**Phone and public screens (12):**
+**Phone and public screens (13):**
 
 ```
-api_brand  api_teamCode  api_customerLookup  api_widget  api_callBoot  api_callRegister  api_callList  api_callDailySummary  api_callSync  api_callComments  api_callAddComment  api_callReport
+api_brand  api_teamCode  api_customerLookup  api_widget  api_announcement  api_callBoot  api_callRegister  api_callList  api_callDailySummary  api_callSync  api_callComments  api_callAddComment  api_callReport
 ```
 
 ---

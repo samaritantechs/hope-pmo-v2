@@ -85,9 +85,20 @@ function sharedList(name) {
 }
 
 /* ---------- the KPI cards on each tab ---------- */
+/* Cards, named where they can be named and COUNTED where they cannot.
+
+   A tab that builds one card per pipeline stage writes kpi(s.stage.replace(...)) -- the label
+   is worked out when the page runs, so there is no text here to read. Matching only quoted
+   labels reported "Cards at the top: none" for a tab with eight of them, and that is the third
+   time this pack has told the v1 team something was missing when it was on the screen.
+   If a label cannot be read, say so rather than saying nothing is there. */
 function kpisFor(id) {
   const body = viewBody(id);
-  return [...new Set([...body.matchAll(/kpi\('([^']+)'/g)].map(m => m[1]))];
+  const named = [...new Set([...body.matchAll(/kpi\('([^']+)'/g)].map(m => m[1]))];
+  const total = (body.match(/\bkpi\(/g) || []).length;
+  const computed = total - (body.match(/\bkpi\('/g) || []).length;
+  if (computed > 0) named.push(`(${computed} more, built from the data — labels not readable here)`);
+  return named;
 }
 /* A view's own source, bounded by MATCHING BRACES.
 

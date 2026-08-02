@@ -47,7 +47,13 @@ async function loanPipeline(db, user) {
     b.count++;
     b.amount += num(r.principal_amt) || num(r.requested_amt) || num(r.loan_amt);
   }
-  return { stages: STAGES.map(s => by[s]) };
+  // A card per stage, and the two figures v1 led with: how many applications are in the
+  // pipeline ALTOGETHER, and what they are asking for. Eight stage cards answer "where are
+  // they" and never "how many".
+  const stages = STAGES.map(s => by[s]);
+  return { stages,
+    total: stages.reduce((n, x) => n + x.count, 0),
+    requested: rows.reduce((n, r) => n + num(r.requested_amt), 0) };
 }
 
 /* ------------------------------------------------------------------ expected repayment */
@@ -1703,6 +1709,34 @@ async function callAgents(db, user) {
     // the signal to add them rather than a reason to hide the row.
     unnamed: rows.filter(r => !r.names && r.id !== '—').map(r => r.id) };
 }
+/** Removing a complaint entirely. Every other register can lose a row -- teams, roles, access
+    codes, officer accounts, call agents -- and this one could not, so a complaint logged
+    against the wrong customer stayed in the register and in every count built off it.
+
+    Admin only, and the audit trail is written BEFORE the row goes: what was deleted, by whom,
+    and when. A register you can quietly empty is not a register. */
+async function deleteComplaint(db, user, p = {}, nowMs = Date.now()) {
+  requireAdmin(user);
+  const id = String(p.id || '').trim();
+  if (!id) throw badRequest('Which complaint? An id is required.');
+  const rows = await fetchAll(() => db.from('complaints').select('*').eq('id', id));
+  const row = rows[0];
+  if (!row) throw badRequest('That complaint could not be found.');
+  if (!teamAllowed(user, row.team)) throw forbidden(`You do not have access to team ${row.team}.`);
+
+  /* The trail is written FIRST, and deliberately not as a child row of the complaint:
+     complaint_log cascades on delete, so a note written against a row that is about to
+     disappear disappears with it. Recording the deletion under a null complaint_id keeps it. */
+  await db.from('complaint_log').insert({
+    complaint_id: null, team: row.team, action: 'DELETED', status: row.status || null,
+    note: `Deleted complaint ${id} — ${String(row.complainant || row.ref || '').slice(0, 80)}`,
+    created_by: user.name, created_at: new Date(nowMs).toISOString(),
+  });
+  const { error } = await db.from('complaints').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+  return { id, deleted: true };
+}
+
 async function saveCallAgent(db, user, p) {
   requireAdmin(user);
   const id = String((p && p.userId) || '').trim();
@@ -2314,7 +2348,7 @@ const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
   loans, loanPipeline, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
-  complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint,
+  complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, legalPreview, abnormal, received,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
