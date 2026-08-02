@@ -29,6 +29,23 @@
     #printFrame{position:static;left:0;width:100%;height:auto;min-height:100vh;
                 visibility:visible;display:block !important}
   }
+  /* The noticeboard. It covers everything on purpose -- that is what "announcement" means
+     here -- but it is always dismissible, because a notice nobody can get past is an outage. */
+  #annBg{position:fixed;inset:0;background:rgba(6,26,54,.92);z-index:80;display:none;
+         align-items:center;justify-content:center;padding:20px}
+  #annBg.on{display:flex}
+  #annBox{background:var(--card);border-radius:18px;max-width:520px;width:100%;
+          max-height:88vh;overflow:auto;padding:18px;text-align:center}
+  #annBox img{max-width:100%;border-radius:12px;display:block;margin:0 auto 12px}
+  #annBox .t{font-size:16px;line-height:1.5;white-space:pre-wrap;text-align:left}
+  /* The bell. A count nobody can read is a dot nobody looks at. */
+  .bell{position:relative}
+  .bell b{position:absolute;top:-5px;right:-5px;background:#B42318;color:#fff;border-radius:999px;
+          font-size:10px;line-height:1;padding:3px 5px;min-width:16px;font-weight:800}
+  #notifList{max-height:60vh;overflow:auto}
+  .nrow{display:block;padding:9px 0;border-top:1px solid var(--line);font-size:13.5px}
+  .nrow.new{background:var(--b50);margin:0 -16px;padding-left:16px;padding-right:16px}
+  .nrow .m{color:var(--mut);font-size:11.5px;margin-top:2px}
   .busy{height:2px;background:transparent;overflow:hidden;flex:0 0 auto}
   .busy.on{background:var(--b100)}
   .busy.on::after{content:'';display:block;height:100%;width:40%;background:var(--b600);animation:bz 1.1s ease-in-out infinite}
@@ -262,6 +279,7 @@
       <button class="btn sm ghost" id="langBtn" title="Lugha / Language">SW</button>
       <button class="btn sm ghost" id="tipBtn" title="Vidokezo / Tips">&#128276;</button>
       <button class="btn sm ghost" id="themeBtn" title="Dark mode">&#9789;</button>
+      <button class="btn sm ghost bell" id="bellBtn" title="Taarifa / Notifications">&#128276;</button>
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
     </div>
     <div class="busy" id="busy"></div>
@@ -269,6 +287,7 @@
   </main>
 </div>
 
+<div id="annBg"><div id="annBox"></div></div>
 <div class="scrim" id="scrim"></div>
 <div id="tip"></div>
 <div id="pres"></div>
@@ -427,6 +446,65 @@ $('#tipBtn').onclick = function(){ tipShow(); };
 $('#menuBtn').onclick = function(){ document.body.classList.toggle('navopen'); };
 $('#scrim').onclick = function(){ document.body.classList.remove('navopen'); };
 
+/* THE NOTICEBOARD, on the reader's side.
+
+   Dismissed PER ANNOUNCEMENT, not per session: waving away Monday's notice must not also wave
+   away Tuesday's, and reading Monday's twice because you opened a second tab is worse than
+   useless. The version stamp the server sends is what tells them apart, and it is also what
+   keeps the image off the wire -- a phone that has already seen this one asks for nothing. */
+function annKey_(ts){ return 'hopeAnnSeen_' + ts; }
+function annCheck(){
+  return srv2('api_announcement').then(function(a){
+    if (!a || !a.on || !a.ts) { $('#annBg').classList.remove('on'); return; }
+    if (load(annKey_(a.ts))) return;                 // this one has already been waved away
+    $('#annBox').innerHTML =
+        (a.image ? '<img src="' + esc(a.image) + '" alt="">' : '')
+      + (a.text ? '<div class="t">' + esc(a.text) + '</div>' : '')
+      + '<button class="btn w" id="annOk" style="margin-top:14px">Sawa / Got it</button>';
+    $('#annBg').classList.add('on');
+    $('#annOk').onclick = function(){
+      store(annKey_(a.ts), '1');
+      $('#annBg').classList.remove('on');
+    };
+  }).catch(function(){ /* a noticeboard that will not load must never block the system */ });
+}
+/* The announcement is read WITHOUT an access code -- it has to reach the sign-in screen -- so
+   it goes to the calls door, not the portal one. */
+function srv2(fn, args){
+  return fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ fn:fn, args:args||[] }) }).then(function(r){ return r.json(); });
+}
+
+/* THE BELL. How a supervisor learns a complaint was logged without opening the tab. */
+function bellRefresh(){
+  return srv('notifications').then(function(d){
+    S.notif = d;
+    var b = $('#bellBtn');
+    b.innerHTML = '&#128276;' + (d.unseen ? '<b>' + (d.unseen > 99 ? '99+' : d.unseen) + '</b>' : '');
+  }).catch(function(){ /* the bell is never the reason a screen fails */ });
+}
+function bellOpen(){
+  var d = S.notif || { items: [] };
+  drawer('<h3 style="margin:0 0 2px">Taarifa / Notifications</h3>'
+    + '<div class="hint" style="margin-bottom:8px">Malalamiko na maoni ya ufuatiliaji ya timu zako.'
+    + '<br>Complaints and follow-up comments from your own teams.</div>'
+    + '<div id="notifList">' + (d.items.length ? d.items.map(function(i){
+        return '<div class="nrow' + (i.unseen ? ' new' : '') + '">'
+          + '<b>' + esc(i.kind === 'complaint' ? 'Lalamiko / Complaint' : 'Maoni / Follow-up') + '</b> — '
+          + esc(i.who || i.ref || '')
+          + '<div>' + esc(i.what) + '</div>'
+          + '<div class="m">' + esc(i.team || '') + ' · ' + esc(i.by || '')
+            + ' · ' + esc(String(i.at).replace('T', ' ').slice(0, 16)) + '</div></div>';
+      }).join('') : '<div class="hint">Hakuna kipya. / Nothing new.</div>') + '</div>'
+    + (d.unseen ? '<button class="btn w" id="notifSeen" style="margin-top:10px">'
+        + 'Nimesoma zote / Mark all read</button>' : ''));
+  var b = $('#notifSeen');
+  if (b) b.onclick = function(){
+    srv('notifSeen', {}).then(function(){ closeDrawer(); bellRefresh(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
+
 function start(me){
   S.me = me;
   // Before anything is drawn: the first tab load already uses the remembered-screen window.
@@ -438,6 +516,14 @@ function start(me){
   buildNav();
   tipsStart();
   go('dashboard');
+  annCheck();
+  bellRefresh();
+  $('#bellBtn').onclick = bellOpen;
+  // Checked again when somebody comes back to the tab, so a notice posted mid-morning reaches
+  // a screen that has been sitting open since eight.
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden){ annCheck(); bellRefresh(); }
+  });
 }
 
 /* ----------------------------------------------------------- table engine
@@ -786,6 +872,39 @@ function wireBar(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-day]'), function(el){
     el.onclick = function(){ S.args.day = Number(el.getAttribute('data-day')); render(); };
   });
+  /* Posting to the noticeboard. The picture is read here and sent as part of the request --
+     there is no file store in this system, and a URL would point every screen in the company
+     at somebody else's server. */
+  var annPost = document.getElementById('annPost');
+  if (annPost){
+    var annImg = '';
+    var f = document.getElementById('annFile');
+    f.onchange = function(){
+      var file = f.files && f.files[0];
+      if (!file) { annImg = ''; document.getElementById('annPrev').innerHTML = ''; return; }
+      // Say it here rather than after a slow upload that fails.
+      if (file.size > 600 * 1024){
+        toast('Picha ni kubwa mno (zaidi ya 600 KB). / That picture is too big — keep it under 600 KB.', true);
+        f.value = ''; return;
+      }
+      var rd = new FileReader();
+      rd.onload = function(){ annImg = String(rd.result || '');
+        document.getElementById('annPrev').innerHTML = '<img src="'+esc(annImg)+'" style="max-width:100%;border-radius:10px">'; };
+      rd.readAsDataURL(file);
+    };
+    annPost.onclick = function(){
+      var text = document.getElementById('annText').value.trim();
+      if (!text && !annImg){ toast('Andika ujumbe au chagua picha. / Write something or choose a picture.', true); return; }
+      srv('announceSave', { text: text, image: annImg })
+        .then(function(){ toast('Limetangazwa. / Posted to every screen.'); })
+        .catch(function(e){ toast(String(e.message||e), true); });
+    };
+    document.getElementById('annOff').onclick = function(){
+      srv('announceSave', { text: '', image: '', on: false })
+        .then(function(){ toast('Limeondolewa. / Taken down.'); render({ force:true }); })
+        .catch(function(e){ toast(String(e.message||e), true); });
+    };
+  }
   var cmSave = document.getElementById('cmSave');
   if (cmSave) cmSave.onclick = function(){
     srv('commissionSave', { mode: $('#cmMode').value, yearRates: $('#cmYear').value,
@@ -2175,6 +2294,21 @@ VIEWS.settings = function(){
             + '<td class="r"><button class="btn sm ghost" data-user="'+esc(u.user_id)+'">Simamia / Manage</button></td></tr>';
         }).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--mut);padding:20px">Hakuna akaunti bado. / No accounts yet.</td></tr>')
       + '</tbody></table></div></div>'
+      + '<div class="card"><div class="card-h">Tangazo / Announcement'
+        + '<span class="sub">huonekana kwenye kila skrini, hata ya kuingia / shows on every screen, including sign-in</span></div>'
+        + '<div class="fld"><label>Maandishi / Text (max 500)</label>'
+          + '<textarea id="annText" rows="3" maxlength="500" style="width:100%"></textarea></div>'
+        + '<div class="fld"><label>Picha / Picture (optional, under 600 KB)</label>'
+          + '<input type="file" id="annFile" accept="image/*"></div>'
+        + '<div id="annPrev" style="margin:8px 0"></div>'
+        + '<div style="display:flex;gap:8px">'
+          + '<button class="btn sm" id="annPost" style="flex:1">Tangaza / Post</button>'
+          + '<button class="btn sm ghost" id="annOff">Ondoa / Take it down</button></div>'
+        + '<div class="note">Kila mtu ataliona mara moja, na litabaki hadi kila mmoja alifunge.'
+          + ' Halifichwi — mtu yeyote anayefika kwenye tovuti anaweza kuliona.'
+          + ' / Everyone sees it at once and it stays until each person closes it.'
+          + ' It is NOT private: anyone who can reach the site can read it.</div>'
+        + '</div>'
       + bar('<button class="btn sm" id="newSetting">+ Badili thamani / Set a value</button>');
     S.acRows = ac.rows; S.cuRows = cu.rows;
     S.rows = st.rows;

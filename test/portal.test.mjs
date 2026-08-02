@@ -9,6 +9,10 @@ import { fakeDb } from './fake-db.mjs';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
+// The announcement is READ without an access code -- it has to reach the sign-in screen -- so
+// it lives on the calls door beside the brand. Both sides are checked here, together, because
+// what one writes the other must be willing to show.
+const { callApi } = await import('../api/_lib/call-core.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20';
@@ -753,6 +757,96 @@ test('demand notices show whether they worked', async () => {
   assert.equal(nd.recoveredSince, 0);
   assert.equal(nd.cleared, 0);
   assert.match(nd.rows[0].notice_state, /No deck/);
+});
+
+/* The noticeboard. Its table has been in the schema since the start and nothing ever wrote to
+   it. It reaches the SIGN-IN screen, so what it will accept matters more than most things. */
+test('an announcement reaches every screen, and will not carry just anything', async () => {
+  const db = fakeDb(tables());
+  const PNG = 'data:image/png;base64,' + 'A'.repeat(40);
+
+  // Nothing posted = nothing shown, and the phone's poll stays tiny.
+  assert.deepEqual(await callApi(db, 'api_announcement', [], NOW), { on: false, ts: 0 });
+
+  await portalApi(db, ADMIN, 'announceSave', { text: 'Mkutano Jumatatu saa 2.', image: PNG }, NOW);
+  const a = await callApi(db, 'api_announcement', [], NOW);
+  assert.equal(a.on, true);
+  assert.equal(a.text, 'Mkutano Jumatatu saa 2.');
+  assert.equal(a.image, PNG);
+  assert.ok(a.ts > 0, 'a version stamp, so a phone fetches the image only when it changes');
+
+  // Taking the PICTURE off does not end the announcement while words remain. Two things were
+  // posted; removing one is not removing both.
+  await portalApi(db, ADMIN, 'announceSave', { text: 'Mkutano Jumatatu saa 2.', image: '' }, NOW);
+  const words = await callApi(db, 'api_announcement', [], NOW);
+  assert.equal(words.on, true);
+  assert.equal(words.image, '');
+
+  // Emptying both ends it.
+  await portalApi(db, ADMIN, 'announceSave', { text: '', image: '' }, NOW);
+  assert.equal((await callApi(db, 'api_announcement', [], NOW)).on, false);
+
+  // A URL would let a noticeboard point every screen in the company at somebody else's server.
+  await assert.rejects(
+    () => portalApi(db, ADMIN, 'announceSave', { image: 'https://example.com/x.png' }, NOW),
+    e => e.status === 400);
+  await assert.rejects(
+    () => portalApi(db, ADMIN, 'announceSave', { image: 'data:text/html;base64,PHNjcmlwdD4=' }, NOW),
+    e => e.status === 400);
+
+  // Every phone in the field loads this, most of them on mobile data.
+  await assert.rejects(
+    () => portalApi(db, ADMIN, 'announceSave', { image: 'data:image/png;base64,' + 'A'.repeat(700 * 1024) }, NOW),
+    e => e.status === 400);
+
+  // A noticeboard is not a place to paste a page onto everybody's screen.
+  await portalApi(db, ADMIN, 'announceSave', { text: 'z'.repeat(900) }, NOW);
+  assert.equal((await callApi(db, 'api_announcement', [], NOW)).text.length, 500);
+
+  // Whoever loads the company's reports posts to the company's noticeboard -- not everybody.
+  await assert.rejects(() => portalApi(db, GMO, 'announceSave', { text: 'hi' }, NOW),
+    e => e.status === 403);
+});
+
+/* How a supervisor learns a complaint was logged without opening the complaints tab. */
+test('the bell merges complaints and comments, scoped to your own teams', async () => {
+  const t = tables();
+  t.complaints = [
+    { id: 'p1', ref: '111', team: 'KONGOWE', complainant: 'AMINA', details: 'hakupewa risiti', created_at: TODAY + 'T09:00:00Z', created_by: 'DESK' },
+    { id: 'p2', ref: '999', team: 'MBAGALA', complainant: 'OTHER', details: 'nje ya timu', created_at: TODAY + 'T10:00:00Z', created_by: 'DESK' },
+  ];
+  t.followup_comments = [
+    { id: 'f1', ref: '555', team: 'KONGOWE', full_name: 'C555', comment: 'ataleta kesho', created_at: TODAY + 'T08:00:00Z', created_by: 'JUMA G' },
+  ];
+  const db = fakeDb(t);
+
+  // A leader over KONGOWE sees their own two and not the other team's.
+  const mine = await portalApi(db, GMO, 'notifications', {}, NOW);
+  // Ids are prefixed by stream so a complaint and a comment can never collide on the same key.
+  assert.deepEqual(mine.items.map(i => i.id), ['cp1', 'ff1']);
+  assert.equal(mine.items.every(i => i.team === 'KONGOWE'), true);
+  assert.equal(JSON.stringify(mine).includes('nje ya timu'), false, "another team's complaint leaked");
+
+  // Newest first -- the complaint at 09:00 above the comment at 08:00.
+  assert.equal(mine.items[0].kind, 'complaint');
+  assert.equal(mine.items[1].kind, 'comment');
+
+  // Everything is unseen until somebody says otherwise.
+  assert.equal(mine.unseen, 2);
+
+  // Marking them read is PER CODE: one supervisor clearing their bell must not clear another's.
+  await portalApi(db, GMO, 'notifSeen', {}, Date.parse(TODAY + 'T11:00:00Z'));
+  assert.equal((await portalApi(db, GMO, 'notifications', {}, NOW)).unseen, 0);
+  assert.equal((await portalApi(db, ADMIN, 'notifications', {}, NOW)).unseen > 0, true,
+    "one person's bell must not clear everybody's");
+
+  // Something new after that stamp shows up again. Written into the DATABASE, not the fixture
+  // it was built from -- the fake copies its rows on construction, the way a real one would.
+  db._dump('complaints').push({ id: 'p3', ref: '111', team: 'KONGOWE', complainant: 'NEW',
+    details: 'baadaye', created_at: TODAY + 'T12:00:00Z', created_by: 'DESK' });
+  const later = await portalApi(db, GMO, 'notifications', {}, NOW);
+  assert.equal(later.items[0].what, 'baadaye');
+  assert.equal(later.unseen, 1);
 });
 
 test('every complaint save is written to the audit trail', async () => {
