@@ -8,7 +8,7 @@ way a hand-written summary does.
 **What we are asking for.** You know the old system. Read this and tell us what is missing
 or wrong. The questions are at the end.
 
-*Generated 2026-08-01 from the live source.*
+*Generated 2026-08-02 from the live source.*
 
 ---
 
@@ -60,15 +60,15 @@ or wrong. The questions are at the end.
 
 ### Defaulters Followup  `followup`
 
-**Cards at the top:** Customers · Total arrears
+**Cards at the top:** Customers · Total arrears · Recovered
 
-**Columns in the table:** REF · Customer · Team · Contact · Arrears · Rejesho · Promise · D.S · By · When · Status · Follow-up
+**Columns in the table:** REF · Customer · Team · Guarantor · Arrears · Rejesho · Recovered · Promise · D.S · D.C · Disb date · Last trans · Last comment · By · When · Contact · New no · G. Contact · Status · Follow-up
 
 ### My Commission  `commission`
 
 **Cards at the top:** Recovery mode · Early collection
 
-**Columns in the table:** none — this tab is boards and forms, not a list
+**Columns in the table:** Officer · Recovered · Recovery comm. · Paid · Overpaid · Collection comm. · Total
 
 ### Promise to Pay  `promises`
 
@@ -96,7 +96,7 @@ or wrong. The questions are at the end.
 
 ### Legal / Demand Notices  `legal`
 
-**Cards at the top:** Notices issued · Total demanded · Fines charged · Marejesho / Paid · Wiki za faini / Weeks late · Faini / Fine · Deni la msingi · Jumla ya madai / Total demand
+**Cards at the top:** Notices issued · Total demanded · Fines charged
 
 **Columns in the table:** Kumb.Na. / Ref · Notice date · REF# · Customer · Team · Days · Paid · Arrears · Principal left · Issued by · Contact · Fine · Total demand
 
@@ -116,7 +116,7 @@ or wrong. The questions are at the end.
 
 **Cards at the top:** Teams · Initial arrears · Current arrears · Recovered
 
-**Columns in the table:** Teams · Which teams · Initial · Current · Progress % · Cleared · Team · Recovery officer · GMO · Manager · Recovered · Init cust · Cur cust · Officer · Recovery comm. · Paid · Overpaid · Collection comm. · Total
+**Columns in the table:** Teams · Which teams · Initial · Current · Progress % · Cleared · Team · Recovery officer · GMO · Manager · Recovered · Init cust · Cur cust
 
 ### Weekly Report  `weekly`
 
@@ -132,15 +132,15 @@ or wrong. The questions are at the end.
 
 ### Presentation  `present`
 
-**Cards at the top:** Slides · Seconds per slide · Weekday · Remaining · New interest · Total to repay · Per installment
+**Cards at the top:** Slides · Seconds per slide · Weekday
 
-**Columns in the table:** Team · Recovery · Current · Recovered · Coll % · Def · Officer · Initial · Rec % · Uncollected · Paid+over · Agent · Calls · Talk time · Portfolio · Connected % · Analyst · Apps · Amount · Sales % · Perf · Day · Expected · Collected · Status · Customers · % of book · Arrears · Slide · Type · Rows · Date · Installment
+**Columns in the table:** Team · Recovery · Current · Recovered · Coll % · Def · Officer · Initial · Rec % · Uncollected · Paid+over · Agent · Calls · Talk time · Portfolio · Connected % · Analyst · Apps · Amount · Sales % · Perf · Day · Expected · Collected · Status · Customers · % of book · Arrears · Slide · Type · Rows
 
 ### Teams & Staff  `teams`
 
 **Cards at the top:** Teams · Supervisors named · Roles · Bila msimbo / No code
 
-**Columns in the table:** Team · OPM · Recovery · GMO · Manager · Credit · Expected · Bike · Msimbo / Code · Expected Repayment · Defaulters (initial + current) · Received Payments · Abnormal Payments · Call Logs · Loan Pipeline (all stages) · Comments Log · Complaints · Loan Restructuring · Demand Notices
+**Columns in the table:** Team · OPM · Recovery · GMO · Manager · Credit · Expected · Bike · Msimbo / Code
 
 ### Upload Reports  `upload`
 
@@ -182,10 +182,10 @@ same six figures as the phone bar, and nothing else. No customer data at all.
 
 ## 4. Everything the system can be asked for
 
-**Portal (62):**
+**Portal (63):**
 
 ```
-abnormal  accessCodes  addComment  addComplaint  addDemandNotice  addRestructure  assignments  callAgents  callReport  callUsers  comments  commission  commissionSave  complaintLog  complaints  credit  dashboard  dashboardFull  decideRestructure  defaulters  deleteAccessCode  deleteOfficerAccount  deleteRole  deleteTeam  demandNotices  emailWeeklyExpdf  expdfMine  expdfReport  expected  expectedDay  expectedDefaulters  followup  followupReport  hints  leaderReports  legalPreview  loanPipeline  loans  officerAccounts  officerBoards  par  promises  purgeSnapshots  received  removeCallUser  resolveComplaint  restructureEligible  restructures  saveAccessCode  saveCallAgent  saveComplaint  saveOfficerAccount  saveRole  saveTeam  settingSet  settings  settingsList  storageUsage  teamProgress  teams  uploadStatus  weekly
+abnormal  accessCodes  addComment  addComplaint  addDemandNotice  addRestructure  assignments  callAgents  callReport  callUsers  comments  commission  commissionSave  complaintLog  complaints  credit  dashboard  dashboardFull  decideRestructure  defaulters  deleteAccessCode  deleteOfficerAccount  deleteRole  deleteTeam  demandNotices  emailWeeklyExpdf  expdfMine  expdfReport  expected  expectedDay  expectedDefaulters  followup  followupReport  hints  leaderReports  legalPreview  loanPipeline  loans  officerAccounts  officerBoards  par  promises  purgeSnapshots  received  removeCallUser  resolveComplaint  restructureContract  restructureEligible  restructures  saveAccessCode  saveCallAgent  saveComplaint  saveOfficerAccount  saveRole  saveTeam  settingSet  settings  settingsList  storageUsage  teamProgress  teams  uploadStatus  weekly
 ```
 
 **Phone and public screens (12):**
@@ -248,6 +248,7 @@ CMS_OVER_TZS
 CMS_PAID_TZS
 CMS_STATUS_RATES
 CMS_YEAR_RATES
+COMM_PAY_TEXT
 CUSTOMER_LOGIN_VERIFY
 EMAIL_FROM
 RESTRUCTURE_APPROVERS

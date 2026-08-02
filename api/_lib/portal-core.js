@@ -1192,7 +1192,11 @@ async function cmsCfg(db) {
   try { statusRates = cmsPairs(get('CMS_STATUS_RATES')); } catch { /* same */ }
   return { mode, yearRaw: String(get('CMS_YEAR_RATES') || ''), statusRaw: String(get('CMS_STATUS_RATES') || ''),
     yearRates, statusRates,
-    paidTzs: num(get('CMS_PAID_TZS')) || 0, overTzs: num(get('CMS_OVER_TZS')) || 0 };
+    paidTzs: num(get('CMS_PAID_TZS')) || 0, overTzs: num(get('CMS_OVER_TZS')) || 0,
+    // What an officer is told about WHEN and HOW the money reaches them. A commission figure
+    // with no word about payday is the question every officer asks next, and they ask it of
+    // somebody rather than of the screen.
+    payText: String(get('COMM_PAY_TEXT') || '') };
 }
 function cmsRateFor(cfg, row) {
   if (cfg.mode === 'status') {
@@ -1259,7 +1263,7 @@ async function commission(db, user, _args, nowMs) {
 
   const day = pack(dayAcc), week = pack(weekAcc);
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
-    paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, isAdmin, me: user.name,
+    paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText, isAdmin, me: user.name,
     weekday: currentWeekday(nowMs), date: today, weekOf: mon,
     day, week,
     totals: { day: day.reduce((s, r) => s + r.total, 0), week: week.reduce((s, r) => s + r.total, 0),
@@ -1282,6 +1286,9 @@ async function commissionSave(db, user, p) {
   if (out.statusRates != null) await set('CMS_STATUS_RATES', out.statusRates);
   if (p.paidTzs != null) { out.paidTzs = Math.max(0, num(p.paidTzs) || 0); await set('CMS_PAID_TZS', out.paidTzs); }
   if (p.overTzs != null) { out.overTzs = Math.max(0, num(p.overTzs) || 0); await set('CMS_OVER_TZS', out.overTzs); }
+  // The payout note officers read under their own figure. Capped so a settings box cannot
+  // become a place to paste a page of text onto everybody's commission screen.
+  if (p.payText != null) { out.payText = String(p.payText).slice(0, 300); await set('COMM_PAY_TEXT', out.payText); }
   return out;
 }
 
