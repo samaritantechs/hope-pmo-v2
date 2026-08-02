@@ -494,6 +494,120 @@ function restructureSchedule(total, count, per, startKey) {
   return out;
 }
 
+/* THE RESTRUCTURING CONTRACT -- the one document here a customer actually signs.
+
+   The figures were already being worked out and stored; there was simply nothing to put in
+   front of the customer. Built the same way as the demand notice, from ONE set of numbers, so
+   what is on the paper and what is in the books cannot drift: the schedule comes from
+   restructureSchedule() rather than being re-derived for printing.
+
+   Swahili, because the person signing it reads Swahili. Laid out for A4 with the company's
+   stamp and signature, and with two signature lines -- the customer's and the guarantor's --
+   because a restructuring that the guarantor has not agreed to is not worth the paper. */
+function restructureContractHtml(t) {
+  const img = (src, style, alt) => src ? `<img src="${esc_(src)}" style="${style}" alt="${alt}">` : '';
+  const rows = t.schedule.map(s => `<tr><td style="text-align:center">${s.n}</td>`
+    + `<td>${esc_(s.date || '—')}</td>`
+    + `<td style="text-align:right">${fmtM(s.amount)}</td></tr>`).join('');
+  return `<!DOCTYPE html><html lang="sw"><head><meta charset="UTF-8">
+<title>Mkataba wa Marekebisho ya Mkopo — ${esc_(t.ref)}</title>
+<style>
+  @page{size:A4;margin:16mm}
+  body{font-family:Georgia,'Times New Roman',serif;font-size:12pt;line-height:1.55;color:#000;margin:0}
+  .hd{display:flex;align-items:center;gap:14px;border-bottom:2px solid #000;padding-bottom:10px}
+  .hd .co{font-size:15pt;font-weight:bold;letter-spacing:.5px}
+  .hd .sub{font-size:9.5pt}
+  h1{font-size:13.5pt;text-align:center;margin:18px 0 4px;text-transform:uppercase;letter-spacing:.5px}
+  .ref{text-align:center;font-size:10pt;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;margin:10px 0}
+  th,td{border:1px solid #000;padding:5px 7px;font-size:11pt}
+  th{background:#eee;text-align:left}
+  .kv td{border:0;padding:2px 0;font-size:11.5pt}
+  .kv td:first-child{width:42%;color:#333}
+  .tot{font-weight:bold;background:#f4f4f4}
+  .sig{display:flex;gap:26px;margin-top:26px}
+  .sig div{flex:1}
+  .line{border-bottom:1px solid #000;height:44px;margin-bottom:4px}
+  .fine{font-size:9.5pt;color:#333;margin-top:14px;border-top:1px solid #999;padding-top:8px}
+</style></head><body>
+<div class="hd">${img(t.logo, 'height:52px', 'logo')}
+  <div><div class="co">${esc_(t.brand)}</div><div class="sub">${esc_(t.motto || '')}</div></div></div>
+
+<h1>Mkataba wa Marekebisho ya Marejesho</h1>
+<div class="ref">Kumb. Na. ${esc_(t.ref)} &nbsp;·&nbsp; Tarehe: ${esc_(t.date)} &nbsp;·&nbsp; Timu: ${esc_(t.team)}</div>
+
+<table class="kv">
+  <tr><td>Jina la mteja / Customer</td><td><b>${esc_(t.name)}</b></td></tr>
+  <tr><td>Namba ya simu / Contact</td><td>${esc_(t.contact || '—')}</td></tr>
+  <tr><td>Mdhamini / Guarantor</td><td>${esc_(t.guarantor || '—')} ${esc_(t.guarantorContact || '')}</td></tr>
+  <tr><td>Deni lililokuwepo / Arrears at agreement</td><td><b>TZS ${fmtM(t.arrears)}</b></td></tr>
+  <tr><td>Malipo ya kwanza / First payment</td><td>TZS ${fmtM(t.first)}</td></tr>
+  <tr><td>Salio / Remaining</td><td>TZS ${fmtM(t.remaining)}</td></tr>
+  ${t.interest ? `<tr><td>Riba / Interest (${esc_(t.interestPct)}%)</td><td>TZS ${fmtM(t.interest)}</td></tr>` : ''}
+  <tr><td>Jumla ya kulipa / Total payable</td><td><b>TZS ${fmtM(t.total)}</b></td></tr>
+  <tr><td>Idadi ya awamu / Installments</td><td>${esc_(t.count)} (kila wiki / weekly)</td></tr>
+</table>
+
+<table>
+  <thead><tr><th style="width:12%;text-align:center">Awamu</th><th>Tarehe / Date</th>
+    <th style="text-align:right;width:32%">Kiasi / Amount (TZS)</th></tr></thead>
+  <tbody>${rows}
+    <tr class="tot"><td colspan="2">JUMLA / TOTAL</td>
+      <td style="text-align:right">${fmtM(t.total)}</td></tr></tbody>
+</table>
+
+<p>Mimi, <b>${esc_(t.name)}</b>, ninakubali kulipa deni langu kwa mpangilio ulioonyeshwa hapo juu.
+Nakubali kwamba nikishindwa kulipa awamu yoyote kwa tarehe yake, mkataba huu unaweza kusitishwa
+na ${esc_(t.brand)} kuendelea na hatua za awali za urejeshaji wa deni, ikiwemo notisi ya madai.</p>
+<p style="font-size:10.5pt;color:#333">I agree to repay the balance shown above on the dates shown.
+If any installment is missed, this agreement may be cancelled and normal recovery action,
+including a demand notice, may continue.</p>
+
+<div class="sig">
+  <div><div class="line"></div>Sahihi ya mteja / Customer<br><b>${esc_(t.name)}</b></div>
+  <div><div class="line"></div>Sahihi ya mdhamini / Guarantor<br><b>${esc_(t.guarantor || '')}</b></div>
+  <div><div class="line">${img(t.sign, 'max-height:40px', 'signature')}</div>
+    Kwa niaba ya / For ${esc_(t.brand)}<br><b>${esc_(t.officer || '')}</b>
+    ${img(t.stamp, 'max-height:64px;margin-top:6px', 'stamp')}</div>
+</div>
+
+<div class="fine">Mkataba huu umetolewa na ${esc_(t.brand)} tarehe ${esc_(t.date)}.
+Hali ya ombi / Status: ${esc_(t.status || 'Pending')}.</div>
+</body></html>`;
+}
+
+/** The contract for one restructuring, ready to print. Reads the stored row rather than
+    recomputing, so a contract printed a week after approval says exactly what was approved. */
+async function restructureContract(db, user, { id, ref } = {}) {
+  const all = await fetchAll(() => db.from('restructures').select('*'));
+  const row = id ? all.find(r => String(r.id) === String(id))
+    : all.filter(r => K(r.ref) === K(ref)).sort((a, b) =>
+        String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+  if (!row) throw badRequest('That restructuring request could not be found.');
+  if (!teamAllowed(user, row.team)) throw forbidden(`You do not have access to team ${row.team}.`);
+
+  // Read the same way the demand notice reads them, so both documents carry the same brand,
+  // the same stamp and the same signature -- one company, one letterhead.
+  const setRows = await fetchAll(() => db.from('settings').select('*'));
+  const get = k => { const r = setRows.find(x => x.key === k); return (r && r.value) || ''; };
+  const schedule = restructureSchedule(num(row.total), num(row.installments), num(row.inst_amt), row.start_date);
+  return {
+    row, schedule,
+    html: restructureContractHtml({
+      ref: row.ref, name: row.full_name, team: row.team, contact: row.contact,
+      guarantor: row.guarantor, guarantorContact: row.guarantor_contact,
+      arrears: num(row.arrears), first: num(row.first_inst), remaining: num(row.remaining),
+      interest: num(row.interest_amt), interestPct: get('RESTRUCTURE_INTEREST_PCT') || '',
+      total: num(row.total), count: num(row.installments), schedule,
+      date: String(row.created_at || '').slice(0, 10), status: row.status,
+      officer: row.approved_by || row.requested_by || user.name,
+      brand: get('CALL_BRAND') || 'HOPE MICROCREDIT CO. LTD',
+      motto: 'MKOPO CHAP CHAP',
+      logo: get('BRAND_LOGO'), stamp: get('BRAND_STAMP'), sign: get('BRAND_SIGN'),
+    }),
+  };
+}
+
 async function restructures(db, user, _args, nowMs) {
   const [r, strat] = await Promise.all([listTable(db, user, 'restructures'), restructureStrategy(db)]);
   const rows = r.rows.map(x => ({ ...x,
@@ -1987,7 +2101,7 @@ const FN = {
   loans, loanPipeline, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint,
-  restructures, addRestructure, decideRestructure, restructureEligible,
+  restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, legalPreview, abnormal, received,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,

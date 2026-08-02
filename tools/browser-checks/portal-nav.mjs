@@ -63,6 +63,11 @@ function answer(fn, args) {
   if (fn === 'dashboardFull') return { ok: true, kpis: {}, teams: [], weekdays: [], pipeline: {}, totals: {} };
   if (fn === 'officerBoards') return { ok: true, boards: [] };
   if (fn === 'settingSet') return { ok: true };
+  if (fn === 'restructureContract') return { ok: true, row: { id: 's1', ref: '555' },
+    schedule: [{ n: 1, date: '2026-08-10', amount: 200 }],
+    html: '<!DOCTYPE html><html><head><title>Mkataba</title></head><body>'
+      + '<h1>Mkataba wa Marekebisho ya Marejesho</h1><p>Sahihi ya mteja</p>'
+      + '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></body></html>' };
   if (fn === 'settings') return { ok: true, rows: [] };
   if (fn === 'accessCodes') return { ok: true, rows: [], count: 0, roles: [] };
   if (fn === 'officerAccounts') return { ok: true, rows: [], count: 0 };
@@ -320,6 +325,56 @@ check('and saving puts the table in THAT order, not the alphabet',
   afterSave[0] === 'ANALIPA LEO', afterSave.join(','));
 check('the order is remembered on the device', ordered.saved[0] === 'ANALIPA LEO', ordered.saved.join(','));
 await page.evaluate(() => localStorage.removeItem('hopeOrder_fu_status'));
+
+// --- 9. PRINTING. A legal document has to reach paper, and the old path used a pop-up window
+//        -- blocked by browsers, and impossible in the Android app, where the button did
+//        nothing at all and said nothing about it.
+await page.evaluate(() => { VC.store = {}; go('dashboard'); });
+await page.waitForTimeout(400);
+const printed = await page.evaluate(() => {
+  // Catch the print call rather than opening a real dialog, which would hang the run.
+  window.__printedFrom = null;
+  const seen = [];
+  const orig = window.open;
+  window.open = function(){ seen.push('popup'); return null; };
+  return new Promise((resolve) => {
+    printHtml('<html><head></head><body><h1>Mkataba wa Marekebisho</h1>'
+      + '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></body></html>');
+    setTimeout(() => {
+      const f = document.getElementById('printFrame');
+      const body = f && f.contentWindow.document.body;
+      window.open = orig;
+      resolve({ frame: !!f, popup: seen.length,
+                text: body ? body.innerText.trim() : '',
+                imgs: body ? body.querySelectorAll('img').length : 0 });
+    }, 600);
+  });
+});
+check('printing writes into the page, never a pop-up window',
+  printed.frame && printed.popup === 0, JSON.stringify(printed));
+check('and the document itself is what lands there',
+  /Mkataba wa Marekebisho/.test(printed.text), printed.text.slice(0, 60));
+check('with its images -- a contract printed without its stamp has to be printed twice',
+  printed.imgs === 1, 'images=' + printed.imgs);
+
+// On paper the frame must be the ONLY thing: an app sidebar printed down the side of a legal
+// document is not a document anybody hands to a customer.
+const printCss = await page.evaluate(() => {
+  const out = { hidesBody: false, showsFrame: false };
+  for (const sheet of document.styleSheets) {
+    let rules; try { rules = sheet.cssRules; } catch(e){ continue; }
+    for (const r of rules) {
+      if (r.type !== CSSRule.MEDIA_RULE || !/print/.test(r.conditionText || '')) continue;
+      for (const inner of r.cssRules) {
+        if (/body > \*/.test(inner.selectorText || '') && /none/.test(inner.style.display)) out.hidesBody = true;
+        if (/#printFrame/.test(inner.selectorText || '') && /visible/.test(inner.style.visibility)) out.showsFrame = true;
+      }
+    }
+  }
+  return out;
+});
+check('on paper the app is hidden and only the document shows',
+  printCss.hidesBody && printCss.showsFrame, JSON.stringify(printCss));
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));

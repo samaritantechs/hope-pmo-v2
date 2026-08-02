@@ -635,6 +635,54 @@ test('cleanup reaches every report, and never takes what somebody typed', async 
   assert.ok(db._dump('followup_status').length > 0, 'the working list is untouched');
 });
 
+/* The one document here a customer actually SIGNS. The figures were already being worked out
+   and stored; there was simply nothing to put in front of them. */
+test('the restructuring contract prints exactly what was agreed', async () => {
+  const t = tables();
+  Object.assign(t.restructures[0], {
+    contact: '0714000555', guarantor: 'MAMA ASHA', guarantor_contact: '0715000555',
+    first_inst: 200, remaining: 400, interest_amt: 0, start_date: '2026-08-10',
+    status: 'Approved', approved_by: 'ASHA JUMA',
+  });
+  t.settings = (t.settings || []).concat([
+    { key: 'CALL_BRAND', value: 'HOPE MICROCREDIT CO. LTD' },
+    { key: 'BRAND_STAMP', value: 'data:image/png;base64,STAMP' },
+    { key: 'BRAND_SIGN', value: 'data:image/png;base64,SIGN' },
+  ]);
+  const db = fakeDb(t);
+  const c = await portalApi(db, ADMIN, 'restructureContract', { id: 's1' }, NOW);
+
+  // The schedule on the paper comes from the SAME builder the request was created with, so
+  // the contract and the books cannot drift.
+  assert.equal(c.schedule.length, 4);
+  assert.deepEqual(c.schedule.map(s => s.date),
+    ['2026-08-10', '2026-08-17', '2026-08-24', '2026-08-31']);
+  // Three at the regular amount and a last one carrying the remainder -- never 200×4 = 800
+  // when the total is not divisible.
+  assert.equal(c.schedule.reduce((s, x) => s + x.amount, 0), 800);
+
+  // Everything a signed document has to name.
+  for (const must of ['C555', '0714000555', 'MAMA ASHA', 'HOPE MICROCREDIT CO. LTD',
+                      'Sahihi ya mteja', 'Sahihi ya mdhamini', '2026-08-31', '800']) {
+    assert.ok(c.html.includes(must), 'the contract must name ' + must);
+  }
+  // The company's stamp and signature, or it is not a company document.
+  assert.ok(c.html.includes('base64,STAMP'), 'the stamp must be on the contract');
+  assert.ok(c.html.includes('base64,SIGN'), 'the signature must be on the contract');
+
+  // Found by REF as well as by id, newest first, for printing a replacement copy.
+  const byRef = await portalApi(db, ADMIN, 'restructureContract', { ref: '555' }, NOW);
+  assert.equal(byRef.row.id, 's1');
+
+  // Team scoping is not optional on a document naming a customer and their guarantor. The row
+  // is KONGOWE; a leader scoped to MBAGALA must not be able to print it.
+  const OTHER = { code: 'M', name: 'MB LEAD', role: 'GMO', teams: ['MBAGALA'], tabs: [] };
+  await assert.rejects(() => portalApi(db, OTHER, 'restructureContract', { id: 's1' }, NOW),
+    e => e.status === 403);
+  await assert.rejects(() => portalApi(db, ADMIN, 'restructureContract', { id: 'nope' }, NOW),
+    e => e.status === 400);
+});
+
 test('every complaint save is written to the audit trail', async () => {
   const db = fakeDb(tables());
   // The complaint_log table existed from the start but nothing wrote to it, so "who changed
