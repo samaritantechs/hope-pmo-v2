@@ -134,11 +134,66 @@ async function expectedDefaulters(db, user, _args, nowMs) {
 }
 
 /* ------------------------------------------------------------------ followup + comments */
-async function followup(db, user) {
-  const rows = scoped(user, await fetchAll(() => db.from('followup_status').select('*').order('arrears', { ascending: false })));
+/* THE TAB RECOVERY OFFICERS LIVE IN ALL DAY.
+
+   It was rendering twelve of its columns and carrying the rest silently: the guarantor and
+   their number, the disbursement and last-transaction dates, days-in-cycle, and the last
+   comment were all being fetched and then thrown away by the screen. An officer whose customer
+   will not answer rings the guarantor -- and had to open a second tab to find the number.
+
+   Two fields are not in followup_status and are assembled here:
+
+   NEW NUMBER -- when a customer's number is dead, the officer logs a replacement against the
+   follow-up. It lives on the comment, so the newest one per customer is carried up to the row.
+
+   RECOVERED -- what has actually come back off this customer since the baseline. The rule
+   already exists in expdf.js (today's own INITIAL deck, and zero rather than a fabricated
+   number when that customer is not in it), so the same baseline is used here rather than a
+   second, differently-computed truth appearing on a second screen. */
+async function followup(db, user, args = {}, nowMs = Date.now()) {
+  const today = todayKey(nowMs);
+  const [raw, comments, iniSnap] = await Promise.all([
+    fetchAll(() => db.from('followup_status').select('*').order('arrears', { ascending: false })),
+    fetchAll(() => db.from('followup_comments').select('ref, new_number, created_at')),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: currentWeekday(nowMs) },
+      { notAfter: today, teams: user.teams }),
+  ]);
+  const rows = scoped(user, raw);
+
+  // Newest replacement number per customer.
+  const newNo = {};
+  for (const c of comments) {
+    const n = String(c.new_number == null ? '' : c.new_number).trim();
+    if (!n) continue;
+    const k = String(c.ref);
+    const at = String(c.created_at || '');
+    if (!newNo[k] || at > newNo[k].at) newNo[k] = { at, n };
+  }
+  const baseBy = {};
+  for (const d of iniSnap.rows) baseBy[String(d.ref).trim().toUpperCase()] = num(d.arrears);
+
   // Pure FK stubs (created so an Expected customer's comment can be stored) are not defaulters.
-  const real = rows.filter(r => !(r.status == null && r.arrears == null));
-  return { rows: real, count: real.length, arrears: real.reduce((s, r) => s + num(r.arrears), 0) };
+  const real = rows.filter(r => !(r.status == null && r.arrears == null)).map(r => {
+    const arrears = num(r.arrears);
+    const key = String(r.ref == null ? '' : r.ref).trim().toUpperCase();
+    const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
+    return {
+      ...r,
+      new_no: (newNo[String(r.ref)] || {}).n || null,
+      initial,
+      recovered: Math.max(0, initial - arrears),
+      // The month of the last transaction, so the screen can offer "any month" as a filter
+      // without every browser having to work the same thing out from a date string.
+      last_trans_month: String(r.last_trans || '').slice(0, 7) || null,
+    };
+  });
+  return {
+    rows: real, count: real.length,
+    arrears: real.reduce((s, r) => s + num(r.arrears), 0),
+    recovered: real.reduce((s, r) => s + num(r.recovered), 0),
+    // Newest first, so the month someone actually wants is at the top of the list.
+    months: [...new Set(real.map(r => r.last_trans_month).filter(Boolean))].sort().reverse(),
+  };
 }
 
 async function comments(db, user, { ref }) {

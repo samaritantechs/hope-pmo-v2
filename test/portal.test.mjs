@@ -147,6 +147,58 @@ test('followup drops FK stubs but keeps real defaulters', async () => {
   assert.equal(d.arrears, 1400);
 });
 
+/* The tab recovery officers live in all day. It was rendering twelve columns while the server
+   was already sending most of the rest -- the guarantor above all, who is the person an
+   officer rings when the customer will not answer. */
+test('followup carries everything the officer needs to work the customer', async () => {
+  const t = tables();
+  // The guarantor, the dates and the days-in-cycle are already columns on this table; they
+  // were simply never asked for by the screen.
+  Object.assign(t.followup_status[0], {
+    guarantor_name: 'MAMA ASHA', guarantor_contact: '0715000555',
+    disb_date: '2026-06-01', last_trans: '2026-07-20', dc: 4,
+    last_comment: 'ameahidi kulipa ijumaa',
+  });
+  // A replacement number logged during a follow-up, and an older one that must lose to it.
+  t.followup_comments.push(
+    { id: 'c9', ref: '555', new_number: '0755111222', created_at: '2026-07-01T06:00:00Z' },
+    { id: 'c10', ref: '555', new_number: '0766333444', created_at: TODAY + 'T07:00:00Z' });
+  const d = await portalApi(fakeDb(t), ADMIN, 'followup', {}, NOW);
+  const r = d.rows.find(x => x.ref === '555');
+
+  assert.equal(r.guarantor_name, 'MAMA ASHA');
+  assert.equal(r.guarantor_contact, '0715000555');
+  assert.equal(r.disb_date, '2026-06-01');
+  assert.equal(r.last_trans, '2026-07-20');
+  assert.equal(r.dc, 4);
+  assert.equal(r.last_comment, 'ameahidi kulipa ijumaa');
+
+  // The NEWEST replacement number wins -- an officer who corrects a number twice means the
+  // second one.
+  assert.equal(r.new_no, '0766333444');
+  // A customer nobody logged a new number for says so, rather than borrowing somebody else's.
+  assert.equal(d.rows.find(x => x.ref === '999').new_no, null);
+
+  // Recovered comes off the SAME baseline the Exp.Def screen uses -- today's own initial deck
+  // -- so the two screens cannot disagree about what came back. 555: 700 initial, 600 now.
+  assert.equal(r.initial, 700);
+  assert.equal(r.recovered, 100);
+  assert.equal(d.recovered, d.rows.reduce((s, x) => s + x.recovered, 0));
+
+  // A customer absent from the baseline shows nothing recovered rather than a fabricated
+  // number worked out against whatever deck happened to be lying around.
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(x => !(x.ref === '555' && x.snapshot_type === 'initial'));
+  const none = await portalApi(fakeDb(t), ADMIN, 'followup', {}, NOW);
+  const r2 = none.rows.find(x => x.ref === '555');
+  assert.equal(r2.recovered, 0);
+  assert.equal(r2.initial, 600);
+
+  // The month of the last transaction, ready for the "any month" filter, newest month first.
+  assert.equal(r.last_trans_month, '2026-07');
+  assert.ok(d.months.includes('2026-07'));
+  assert.deepEqual(d.months, d.months.slice().sort().reverse());
+});
+
 test('promises bucket against today, overdue first', async () => {
   const d = await run('promises');
   assert.equal(d.count, 1);

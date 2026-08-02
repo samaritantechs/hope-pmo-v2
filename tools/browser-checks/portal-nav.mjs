@@ -40,6 +40,26 @@ function answer(fn, args) {
     rows: teamRows,
   };
   if (fn === 'par') return { ok: true, rows: [], totals: {}, teams: [] };
+  if (fn === 'followup') return { ok: true, count: 3, arrears: 1800, recovered: 250,
+    months: ['2026-07', '2026-06'],
+    rows: [
+      { ref: 'R1', full_name: 'AMINA JUMA', team: 'KONGOWE', contact: '0712000001',
+        new_no: '0766333444', guarantor_name: 'MAMA ASHA', guarantor_contact: '0715000555',
+        arrears: 600, rejesho: 100, recovered: 100, status: 'Defaulter', fu_status: 'ANALIPA LEO',
+        promise_date: '2026-08-03', ds: '3-6', dc: 4, disb_date: '2026-06-01',
+        last_trans: '2026-07-20', last_trans_month: '2026-07',
+        last_comment: 'ameahidi kulipa ijumaa', comment_by: 'JUMA G', comment_at: '2026-07-30T08:00:00Z' },
+      { ref: 'R2', full_name: 'PILI SALUM', team: 'KONGOWE', contact: '0714000001',
+        new_no: null, guarantor_name: 'BABA PILI', guarantor_contact: '0715000777',
+        arrears: 900, rejesho: 200, recovered: 150, status: 'Defaulter', fu_status: 'AMETOA AHADI',
+        ds: '1-2', dc: 2, disb_date: '2026-05-01', last_trans: '2026-06-10',
+        last_trans_month: '2026-06', last_comment: 'hana ushirikiano' },
+      { ref: 'R3', full_name: 'JUMA HAJI', team: 'KONGOWE', contact: '0714000002',
+        new_no: null, guarantor_name: 'MAMA JUMA', guarantor_contact: '0715000888',
+        arrears: 300, rejesho: 50, recovered: 0, status: 'Defaulter', fu_status: 'HAPATIKANI YEYE & MDHAMINI',
+        ds: '3-6', dc: 6, disb_date: '2026-04-01', last_trans: '2026-07-01',
+        last_trans_month: '2026-07', last_comment: '' },
+    ] };
   if (fn === 'dashboardFull') return { ok: true, kpis: {}, teams: [], weekdays: [], pipeline: {}, totals: {} };
   if (fn === 'officerBoards') return { ok: true, boards: [] };
   if (fn === 'settingSet') return { ok: true };
@@ -214,6 +234,92 @@ check('"Check first" asks for a dry run, and for all ten types',
 const dryOut = await page.evaluate(() => document.getElementById('clOut').textContent);
 check('and it says how many typed rows are being left alone',
   /3/.test(dryOut) && /left alone|imeachwa/.test(dryOut), dryOut.slice(0, 120));
+
+// --- 8. THE TAB RECOVERY OFFICERS LIVE IN. It was showing twelve columns while the server
+//        was already sending the guarantor, the dates and the last comment.
+await page.evaluate(() => { VC.store = {}; go('followup'); });
+await page.waitForTimeout(600);
+const heads = await page.evaluate(() => Array.from(document.querySelectorAll('#mainCard thead th')).map(t => t.textContent.trim()));
+for (const want of ['Guarantor', 'G. Contact', 'New no', 'Disb date', 'Last trans', 'D.C', 'Recovered', 'Last comment'])
+  check('followup shows ' + want, heads.includes(want), heads.join(' | '));
+check('and it still shows Follow-up status, which was never actually missing',
+  heads.includes('Follow-up'), heads.join(' | '));
+
+// The guarantor's number has to be tappable -- that is the whole reason it is on the screen.
+check('the guarantor number is dialable',
+  await page.evaluate(() => !!document.querySelector('#mainCard a.tel[href="tel:0715000555"]')));
+
+// Searching a guarantor's name must find the customer's row, which is what an officer does
+// when the guarantor rings THEM back.
+await page.evaluate(() => { document.getElementById('q').value = 'MAMA ASHA';
+  document.getElementById('q').dispatchEvent(new Event('input')); });
+await page.waitForTimeout(200);
+check('searching a guarantor name finds their customer',
+  await page.evaluate(() => document.querySelectorAll('#mainCard tbody tr').length === 1
+    && /AMINA JUMA/.test(document.querySelector('#mainCard tbody tr').textContent)));
+await page.evaluate(() => { document.getElementById('q').value = '';
+  document.getElementById('q').dispatchEvent(new Event('input')); });
+await page.waitForTimeout(200);
+
+// The month filter, off the last transaction.
+await page.evaluate(() => { const s = document.querySelector('[data-filter="last_trans_month"]');
+  s.value = '2026-06'; s.onchange(); });
+await page.waitForTimeout(200);
+check('the month filter narrows to that month only',
+  await page.evaluate(() => document.querySelectorAll('#mainCard tbody tr').length === 1));
+await page.evaluate(() => { const s = document.querySelector('[data-filter="last_trans_month"]');
+  s.value = ''; s.onchange(); });
+await page.waitForTimeout(200);
+
+// Columns are looked up BY NAME, never by position -- adding an S/N column ahead of them
+// would otherwise silently move every index and make these checks lie.
+// The active sort column's heading gains an arrow, so match on the start of the label rather
+// than the whole of it -- otherwise these checks stop finding a column the moment it is sorted.
+const colIdx = async (name) => page.evaluate((n) =>
+  Array.from(document.querySelectorAll('#mainCard thead th'))
+    .findIndex(t => t.textContent.trim().replace(/[^\w. &-]+$/, '').trim() === n), name);
+const colValues = async (name) => {
+  const i = await colIdx(name);
+  return page.evaluate((k) => Array.from(document.querySelectorAll('#mainCard tbody tr'))
+    .map(r => (((r.children[k] || {}).textContent) || '').trim()), i);
+};
+
+// TWO-LEVEL SORT: by follow-up status, then by arrears descending inside it. R1 and R3 share
+// no status here, so the second level is proven by adding a tie: both AMETOA AHADI rows must
+// come back biggest-arrears-first.
+await page.evaluate(() => { S.rows[2].fu_status = 'AMETOA AHADI'; paint(); });
+await page.evaluate(() => {
+  const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.onchange.call(e); };
+  set('sortA', 'fu_status'); set('sortB', 'arrears'); set('sortBd', '0');
+});
+await page.waitForTimeout(150);
+const st = await colValues('Follow-up'), ar = await colValues('Arrears');
+check('the first sort level groups by follow-up status',
+  st[0] === st[1] && st[0] === 'AMETOA AHADI', st.join(','));
+check('and the second orders by arrears inside the group, biggest first',
+  Number(ar[0].replace(/,/g, '')) > Number(ar[1].replace(/,/g, '')), ar.join(','));
+await page.evaluate(() => { S.rows[2].fu_status = 'HAPATIKANI YEYE & MDHAMINI'; paint(); });
+
+// CUSTOM ORDER: the alphabet is not the order the work happens in. Put ANALIPA LEO first.
+await page.evaluate(() => { localStorage.removeItem('hopeOrder_fu_status'); openOrderPanel('fu_status'); });
+await page.waitForTimeout(200);
+check('the custom order panel lists the values actually in the column',
+  await page.evaluate(() => document.querySelectorAll('#ordList .ordrow').length === 3));
+const ordered = await page.evaluate(() => {
+  // Alphabetically AMETOA < ANALIPA < HAPATIKANI. Move ANALIPA LEO to the top.
+  const rows = () => Array.from(document.querySelectorAll('#ordList .ordrow')).map(r => r.children[0].textContent.trim());
+  const i = rows().indexOf('ANALIPA LEO');
+  document.querySelector('[data-up="' + i + '"]').click();
+  const after = rows();
+  document.getElementById('ordSave').click();
+  return { panel: after, saved: JSON.parse(localStorage.getItem('hopeOrder_fu_status') || '[]') };
+});
+check('moving a value up reorders the panel', ordered.panel[0] === 'ANALIPA LEO', ordered.panel.join(','));
+const afterSave = await colValues('Follow-up');
+check('and saving puts the table in THAT order, not the alphabet',
+  afterSave[0] === 'ANALIPA LEO', afterSave.join(','));
+check('the order is remembered on the device', ordered.saved[0] === 'ANALIPA LEO', ordered.saved.join(','));
+await page.evaluate(() => localStorage.removeItem('hopeOrder_fu_status'));
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));
