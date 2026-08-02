@@ -2,7 +2,12 @@ import { fetchAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
+
+/** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
+    everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
+    stopped working must not become a data leak -- but by then there is little left to drop. */
+const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
 import { collectedOf, uncollectedOf, num } from './recovery.js';
 import { buildDashboard } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36 } from './call-core.js';
@@ -159,8 +164,12 @@ async function expectedDefaulters(db, user, _args, nowMs) {
 async function followup(db, user, args = {}, nowMs = Date.now()) {
   const today = todayKey(nowMs);
   const [raw, comments, iniSnap] = await Promise.all([
-    fetchAll(() => db.from('followup_status').select('*').order('arrears', { ascending: false })),
-    fetchAll(() => db.from('followup_comments').select('ref, new_number, created_at')),
+    fetchAll(() => onTeams(db.from('followup_status').select('*').order('arrears', { ascending: false }), user.teams)),
+    /* Only the comments that CARRY a replacement number. This was reading every comment ever
+       written -- sixty thousand rows on a real book -- to find the few hundred that have one.
+       Two clauses do the same job at the database: not null, and not empty. */
+    fetchAll(() => onTeams(db.from('followup_comments').select('ref, new_number, created_at')
+      .not('new_number', 'is', null).neq('new_number', ''), user.teams)),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: currentWeekday(nowMs) },
       { notAfter: today, teams: user.teams }),
   ]);

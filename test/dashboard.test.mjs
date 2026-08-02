@@ -330,3 +330,46 @@ test('recoveryBasis and the EAT clock agree on all seven days', () => {
   assert.equal(isoWeekday(nowMs), 6);
   assert.equal(weekMondayKey(nowMs), '2026-07-20');
 });
+
+/* The dashboard is the most expensive answer in the system -- 555,000 rows for somebody who
+   sees every team -- and it is the first thing everybody opens. */
+test('the dashboard is worked out once a minute, per set of teams', async () => {
+  const NOW2 = Date.parse('2026-07-24T09:00:00Z');
+  const ADMIN2 = { name: 'A', role: 'ADMIN', teams: null };
+  const ONE = { name: 'B', role: 'GMO', teams: ['KONGOWE'] };
+
+  const base = fakeDb(makeTables());
+  let reads = 0;
+  const db = { from(n){ reads++; return base.from(n); }, rpc: base.rpc, _dump: n => base._dump(n) };
+
+  await buildDashboard(db, ADMIN2, NOW2);
+  const first = reads;
+  assert.ok(first > 5, 'the first answer really is expensive: ' + first + ' reads');
+
+  // The same person, or anybody else on the same teams, a moment later: no work at all.
+  await buildDashboard(db, ADMIN2, NOW2 + 1000);
+  assert.equal(reads, first, 'a repeat within the minute costs nothing');
+
+  // A DIFFERENT scope is a different question and is worked out properly.
+  await buildDashboard(db, ONE, NOW2 + 2000);
+  assert.ok(reads > first, 'one team is not served the whole company’s figures');
+
+  // After the minute it is worked out again, so an upload shows up.
+  const before = reads;
+  await buildDashboard(db, ADMIN2, NOW2 + 61000);
+  assert.ok(reads > before, 'it does not go stale for ever');
+
+  // A clock that jumps backwards must not make an old answer look brand new.
+  const beforeBack = reads;
+  await buildDashboard(db, ADMIN2, NOW2 - 60000);
+  assert.ok(reads > beforeBack, 'a backwards clock re-computes rather than trusting the past');
+
+  // TWO DIFFERENT DATABASES NEVER SHARE AN ANSWER. In production there is one client so this
+  // is invisible; in a test it is the difference between a suite that checks the system and
+  // one that checks its own leftovers.
+  const other = fakeDb(makeTables());
+  let otherReads = 0;
+  const db2 = { from(n){ otherReads++; return other.from(n); }, rpc: other.rpc, _dump: n => other._dump(n) };
+  await buildDashboard(db2, ADMIN2, NOW2);
+  assert.ok(otherReads > 5, 'a different database does its own work');
+});

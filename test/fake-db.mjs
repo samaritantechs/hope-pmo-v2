@@ -2,7 +2,11 @@
 // dashboard.test.mjs (filters, order, range with the 1000-row page cap, maybeSingle) plus
 // insert / upsert(onConflict, ignoreDuplicates) / update, which the calls endpoints need.
 
-const PAGE_CAP = 1000;
+/* What the server will hand back in one request. Supabase does not set PostgREST's db-max-rows
+   by default, so a real deployment returns whatever is asked for; a deployment that DOES set it
+   truncates silently. Both are worth being able to reproduce, so it is settable. */
+export let PAGE_CAP = 100000;
+export function setPageCap(n) { PAGE_CAP = n; }
 
 /** Postgres LIKE, near enough: % is anything, and the comparison ignores case. Regex
     metacharacters in the pattern are escaped, so searching for "C++" or "(a)" matches those
