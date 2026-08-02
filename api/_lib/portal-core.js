@@ -4,6 +4,7 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
 import { cachedAnswer } from './answer-cache.js';
+import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -1811,7 +1812,31 @@ async function settingSet(db, user, p) {
   if (!p || !p.key) throw badRequest('key is required');
   const { error } = await db.from('settings').upsert({ key: p.key, value: String(p.value == null ? '' : p.value) }, { onConflict: 'key' });
   if (error) throw new Error(error.message);
+  /* The open/closed switch is read from a half-minute cache on every request. An admin who
+     flips it and then goes to check must see the effect, not wonder for thirty seconds
+     whether it took -- so writing any setting drops the cache. */
+  clearSystemOpenCache(db);
   return { key: p.key };
+}
+
+/** The switch itself, given its own function so the Settings page can offer a real toggle
+    rather than asking an admin to type YES into a key-value row and hope they spelled it the
+    way the server reads it. */
+async function systemOpenSet(db, user, p) {
+  requireAdmin(user);
+  const open = !!(p && (p.open === true || readsAsOpen(p.open)));
+  const { error } = await db.from('settings')
+    .upsert({ key: 'SYSTEM_OPEN', value: open ? 'YES' : 'NO' }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  clearSystemOpenCache(db);
+  return { open };
+}
+
+/** What the Settings page shows beside the toggle. Admins only -- everybody else learns the
+    answer from /api/me, which they can reach without an admin's permission. */
+async function systemOpenGet(db, user) {
+  requireAdmin(user);
+  return { open: await isSystemOpen(db) };
 }
 async function accessCodes(db, user) {
   requireAdmin(user);
@@ -2364,6 +2389,7 @@ const FN = {
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
+  systemOpenGet, systemOpenSet,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, uploadStatus,
   announceSave, notifications, notifSeen, customerSearch,

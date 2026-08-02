@@ -1,5 +1,5 @@
 import { supabase } from './_lib/supabase.js';
-import { authCode, withApi, resolveTabs } from './_lib/auth.js';
+import { gatedUser, withApi } from './_lib/auth.js';
 import { portalApi } from './_lib/portal-core.js';
 
 // POST /api/portal   { code, fn, args }
@@ -9,10 +9,9 @@ import { portalApi } from './_lib/portal-core.js';
 export default withApi(async (req, res) => {
   if (req.method !== 'POST') { const e = new Error('Method not allowed'); e.status = 405; throw e; }
   const { code, fn, args } = req.body || {};
-  const user = await authCode(code);
-  // Merge the role's tabs in, exactly as /api/me does, so permission checks inside the
-  // portal functions (settings, access codes) see the same tab list the UI gated on.
-  const { data: roleRow } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
-  user.tabs = resolveTabs(user, roleRow && roleRow.tabs);
+  // Identity, the role's tabs merged in, and the admin's open/closed switch -- all three in
+  // one place, so a new portal function cannot accidentally be reachable while the system is
+  // closed. An admin passes the switch, which is how it ever gets turned back on.
+  const user = await gatedUser(code);
   return portalApi(supabase, user, fn, args);
 });

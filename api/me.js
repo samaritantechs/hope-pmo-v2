@@ -1,5 +1,6 @@
 import { supabase } from './_lib/supabase.js';
-import { authCode, withApi, resolveTabs } from './_lib/auth.js';
+import { authCodeResolved, withApi } from './_lib/auth.js';
+import { isSystemOpen, isAdminUser } from './_lib/system-gate.js';
 
 // GET /api/me?code=XXX
 // Who is this code, and what may they open? The launcher (public/home.html) calls this to
@@ -9,18 +10,28 @@ import { authCode, withApi, resolveTabs } from './_lib/auth.js';
 // `tabs` is the union of the code's own tabs and its role's tabs, matching how can() in
 // _lib/auth.js resolves permissions -- one rule, not a second copy of it here.
 export default withApi(async (req, res) => {
-  const user = await authCode(req.query.code);
-  const { data: roleRow } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
-  const tabs = resolveTabs(user, roleRow && roleRow.tabs);
+  /* Deliberately NOT behind the open/closed switch. This is how the launcher finds out who
+     somebody is AND whether the system is open at all -- gate it and the closed message could
+     never be drawn, only a bare "invalid code". */
+  const user = await authCodeResolved(req.query.code);
+  const tabs = user.tabs;
+  const admin = isAdminUser(user);
+  const open = admin || await isSystemOpen(supabase);
   return {
     name: user.name,
     role: user.role,
     teams: user.teams,                       // null = every team
     teamCount: user.teams ? user.teams.length : null,
     tabs,
+    /* Whether the system side is open to everybody. An admin always sees it as open, because
+       for them it is -- they are the ones who close it, and they have to be able to get back
+       in and turn it on again. */
+    systemOpen: open,
     can: {
-      dashboard: true,                       // anyone with a valid code may read their own scope
-      upload: tabs.includes('upload'),
+      // Closed, there is no portal to offer. The server refuses these routes too; this is only
+      // so the launcher does not draw a door that will not open.
+      dashboard: open,
+      upload: open && tabs.includes('upload'),
       admin: tabs.includes('settings'),
     },
     /* THE THREE CADENCES THE PORTAL RUNS ON, which were numbers typed into the page.

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { supabase } from './_lib/supabase.js';
-import { authCode, can, withApi } from './_lib/auth.js';
+import { gatedUser, can, withApi } from './_lib/auth.js';
 import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
@@ -153,7 +153,9 @@ export function stampPlan(table, meta = {}, nowMs = Date.now()) {
 export default withApi(async (req, res) => {
   if (req.method !== 'POST') { const e = new Error('Method not allowed'); e.status = 405; throw e; }
   const { code, type, meta = {}, rows } = req.body || {};
-  const user = await authCode(code);
+  // Uploading is a system-side act, so it closes with the rest of the system. An admin
+  // still gets through -- somebody has to be able to load the day's files either way.
+  const user = await gatedUser(code);
   if (!(await can(user, 'upload'))) { const e = new Error('Upload permission is required for your access code.'); e.status = 403; throw e; }
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 

@@ -5,6 +5,7 @@ import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } fro
 import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
+import { isSystemOpen } from './system-gate.js';
 
 /** The HOPE Calls backend, ported from the api_call* family in the live Code.gs -- same
     endpoints, same shapes, so call.html works against either system. Differences are all
@@ -112,14 +113,20 @@ async function boot(db, [dev], nowMs) {
   const logo = (await settingGet(db, 'CALL_LOGO_URL')) || '';
   // An unauthenticated device gets branding only. The team list used to be handed out here,
   // which is half of what made self-registration work: pick a team off the list, get its book.
+  /* Whether to show the way across to the system at all. Calls itself is NEVER gated -- an
+     officer's day does not depend on the portal being open -- but the switch button, and the
+     sign-in it leads to, disappear while the system is closed. Sent on both branches so the
+     sign-in screen and the app agree. */
+  const systemOpen = await isSystemOpen(db, nowMs);
   if (!cu) return { ok: false, error: accountOff ? 'ACCOUNT_OFF' : 'DEVICE_NOT_REGISTERED',
-    teams: [], brand, motto: APP.MOTTO, logo };
+    teams: [], brand, motto: APP.MOTTO, logo, systemOpen };
   const today = todayKey(nowMs);
   const logs = await fetchAll(() => db.from('call_logs').select('duration, portfolio').eq('user_id', cu.user_id).eq('call_date', today));
   const syncSec = parseInt(await settingGet(db, 'CALL_SYNC_SECONDS'), 10);
   const logoutSetting = K(await settingGet(db, 'CALL_LOGOUT_ENABLED'));
   return {
     ok: true,
+    systemOpen,
     userId: cu.user_id, name: cu.name, team: cu.team, role: cu.role,
     leader: !!cu.is_leader,
     // Whether the teams table names this person as a GMO / MANAGER / BIKE officer anywhere --
@@ -780,6 +787,12 @@ export function _clearWidgetCache() { widgetCache.clear(); }   // tests only
 async function widget(db, [code], nowMs) {
   const raw = String(code == null ? '' : code).trim();
   if (!raw) return { ok: false, error: 'NO_CODE' };
+
+  /* HOPE Live is a system-side screen -- the whole company's figures on a wall -- so it opens
+     and closes with the system, exactly as the admin asked. Checked BEFORE the code is looked
+     up, so a closed system says "closed" rather than leaking whether a code is real. Admins
+     are not exempt here: unlike the portal, nobody needs Live to turn the switch back on. */
+  if (!(await isSystemOpen(db, nowMs))) return { ok: false, error: 'SYSTEM_CLOSED' };
 
   // A leader's access code first: it carries the wider scope of the two.
   const rows = await fetchAll(() => db.from('access_codes').select('code, name, role, teams').eq('code', raw));

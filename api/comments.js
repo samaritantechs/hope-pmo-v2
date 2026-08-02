@@ -1,10 +1,10 @@
 import { supabase } from './_lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './_lib/auth.js';
+import { gatedUser, teamAllowed, withApi } from './_lib/auth.js';
 
 // GET /api/comments?code=XXX&ref=2202981621
 export default withApi(async (req, res) => {
   const { code, ref } = req.query;
-  const user = await authCode(code);
+  const user = await gatedUser(code);
   if (!ref) { const e = new Error('ref is required'); e.status = 400; throw e; }
 
   const { data: status } = await supabase.from('followup_status').select('team').eq('ref', ref).maybeSingle();

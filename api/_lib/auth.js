@@ -1,4 +1,5 @@
 import { supabase, runQuery, friendlyDbError } from './supabase.js';
+import { requireSystemOpen } from './system-gate.js';
 
 /** Same shape and job as auth_() in Code.gs: resolve an access code to
     {code, name, role, teams, tabs}. Throws on an invalid code -- callers don't need to
@@ -51,6 +52,26 @@ export async function can(user, tab) {
   if (user.tabs && user.tabs.includes(tab)) return true;
   const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
   return !!(data && data.tabs && data.tabs.includes(tab));
+}
+
+/** authCode, then the role's tabs merged in -- the SAME two steps /api/me and /api/portal each
+    used to spell out for themselves. It is the resolved list that every permission check reads
+    (an ADMIN row with a blank TABS cell still holds every tab), so any route that asks "may
+    this person?" has to start here rather than from the raw row. */
+export async function authCodeResolved(code) {
+  const user = await authCode(code);
+  const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
+  user.tabs = resolveTabs(user, data && data.tabs);
+  return user;
+}
+
+/** Every door into the system side of this deployment: identity, then the admin's open/closed
+    switch. Calls has its own door (api/call.js) and is deliberately NOT behind this one -- the
+    whole point of closing the system is that field officers carry on working. */
+export async function gatedUser(code) {
+  const user = await authCodeResolved(code);
+  await requireSystemOpen(supabase, user);
+  return user;
 }
 
 export class AuthError extends Error {
