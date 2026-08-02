@@ -21,8 +21,17 @@ function likeMatch(value, pattern) {
 
 class FakeQuery {
   static _seq = 0;
-  constructor(table) { this.table = table; this.filters = []; this.ord = null; this.lim = null; this.rng = null; this.single = false; this.mode = 'select'; this.payload = null; this.opts = null; this.wantRows = false; }
-  select() { if (this.mode !== 'select') this.wantRows = true; return this; }
+  constructor(table) { this.table = table; this.filters = []; this.ord = null; this.lim = null; this.rng = null; this.single = false; this.mode = 'select'; this.payload = null; this.opts = null; this.wantRows = false; this.cols = null; }
+  /** PostgREST returns ONLY the columns asked for. The fake used to ignore the argument and
+      hand back whole rows, which meant a narrowed select that forgot a column passed every
+      test and failed in the field -- exactly how customer rows reached officers' phones with
+      no name and nothing to tap. Honouring the projection makes that a red test instead. */
+  select(cols) {
+    if (this.mode !== 'select') this.wantRows = true;
+    const list = String(cols == null ? '*' : cols).split(',').map(s => s.trim()).filter(Boolean);
+    this.cols = (!list.length || list.includes('*')) ? null : list;
+    return this;
+  }
   eq(k, v) { this.filters.push(r => String(r[k]) === String(v)); return this; }
   neq(k, v) { this.filters.push(r => String(r[k]) !== String(v)); return this; }
   // PostgREST spells "everything with a value here" as .not(col, 'is', null) -- the idiom for
@@ -56,6 +65,14 @@ class FakeQuery {
   upsert(rows, opts) { this.mode = 'upsert'; this.payload = Array.isArray(rows) ? rows : [rows]; this.opts = opts || {}; return this; }
   update(patch) { this.mode = 'update'; this.payload = patch; return this; }
   delete() { this.mode = 'delete'; return this; }
+  /* A column that was asked for but is absent from the stored row still comes back as a key
+     with null, the way Postgres answers for a column that exists but holds nothing. */
+  _project(r) {
+    if (!this.cols) return { ...r };
+    const out = {};
+    for (const c of this.cols) out[c] = r[c] === undefined ? null : r[c];
+    return out;
+  }
   _exec() {
     const rows = this.table.rows;
     if (this.mode === 'insert') {
@@ -97,7 +114,7 @@ class FakeQuery {
     }
     if (this.rng) out = out.slice(this.rng[0], this.rng[1] + 1);
     out = out.slice(0, Math.min(this.lim != null ? this.lim : PAGE_CAP, PAGE_CAP));
-    out = out.map(r => ({ ...r }));
+    out = out.map(r => this._project(r));
     if (this.single) return { data: out[0] || null, error: null };
     return { data: out, error: null };
   }

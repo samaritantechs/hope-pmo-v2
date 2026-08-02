@@ -3,6 +3,7 @@ import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
+import { cachedAnswer } from './answer-cache.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -2673,18 +2674,37 @@ function officerOf(teamBy, team, roleCol) {
 function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
 
-async function officerBoards(db, user, _args, nowMs) {
+/* The officer boards are the dashboard's twin: pure sums over a whole week of snapshots, and
+   the second half of what the Presentation deck waits for. Same one-minute answer, same
+   reasoning -- see answer-cache.js. Opening the deck straight after the Dashboard now costs
+   this half only, and re-opening it costs neither. */
+async function officerBoards(db, user, args, nowMs) {
+  return cachedAnswer(db, 'officerBoards', user, nowMs, () => officerBoardsUncached(db, user, args, nowMs));
+}
+
+async function officerBoardsUncached(db, user, _args, nowMs) {
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), fri = addDaysKey(mon, 4), sun = addDaysKey(mon, 6);
   const wd = currentWeekday(nowMs);
 
+  /* These boards are SUMS. Not one customer's name, phone or balance is ever shown -- every
+     slide is money and headcounts grouped by officer -- yet this used to download a whole week
+     of snapshots with every column on every row: 825,000 rows behind one Presentation. Listing
+     what is actually read cuts the body by more than half, and the week-long range reads pay
+     that saving five to seven times over.
+
+     Keep this list honest: if a figure below starts reading a new column, it has to be added
+     here too. The tests' fake database returns only what is asked for, so a forgotten column
+     fails a test rather than quietly reporting zero. */
+  const EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
+  const DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
-    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
-    fetchAll(() => db.from('followup_status').select('ref, team, status, fu_status, arrears')),
-    fetchAll(() => db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')),
-    fetchAll(() => db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun)),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, EXP_COLS),
+    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today, teams: user.teams, columns: EXP_COLS }),
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, DEF_COLS),
+    fetchAll(() => onTeams(db.from('followup_status').select('ref, team, status, fu_status, arrears'), user.teams)),
+    fetchAll(() => onTeams(db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt'), user.teams)),
+    fetchAll(() => onTeams(db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun), user.teams)),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
