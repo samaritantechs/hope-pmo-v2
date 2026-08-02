@@ -289,6 +289,7 @@ function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTC
 
 var WDFULL = { MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday' };
 var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true,
+          sort2:null, asc2:false,
           args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0 };
 
 /* Which portal calls only LOOK at data. Everything not on this list is treated as a change to
@@ -397,7 +398,8 @@ function buildNav(){
   });
 }
 function go(view){
-  S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.args={}; S.filters={}; S.foot='';
+  S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
+  S.args={}; S.filters={}; S.foot='';
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
   var t = NAV.filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
@@ -472,18 +474,60 @@ function filtered(){
     return false;
   });
 }
+/* SORTING BY THE ORDER THE WORK HAPPENS IN, NOT BY THE ALPHABET.
+
+   A follow-up status sorted A-Z puts AMETOA AHADI above ANALIPA LEO above HAPATIKANI, which is
+   no order anybody works in. A recovery officer wants the people who said they would pay today
+   at the top, then the promises, then the ones who cannot be reached at all.
+
+   So a column may carry its own order of VALUES, and the user may drag that order about. It is
+   remembered on the device, because it is a personal working preference and not company data.
+   Columns with no custom order sort normally. */
+function customOrder(key){
+  try { var raw = load('hopeOrder_' + key); return raw ? JSON.parse(raw) : null; } catch(e){ return null; }
+}
+function cmpOn(c, a, b, asc){
+  var av = c.get?c.get(a):a[c.key], bv = c.get?c.get(b):b[c.key];
+  var ord = customOrder(c.key);
+  if (ord && ord.length){
+    // Anything not in the saved order sorts after everything that is, rather than jumping to
+    // the top -- a status nobody has ranked is not the most urgent thing on the screen.
+    var ai = ord.indexOf(String(av==null?'':av)), bi = ord.indexOf(String(bv==null?'':bv));
+    if (ai < 0) ai = ord.length; if (bi < 0) bi = ord.length;
+    if (ai !== bi) return asc ? ai-bi : bi-ai;
+    return 0;
+  }
+  if (isNum(c)){ av=Number(av)||0; bv=Number(bv)||0; return asc ? av-bv : bv-av; }
+  av=String(av==null?'':av).toUpperCase(); bv=String(bv==null?'':bv).toUpperCase();
+  return asc ? (av<bv?-1:av>bv?1:0) : (av>bv?-1:av<bv?1:0);
+}
 function sorted(rows){
-  if (!S.sort) return rows;
-  var c = S.cols.filter(function(x){ return x.key===S.sort; })[0];
-  if (!c) return rows;
+  var c1 = S.sort ? S.cols.filter(function(x){ return x.key===S.sort; })[0] : null;
+  var c2 = S.sort2 ? S.cols.filter(function(x){ return x.key===S.sort2; })[0] : null;
+  if (!c1 && !c2) return rows;
   var out = rows.slice();
+  // Two levels: sort by follow-up status, THEN by arrears descending inside each status. One
+  // level answers "who is worst"; two answers "who is worst among the ones I can act on".
   out.sort(function(a,b){
-    var av = c.get?c.get(a):a[c.key], bv = c.get?c.get(b):b[c.key];
-    if (isNum(c)){ av=Number(av)||0; bv=Number(bv)||0; return S.asc ? av-bv : bv-av; }
-    av=String(av==null?'':av).toUpperCase(); bv=String(bv==null?'':bv).toUpperCase();
-    return S.asc ? (av<bv?-1:av>bv?1:0) : (av>bv?-1:av<bv?1:0);
+    if (c1){ var r = cmpOn(c1, a, b, S.asc); if (r) return r; }
+    if (c2) return cmpOn(c2, a, b, S.asc2);
+    return 0;
   });
   return out;
+}
+/* The sort bar. Offered on any tab that asks for it, so this does not become a followup-only
+   feature that the next tab has to reinvent. */
+function sortBarHtml(){
+  var opts = function(sel){
+    return '<option value="">—</option>' + S.cols.map(function(c){
+      return '<option value="'+esc(c.key)+'"'+(sel===c.key?' selected':'')+'>'+esc(c.label)+'</option>'; }).join('');
+  };
+  return '<select id="sortA">' + opts(S.sort) + '</select>'
+    + '<select id="sortAd"><option value="1"'+(S.asc?' selected':'')+'>↑</option><option value="0"'+(!S.asc?' selected':'')+'>↓</option></select>'
+    + '<span style="color:var(--mut);font-size:12px">kisha / then</span>'
+    + '<select id="sortB">' + opts(S.sort2) + '</select>'
+    + '<select id="sortBd"><option value="1"'+(S.asc2?' selected':'')+'>↑</option><option value="0"'+(!S.asc2?' selected':'')+'>↓</option></select>'
+    + '<button class="btn sm ghost" id="ordBtn">Panga mwenyewe / Custom order…</button>';
 }
 /* Every table carries a serial number. These lists run to thousands of rows and get read
    aloud in meetings ("number 42..."), so position has to be visible without counting. It is
@@ -667,6 +711,17 @@ function wireBar(){
     }
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
+  // The two-level sort. Changing it re-sorts what is already on screen -- no trip to the
+  // server, because sorting is not a question the server was ever asked.
+  var sa = document.getElementById('sortA');
+  if (sa){
+    sa.onchange = function(){ S.sort = this.value || null; paint(); };
+    document.getElementById('sortAd').onchange = function(){ S.asc = this.value === '1'; paint(); };
+    document.getElementById('sortB').onchange = function(){ S.sort2 = this.value || null; paint(); };
+    document.getElementById('sortBd').onchange = function(){ S.asc2 = this.value === '1'; paint(); };
+  }
+  var ob = document.getElementById('ordBtn');
+  if (ob) ob.onclick = function(){ openOrderPanel(S.sort || (S.cols[0]||{}).key); };
   var mw = document.getElementById('mailWeekly');
   if (mw) mw.onclick = function(){
     if (!confirm('Tuma ripoti ya wiki kwa admin? / Email this week’s report to the admin address?')) return;
@@ -1163,19 +1218,49 @@ VIEWS.assignments = function(){
   });
 };
 
+function FOLLOWUP_COLS(){
+  return [col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+    {key:'contact', label:'Contact', kind:'tel'},
+    {key:'new_no', label:'New no', kind:'tel'},
+    col('guarantor_name','Guarantor'),
+    {key:'guarantor_contact', label:'G. Contact', kind:'tel'},
+    col('arrears','Arrears','money'), col('rejesho','Rejesho','money'),
+    col('recovered','Recovered','money'),
+    {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
+    {key:'fu_status', label:'Follow-up', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
+    col('promise_date','Promise','date'), col('ds','D.S'), col('dc','D.C','num'),
+    col('disb_date','Disb date','date'), col('last_trans','Last trans','date'),
+    col('last_comment','Last comment'),
+    col('comment_by','By'), col('comment_at','When','dt')];
+}
+/* The tab recovery officers live in all day. It was showing twelve columns while the server
+   was already sending every one of these -- the guarantor and their number most of all, which
+   is who an officer rings when the customer will not answer. */
 VIEWS.followup = function(){
   return srv('followup').then(function(d){
+    // COLUMNS FIRST, then the head. The sort bar offers the columns of the tab you are on, so
+    // it has to be built after they are set -- otherwise it silently lists the PREVIOUS tab's
+    // columns and every choice in it does nothing.
+    S.rows = d.rows;
+    S.cols = FOLLOWUP_COLS();
     HEAD = '<div class="kpis">'
       + kpi('Customers', money(d.count))
       + kpi('Total arrears', money(d.arrears), null, 'bad')
+      + kpi('Recovered', money(d.recovered), 'tangu deki ya leo / since today’s initial deck', 'good')
+      + '</div>'
+      + '<div class="pills">'
+        + '<select data-filter="last_trans_month"><option value="">Miezi yote / Any month (Last trans)</option>'
+          + (d.months||[]).map(function(m){
+              return '<option value="'+esc(m)+'"'+(S.filters.last_trans_month===m?' selected':'')+'>'+esc(m)+'</option>'; }).join('')
+        + '</select>'
+        + '<select data-filter="fu_status"><option value="">Hali zote / Any follow-up status</option>'
+          + FU_STATUSES.map(function(s){
+              return '<option value="'+esc(s)+'"'+(S.filters.fu_status===s?' selected':'')+'>'+esc(s)+'</option>'; }).join('')
+        + '</select>'
+        + sortBarHtml()
       + '</div>'
       + '<div class="note" style="background:#fff;border-color:var(--line);color:var(--mut)">Bofya mstari kuandika maoni. / Tap a row to log a follow-up.</div>';
-    S.rows = d.rows;
-    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'), col('contact','Contact'),
-      col('arrears','Arrears','money'), col('rejesho','Rejesho','money'),
-      {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
-      {key:'fu_status', label:'Follow-up', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
-      col('promise_date','Promise','date'), col('ds','D.S'), col('comment_by','By'), col('comment_at','When','dt')];
+    S.foot = 'Arrears: TZS ' + money(d.arrears) + ' · Recovered: TZS ' + money(d.recovered);
     ONROW = openFollowup;
   });
 };
@@ -2206,6 +2291,71 @@ function load_(fn, key, quiet){
 }
 
 /* ----------------------------------------------------------- drawers / forms */
+/* CUSTOM ORDER -- drag the VALUES of a column into the order the work happens in.
+
+   Up and down buttons rather than drag-and-drop: this is used on a laptop in a meeting and on
+   a phone in the field, and dragging on a touch screen inside a scrolling drawer is a fight.
+   Two buttons always work.
+
+   Saved on the device, not on the server, because it is one person's way of working through
+   their own list -- not a company rule, and not something to push onto everybody else. */
+function openOrderPanel(key){
+  var c = S.cols.filter(function(x){ return x.key===key; })[0];
+  if (!c){ toast('Chagua safu kwanza. / Choose a column to sort by first.', true); return; }
+  // Whatever is actually in the data, with any saved order applied first so the panel opens
+  // showing the order currently in force.
+  var seen = {}, values = [];
+  S.rows.forEach(function(r){
+    var v = String((c.get?c.get(r):r[c.key]) == null ? '' : (c.get?c.get(r):r[c.key]));
+    if (!v || seen[v]) return; seen[v] = 1; values.push(v);
+  });
+  var saved = customOrder(key) || [];
+  values.sort(function(a,b){
+    var ai = saved.indexOf(a), bi = saved.indexOf(b);
+    if (ai < 0) ai = 9999; if (bi < 0) bi = 9999;
+    return ai - bi;
+  });
+  S.orderKey = key; S.orderVals = values;
+  drawOrderPanel();
+}
+function drawOrderPanel(){
+  var c = S.cols.filter(function(x){ return x.key===S.orderKey; })[0] || { label: S.orderKey };
+  drawer('<h3 style="margin:0 0 4px">Panga mwenyewe / Custom order</h3>'
+    + '<div class="hint" style="margin-bottom:10px">' + esc(c.label)
+      + ' — pangilia kwa mpangilio wa kazi, si wa alfabeti.<br>'
+      + 'Order these the way the work happens, not the way the alphabet does. '
+      + 'Saved on this device only.</div>'
+    + '<div id="ordList">' + S.orderVals.map(function(v, i){
+        return '<div class="ordrow" style="display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--line)">'
+          + '<span style="flex:1;min-width:0">' + esc(v) + '</span>'
+          + '<button class="btn sm ghost" data-up="'+i+'"'+(i===0?' disabled':'')+'>↑</button>'
+          + '<button class="btn sm ghost" data-dn="'+i+'"'+(i===S.orderVals.length-1?' disabled':'')+'>↓</button>'
+          + '</div>'; }).join('') + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+      + '<button class="btn" id="ordSave" style="flex:1">Hifadhi / Save</button>'
+      + '<button class="btn ghost" id="ordClear">Ondoa / Reset to A–Z</button>'
+    + '</div>');
+  var move = function(i, j){
+    if (j < 0 || j >= S.orderVals.length) return;
+    var t = S.orderVals[i]; S.orderVals[i] = S.orderVals[j]; S.orderVals[j] = t;
+    drawOrderPanel();
+  };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-up]'), function(b){
+    b.onclick = function(){ var i = Number(b.getAttribute('data-up')); move(i, i-1); }; });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-dn]'), function(b){
+    b.onclick = function(){ var i = Number(b.getAttribute('data-dn')); move(i, i+1); }; });
+  document.getElementById('ordSave').onclick = function(){
+    store('hopeOrder_' + S.orderKey, JSON.stringify(S.orderVals));
+    // Sorting by that column is the whole point of having ordered it, so do it.
+    S.sort = S.orderKey; closeDrawer(); paint();
+    toast('Mpangilio umehifadhiwa. / Order saved on this device.');
+  };
+  document.getElementById('ordClear').onclick = function(){
+    store('hopeOrder_' + S.orderKey, null); closeDrawer(); paint();
+    toast('Imerudi kwa alfabeti. / Back to normal order.');
+  };
+}
+
 function drawer(html){
   $('#drawer').innerHTML = html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
   $('#drawerBg').style.display = 'flex';
