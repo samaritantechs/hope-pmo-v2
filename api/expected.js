@@ -1,11 +1,11 @@
 import { supabase, fetchAll } from './_lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './_lib/auth.js';
+import { gatedUser, teamAllowed, withApi } from './_lib/auth.js';
 
 // GET /api/expected?code=XXX&type=today&date=2026-07-22
 //   type: 'today' | 'tomorrow' | 'yesterday' | 'initial'
 export default withApi(async (req, res) => {
   const { code, type = 'today', date } = req.query;
-  const user = await authCode(code);
+  const user = await gatedUser(code);
 
   let snapDate = date;
   if (!snapDate) {

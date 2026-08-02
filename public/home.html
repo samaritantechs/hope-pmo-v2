@@ -135,19 +135,28 @@ function tryTeamCode(code, no){
 function renderHome(me){
   var scope = me.teams ? (me.teamCount + (me.teamCount === 1 ? ' team' : ' teams')) : 'Timu zote / All teams';
   var initials = String(me.name || '?').trim().split(/\s+/).slice(0, 2).map(function(w){ return w.charAt(0); }).join('').toUpperCase();
+  /* When the admin has closed the system, the portal is not merely refused -- it is not
+     offered. A door that is drawn and then slams in somebody's face is worse than no door:
+     they retype their code, they ring the office, and somebody's afternoon goes on it. Calls
+     is always here, because Calls is never closed. */
+  var open = me.systemOpen !== false;
   var tiles =
       tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu, ufuatiliaji, ripoti / call lists & follow-ups')
-    + tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, followup, PAR, ripoti zote / the full portal')
-    + (me.can.upload ? tile('/upload', '&#128228;', 'Pakia faili / Upload', 'Expected, Defaulters, Received, mikopo / loan files') : '')
-    + tile('/live', '&#128225;', 'HOPE Live', 'Ufaulu wa timu, unajisasisha wenyewe / live figures, updates itself')
+    + (open ? tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, followup, PAR, ripoti zote / the full portal') : '')
+    + (open && me.can.upload ? tile('/upload', '&#128228;', 'Pakia faili / Upload', 'Expected, Defaulters, Received, mikopo / loan files') : '')
+    + (open ? tile('/live', '&#128225;', 'HOPE Live', 'Ufaulu wa timu, unajisasisha wenyewe / live figures, updates itself') : '')
     + (me.can.admin ? tile('/upload?admin=1', '&#128273;', 'Misimbo / Access codes', 'Pakia Access Codes na User Roles / manage who signs in') : '');
+  // Said plainly, once, so nobody spends the morning deciding whether it is broken.
+  var closedNote = open ? '' :
+    '<div class="hint">Mfumo umefungwa kwa sasa &mdash; tumia HOPE Calls.<br>'
+    + 'The system is closed for now &mdash; please use HOPE Calls.</div>';
   $('view').innerHTML =
     '<div class="card">'
     + '<div class="who"><span class="av">' + esc(initials) + '</span>'
     + '<span><b>' + esc(me.name) + '</b><span>' + esc(me.role) + ' &middot; ' + esc(scope) + '</span></span></div>'
     + '<button class="btn ghost" id="out">Toka / Sign out</button>'
     + '</div>'
-    + '<div class="tiles">' + tiles + '</div>'
+    + '<div class="tiles">' + tiles + '</div>' + closedNote
     + '<div class="hint">Chagua sehemu unayotaka kuendelea nayo.<br>Choose which part of the system to open.</div>';
   $('out').onclick = function(){ store('hopeCode', null); renderSignIn(); };
 }

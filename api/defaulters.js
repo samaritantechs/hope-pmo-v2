@@ -1,11 +1,11 @@
 import { supabase, fetchAll } from './_lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './_lib/auth.js';
+import { gatedUser, teamAllowed, withApi } from './_lib/auth.js';
 import { currentWeekday } from './_lib/time.js';
 
 // GET /api/defaulters?code=XXX&type=current&weekday=WED&date=2026-07-22
 export default withApi(async (req, res) => {
   const { code, type = 'current', weekday, date } = req.query;
-  const user = await authCode(code);
+  const user = await gatedUser(code);
 
   const wd = weekday || currentWeekday();
 

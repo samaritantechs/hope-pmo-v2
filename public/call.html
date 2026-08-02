@@ -234,7 +234,7 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
       <!-- Swap into the portal. Sits right after the sync pill so the two "mode" controls are
            together, and before logout so it is never mistaken for one. -->
-      <a class="swapBtn" href="/dashboard" title="Nenda kwenye mfumo / Switch to the system">&#128260;</a>
+      <a class="swapBtn hide" id="swapBtn" href="/dashboard" title="Nenda kwenye mfumo / Switch to the system">&#128260;</a>
       <button type="button" class="logoutBtn hide" id="logoutBtn" title="Toka / Log out"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
     </div>
     <div class="searchbar" style="margin:10px 0 0"><input id="listQ" placeholder="Tafuta jina / namba&#x2026; (kwenye orodha zote)"></div>
@@ -656,6 +656,12 @@ function enterApp(d){
   // officer. Showing the tab to everyone would just hand most officers an empty screen.
   $('#tabExpdf').classList.toggle('hide', !d.expdfLeader);
   $('#logoutBtn').classList.toggle('hide', d.logoutEnabled === false);
+  /* The way across to the system, shown only while the admin has the system open. Hidden by
+     default in the markup and revealed here, so a phone that cannot reach the server, or one
+     running an older app than the server, shows no door rather than a dead one. Set both ways
+     round: a system closed at lunchtime has to take the button away, not merely stop adding
+     it. */
+  $('#swapBtn').classList.toggle('hide', d.systemOpen !== true);
   if (S.entered) {
     // Tabs can appear or disappear here, and the one they are standing on may have just gone.
     if (S.view === 'reports' && !d.leader) setView('today');

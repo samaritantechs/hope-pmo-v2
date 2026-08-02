@@ -350,6 +350,16 @@ function srv(fn, args){
   }).then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) return x.body;
+      /* The admin closed the system while this page was open. Every tab from here on would
+         answer the same way, so a red message on each one teaches nothing -- say it once and
+         go back to the launcher, which knows how to explain what is still available. */
+      if (x.status === 403 && x.body && /HOPE Calls/.test(String(x.body.error||''))){
+        document.body.innerHTML = '<div class="msg" style="padding:40px;text-align:center;line-height:1.8">'
+          + 'Mfumo umefungwa kwa sasa &mdash; tumia HOPE Calls.<br>'
+          + 'The system is closed for now &mdash; please use HOPE Calls.<br><br>'
+          + '<a class="btn" href="/">Rudi / Back</a></div>';
+        throw new Error(x.body.error);
+      }
       throw new Error((x.body && x.body.error) || ('HTTP '+x.status));
     });
 }
@@ -2270,8 +2280,9 @@ var CLEAN_TYPES = [
   { key:'demand_notices', label:'Demand Notices', kept:1 },
 ];
 VIEWS.settings = function(){
-  return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage')]).then(function(r){
-    var st=r[0], ac=r[1], cu=r[2], sg=r[3];
+  return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage'),
+      srv('systemOpenGet')]).then(function(r){
+    var st=r[0], ac=r[1], cu=r[2], sg=r[3], so=r[4];
     S.officers = cu;
     S.roles = ac.roles || [];
     S.storage = sg;
@@ -2287,6 +2298,28 @@ VIEWS.settings = function(){
         + ' 8 GB inatosha takriban <b>' + (sg.perMonth>0 ? Math.floor(8*1024*1024*1024/sg.perMonth) : '∞')
         + ' miezi</b> bila kusafisha. / at the current rate, 8 GB lasts about that many months with no cleanup.'
         + ' Ukisafisha tarehe za zamani hapa chini, haitajaa kamwe. / Clean old dates below and it never fills.</div>'
+      /* THE MASTER SWITCH, first on the page because it is the one that decides whether anybody
+         else can see any of the rest. Closed, the whole company has HOPE Calls and nothing
+         else: no portal, no HOPE Live, and no button offering either. The admin is never shut
+         out by it -- otherwise there would be no way back. */
+      + '<div class="card"><div class="card-h">Mfumo kwa watumiaji wote / The system, for everybody'
+        + '<span class="sub">HOPE Calls haiathiriki kamwe / HOPE Calls is never affected</span></div>'
+        + '<div class="cleanbox">'
+        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        + '<span class="chip ' + (so.open ? 'ok' : 'bad') + '" id="soState">'
+          + (so.open ? 'IMEFUNGULIWA / OPEN' : 'IMEFUNGWA / CLOSED') + '</span>'
+        + '<button class="btn sm' + (so.open ? ' danger' : '') + '" id="soToggle">'
+          + (so.open ? 'Funga mfumo / Close the system' : 'Fungua mfumo / Open the system') + '</button>'
+        + '</div>'
+        + '<div class="note" style="margin-top:10px">'
+        + (so.open
+            ? 'Kila mwenye msimbo anaweza kufungua mfumo na HOPE Live.'
+              + ' / Everyone with a code can open the portal and HOPE Live.'
+            : 'Watumiaji wanaona HOPE Calls pekee. Kitufe cha kubadili na HOPE Live vimefichwa,'
+              + ' na seva inakataa hata mtu akijaribu anwani moja kwa moja.'
+              + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
+              + ' server refuses those addresses even if somebody types them in directly.')
+        + '</div></div></div>'
       /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
          Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
          no cell ceiling), but the plan's disk is finite, so this is where old dates get let go. */
@@ -2920,6 +2953,21 @@ function wireForms(){
   // for the wrong amount with the company's stamp on it. They are computed now.
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){ lgIssue(); };
+  /* Closing the system turns two hundred people away from a screen they were using a minute
+     ago, so it asks first. Opening it does not -- letting people back in is not the move
+     anybody regrets. */
+  var so = document.getElementById('soToggle');
+  if (so) so.onclick = function(){
+    var open = document.getElementById('soState').textContent.indexOf('OPEN') >= 0;
+    if (open && !confirm('Funga mfumo kwa watumiaji wote? Watabaki na HOPE Calls pekee.\n\n'
+      + 'Close the system for everybody? They keep HOPE Calls only.')) return;
+    so.disabled = true; so.textContent = 'Inabadili…';
+    srv('systemOpenSet', { open: !open })
+      .then(function(){ toast(open ? 'Mfumo umefungwa. / The system is closed.'
+                                   : 'Mfumo umefunguliwa. / The system is open.');
+                        render({ force: true }); })
+      .catch(function(e){ so.disabled = false; toast(String(e.message || e), true); });
+  };
   var ns = document.getElementById('newSetting');
   if (ns) ns.onclick = function(){ settingForm('', ''); };
   var nk = document.getElementById('newCode');

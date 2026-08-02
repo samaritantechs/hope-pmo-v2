@@ -1,5 +1,5 @@
 import { supabase, fetchAll } from './_lib/supabase.js';
-import { authCode, teamAllowed, withApi } from './_lib/auth.js';
+import { gatedUser, teamAllowed, withApi } from './_lib/auth.js';
 
 // GET  /api/followup?code=XXX             -> list, team-scoped
 // POST /api/followup  { code, ref, comment, fuStatus, promiseDate, promiseAmt, newNumber, dockNo, fullName, team }
@@ -15,7 +15,7 @@ export default withApi(async (req, res) => {
 
 async function handleGet(req) {
   const { code } = req.query;
-  const user = await authCode(code);
+  const user = await gatedUser(code);
   const data = await fetchAll(() => supabase.from('followup_status').select('*').order('arrears', { ascending: false }));
   const rows = (data || []).filter(r => teamAllowed(user, r.team));
   return { rows, count: rows.length };
@@ -23,7 +23,7 @@ async function handleGet(req) {
 
 async function handlePost(req) {
   const { code, ref, comment, fuStatus, promiseDate, promiseAmt, newNumber, dockNo, fullName, team } = req.body || {};
-  const user = await authCode(code);
+  const user = await gatedUser(code);
   if (!ref) { const e = new Error('ref is required'); e.status = 400; throw e; }
 
   const { data: existing } = await supabase.from('followup_status').select('team').eq('ref', ref).maybeSingle();

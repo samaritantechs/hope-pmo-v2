@@ -25,7 +25,9 @@ function makeTables() {
       { code: 'LEAD1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] },
       { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] },   // ALL teams
     ],
-    settings: [{ key: 'SALES_TARGET_MONTHLY', value: '4000000' }],
+    /* HOPE Live is a system-side screen, so it opens and closes with the system. These
+       fixtures describe a normal, open deployment; the closed case has its own test below. */
+    settings: [{ key: 'SALES_TARGET_MONTHLY', value: '4000000' }, { key: 'SYSTEM_OPEN', value: 'YES' }],
     repayment_snapshots: [
       { ref: '111', full_name: 'AMINA H', contact: '0712000001', guarantor_name: 'G ONE', guarantor_contact: '0713000001', team: 'KONGOWE', payment_expected: 1000, arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today', snapshot_date: '2026-07-24', upload_batch: 'b1', created_at: '2026-07-24T04:00:00Z' },
       { ref: '222', full_name: 'PILI S', contact: '0712000002', guarantor_name: '', guarantor_contact: '', team: 'KONGOWE', payment_expected: 500, arrears: 0, todays_status: 'PAID', due_summary: '3/6', snapshot_type: 'today', snapshot_date: '2026-07-24', upload_batch: 'b1', created_at: '2026-07-24T04:00:00Z' },

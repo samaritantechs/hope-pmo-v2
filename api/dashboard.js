@@ -1,5 +1,5 @@
 import { supabase } from './_lib/supabase.js';
-import { authCode, withApi } from './_lib/auth.js';
+import { gatedUser, withApi } from './_lib/auth.js';
 import { buildDashboard } from './_lib/dashboard-core.js';
 
 // GET /api/dashboard?code=XXX
@@ -11,6 +11,6 @@ import { buildDashboard } from './_lib/dashboard-core.js';
 // resolution, the EAT clock, the recovery rule -- runs under `npm test` against a fake
 // PostgREST client. This file is only auth + wiring.
 export default withApi(async (req, res) => {
-  const user = await authCode(req.query.code);
+  const user = await gatedUser(req.query.code);
   return buildDashboard(supabase, user);
 });
