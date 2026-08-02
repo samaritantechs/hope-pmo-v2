@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { importAccessCodes, importUserRoles } = await import('../api/_lib/importers.js');
+const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder }
+  = await import('../api/_lib/importers.js');
+const { stampOrNull, inferDayFirst, dateOrNull } = await import('../api/_lib/parse.js');
 
 test('importAccessCodes: ALL -> null teams, comma lists -> arrays, incomplete rows skipped', () => {
   const rows = [
@@ -289,4 +291,149 @@ test('UI cadence settings are clamped to something usable', async () => {
   assert.equal(clampNum('abc', 15, 5, 300), 15);
   assert.equal(clampNum('0', 15, 5, 300), 15);
   assert.equal(clampNum('-40', 15, 5, 300), 40);   // the minus is stripped, not obeyed
+});
+
+
+/* THE v1 FOLLOW-UP COMMENT LOG.
+
+   Its columns are TIMESTAMP, REF#, TEAM, FULLNAME, COMMENT, FU STATUS, PROMISE DATE,
+   PROMISE AMT, BY, NEW NUMBER, DOCKET# -- and the TIMESTAMP is the whole point. It is a
+   history import: the thread on each customer only means anything if the comments keep the
+   dates and the order they were actually made in. */
+
+const V1_HEADER = ['TIMESTAMP', 'REF#', 'TEAM', 'FULLNAME', 'COMMENT', 'FU STATUS',
+  'PROMISE DATE', 'PROMISE AMT', 'BY', 'NEW NUMBER', 'DOCKET#'];
+
+test('a v1 comment keeps the day AND the hour it was actually written', () => {
+  const rows = [V1_HEADER,
+    ['6/22/2026 11:29', '2202428956', 'GOBA', 'ERNEST JOHN MSHUBI', 'BADO NA FATILIA',
+      'HAPATIKANI YEYE & MDHAMINI', '', '', 'CHRISPIN LUKONGE', '', '2-202-42895'],
+    ['6/22/2026 11:45', '2202508974', 'GOBA', 'JANETH JOHN MAKATA', 'NAMBA YA MUME WAKE 0714665566',
+      'AMETOA AHADI', '2026-06-23', '500,000', 'CHRISPIN LUKONGE', '', '2-202-50897'],
+  ];
+  const out = importComments(rows);
+  assert.equal(out.length, 2);
+
+  /* 11:29 in the office is 08:29 UTC. Before this, dateOrNull could not read a date with a
+     clock attached, returned null, and every row fell through to `new Date()` -- a year of
+     history all stamped with the moment somebody pressed Upload. */
+  assert.equal(out[0].created_at, '2026-06-22T08:29:00.000Z');
+  assert.equal(out[1].created_at, '2026-06-22T08:45:00.000Z');
+  assert.ok(out[0].created_at < out[1].created_at, 'and the afternoon stays in order');
+
+  assert.equal(out[0].ref, '2202428956');
+  assert.equal(out[0].team, 'GOBA');
+  assert.equal(out[0].full_name, 'ERNEST JOHN MSHUBI');
+  assert.equal(out[0].fu_status, 'HAPATIKANI YEYE & MDHAMINI');
+  assert.equal(out[0].created_by, 'CHRISPIN LUKONGE');
+  assert.equal(out[0].docket_no, '2-202-42895');
+  assert.equal(out[1].promise_date, '2026-06-23');
+  assert.equal(out[1].promise_amt, 500000, 'a thousands separator is not part of the number');
+});
+
+test('the day/month order is read off the file, not assumed', () => {
+  // 6/22 can only be month-first: there is no twenty-second month.
+  assert.equal(inferDayFirst(['6/22/2026 11:29', '6/7/2026 09:00']), false);
+  // 23/07 can only be day-first.
+  assert.equal(inferDayFirst(['23/07/2026 11:29', '6/7/2026 09:00']), true);
+  // Nothing decisive anywhere: say so rather than guess.
+  assert.equal(inferDayFirst(['6/7/2026 09:00', '5/4/2026 10:00']), null);
+  assert.equal(inferDayFirst([]), null);
+
+  /* And the decision reaches the ambiguous rows. 6/7/2026 in a month-first file is the 7th of
+     June; in a day-first file it is the 6th of July. Getting this wrong moves a comment by a
+     month while looking entirely reasonable. */
+  const monthFirst = importComments([V1_HEADER,
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'c1', '', '', '', 'BY', '', ''],
+    ['6/7/2026 09:00', 'B', 'GOBA', 'Y', 'c2', '', '', '', 'BY', '', ''],
+  ]);
+  assert.equal(monthFirst[1].created_at, '2026-06-07T06:00:00.000Z');
+
+  const dayFirst = importComments([V1_HEADER,
+    ['23/6/2026 11:29', 'A', 'GOBA', 'X', 'c1', '', '', '', 'BY', '', ''],
+    ['6/7/2026 09:00', 'B', 'GOBA', 'Y', 'c2', '', '', '', 'BY', '', ''],
+  ]);
+  assert.equal(dayFirst[1].created_at, '2026-07-06T06:00:00.000Z');
+
+  // PROMISE DATE is read the same way round as the TIMESTAMP, so one file is never read two
+  // ways -- a promise dated a month off is a customer chased on the wrong day.
+  const both = importComments([V1_HEADER,
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'c1', 'AMETOA AHADI', '6/7/2026', '1000', 'BY', '', ''],
+  ]);
+  assert.equal(both[0].promise_date, '2026-06-07');
+});
+
+test('what the importer decided is reported, including what it could not read', () => {
+  assert.deepEqual(commentsDateOrder([V1_HEADER,
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'c', '', '', '', 'BY', '', ''],
+  ]), { dayFirst: false, unreadable: 0 });
+
+  assert.deepEqual(commentsDateOrder([V1_HEADER,
+    ['6/7/2026 09:00', 'A', 'GOBA', 'X', 'c', '', '', '', 'BY', '', ''],
+  ]), { dayFirst: null, unreadable: 0 }, 'no evidence either way is reported as such');
+
+  const messy = commentsDateOrder([V1_HEADER,
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'c', '', '', '', 'BY', '', ''],
+    ['sometime last june', 'B', 'GOBA', 'Y', 'c', '', '', '', 'BY', '', ''],
+    ['', 'C', 'GOBA', 'Z', 'c', '', '', '', 'BY', '', ''],
+  ]);
+  assert.equal(messy.unreadable, 1, 'a blank stamp is not the same as an unreadable one');
+});
+
+test('an unreadable stamp falls back to now, and is the only row that does', () => {
+  const before = Date.now();
+  const out = importComments([V1_HEADER,
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'good', '', '', '', 'BY', '', ''],
+    ['not a date', 'B', 'GOBA', 'Y', 'bad', '', '', '', 'BY', '', ''],
+  ]);
+  assert.equal(out[0].created_at, '2026-06-22T08:29:00.000Z');
+  assert.ok(Date.parse(out[1].created_at) >= before, 'the unreadable one is stamped now');
+});
+
+test('the same comment uploaded twice is the same row', () => {
+  /* Importing years of history is never done in one clean go: a file goes in, something is
+     wrong with it, it is fixed and sent again. Without an identity the second attempt doubles
+     every comment already stored, and nothing on screen says so. */
+  const rows = [V1_HEADER,
+    ['6/22/2026 11:29', '2202428956', 'GOBA', 'ERNEST JOHN MSHUBI', 'BADO NA FATILIA', '', '', '', 'CHRISPIN LUKONGE', '', ''],
+  ];
+  assert.equal(importComments(rows)[0].id, importComments(rows)[0].id);
+
+  // Two DIFFERENT comments are two rows, including two in the same minute about the same
+  // person -- an officer can log a call and a note one after the other.
+  const two = importComments([V1_HEADER,
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'first thing', '', '', '', 'BY', '', ''],
+    ['6/22/2026 11:29', 'A', 'GOBA', 'X', 'second thing', '', '', '', 'BY', '', ''],
+  ]);
+  assert.notEqual(two[0].id, two[1].id);
+
+  // The identity is the customer, the moment, the words and who said them -- not the fields an
+  // officer might correct later.
+  assert.equal(
+    commentId({ ref: 'A', created_at: 'T', comment: 'c', created_by: 'B' }),
+    commentId({ ref: 'a', created_at: 'T', comment: ' c ', created_by: 'b', fu_status: 'CHANGED', promise_amt: 999 }));
+  // And it is shaped as a uuid, because that is what the column is.
+  assert.match(importComments(rows)[0].id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+});
+
+test('stampOrNull reads the shapes a real export produces, and refuses the rest', () => {
+  assert.equal(stampOrNull('2026-06-22 11:29:07'), '2026-06-22T08:29:07.000Z');
+  assert.equal(stampOrNull('2026-06-22T11:29:07'), '2026-06-22T08:29:07.000Z');
+  assert.equal(stampOrNull('6/22/2026 1:05 PM', false), '2026-06-22T10:05:00.000Z');
+  assert.equal(stampOrNull('6/22/2026 12:30 AM', false), '2026-06-21T21:30:00.000Z', 'midnight is 00, not 12');
+  assert.equal(stampOrNull('6/22/2026', false), '2026-06-21T21:00:00.000Z', 'a date with no clock is midnight EAT');
+  // The XLSX reader hands real date cells back as Date objects; those already carry the clock.
+  assert.equal(stampOrNull(new Date('2026-06-22T08:29:00Z')), '2026-06-22T08:29:00.000Z');
+  for (const bad of ['', null, undefined, 'sometime', '13/13/2026', new Date('nope')]) {
+    assert.equal(stampOrNull(bad), null, JSON.stringify(String(bad)) + ' is not a moment');
+  }
+});
+
+test('dateOrNull still behaves exactly as it did when nothing is passed', () => {
+  assert.equal(dateOrNull('2026-06-23'), '2026-06-23');
+  assert.equal(dateOrNull('23/07/2026'), '2026-07-23');
+  assert.equal(dateOrNull('07/23/2026'), '2026-07-23');
+  assert.equal(dateOrNull('6/7/2026'), '2026-07-06', 'ambiguous stays day/month by default');
+  assert.equal(dateOrNull('6/7/2026', false), '2026-06-07', 'unless the file said month-first');
+  assert.equal(dateOrNull(''), null);
 });

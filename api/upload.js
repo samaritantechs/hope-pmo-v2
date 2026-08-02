@@ -159,7 +159,7 @@ export default withApi(async (req, res) => {
   if (!(await can(user, 'upload'))) { const e = new Error('Upload permission is required for your access code.'); e.status = 403; throw e; }
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
-  let table, records;
+  let table, records, commentsOrder = null;
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -182,6 +182,7 @@ export default withApi(async (req, res) => {
     case 'comments':
       table = 'followup_comments';
       records = importComments(rows);
+      commentsOrder = commentsDateOrder(rows);
       break;
     case 'loans':
       if (!meta.stage) { const e = new Error('stage is required for a loan-pipeline upload.'); e.status = 400; throw e; }
@@ -289,8 +290,9 @@ export default withApi(async (req, res) => {
   // team's first Defaulters/Expected file shouldn't have to wait on someone remembering to
   // register it first. New teams get blank role columns (no leader assigned yet) -- fill those
   // in later via Leaders/Teams or a teams-editing screen.
-  const TEAM_REF_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots', 'followup_status', 'loans']);
-  let newTeams = [];
+  const TEAM_REF_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots', 'followup_status', 'loans',
+    'followup_comments']);
+  let newTeams = [], stubbed = 0;
   if (TEAM_REF_TABLES.has(table)) {
     const incomingTeams = [...new Set(records.map(r => r.team).filter(Boolean))];
     if (incomingTeams.length) {
@@ -315,9 +317,53 @@ export default withApi(async (req, res) => {
   // As a plain insert it appended, so uploading Unassigned then Assigned then Approved for the
   // same loan made three rows, and re-uploading Approved doubled the sales figure -- with
   // nothing on screen to say so.
+  /* A COMMENT HAS TO HAVE SOMEBODY TO BE ABOUT.
+
+     followup_comments.ref is a foreign key into followup_status, so importing years of v1
+     history fails outright the moment it mentions a customer who is not on today's follow-up
+     list -- which, over a year of history, is most of them. Not a few rows rejected: the whole
+     upload refused, with a foreign-key error nobody outside this file can act on.
+
+     So the missing ones are created as stubs first -- ref, team and name, nothing else. This
+     is the SAME stub the Calls app already creates when an officer comments on an Expected
+     customer who is not a defaulter, and every screen already knows to skip them: a row with
+     no status and no arrears is not a defaulter and is never counted as one. */
+  if (table === 'followup_comments') {
+    const refs = [...new Set(records.map(r => r.ref).filter(Boolean))];
+    const known = new Set();
+    // Chunked: a year of history can mention tens of thousands of customers, and a single
+    // .in() with all of them is a URL no server will accept.
+    for (let i = 0; i < refs.length; i += 500) {
+      const { data, error } = await supabase.from('followup_status').select('ref').in('ref', refs.slice(i, i + 500));
+      if (error) throw new Error('Could not check which customers already exist: ' + error.message);
+      for (const r of (data || [])) known.add(String(r.ref));
+    }
+    const missing = refs.filter(r => !known.has(String(r)));
+    if (missing.length) {
+      // The name and team off the first comment that mentions them -- the only thing the file
+      // knows about a customer it is only quoting.
+      const first = new Map();
+      for (const r of records) if (r.ref && !first.has(String(r.ref))) first.set(String(r.ref), r);
+      const stubs = missing.map(ref => {
+        const r = first.get(String(ref)) || {};
+        return { ref, team: r.team || null, full_name: r.full_name || null };
+      });
+      for (let i = 0; i < stubs.length; i += 500) {
+        const { error } = await supabase.from('followup_status')
+          .upsert(stubs.slice(i, i + 500), { onConflict: 'ref', ignoreDuplicates: true });
+        if (error) throw new Error('Could not create customer records for the comments: ' + error.message);
+      }
+      stubbed = stubs.length;
+    }
+  }
+
   const upsertTables = {
     followup_status: 'ref', teams: 'team', access_codes: 'code', roles: 'role',
     settings: 'key', call_users: 'user_id', call_logs: 'id', loans: 'id',
+    /* Keyed on the comment's own identity (importers.js commentId), so re-uploading a history
+       file that was already partly loaded collapses instead of doubling every comment in it.
+       Importing years of history is never done in one clean go. */
+    followup_comments: 'id',
   };
 
   // Hints are the one sheet that is REPLACED wholesale. A tab has MANY tips -- the reader
@@ -405,7 +451,17 @@ export default withApi(async (req, res) => {
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
     followupSynced, behaviour, sameAsToday,
-    message: newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : undefined
+    stubbed: stubbed || undefined,
+    /* Reading a date column the wrong way round moves history by up to eleven months and looks
+       entirely reasonable in the result, so the file is told what was decided about it. */
+    dateOrder: commentsOrder ? (commentsOrder.dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
+      : commentsOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
+    unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
+    message: [
+      newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
+      stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
+      commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
+    ].filter(Boolean).join(' ') || undefined
   };
 });
 

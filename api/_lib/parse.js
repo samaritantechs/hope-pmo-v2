@@ -42,7 +42,10 @@ export function num(v) {
     5 July. So: whichever component CANNOT be a month decides the order, and only when both
     are <= 12 do we fall back to d/m/yyyy, the convention of the sheets this system reads.
     (The browser path now sends yyyy-mm-dd, which is unambiguous and skips all of this.) */
-export function dateOrNull(v) {
+/** `dayFirst` is optional and comes from inferDayFirst over the whole column: it only decides
+    the cases the value itself cannot, like 06/07/2026. Everything else is read from the value.
+    Omitted, this behaves exactly as it always has. */
+export function dateOrNull(v, dayFirst) {
   if (!v) return null;
   const s = String(v).trim();
   if (!s || /^no\s+due\s+date$/i.test(s)) return null;
@@ -58,6 +61,7 @@ export function dateOrNull(v) {
     let day, month;
     if (a > 12 && b <= 12) { day = a; month = b; }                      // 23/7 -> only d/m is possible
     else if (b > 12 && a <= 12) { month = a; day = b; }                 // 7/23 -> only m/d is possible
+    else if (dayFirst === false) { month = a; day = b; }                 // the file said month-first
     else { day = a; month = b; }                                        // both <= 12 -> the sheets' own d/m
     if (day < 1 || day > 31 || month < 1 || month > 12) return null;
     return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -75,6 +79,88 @@ export function timeOrNull(v) {
   const h = Number(m[1]), min = Number(m[2]);
   if (h > 23 || min > 59) return null;
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** IS THIS FILE WRITTEN DAY-FIRST OR MONTH-FIRST?
+
+    23/07/2026 can only be d/m. 07/23/2026 can only be m/d. 06/07/2026 is genuinely both, and
+    guessing wrong moves a comment by up to eleven months while looking perfectly reasonable.
+
+    A whole COLUMN usually settles it: one unambiguous value anywhere in the file decides every
+    value in it, because a single export does not switch conventions halfway down. So this
+    reads the column, not the cell.
+
+    Returns true (day-first), false (month-first), or null when the file offers no evidence
+    either way -- a caller that gets null should say so rather than pretend it knew. */
+export function inferDayFirst(values) {
+  let dayFirst = 0, monthFirst = 0;
+  for (const v of (values || [])) {
+    const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (!m) continue;
+    const a = Number(m[1]), b = Number(m[2]);
+    if (a > 12 && b <= 12) dayFirst++;
+    else if (b > 12 && a <= 12) monthFirst++;
+  }
+  /* A file carrying BOTH kinds of evidence is malformed -- somebody pasted two exports
+     together. The larger pile of evidence wins, and an exact tie gives up rather than guessing
+     from a coin flip. */
+  if (dayFirst === monthFirst) return null;
+  return dayFirst > monthFirst;
+}
+
+/** A full moment -- date AND clock -- as an ISO timestamp, for a log whose ORDER matters.
+
+    dateOrNull deliberately throws the time away: a due date has no clock. A comment log is the
+    opposite. Its rows are what somebody said and when, several in the same afternoon, and the
+    screen shows them newest first -- so collapsing every comment of a day onto midnight loses
+    the order they were actually made in.
+
+    `dayFirst` comes from inferDayFirst over the whole column. Null means undecided, and the
+    caller decides what to do about that; here it falls back to day-first, which is what
+    dateOrNull has always assumed.
+
+    Returns null rather than a wrong answer, so an unreadable stamp is visible as missing
+    instead of quietly becoming the moment of upload. */
+export function stampOrNull(v, dayFirst) {
+  if (v == null || v === '') return null;
+  // The XLSX reader hands real date cells back as Date objects, which already carry the clock.
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString();
+  const s = String(v).trim();
+  if (!s) return null;
+
+  let y, mo, d;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);                  // ISO -- never ambiguous
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else {
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    if (!m) return null;
+    const a = +m[1], b = +m[2];
+    y = +m[3];
+    if (a > 12 && b <= 12) { d = a; mo = b; }                        // only d/m is possible
+    else if (b > 12 && a <= 12) { mo = a; d = b; }                   // only m/d is possible
+    else if (dayFirst === false) { mo = a; d = b; }                  // the file said month-first
+    else { d = a; mo = b; }                                          // the sheets' own d/m
+  }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+
+  // The clock, if there is one. 12-hour times carry am/pm; a bare 24-hour time does not.
+  let hh = 0, mi = 0, ss = 0;
+  const t = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?/);
+  if (t) {
+    hh = +t[1]; mi = +t[2]; ss = t[3] ? +t[3] : 0;
+    const ap = t[4] ? t[4].toUpperCase() : '';
+    if (ap === 'PM' && hh < 12) hh += 12;
+    if (ap === 'AM' && hh === 12) hh = 0;
+    if (hh > 23 || mi > 59 || ss > 59) { hh = 0; mi = 0; ss = 0; }
+  }
+
+  /* Read as EAT (UTC+3) and stored as the UTC instant it was. The clock in a v1 export is the
+     wall clock in the office, and treating 11:29 as 11:29 UTC would file every comment three
+     hours early -- enough to move an evening one onto the next day. */
+  const p2 = n => String(n).padStart(2, '0');
+  const iso = `${y}-${p2(mo)}-${p2(d)}T${p2(hh)}:${p2(mi)}:${p2(ss)}+03:00`;
+  const when = new Date(iso);
+  return isNaN(when.getTime()) ? null : when.toISOString();
 }
 
 /** D.S / D.C are "paid/target" TEXT, e.g. "3/6" -- this is the one field that broke
