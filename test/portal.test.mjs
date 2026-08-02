@@ -683,6 +683,33 @@ test('the restructuring contract prints exactly what was agreed', async () => {
     e => e.status === 400);
 });
 
+/* An officer looking at a commission figure asks "when do I actually get it?" next. Without a
+   note on the screen they ask a person instead. */
+test('the commission payout note reaches the officer who needs it', async () => {
+  const db = fakeDb(tables());
+  assert.equal((await portalApi(db, GMO, 'commission', {}, NOW)).payText, '');
+
+  await portalApi(db, ADMIN, 'commissionSave', { payText: 'Kamisheni hulipwa tarehe 5 ya mwezi.' }, NOW);
+  assert.equal((await portalApi(db, GMO, 'commission', {}, NOW)).payText,
+    'Kamisheni hulipwa tarehe 5 ya mwezi.');
+
+  // Only an admin sets it -- it appears on every officer's screen.
+  await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { payText: 'x' }, NOW),
+    e => e.status === 403);
+
+  // A settings box is not a place to paste a page of text onto everybody's screen.
+  await portalApi(db, ADMIN, 'commissionSave', { payText: 'z'.repeat(900) }, NOW);
+  assert.equal((await portalApi(db, ADMIN, 'commission', {}, NOW)).payText.length, 300);
+
+  // Saving the note must not disturb the rates sitting beside it.
+  await portalApi(db, ADMIN, 'commissionSave', { paidTzs: 500, overTzs: 800 }, NOW);
+  await portalApi(db, ADMIN, 'commissionSave', { payText: 'imebadilika' }, NOW);
+  const after = await portalApi(db, ADMIN, 'commission', {}, NOW);
+  assert.equal(after.paidTzs, 500);
+  assert.equal(after.overTzs, 800);
+  assert.equal(after.payText, 'imebadilika');
+});
+
 test('every complaint save is written to the audit trail', async () => {
   const db = fakeDb(tables());
   // The complaint_log table existed from the start but nothing wrote to it, so "who changed

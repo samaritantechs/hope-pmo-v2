@@ -786,7 +786,8 @@ function wireBar(){
   var cmSave = document.getElementById('cmSave');
   if (cmSave) cmSave.onclick = function(){
     srv('commissionSave', { mode: $('#cmMode').value, yearRates: $('#cmYear').value,
-      statusRates: $('#cmStatus').value, paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value })
+      statusRates: $('#cmStatus').value, paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
+      payText: ($('#cmPayText') ? $('#cmPayText').value : null) })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
@@ -1567,11 +1568,17 @@ VIEWS.commission = function(){
             + '<input id="cmPaid" type="number" min="0" step="50" value="'+(d.paidTzs||0)+'"></div>'
           + '<div class="fld"><label>TZS per OVERPAID client</label>'
             + '<input id="cmOver" type="number" min="0" step="50" value="'+(d.overTzs||0)+'"></div>'
+          + '<div class="fld" style="grid-column:1/-1"><label>Maelezo ya malipo / Payout note shown to officers</label>'
+            + '<input id="cmPayText" placeholder="mf. Kamisheni hulipwa kila tarehe 5 ya mwezi" value="'+esc(d.payText||'')+'"></div>'
           + '<button class="btn sm" id="cmSave">Hifadhi / Save &amp; recalculate</button>'
           + (noRates ? '<div class="note">Viwango vyote ni <b>0</b> — ndiyo maana Collection comm. inaonyesha 0.'
               + ' / Both flat rates are <b>0</b>, which is exactly why Collection comm. reads 0 while the'
               + ' PAID/OVERPAID counts flow. Type the amounts and press Save.</div>' : '')
           + '</div></div>' : '')
+      // The payout note. An officer looking at a commission figure asks "when do I get it?"
+      // next, and without this they ask a person instead of the screen.
+      + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
+          + esc(d.payText) + '</div>' : '')
       + board('cmDay','Leo / Today','recovery: each customer’s recovered amount × their rate · early collection: PAID/OVERPAID counts',
           d.day, CMS_COLS, sumRow(d.day, ['recovered','recComm','paid','over','colComm','total']));
     S.rows = d.week;

@@ -33,28 +33,81 @@ const tabs = [...navBlock.slice(0, navBlock.indexOf('\n];')).matchAll(/\{\s*id:'
 /* ---------- the columns each tab actually shows ----------
    Taken from the col(...) calls inside each VIEWS.<id> block. These are the column HEADINGS a
    reviewer compares against the old sheet, which is where "you left a column behind" lives. */
-function columnsFor(id) {
-  const start = APP.indexOf(`VIEWS.${id} = function`);
-  if (start < 0) return [];
-  // The next VIEWS.x assignment, or the end -- crude, and right, because they are written
-  // one after another with nothing else at that indentation between them.
-  const rest = APP.slice(start + 10);
-  const nextIdx = rest.indexOf('\nVIEWS.');
-  const body = nextIdx < 0 ? rest : rest.slice(0, nextIdx);
+/* Pull the column labels out of a piece of source, in either idiom the app uses. */
+function labelsIn(src) {
   const out = [];
-  for (const m of body.matchAll(/col\('([^']+)',\s*'([^']*)'/g)) out.push(m[2] || m[1]);
-  for (const m of body.matchAll(/\{\s*key:'([^']+)',\s*label:'([^']*)'/g)) out.push(m[2] || m[1]);
+  for (const m of src.matchAll(/col\('([^']+)',\s*'([^']*)'/g)) out.push(m[2] || m[1]);
+  for (const m of src.matchAll(/\{\s*key:'([^']+)',\s*label:'([^']*)'/g)) out.push(m[2] || m[1]);
+  return out;
+}
+/* THIS FUNCTION GOT IT WRONG ONCE, AND THE WRONGNESS TRAVELLED.
+
+   It used to read only the body of the view. But a tab whose columns are shared between two
+   places on the same screen declares them ONCE, outside the view, as a named constant --
+   `var CMS_COLS = [...]` and then `S.cols = CMS_COLS`. Reading only the body found nothing,
+   so this pack reported "Columns in the table: none" for My Commission.
+
+   That was not a harmless gap in a document. The pack went to the team who know v1, they
+   diffed it honestly, and it came back as "the whole per-officer table is missing, rebuild
+   it" -- for seven columns that had been on screen the entire time. A tool that under-reports
+   sends people to build things that already exist.
+
+   So a shared constant is now followed and read. */
+function columnsFor(id) {
+  const body = viewBody(id);
+  if (!body) return [];
+  const out = labelsIn(body);
+
+  // Follow a shared column list the view hands to S.cols, in either form it is written:
+  //     var CMS_COLS = [ ... ];              a constant
+  //     function FOLLOWUP_COLS(){ return [ ... ]; }   a builder, when a column needs a closure
+  const named = new Set();
+  for (const m of body.matchAll(/S\.cols\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*(\(\s*\))?/g)) named.add(m[1]);
+  for (const name of named) out.push(...labelsIn(sharedList(name)));
   return [...new Set(out)];
+}
+/* The source of a named column list, bounded by MATCHING BRACKETS rather than by hunting for
+   the next "];". A naive search runs past the end of a list whose last entry closes with "}]"
+   and swallows whatever comes next -- which is how one tab reported ninety-one columns. */
+function sharedList(name) {
+  for (const start of [APP.indexOf(`var ${name} = [`), APP.indexOf(`function ${name}(){`)]) {
+    if (start < 0) continue;
+    const open = APP.indexOf('[', start);
+    if (open < 0) continue;
+    let depth = 0;
+    for (let i = open; i < APP.length; i++) {
+      const ch = APP[i];
+      if (ch === '[') depth++;
+      else if (ch === ']') { depth--; if (!depth) return APP.slice(open, i + 1); }
+    }
+  }
+  return '';
 }
 
 /* ---------- the KPI cards on each tab ---------- */
 function kpisFor(id) {
-  const start = APP.indexOf(`VIEWS.${id} = function`);
-  if (start < 0) return [];
-  const rest = APP.slice(start + 10);
-  const nextIdx = rest.indexOf('\nVIEWS.');
-  const body = nextIdx < 0 ? rest : rest.slice(0, nextIdx);
+  const body = viewBody(id);
   return [...new Set([...body.matchAll(/kpi\('([^']+)'/g)].map(m => m[1]))];
+}
+/* A view's own source, bounded by MATCHING BRACES.
+
+   This used to run from `VIEWS.x = function` to the next `VIEWS.` in the file -- which quietly
+   swallowed anything declared BETWEEN two views. A shared column list sitting between
+   Assignment and Followup was read as if it belonged to Assignment, and that tab was reported
+   with eleven columns it does not have. Over-reporting is as bad as under-reporting here: one
+   sends people to build what exists, the other tells them something is fine when it is not. */
+function viewBody(id) {
+  const start = APP.indexOf(`VIEWS.${id} = function`);
+  if (start < 0) return '';
+  const open = APP.indexOf('{', start);
+  if (open < 0) return '';
+  let depth = 0;
+  for (let i = open; i < APP.length; i++) {
+    const ch = APP[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') { depth--; if (!depth) return APP.slice(open, i + 1); }
+  }
+  return APP.slice(open);
 }
 
 /* ---------- everything the server can be asked ---------- */
