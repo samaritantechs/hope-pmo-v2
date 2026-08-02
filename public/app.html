@@ -20,6 +20,15 @@
      brought up to date behind you. It replaces the old habit of wiping the page to a spinner
      on every single click -- you keep your place, and the numbers change under you when they
      are ready. Two pixels tall on purpose: it should be noticeable, not distracting. */
+  /* The print frame. Invisible on screen; on paper it is the ONLY thing, at full page width.
+     A legal document with the app's navigation printed down the side of it is not a legal
+     document anybody wants to hand to a customer. */
+  #printFrame{position:fixed;left:-10000px;top:0;width:210mm;height:297mm;border:0;visibility:hidden}
+  @media print{
+    body > *{display:none !important}
+    #printFrame{position:static;left:0;width:100%;height:auto;min-height:100vh;
+                visibility:visible;display:block !important}
+  }
   .busy{height:2px;background:transparent;overflow:hidden;flex:0 0 auto}
   .busy.on{background:var(--b100)}
   .busy.on::after{content:'';display:block;height:100%;width:40%;background:var(--b600);animation:bz 1.1s ease-in-out infinite}
@@ -1760,11 +1769,65 @@ function lgIssue(){
 }
 /* Opened as a document rather than downloaded: the officer prints it or saves it as PDF from
    the browser's own print dialog, which is what produced the letter in v1 too. */
+/* PRINTING A DOCUMENT THAT SOMEBODY SIGNS.
+
+   This opened a new window and wrote the document into it. Two problems with that, and both
+   of them end with an officer unable to produce a legal document:
+
+     - A pop-up blocker stops it, and the only clue is a small icon in the address bar.
+     - The Android app has no pop-ups at all, and no print service of its own, so from the
+       APK the button did nothing whatsoever.
+
+   Printing now happens IN THE PAGE: the document is written into a hidden frame that the
+   print stylesheet reveals and everything else hides. No new window, nothing to block, and
+   the browser's own print dialog does the rest -- including "Save as PDF", which is how these
+   end up attached to an email or a legal file.
+
+   The APK still cannot print (Android WebView needs the app to offer a print service, which
+   this one does not). Rather than a button that silently does nothing, it says so and offers
+   the document in the phone's browser, where printing works. */
+function canPrintHere(){
+  // The Android shell announces itself; a plain browser does not.
+  return !(window.HopeCalls || /HopeCalls/i.test(navigator.userAgent || ''));
+}
 function printHtml(html){
-  var w = window.open('', '_blank');
-  if (!w){ toast('Ruhusu pop-ups ili kuchapisha. / Allow pop-ups to print the notice.', true); return; }
-  w.document.open(); w.document.write(html); w.document.close();
-  setTimeout(function(){ try { w.focus(); w.print(); } catch(e){} }, 400);
+  if (!canPrintHere()){
+    // Hand it to the real browser, which can print. A blob URL keeps the document off the
+    // network -- it never leaves the phone.
+    try {
+      var url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      window.open(url, '_blank');
+      toast('Imefunguliwa kwenye kivinjari ili kuchapisha. / Opened in the browser, where you can print.');
+      return;
+    } catch(e){
+      toast('Chapisha kwenye kompyuta. / Print this from a computer.', true); return;
+    }
+  }
+  var f = document.getElementById('printFrame');
+  if (!f){
+    f = document.createElement('iframe');
+    f.id = 'printFrame';
+    f.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(f);
+  }
+  var doc = f.contentWindow.document;
+  doc.open(); doc.write(html); doc.close();
+  // Give the images -- logo, stamp, signature -- a moment to load. A contract printed without
+  // its stamp has to be printed again, and nobody notices until it is in front of a customer.
+  var go = function(){
+    try { f.contentWindow.focus(); f.contentWindow.print(); }
+    catch(e){ toast('Imeshindikana kuchapisha. / Could not open the print dialog.', true); }
+  };
+  var imgs = doc.images ? doc.images.length : 0;
+  if (!imgs) { setTimeout(go, 120); return; }
+  var done = 0, fired = false;
+  var maybe = function(){ if (++done >= imgs && !fired){ fired = true; setTimeout(go, 80); } };
+  Array.prototype.forEach.call(doc.images, function(im){
+    if (im.complete) return maybe();
+    im.onload = maybe; im.onerror = maybe;
+  });
+  // A stamp that never loads must not mean a document that never prints.
+  setTimeout(function(){ if (!fired){ fired = true; go(); } }, 2500);
 }
 
 VIEWS.abnormal = function(){
@@ -2531,13 +2594,26 @@ function rxOffer(e){
       .catch(function(err){ toast(String(err.message||err), true); });
   };
 }
+/* The contract is printed off the STORED row, not off whatever is on screen, so one printed a
+   week after approval says exactly what was approved. */
+function printContract(r){
+  srv('restructureContract', { id: r.id, ref: r.ref })
+    .then(function(c){ printHtml(c.html); })
+    .catch(function(err){ toast(String(err.message||err), true); });
+}
 function openRestructure(r){
   if (String(r.status||'').toUpperCase()!=='PENDING'){
+    var approved = String(r.status||'').toUpperCase()==='APPROVED';
     drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · '+esc(r.status)+'</div>'
       + '<div class="facts"><div class="frow"><span>Total</span><b>'+money(r.total)+'</b></div>'
       + '<div class="frow"><span>Installments</span><span>'+esc(r.installments||'')+' × '+money(r.inst_amt)+'</span></div>'
       + '<div class="frow"><span>Decided by</span><span>'+esc(r.approved_by||'')+'</span></div>'
-      + (r.reject_reason?'<div class="frow"><span>Reason</span><span>'+esc(r.reject_reason)+'</span></div>':'')+'</div>');
+      + (r.reject_reason?'<div class="frow"><span>Reason</span><span>'+esc(r.reject_reason)+'</span></div>':'')+'</div>'
+      // Only an APPROVED offer gets a contract. Printing one for a rejected request would put
+      // a signable document in front of a customer for an agreement nobody made.
+      + (approved ? '<button class="btn w" id="rxPrint" style="margin-top:10px">'
+          + '&#128424; Chapisha mkataba / Print contract</button>' : ''));
+    if (approved) $('#rxPrint').onclick = function(){ printContract(r); };
     return;
   }
   drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · REF '+esc(r.ref)+'</div>'
