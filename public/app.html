@@ -1708,6 +1708,10 @@ VIEWS.legal = function(){
     HEAD = '<div class="kpis">' + kpi('Notices issued', money(d.count))
       + kpi('Total demanded', money(d.demanded), null, 'bad')
       + kpi('Fines charged', money(d.fines), 'late-payment penalties', 'warnc')
+      // The question the register exists to answer: does serving a notice bring money back?
+      + kpi('Recovered since notice', money(d.recoveredSince),
+            money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
+            d.recoveredSince > 0 ? 'good' : '')
       + '</div>'
       + '<div class="note">Faini huanza wiki <b>2</b> baada ya rejesho la kwanza kukosekana · '
       + 'mikopo ya 2024 na kabla <b>2%</b>, baadaye <b>5%</b> kwa kila rejesho lililochelewa.'
@@ -1719,7 +1723,18 @@ VIEWS.legal = function(){
     S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
       col('ref','REF#'), col('full_name','Customer'), col('team','Team'),
       {key:'contact', label:'Contact', kind:'tel'}, col('notice_days','Days','num'),
-      col('paid_count','Paid','num'), col('arrears_at_notice','Arrears','money'),
+      col('paid_count','Paid','num'),
+      // "At notice" rather than "Arrears": the point of the next two columns is that this one
+      // is a figure from the PAST, and a heading that does not say so invites somebody to read
+      // it as what the customer owes today.
+      col('arrears_at_notice','At notice','money'),
+      col('arrears_now','Current','money'),
+      {key:'recovered_since', label:'Recovered', kind:'money',
+       cls:function(r){ return r.recovered_since > 0 ? 'good' : ''; }},
+      {key:'notice_state', label:'Status', kind:'chip', chip:function(r){
+        var k = String(r.notice_state||'');
+        return k.indexOf('Cleared')>=0 ? 'ok' : k.indexOf('Reducing')>=0 ? 'warn'
+             : k.indexOf('No movement')>=0 ? 'bad' : 'mut'; }},
       {key:'fine', label:'Fine', kind:'money', cls:function(){ return 'bad'; }},
       col('principal_remaining','Principal left','money'),
       {key:'total_demand', label:'Total demand', kind:'money', cls:function(){ return 'bad'; }},

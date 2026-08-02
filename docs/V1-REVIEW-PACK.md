@@ -96,9 +96,9 @@ or wrong. The questions are at the end.
 
 ### Legal / Demand Notices  `legal`
 
-**Cards at the top:** Notices issued · Total demanded · Fines charged
+**Cards at the top:** Notices issued · Total demanded · Fines charged · Recovered since notice
 
-**Columns in the table:** Kumb.Na. / Ref · Notice date · REF# · Customer · Team · Days · Paid · Arrears · Principal left · Issued by · Contact · Fine · Total demand
+**Columns in the table:** Kumb.Na. / Ref · Notice date · REF# · Customer · Team · Days · Paid · At notice · Current · Principal left · Issued by · Contact · Recovered · Status · Fine · Total demand
 
 ### Loan Restructuring  `restructure`
 

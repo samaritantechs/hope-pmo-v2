@@ -873,10 +873,54 @@ ol{padding-left:18px}.sig{margin-top:22px}
 <div class="bbot"></div></body></html>`;
 }
 
-async function demandNotices(db, user) {
-  const r = await listTable(db, user, 'demand_notices');
-  return { ...r, demanded: r.rows.reduce((s, x) => s + num(x.total_demand), 0),
-    fines: r.rows.reduce((s, x) => s + num(x.fine), 0) };
+/* DID THE NOTICE WORK?
+
+   The tab listed notices as issued and stopped there: what was owed when it was served, and
+   nothing after. So the one question the register exists to answer -- does serving a demand
+   notice actually bring money back -- had no figures behind it.
+
+   arrears_at_notice was already stored on every notice. What was missing was the other end of
+   the comparison: what that customer owes NOW. Put the two side by side and the difference is
+   what the notice achieved.
+
+   The "now" figure is today's current defaulter deck, the same book every other screen reads,
+   so a recovery claimed here is the same recovery the dashboard counts. A customer who has
+   left the deck entirely owes nothing on it, which is the strongest outcome a notice can have
+   and must not be read as "no data". */
+async function demandNotices(db, user, _args, nowMs = Date.now()) {
+  const [r, cur] = await Promise.all([
+    listTable(db, user, 'demand_notices'),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) },
+      { notAfter: todayKey(nowMs), teams: user.teams }),
+  ]);
+  const nowBy = {};
+  for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
+  const seen = cur.rows.length > 0;
+
+  const rows = r.rows.map(x => {
+    const at = num(x.arrears_at_notice);
+    const key = K(x.ref);
+    const known = Object.prototype.hasOwnProperty.call(nowBy, key);
+    // Off the deck = cleared. But only if there IS a deck today: with nothing uploaded, every
+    // customer would look cleared and the tab would report a triumph that never happened.
+    const current = known ? nowBy[key] : (seen ? 0 : null);
+    return { ...x,
+      arrears_now: current,
+      recovered_since: current == null ? null : Math.max(0, at - current),
+      // What a person working the notice needs to see at a glance.
+      notice_state: current == null ? 'Hakuna deki / No deck'
+        : current <= 0 ? 'Amemaliza / Cleared'
+        : current < at ? 'Amepunguza / Reducing'
+        : 'Hajalipa / No movement',
+    };
+  });
+  return { ...r, rows,
+    demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
+    fines: rows.reduce((s, x) => s + num(x.fine), 0),
+    atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
+    recoveredSince: rows.reduce((s, x) => s + num(x.recovered_since), 0),
+    cleared: rows.filter(x => x.notice_state.indexOf('Cleared') >= 0).length,
+    asOf: cur.date || null };
 }
 
 async function abnormal(db, user) { return listTable(db, user, 'abnormal_payments'); }
