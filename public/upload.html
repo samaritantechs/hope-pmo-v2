@@ -257,6 +257,10 @@ var BEHAVIOUR = {
     + 'Each upload ADDS to the report date you chose. To redo a day, choose "Replace all" — only that date is touched.',
   replaceAll:'Inabadilisha laha nzima. Ukiondoa kidokezo kwenye faili, kinatoweka kwenye app. / '
     + 'Replaces the WHOLE sheet — a tip you delete from the file disappears from the app.',
+  commentsUpdate: 'Maoni yaleyale hayarudiwi — unaweza kupakia faili la historia tena bila hofu. / '
+    + 'The SAME comment is never stored twice — a history file can be re-uploaded safely. '
+    + 'Wateja wasio kwenye orodha ya ufuatiliaji wataundiwa nafasi ili historia yao ikae mahali; hawahesabiwi kama wadaiwa. / '
+    + 'Customers not on the follow-up list get a placeholder record so their history has somewhere to live — they are not counted as defaulters.',
   logo:      'Inabadilisha nembo kila mahali mara moja. / Replaces the logo everywhere at once.',
 };
 var TYPE_BEHAVIOUR = {
@@ -270,7 +274,12 @@ var TYPE_BEHAVIOUR = {
   'loans': 'append',
   'followup': 'update', 'teams': 'update', 'access-codes': 'update', 'user-roles': 'update',
   'call-users': 'update', 'call-logs': 'update', 'settings': 'update',
-  'comments': 'append', 'received': 'append', 'abnormal': 'append',
+  /* A comment is matched on its own identity -- who it was about, when, what was said, and by
+     whom -- so a history file that went in half-way can simply be sent again. Importing years
+     of v1 comments is never one clean go, and without this the second attempt doubled every
+     comment already stored. */
+  'comments': 'commentsUpdate',
+  'received': 'append', 'abnormal': 'append',
   'complaints': 'append', 'restructures': 'append', 'demand-notices': 'append',
   'hints': 'replaceAll', 'logo': 'logo',
 };

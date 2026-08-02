@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { buildHeaderMap, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam } from './parse.js';
+import { buildHeaderMap, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -100,20 +100,76 @@ export function importFollowup(csvRows) {
   })).filter(x => x.ref);
 }
 
+/** The identity of a comment: who it was about, when it was said, and what was said. Two rows
+    agreeing on all three ARE the same comment -- there is no legitimate way to write the same
+    sentence about the same customer in the same minute twice.
+
+    This matters because importing years of history is never done in one clean go. A file is
+    uploaded, something is wrong with it, it is fixed and uploaded again -- and without an
+    identity the second attempt doubles every comment already in, with nothing on screen to say
+    so. Keyed this way the database itself collapses the repeat. */
+export function commentId(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  const hex = createHash('md5')
+    .update([t(o.ref), t(o.created_at), t(o.comment), t(o.created_by)].join('|'))
+    .digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** The v1 follow-up comment log:
+      TIMESTAMP  REF#  TEAM  FULLNAME  COMMENT  FU STATUS  PROMISE DATE  PROMISE AMT  BY
+      NEW NUMBER  DOCKET#
+
+    THE TIMESTAMP IS THE WHOLE POINT of this import, and it was the one field being thrown
+    away. A v1 export writes "6/22/2026 11:29"; dateOrNull cannot read a date with a clock
+    attached and returned null, so every row fell through to `new Date()` -- years of follow-up
+    history all stamped with the moment somebody pressed Upload. The thread on each customer
+    would have read as one instant, in file order, with every date wrong.
+
+    So: a real timestamp, clock included, in EAT. Both halves of that matter -- the clock keeps
+    the afternoon's comments in the order they were made, and reading it as EAT stops an
+    evening comment landing on the previous day.
+
+    The day/month order is inferred from the whole column rather than assumed, and applied to
+    PROMISE DATE too so one file cannot be read two ways. */
 export function importComments(csvRows) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, 'REF#')),
-    docket_no: textOrNull(col(r, h, 'DOCKET#')),
-    team: normTeam(col(r, h, 'TEAM')),
-    full_name: textOrNull(col(r, h, 'FULLNAME')),
-    comment: textOrNull(col(r, h, 'COMMENT')),
-    fu_status: textOrNull(col(r, h, 'FU STATUS')),
-    promise_date: dateOrNull(col(r, h, 'PROMISE DATE')),
-    promise_amt: num(col(r, h, 'PROMISE AMT')),
-    new_number: normPhone(col(r, h, 'NEW NUMBER')),
-    created_by: textOrNull(col(r, h, 'BY')),
-    created_at: dateOrNull(col(r, h, 'TIMESTAMP')) || new Date().toISOString(),
-  })).filter(x => x.ref);
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = inferDayFirst(objs.map(({ raw: r, h }) => col(r, h, 'TIMESTAMP')));
+  return objs.map(({ raw: r, h }) => {
+    const row = {
+      ref: textOrNull(col(r, h, 'REF#')),
+      docket_no: textOrNull(col(r, h, 'DOCKET#')),
+      team: normTeam(col(r, h, 'TEAM')),
+      full_name: textOrNull(col(r, h, 'FULLNAME')),
+      comment: textOrNull(col(r, h, 'COMMENT')),
+      fu_status: textOrNull(col(r, h, 'FU STATUS')),
+      promise_date: dateOrNull(col(r, h, 'PROMISE DATE'), dayFirst),
+      promise_amt: num(col(r, h, 'PROMISE AMT')),
+      new_number: normPhone(col(r, h, 'NEW NUMBER')),
+      created_by: textOrNull(col(r, h, 'BY')),
+      /* An unreadable stamp falls back to now, as before -- a comment with no date is still
+         worth keeping. What is NOT acceptable is a READABLE stamp being silently discarded,
+         which is what was happening to every row of a v1 export. */
+      created_at: stampOrNull(col(r, h, 'TIMESTAMP'), dayFirst) || new Date().toISOString(),
+    };
+    row.id = commentId(row);
+    return row;
+  }).filter(x => x.ref);
+}
+
+/** What importComments decided about a file, for the upload screen to report. Reading a date
+    column the wrong way round is the kind of mistake that is invisible in the result and
+    expensive later, so the file is asked rather than guessed at -- and when it cannot say, the
+    person uploading is told which way it was read. */
+export function commentsDateOrder(csvRows) {
+  const objs = rowsToObjects(csvRows);
+  const stamps = objs.map(({ raw: r, h }) => col(r, h, 'TIMESTAMP'));
+  const dayFirst = inferDayFirst(stamps);
+  const unreadable = objs.filter(({ raw: r, h }) => {
+    const v = col(r, h, 'TIMESTAMP');
+    return String(v == null ? '' : v).trim() !== '' && stampOrNull(v, dayFirst) == null;
+  }).length;
+  return { dayFirst, unreadable };
 }
 
 const LOAN_STAGE_COLUMNS = {

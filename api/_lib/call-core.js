@@ -636,6 +636,26 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     if (!byOutcome[outc]) byOutcome[outc] = { outcome: outc, calls: 0, dur: 0 };
     byOutcome[outc].calls++; byOutcome[outc].dur += dur;
   }
+  /* AN OFFICER WHO MADE NO CALLS IS THE POINT OF THIS REPORT.
+
+     Everything above is built from the call log, so somebody who never opened the app all week
+     simply did not appear -- and that is the one name a review of underperformance most needs
+     to see. A report that quietly omits its worst case is worse than no report.
+
+     So every registered officer in scope is placed on the board, at zero if that is what they
+     did. Switched-off accounts are left out: they are not expected to be calling, and listing
+     them as zeroes would bury the officers who are. */
+  for (const u of users0) {
+    const uid = String(u.user_id);
+    if (users[uid]) continue;
+    if (u.active === false) continue;
+    const team = u.team || '';
+    if (scope && !scope[K(team)] && uid !== alwaysUid) continue;
+    if (!String(u.name || '').trim()) continue;
+    users[uid] = { name: u.name, team, role: u.role || '', calls: 0, dur: 0, pf: 0, npf: 0,
+      days: {}, uniq: {}, expected: 0, defaulter: 0, connected: 0 };
+  }
+
   const CAT_ORDER = { EXPECTED: 1, DEFAULTER: 2, UNCATEGORIZED: 3, OTHER: 4 };
   const OUT_ORDER = { CONNECTED: 1, MISSED: 2, REJECTED: 3, BLOCKED: 4 };
   const totals = { calls: rows.length, duration: 0, portfolio: 0, nonPortfolio: 0 };
