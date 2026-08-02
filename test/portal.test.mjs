@@ -901,6 +901,58 @@ test('the bell merges complaints and comments, scoped to your own teams', async 
   assert.equal(later.unseen, 1);
 });
 
+/* Every other register can lose a row -- teams, roles, access codes, officer accounts, call
+   agents. Complaints could not, so one logged against the wrong customer stayed in the
+   register and in every count built off it. */
+test('a complaint can be removed, and the removal is on the record', async () => {
+  const t = tables();
+  t.complaints = [{ id: 'p1', ref: '111', team: 'KONGOWE', complainant: 'AMINA',
+    details: 'imeandikwa vibaya', status: 'Open', created_at: TODAY + 'T09:00:00Z' }];
+  const db = fakeDb(t);
+
+  const out = await portalApi(db, ADMIN, 'deleteComplaint', { id: 'p1' }, NOW);
+  assert.equal(out.deleted, true);
+  assert.equal(db._dump('complaints').length, 0);
+
+  /* THE TRAIL SURVIVES THE ROW. complaint_log cascades on delete, so a note filed against the
+     complaint would have vanished with it -- leaving a register somebody could quietly empty.
+     It is recorded with no complaint_id for exactly that reason. */
+  const log = db._dump('complaint_log');
+  const gone = log.find(x => x.action === 'DELETED');
+  assert.ok(gone, 'the deletion is on the record');
+  assert.equal(gone.complaint_id, null, 'and is not attached to the row it describes');
+  assert.equal(gone.created_by, ADMIN.name, 'named to whoever did it');
+  assert.ok(String(gone.note).includes('AMINA'), 'saying what was removed');
+
+  // Only an admin, and only within their own teams.
+  const db2 = fakeDb(t);
+  await assert.rejects(() => portalApi(db2, GMO, 'deleteComplaint', { id: 'p1' }, NOW),
+    e => e.status === 403);
+  assert.equal(db2._dump('complaints').length, 1, 'a refused delete removes nothing');
+  await assert.rejects(() => portalApi(db2, ADMIN, 'deleteComplaint', {}, NOW), e => e.status === 400);
+  await assert.rejects(() => portalApi(db2, ADMIN, 'deleteComplaint', { id: 'nope' }, NOW), e => e.status === 400);
+});
+
+/* Eight stage cards answer "where are they" and never "how many". */
+test('the pipeline says how many applications there are altogether', async () => {
+  const t = tables();
+  t.loans = [
+    { id: 'l1', team: 'KONGOWE', stage: 'approved', principal_amt: 300000, requested_amt: 350000 },
+    { id: 'l2', team: 'KONGOWE', stage: 'unassigned', requested_amt: 200000 },
+    { id: 'l3', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100000, requested_amt: 120000 },
+  ];
+  const all = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', {}, NOW);
+  assert.equal(all.total, 3);
+  assert.equal(all.requested, 670000);
+  // The per-stage cards are untouched by the addition.
+  assert.equal(all.stages.find(s => s.stage === 'approved').count, 1);
+
+  // Scoped like everything else: a leader sees their own teams' pipeline, not the company's.
+  const mine = await portalApi(fakeDb(t), GMO, 'loanPipeline', {}, NOW);
+  assert.equal(mine.total, 2);
+  assert.equal(mine.requested, 550000);
+});
+
 test('every complaint save is written to the audit trail', async () => {
   const db = fakeDb(tables());
   // The complaint_log table existed from the start but nothing wrote to it, so "who changed
