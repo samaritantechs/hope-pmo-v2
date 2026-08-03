@@ -2472,3 +2472,57 @@ test('cleaning the follow-up list is admin-only, and honours team scope', async 
   const db = fakeDb({ ...tables(), followup_status: [] });
   await assert.rejects(() => portalApi(db, GMO, 'followupClean', {}, NOW), e => e.status === 403);
 });
+
+/* CLEANING THE WORKING LIST MUST NOT MOVE A SINGLE FIGURE IN THE WEEKLY SUMMARY.
+ *
+ * Asked directly, and it is the right question: the button blanks status and arrears on
+ * followup_status, and if any report counted its defaulters from there, cleaning would quietly
+ * rewrite the week.
+ *
+ * It does not. The weekly summary counts defaulters from defaulter_snapshots -- the uploaded
+ * decks themselves, which are history and are never touched by this. followup_status is the
+ * officers' LIVE working list, a different thing with a different job. This test holds those
+ * two apart, because a future change that started reading the working list for a weekly figure
+ * would be silent, plausible, and wrong.
+ */
+test('cleaning stale defaulters changes nothing in the weekly summary', async () => {
+  const t = tables();
+  const db = fakeDb({
+    ...t,
+    followup_status: [
+      { ref: 'STALE1', team: 'KONGOWE', full_name: 'OLD ONE', status: 'Defaulter', arrears: 9000,
+        updated_at: '2026-05-01T04:00:00Z' },
+      { ref: 'STALE2', team: 'KONGOWE', full_name: 'OLD TWO', status: 'Chronic', arrears: 7000,
+        updated_at: '2026-05-01T04:00:00Z' },
+    ],
+  });
+  const before = await portalApi(db, ADMIN, 'weekly', {}, NOW);
+
+  const done = await portalApi(db, ADMIN, 'followupClean', { confirm: true }, NOW);
+  assert.equal(done.retired, 2, 'both were genuinely retired, so this is a real comparison');
+
+  const after = await portalApi(db, ADMIN, 'weekly', {}, NOW);
+  assert.deepEqual(after.rows, before.rows, 'every team row is identical');
+  assert.deepEqual(after.totals, before.totals, 'and so is every total');
+});
+
+test('promises and assignments survive a clean -- it only blanks the deck figures', async () => {
+  /* The button clears status and arrears. It does NOT touch fu_status, promise_date,
+     promise_amt or the last comment: those are what officers typed, and Promise to Pay and the
+     assignment engine are built entirely on them. */
+  const db = fakeDb({
+    ...tables(),
+    followup_status: [
+      { ref: 'P1', team: 'KONGOWE', full_name: 'PROMISED', status: 'Defaulter', arrears: 4000,
+        fu_status: 'AMETOA AHADI', promise_date: TODAY, promise_amt: 1200,
+        last_comment: 'ataleta kesho', comment_by: 'JUMA G', updated_at: '2026-05-01T04:00:00Z' },
+    ],
+  });
+  await portalApi(db, ADMIN, 'followupClean', { confirm: true }, NOW);
+  const row = db._dump('followup_status').find(r => r.ref === 'P1');
+  assert.equal(row.arrears, null);
+  assert.equal(row.status, null);
+  assert.equal(row.fu_status, 'AMETOA AHADI', 'the promise is the officer\'s work, not the deck\'s');
+  assert.equal(row.promise_amt, 1200);
+  assert.equal(row.last_comment, 'ataleta kesho');
+});

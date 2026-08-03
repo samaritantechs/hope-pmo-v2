@@ -2223,6 +2223,56 @@ yet** — close the app fully and reopen. That is the first thing to check befor
 
 ---
 
+## Part 14z — Two questions, answered from the code
+
+### "Upload stamp" means the date you chose, not the moment you clicked
+
+**Yes, that is how it works.** The date on the upload form is what gets written. The clock is
+only used if that box is left empty, and then it is the EAT day, not the server's UTC one.
+
+So a report re-done today for the 27th, uploaded with 27 July in the box, belongs to 27 July —
+and **Replace all** for that report clears 27 July, not today.
+
+Unassigned and Assigned applications work exactly this way: they carry the date you chose. Only
+**Approved** and **Disbursed** read dates out of the file instead (`APPROVED DATE`, `DISB DATE`),
+deliberately — a loan applications report pulled on the 27th is legitimately full of June
+applications, so the dates inside cannot say which report a row belongs to. The person uploading
+has to, and does.
+
+### Cleaning stale defaulters does not touch the weekly summary
+
+**It cannot.** The weekly summary counts defaulters from `defaulter_snapshots` — the uploaded
+decks themselves, which are history and are never written by that button. The working list
+(`followup_status`) is a different table with a different job: what officers are calling
+*today*.
+
+A test now holds those two apart. It builds the weekly summary, cleans two stale customers,
+builds it again, and asserts **every team row and every total is identical**. A future change
+that started counting a weekly figure from the working list would be silent, plausible and
+wrong, so it fails instead.
+
+What the button does **not** change:
+
+| Untouched | Why |
+|---|---|
+| Weekly summary | counts from the uploaded decks |
+| Promise to Pay | built on `fu_status` and `promise_date` — the officer's work |
+| Assignments | built on comments and promises |
+| Every comment ever written | never touched by anything here |
+
+What it **does** change — which is the point:
+
+- the live **Def / Exp / Chr** lists on the phones,
+- the **follow-up report** arrears figures,
+- the **officer boards** defaulter counts.
+
+All three should change: they are meant to show live defaulters, and a customer no deck has
+confirmed for a fortnight is not one.
+
+Both answers are now printed on the button itself, so nobody has to ask again before pressing it.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
