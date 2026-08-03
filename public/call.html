@@ -292,6 +292,22 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 
 <div class="toast" id="toast"></div>
 
+<!-- Ruhusu kufanya kazi chini chini. Shown by the app itself when it opens, not a banner
+     somebody has to find. The wording is the permission described as what it buys. -->
+<div class="sheet-backdrop" id="bgPrompt" style="align-items:center;justify-content:center">
+  <div class="sheet-card" style="max-width:330px;margin:0 24px;padding:22px;border-radius:16px">
+    <div style="font-size:17px;font-weight:800;line-height:1.35;margin-bottom:8px">🔋 Ruhusu comment kusave automatic</div>
+    <div style="font-size:13.5px;color:var(--mut);line-height:1.5;margin-bottom:18px">
+      Simu yako inazima HOPE Calls ikiwa nyuma. Ukiruhusu, maoni na simu zako zinahifadhika zenyewe
+      bila kusubiri. Bonyeza <b>Ruhusu</b>, kisha kwenye dirisha la simu chagua <b>Allow</b>.
+    </div>
+    <div style="display:flex;gap:10px">
+      <button type="button" class="btn btn-ghost" id="bgLater">Baadaye</button>
+      <button type="button" class="btn btn-pri" id="bgYes">Ruhusu</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheet-backdrop" id="confirmModal" style="align-items:center;justify-content:center">
   <div class="sheet-card" style="max-width:320px;margin:0 24px;padding:20px;border-radius:16px">
     <div id="confirmMsg" style="font-size:15px;font-weight:700;line-height:1.4;margin-bottom:18px"></div>
@@ -488,9 +504,64 @@ function batteryGuidanceHtml_(){
     extra = ' Kwenye Huawei/Honor: Settings \u2192 Battery \u2192 App launch \u2192 HOPE Calls \u2192 chagua "Manage manually" na washa vyote.';
   else if (mfr.indexOf('samsung') >= 0)
     extra = ' Kwenye Samsung: Settings \u2192 Battery \u2192 Background usage limits \u2192 toa HOPE Calls kwenye orodha ya "Put unused apps to sleep".';
-  if (ignoring && !extra) return '';
-  return '<div class="banner" id="battBanner">\uD83D\uDD0B Baadhi ya simu huzima programu zinapokuwa nyuma, hivyo kukatiza sync ya simu.' + extra
-    + '<div style="margin-top:8px"><button type="button" class="btn btn-pri" id="battBtn" style="width:auto;padding:8px 16px;font-size:12.5px">Ruhusu kufanya kazi chinichini</button></div></div>';
+  /* THE BUTTON IS GONE FROM HERE ON PURPOSE. Asking is now something the app DOES when it
+     opens (see askBackground_) rather than something an officer has to notice on a list and
+     decide to press -- the same way the call-log permission and the update check have always
+     worked. What is left in this banner is only the part Android has no API for: the OEM's own
+     settings screens, which no dialog can open and which have to be described by name. */
+  if (!extra) return '';
+  return '<div class="banner" id="battBanner">\uD83D\uDD0B Simu yako inaweza kuzima programu ikiwa nyuma, maoni yasihifadhike.' + extra + '</div>';
+}
+
+/* ---------------------------------------------------------------- RUHUSU KUFANYA KAZI CHINI CHINI
+ *
+ * Android stops an app that is not on screen, and on most of the handsets in the field it does
+ * so aggressively. For HOPE Calls that means a comment typed at a customer's door, and the call
+ * that goes with it, may never reach the server -- the officer did their work and the system
+ * does not know it.
+ *
+ * This was a button on a banner. A banner is something an officer has to notice on a list of
+ * customers and decide to press, and almost nobody did, so almost nobody was exempt. The
+ * call-log permission and the update check were never optional in that way: the app asks the
+ * moment it opens. This now does the same, for everybody who has not already allowed it.
+ *
+ * WHAT IT SAYS MATTERS AS MUCH AS WHEN. "Allow background activity" means nothing at a
+ * customer's door. "Ruhusu comment kusave automatic" is the same permission described as the
+ * thing it actually buys, which is the difference between being read and being dismissed.
+ *
+ * ASKED AT MOST ONCE A DAY. Android's own dialog is the second step, so a refusal costs two
+ * taps and re-asking every few minutes would train people to refuse. Once a day, until it is
+ * allowed, then never again -- the check is the granted state itself, not a flag we set, so an
+ * officer who allows it and later has it revoked by a battery-saver sweep is asked again.
+ */
+var BG_ASK_LS_KEY = 'hcBgAsk_v1';
+function backgroundBlocked_(){
+  var nb = nativeBridge();
+  if (!nb || !nb.isIgnoringBatteryOptimizations || !nb.requestIgnoreBatteryOptimizations) return false;
+  try { return nb.isIgnoringBatteryOptimizations() !== '1'; } catch(e){ return false; }
+}
+function askBackground_(force){
+  if (!backgroundBlocked_()) return;
+  if (!force) {
+    var last = '';
+    try { last = localStorage.getItem(BG_ASK_LS_KEY) || ''; } catch(e){}
+    if (last === todayKeyLocal_()) return;                 // already asked today
+  }
+  try { localStorage.setItem(BG_ASK_LS_KEY, todayKeyLocal_()); } catch(e){}
+  $('#bgPrompt').style.display = 'flex';
+}
+function wireBackgroundPrompt_(){
+  var close = function(){ $('#bgPrompt').style.display = 'none'; };
+  $('#bgYes').onclick = function(){
+    close();
+    var nb = nativeBridge();
+    if (nb && nb.requestIgnoreBatteryOptimizations) { try { nb.requestIgnoreBatteryOptimizations(); } catch(e){} }
+    /* Android's dialog takes the officer off this page. When they come back, redraw -- if they
+       allowed it the OEM banner may no longer apply, and if they did not, nothing nags. */
+    setTimeout(function(){ if (S.entered) drawList(); }, 1200);
+  };
+  $('#bgLater').onclick = close;
+  $('#bgPrompt').onclick = function(e){ if (e.target === $('#bgPrompt')) close(); };
 }
 
 /* ================= boot / register ================= */
@@ -614,6 +685,7 @@ function doLogout(){
   try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); } catch(e){}
   sheetHide();
   $('#confirmModal').style.display = 'none';
+  $('#bgPrompt').style.display = 'none';
   var q = $('#listQ'); if (q) q.value = '';
   $('#regPhone').value = ''; $('#regCode').value = ''; $('#regPass').value = ''; $('#regName').value = '';
   regRole = 'officer';
@@ -714,6 +786,10 @@ function enterApp(d){
      the instant the app is -- including on the cheap handsets Android throws away after every
      call. Then ask for fresh figures over the top. */
   restoreSummary_();
+  /* Ask for background permission the way the app asks for everything else -- on its own, when
+     it opens. Behind the first draw so the officer sees their customers underneath it and knows
+     what the app is, rather than being met by a dialog on a blank screen. */
+  setTimeout(function(){ if (S.entered) askBackground_(false); }, 900);
   startSyncLoop();
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
@@ -1124,7 +1200,6 @@ function drawList(){
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
     + staleNote_()
     + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>';
-  if ($('#battBtn')) $('#battBtn').onclick = function(){ var nb2 = nativeBridge(); if (nb2 && nb2.requestIgnoreBatteryOptimizations) nb2.requestIgnoreBatteryOptimizations(); };
   $all('.crow').forEach(function(row){
     row.addEventListener('click', function(e){
       if (e.target.closest('.callbtn')) return;
@@ -1315,6 +1390,9 @@ $('#bootRetry').onclick = function(){
   var spin = $('#bootSpin'); if (spin) spin.classList.remove('hide');
   boot();
 };
+/* Bound at page load, not inside whichever screen happens to open first. Binding a dialog's own
+   close buttons somewhere else is exactly how the bell once opened with no way out of it. */
+wireBackgroundPrompt_();
 boot();
 </script>
 <script>window.HOPE_NO_BRAND_FETCH = true;</script>
