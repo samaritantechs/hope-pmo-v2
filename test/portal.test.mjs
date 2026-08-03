@@ -1462,7 +1462,9 @@ test('uploading the current deck rebuilds the officers working list', async () =
       ds: '1/6', dc: 1, days_elapsed: 120, other_inst: 30000, arrears: 1500 },
   ];
   const n = await syncFollowupFromDeck(db, deck, 'MON', 'new');
-  assert.equal(n, 2);
+  assert.equal(n.synced, 2);
+  assert.equal(n.retired, 1, 'GONE left the deck');
+  assert.equal(n.staleCapped, 0);
 
   const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
   // Deck figures refresh...
@@ -2351,4 +2353,80 @@ test('a database without the column still works, and still retires by weekday', 
   assert.equal(by.MON1.arrears, 800, 'the upload still lands');
   assert.equal(by.MONGONE.arrears, null, 'and the weekday rule still retires the one who left');
   assert.equal('deck_date' in by.MON1, false, 'nothing tries to write a column that is not there');
+});
+
+/* MATESO STEPHAN FELISI: ON KESHO WITH D.S 9-10 AND ON DEF WITH D.S 8-9.
+ *
+ * Being on both lists is right -- they answer different questions. Two different D.S values is
+ * not: it means the Def row came from an older deck than the Kesho row, and that customer is
+ * not in the current defaulter file at all.
+ *
+ * The first version of the fix retired a row whose deck_date was older than a fortnight, and
+ * deliberately left rows with NO deck_date alone -- reasoning that they predate the column and
+ * retiring them on a stamp they never had would empty the list.
+ *
+ * Which is exactly backwards for the row being complained about. It predates the column. It has
+ * no stamp, it will never get one (nothing is uploading its weekday's deck), so under that rule
+ * it could sit on the working list for ever. The fix cleared nothing.
+ *
+ * updated_at is the fallback: not null, and moved by any deck confirming the row or any officer
+ * commenting on it. Untouched for a fortnight IS unconfirmed for a fortnight.
+ */
+test('a customer nobody has confirmed for a fortnight is retired even with no deck stamp', async () => {
+  const { syncFollowupFromDeck } = await import('../api/upload.js');
+  const old = '2026-06-20T04:00:00Z';                 // over a month before the deck below
+  const db = fakeDb({
+    followup_status: [
+      { ref: 'MATESO', team: 'KONGOWE', full_name: 'MATESO STEPHAN FELISI', arrears: 8500,
+        status: 'Defaulter', ds: '8-9', last_comment: 'aliahidi', updated_at: old },
+      { ref: 'FRESH', team: 'KONGOWE', full_name: 'STILL WORKED', arrears: 400,
+        status: 'Defaulter', updated_at: '2026-07-24T04:00:00Z' },
+    ],
+    defaulter_snapshots: [],
+  });
+  // A Monday deck that does not mention either of them. Nothing has ever been uploaded for
+  // MATESO's own weekday, which is the whole point -- the per-weekday rule cannot reach them.
+  const out = await syncFollowupFromDeck(db,
+    [{ ref: 'D9', team: 'KONGOWE', full_name: 'ON THE DECK', arrears: 100 }],
+    'MON', 'b-new', '2026-07-27');
+
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.MATESO.arrears, null, 'the stale row stops looking like a live defaulter');
+  assert.equal(by.MATESO.status, null);
+  assert.equal(by.MATESO.last_comment, 'aliahidi', 'and keeps every word of their history');
+  assert.equal(by.FRESH.arrears, 400, 'somebody confirmed this month is left alone');
+  assert.equal(out.retired, 1);
+  assert.equal(out.staleCapped, 0);
+});
+
+test('a deck stamp still wins over updated_at when it is there', async () => {
+  const { syncFollowupFromDeck } = await import('../api/upload.js');
+  const db = fakeDb({
+    /* Confirmed by a deck two days ago, but the row has not been WRITTEN since June. Reading
+       updated_at alone would retire somebody a deck confirmed this week. */
+    followup_status: [
+      { ref: 'RECENT', team: 'KONGOWE', arrears: 700, status: 'Defaulter',
+        deck_date: '2026-07-25', updated_at: '2026-06-01T04:00:00Z' },
+    ],
+    defaulter_snapshots: [],
+  });
+  await syncFollowupFromDeck(db, [{ ref: 'D9', team: 'KONGOWE', arrears: 100 }], 'MON', 'b', '2026-07-27');
+  const row = db._dump('followup_status').find(r => r.ref === 'RECENT');
+  assert.equal(row.arrears, 700, 'a deck confirmed them two days ago -- they stay');
+});
+
+test('the working list is never gutted in one upload, and the upload says so', async () => {
+  /* Retiring is not deleting, and the next deck brings anybody back -- but this is the list two
+     hundred people work from. If most of it looks stale, that is a real problem to read about,
+     not one to action quietly. */
+  const { syncFollowupFromDeck } = await import('../api/upload.js');
+  const old = '2026-05-01T04:00:00Z';
+  const rows = [];
+  for (let i = 0; i < 200; i++) rows.push({ ref: 'S' + i, team: 'KONGOWE', arrears: 500, status: 'Defaulter', updated_at: old });
+  const db = fakeDb({ followup_status: rows, defaulter_snapshots: [] });
+
+  const out = await syncFollowupFromDeck(db, [{ ref: 'D9', team: 'KONGOWE', arrears: 100 }], 'MON', 'b', '2026-07-27');
+  assert.equal(out.retired, 0, 'nobody retired');
+  assert.equal(out.staleCapped, 200, 'and the number is reported so it can be acted on');
+  assert.equal(db._dump('followup_status').find(r => r.ref === 'S0').arrears, 500);
 });

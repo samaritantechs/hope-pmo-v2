@@ -102,6 +102,11 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 .daystrip .ds-dot{color:rgba(255,255,255,.35)}
 /* Figures kept from an earlier day. Still shown -- they are the last true thing this officer
    was told -- but visibly not today's, and the tag says "Jana". */
+.daystrip{cursor:pointer}
+/* A refresh that moves no figure is still a refresh. Without this, an officer who taps to
+   check has no way to know the tap did anything. */
+@keyframes dsLit{0%{background:rgba(255,255,255,.20)}100%{background:transparent}}
+.daystrip.lit{animation:dsLit .7s ease-out;border-radius:8px}
 .daystrip.stale{opacity:.62}
 .daystrip.stale .ds-tag{background:rgba(255,255,255,.06)}
 
@@ -793,9 +798,17 @@ function enterApp(d){
   startSyncLoop();
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
+  /* AND TAPPING THE FIGURES REFRESHES THEM. The one thing an officer can do when they doubt a
+     number is ask for it again, and there was no way to. */
+  $('#dayStrip').onclick = function(){ loadDaySummary(true); };
   document.addEventListener('visibilitychange', function(){
     if (document.hidden || !S.boot) return;
-    loadDaySummary(false);   // throttled refresh on foreground return
+    /* ASK THE CHEAP QUESTION, NOT THE THROTTLED ONE. This used to call loadDaySummary(false),
+       which does nothing for a quarter of an hour after the last refresh -- so an officer who
+       put the phone down, waited for an upload and came back saw the same figures and had no
+       way to tell whether anything had happened. The version ping is two lookups by key and
+       fetches new figures only if something really was uploaded. */
+    versionPing_();
     bellRefresh();           // and the count, at the moment the officer is looking again
   });
 }
@@ -848,11 +861,20 @@ function restoreSummary_(){
     $('#dayStrip').classList.remove('hide');       // dashes, but present -- never a missing strip
     return;
   }
-  drawSummary_(saved.d, saved.day !== todayKeyLocal_());
+  drawSummary_(saved.d, saved.day !== todayKeyLocal_(), saved.at);
   _sumVer = saved.d.dataVersion || null;
 }
-function drawSummary_(d, stale){
-  $('#dsTag').textContent = (d.period === 'week') ? 'Wiki' : 'Leo';
+/** HH:MM on the officer's own clock. */
+function hhmm_(ms){
+  var t = new Date(ms), p = function(n){ return ('0' + n).slice(-2); };
+  return p(t.getHours()) + ':' + p(t.getMinutes());
+}
+function drawSummary_(d, stale, atMs){
+  /* THE TAG SAYS WHEN. "I don't know if it even does" is a fair thing to say about a row of
+     percentages that never visibly changes -- most uploads move none of them by a whole point,
+     so there is nothing on screen to tell an officer the app is keeping up. A clock beside the
+     figures answers it without them having to trust anything. */
+  $('#dsTag').textContent = ((d.period === 'week') ? 'Wiki' : 'Leo') + (atMs ? ' ' + hhmm_(atMs) : '');
   $('#dsCol').textContent = pctW_(d.col && d.col.pct);
   // Early collection is judged on TOMORROW's list, so it sits right beside today's Col.
   $('#dsKesho').textContent = pctW_(d.kesho && d.kesho.pct);
@@ -868,7 +890,7 @@ function drawSummary_(d, stale){
   /* Figures kept from another day are still shown -- they are the last true thing the officer
      was told -- but never as today's. The tag is the only honest place to say so. */
   $('#dayStrip').classList.toggle('stale', !!stale);
-  if (stale) $('#dsTag').textContent = 'Jana';
+  if (stale) $('#dsTag').textContent = 'Jana' + (atMs ? ' ' + hhmm_(atMs) : '');
   $('#dayStrip').classList.remove('hide');
 }
 // Which DAY each list actually came from. An officer working yesterday's customers while the
@@ -889,8 +911,11 @@ function loadDaySummary(force){
     _sumAt = Date.now();
     _sumVer = d.dataVersion || null;
     // Sat/Sun the server returns week-to-date; drawSummary_ reads d.period for the tag.
-    drawSummary_(d, false);
+    drawSummary_(d, false, _sumAt);
     saveSummary_(d, _sumAt);
+    // A brief flash, so a refresh that moves no figure is still visibly a refresh.
+    var el = $('#dayStrip');
+    el.classList.remove('lit'); void el.offsetWidth; el.classList.add('lit');
   }).catch(function(){
     /* NEVER TAKE THE STRIP AWAY. A failed request means the network is bad, not that the team
        has no figures -- and blanking the header is how it came to feel like something that

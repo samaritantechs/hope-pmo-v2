@@ -471,9 +471,10 @@ export default withApi(async (req, res) => {
     }
   }
 
-  let followupSynced = 0;
+  let followupSynced = 0, followupRetired = 0, followupStaleCapped = 0;
   if (type === 'defaulters-current') {
-    followupSynced = await syncFollowupFromDeck(supabase, records, meta.weekday, uploadBatch, meta.date);
+    const fu = await syncFollowupFromDeck(supabase, records, meta.weekday, uploadBatch, meta.date);
+    followupSynced = fu.synced; followupRetired = fu.retired; followupStaleCapped = fu.staleCapped;
   }
 
   // "Inserted 412" says nothing about whether a second upload of the same file doubles the
@@ -506,7 +507,7 @@ export default withApi(async (req, res) => {
 
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
-    followupSynced, behaviour, sameAsToday,
+    followupSynced, followupRetired: followupRetired || undefined, behaviour, sameAsToday,
     stubbed: stubbed || undefined,
     collapsed: collapsed || undefined,
     /* Reading a date column the wrong way round moves history by up to eleven months and looks
@@ -519,6 +520,8 @@ export default withApi(async (req, res) => {
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
+      followupRetired ? `${followupRetired} customer(s) no deck has confirmed were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
+      followupStaleCapped ? `NOTE: ${followupStaleCapped} customers on the follow-up list have not been confirmed by any deck for over ${FU_STALE_DAYS} days -- too many to retire in one go, so none were. That usually means some weekdays' current-defaulter decks have stopped being uploaded. Upload those decks, or clear the old rows under Settings -> storage (Follow-up list, by date).` : '',
     ].filter(Boolean).join(' ') || undefined
   };
 });
@@ -560,6 +563,9 @@ async function prevWeekdayDeck(db, weekday, excludeBatch) {
 /** How long a customer may sit on the working list without a deck confirming them.
     A weekday's deck should come round every seven days, so a fortnight is forgiving. */
 const FU_STALE_DAYS = 14;
+/** The most of the working list one upload may retire on age alone, as a fraction. Above this
+    it retires nobody and reports the number instead -- see the brake in syncFollowupFromDeck. */
+const FU_RETIRE_CAP = 0.35;
 
 export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, deckDate) {
   const refs = records.map(r => String(r.ref)).filter(Boolean);
@@ -570,12 +576,16 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, de
   let stamped = true;
   let existing = null;
   {
+    /* updated_at is read for the retirement clock below, NOT for the merge -- a row with no
+       deck stamp has only this to say when anything last confirmed it. Leaving it out of the
+       select is not a missing field: the column simply is not there to read, so every row
+       looked freshly confirmed and nothing was ever retired. */
     const withDeck = await db.from('followup_status')
-      .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, deck_date');
+      .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, updated_at, deck_date');
     if (withDeck.error) {
       stamped = false;
       const plain = await db.from('followup_status')
-        .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at');
+        .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, updated_at');
       if (plain.error) throw new Error(plain.error.message);
       existing = plain.data;
     } else existing = withDeck.data;
@@ -619,18 +629,35 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, de
   /* AND THE ONES NOBODY HAS RE-CONFIRMED AT ALL.
      The per-weekday rule above only retires somebody whose own weekday deck came round and
      left them out. If that weekday's deck simply stops being uploaded -- the customer left the
-     book, the file was renamed, whatever -- they sit on the officers' list for ever. That is
-     the "showing on Def with an eight-day-old D.S when they are not in the current file"
-     report from the field.
+     book, the file was renamed, whoever sends it went on leave -- they sit on the officers'
+     list for ever. That is the "showing on Def with an eight-day-old D.S when they are not in
+     the current file at all" report from the field.
 
-     A row STAMPED longer ago than a fortnight is retired. Rows with no stamp at all are left
-     alone: they predate the column or are placeholders holding somebody's comment history, and
-     retiring those on the strength of a stamp they never had would empty the list. */
-  const cutoff = stamped && deckDate ? addDays_(deckDate, -FU_STALE_DAYS) : null;
-  const staleRefs = !cutoff ? [] : (existing || [])
-    .filter(r => r.deck_date && String(r.deck_date).slice(0, 10) < cutoff)
+     WHEN DID ANYTHING LAST CONFIRM THIS ROW? deck_date answers it exactly, and is the answer to
+     use when it is there. But it arrived in a migration, so EVERY row that existed before that
+     migration has none -- and the first version of this rule skipped unstamped rows, which
+     meant precisely the rows the report was about could never be retired. It cleared nothing.
+
+     updated_at is the honest fallback: it is not null, and it moves whenever a deck confirms
+     the row or an officer comments on it. A row with no stamp that nothing has touched for a
+     fortnight has not been confirmed for a fortnight, whatever the reason. */
+  const confirmedOn = r => String(r.deck_date || r.updated_at || '').slice(0, 10);
+  const cutoff = deckDate ? addDays_(deckDate, -FU_STALE_DAYS) : null;
+  let staleRefs = !cutoff ? [] : (existing || [])
+    .filter(r => { const d = confirmedOn(r); return d && d < cutoff; })
     .map(r => String(r.ref).trim().toUpperCase())
-    .filter(k => !inDeck.has(k));
+    .filter(k => !inDeck.has(k) && !leftThisWeekday.has(k));
+
+  /* A BRAKE, BECAUSE THIS IS THE OFFICERS' WORKING LIST.
+     Retiring is not deleting -- it blanks the deck figures and keeps every comment, and the
+     next deck that names the customer brings them straight back. It is still the list two
+     hundred people work from, and a rule that can empty most of it in one upload because a few
+     weekdays' decks fell behind is not a rule anybody should have to trust silently.
+     Above the cap, nothing is retired on age and the upload SAYS SO, with the number. A large
+     stale set is a real problem worth reading about, not one to action quietly. */
+  const staleCapped = staleRefs.length > Math.max(50, Math.floor((existing || []).length * FU_RETIRE_CAP))
+    ? staleRefs.length : 0;
+  if (staleCapped) staleRefs = [];
 
   const retire = new Set([...leftThisWeekday, ...staleRefs]);
   const gone = (existing || [])
@@ -644,5 +671,5 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, de
     const { error } = await db.from('followup_status').upsert(batch, { onConflict: 'ref' });
     if (error) throw new Error(error.message);
   }
-  return rows.length;
+  return { synced: rows.length, retired: gone.length, staleCapped };
 }
