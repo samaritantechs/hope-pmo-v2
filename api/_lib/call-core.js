@@ -6,6 +6,7 @@ import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
+import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 
 /** The HOPE Calls backend, ported from the api_call* family in the live Code.gs -- same
     endpoints, same shapes, so call.html works against either system. Differences are all
@@ -973,6 +974,25 @@ async function teamCode(db, [code]) {
   return hit ? { ok: true, team: hit.team } : { ok: false };
 }
 
+/* THE BELL, FOR THE FIELD. Same updates as the portal's -- complaints logged at the desk and
+   follow-up comments -- scoped to the teams this handset may see, through the SAME
+   implementation. An officer had no way to learn that a complaint had been raised against a
+   customer on their round except by being telephoned about it.
+
+   "Read up to here" is remembered against the handset's own user id, so an officer marking
+   theirs read does not mark anybody else's. */
+async function callNotifications(db, [dev]) {
+  const cu = await userByDeviceSoft(db, dev);
+  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  const d = await notifCore(db, pseudoUser(cu), notifKeyFor(cu.user_id));
+  return { ok: true, ...d };
+}
+async function callNotifSeen(db, [dev], nowMs) {
+  const cu = await userByDeviceSoft(db, dev);
+  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  return { ok: true, ...(await notifSeenCore(db, notifKeyFor(cu.user_id), nowMs)) };
+}
+
 const HANDLERS = {
   api_brand: brand,
   api_teamCode: teamCode,
@@ -987,6 +1007,8 @@ const HANDLERS = {
   api_callComments: comments,
   api_callAddComment: addComment,
   api_callReport: report,
+  api_callNotifications: callNotifications,
+  api_callNotifSeen: callNotifSeen,
 };
 export async function callApi(db, fn, args, nowMs = Date.now()) {
   const h = HANDLERS[fn];

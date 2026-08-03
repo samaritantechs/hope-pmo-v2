@@ -5,13 +5,13 @@
 <title>HOPE Calls</title>
 <style>
 :root{
-  --b950:#081C4A; --b900:#0B2A6B; --b800:#10357F; --b700:#1D4ED8; --b600:#2563EB;
-  --b500:#3B82F6; --b300:#93C5FD; --b100:#DBEAFE; --b50:#EFF6FF;
+  --b950:#14113F; --b900:#1D1873; --b800:#2A22A8; --b700:#3B30E6; --b600:#5B52EC;
+  --b500:#7C74F1; --b300:#B6B1F8; --b100:#E2E0FD; --b50:#F3F2FE;
   --bg:#F6F8FC; --card:#FFFFFF; --ink:#0F172A; --mut:#64748B; --soft:#94A3B8; --line:#E2E8F0;
   --ok:#067647; --okbg:#E7F6EE; --okline:#CFEADD;
   --warn:#92400E; --warnbg:#FEF3DC; --warnline:#F6E3BC;
   --bad:#B42318; --badbg:#FDECEA; --badline:#F6CFCB;
-  --rad:14px; --shadow:0 2px 10px -4px rgba(11,42,107,.18);
+  --rad:14px; --shadow:0 2px 10px -4px rgba(29,24,115,.18);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);height:100%;
@@ -76,11 +76,21 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 .swapBtn{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);
   border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;text-decoration:none;
   display:flex;align-items:center;justify-content:center}
+.bellBtn{position:relative;flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);
+  border:0;color:#fff;font-size:15px;line-height:1;cursor:pointer}
+/* The dot is the whole point: it has to be visible at arm's length, on a bright phone, outdoors. */
+.bellBtn .bdot{position:absolute;top:2px;right:2px;min-width:15px;height:15px;padding:0 3px;border-radius:999px;
+  background:var(--bad);color:#fff;font-size:9.5px;font-weight:800;line-height:15px;text-align:center}
+.notifItem{padding:10px 0;border-bottom:1px solid var(--line)}
+.notifItem.new{background:var(--b50);margin:0 -14px;padding-left:14px;padding-right:14px}
+.notifItem .nwho{font-weight:700;font-size:13.5px}
+.notifItem .nwhat{font-size:12.5px;color:var(--ink);margin-top:2px}
+.notifItem .nmeta{font-size:11px;color:var(--mut);margin-top:3px}
 .logoutBtn{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.1);
   border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;
   display:flex;align-items:center;justify-content:center;padding:0}
 .tabs{display:flex;gap:4px;margin-top:12px;overflow-x:auto}
-.tabs button{flex:1;background:rgba(255,255,255,.08);color:#cfe0ff;border:0;padding:9px 4px;border-radius:9px;
+.tabs button{flex:1;background:rgba(255,255,255,.08);color:#D8D5FB;border:0;padding:9px 4px;border-radius:9px;
   font-size:12.5px;font-weight:700;white-space:nowrap}
 .tabs button.on{background:#fff;color:var(--b800)}
 /* Five figures on a phone: wrap freely, but never break a label away from its number. */
@@ -169,7 +179,7 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
   .expdfstrip.shut{padding:6px 12px}
   .expdfstrip .xscope{flex-basis:100%;display:flex;gap:6px;margin-bottom:2px}
   .expdfstrip .xscope button{flex:1;padding:5px 8px;border:1px solid var(--line);background:transparent;color:var(--mut);border-radius:8px;font-size:11.5px;font-weight:700}
-  .expdfstrip .xscope button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
+  .expdfstrip .xscope button.on{background:var(--b600,#5B52EC);border-color:var(--b600,#5B52EC);color:#fff}
   .expdfstrip .xcyc span{font-size:10.5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
 </style>
 </head>
@@ -232,6 +242,10 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       </span><img class="logo hide" id="appLogo" alt="Menu"></a>
       <div class="who"><b id="appName">&#x2014;</b><span id="appTeam">&#x2014;</span></div>
       <span class="pill" id="syncPill" title="Sync status &#x2014; gusa kusawazisha / tap to sync"><span class="dot"></span></span>
+      <!-- The bell. An officer had no way to learn that a complaint had been raised against a
+           customer on their round, or that a colleague had left a note, except by being
+           telephoned about it. Same updates the portal shows, scoped to this handset's teams. -->
+      <button type="button" class="bellBtn" id="bellBtn" title="Taarifa / Updates">&#128276;<span class="bdot hide" id="bellDot"></span></button>
       <!-- Swap into the portal. Sits right after the sync pill so the two "mode" controls are
            together, and before logout so it is never mistaken for one. -->
       <a class="swapBtn hide" id="swapBtn" href="/dashboard" title="Nenda kwenye mfumo / Switch to the system">&#128260;</a>
@@ -672,12 +686,18 @@ function enterApp(d){
   $('#logoutBtn').onclick = function(){
     showConfirm_('Toka kwenye akaunti hii? / Log out of this account?', doLogout);
   };
+  $('#bellBtn').onclick = bellOpen;
+  bellRefresh();
   $all('#tabs button').forEach(function(b){ b.onclick = function(){ exitSearch_(); setView(b.getAttribute('data-v')); }; });
   setView('today');
   startSyncLoop();
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
-  document.addEventListener('visibilitychange', function(){ if (!document.hidden && S.boot) loadDaySummary(false); });   // throttled refresh on foreground return
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden || !S.boot) return;
+    loadDaySummary(false);   // throttled refresh on foreground return
+    bellRefresh();           // and the count, at the moment the officer is looking again
+  });
 }
 /** Top-of-app team % strip -- Col leo / Kesho / Col wiki / Sales (month-to-date) / Exp.Def / Rec
     for the officer's own team(s). Numbers come
@@ -925,6 +945,47 @@ function isIOS_(){
    is what anybody would expect. Two property reads and a scroll; nothing is fetched and nothing
    is computed, so this cannot make the app heavy. */
 var LAST_DRAW = null;
+/* ---------------------------------------------------------------- the bell */
+/* Counted quietly on entry and again whenever the app comes back to the foreground -- the same
+   moment the list already syncs, so this adds no new habit of waking the network. The number
+   is what matters: the list itself is only fetched when somebody actually taps. */
+function bellRefresh(){
+  srv('api_callNotifications', DEV).then(function(d){
+    if (!d || d.ok === false) return;
+    S.notif = d;
+    var dot = $('#bellDot');
+    dot.classList.toggle('hide', !d.unseen);
+    dot.textContent = d.unseen > 9 ? '9+' : String(d.unseen || '');
+  }).catch(function(){ /* a bell that cannot count is not worth an error on somebody's screen */ });
+}
+function bellOpen(){
+  var d = S.notif;
+  $('#sheetBody').innerHTML = '<h3 style="margin:0 0 2px">Taarifa / Updates</h3>'
+    + '<div style="font-size:12px;color:var(--mut);margin-bottom:10px">'
+    + 'Malalamiko na maoni ya timu zako / complaints and comments on your teams</div>'
+    + (!d ? '<div class="center" style="padding:30px 0"><div class="sk"></div></div>'
+      : !d.items.length ? '<div class="empty"><b>Hakuna taarifa mpya.</b>Nothing new yet.</div>'
+      : d.items.map(function(x){
+          return '<div class="notifItem' + (x.unseen ? ' new' : '') + '">'
+            + '<div class="nwho">' + (x.kind === 'complaint' ? '\u26A0 ' : '\uD83D\uDCAC ')
+              + esc(x.who || x.ref || '') + '</div>'
+            + '<div class="nwhat">' + esc(x.what) + '</div>'
+            + '<div class="nmeta">' + esc(x.by || '') + (x.team ? ' \u00B7 ' + esc(x.team) : '')
+              + ' \u00B7 ' + esc(String(x.at).slice(0, 16).replace('T', ' ')) + '</div></div>'; }).join(''))
+    + (d && d.unseen ? '<button class="btn btn-pri" id="notifSeen" style="width:100%;margin-top:12px">'
+        + 'Nimesoma zote / Mark all read</button>' : '');
+  $('#sheet').style.display = 'flex';
+  var b = $('#notifSeen');
+  if (b) b.onclick = function(){
+    b.disabled = true;
+    srv('api_callNotifSeen', DEV).then(function(){
+      $('#sheet').style.display = 'none';
+      bellRefresh();
+    }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
+  };
+  if (!d) bellRefresh();
+}
+
 function drawList(){
   var body = $('#body');
   var drawKey = S.view + '|' + S.q;

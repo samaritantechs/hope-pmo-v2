@@ -695,3 +695,33 @@ test('"Amepigiwa leo" ticks for a call by ANYBODY, not just the officer looking'
   assert.equal(list2.rows.find(r => r.ref === '111').called, false,
     'three seconds is a dial attempt, not a conversation — by anyone');
 });
+
+
+test('the bell reaches the field, scoped to the handset\'s own teams', async () => {
+  /* An officer had no way to learn that a complaint had been raised against a customer on
+     their round except by being telephoned about it. Same updates the portal shows, through
+     the same implementation, so the office and the field can never see different lists. */
+  const db = await registeredDb();
+  db.from('complaints');          // the fake makes a table on first touch
+  db._dump('complaints').push({ id: 'k9', team: 'KONGOWE', complainant: 'MAMA A',
+    details: 'hakupata risiti', created_at: '2026-07-24T05:00:00Z', created_by: 'DESK' });
+  db._dump('complaints').push({ id: 'k8', team: 'MBAGALA', complainant: 'OTHER TEAM',
+    details: 'not mine', created_at: '2026-07-24T06:00:00Z', created_by: 'DESK' });
+
+  const d = await callApi(db, 'api_callNotifications', ['d1'], NOW);
+  assert.equal(d.ok, true);
+  const blob = JSON.stringify(d.items);
+  assert.match(blob, /hakupata risiti/);
+  assert.doesNotMatch(blob, /not mine/, 'another team\'s complaint is not this officer\'s news');
+  assert.ok(d.unseen > 0, 'nothing read yet means everything is unread');
+
+  // Marking read is per HANDSET: one officer clearing theirs must not clear anybody else's.
+  const seen = await callApi(db, 'api_callNotifSeen', ['d1'], NOW + 1000);
+  assert.ok(seen.seenAt);
+  assert.equal((await callApi(db, 'api_callNotifications', ['d1'], NOW)).unseen, 0);
+  assert.ok((await callApi(db, 'api_callNotifications', ['d2'], NOW)).unseen > 0,
+    'the leader on another handset has still read nothing');
+
+  // An unregistered phone is told so rather than handed the company's updates.
+  assert.equal((await callApi(db, 'api_callNotifications', ['nope'], NOW)).error, 'DEVICE_NOT_REGISTERED');
+});

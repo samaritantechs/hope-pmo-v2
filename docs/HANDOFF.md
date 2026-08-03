@@ -1687,6 +1687,68 @@ of a hundred is **fifty** per cent of two hundred, not a hundred.
 
 ---
 
+## Part 14k — Totals that were missing, a blue that was too hard, and a bell for the field
+
+### The totals were missing from the biggest table of all
+
+Card boards got grand totals and so did every slide, but the **main list** — the largest table
+on every tab, and the one the commission week is read from — did not. That is what "the
+commission totals aren't adding" meant.
+
+It has one now, worked out by the same rule as everywhere else, so the figure at the bottom of
+a card and the figure at the bottom of the list can never disagree.
+
+It totals **what is on screen**. Filter to one team and the total is that team's — the only
+reading that makes sense under a filter, and a total that ignored the filter would be read as
+the filtered one by everybody anyway.
+
+### The blue
+
+The system's blue and the app's logo blue were two different colours: the logo is an indigo
+(`#3B30E6`), the system was a near-black navy laid down a 225-pixel sidebar, which is what made
+it read as hard. **The whole ramp now sits on the logo's colour** — `--b700` *is* the logo — and
+every screen shares it: the portal, the app, the launcher, the customer screen, the upload page,
+the printed exports and the emailed report.
+
+### The presentation follows the theme
+
+It was a fixed dark navy whatever the rest of the system was set to, so somebody working in
+light mode got a black screen thrown at the projector — and a bright meeting room is exactly
+where a light deck reads better. Every colour on the deck is now a variable that flips with the
+theme toggle.
+
+### Team performance
+
+Ranked on the **average of sales and collection**, best first, because a team that sells well
+and collects badly is not a good team and neither is the reverse. Numbered after ranking.
+
+| Column | Meaning |
+|---|---|
+| Monthly sales | Approved this calendar month. The month is the period a sales target is set over. |
+| Total def · No. of def | Current arrears and the headcount behind them |
+| Uncollected · Collection % | **Today** Monday to Friday, **the whole week** at the weekend |
+| Rec % vs Mon · vs yesterday · vs week | All three at once |
+
+Recovery % is recovered ÷ the uncollected being chased, and which day's that is changes with
+the day. Rather than showing only the one today's rule picks, the slide shows all three so the
+room can see the comparison instead of being told which to look at. Each day is batch-resolved
+before being summed, so a report uploaded twice cannot double a denominator.
+
+### The bell now reaches the field
+
+Complaints logged at the desk and follow-up comments were visible only in the portal. A field
+officer could not learn that a complaint had been raised against a customer on their round
+except by being telephoned about it.
+
+HOPE Calls has the same bell in its header, showing the same updates scoped to that handset's
+teams — **through the same implementation**, in `api/_lib/notify.js`, so the office and the
+field can never see different lists. "Read up to here" is remembered per handset, so one
+officer clearing theirs does not clear anybody else's. The count refreshes on entry and
+whenever the app returns to the foreground — the same moment the list already syncs, so it adds
+no new habit of waking the network.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1777,7 +1839,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 180 checks of the rules and the sums
+npm test                                    # 184 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HOPE PMO — Portal</title>
 <style>
-  :root{--b950:#081C4A;--b900:#0B2A6B;--b800:#10357F;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
+  :root{--b950:#14113F;--b900:#1D1873;--b800:#2A22A8;--b700:#3B30E6;--b600:#5B52EC;--b500:#7C74F1;--b300:#B6B1F8;--b100:#E2E0FD;--b50:#F3F2FE;
         --bg:#F6F8FC;--card:#FFF;--ink:#0F172A;--mut:#64748B;--soft:#94A3B8;--line:#E2E8F0;
         --ok:#067647;--okbg:#E7F6EE;--okline:#CFEADD;--warn:#92400E;--warnbg:#FEF3DC;--warnline:#F6E3BC;
         --bad:#B42318;--badbg:#FDECEA;--badline:#F6CFCB;--rad:14px}
@@ -67,11 +67,11 @@
 
   /* shell */
   .shell{display:flex;height:100%}
-  .side{width:225px;flex:0 0 auto;background:var(--b950);color:#cfe0ff;display:flex;flex-direction:column;padding:16px 12px}
+  .side{width:225px;flex:0 0 auto;background:var(--b950);color:#D8D5FB;display:flex;flex-direction:column;padding:16px 12px}
   .side .brand{color:#fff;font-weight:800;font-size:14px;line-height:1.35}
   .side .brand small{display:block;color:var(--b300);font-weight:500;font-size:11px;margin-top:2px}
   .nav{margin-top:18px;display:flex;flex-direction:column;gap:2px;flex:1;overflow:auto}
-  .nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:0;color:#cfe0ff;
+  .nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:0;color:#D8D5FB;
     padding:9px 11px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer}
   .nav button svg{width:16px;height:16px;flex:0 0 16px;opacity:.85}
   .nav button.on svg{opacity:1}
@@ -148,30 +148,38 @@
   @media (max-width:1000px){ .pair{grid-template-columns:1fr} }
   tr.totrow td{font-weight:800;background:var(--b50);border-top:2px solid var(--b100)}
   /* presentation: a real projector deck, full screen, dark, readable across a room */
-  #pres{display:none;position:fixed;inset:0;z-index:200;background:#081C4A;color:#fff;padding:26px 34px;overflow:auto}
+  /* THE DECK FOLLOWS THE THEME. It was a fixed dark navy whatever the rest of the system was
+     set to, so somebody working in light mode got a black screen thrown at them on the
+     projector -- and a bright meeting room is exactly where a light deck reads better. Every
+     colour here is a variable that flips with body.dark, so one toggle changes both. */
+  :root{ --pbg:#FFFFFF; --pink:#14113F; --plab:#5B52EC; --pline:rgba(20,17,63,.14);
+         --psoft:rgba(59,48,230,.06); --pedge:rgba(20,17,63,.10) }
+  body.dark{ --pbg:#14113F; --pink:#FFFFFF; --plab:#B6B1F8; --pline:rgba(255,255,255,.22);
+             --psoft:rgba(255,255,255,.07); --pedge:rgba(255,255,255,.12) }
+  #pres{display:none;position:fixed;inset:0;z-index:200;background:var(--pbg);color:var(--pink);padding:26px 34px;overflow:auto}
   #pres .phead{display:flex;align-items:center;gap:14px;font-size:26px;font-weight:800;margin-bottom:18px}
-  #pres .pnum{margin-left:auto;font-size:15px;font-weight:600;color:#93C5FD}
-  #pres .pclose{background:rgba(255,255,255,.12);border:0;color:#fff;width:38px;height:38px;border-radius:50%;font-size:17px;cursor:pointer}
+  #pres .pnum{margin-left:auto;font-size:15px;font-weight:600;color:var(--plab)}
+  #pres .pclose{background:var(--psoft);border:1px solid var(--pedge);color:var(--pink);width:38px;height:38px;border-radius:50%;font-size:17px;cursor:pointer}
   /* The arrows. On a TV nobody is holding a keyboard, and on a phone or tablet there are no
      arrow keys at all -- so the two things a person wants during a deck have to be touchable.
      Big, at the vertical middle, hard against each edge where a thumb already is. */
-  #pres .ptot td{border-top:2px solid rgba(255,255,255,.5);font-weight:800;background:rgba(255,255,255,.07)}
+  #pres .ptot td{border-top:2px solid var(--pline);font-weight:800;background:var(--psoft)}
   #pres .pnav{position:fixed;top:50%;transform:translateY(-50%);z-index:210;
-    background:rgba(255,255,255,.12);border:0;color:#fff;width:64px;height:96px;
+    background:var(--psoft);border:1px solid var(--pedge);color:var(--pink);width:64px;height:96px;
     font-size:34px;line-height:1;cursor:pointer;border-radius:12px;
     display:flex;align-items:center;justify-content:center}
-  #pres .pnav:hover{background:rgba(255,255,255,.24)}
+  #pres .pnav:hover{background:var(--b100);color:var(--b800)}
   #pres .pprev{left:10px} #pres .pnext{right:10px}
   /* Out of the way on a small screen: half the size, and low enough not to sit over a name. */
   @media (max-width:700px){ #pres .pnav{width:44px;height:64px;font-size:24px} }
   #pres .pkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-  #pres .pkpi{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:22px}
-  #pres .pl{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:#93C5FD}
+  #pres .pkpi{background:var(--psoft);border:1px solid var(--pedge);border-radius:16px;padding:22px}
+  #pres .pl{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--plab)}
   #pres .pv{font-size:40px;font-weight:800;margin-top:8px}
   #pres .ptable{width:100%;border-collapse:collapse;font-size:19px}
-  #pres .ptable th{text-align:left;padding:10px 12px;color:#93C5FD;font-size:14px;text-transform:uppercase;
-    border-bottom:1px solid rgba(255,255,255,.2);background:transparent}
-  #pres .ptable td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.1)}
+  #pres .ptable th{text-align:left;padding:10px 12px;color:var(--plab);font-size:14px;text-transform:uppercase;
+    border-bottom:1px solid var(--pline);background:transparent}
+  #pres .ptable td{padding:10px 12px;border-bottom:1px solid var(--pedge)}
   #pres .ptable .r{text-align:right}
   /* tips toast */
   #tip{position:fixed;right:18px;bottom:18px;max-width:330px;background:var(--card);border:1px solid var(--line);
@@ -713,6 +721,17 @@ function tableHtml(rows, cols, onRow){
           return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>';
         }).join('') + '</tr>';
   }).join('');
+  /* THE GRAND TOTAL ON THE MAIN LIST TOO. Every card board and every projected slide grew one,
+     and this table -- the biggest on every tab, and the one the commission week is read from --
+     did not. Same rule as everywhere else, so the figure at the bottom of a card and the figure
+     at the bottom of the list are worked out the same way and cannot disagree.
+
+     It totals what is ON SCREEN. Filter to one team and the total is that team's; that is the
+     only reading that makes sense under a filter, and a total that ignored the filter would be
+     read as the filtered one by everybody. */
+  var tot = autoTotals(rows, cols);
+  if (tot) body += '<tr class="totrow"><td class="sn"></td>' + cols.map(function(c, i){
+    return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>';
   return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
 function wireTable(rows, onRow){
@@ -756,7 +775,7 @@ function exportXls(){
     + '<x:Name>'+esc(S.view)+'</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>1</x:SplitHorizontal>'
     + '<x:TopRowBottomPane>1</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet>'
     + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
-    + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+    + '<style>th{background:#1D1873;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
     + '</head><body><table><thead><tr><th>S/N</th>'
     + S.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')
     + '</tr></thead><tbody>'
@@ -1088,7 +1107,7 @@ function exportBoard(id, kind){
     return;
   }
   var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
-    + '<style>th{background:#0B2A6B;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body>'
+    + '<style>th{background:#1D1873;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body>'
     + '<h3>'+esc(b.title)+'</h3><table><thead><tr><th>S/N</th>'
     + b.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
     + b.rows.map(function(r,i){
@@ -1644,6 +1663,10 @@ var PCT_FROM = {   // percentage column -> [numerator field, denominator field]
   salesPct: ['amount', 'target'], par: ['arrears', 'balance'],
   // Recovery: recovered over the uncollected it was chased against, for each period.
   tPct: ['tRecovered', 'tUncollected'], wPct: ['wCollected', 'wExpected'],
+  // Team performance: the three recovery denominators, and the basis collection column.
+  recPctMon: ['recovered', 'uncolMon'], recPctYest: ['recovered', 'uncolYest'],
+  recPctWeek: ['recovered', 'uncolWeek'], collPct: ['colBasis', 'expBasis'],
+  collPctWeek: ['colWeek', 'expWeek'],
 };
 function autoTotals(rows, cols){
   if (!rows || !rows.length || !cols || !cols.length) return null;
@@ -1925,8 +1948,7 @@ VIEWS.commission = function(){
           'kiwango cha siku kinatokana na asilimia ya siku hiyo / the day’s rate follows that day’s percentage',
           d.pmo, [col('officer','PMO'), col('teams','Teams','num'), col('customers','Customers','num'),
             col('expected','Expected','money'), col('uncollected','Uncollected','money'),
-            col('pct','Collection %','pct'), col('band','Band'), col('commission','Today TZS','money')],
-          sumRow(d.pmo, ['teams','customers','expected','uncollected','commission'])) : '');
+            col('pct','Collection %','pct'), col('band','Band'), col('commission','Today TZS','money')]) : '');
     /* The week's PMO board is a board of its own rather than the main table, because the main
        table is the recovery/early-collection week and the two are different people paid on
        different things. */
@@ -1936,8 +1958,7 @@ VIEWS.commission = function(){
       d.pmo, [col('officer','PMO'), col('teams','Teams','num'),
         col('weekExpected','Expected','money'), col('weekUncollected','Uncollected','money'),
         col('weekPct','Collection %','pct'), col('prevWeekPct','Last week %','pct'),
-        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')],
-      sumRow(d.pmo, ['teams','weekExpected','weekUncollected','weekCommission','bonus']));
+        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]);
     S.rows = d.week;
     S.cols = CMS_COLS;
     ONROW = null;
@@ -2608,9 +2629,22 @@ function presSlides(){
       { l:'Sales this week', v:'TZS '+money(c.salesWeek) },
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
       { l:'Abnormal', v:money(c.abnormal) }]});
-    slides.push({ id:'teams', kind:'table', title:'Team performance', rows:d.teamPerf.slice(0,12),
-      cols:[col('team','Team'), col('recovery','Recovery'), col('curArrears','Current','money'),
-        col('recovered','Recovered','money'), col('collPctToday','Coll %','pct'), col('defaulters','Def','num')] });
+    /* TEAM PERFORMANCE. Ranked on the average of sales and collection, highest first -- a team
+       that sells well and collects badly is not a good team, and neither is the reverse.
+
+       "Uncollected" and "Collection %" follow the same basis as the recovery denominator:
+       today from Monday to Friday, the whole week at the weekend. Recovery % is shown against
+       all three denominators at once, because which one applies changes with the day and the
+       room wants to see the comparison rather than be told which to look at. */
+    var tpBasis = d.teamPerf && d.teamPerf.length ? d.teamPerf[0].basis : 'today';
+    var tpLab = tpBasis === 'week' ? ' (week)' : ' (today)';
+    slides.push({ id:'teams', kind:'table', title:'Team performance — best first', rows:d.teamPerf.slice(0,12),
+      cols:[col('sn','S/N','num'), col('team','Team'),
+        col('salesMonth','Monthly sales','money'),
+        col('curArrears','Total def','money'), col('defaulters','No. of def','num'),
+        col('uncollected','Uncollected'+tpLab,'money'), col('collPct','Collection %'+tpLab,'pct'),
+        col('recPctMon','Rec % vs Mon','pct'), col('recPctYest','Rec % vs yest','pct'),
+        col('recPctWeek','Rec % vs week','pct')] });
     /* Recovery is judged against the uncollected the officer is actually chasing, and which
        day's uncollected that is depends on the day: Monday divides by Monday, Tuesday to
        Friday by yesterday, and the weekend by the whole week. So the denominator goes on the
