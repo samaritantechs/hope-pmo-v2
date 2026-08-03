@@ -95,50 +95,73 @@ function counting(tables) {
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
 const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
 
-/* screen, portal function, args, who, budget in ROUND TRIPS */
+/* ROWS ARE A BUDGET TOO, and leaving them out is how three unbounded reads of the comment log
+   sat behind a guard that was passing. A filtered fetchAll costs ONE round trip and can still
+   drag two hundred thousand rows across the wire -- the trip count says nothing about it. So
+   every screen declares both, and the row budget is the one that catches "select everything and
+   sort it here".
+
+   screen, portal function, args, who, TRIPS, ROWS */
 const BUDGETS = [
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60],
-  ['Officer boards',          'officerBoards', {}, ADMIN,   50],
-  ['Defaulters Followup',     'followup',      {}, ADMIN,   10],
-  ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10],
-  ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10],
-  ['Promise to Pay',          'promises',      {}, ADMIN,   10],
-  ['Weekly report',           'weekly',        {}, ADMIN,   45],
-  ['The bell',                'notifications', {}, ADMIN,    6],
-  ['The bell (one team)',     'notifications', {}, OFFICER,  6],
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000],
+  ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000],
+  ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000],
+  ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000],
+  ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000],
+  ['Promise to Pay',          'promises',      {}, ADMIN,   10,  10000],
+  /* A report over a date range must read that range -- there is no honest way to count a
+     week's follow-up comments without them. It is already narrowed to the six columns it uses
+     and to the window asked for; what is left is proportionate. The officer-scoped row below
+     is the proof that the team narrowing works: a fortieth of the same report. */
+  ['Follow-up report',        'followupReport', {}, ADMIN,  10,  30000],
+  ['Follow-up report (one team)', 'followupReport', {}, OFFICER, 10, 1500],
+  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000],
+  ['The bell',                'notifications', {}, ADMIN,    6,    200],
+  ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200],
 ];
 
-for (const [label, fn, args, user, budget] of BUDGETS) {
-  test(`speed: ${label} stays within ${budget} round trips`, async () => {
+for (const [label, fn, args, user, tripBudget, rowBudget] of BUDGETS) {
+  test(`speed: ${label} stays within ${tripBudget} trips and ${rowBudget.toLocaleString()} rows`, async () => {
     const c = counting(bigBook());
     await portalApi(c.db, user, fn, args, NOW);
     const { trips, rows } = c.stat();
-    assert.ok(trips <= budget,
-      `${label} took ${trips} round trips (budget ${budget}), reading ${rows.toLocaleString()} rows.\n` +
-      `  Before raising this number: can the database do the work instead? Ordering, limiting,\n` +
-      `  filtering and counting all belong there. If the answer is genuinely no, raise it in the\n` +
-      `  SAME commit so the cost is visible in the diff.`);
+    const advice = `\n  Before raising these numbers: can the database do the work instead?\n` +
+      `  Ordering, limiting, filtering and counting all belong there. If the answer is genuinely\n` +
+      `  no, raise them in the SAME commit so the cost is visible in the diff.`;
+    assert.ok(trips <= tripBudget,
+      `${label} took ${trips} round trips (budget ${tripBudget}).` + advice);
+    assert.ok(rows <= rowBudget,
+      `${label} read ${rows.toLocaleString()} rows (budget ${rowBudget.toLocaleString()}) in ${trips} trips.` +
+      `\n  A filtered read is ONE trip and can still drag a whole table.` + advice);
   });
 }
 
 /* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one
    of these is a field officer standing in the sun on mobile data. */
 const PHONE = [
-  ['Calls: boot',        'api_callBoot',          ['DEV1'], 12],
-  ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 10],
-  ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 10],
-  ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6],
+  ['Calls: boot',        'api_callBoot',          ['DEV1'], 12,  5000],
+  ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 10, 6000],
+  ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 10, 6000],
+  ['Calls: one customer\'s comments', 'api_callComments', ['DEV1', 'R1'], 6, 200],
+  /* The phone's search index. It used to read EVERY comment ever written to find the few
+     hundred carrying a replacement phone number -- the portal's copy of this was fixed weeks
+     ago and the phone's was not, which is why the app felt slower than the portal on the same
+     data. */
+  ['Calls: sync / search index', 'api_callSync',
+    ['DEV1', [{ phone: '0712000001', date: '2026-07-24', ts: 1, duration: 60, outcome: 'CONNECTED' }]],
+    20, 30000],
+  ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way
      would be two answers that could disagree on a wall in front of the company.
      It is also the one screen nobody is waiting on: the figures are kept for two minutes per
      scope, so a display refreshing every twenty seconds pays this once every two minutes. */
-  ['HOPE Live widget',   'api_widget',            ['TEAM01'], 35],
+  ['HOPE Live widget',   'api_widget',            ['TEAM01'], 35, 60000],
 ];
 
-for (const [label, fn, args, budget] of PHONE) {
-  test(`speed: ${label} stays within ${budget} round trips`, async () => {
+for (const [label, fn, args, tripBudget, rowBudget] of PHONE) {
+  test(`speed: ${label} stays within ${tripBudget} trips and ${rowBudget.toLocaleString()} rows`, async () => {
     const t = bigBook();
     t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER',
       device_id: 'DEV1', active: true });
@@ -146,10 +169,11 @@ for (const [label, fn, args, budget] of PHONE) {
     const c = counting(t);
     await callApi(c.db, fn, args, NOW);
     const { trips, rows } = c.stat();
-    assert.ok(trips <= budget,
-      `${label} took ${trips} round trips (budget ${budget}), reading ${rows.toLocaleString()} rows.\n` +
-      `  This one runs on a phone, on mobile data. Ask the database to do more before asking\n` +
-      `  the handset to wait longer.`);
+    const advice = `\n  This one runs on a PHONE, on mobile data. Ask the database to do more before\n` +
+      `  asking the handset to wait longer.`;
+    assert.ok(trips <= tripBudget, `${label} took ${trips} round trips (budget ${tripBudget}).` + advice);
+    assert.ok(rows <= rowBudget,
+      `${label} read ${rows.toLocaleString()} rows (budget ${rowBudget.toLocaleString()}) in ${trips} trips.` + advice);
   });
 }
 

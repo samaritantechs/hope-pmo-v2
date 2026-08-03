@@ -593,7 +593,7 @@ function doLogout(){
   ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
   try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); } catch(e){}
-  $('#sheet').style.display = 'none';
+  sheetHide();
   $('#confirmModal').style.display = 'none';
   var q = $('#listQ'); if (q) q.value = '';
   $('#regPhone').value = ''; $('#regCode').value = ''; $('#regPass').value = ''; $('#regName').value = '';
@@ -688,6 +688,7 @@ function enterApp(d){
   };
   $('#bellBtn').onclick = bellOpen;
   bellRefresh();
+
   $all('#tabs button').forEach(function(b){ b.onclick = function(){ exitSearch_(); setView(b.getAttribute('data-v')); }; });
   setView('today');
   startSyncLoop();
@@ -984,12 +985,12 @@ function bellOpen(){
               + ' \u00B7 ' + esc(String(x.at).slice(0, 16).replace('T', ' ')) + '</div></div>'; }).join(''))
     + (d && d.unseen ? '<button class="btn btn-pri" id="notifSeen" style="width:100%;margin-top:12px">'
         + 'Nimesoma zote / Mark all read</button>' : '');
-  $('#sheet').style.display = 'flex';
+  sheetShow();
   var b = $('#notifSeen');
   if (b) b.onclick = function(){
     b.disabled = true;
     srv('api_callNotifSeen', DEV).then(function(){
-      $('#sheet').style.display = 'none';
+      sheetHide();
       bellRefresh();
     }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
   };
@@ -1042,7 +1043,37 @@ function rowHtml(r, showSeg){
     + '</div>';
 }
 
-/* ================= bottom sheet: customer detail + follow-up ================= */
+/* ================= bottom sheet: customer detail + follow-up =================
+   ONE PLACE THAT OPENS AND CLOSES IT, WIRED ONCE AT STARTUP.
+
+   The close handlers used to be bound inside wireSheetForm, which only the customer sheet
+   calls -- so the bell, which uses the same panel, opened a sheet with NO way out. Tapping the
+   X or the dark area did nothing, and the only escape was the Back button, which left the app
+   altogether and landed the officer back on the launcher.
+
+   Back now closes the sheet and stays put. Opening the sheet pushes a history entry so the
+   phone's own Back gesture has something to consume; closing it by hand takes that entry away
+   again, so Back never has to be pressed twice to leave a screen. */
+var SHEET_STATE = false;
+function sheetShow(){
+  $('#sheet').style.display = 'flex';
+  if (!SHEET_STATE){ SHEET_STATE = true; try { history.pushState({ hopeSheet: 1 }, ''); } catch(e){} }
+}
+function sheetHide(fromBack){
+  $('#sheet').style.display = 'none';
+  if (SHEET_STATE && !fromBack){ SHEET_STATE = false; try { history.back(); } catch(e){} }
+  else SHEET_STATE = false;
+}
+window.addEventListener('popstate', function(){ if (SHEET_STATE) sheetHide(true); });
+/* Bound at LOAD, not at sign-in. The sheet is part of the page from the first byte, so its way
+   out should be too -- bound inside enterApp, a sheet opened before or after a sign-in bounce
+   had no working X at all. */
+$('#sheetClose').onclick = function(){ sheetHide(); };
+$('#sheet').onclick = function(e){ if (e.target.id === 'sheet') sheetHide(); };
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape' && $('#sheet').style.display === 'flex') sheetHide();
+});
+
 function openSheet(ref){
   var r = null;
   for (var i=0;i<S.rows.length;i++){ if (String(S.rows[i].ref)===String(ref)) { r = S.rows[i]; break; } }
@@ -1050,7 +1081,7 @@ function openSheet(ref){
   S.curRef = ref;
   var sb = $('#sheetBody');
   sb.innerHTML = sheetSkeleton(r) ;
-  $('#sheet').style.display = 'flex';
+  sheetShow();
   wireSheetForm(r);
   srv('api_callComments', DEV, r.ref).then(function(d){
     S.comments = (d && d.items) || [];
@@ -1103,8 +1134,6 @@ function applyLocalFuUpdate_(ref, fu){
   drawList();
 }
 function wireSheetForm(r){
-  $('#sheetClose').onclick = function(){ $('#sheet').style.display = 'none'; };
-  $('#sheet').onclick = function(e){ if (e.target.id === 'sheet') $('#sheet').style.display = 'none'; };
   $('#fuStatus').addEventListener('change', function(){
     var v = this.value;
     $('#fuDateWrap').classList.toggle('hide', (S.boot.fuNeedDate||[]).indexOf(v) < 0);
@@ -1118,7 +1147,7 @@ function wireSheetForm(r){
     $('#fuSave').disabled = true; $('#fuSave').textContent = 'Inahifadhi\u2026';
     srv('api_callAddComment', DEV, { ref:r.ref, team:r.team, name:r.name, fu:fu, comment:comment, promiseDate:pd, newNo:newNo }).then(function(){
       toast('Imehifadhiwa.');
-      $('#sheet').style.display = 'none';
+      sheetHide();
       applyLocalFuUpdate_(r.ref, fu);
     }).catch(function(e){
       $('#fuSave').disabled = false; $('#fuSave').textContent = 'Hifadhi / Save';

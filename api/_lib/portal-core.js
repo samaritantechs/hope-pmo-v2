@@ -219,7 +219,11 @@ async function comments(db, user, { ref }) {
   if (!ref) throw badRequest('ref is required');
   const { data: st } = await db.from('followup_status').select('team').eq('ref', String(ref)).maybeSingle();
   if (st && !teamAllowed(user, st.team)) throw forbidden(`You do not have access to team ${st.team}.`);
-  const { data, error } = await db.from('followup_comments').select('*').eq('ref', String(ref)).order('created_at', { ascending: false });
+  /* The columns this drawer draws, newest first, capped -- the same reasoning as the phone's
+     copy in call-core.js. A customer with an imported history has hundreds of notes. */
+  const { data, error } = await db.from('followup_comments')
+    .select('comment, fu_status, promise_date, promise_amt, new_number, created_by, created_at')
+    .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(200);
   if (error) throw new Error(error.message);
   return { rows: data || [] };
 }
@@ -264,8 +268,15 @@ async function promises(db, user, { from, to } = {}, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : null;
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : null;
   const [all, cm, curSnap] = await Promise.all([
-    fetchAll(() => db.from('followup_status').select('*').eq('fu_status', 'AMETOA AHADI')),
-    fetchAll(() => db.from('followup_comments').select('*').eq('fu_status', 'AMETOA AHADI')),
+    fetchAll(() => onTeams(db.from('followup_status').select('*').eq('fu_status', 'AMETOA AHADI'), user.teams)),
+    /* Every promise ever made was being read to show the ones in a chosen window. Narrowed to
+       the caller's teams and to the window itself -- the comment that CREATED a promise is
+       what this needs, and one made two years ago cannot have created a promise due this
+       week. A generous margin before the window keeps the creating comment in view. */
+    fetchAll(() => onTeams(db.from('followup_comments')
+      .select('ref, team, fu_status, promise_date, promise_amt, comment, created_by, created_at')
+      .eq('fu_status', 'AMETOA AHADI')
+      .gte('created_at', addDaysKey(fromKey || todayKey(nowMs), -120)), user.teams)),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: today }),
   ]);
   const stillOwing = {};
@@ -309,9 +320,11 @@ async function followupReport(db, user, { from, to }, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : addDaysKey(todayKey(nowMs), -7);
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : todayKey(nowMs);
   const [fu, cm] = await Promise.all([
-    fetchAll(() => db.from('followup_status').select('*')),
-    fetchAll(() => db.from('followup_comments').select('*')
-      .gte('created_at', fromKey).lte('created_at', toKey + 'T23:59:59.999Z')),
+    fetchAll(() => onTeams(db.from('followup_status')
+      .select('ref, team, full_name, status, arrears, fu_status'), user.teams)),
+    fetchAll(() => onTeams(db.from('followup_comments')
+      .select('ref, team, fu_status, comment, created_by, created_at')
+      .gte('created_at', fromKey).lte('created_at', toKey + 'T23:59:59.999Z'), user.teams)),
   ]);
   const mineFu = scoped(user, fu).filter(r => !(r.status == null && r.arrears == null));
   const mineCm = scoped(user, cm);
