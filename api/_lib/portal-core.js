@@ -1174,12 +1174,31 @@ async function par(db, user, _args, nowMs) {
 
 /** Weekly report: Mon-Fri collection per day plus the week's recovery and sales, all
     scoped -- the same numbers the dashboard shows, laid out by day. */
+/* WHAT A WEEK-WIDE READ ACTUALLY NEEDS.
+ *
+ * A range read is five to seven days of the WHOLE BOOK, so every column left out is dropped
+ * that many times over. These reads asked for `*` -- every column of every customer for every
+ * day of the week -- and at thirty thousand customers that is what turned the dashboard, the
+ * weekly report and the Presentation into HTTP 504 within the same hour.
+ *
+ * These are exactly the columns the arithmetic touches: team for scoping, snapshot_date and
+ * snapshot_type to sort the days out, and the money. collectedOf reads payment_expected,
+ * arrears and todays_status and nothing else; uncollectedOf is built on collectedOf. The batch
+ * keys are added automatically by snapshotsInRange, so a re-upload still supersedes correctly.
+ *
+ * Narrowing is opt-in ON PURPOSE -- latestSnapshot is shared with the phone's lists, which need
+ * names and numbers, and a single hard-coded list would silently rob one screen to feed
+ * another. So these are passed only by callers that have been read and can say what they use.
+ */
+const WEEK_EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
+const WEEK_DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
+
 async function weekly(db, user, { weekOf }, nowMs) {
   const mon = /^\d{4}-\d{2}-\d{2}$/.test(String(weekOf)) ? weekOf : weekMondayKey(nowMs);
   const fri = addDaysKey(mon, 4);
   const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, fri),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, WEEK_EXP_COLS),
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, fri, user.teams, WEEK_DEF_COLS),
     fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').eq('stage', 'approved').gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
     fetchAll(() => db.from('received_payments').select('team, amount_paid, paid_at').gte('paid_at', mon).lte('paid_at', addDaysKey(mon, 6))),
   ]);
@@ -1356,7 +1375,18 @@ async function leaderReports(db, user, _args, nowMs) {
       unstaffed: rows.filter(r => r.leader === '(unassigned)').reduce((s, r) => s + r.teams, 0) };
   }).filter(s => s.rows.length);
 
-  return { weekday: tp.weekday, date: tp.date, paired: tp.paired, note: tp.note,
+  /* A BLANK PAGE IS NOT AN ANSWER. Progress here is measured by comparing THIS weekday's
+     initial deck against its current one -- both are needed, and if either is missing there is
+     genuinely nothing to show. Saying so is the difference between "the system is broken" and
+     "upload the other half of Friday". */
+  const why = sections.length ? (tp.note || '')
+    : (!tp.rows || !tp.rows.length
+        ? `Hakuna deki la ${tp.weekday || 'siku hii'} bado / no deck uploaded for this weekday yet. `
+          + 'Progress compares the INITIAL deck against the CURRENT one, so both are needed before anything can be shown.'
+        : 'Timu hazina majina ya viongozi / no leader names are set on the teams table, so there is '
+          + 'nobody to group these teams under. Fill in the recovery / GMO / manager columns under Teams.');
+
+  return { weekday: tp.weekday, date: tp.date, paired: tp.paired, note: why,
     rows: tp.rows, sections,
     totals: { teams: tp.rows.length,
       initArrears: tp.rows.reduce((s, r) => s + r.initArrears, 0),
@@ -1426,14 +1456,19 @@ async function commission(db, user, _args, nowMs) {
   const [cfg, teamRows, defWeek, expWeek, codeRows, pmoCfg, prevExp] = await Promise.all([
     cmsCfg(db),
     fetchAll(() => db.from('teams').select('*')),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
+    /* COMMISSION NEEDS ONE MORE COLUMN THAN THE OTHERS: ref.
+       It works recovery out PER CUSTOMER -- what each one owed on the initial deck against what
+       they still owe on the current one -- so it cannot sum a team and be done. Dropping ref
+       here made every officer's board come back undefined, which is what the test caught before
+       this ever left the machine. */
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, WEEK_DEF_COLS + ', ref'),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, WEEK_EXP_COLS),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
        got the previous week". Without last week's figures the condition cannot be checked at
        all, and a bonus awarded without checking it is just a bonus. */
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, prevMon, prevFri),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, prevMon, prevFri, user.teams, WEEK_EXP_COLS),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -2660,8 +2695,8 @@ async function dashboardFull(db, user, _args, nowMs) {
   const base = await buildDashboard(db, user, nowMs);
 
   const [expWeek, defWeek, loansAll, abn, teamRows] = await Promise.all([
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, sun),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, sun, user.teams, WEEK_EXP_COLS),
+    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, WEEK_DEF_COLS),
     fetchAll(() => db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')),
     fetchAll(() => db.from('abnormal_payments').select('team, paid')),
     fetchAll(() => db.from('teams').select('*')),
