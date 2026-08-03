@@ -197,6 +197,27 @@ await page.waitForTimeout(500);
 check('but the first sync after an upload does',
   calls.indexOf('api_callDailySummary') >= 0, calls.join(','));
 
+/* AND THE OFFICER CAN SEE THAT IT DID. Most uploads move none of the six figures by a whole
+   point, so a refresh that works looks exactly like one that never happened -- which is the
+   whole of "I don't know if it even does". */
+const tag = () => page.evaluate(() => document.getElementById('dsTag').textContent);
+check('the strip says WHEN the figures were worked out', /\d\d:\d\d/.test(await tag()), await tag());
+
+// Coming back to the app asks the cheap question, not the fifteen-minute-throttled one.
+dataVersion = 'v3';
+calls.length = 0;
+await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+await page.waitForTimeout(500);
+check('returning to the app after an upload refreshes the figures at once',
+  calls.indexOf('api_callDailySummary') >= 0, calls.join(','));
+
+// And tapping the figures asks again -- the one thing to do when a number looks wrong.
+calls.length = 0;
+await page.click('#dayStrip');
+await page.waitForTimeout(400);
+check('tapping the strip asks for the figures again',
+  calls.indexOf('api_callDailySummary') >= 0, calls.join(','));
+
 /* -------------------------------------------- RUHUSU COMMENT KUSAVE AUTOMATIC.
    Android stops an app that is not on screen, so a comment typed at a customer's door may never
    reach the server. The exemption used to be a button on a banner -- something an officer had

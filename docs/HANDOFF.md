@@ -2093,6 +2093,76 @@ are gone.
 
 ---
 
+## Part 14u — MATESO STEPHAN FELISI, properly this time
+
+I told you the stale Def row would clear itself on your next current-defaulter upload. **It could
+not.** Two faults, both in the fix I shipped.
+
+### The rule could never reach that row
+
+The retirement asked: *when did a deck last confirm this customer?* — and read `deck_date`. Rows
+with no `deck_date` were deliberately skipped, on the reasoning that they predate the column and
+retiring them on a stamp they never had would empty the list.
+
+Which is exactly backwards for the row being complained about. **It predates the column.** It has
+no stamp, and it will never get one, because nothing is uploading its weekday's deck — that is
+the whole reason it is stuck. The rule was written to skip precisely the rows it was written to
+clear.
+
+`updated_at` is the honest fallback. It is never null, and it moves whenever a deck confirms the
+row or an officer comments on it. A row nothing has touched for a fortnight has not been
+confirmed for a fortnight, whatever the reason. `deck_date` still wins where it exists.
+
+### And it was reading a column it never asked for
+
+`updated_at` was not in the list of columns the upload reads. Not a blank field — the column
+simply is not there, so **every row looked freshly confirmed** and nothing was ever going to be
+retired. (The schema test guards columns that do not *exist*; a column that exists and is not
+asked for is a different mistake, and this is the one that catches it: a test built from your
+actual case.)
+
+### A brake, because this is the working list
+
+Retiring is not deleting. It blanks the deck figures, keeps every comment, and the next deck that
+names the customer brings them straight back. It is still the list two hundred people work from.
+
+So one upload may retire at most **35%** of the list on age alone. Above that it retires nobody
+and the upload tells you the number, because a large stale set means some weekdays' decks have
+stopped being uploaded — a real problem to read about, not one to action quietly.
+
+Every upload that retires anybody now says so in words, with the count.
+
+### If you want it gone today
+
+Upload any current-defaulter deck and the rule runs. Or clear the old rows directly:
+**Settings → storage → Follow-up list, by date**, which is what
+`2026-08-03-followup-cleanup.sql` enabled.
+
+---
+
+## Part 14v — "The performance bar is taking years to update, I don't know if it even does"
+
+The mechanism was working. Two things stopped you being able to tell, and one made it slow.
+
+**Coming back to the app did nothing for fifteen minutes.** Returning to the foreground called
+the *throttled* refresh, which does nothing if the figures are less than a quarter of an hour
+old. So the natural test — put the phone down, upload a report, pick the phone up — was the one
+case that would not update. It now asks the cheap version question instead: two lookups by key,
+and new figures only if something was really uploaded.
+
+**Nothing on screen said when.** Most uploads move none of the six percentages by a whole point,
+so a refresh that worked looked exactly like one that never happened. The tag now carries the
+clock — **Leo 15:42** — and the strip flashes briefly when new figures land. A refresh that moves
+no figure is still visibly a refresh.
+
+**And you can now ask.** Tapping the strip fetches the figures again. That is the obvious thing
+to do when a number looks wrong, and there was no way to do it.
+
+Together: upload a report, pick up any phone, and the figures are current — or tap the strip and
+watch the clock move.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
