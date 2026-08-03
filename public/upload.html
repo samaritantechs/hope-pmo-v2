@@ -61,7 +61,12 @@
       </optgroup>
       <optgroup label="Expected repayment">
         <option value="expected-today">Expected — Today</option>
-        <option value="expected-tomorrow">Expected — Tomorrow</option>
+        <!-- "Expected - Tomorrow" was removed from this list on purpose. Tomorrow's list is the
+             ordinary Expected sheet filed under TOMORROW'S DATE, which is how the old system
+             worked and how the Kesho tab reads it -- so a separate report type asked somebody to
+             upload the same file twice under a second label, and looked like a required step
+             nobody could explain. The server still ACCEPTS the type so historic uploads keep
+             reading; it is simply not offered any more. -->
         <option value="expected-yesterday">Expected — Yesterday</option>
         <option value="expected-initial">Expected — Initial</option>
       </optgroup>
@@ -102,7 +107,10 @@
     <div id="dateWrap" class="hide">
       <label>Snapshot date</label>
       <input type="date" id="snapDate">
-      <div class="hint">The date this file's numbers are as-of — usually today.</div>
+      <div class="hint">The date this file's numbers are as-of — usually today.
+        <br><b>Kesho / tomorrow:</b> there is no separate "tomorrow" report. If you have the sheet
+        for tomorrow, upload it as <b>Expected — Today</b> with <b>tomorrow's date</b> here, and the
+        Kesho tab reads it. If you never file ahead, leave it — Kesho simply stays empty.</div>
     </div>
 
     <div id="stageWrap" class="hide">

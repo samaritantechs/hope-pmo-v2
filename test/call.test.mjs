@@ -802,3 +802,36 @@ test('the strip\'s Kesho figure falls back exactly as the Kesho tab does', async
   assert.notEqual(sum.kesho.pct, null, 'so the strip must not show a dash');
   assert.equal(sum.kesho.customers, list.rows.length, 'and it is the same list, not a second one');
 });
+
+/* AN ADMIN WITH NO HOME TEAM MUST SEE THE WHOLE COMPANY, ON THE STRIP TOO.
+ *
+ * "The performance bar is still dashes."
+ *
+ * An ALL-teams admin registers with call_users.team = NULL deliberately -- the column is a
+ * foreign key into teams, so writing the literal 'ALL' broke registration outright. Wrapping
+ * that NULL in an array scoped them to a team named "", which matches nothing, so every
+ * denominator was zero and every percentage came back null. Dashes, all the way across, for the
+ * one person most likely to be looking at the bar.
+ *
+ * The customer LISTS escaped it because they take their own path; the strip did not.
+ */
+test('an ALL-teams admin gets real figures on the strip, not dashes', async () => {
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['dA', '', '', 'ADMIN1', '0755000111'], NOW);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callDailySummary', ['dA'], NOW);
+  assert.equal(d.ok, true);
+  assert.notEqual(d.col.pct, null, 'Col leo must be a number, not a dash');
+  assert.ok(d.col.den > 0, 'and it is measured against a real expected amount');
+  // MBAGALA is a second team; an ALL-teams admin's figures must include it.
+  const scoped = await callApi(db, 'api_callDailySummary', ['d1'], NOW);   // KONGOWE officer
+  assert.ok(d.col.den > scoped.col.den, 'the admin sees more of the book than one team does');
+});
+
+test('an officer with a home team is still scoped to it', async () => {
+  // The fix must not turn every officer into an admin.
+  const db = await registeredDb();
+  const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
+  assert.equal(d.ok, true);
+  assert.equal(d.col.den, 1500, 'KONGOWE only: 1000 + 500, never MBAGALA\'s 800');
+});

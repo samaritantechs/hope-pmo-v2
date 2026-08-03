@@ -2273,6 +2273,58 @@ Both answers are now printed on the button itself, so nobody has to ask again be
 
 ---
 
+## Part 15a — Why YOUR strip showed dashes
+
+Found it, and it was not the figures.
+
+An **all-teams admin registers on the phone with no home team** — `call_users.team` is NULL,
+deliberately, because that column is a foreign key into the teams table and writing the literal
+`ALL` used to break registration outright.
+
+Working out which teams that person may see wrapped the NULL in a list, producing a scope of one
+team **named `""`**. Nothing matches a team called nothing. So every denominator came out zero,
+every percentage came out null, and the strip printed dashes all the way across — **for the one
+person in the company most likely to be looking at it.**
+
+The customer lists escaped it because they take their own path to the same question. The strip
+did not. A NULL home team now means what it always meant everywhere else: every team.
+
+### And the strip no longer hides why
+
+It swallowed its failures in silence — *"never show an error in the header"* — which sounded
+considerate and meant that "the figures are zero" and "the app cannot reach the server" looked
+exactly the same on screen. Three rounds of work went into figures that were never the problem.
+
+Now a failed refresh:
+
+- leaves **every figure where it is** (an old number beats no number),
+- puts **⚠ Bonyeza** where the clock goes,
+- and **tapping it says why, in the server's own words**, then tries again.
+
+## Part 15b — "Expected — Tomorrow" is gone from the dropdown
+
+You have said several times that you do not use it and that your way of working has no place for
+it. You were right, and it should never have been asking.
+
+**There is no such report.** Tomorrow's list is the ordinary **Expected — Today** sheet filed
+under **tomorrow's date**. That is how the old system worked and how the Kesho tab has always
+read it. A separate report type asked somebody to upload the same file twice under a second
+label, and looked like a required step nobody could explain.
+
+It is no longer offered. The server still accepts the old type so historic uploads keep reading
+correctly — nothing already stored is affected.
+
+The date box now says this where the question actually arises:
+
+> **Kesho / tomorrow:** there is no separate "tomorrow" report. If you have the sheet for
+> tomorrow, upload it as **Expected — Today** with **tomorrow's date** here, and the Kesho tab
+> reads it. If you never file ahead, leave it — Kesho simply stays empty.
+
+So: **do nothing with it.** If Kesho is blank on the phone, that is correct for how you work, not
+a fault.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live

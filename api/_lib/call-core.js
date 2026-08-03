@@ -86,7 +86,13 @@ async function userByDeviceSoft(db, dev) {
     works identically whether the caller came from the portal or the calls app. */
 export function pseudoUser(cu) {
   const lt = cu.leader_teams;
-  const teams = !cu.is_leader ? [K(cu.team)]
+  /* A HOME TEAM OF NULL MEANS EVERY TEAM, NOT A TEAM CALLED "".
+     An ALL-teams admin registers with team = NULL on purpose (call_users.team is a foreign key,
+     so the literal 'ALL' used to break registration outright). Wrapping that null in an array
+     scoped them to a team name that does not exist, so every figure came back zero -- which is
+     how the performance strip showed dashes for the one person most likely to be looking at it.
+     The lists escaped it because they take their own path; the strip did not. */
+  const teams = !cu.is_leader ? (K(cu.team) ? [K(cu.team)] : null)
     : (!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null
     : lt.map(t => K(t)).filter(Boolean);
   return { name: cu.name, role: cu.role, teams };

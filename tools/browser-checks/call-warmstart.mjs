@@ -220,6 +220,23 @@ check('tapping the strip asks for the figures again',
 
 /* HOW OLD IS THE APP YOU ARE HOLDING? Three rounds of "it still is not fixed" could each have
    been a phone running yesterday's page, and nobody -- in the field or here -- could tell. */
+/* A FAILURE THAT CANNOT BE READ IS A FAILURE NOBODY CAN REPORT. The strip swallowed its errors
+   in silence -- "never show an error in the header" -- so "it shows dashes" and "it cannot reach
+   the server" looked identical, and three rounds went into figures that were never the problem. */
+summaryFails = true;
+await page.evaluate(() => loadDaySummary(true));
+await page.waitForTimeout(400);
+check('a strip that cannot load says so where the clock goes',
+  /\u26A0/.test(await page.evaluate(() => document.getElementById('dsTag').textContent)),
+  await page.evaluate(() => document.getElementById('dsTag').textContent));
+check('and the figures are STILL there -- an old number beats no number',
+  '42%' === await page.evaluate(() => document.getElementById('dsCol').textContent));
+summaryFails = false;
+await page.evaluate(() => loadDaySummary(true));
+await page.waitForTimeout(400);
+check('and the warning clears the moment figures arrive',
+  !(await page.evaluate(() => document.getElementById('dayStrip').classList.contains('warn'))));
+
 check('the app says which version of itself is on screen',
   /Toleo la app.*\d{4}-\d\d-\d\d \d\d:\d\d/.test(await page.evaluate(() => document.getElementById('body').textContent)));
 
