@@ -107,6 +107,7 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
    check has no way to know the tap did anything. */
 @keyframes dsLit{0%{background:rgba(255,255,255,.20)}100%{background:transparent}}
 .daystrip.lit{animation:dsLit .7s ease-out;border-radius:8px}
+.daystrip.warn .ds-tag{background:rgba(255,190,80,.28);color:#FFE9BF}
 .daystrip.stale{opacity:.62}
 .daystrip.stale .ds-tag{background:rgba(255,255,255,.06)}
 
@@ -800,7 +801,11 @@ function enterApp(d){
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
   /* AND TAPPING THE FIGURES REFRESHES THEM. The one thing an officer can do when they doubt a
      number is ask for it again, and there was no way to. */
-  $('#dayStrip').onclick = function(){ loadDaySummary(true); };
+  $('#dayStrip').onclick = function(){
+    // A failure that cannot be read is a failure nobody can report. Say it, then try again.
+    if (_sumErr) toast('Takwimu hazikupatikana / could not load the figures: ' + _sumErr, true);
+    loadDaySummary(true);
+  };
   document.addEventListener('visibilitychange', function(){
     if (document.hidden || !S.boot) return;
     /* ASK THE CHEAP QUESTION, NOT THE THROTTLED ONE. This used to call loadDaySummary(false),
@@ -838,6 +843,17 @@ function enterApp(d){
 var SUM_LS_KEY = 'hcDaySummary_v1';
 var _sumAt = 0;
 var _sumVer = null;                      // which upload the figures on screen came from
+var _sumErr = null;                      // why the last attempt failed, in the server's own words
+/** The strip could not be refreshed. Leave every figure where it is -- an old number beats no
+    number -- and put a warning where the clock goes, so "it shows dashes" and "it cannot reach
+    the server" stop looking identical. */
+function summaryFailed_(why){
+  _sumErr = why || 'Imeshindikana / failed';
+  var el = $('#dayStrip');
+  el.classList.remove('hide');
+  el.classList.add('warn');
+  $('#dsTag').textContent = '\u26A0 Bonyeza';
+}
 function saveSummary_(d, atMs){
   /* WHOSE figures these are is stored with them. Handsets get handed on and officers get moved
      between teams; restoring a saved strip without checking would put one team's numbers in
@@ -907,19 +923,23 @@ function loadDaySummary(force){
   if (!S.boot) return;
   if (!force && _sumAt && (Date.now() - _sumAt < 15*60*1000)) return;   // light cooldown, mirrors the list-cache feel
   srv('api_callDailySummary', DEV).then(function(d){
-    if (!d || !d.ok) return;
+    if (!d || !d.ok) { summaryFailed_(d && d.error ? d.error : 'Jibu tupu / empty answer'); return; }
+    _sumErr = null;
     _sumAt = Date.now();
     _sumVer = d.dataVersion || null;
     // Sat/Sun the server returns week-to-date; drawSummary_ reads d.period for the tag.
+    $('#dayStrip').classList.remove('warn');
     drawSummary_(d, false, _sumAt);
     saveSummary_(d, _sumAt);
     // A brief flash, so a refresh that moves no figure is still visibly a refresh.
     var el = $('#dayStrip');
     el.classList.remove('lit'); void el.offsetWidth; el.classList.add('lit');
-  }).catch(function(){
-    /* NEVER TAKE THE STRIP AWAY. A failed request means the network is bad, not that the team
-       has no figures -- and blanking the header is how it came to feel like something that
-       might not come back. What is on screen stays on screen until better figures arrive. */
+  }).catch(function(e){
+    /* NEVER TAKE THE STRIP AWAY -- but never hide the reason either. What is on screen stays on
+       screen; the tag says a warning instead of a clock, and tapping it says WHY in words.
+       Swallowing this in silence is what turned "the bar shows dashes" into three rounds of
+       guessing at figures that were never the problem: the request was failing. */
+    summaryFailed_(String((e && e.message) || e || 'Mtandao / network'));
   });
 }
 /** Called by the sync loop. The strip is far too expensive to recompute on a timer, so it is
