@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HOPE PMO — Portal</title>
 <style>
-  :root{--b950:#14113F;--b900:#1D1873;--b800:#2A22A8;--b700:#3B30E6;--b600:#5B52EC;--b500:#7C74F1;--b300:#B6B1F8;--b100:#E2E0FD;--b50:#F3F2FE;
+  :root{--b950:#081C4A;--b900:#0B2A6B;--b800:#10357F;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
         --bg:#F6F8FC;--card:#FFF;--ink:#0F172A;--mut:#64748B;--soft:#94A3B8;--line:#E2E8F0;
         --ok:#067647;--okbg:#E7F6EE;--okline:#CFEADD;--warn:#92400E;--warnbg:#FEF3DC;--warnline:#F6E3BC;
         --bad:#B42318;--badbg:#FDECEA;--badline:#F6CFCB;--rad:14px}
@@ -67,11 +67,15 @@
 
   /* shell */
   .shell{display:flex;height:100%}
-  .side{width:225px;flex:0 0 auto;background:var(--b950);color:#D8D5FB;display:flex;flex-direction:column;padding:16px 12px}
+  /* The sidebar is the SAME navy the phone app's header uses, not the darkest shade in the
+     ramp. The app's colour was right; what made the system read as hard was painting 225
+     pixels of near-black down the whole height of the screen, next to a white page. One step
+     lighter is the app's own header colour, which is the thing it was meant to match. */
+  .side{width:225px;flex:0 0 auto;background:var(--b900);color:#cfe0ff;display:flex;flex-direction:column;padding:16px 12px}
   .side .brand{color:#fff;font-weight:800;font-size:14px;line-height:1.35}
   .side .brand small{display:block;color:var(--b300);font-weight:500;font-size:11px;margin-top:2px}
   .nav{margin-top:18px;display:flex;flex-direction:column;gap:2px;flex:1;overflow:auto}
-  .nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:0;color:#D8D5FB;
+  .nav button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:0;color:#cfe0ff;
     padding:9px 11px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer}
   .nav button svg{width:16px;height:16px;flex:0 0 16px;opacity:.85}
   .nav button.on svg{opacity:1}
@@ -152,9 +156,9 @@
      set to, so somebody working in light mode got a black screen thrown at them on the
      projector -- and a bright meeting room is exactly where a light deck reads better. Every
      colour here is a variable that flips with body.dark, so one toggle changes both. */
-  :root{ --pbg:#FFFFFF; --pink:#14113F; --plab:#5B52EC; --pline:rgba(20,17,63,.14);
-         --psoft:rgba(59,48,230,.06); --pedge:rgba(20,17,63,.10) }
-  body.dark{ --pbg:#14113F; --pink:#FFFFFF; --plab:#B6B1F8; --pline:rgba(255,255,255,.22);
+  :root{ --pbg:#FFFFFF; --pink:#0F172A; --plab:#1D4ED8; --pline:rgba(8,28,74,.14);
+         --psoft:rgba(11,42,107,.06); --pedge:rgba(8,28,74,.10) }
+  body.dark{ --pbg:#081C4A; --pink:#FFFFFF; --plab:#93C5FD; --pline:rgba(255,255,255,.22);
              --psoft:rgba(255,255,255,.07); --pedge:rgba(255,255,255,.12) }
   #pres{display:none;position:fixed;inset:0;z-index:200;background:var(--pbg);color:var(--pink);padding:26px 34px;overflow:auto}
   #pres .phead{display:flex;align-items:center;gap:14px;font-size:26px;font-weight:800;margin-bottom:18px}
@@ -775,7 +779,7 @@ function exportXls(){
     + '<x:Name>'+esc(S.view)+'</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>1</x:SplitHorizontal>'
     + '<x:TopRowBottomPane>1</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet>'
     + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
-    + '<style>th{background:#1D1873;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+    + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
     + '</head><body><table><thead><tr><th>S/N</th>'
     + S.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')
     + '</tr></thead><tbody>'
@@ -1107,7 +1111,7 @@ function exportBoard(id, kind){
     return;
   }
   var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
-    + '<style>th{background:#1D1873;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body>'
+    + '<style>th{background:#0B2A6B;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body>'
     + '<h3>'+esc(b.title)+'</h3><table><thead><tr><th>S/N</th>'
     + b.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
     + b.rows.map(function(r,i){

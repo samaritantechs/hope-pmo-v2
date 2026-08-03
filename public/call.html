@@ -5,13 +5,13 @@
 <title>HOPE Calls</title>
 <style>
 :root{
-  --b950:#14113F; --b900:#1D1873; --b800:#2A22A8; --b700:#3B30E6; --b600:#5B52EC;
-  --b500:#7C74F1; --b300:#B6B1F8; --b100:#E2E0FD; --b50:#F3F2FE;
+  --b950:#081C4A; --b900:#0B2A6B; --b800:#10357F; --b700:#1D4ED8; --b600:#2563EB;
+  --b500:#3B82F6; --b300:#93C5FD; --b100:#DBEAFE; --b50:#EFF6FF;
   --bg:#F6F8FC; --card:#FFFFFF; --ink:#0F172A; --mut:#64748B; --soft:#94A3B8; --line:#E2E8F0;
   --ok:#067647; --okbg:#E7F6EE; --okline:#CFEADD;
   --warn:#92400E; --warnbg:#FEF3DC; --warnline:#F6E3BC;
   --bad:#B42318; --badbg:#FDECEA; --badline:#F6CFCB;
-  --rad:14px; --shadow:0 2px 10px -4px rgba(29,24,115,.18);
+  --rad:14px; --shadow:0 2px 10px -4px rgba(11,42,107,.18);
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);height:100%;
@@ -90,7 +90,7 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
   border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;
   display:flex;align-items:center;justify-content:center;padding:0}
 .tabs{display:flex;gap:4px;margin-top:12px;overflow-x:auto}
-.tabs button{flex:1;background:rgba(255,255,255,.08);color:#D8D5FB;border:0;padding:9px 4px;border-radius:9px;
+.tabs button{flex:1;background:rgba(255,255,255,.08);color:#cfe0ff;border:0;padding:9px 4px;border-radius:9px;
   font-size:12.5px;font-weight:700;white-space:nowrap}
 .tabs button.on{background:#fff;color:var(--b800)}
 /* Five figures on a phone: wrap freely, but never break a label away from its number. */
@@ -179,7 +179,7 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
   .expdfstrip.shut{padding:6px 12px}
   .expdfstrip .xscope{flex-basis:100%;display:flex;gap:6px;margin-bottom:2px}
   .expdfstrip .xscope button{flex:1;padding:5px 8px;border:1px solid var(--line);background:transparent;color:var(--mut);border-radius:8px;font-size:11.5px;font-weight:700}
-  .expdfstrip .xscope button.on{background:var(--b600,#5B52EC);border-color:var(--b600,#5B52EC);color:#fff}
+  .expdfstrip .xscope button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
   .expdfstrip .xcyc span{font-size:10.5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
 </style>
 </head>
@@ -844,13 +844,23 @@ function drawExpdfStrip_(){
 function staleNote_(){
   var src = LIST_SOURCE[S.view], a = src && S.asOf[src];
   if (!a || !a.stale || !a.date) return '';
+  var box = function(html){ return '<div class="empty" style="background:#FEF3C7;border:1px solid #FCD34D;'
+    + 'color:#92400E;text-align:left;padding:10px 12px;margin-bottom:8px;border-radius:10px">' + html + '</div>'; };
+  /* The defaulter list ages differently from the Expected ones. A customer stays on it until
+     THEIR weekday's deck is uploaded again without them, so a deck nobody has re-sent for a
+     fortnight leaves people on the list who may already have cleared. Saying so is the
+     difference between an officer trusting the list and an officer ringing somebody who has
+     paid. */
+  if (S.view === 'def' || S.view === 'exp' || S.view === 'chr')
+    return box('<b>Angalia / Note:</b> takwimu hizi zilisasishwa mara ya mwisho tarehe <b>'
+      + esc(a.date) + '</b>.<br><span style="font-size:11.5px">These figures were last refreshed on '
+      + esc(a.date) + '. A customer stays on this list until their weekday\u2019s deck is uploaded '
+      + 'again without them, so somebody here may already have cleared.</span>');
   var what = S.view === 'tomorrow' ? 'KESHO' : 'LEO';
-  return '<div class="empty" style="background:#FEF3C7;border:1px solid #FCD34D;color:#92400E;'
-    + 'text-align:left;padding:10px 12px;margin-bottom:8px;border-radius:10px">'
-    + '<b>Angalia / Note:</b> orodha ya ' + what + ' haijapakiwa leo. '
+  return box('<b>Angalia / Note:</b> orodha ya ' + what + ' haijapakiwa leo. '
     + 'Hii ni ya <b>' + esc(a.date) + '</b>.<br>'
     + '<span style="font-size:11.5px">This list was not uploaded for today — you are seeing '
-    + esc(a.date) + '. Tell your PMO officer before working it.</span></div>';
+    + esc(a.date) + '. Tell your PMO officer before working it.</span>');
 }
 
 function emptyWhy_(v){

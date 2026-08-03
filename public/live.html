@@ -205,8 +205,20 @@ function tick(){
     // A code that has been withdrawn should send somebody back to the box, but ONLY if we have
     // nothing good to show. A display that has been working for a week must not blank itself
     // over one odd answer.
-    if (!lastData) ask(d && d.error === 'BAD_CODE'
-      ? 'Msimbo huu haufahamiki. / That code is not recognised.' : '');
+    /* A CLOSED SYSTEM IS NOT A BAD CODE. HOPE Live opens and closes with the rest of the
+       system, and without this the code box simply came back with nothing written on it --
+       somebody types their code, presses Start, and the same empty box returns. That is the
+       most frustrating possible answer, and the fix is one sentence naming the switch. */
+    if (!lastData) ask(
+      d && d.error === 'SYSTEM_CLOSED'
+        ? 'Mfumo umefungwa kwa sasa, kwa hiyo HOPE Live nayo imefungwa. '
+          + 'Msimamizi anaifungua kwenye Settings → "Mfumo kwa watumiaji wote". '
+          + '/ The system is closed, so HOPE Live is closed with it. '
+          + 'An admin opens it in Settings → "The system, for everybody".'
+      : d && d.error === 'BAD_CODE'
+        ? 'Msimbo huu haufahamiki. / That code is not recognised.'
+      : d && d.error === 'NO_CODE' ? ''
+      : '');
   }).catch(function(e){
     // Keep whatever good figures are up; the dot already says they are ageing. Only somebody
     // who has nothing on screen yet needs to be told what went wrong -- and told WHICH thing.

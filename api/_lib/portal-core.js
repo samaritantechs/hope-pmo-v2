@@ -2401,9 +2401,9 @@ function expdfEmailHtml(d, sentBy) {
   const pctTxt = v => (v == null ? '—' : v + '%');
   const t = d.totals;
   const section = s => `
-    <h3 style="margin:22px 0 6px;font:600 14px system-ui;color:#1D1873">${esc_(s.role)}</h3>
+    <h3 style="margin:22px 0 6px;font:600 14px system-ui;color:#0B2A6B">${esc_(s.role)}</h3>
     <table style="width:100%;border-collapse:collapse;font:13px system-ui">
-      <thead><tr style="background:#1D1873;color:#fff">
+      <thead><tr style="background:#0B2A6B;color:#fff">
         <th align="left" style="padding:6px 8px">Leader</th>
         <th align="right" style="padding:6px 8px">Customers</th>
         <th align="right" style="padding:6px 8px">Initial</th>
@@ -2429,7 +2429,7 @@ function expdfEmailHtml(d, sentBy) {
         <td align="right" style="padding:6px 8px">${pctTxt(s.totals.pct)}</td>
       </tr></tfoot></table>`;
   return `<div style="font:14px system-ui;color:#111;max-width:860px">
-    <h2 style="margin:0 0 2px;color:#1D1873">HOPE PMO — Expected Defaulters, weekly recovery</h2>
+    <h2 style="margin:0 0 2px;color:#0B2A6B">HOPE PMO — Expected Defaulters, weekly recovery</h2>
     <div style="color:#6b7280;font-size:13px">Week of ${esc_(d.weekOf)} · as of ${esc_(d.date || '—')} (${esc_(d.weekday)}) · sent by ${esc_(sentBy)}</div>
     ${d.hasBaseline ? '' : '<p style="color:#B42318"><b>Monday’s initial deck is not uploaded</b>, so recovery below reads 0. Upload it and resend.</p>'}
     <p style="margin:14px 0 0"><b>Whole book:</b> ${money0(t.customers)} customers ·

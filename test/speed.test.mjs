@@ -1,0 +1,165 @@
+/* THE SPEED GUARD.
+ *
+ * "Moving forward everything we do should take speed precaution."
+ *
+ * A promise to be careful is worth nothing six weeks later. This is the promise written down as
+ * something that FAILS: every screen has a budget in round trips, and adding a read that blows
+ * it turns `npm test` red before the change can be deployed.
+ *
+ * ROUND TRIPS ARE THE UNIT. Each one is a separate journey from the web server to the database
+ * and back -- 100 to 300 thousandths of a second on a good connection. Rows and megabytes
+ * matter too, but they scale with the book; the number of journeys is a property of the CODE,
+ * and it is what turned the dashboard into eighty-five seconds of waiting for one idle user.
+ *
+ * The budgets below are deliberately a little above what each screen costs today, so ordinary
+ * work does not trip them. They are a ceiling, not a target. If a change needs more, the
+ * question to answer first is "can the database do this instead of me?" -- and if the answer is
+ * genuinely no, raise the number here IN THE SAME COMMIT, so the cost is visible in the diff
+ * rather than discovered by somebody in the field.
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fakeDb } from './fake-db.mjs';
+
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
+const { portalApi } = await import('../api/_lib/portal-core.js');
+const { callApi } = await import('../api/_lib/call-core.js');
+
+const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
+const TEAMS = Array.from({ length: 40 }, (_, i) => 'TEAM' + String(i + 1).padStart(2, '0'));
+
+/** A book big enough that reading it carelessly shows up. Deliberately modest per table --
+    this is about the SHAPE of the reads, and a shape that is wrong is wrong at any size. */
+function bigBook() {
+  const t = {
+    teams: TEAMS.map(x => ({ team: x, recovery: 'REC ' + x, expected: 'EXP ' + x })),
+    settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }],
+    access_codes: [], roles: [], call_agents: [], call_users: [], call_logs: [],
+    repayment_snapshots: [], defaulter_snapshots: [], followup_status: [], followup_comments: [],
+    loans: [], received_payments: [], complaints: [], restructures: [], demand_notices: [],
+    abnormal_payments: [],
+  };
+  const day = i => new Date(Date.parse('2026-07-24') - i * 86400000).toISOString().slice(0, 10);
+  for (let d = 0; d < 7; d++) {
+    for (let i = 0; i < 2000; i++) {
+      const team = TEAMS[i % TEAMS.length];
+      t.repayment_snapshots.push({ ref: 'R' + i, full_name: 'C' + i, team, payment_expected: 5000,
+        todays_status: i % 2 ? 'PAID' : 'UNPAID', arrears: 0, snapshot_type: 'today',
+        snapshot_date: day(d), upload_batch: 'b' + d, created_at: day(d) + 'T04:00:00Z' });
+    }
+    for (let i = 0; i < 500; i++) {
+      const team = TEAMS[i % TEAMS.length];
+      for (const type of ['initial', 'current']) {
+        t.defaulter_snapshots.push({ ref: 'R' + i, team, arrears: 4000, snapshot_type: type,
+          weekday: 'FRI', snapshot_date: day(d), upload_batch: 'b' + d + type,
+          created_at: day(d) + 'T04:00:00Z' });
+      }
+    }
+  }
+  for (let i = 0; i < 2000; i++) {
+    t.followup_status.push({ ref: 'R' + i, team: TEAMS[i % TEAMS.length], full_name: 'C' + i,
+      arrears: 4000, status: 'Defaulter', fu_status: 'AMETOA AHADI' });
+    t.loans.push({ id: 'l' + i, team: TEAMS[i % TEAMS.length], stage: 'approved',
+      principal_amt: 300000, approved_date: day(i % 7), track_no: '1', created_by: 'CS1' });
+  }
+  // A year of imported comment history -- the thing that made the bell cost forty megabytes.
+  for (let i = 0; i < 20000; i++) {
+    t.followup_comments.push({ id: 'c' + i, ref: 'R' + (i % 2000), team: TEAMS[i % TEAMS.length],
+      comment: 'a note', created_at: day(i % 7) + 'T08:00:00Z', created_by: 'OFFICER' });
+  }
+  for (let i = 0; i < 500; i++) {
+    t.complaints.push({ id: 'k' + i, ref: 'R' + i, team: TEAMS[i % TEAMS.length],
+      complainant: 'MAMA ' + i, details: 'x', created_at: day(i % 7) + 'T08:00:00Z' });
+  }
+  return t;
+}
+
+/** Counts every request the code sends, exactly as fetchAll issues them. */
+function counting(tables) {
+  const db0 = fakeDb(tables);
+  let trips = 0, rows = 0;
+  const wrap = q => new Proxy(q, { get(o, p) {
+    if (p === 'then') return (res, rej) => o.then(r => {
+      trips++; if (Array.isArray(r.data)) rows += r.data.length; return res(r);
+    }, rej);
+    const v = o[p];
+    return typeof v === 'function' ? (...a) => { const out = v.apply(o, a); return out === o ? wrap(o) : out; } : v;
+  } });
+  return { db: { from: n => wrap(db0.from(n)), rpc: async (n, a) => { trips++; return db0.rpc(n, a); },
+                 _dump: n => db0._dump(n) },
+           stat: () => ({ trips, rows }) };
+}
+
+const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
+const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
+
+/* screen, portal function, args, who, budget in ROUND TRIPS */
+const BUDGETS = [
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60],
+  ['Officer boards',          'officerBoards', {}, ADMIN,   50],
+  ['Defaulters Followup',     'followup',      {}, ADMIN,   10],
+  ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10],
+  ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10],
+  ['Promise to Pay',          'promises',      {}, ADMIN,   10],
+  ['Weekly report',           'weekly',        {}, ADMIN,   45],
+  ['The bell',                'notifications', {}, ADMIN,    6],
+  ['The bell (one team)',     'notifications', {}, OFFICER,  6],
+];
+
+for (const [label, fn, args, user, budget] of BUDGETS) {
+  test(`speed: ${label} stays within ${budget} round trips`, async () => {
+    const c = counting(bigBook());
+    await portalApi(c.db, user, fn, args, NOW);
+    const { trips, rows } = c.stat();
+    assert.ok(trips <= budget,
+      `${label} took ${trips} round trips (budget ${budget}), reading ${rows.toLocaleString()} rows.\n` +
+      `  Before raising this number: can the database do the work instead? Ordering, limiting,\n` +
+      `  filtering and counting all belong there. If the answer is genuinely no, raise it in the\n` +
+      `  SAME commit so the cost is visible in the diff.`);
+  });
+}
+
+/* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one
+   of these is a field officer standing in the sun on mobile data. */
+const PHONE = [
+  ['Calls: boot',        'api_callBoot',          ['DEV1'], 12],
+  ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 10],
+  ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 10],
+  ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6],
+  /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
+     figures on it are the dashboard's own figures, and computing them a second, cheaper way
+     would be two answers that could disagree on a wall in front of the company.
+     It is also the one screen nobody is waiting on: the figures are kept for two minutes per
+     scope, so a display refreshing every twenty seconds pays this once every two minutes. */
+  ['HOPE Live widget',   'api_widget',            ['TEAM01'], 35],
+];
+
+for (const [label, fn, args, budget] of PHONE) {
+  test(`speed: ${label} stays within ${budget} round trips`, async () => {
+    const t = bigBook();
+    t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER',
+      device_id: 'DEV1', active: true });
+    t.teams = t.teams.map(x => (x.team === TEAMS[0] ? { ...x, team_code: 'TEAM01' } : x));
+    const c = counting(t);
+    await callApi(c.db, fn, args, NOW);
+    const { trips, rows } = c.stat();
+    assert.ok(trips <= budget,
+      `${label} took ${trips} round trips (budget ${budget}), reading ${rows.toLocaleString()} rows.\n` +
+      `  This one runs on a phone, on mobile data. Ask the database to do more before asking\n` +
+      `  the handset to wait longer.`);
+  });
+}
+
+test('speed: the bell reads a page, not a table', async () => {
+  /* The specific mistake this guards. The bell shows sixty items; it used to read every
+     complaint and every comment ever written -- measured at 204,000 rows and 40 MB against a
+     real book -- to find them. The budget above catches the round trips; this catches the
+     rows, because a single query that drags a whole table is one round trip and still wrong. */
+  const c = counting(bigBook());
+  await portalApi(c.db, OFFICER, 'notifications', {}, NOW);
+  const { rows } = c.stat();
+  assert.ok(rows <= 200, `the bell read ${rows.toLocaleString()} rows to show at most 60 items`);
+});
