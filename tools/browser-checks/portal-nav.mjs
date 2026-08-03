@@ -545,10 +545,60 @@ await page.waitForTimeout(700);
 const segs = await page.evaluate(() =>
   Array.from(document.querySelectorAll('.presSeg')).map(c => c.value));
 check('every board is offered as a segment', segs.length >= 10, segs.join(','));
-for (const id of ['pmoDay', 'pmoWeek', 'early', 'earlyWeek', 'recovery', 'calls', 'cs'])
+for (const id of ['pmo', 'early', 'recovery', 'calls', 'cs', 'credit'])
   check('  ...including ' + id, segs.includes(id));
 check('the two HOPE Calls ends are ONE slide, not two',
   segs.includes('calls') && !segs.includes('callsLow'), segs.join(','));
+/* ONE SLIDE PER ROLE, carrying today AND the week. Split apart, the room read today's figure,
+   discussed it, and had lost the week by the time it came round. */
+for (const [id, gone] of [['pmo','pmoDay'], ['pmo','pmoWeek'], ['early','earlyWeek'], ['recovery','recToday']])
+  check('  ...and ' + gone + ' is folded into ' + id, !segs.includes(gone), segs.join(','));
+const bothPeriods = await page.evaluate(() => {
+  const out = {};
+  for (const id of ['pmo', 'early', 'recovery']) {
+    const sl = S.slides.find(s => s.id === id);
+    out[id] = sl ? sl.cols.map(c => c.label).join(' | ') : null;
+  }
+  return out;
+});
+for (const id of ['pmo', 'early', 'recovery'])
+  check('  ...' + id + ' carries today and the week on one slide',
+    /today/i.test(bothPeriods[id] || '') && /week/i.test(bothPeriods[id] || ''), bothPeriods[id]);
+
+/* GRAND TOTALS. The number the meeting reads out, missing from every projected table. */
+await page.evaluate(() => presStart(0));
+await page.waitForTimeout(200);
+const totalOn = async () => page.evaluate(() => {
+  const tr = document.querySelector('#pres .ptot');
+  return tr ? tr.textContent.replace(/\s+/g, ' ').trim() : null;
+});
+let seenTotals = 0, tableSlides = 0;
+const nSlides = await page.evaluate(() => S.slides.length);
+for (let i = 0; i < nSlides; i++) {
+  const kind = await page.evaluate(() => S.slides[S.presI].kind);
+  if (kind === 'table') { tableSlides++; if (await totalOn()) seenTotals++; }
+  await page.evaluate(() => presGo(1));
+}
+check('every table slide carries a grand total', seenTotals === tableSlides,
+  seenTotals + ' of ' + tableSlides);
+check('and it is labelled in both languages',
+  /JUMLA \/ TOTAL/.test(await page.evaluate(() => {
+    const t = S.slides.findIndex(s => s.kind === 'table');
+    S.presI = t; presDraw();
+    const tr = document.querySelector('#pres .ptot');
+    return tr ? tr.textContent : '';
+  })));
+/* A column of percentages ADDED UP is nonsense. It is worked out again from the two totals
+   that made it, or left blank -- never summed. */
+check('percentages are never summed into the total',
+  await page.evaluate(() => {
+    const rows = [{ collected: 90, expected: 100, pct: 90 }, { collected: 10, expected: 100, pct: 10 }];
+    const cols = [{ key:'collected', label:'C', kind:'money' }, { key:'expected', label:'E', kind:'money' },
+                  { key:'pct', label:'%', kind:'pct' }];
+    const t = autoTotals(rows, cols);
+    return t.collected === 100 && t.expected === 200 && t.pct === 50;   // 100/200, not 90+10
+  }));
+await page.evaluate(() => presStop());
 
 /* THE BUG. This view is never cached (the slideshow runs its own timers), so re-rendering it
    went back for the dashboard AND the officer boards -- a hundred-odd round trips because

@@ -1635,6 +1635,58 @@ beside the week's, both divided by the week's uncollected.
 
 ---
 
+## Part 14i — Early collection was reading a report nobody uploads
+
+*"i wonder at upload there is expected tommorow, i never used it b/se the essential reports are
+initial and current where initial is the early col"*
+
+That sentence explains an empty board. Early collection is judged on the list of who is due
+**next** — collect before the day arrives — and the code read the **Expected Tomorrow** report
+to find that list. This operation does not upload Expected Tomorrow. The essential Expected
+reports here are **Initial** and the day's own, and it is **Initial** that early collection is
+worked from.
+
+So the board was silently empty. No error, no note, just an officer board with nobody on it.
+
+**Now: Initial is read first, Tomorrow is the fallback.** Whichever of the two a company
+actually uploads is the one used, and neither convention has to be explained to anybody. If
+neither has been uploaded, the answer says so rather than showing a team that appears to have
+collected nothing.
+
+Both the dashboard and the officer boards read it through the same function, so the two screens
+can never disagree about what "early collection" means.
+
+**You can ignore Expected Tomorrow at upload.** It still works if you ever want it, but nothing
+depends on it any more.
+
+---
+
+## Part 14j — One slide per role, and a grand total on everything
+
+**Today and the week share a slide.** Split across two, the room read today's figure, discussed
+it, and had lost the week by the time it came round — and *"is this better or worse than the
+week?"* is the question every one of these boards exists to answer. PMO Collection, early
+collection and recovery each now carry both periods on one page, joined on the officer.
+
+**Every table has a grand total** — on the wall and on the tab. It is the number the meeting
+reads out, and a projected table without one sends somebody to a calculator while the slide is
+still up.
+
+The rule lives in the column definition rather than in each board, so a new board cannot be
+built without one by forgetting:
+
+| Column kind | In the total |
+|---|---|
+| `num`, `money`, `dur` | Added up. Counts, shillings and talk time all sum honestly. |
+| `pct` | **Never added up.** Worked out again from the two totals that made it, where both are on the board. Otherwise left blank. |
+| anything else | Blank. |
+
+A column of percentages summed is nonsense, and averaging them is nearly as bad: it weights a
+team of four the same as a team of four hundred. Ninety per cent of a hundred and ten per cent
+of a hundred is **fifty** per cent of two hundred, not a hundred.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1725,7 +1777,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 175 checks of the rules and the sums
+npm test                                    # 180 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 

@@ -2036,3 +2036,71 @@ test('on a Monday recovery divides by Monday, and on the weekend by the week', a
     'the weekend reconciles Monday to Friday: 1000 + 400 + 600');
   assert.equal(sat.recWeek.find(r => r.officer === 'JUMA G').uncollected, 2000);
 });
+
+
+/* EARLY COLLECTION IS WORKED FROM THE LIST OF WHO IS DUE NEXT.
+ *
+ * That used to mean the "Expected Tomorrow" report and nothing else -- and that report is not
+ * uploaded here. The essential Expected reports in this operation are INITIAL and the day's
+ * own, and it is INITIAL that early collection is worked from. So the board was silently
+ * empty: no error, no note, just an officer board with nobody on it.
+ */
+
+test('early collection reads the INITIAL list, and says which list it read', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    // The initial list: who is due next. One paid early, one not.
+    { ...E('111', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial') },
+    { ...E('222', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial') },
+  ];
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.earlySource, 'initial');
+  const e = b.earlyToday.find(r => r.officer === 'EARLY E');
+  assert.ok(e, 'the board is no longer empty');
+  assert.equal(e.pct, 50);
+  assert.equal(e.uncollected, 1000);
+  assert.equal(e.teams, 1);
+  assert.equal(e.sn, 1);
+});
+
+test('a company that uploads Tomorrow instead still gets its board', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    { ...E('444', 'KONGOWE', 700, 'PAID', 0, TODAY, 'tomorrow') },
+    { ...E('555', 'KONGOWE', 300, 'UNPAID', 0, TODAY, 'tomorrow') },
+  ];
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.earlySource, 'tomorrow', 'the fallback, so neither convention has to be explained');
+  assert.equal(b.earlyToday.find(r => r.officer === 'EARLY E').pct, 70);
+});
+
+test('initial wins when both are uploaded, and neither means an empty board that says so', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    { ...E('111', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial') },
+    { ...E('444', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'tomorrow') },
+  ];
+  const both = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(both.earlySource, 'initial');
+  assert.equal(both.earlyToday.find(r => r.officer === 'EARLY E').pct, 100);
+
+  const t2 = tables();
+  t2.repayment_snapshots = [E('333', 'KONGOWE', 500, 'PAID', 0, TODAY)];   // only the day's own
+  const none = await run('officerBoards', {}, ADMIN, fakeDb(t2));
+  assert.equal(none.earlySource, null, 'no list uploaded is reported, not disguised as zero');
+  assert.deepEqual(none.earlyToday, []);
+});
+
+test('the dashboard reads the same list as the officer board', async () => {
+  /* Two screens showing "early collection" from two different reports is how a meeting spends
+     twenty minutes on a discrepancy that is not real. */
+  const t = tables();
+  t.repayment_snapshots = [
+    { ...E('111', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial') },
+    { ...E('222', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial') },
+  ];
+  const db = fakeDb(t);
+  const dash = await run('dashboardFull', {}, ADMIN, db);
+  const kongowe = dash.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(kongowe.collPctEarly, 50, 'the same 50% the officer board reports');
+});

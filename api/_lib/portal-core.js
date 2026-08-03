@@ -2545,6 +2545,28 @@ function dateOfWeekday(nowMs, wd) { return addDaysKey(weekMondayKey(nowMs), WD7.
 
 /** A setting that is TEXT rather than a number. Blank reads as "not set", so a key somebody
     cleared falls back to the built-in default instead of matching nothing at all. */
+/** THE EARLY-COLLECTION LIST: who is due NEXT, so the officer can collect before the day.
+ *
+ *  This used to read the "Expected Tomorrow" report and nothing else -- and that report is not
+ *  uploaded here. The essential Expected reports in this operation are INITIAL and the day's
+ *  own, and it is the INITIAL list that early collection is worked from. So the board was
+ *  silently empty: no error, no note, just an officer board with nobody on it.
+ *
+ *  Initial is preferred and Tomorrow is the fallback, so whichever of the two a company
+ *  actually uploads is the one used, and neither has to be explained to anybody. The source is
+ *  returned as well as the rows, because a board built from a report nobody uploaded should say
+ *  so rather than look like a team that collected nothing.
+ *
+ *  Costs one round trip on the normal path -- the fallback only runs when the first is empty. */
+async function earlyList(db, { today, teams, columns }) {
+  const ini = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'initial' },
+    { notAfter: today, teams, columns });
+  if (ini.rows.length) return { ...ini, source: 'initial' };
+  const tmw = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' },
+    { notAfter: today, teams, columns });
+  return { ...tmw, source: tmw.rows.length ? 'tomorrow' : null };
+}
+
 async function settingStr(db, key, dflt) {
   const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
   const v = String((data && data.value) || '').trim();
@@ -2643,7 +2665,7 @@ async function dashboardFull(db, user, _args, nowMs) {
 
   /* ---- team performance: numbers WITH the leader names beside them ---- */
   const todayExp = pickLatestBatchRows(dayRows(myExpWeek, today));
-  const tomorrowSnap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today });
+  const tomorrowSnap = await earlyList(db, { today, teams: user.teams });
   const earlyExp = scoped(user, tomorrowSnap.rows);
   const iniToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'initial'));
   const curToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'current'));
@@ -2871,7 +2893,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
          codeRows, cfgS] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
     snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, EXP_COLS),
-    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today, teams: user.teams, columns: EXP_COLS }),
+    earlyList(db, { today, teams: user.teams, columns: EXP_COLS }),
     snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, DEF_COLS),
     fetchAll(() => onTeams(db.from('followup_status').select('ref, team, status, fu_status, arrears'), user.teams)),
     fetchAll(() => onTeams(db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt, track_no, upload_date'), user.teams)),
@@ -2906,7 +2928,11 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     String(r.snapshot_date) === d && (!type || r.snapshot_type === type)
     && (!weekday || r.weekday === weekday)));
 
-  /* ---- EARLY COLLECTION: judged on tomorrow's (kesho) list, per Expected officer ---- */
+  /* ---- EARLY COLLECTION: judged on the list of who is due NEXT, per Expected officer.
+         That is the INITIAL expected report here, with Tomorrow as a fallback -- see
+         earlyList. Which one it came from travels with the board, so a screen built on a
+         report nobody uploaded says so instead of looking like a team that collected
+         nothing. ---- */
   /* Read the same way as the PMO Collection board, because it asks the same question about a
      different set of officers: how many teams they cover, what is still out, and what share
      came in. `teams` is counted from the rows actually seen, so it is the number of teams that
@@ -3172,6 +3198,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        happened to be sitting on the object. */
     pmo: pmoRows.map(pmoPublicRow),
     pmoBasis: basis.kind, pmoBasisLabel: basis.label,
+    earlySource: tomorrow.source, earlyDate: tomorrow.date,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };
 }
