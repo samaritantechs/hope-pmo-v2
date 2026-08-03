@@ -18,7 +18,15 @@
 
 create or replace function storage_usage_by_date()
 returns table (source text, day date, n bigint)
-language sql stable as $$
+language sql
+stable
+-- CARRIED FORWARD FROM THE FILE BEFORE THIS ONE. 2026-08-02 pinned the search_path to close
+-- Supabase's "Function Search Path Mutable" warning: a function without one resolves table
+-- names against whatever the caller happens to have set. Because this file REPLACES that
+-- function, leaving the line out would have silently reopened the warning the moment this ran.
+-- Anything replacing this function again must carry it too.
+set search_path = public, pg_catalog
+as $$
   select 'expected'::text,       snapshot_date::date, count(*) from public.repayment_snapshots group by 2
   union all
   select 'defaulters'::text,     snapshot_date::date, count(*) from public.defaulter_snapshots group by 2
