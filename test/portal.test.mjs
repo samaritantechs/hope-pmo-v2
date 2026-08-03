@@ -1791,3 +1791,248 @@ test('the call report puts a silent officer on the list at zero', async () => {
   // Still scoped: a KONGOWE leader does not learn about MBAGALA's quiet officers.
   assert.equal(d.users.find(u => u.name === 'OTHER TEAM O'), undefined);
 });
+
+
+/* PMO COLLECTION — the collection officers, paid on the ONE thing they control.
+ *
+ * They are ACCESS CODES with a role, each carrying their own list of teams: one officer holds
+ * thirty-odd, which is a list on the person rather than their name repeated in thirty-odd rows
+ * of the teams table.
+ *
+ * These tests are about money, so the arithmetic is spelled out rather than asserted against
+ * whatever the code happens to produce. */
+
+const PMO_A = { code: 'P1', name: 'KAMARIA', role: 'PMO COLLECTION', teams: ['KONGOWE'] };
+const PMO_B = { code: 'P2', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['MBAGALA'] };
+
+/** An Expected-today row for a given team and date: expected 1000, and `paid` says whether it
+    came in. Two rows a day per team keeps the percentages easy to check by hand. */
+const X = (team, date, status, exp = 1000, arrears = 0) => ({
+  ref: team + date + status + Math.random(), team, payment_expected: exp, arrears,
+  todays_status: status, snapshot_type: 'today', snapshot_date: date,
+  upload_batch: 'x' + date, created_at: date + 'T04:00:00Z',
+});
+
+function pmoTables(rows) {
+  const t = tables();
+  t.access_codes = t.access_codes.concat([PMO_A, PMO_B]);
+  t.repayment_snapshots = rows;
+  return t;
+}
+
+test('a PMO officer is scored on the percentage collected, not the size of the book', async () => {
+  /* KAMARIA: 9 of 10 paid = 90%.  CATHERINE: 1 of 2 paid = 50%, on a fifth of the customers.
+     The plan's whole point is that the small book does not flatter anybody. */
+  const rows = [];
+  for (let i = 0; i < 9; i++) rows.push(X('KONGOWE', TODAY, 'PAID'));
+  rows.push(X('KONGOWE', TODAY, 'UNPAID'));
+  rows.push(X('MBAGALA', TODAY, 'PAID'));
+  rows.push(X('MBAGALA', TODAY, 'UNPAID'));
+
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(pmoTables(rows)));
+  assert.equal(b.pmo.length, 2);
+
+  const k = b.pmo.find(r => r.officer === 'KAMARIA');
+  assert.equal(k.sn, 1, 'best first, numbered for the slide');
+  assert.equal(k.teams, 1);
+  assert.equal(k.pct, 90);
+  assert.equal(k.uncollected, 1000);
+
+  const c = b.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(c.pct, 50);
+  assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
+
+  /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
+     future slide cannot include it by reaching for a field that happened to be there. */
+  for (const key of ['commission', 'weekCommission', 'bonus', 'band', 'expected', 'collected']) {
+    assert.equal(key in k, false, key + ' must not travel to the presentation');
+  }
+  assert.deepEqual(Object.keys(k).sort(),
+    ['officer', 'pct', 'sn', 'teams', 'uncollected', 'weekPct', 'weekUncollected'].sort());
+});
+
+test('the five bands pay what the plan says they pay', async () => {
+  const { pmoBand, PMO_BANDS } = await import('../api/_lib/pmo.js');
+  const rate = p => { const b = pmoBand(p); return b ? b.tzs : null; };
+
+  assert.equal(rate(85), 20000);   assert.equal(rate(89), 20000);
+  assert.equal(rate(90), 25000);   assert.equal(rate(92), 25000);
+  assert.equal(rate(93), 30000);   assert.equal(rate(94), 30000);
+  assert.equal(rate(95), 40000);   assert.equal(rate(96), 40000);
+  assert.equal(rate(97), 60000);   assert.equal(rate(100), 60000);
+  assert.equal(rate(84.9), 0, 'below 85 pays nothing, which is intended');
+  assert.equal(rate(0), 0);
+
+  /* The plan lists whole numbers with GAPS -- 89 to 90, 92 to 93 -- so 89.4 belongs to no band
+     as written. It pays the band below rather than nothing, because nobody intended a
+     percentage that pays zero while a lower one pays 20,000. */
+  assert.equal(rate(89.4), 20000);
+  assert.equal(rate(92.7), 25000);
+  assert.equal(rate(96.5), 40000);
+
+  // A day with nothing expected is not a 0% day. It is a day with no percentage at all.
+  assert.equal(pmoBand(null), null);
+
+  // A week of steady 90–92% pays 5 × 25,000 = 125,000, exactly as the plan's table says.
+  assert.equal(PMO_BANDS.find(b => b.floor === 90).tzs * 5, 125000);
+});
+
+test('the week is each day on its own band, added up', async () => {
+  /* Mon 100% (60,000) · Tue 50% (nothing) · Wed 100% (60,000). Two rows a day, so the
+     percentages are exact. A week scored as ONE percentage would be 5 of 6 = 83.3% and pay
+     nothing at all -- which is why the choice matters and why it is tested. */
+  const rows = [
+    X('KONGOWE', MON, 'PAID'), X('KONGOWE', MON, 'PAID'),
+    X('KONGOWE', '2026-07-21', 'PAID'), X('KONGOWE', '2026-07-21', 'UNPAID'),
+    X('KONGOWE', '2026-07-22', 'PAID'), X('KONGOWE', '2026-07-22', 'PAID'),
+  ];
+  const d = await run('commission', {}, ADMIN, fakeDb(pmoTables(rows)));
+  const k = d.pmo.find(r => r.officer === 'KAMARIA');
+
+  assert.equal(k.weekCommission, 120000, 'two good days at 60,000; the 50% day pays nothing');
+  assert.equal(k.weekPct, 83.3, 'and the week itself is still reported honestly');
+  assert.equal(k.weekUncollected, 1000);
+});
+
+test('the weekly bonus is checked, not assumed', async () => {
+  const thisWeek = [
+    X('KONGOWE', MON, 'PAID'), X('KONGOWE', MON, 'PAID'),     // KAMARIA 100%
+    X('MBAGALA', MON, 'PAID'), X('MBAGALA', MON, 'UNPAID'),   // CATHERINE 50%
+  ];
+  // Last week KAMARIA also managed 100% — so she leads, but has not BEATEN herself.
+  const lastWeek = [
+    X('KONGOWE', '2026-07-13', 'PAID'), X('KONGOWE', '2026-07-13', 'PAID'),
+  ];
+  const t = pmoTables(thisWeek.concat(lastWeek));
+  t.settings = t.settings.concat([{ key: 'PMO_WEEKLY_BONUS', value: '50000' }]);
+
+  const d = await run('commission', {}, ADMIN, fakeDb(t));
+  assert.equal(d.pmoBonus.set, true);
+  assert.equal(d.pmoBonus.leader, 'KAMARIA');
+  assert.equal(d.pmoBonus.won, false, 'leading is not enough — she has to beat her own last week');
+  assert.match(d.pmoBonus.why, /previous week/);
+  assert.equal(d.pmo.find(r => r.officer === 'KAMARIA').bonus, 0);
+
+  /* Now last week was worse, so leading IS beating herself. */
+  const t2 = pmoTables(thisWeek.concat([
+    X('KONGOWE', '2026-07-13', 'PAID'), X('KONGOWE', '2026-07-13', 'UNPAID'),   // 50% last week
+  ]));
+  t2.settings = t2.settings.concat([{ key: 'PMO_WEEKLY_BONUS', value: '50000' }]);
+  const d2 = await run('commission', {}, ADMIN, fakeDb(t2));
+  assert.equal(d2.pmoBonus.won, true);
+  assert.equal(d2.pmoBonus.leaderPrevPct, 50);
+  assert.equal(d2.pmo.find(r => r.officer === 'KAMARIA').bonus, 50000);
+  assert.equal(d2.pmo.find(r => r.officer === 'CATHERINE').bonus, 0, 'only the leader');
+});
+
+test('an amount nobody has set pays nothing and says so', async () => {
+  const rows = [X('KONGOWE', MON, 'PAID'), X('KONGOWE', MON, 'PAID')];
+  const d = await run('commission', {}, ADMIN, fakeDb(pmoTables(rows)));
+  assert.equal(d.pmoBonus.set, false);
+  assert.equal(d.pmoBonus.tzs, 0);
+  assert.equal(d.pmo.find(r => r.officer === 'KAMARIA').bonus, 0,
+    'the rule is in place; the figure is the owner\'s to choose, not one to invent');
+});
+
+test('a PMO officer sees their own money and nobody else\'s', async () => {
+  const rows = [X('KONGOWE', TODAY, 'PAID'), X('MBAGALA', TODAY, 'PAID')];
+  const me = { code: 'P1', name: 'KAMARIA', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: ['commission'] };
+  const d = await run('commission', {}, me, fakeDb(pmoTables(rows)));
+  assert.equal(d.pmo.length, 1);
+  assert.equal(d.pmo[0].officer, 'KAMARIA');
+});
+
+test('somebody who sees every team is not a collection officer with a portfolio', async () => {
+  /* A blank team list means ALL teams. Putting that person on this board would make their
+     percentage the company's percentage and quietly outrank everybody. */
+  const t = pmoTables([X('KONGOWE', TODAY, 'PAID')]);
+  t.access_codes = t.access_codes.concat([
+    { code: 'P9', name: 'EVERYWHERE E', role: 'PMO COLLECTION', teams: null }]);
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.pmo.find(r => r.officer === 'EVERYWHERE E'), undefined);
+});
+
+test('the role name is a setting, so a spelling is fixable without a deploy', async () => {
+  const t = pmoTables([X('KONGOWE', TODAY, 'PAID')]);
+  t.access_codes = t.access_codes.map(c =>
+    c.code === 'P1' ? { ...c, role: 'pmo-collection' } : c);
+  // Written differently, meant identically: case and punctuation are not the point.
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.ok(b.pmo.find(r => r.officer === 'KAMARIA'), 'PMO-COLLECTION is PMO COLLECTION');
+
+  const t2 = pmoTables([X('KONGOWE', TODAY, 'PAID')]);
+  t2.access_codes = t2.access_codes.map(c => c.code === 'P1' ? { ...c, role: 'COLLECTIONS' } : c);
+  t2.settings = t2.settings.concat([{ key: 'PMO_ROLE', value: 'COLLECTIONS' }]);
+  const b2 = await run('officerBoards', {}, ADMIN, fakeDb(t2));
+  assert.ok(b2.pmo.find(r => r.officer === 'KAMARIA'), 'and the name itself can be changed');
+});
+
+
+/* RECOVERY IS DIVIDED BY THE UNCOLLECTED THE OFFICER IS ACTUALLY CHASING.
+ *
+ * Which day's uncollected that is depends on the day of the week -- the rule the dashboard's
+ * Recovery % has always used (recovery.js):
+ *
+ *     Monday      today's uncollected      (no yesterday exists inside a HOPE week)
+ *     Tue–Fri     yesterday's uncollected
+ *     Sat/Sun     the whole week's         (the weekend reconciles Monday to Friday)
+ *
+ * The officer boards were not following it. They added up every Expected row of the whole week
+ * -- every day, and every RE-UPLOAD of every day -- and used that on both the daily and the
+ * weekly board. A team whose Tuesday file went in twice had its recovery percentage quietly
+ * halved, and Monday was divided by a week that had barely started.
+ */
+
+test('recovery divides by yesterday\'s uncollected on a Tuesday-to-Friday', async () => {
+  // NOW is Friday 2026-07-24, so the basis is Thursday the 23rd.
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0, YEST),          // Thursday: 1000 uncollected
+    E('222', 'KONGOWE', 500, 'PAID', 0, YEST),             //           nothing uncollected
+    E('333', 'KONGOWE', 9000, 'UNPAID', 0, TODAY),         // Friday's own -- NOT the basis
+    E('444', 'KONGOWE', 7000, 'UNPAID', 0, MON),           // Monday's -- NOT the basis either
+  ];
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  const juma = b.recWeek.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.uncollected, 17000,
+    'the WEEKLY board always divides by the whole week: 7000 Mon + 1000 Thu + 9000 Fri');
+
+  const jumaToday = b.recToday.find(r => r.officer === 'JUMA G');
+  assert.equal(jumaToday.uncollected, 1000,
+    'but the DAILY board divides by yesterday alone — not the week, and not today');
+  assert.equal(b.pmoBasis, 'yesterday');
+});
+
+test('a report uploaded twice no longer halves the recovery percentage', async () => {
+  /* THE DEFECT THIS FIXES. Two uploads of the same Thursday: the later batch is the real one,
+     and the earlier must not be added to it. Before, both counted, so the denominator doubled
+     and every officer's recovery percentage read half what it was. */
+  const t = tables();
+  const first = { ...E('111', 'KONGOWE', 1000, 'UNPAID', 0, YEST), upload_batch: 'b1', created_at: YEST + 'T04:00:00Z' };
+  const redo = { ...E('111', 'KONGOWE', 1000, 'UNPAID', 0, YEST), upload_batch: 'b2', created_at: YEST + 'T09:00:00Z' };
+  t.repayment_snapshots = [first, redo];
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.recToday.find(r => r.officer === 'JUMA G').uncollected, 1000,
+    'one thousand, not two — the re-upload replaces the file, it does not stack on it');
+});
+
+test('on a Monday recovery divides by Monday, and on the weekend by the week', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0, MON),
+    E('222', 'KONGOWE', 400, 'UNPAID', 0, '2026-07-21'),      // Tuesday
+    E('333', 'KONGOWE', 600, 'UNPAID', 0, '2026-07-22'),      // Wednesday
+  ];
+  // Monday 2026-07-20, noon EAT.
+  const monday = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, Date.parse('2026-07-20T09:00:00Z'));
+  assert.equal(monday.pmoBasis, 'today');
+  assert.equal(monday.recToday.find(r => r.officer === 'JUMA G').uncollected, 1000,
+    'Monday has no yesterday inside a HOPE week, so it divides by itself');
+
+  // Saturday 2026-07-25.
+  const sat = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, Date.parse('2026-07-25T09:00:00Z'));
+  assert.equal(sat.pmoBasis, 'week');
+  assert.equal(sat.recToday.find(r => r.officer === 'JUMA G').uncollected, 2000,
+    'the weekend reconciles Monday to Friday: 1000 + 400 + 600');
+  assert.equal(sat.recWeek.find(r => r.officer === 'JUMA G').uncollected, 2000);
+});
