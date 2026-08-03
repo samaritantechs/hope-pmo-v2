@@ -155,6 +155,7 @@
   /* The arrows. On a TV nobody is holding a keyboard, and on a phone or tablet there are no
      arrow keys at all -- so the two things a person wants during a deck have to be touchable.
      Big, at the vertical middle, hard against each edge where a thumb already is. */
+  #pres .ptot td{border-top:2px solid rgba(255,255,255,.5);font-weight:800;background:rgba(255,255,255,.07)}
   #pres .pnav{position:fixed;top:50%;transform:translateY(-50%);z-index:210;
     background:rgba(255,255,255,.12);border:0;color:#fff;width:64px;height:96px;
     font-size:34px;line-height:1;cursor:pointer;border-radius:12px;
@@ -1607,7 +1608,7 @@ function tableSimple(rows, cols, totalRow){
         return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
   // A TOTAL row is not decoration on these boards -- it is the number read out in the meeting.
   if (totalRow) body += '<tr class="totrow"><td class="sn"></td>'+cols.map(function(c,i){
-      return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
+      return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
   return '<div class="scroll"><table><thead><tr><th class="sn">S/N</th>'+cols.map(function(c){
       return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
     + body + '</tbody></table></div>';
@@ -1617,11 +1618,67 @@ function sumRow(rows, fields){
   fields.forEach(function(f){ o[f] = rows.reduce(function(s,r){ return s + (Number(r[f])||0); }, 0); });
   return o;
 }
+
+/** THE GRAND TOTAL, WORKED OUT FROM THE COLUMNS THEMSELVES.
+ *
+ *  Every board used to have to be told which fields to add up, and boards whose author forgot
+ *  simply had no total -- so the number people read out in the meeting was missing from some
+ *  tables and present in others for no reason anybody could see.
+ *
+ *  The rule is in the column definition, which already knows what each column IS:
+ *
+ *    num, money, dur   added up. Counts, shillings and talk time all sum honestly.
+ *    pct               NEVER added up. A column of percentages summed is nonsense -- and
+ *                      dividing by the row count is nearly as bad, because it weights a team
+ *                      of four the same as a team of four hundred. Where the two columns that
+ *                      MADE the percentage are both on the board, it is worked out again from
+ *                      their totals, which is the only honest answer. Otherwise it is blank.
+ *    anything else     blank.
+ *
+ *  A `get` column is computed per row, so its total is computed the same way from the totals
+ *  row rather than by summing whatever it displayed. */
+var PCT_FROM = {   // percentage column -> [numerator field, denominator field]
+  pct: ['collected', 'expected'], collPctToday: ['colToday', 'expToday'],
+  collPctEarly: ['colEarly', 'expEarly'], weekPct: ['weekCollected', 'weekExpected'],
+  connectPct: ['connected', 'calls'], portfolioPct: ['portfolio', 'calls'],
+  salesPct: ['amount', 'target'], par: ['arrears', 'balance'],
+  // Recovery: recovered over the uncollected it was chased against, for each period.
+  tPct: ['tRecovered', 'tUncollected'], wPct: ['wCollected', 'wExpected'],
+};
+function autoTotals(rows, cols){
+  if (!rows || !rows.length || !cols || !cols.length) return null;
+  var t = {}, any = false;
+  cols.forEach(function(c){
+    var k = c.key, kind = c.kind;
+    if (kind === 'num' || kind === 'money' || kind === 'dur'){
+      t[k] = rows.reduce(function(s, r){
+        var v = c.get ? c.get(r) : r[k];
+        return s + (Number(v) || 0); }, 0);
+      any = true;
+    }
+  });
+  if (!any) return null;
+  // Percentages last, so the totals they are built from are already in place.
+  cols.forEach(function(c){
+    if (c.kind !== 'pct') return;
+    var src = PCT_FROM[c.key];
+    if (!src) return;
+    var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
+    var d = rows.reduce(function(s, r){ return s + (Number(r[src[1]]) || 0); }, 0);
+    if (d > 0) t[c.key] = Math.round((n / d) * 1000) / 10;
+  });
+  return t;
+}
 /** Every board is its own card with its OWN Excel and JPG buttons -- exports belong to the
     widget being read, not to a page-wide bar that cannot know which table you meant. */
 var BOARDS = {};
+/* `totalRow` may still be given explicitly -- several boards know something autoTotals cannot,
+   such as a percentage whose denominator is not on the table. Passing `false` says this board
+   genuinely has nothing to total. Omitting it gets the automatic one. */
 function board(id, title, sub, rows, cols, totalRow){
   BOARDS[id] = { title: title, rows: rows, cols: cols };
+  if (totalRow === undefined) totalRow = autoTotals(rows, cols);
+  if (totalRow === false) totalRow = null;
   return '<div class="card" id="'+id+'"><div class="card-h">'+esc(title)
     + (sub ? '<span style="font-weight:400;color:var(--mut);font-size:12px">'+esc(sub)+'</span>' : '')
     + '<span class="sub"><button class="btn sm ghost" data-xls="'+id+'">Excel</button>'
@@ -1631,8 +1688,8 @@ function board(id, title, sub, rows, cols, totalRow){
 }
 function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields){
   return '<div class="pair">'
-    + board(idA, titleA, subA, a, cols, totalFields ? sumRow(a, totalFields) : null)
-    + board(idB, titleB, subB, b, cols, totalFields ? sumRow(b, totalFields) : null)
+    + board(idA, titleA, subA, a, cols, totalFields ? sumRow(a, totalFields) : undefined)
+    + board(idB, titleB, subB, b, cols, totalFields ? sumRow(b, totalFields) : undefined)
     + '</div>';
 }
 
@@ -2562,28 +2619,40 @@ function presSlides(){
     var recBasis = d.weekday === 'SAT' || d.weekday === 'SUN' ? 'week' : (d.weekday === 'MON' ? 'today' : 'yesterday');
     var recUncolLabel = recBasis === 'week' ? 'Uncollected (week)'
       : recBasis === 'today' ? 'Uncollected (today)' : 'Uncollected (yesterday)';
-    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — this week', rows:b.recWeek.slice(0,12),
+    /* Today and the week on one slide, joined on the officer -- the same rule as every other
+       role board here. Today's recovery is divided by the basis above; the week's always by the
+       week, which is what makes it the weekly figure rather than a second copy of the daily. */
+    var recT = {};
+    (b.recToday || []).forEach(function(x){ recT[x.officer] = x; });
+    var recRows = (b.recWeek || []).map(function(x){
+      var t = recT[x.officer] || {};
+      return { ...x, tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; });
+    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — today and this week',
+      rows: recRows.slice(0,12),
       cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
-        col('uncollected', recUncolLabel, 'money'),
-        col('recovered','Recovered','money'), col('pct','Rec %','pct')] });
-    /* On Saturday and Sunday the week is what is being reconciled, so the day's own recovery
-       gets a slide of its own beside the week's -- both divided by the week's uncollected,
-       which is what the recovery rule says the weekend denominator is. */
-    if (recBasis === 'week') slides.push({ id:'recToday', kind:'table', title:'Recovery today — against the week\'s uncollected',
-      rows:b.recToday.slice(0,12),
-      cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+        col('tUncollected', recUncolLabel, 'money'),
+        col('tRecovered','Recovered today','money'), col('tPct','Rec % (today)','pct'),
         col('uncollected','Uncollected (week)','money'),
-        col('recovered','Recovered today','money'), col('pct','Rec %','pct')] });
+        col('recovered','Recovered (week)','money'), col('pct','Rec % (week)','pct')] });
     /* Read the same way as PMO Collection, because it answers the same question about a
        different set of officers: how many teams, what is still out, and what share came in.
        The paid/overpaid counts are what the commission is worked out FROM, so they belong on
        the commission panel and not on a wall. */
-    slides.push({ id:'early', kind:'table', title:'Early collection — today', rows:b.earlyToday.slice(0,12),
+    /* Early collection is judged on the list of who is due NEXT -- the INITIAL expected report
+       here -- so "today" on this board is tomorrow's performance: what the officer has already
+       brought in against a day that has not arrived. The two periods share one slide, joined
+       on the officer. */
+    var earlyW = {};
+    (b.earlyWeek || []).forEach(function(x){ earlyW[x.officer] = x; });
+    var earlyRows = (b.earlyToday || []).map(function(x){
+      var w = earlyW[x.officer] || {};
+      return { ...x, wUncollected: w.uncollected, wPct: w.pct }; });
+    slides.push({ id:'early', kind:'table',
+      title:'Early collection — today and this week' + (b.earlySource === 'tomorrow' ? ' (kesho)' : ''),
+      rows: earlyRows.slice(0,12),
       cols:[col('sn','S/N','num'), col('officer','Officer'), col('teams','Teams','num'),
-        col('uncollected','Uncollected','money'), col('pct','Collection %','pct')] });
-    slides.push({ id:'earlyWeek', kind:'table', title:'Early collection — this week', rows:b.earlyWeek.slice(0,12),
-      cols:[col('sn','S/N','num'), col('officer','Officer'), col('teams','Teams','num'),
-        col('uncollected','Uncollected','money'), col('pct','Collection %','pct')] });
+        col('uncollected','Uncollected (today)','money'), col('pct','Coll % (today)','pct'),
+        col('wUncollected','Uncollected (week)','money'), col('wPct','Coll % (week)','pct')] });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
        "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
@@ -2598,13 +2667,14 @@ function presSlides(){
        the commission panel where the person it concerns can see their own figure. A projector
        in a meeting room is the wrong place for anybody's pay, and it changes what the room
        talks about. */
-    var PMO_COLS = function(uncol, pct){ return [
-      col('sn','S/N','num'), col('officer','PMO'), col('teams','Teams','num'),
-      col(uncol,'Uncollected','money'), col(pct,'Collection %','pct')]; };
-    slides.push({ id:'pmoDay', kind:'table', title:'PMO Collection — today', rows:(b.pmo||[]).slice(0,12),
-      cols: PMO_COLS('uncollected','pct') });
-    slides.push({ id:'pmoWeek', kind:'table', title:'PMO Collection — this week', rows:(b.pmo||[]).slice(0,12),
-      cols: PMO_COLS('weekUncollected','weekPct') });
+    /* TODAY AND THE WEEK SIDE BY SIDE, one slide per role. Split across two, the room read
+       today's figure, discussed it, and had lost the week by the time it came round -- and
+       "is this better or worse than the week?" is the question every one of these boards
+       exists to answer. */
+    slides.push({ id:'pmo', kind:'table', title:'PMO Collection — today and this week', rows:(b.pmo||[]).slice(0,12),
+      cols:[col('sn','S/N','num'), col('officer','PMO'), col('teams','Teams','num'),
+        col('uncollected','Uncollected (today)','money'), col('pct','Coll % (today)','pct'),
+        col('weekUncollected','Uncollected (week)','money'), col('weekPct','Coll % (week)','pct')] });
     slides.push({ id:'cs', kind:'table', title:'Call agents — applications brought in', rows:b.csWeek.slice(0,12),
       cols:[col('agent','Agent'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
         col('brought','Brought in','num'), col('amount','Amount','money')] });
@@ -2712,10 +2782,17 @@ function presDraw(){
     body = '<div class="pkpis">' + s.items.map(function(it){
       return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+'</div></div>'; }).join('') + '</div>';
   } else {
+    /* THE GRAND TOTAL, on the wall as well as on the tab. It is the number the meeting reads
+       out, and a projected table without one sends somebody to a calculator while the slide is
+       still up. Same rule as everywhere else: counts, money and talk time add up; percentages
+       are worked out again from the totals that made them, never summed. */
+    var tot = autoTotals(s.rows, s.cols);
     body = '<table class="ptable"><thead><tr><th>#</th>' + s.cols.map(function(c){
         return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('') + '</tr></thead><tbody>'
       + s.rows.map(function(r,i){ return '<tr><td>'+(i+1)+'</td>'+s.cols.map(function(c){
           return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
+      + (tot ? '<tr class="ptot"><td></td>' + s.cols.map(function(c,i){
+          return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>' : '')
       + '</tbody></table>';
   }
   document.getElementById('pres').innerHTML =
