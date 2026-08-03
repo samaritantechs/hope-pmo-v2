@@ -1914,6 +1914,67 @@ per-weekday rule is all that applies and this particular customer will keep reap
 
 ---
 
+## Part 14q — One wrong column name, one missing word, and a two-digit year
+
+Three faults, reported together, all three mine.
+
+### "Column complaints.created_by does not exist"
+
+The bell reads the two things worth being told about: new complaints and new follow-up comments.
+The comment log records who wrote a comment as `created_by`. The complaint log records who
+logged a complaint as `logged_by`. Two tables, the same idea, different names — and I asked
+complaints for `created_by`.
+
+What makes this worse than a blank field is how PostgREST answers it. **One unknown column fails
+the WHOLE read.** Not the column — the read. So the bell got nothing back at all and said it
+could not load, and nothing about the bell explained why.
+
+Fixed, and then guarded, because guessing a column name is the kind of mistake that will happen
+again. `test/schema.test.mjs` reads `db/schema.sql` and every migration, works out every column
+the database actually has, then reads every `.select(...)` in `api/` and compares the two. 245
+column references checked on every `npm test`. A name that does not exist is now a red test on
+this machine instead of a message on a phone in the field.
+
+It only checks what it can see: a table with no `CREATE TABLE` in this repository is skipped
+rather than guessed at, and `select('*')` is nothing to check. A second test asserts that the
+scan still finds the ten tables the system is built on, so a scan that quietly stopped working
+cannot leave the first test passing while checking nothing.
+
+### "Failed: commentsDateOrder is not defined"
+
+The v1 comment importer works out whether a file writes dates day-first or month-first by
+looking at the whole file before reading any single row. That function lives in
+`api/_lib/importers.js`; the upload route calls it; the upload route never imported it.
+
+The edit that should have added it to the import list did not match the text it was replacing,
+and I did not check that it had landed. Uploading a comment log therefore failed on the first
+row, every time. It is in the list now.
+
+### The promise date `23-06-26`
+
+Your newest export writes years with two digits. Every date pattern in the parser demanded four,
+so `23-06-26` was not a date it recognised — and a promise date that will not parse is a promise
+nobody is reminded about.
+
+Two-digit years are now read, with the ordinary convention: **under 50 is 2000s, 50 and over is
+1900s**. So `26` is 2026 and `98` is 1998. Four-digit years are untouched, and a file that mixes
+the two reads correctly either way.
+
+Checked against the exact rows you sent:
+
+```
+2202508974 | 2026-06-22 08:45 | promise: 2026-06-23 | amt: 500,000 | AMETOA AHADI
+```
+
+### One thing that is fixed but will not look fixed yet
+
+You ran `2026-08-04-followup-deck-date.sql`, and the retirement it enables happens **on the next
+current-defaulter upload** — that is when the system compares who is on the deck against who is
+on the list. `MATESO STEPHAN FELISI` will keep showing the stale Def row until a
+defaulters-current file is uploaded. Nothing more to do; it clears itself.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live

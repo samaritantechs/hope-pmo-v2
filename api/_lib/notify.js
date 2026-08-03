@@ -53,7 +53,10 @@ export async function notifCore(db, user, seenKey) {
     return q;
   };
   const [compRes, cmtRes, seenRes] = await Promise.all([
-    runQuery(() => newest('complaints', 'id, ref, team, complainant, details, category, created_at, created_by')),
+    /* logged_by, not created_by -- that is the column complaints actually has, and asking for
+       the other one failed the WHOLE read, which is what left the bell saying it could not
+       load. The comment log does use created_by; the two tables simply name it differently. */
+    runQuery(() => newest('complaints', 'id, ref, team, complainant, details, category, created_at, logged_by')),
     runQuery(() => newest('followup_comments', 'id, ref, team, full_name, comment, fu_status, created_at, created_by')),
     runQuery(() => db.from('settings').select('key, value').eq('key', seenKey)),
   ]);
@@ -67,7 +70,7 @@ export async function notifCore(db, user, seenKey) {
   const items = [
     ...scoped(user, comp).map(c => ({
       kind: 'complaint', id: 'c' + c.id, ref: c.ref, team: c.team,
-      who: c.complainant || '', by: c.created_by || '',
+      who: c.complainant || '', by: c.logged_by || '',
       what: String(c.details || c.category || 'Complaint').slice(0, 160),
       at: String(c.created_at || ''),
     })),

@@ -4,7 +4,7 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
 import { pickLatestBatch } from './_lib/snapshots.js';
 import { addDaysKey as addDays_ } from './_lib/time.js';
 import {
-  importDefaulters, importExpected, importFollowup, importComments,
+  importDefaulters, importExpected, importFollowup, importComments, commentsDateOrder,
   importLoans, importTeams, importReceivedPayments,
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices,
