@@ -423,6 +423,21 @@ export default withApi(async (req, res) => {
     : await supabase.from(table).insert(records);
   if (result.error) throw new Error(result.error.message);
 
+  /* THE FIGURES ON EVERY PHONE ARE NOW OUT OF DATE, AND ONLY THIS CODE KNOWS IT.
+     The performance strip is worked out from the whole book, so it is far too expensive to
+     recompute on a timer for two hundred officers. It was therefore refreshed a quarter of an
+     hour after the fact at best -- which is a long time to stand in front of a manager holding
+     a phone that still shows this morning.
+     One line moved here instead: the moment anything is uploaded, the stamp changes, every
+     phone's next routine sync sees a different value, and only then does it ask for new
+     figures. Cost when nothing is uploaded: nothing at all.
+     Deliberately not fatal. An upload that WORKED must not be reported as failed because a
+     bookkeeping stamp did not save. */
+  try {
+    await supabase.from('settings')
+      .upsert({ key: 'DATA_VERSION', value: String(Date.now()) }, { onConflict: 'key' });
+  } catch (e) { /* the data is in; the phones will catch up on their own schedule */ }
+
   // The CURRENT defaulter deck is also the officers' working list. The phone's Def/Exp/Chr
   // tabs and the portal's Followup tab both read followup_status, which only a separate
   // "Defaulters Followup" upload ever filled -- so uploading the deck left every officer

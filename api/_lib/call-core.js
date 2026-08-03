@@ -444,6 +444,11 @@ async function summaryFor(db, user, nowMs) {
     sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount, basis: 'month' },
     expdf,
     recovery: { pct: rat(rec.recovered, rec.denominator), num: rec.recovered, den: rec.denominator, basis: rec.basis },
+    /* WHICH UPLOAD THESE FIGURES ARE. The phone keeps the strip on screen across restarts, so
+       it has to know what it is holding: it stores this beside the numbers and asks again only
+       when a sync reports a different one. Sent by the figures themselves rather than assumed
+       by the caller, so the two can never drift apart. */
+    dataVersion: (await settingGet(db, 'DATA_VERSION')) || '',
   };
 }
 
@@ -493,7 +498,15 @@ async function sync(db, [dev, calls], nowMs) {
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   calls = calls || [];
   let wm = num(cu.last_ts);
-  if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0 };
+  /* WHY A SYNC CARRIES A NUMBER THAT HAS NOTHING TO DO WITH CALLS.
+     The performance strip is worked out from the whole book and is far too expensive to
+     recompute on a timer for two hundred officers, so it used to refresh a quarter of an hour
+     after an upload at best. This stamp changes the moment anything is uploaded. The phone is
+     already talking to us every few minutes; it compares this against the one it holds and
+     asks for new figures only when it has actually changed.
+     One read of one row by primary key, on a request that was happening anyway. */
+  const dataVersion = (await settingGet(db, 'DATA_VERSION')) || '';
+  if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
   const byNum = await phoneIndex(db, nowMs);
   const records = [];
   const seenBatch = {};
@@ -521,7 +534,7 @@ async function sync(db, [dev, calls], nowMs) {
     if (m) pf++; else npf++;
     if (ts > wm) wm = ts;
   }
-  if (!records.length) return { ok: true, added: 0, dup: batchDup, watermark: wm, portfolio: 0, nonPortfolio: 0 };
+  if (!records.length) return { ok: true, added: 0, dup: batchDup, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
   // Dedup is the id PRIMARY KEY itself -- on conflict do nothing. No lock, no read-then-write
   // race: two overlapping syncs of the same call cannot both insert it, by construction.
   const { data: inserted, error } = await db.from('call_logs')
@@ -531,7 +544,7 @@ async function sync(db, [dev, calls], nowMs) {
   const { error: e2 } = await db.from('call_users')
     .update({ last_sync: new Date(nowMs).toISOString(), last_ts: wm }).eq('user_id', cu.user_id);
   if (e2) throw new Error(e2.message);
-  return { ok: true, added, dup: batchDup + (records.length - added), watermark: wm, portfolio: pf, nonPortfolio: npf };
+  return { ok: true, added, dup: batchDup + (records.length - added), watermark: wm, portfolio: pf, nonPortfolio: npf, dataVersion };
 }
 
 /* ---------- comments / follow-up ---------- */

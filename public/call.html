@@ -100,6 +100,10 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 .daystrip b{color:#fff;font-weight:800;margin-left:3px}
 .daystrip .ds-tag{background:rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:1.5px 7px;font-size:10.5px;font-weight:800;letter-spacing:.02em}
 .daystrip .ds-dot{color:rgba(255,255,255,.35)}
+/* Figures kept from an earlier day. Still shown -- they are the last true thing this officer
+   was told -- but visibly not today's, and the tag says "Jana". */
+.daystrip.stale{opacity:.62}
+.daystrip.stale .ds-tag{background:rgba(255,255,255,.06)}
 
 main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 12px 90px}
 .searchbar{position:relative;margin-bottom:10px}
@@ -416,21 +420,33 @@ function setSyncStatus(kind){
   var p = $('#syncPill');
   p.className = 'pill' + (kind==='ok'?' ok':kind==='err'?' err':kind==='syncing'?' syncing':(kind==='noperm'?' err':''));
 }
+/* MOST SYNCS NEVER REACH THE SERVER, AND THE STRIP STILL HAS TO KEEP UP.
+   An officer with no new calls, one who has not granted the call-log permission, and anyone on
+   a plain browser all leave doSync early -- which is right, there is nothing to send. But the
+   whole point of the sync loop, for the strip, is asking "has anything been uploaded". So those
+   paths still ping: the server's empty-sync path is two reads by primary key, no lists, no
+   book. It is the cheapest question in the system, and it is the only one that has to be asked
+   often. Fire and forget -- a failure here must never change the sync light. */
+function versionPing_(){
+  srv('api_callSync', DEV, []).then(function(r){ if (r && r.ok) summaryVersionCheck_(r.dataVersion); })
+    .catch(function(){});
+}
 function doSync(){
   if (!S.boot) return Promise.resolve({ ok:true, added:0 });
   var nb = nativeBridge();
-  if (!nb){ setSyncStatus('none'); S.permOk = null; return Promise.resolve({ ok:true, added:0 }); }
+  if (!nb){ setSyncStatus('none'); S.permOk = null; versionPing_(); return Promise.resolve({ ok:true, added:0 }); }
   try { S.permOk = nb.hasCallLogPermission ? (nb.hasCallLogPermission() === '1') : true; } catch(e){ S.permOk = true; }
-  if (!S.permOk){ setSyncStatus('noperm'); return Promise.resolve({ ok:true, added:0 }); }
+  if (!S.permOk){ setSyncStatus('noperm'); versionPing_(); return Promise.resolve({ ok:true, added:0 }); }
   setSyncStatus('syncing');
   var raw = '[]';
   try { raw = nb.getCalls(startOfWeekMs_(), 2000) || '[]'; } catch(e){}
   var calls; try { calls = JSON.parse(raw); } catch(e){ calls = []; }
-  if (!calls.length){ setSyncStatus('ok'); return Promise.resolve({ ok:true, added:0 }); }
+  if (!calls.length){ setSyncStatus('ok'); versionPing_(); return Promise.resolve({ ok:true, added:0 }); }
   return srv('api_callSync', DEV, calls).then(function(r){
     if (r && r.ok){
       if (nb.setWatermark) { try { nb.setWatermark(String(r.watermark)); } catch(e){} }
       setSyncStatus('ok');
+      summaryVersionCheck_(r.dataVersion);   // an upload while the officer was working
       // No forced list reload here on purpose. Freshness is a per-device rolling cooldown (see
       // sourceFresh_ / setView) -- a call just made by the officer syncing successfully isn't
       // reason enough to reload the list they're looking at, especially on unstable connections.
@@ -557,7 +573,7 @@ function boot(){
     // officer left. Whatever we let them see a moment ago has to go. Clearing what we remember
     // and starting over lands them on the sign-in screen by the ordinary path, with no second
     // way in to keep correct: the next launch finds nothing saved, so this cannot loop.
-    try { localStorage.removeItem(BOOT_LS_KEY); } catch(e){}
+    try { localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); } catch(e){}
     if (S.entered){ try { localStorage.removeItem(CACHE_LS_KEY); } catch(e2){} location.reload(); return; }
     // Not registered yet, OR logged out on this device -> show sign-in. The team list is no
     // longer sent to this screen: publishing every team name to an unauthenticated device was
@@ -588,11 +604,14 @@ function doLogout(){
   try { localStorage.setItem('hcLoggedOut', '1'); } catch(e){}
   if (S.syncTimer) { clearInterval(S.syncTimer); S.syncTimer = null; }
   S.boot = null; S.entered = false; S.cache = {}; S.cacheAt = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
-  _sumAt = 0;
-  var _ds = $('#dayStrip'); if (_ds) _ds.classList.add('hide');
+  /* SIGNING OUT IS THE ONLY THING THAT TAKES THE STRIP AWAY, and it must take the saved copy
+     with it -- one team's figures must not be sitting there when the next officer signs in on
+     the same handset. */
+  _sumAt = 0; _sumVer = null;
+  var _ds = $('#dayStrip'); if (_ds) { _ds.classList.add('hide'); _ds.classList.remove('stale'); }
   ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
-  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); } catch(e){}
+  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); } catch(e){}
   sheetHide();
   $('#confirmModal').style.display = 'none';
   var q = $('#listQ'); if (q) q.value = '';
@@ -691,6 +710,10 @@ function enterApp(d){
 
   $all('#tabs button').forEach(function(b){ b.onclick = function(){ exitSearch_(); setView(b.getAttribute('data-v')); }; });
   setView('today');
+  /* Draw the strip from the handset BEFORE anything is asked of the network, so it is on screen
+     the instant the app is -- including on the cheap handsets Android throws away after every
+     call. Then ask for fresh figures over the top. */
+  restoreSummary_();
   startSyncLoop();
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
@@ -706,7 +729,72 @@ function enterApp(d){
     with app.html. Kept off the sync interval on purpose -- refreshed only on entry, a manual sync
     tap, or a throttled foreground return -- so it never adds to per-officer sync load. A failure
     just leaves the strip hidden; it never surfaces an error into the header. */
+/* THE STRIP STAYS ON THE SCREEN.
+ *
+ * "It gets lost so much that I am even not sure if it'll get back."
+ *
+ * It was hidden until a fetch succeeded and hidden again on every restart, so on a handset
+ * Android throws away after each call -- which is most of them -- an officer saw it only in the
+ * seconds after opening the app, and a single failed request took it away with nothing to say
+ * why. A figure that comes and goes is worse than no figure: nobody can tell whether the number
+ * is bad or the app is.
+ *
+ * So the last figures live on the handset beside the lists, are drawn before anything is asked
+ * of the network, and are NEVER taken away by a failure. The only thing that removes the strip
+ * is signing out.
+ *
+ * What it shows is always true of some moment -- and when that moment is not today, it says so
+ * rather than passing yesterday's morning off as this one.
+ */
+var SUM_LS_KEY = 'hcDaySummary_v1';
 var _sumAt = 0;
+var _sumVer = null;                      // which upload the figures on screen came from
+function saveSummary_(d, atMs){
+  /* WHOSE figures these are is stored with them. Handsets get handed on and officers get moved
+     between teams; restoring a saved strip without checking would put one team's numbers in
+     front of the next person to sign in, looking exactly as authoritative as their own. */
+  try { localStorage.setItem(SUM_LS_KEY, JSON.stringify({
+    d: d, at: atMs, day: todayKeyLocal_(), who: (S.boot && S.boot.userId) || '' })); } catch(e){}
+}
+/** The officer's own calendar day, only ever compared against itself -- this decides whether to
+    say "jana", never what any figure means. */
+function todayKeyLocal_(){
+  // Padded the long way round on purpose: this file runs in whatever WebView is on a
+  // five-year-old handset, and nothing else in it assumes padStart.
+  var t = new Date(), p = function(n){ return ('0' + n).slice(-2); };
+  return t.getFullYear() + '-' + p(t.getMonth()+1) + '-' + p(t.getDate());
+}
+function restoreSummary_(){
+  var saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SUM_LS_KEY) || 'null'); } catch(e){}
+  var me = (S.boot && S.boot.userId) || '';
+  if (!saved || !saved.d || (saved.who || '') !== me) {
+    $('#dayStrip').classList.remove('hide');       // dashes, but present -- never a missing strip
+    return;
+  }
+  drawSummary_(saved.d, saved.day !== todayKeyLocal_());
+  _sumVer = saved.d.dataVersion || null;
+}
+function drawSummary_(d, stale){
+  $('#dsTag').textContent = (d.period === 'week') ? 'Wiki' : 'Leo';
+  $('#dsCol').textContent = pctW_(d.col && d.col.pct);
+  // Early collection is judged on TOMORROW's list, so it sits right beside today's Col.
+  $('#dsKesho').textContent = pctW_(d.kesho && d.kesho.pct);
+  // The week beside the day: one bad morning is not a bad week, and the week is what is chased.
+  $('#dsWeek').textContent = pctW_(d.weekCol && d.weekCol.pct);
+  // Sales is month-to-date against the monthly target -- the label stays short on purpose.
+  $('#dsSales').textContent = pctW_(d.sales && d.sales.pct);
+  // The two recovery figures carry the SHILLINGS beside the percentage. A percentage on its
+  // own is an abstraction at the door; "1.4m" is the thing the team is actually chasing.
+  var amt_ = function(x){ return (x && Number(x.num) > 0) ? ' · ' + mc_(x.num) : ''; };
+  $('#dsExpdf').textContent = pctW_(d.expdf && d.expdf.pct) + amt_(d.expdf);
+  $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct) + amt_(d.recovery);
+  /* Figures kept from another day are still shown -- they are the last true thing the officer
+     was told -- but never as today's. The tag is the only honest place to say so. */
+  $('#dayStrip').classList.toggle('stale', !!stale);
+  if (stale) $('#dsTag').textContent = 'Jana';
+  $('#dayStrip').classList.remove('hide');
+}
 // Which DAY each list actually came from. An officer working yesterday's customers while the
 // screen says Leo is the worst kind of wrong: silently plausible.
 S.asOf = S.asOf || {};
@@ -723,21 +811,22 @@ function loadDaySummary(force){
   srv('api_callDailySummary', DEV).then(function(d){
     if (!d || !d.ok) return;
     _sumAt = Date.now();
-    $('#dsTag').textContent = (d.period === 'week') ? 'Wiki' : 'Leo';   // Sat/Sun the server returns week-to-date
-    $('#dsCol').textContent = pctW_(d.col && d.col.pct);
-    // Early collection is judged on TOMORROW's list, so it sits right beside today's Col.
-    $('#dsKesho').textContent = pctW_(d.kesho && d.kesho.pct);
-    // The week beside the day: one bad morning is not a bad week, and the week is what is chased.
-    $('#dsWeek').textContent = pctW_(d.weekCol && d.weekCol.pct);
-    // Sales is month-to-date against the monthly target -- the label stays short on purpose.
-    $('#dsSales').textContent = pctW_(d.sales && d.sales.pct);
-    // The two recovery figures carry the SHILLINGS beside the percentage. A percentage on its
-    // own is an abstraction at the door; "1.4m" is the thing the team is actually chasing.
-    var amt_ = function(x){ return (x && Number(x.num) > 0) ? ' · ' + mc_(x.num) : ''; };
-    $('#dsExpdf').textContent = pctW_(d.expdf && d.expdf.pct) + amt_(d.expdf);
-    $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct) + amt_(d.recovery);
-    $('#dayStrip').classList.remove('hide');
-  }).catch(function(){ /* leave the strip hidden -- never show an error in the header */ });
+    _sumVer = d.dataVersion || null;
+    // Sat/Sun the server returns week-to-date; drawSummary_ reads d.period for the tag.
+    drawSummary_(d, false);
+    saveSummary_(d, _sumAt);
+  }).catch(function(){
+    /* NEVER TAKE THE STRIP AWAY. A failed request means the network is bad, not that the team
+       has no figures -- and blanking the header is how it came to feel like something that
+       might not come back. What is on screen stays on screen until better figures arrive. */
+  });
+}
+/** Called by the sync loop. The strip is far too expensive to recompute on a timer, so it is
+    recomputed on the only event that can actually change it: somebody uploading a report. */
+function summaryVersionCheck_(ver){
+  if (!ver || ver === _sumVer) return;
+  _sumVer = ver;
+  loadDaySummary(true);
 }
 
 /* ================= tabs / list =================
