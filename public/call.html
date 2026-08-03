@@ -913,8 +913,23 @@ $('#listQ').addEventListener('input', function(){
 function isIOS_(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
 }
+/* WHERE THE OFFICER WAS. Redrawing the list replaces #body wholesale, and the browser puts a
+   replaced page back at the top -- so returning from a call landed them at customer 1 of 300
+   every time, and they scrolled back down looking for the name they had just rung.
+
+   A sync arriving in the background does the same thing, which is worse: the list jumps under
+   somebody's thumb while they are reading it.
+
+   The position is only put back when it is the SAME list -- same tab, same search. Changing
+   tab or typing a search is asking for a different list, and that one starts at the top, which
+   is what anybody would expect. Two property reads and a scroll; nothing is fetched and nothing
+   is computed, so this cannot make the app heavy. */
+var LAST_DRAW = null;
 function drawList(){
   var body = $('#body');
+  var drawKey = S.view + '|' + S.q;
+  var sameList = (drawKey === LAST_DRAW);
+  var keepY = sameList ? (window.scrollY || document.documentElement.scrollTop || 0) : 0;
   var nb = nativeBridge();
   var banner = !nb ? (isIOS_()
       ? '<div class="banner">\uD83D\uDCF1 iPhone haiwezi kusoma kumbukumbu za simu moja kwa moja (kizuizi cha Apple, si tatizo la programu hii). Bofya "Piga" hapa chini kupiga \u2014 orodha na maoni yanafanya kazi kama kawaida, lakini muda wa simu hautarekodiwa kiotomatiki.</div>'
@@ -933,6 +948,11 @@ function drawList(){
       openSheet(row.getAttribute('data-ref'));
     });
   });
+  /* After the rows exist, or there is nothing tall enough to scroll to yet. The browser clamps
+     this on its own if the list came back shorter, so a vanished customer cannot strand
+     somebody in blank space below the end. */
+  LAST_DRAW = drawKey;
+  if (keepY) window.scrollTo(0, keepY);
 }
 function rowHtml(r, showSeg){
   var href = telHref(r.contact);
