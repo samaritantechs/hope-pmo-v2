@@ -2735,7 +2735,13 @@ async function dashboardFull(db, user, _args, nowMs) {
     const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
     const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
     const col = rows.reduce((s, r) => s + collectedOf(r), 0);
+    /* A DAY NOBODY HAS UPLOADED IS NOT A DAY OF ZERO COLLECTION.
+       Thursday showing "TZS 0 / Col 0%" on Wednesday afternoon makes the week look like a
+       disaster when nothing has happened yet at all. The totals were always right -- an empty
+       day adds nothing to either side of the sum -- but the tile was not, so this says which
+       days actually have a sheet behind them and the screen stops guessing. */
     return { weekday: wd, date: d, expected: exp, collected: col, uncollected: uncollectedOf(rows),
+      uploaded: rows.length > 0,
       pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null };
   });
 
@@ -2750,6 +2756,7 @@ async function dashboardFull(db, user, _args, nowMs) {
     const rec = (ini.length && cur.length) ? from - to : 0;
     const unc = uncollectedOf(pickLatestBatchRows(dayRows(myExpWeek, d)));
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
+      uploaded: !!(ini.length || cur.length),
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
   });
