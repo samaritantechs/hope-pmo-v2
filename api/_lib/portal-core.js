@@ -5,6 +5,7 @@ import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from 
 import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
+import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
@@ -1032,40 +1033,12 @@ async function announceSave(db, user, p = {}, nowMs = Date.now()) {
    person's screen does not mark them read on everybody's. */
 const NOTIF_LIMIT = 60;
 async function notifications(db, user) {
-  const [comp, cmts, seenRows] = await Promise.all([
-    fetchAll(() => db.from('complaints').select('id, ref, team, complainant, details, category, created_at, created_by')),
-    fetchAll(() => db.from('followup_comments').select('id, ref, team, full_name, comment, fu_status, created_at, created_by')),
-    fetchAll(() => db.from('settings').select('key, value').eq('key', notifKey_(user))),
-  ]);
-  const seenAt = (seenRows[0] && seenRows[0].value) || '';
-
-  const items = [
-    ...scoped(user, comp).map(c => ({
-      kind: 'complaint', id: 'c' + c.id, ref: c.ref, team: c.team,
-      who: c.complainant || '', by: c.created_by || '',
-      what: String(c.details || c.category || 'Complaint').slice(0, 160),
-      at: String(c.created_at || ''),
-    })),
-    ...scoped(user, cmts).map(c => ({
-      kind: 'comment', id: 'f' + c.id, ref: c.ref, team: c.team,
-      who: c.full_name || '', by: c.created_by || '',
-      what: String(c.comment || c.fu_status || 'Follow-up').slice(0, 160),
-      at: String(c.created_at || ''),
-    })),
-  ].filter(x => x.at)
-    .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, NOTIF_LIMIT)
-    .map(x => ({ ...x, unseen: !seenAt || x.at > seenAt }));
-
-  return { items, unseen: items.filter(x => x.unseen).length, seenAt };
+  return notifCore(db, user, notifKey_(user));
 }
-const notifKey_ = user => 'NOTIF_SEEN_' + String(user.code || user.name || '').toUpperCase();
+const notifKey_ = user => notifKeyFor(user.code || user.name);
 /** Marks everything currently visible as read, for THIS code only. */
 async function notifSeen(db, user, _p, nowMs = Date.now()) {
-  const at = new Date(nowMs).toISOString();
-  const { error } = await db.from('settings').upsert({ key: notifKey_(user), value: at }, { onConflict: 'key' });
-  if (error) throw new Error(error.message);
-  return { seenAt: at };
+  return notifSeenCore(db, notifKey_(user), nowMs);
 }
 
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
@@ -2428,9 +2401,9 @@ function expdfEmailHtml(d, sentBy) {
   const pctTxt = v => (v == null ? '—' : v + '%');
   const t = d.totals;
   const section = s => `
-    <h3 style="margin:22px 0 6px;font:600 14px system-ui;color:#0B2A6B">${esc_(s.role)}</h3>
+    <h3 style="margin:22px 0 6px;font:600 14px system-ui;color:#1D1873">${esc_(s.role)}</h3>
     <table style="width:100%;border-collapse:collapse;font:13px system-ui">
-      <thead><tr style="background:#0B2A6B;color:#fff">
+      <thead><tr style="background:#1D1873;color:#fff">
         <th align="left" style="padding:6px 8px">Leader</th>
         <th align="right" style="padding:6px 8px">Customers</th>
         <th align="right" style="padding:6px 8px">Initial</th>
@@ -2456,7 +2429,7 @@ function expdfEmailHtml(d, sentBy) {
         <td align="right" style="padding:6px 8px">${pctTxt(s.totals.pct)}</td>
       </tr></tfoot></table>`;
   return `<div style="font:14px system-ui;color:#111;max-width:860px">
-    <h2 style="margin:0 0 2px;color:#0B2A6B">HOPE PMO — Expected Defaulters, weekly recovery</h2>
+    <h2 style="margin:0 0 2px;color:#1D1873">HOPE PMO — Expected Defaulters, weekly recovery</h2>
     <div style="color:#6b7280;font-size:13px">Week of ${esc_(d.weekOf)} · as of ${esc_(d.date || '—')} (${esc_(d.weekday)}) · sent by ${esc_(sentBy)}</div>
     ${d.hasBaseline ? '' : '<p style="color:#B42318"><b>Monday’s initial deck is not uploaded</b>, so recovery below reads 0. Upload it and resend.</p>'}
     <p style="margin:14px 0 0"><b>Whole book:</b> ${money0(t.customers)} customers ·
@@ -2675,8 +2648,10 @@ async function dashboardFull(db, user, _args, nowMs) {
   const slot = t => {
     const k = t || '(no team)';
     if (!T[k]) T[k] = { team: k, recovery: null, gmo: null, manager: null, opm: null, bike: null,
-      initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesPct: null,
+      initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesMonth: 0, salesPct: null,
       expToday: 0, colToday: 0, collPctToday: null, expEarly: 0, colEarly: 0, collPctEarly: null,
+      expWeek: 0, colWeek: 0, collPctWeek: null,
+      uncolMon: 0, uncolYest: 0, uncolWeek: 0,
       defaulters: 0, abnormal: 0 };
     return T[k];
   };
@@ -2689,21 +2664,78 @@ async function dashboardFull(db, user, _args, nowMs) {
   for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears); s.defaulters += 1; }
   for (const r of todayExp) { const s = slot(r.team); s.expToday += num(r.payment_expected); s.colToday += collectedOf(r); }
   for (const r of earlyExp) { const s = slot(r.team); s.expEarly += num(r.payment_expected); s.colEarly += collectedOf(r); }
+  /* THE THREE RECOVERY DENOMINATORS, per team. Recovery % is recovered over the uncollected
+     the team is actually chasing, and which day's that is depends on the day -- Monday by
+     Monday, Tuesday to Friday by yesterday, the weekend by the week. The meeting wants to see
+     all three side by side rather than only the one today's rule picks, so all three are
+     worked out and the slide shows them together.
+
+     Each day is batch-resolved on its own before being summed, so a report uploaded twice
+     cannot double a denominator and halve a percentage. */
+  const uncolInto = (d, field) => {
+    for (const r of pickLatestBatchRows(dayRows(myExpWeek, d))) {
+      slot(r.team)[field] += Math.max(0, num(r.payment_expected) - collectedOf(r));
+    }
+  };
+  uncolInto(mon, 'uncolMon');
+  uncolInto(addDaysKey(today, -1), 'uncolYest');
+  for (let i = 0; i < 5; i++) {
+    const d = addDaysKey(mon, i);
+    for (const r of pickLatestBatchRows(dayRows(myExpWeek, d))) {
+      const sl = slot(r.team);
+      sl.uncolWeek += Math.max(0, num(r.payment_expected) - collectedOf(r));
+      sl.expWeek += num(r.payment_expected);
+      sl.colWeek += collectedOf(r);
+    }
+  }
+
+  /* Sales two ways. The week drives the existing cards; the MONTH is what the team board is
+     read on, because a month is the period a sales target is actually set over. */
+  const monthStart = String(today).slice(0, 7) + '-01';
   for (const l of myLoans) {
     if (l.stage !== 'approved') continue;
     const d = String(l.approved_date || '').slice(0, 10);
-    if (d < mon || d > sun) continue;
-    slot(l.team).sales += num(l.principal_amt) || num(l.loan_amt);
+    const amt = num(l.principal_amt) || num(l.loan_amt);
+    if (d >= mon && d <= sun) slot(l.team).sales += amt;
+    if (d >= monthStart && d <= today) slot(l.team).salesMonth += amt;
   }
   for (const a of myAbn) slot(a.team).abnormal += 1;
 
-  const teams = Object.values(T).map(s => ({
-    ...s,
-    recovered: pairedToday ? s.initArrears - s.curArrears : 0,
-    salesPct: weeklyTarget > 0 ? Math.round((s.sales / weeklyTarget) * 1000) / 10 : null,
-    collPctToday: s.expToday > 0 ? Math.round((s.colToday / s.expToday) * 1000) / 10 : null,
-    collPctEarly: s.expEarly > 0 ? Math.round((s.colEarly / s.expEarly) * 1000) / 10 : null,
-  })).sort((a, b) => b.curArrears - a.curArrears);
+  const weekend = isoWeekday(nowMs) >= 6;
+  const monthTarget = weeklyTarget * 4;
+  const teams = Object.values(T).map(s => {
+    const recovered = pairedToday ? s.initArrears - s.curArrears : 0;
+    const pctOf_ = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+    const salesPct = pctOf_(s.salesMonth, monthTarget);
+    /* THE BASIS COLUMN. One "uncollected" and one "collection %" that mean today on a weekday
+       and the week at the weekend -- the same rule the recovery denominator follows, so the
+       two columns on the slide are never measuring different stretches of time. */
+    const collPct = weekend ? pctOf_(s.colWeek, s.expWeek) : pctOf_(s.colToday, s.expToday);
+    return {
+      ...s, recovered, salesPct,
+      collPctToday: pctOf_(s.colToday, s.expToday),
+      collPctEarly: pctOf_(s.colEarly, s.expEarly),
+      collPctWeek: pctOf_(s.colWeek, s.expWeek),
+      uncolToday: Math.max(0, s.expToday - s.colToday),
+      basis: weekend ? 'week' : 'today',
+      uncollected: weekend ? s.uncolWeek : Math.max(0, s.expToday - s.colToday),
+      /* The two figures the basis percentage was made FROM, carried alongside it. A grand
+         total cannot add percentages -- it has to work them out again from their parts -- and
+         which parts those are changes with the day, so it cannot be guessed at the screen. */
+      colBasis: weekend ? s.colWeek : s.colToday,
+      expBasis: weekend ? s.expWeek : s.expToday,
+      collPct,
+      recPctMon: pctOf_(recovered, s.uncolMon),
+      recPctYest: pctOf_(recovered, s.uncolYest),
+      recPctWeek: pctOf_(recovered, s.uncolWeek),
+      /* THE RANKING: sales and collection carry equal weight, because a team that sells well
+         and collects badly is not a good team and neither is the reverse. A missing percentage
+         counts as nothing rather than being skipped -- skipping it would let a team with no
+         figures at all float to the top on the strength of the one number it does have. */
+      score: Math.round((((salesPct || 0) + (collPct || 0)) / 2) * 10) / 10,
+    };
+  }).sort((a, b) => b.score - a.score || b.curArrears - a.curArrears)
+    .map((t, i) => ({ sn: i + 1, ...t }));
 
   return {
     ...base,

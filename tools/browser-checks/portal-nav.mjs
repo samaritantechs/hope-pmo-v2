@@ -44,7 +44,7 @@ function answer(fn, args) {
     rows: teamRows,
   };
   if (fn === 'par') return { ok: true, rows: [], totals: {}, teams: [] };
-  if (fn === 'followup') return { ok: true, count: 3, arrears: 1800, recovered: 250,
+  if (fn === 'followup') return { ok: true, count: 4, arrears: 2300, recovered: 250,
     months: ['2026-07', '2026-06'],
     rows: [
       { ref: 'R1', full_name: 'AMINA JUMA', team: 'KONGOWE', contact: '0712000001',
@@ -62,6 +62,16 @@ function answer(fn, args) {
         new_no: null, guarantor_name: 'MAMA JUMA', guarantor_contact: '0715000888',
         arrears: 300, rejesho: 50, recovered: 0, status: 'Defaulter', fu_status: 'HAPATIKANI YEYE & MDHAMINI',
         ds: '3-6', dc: 6, disb_date: '2026-04-01', last_trans: '2026-07-01',
+        last_trans_month: '2026-07', last_comment: '' },
+      /* A fourth customer on ANOTHER team, so filtering has something to remove and the grand
+         total has something to change by. Without it the filter emptied the table and a total
+         of "nothing" proved nothing. */
+      { ref: 'R4', full_name: 'ZAWADI OMARI', team: 'MBAGALA', contact: '0714000003',
+        new_no: null, guarantor_name: 'MAMA ZAWADI', guarantor_contact: '0715000999',
+        // One of the statuses already in the column, so the fixture adds a ROW to sort and
+        // filter with, not a fourth value that would change what the sort checks are about.
+        arrears: 500, rejesho: 100, recovered: 0, status: 'Defaulter', fu_status: 'HAPATIKANI YEYE & MDHAMINI',
+        ds: '1-2', dc: 1, disb_date: '2026-06-01', last_trans: '2026-07-05',
         last_trans_month: '2026-07', last_comment: '' },
     ] };
   /* Enough of a shape for the PRESENTATION to build every slide. The deck reads d.cards,
@@ -181,7 +191,7 @@ calls.length = 0;
 await page.evaluate(() => go('expected'));
 await page.waitForTimeout(400);
 let n1 = calls.filter(c => c === 'expectedDay').length;
-let rows1 = await page.evaluate(() => document.querySelectorAll('#view table tbody tr').length);
+let rows1 = await page.evaluate(() => document.querySelectorAll('#view table tbody tr:not(.totrow)').length);
 check('first visit fetches once and draws rows', n1 === 1 && rows1 === 2, 'fetches=' + n1 + ' rows=' + rows1);
 
 // --- 2. go away and come straight back: the table must be there with NO blank spinner
@@ -193,7 +203,7 @@ calls.length = 0;
 const instant = await page.evaluate(() => {
   go('expected');
   return {
-    rows: document.querySelectorAll('#view table tbody tr').length,
+    rows: document.querySelectorAll('#view table tbody tr:not(.totrow)').length,
     spinner: !!document.querySelector('#view .sk'),
     busy: !!document.querySelector('#busy.on'),
   };
@@ -204,7 +214,7 @@ check('a hairline shows while it refreshes behind you', instant.busy, JSON.strin
 await page.waitForTimeout(400);
 check('and it still checks the server quietly', calls.filter(c => c === 'expectedDay').length === 1,
   'quiet fetches=' + calls.filter(c => c === 'expectedDay').length);
-const after = await page.evaluate(() => document.querySelectorAll('#view table tbody tr').length);
+const after = await page.evaluate(() => document.querySelectorAll('#view table tbody tr:not(.totrow)').length);
 check('rows survive the quiet refresh', after === 2, 'rows=' + after);
 
 // --- 3. the reload button must always go to the server AND blank for a fresh load
@@ -233,14 +243,14 @@ await page.evaluate(() => {
   const sel = document.querySelector('[data-filter="team"]');
   sel.value = 'KONGOWE'; sel.onchange();
 });
-const filtered = await page.evaluate(() => document.querySelectorAll('#view table tbody tr').length);
+const filtered = await page.evaluate(() => document.querySelectorAll('#view table tbody tr:not(.totrow)').length);
 check('filtering costs no network call', calls.length === 0 && filtered === 1,
   'calls=' + calls.length + ' rows=' + filtered);
 await page.evaluate(() => go('par'));
 await page.waitForTimeout(300);
 await page.evaluate(() => go('expected'));
 const back = await page.evaluate(() => ({
-  rows: document.querySelectorAll('#view table tbody tr').length,
+  rows: document.querySelectorAll('#view table tbody tr:not(.totrow)').length,
   box: (document.querySelector('[data-filter="team"]') || {}).value,
 }));
 check('the box and the rows agree when you come back',
@@ -259,7 +269,7 @@ await page.waitForTimeout(200);
 await page.evaluate(() => go('expected'));
 await page.waitForTimeout(600);
 const survived = await page.evaluate(() => ({
-  rows: document.querySelectorAll('#view table tbody tr').length,
+  rows: document.querySelectorAll('#view table tbody tr:not(.totrow)').length,
   err: !!document.querySelector('#view .msg.bad'),
   busy: !!document.querySelector('#busy.on'),
 }));
@@ -325,8 +335,8 @@ await page.evaluate(() => { document.getElementById('q').value = 'MAMA ASHA';
   document.getElementById('q').dispatchEvent(new Event('input')); });
 await page.waitForTimeout(200);
 check('searching a guarantor name finds their customer',
-  await page.evaluate(() => document.querySelectorAll('#mainCard tbody tr').length === 1
-    && /AMINA JUMA/.test(document.querySelector('#mainCard tbody tr').textContent)));
+  await page.evaluate(() => document.querySelectorAll('#mainCard tbody tr:not(.totrow)').length === 1
+    && /AMINA JUMA/.test(document.querySelector('#mainCard tbody tr:not(.totrow)').textContent)));
 await page.evaluate(() => { document.getElementById('q').value = '';
   document.getElementById('q').dispatchEvent(new Event('input')); });
 await page.waitForTimeout(200);
@@ -336,7 +346,7 @@ await page.evaluate(() => { const s = document.querySelector('[data-filter="last
   s.value = '2026-06'; s.onchange(); });
 await page.waitForTimeout(200);
 check('the month filter narrows to that month only',
-  await page.evaluate(() => document.querySelectorAll('#mainCard tbody tr').length === 1));
+  await page.evaluate(() => document.querySelectorAll('#mainCard tbody tr:not(.totrow)').length === 1));
 await page.evaluate(() => { const s = document.querySelector('[data-filter="last_trans_month"]');
   s.value = ''; s.onchange(); });
 await page.waitForTimeout(200);
@@ -350,7 +360,7 @@ const colIdx = async (name) => page.evaluate((n) =>
     .findIndex(t => t.textContent.trim().replace(/[^\w. &-]+$/, '').trim() === n), name);
 const colValues = async (name) => {
   const i = await colIdx(name);
-  return page.evaluate((k) => Array.from(document.querySelectorAll('#mainCard tbody tr'))
+  return page.evaluate((k) => Array.from(document.querySelectorAll('#mainCard tbody tr:not(.totrow)'))
     .map(r => (((r.children[k] || {}).textContent) || '').trim()), i);
 };
 
@@ -535,6 +545,44 @@ await page.evaluate(() => { document.getElementById('findQ').value = 'ZZNOBODY';
 await page.waitForTimeout(400);
 check('nobody found is a sentence, not an empty box',
   /Nobody found|Hakuna aliyepatikana/.test(await page.evaluate(() => document.getElementById('findOut').innerText)));
+
+/* THE MAIN LIST HAS A GRAND TOTAL TOO. Every card board and every slide grew one; this table
+   -- the biggest on every tab, and the one the commission week is read from -- did not, which
+   is what "the totals aint adding" meant. */
+await page.evaluate(() => { VC.store = {}; go('followup'); });
+await page.waitForTimeout(600);
+check('the main list carries a grand total',
+  await page.evaluate(() => !!document.querySelector('#mainCard tr.totrow')));
+check('and it is labelled in both languages',
+  /JUMLA \/ TOTAL/.test(await page.evaluate(() => {
+    const tr = document.querySelector('#mainCard tr.totrow');
+    return tr ? tr.textContent : ''; })));
+check('the total adds the money column, not the row numbers',
+  await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#mainCard tbody tr:not(.totrow)'));
+    const idx = Array.from(document.querySelectorAll('#mainCard thead th'))
+      .findIndex(th => /arrears/i.test(th.textContent));
+    if (idx < 0) return 'no arrears column';
+    const n = s => Number(String(s).replace(/[^0-9.-]/g, '')) || 0;
+    const want = rows.reduce((a, r) => a + n(r.children[idx].textContent), 0);
+    const got = n(document.querySelector('#mainCard tr.totrow').children[idx].textContent);
+    return want === got ? true : ('want ' + want + ' got ' + got);
+  }));
+/* A total that ignored the filter would be read as the filtered one by everybody, so it
+   totals WHAT IS ON SCREEN. */
+const totBefore = await page.evaluate(() => {
+  const idx = Array.from(document.querySelectorAll('#mainCard thead th')).findIndex(th => /arrears/i.test(th.textContent));
+  return document.querySelector('#mainCard tr.totrow').children[idx].textContent; });
+await page.evaluate(() => { S.filters.team = 'KONGOWE'; paint(); });
+await page.waitForTimeout(200);
+const totAfter = await page.evaluate(() => {
+  const tr = document.querySelector('#mainCard tr.totrow');
+  if (!tr) return null;
+  const idx = Array.from(document.querySelectorAll('#mainCard thead th')).findIndex(th => /arrears/i.test(th.textContent));
+  return tr.children[idx].textContent; });
+check('the total follows the filter rather than ignoring it',
+  totBefore === '2,300' && totAfter === '1,800', totBefore + ' -> ' + totAfter);
+await page.evaluate(() => { S.filters.team = ''; paint(); });
 
 /* ------------------------------------------------------------------ THE PRESENTATION.
    Two complaints, both about the deck: ticking a segment box reloaded the whole page, and once

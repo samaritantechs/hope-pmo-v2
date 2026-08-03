@@ -2104,3 +2104,80 @@ test('the dashboard reads the same list as the officer board', async () => {
   const kongowe = dash.teamPerf.find(r => r.team === 'KONGOWE');
   assert.equal(kongowe.collPctEarly, 50, 'the same 50% the officer board reports');
 });
+
+
+/* TEAM PERFORMANCE, ranked on what the company is actually judged on. */
+
+test('teams are ranked on the average of sales and collection, best first', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    // Monthly sales: KONGOWE 400, MBAGALA 100. Monthly target = weekly x 4 = 4,000.
+    { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
+    { id: 'm2', team: 'MBAGALA', stage: 'approved', principal_amt: 100, approved_date: TODAY },
+    // Last month is NOT this month's sales.
+    { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
+  ];
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0),          // 0% collected today
+    E('333', 'MBAGALA', 1000, 'PAID', 0),            // 100% collected today
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+  const m = d.teamPerf.find(r => r.team === 'MBAGALA');
+
+  assert.equal(k.salesMonth, 400);
+  assert.equal(m.salesMonth, 100, 'last month is a different month');
+
+  // KONGOWE: sales 10% of 4,000, collection 0%  -> score 5
+  // MBAGALA: sales  2.5%,          collection 100% -> score 51.3
+  assert.equal(k.salesPct, 10);
+  assert.equal(k.collPct, 0);
+  assert.equal(m.collPct, 100);
+  assert.ok(m.score > k.score, 'collecting everything beats selling a little');
+  assert.equal(d.teamPerf[0].team, 'MBAGALA', 'best first');
+  assert.equal(d.teamPerf[0].sn, 1, 'and numbered after ranking, not before');
+});
+
+test('recovery % is shown against all three denominators', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0, MON),                  // Monday: 1000 uncollected
+    E('222', 'KONGOWE', 400, 'UNPAID', 0, YEST),                  // yesterday: 400
+    E('333', 'KONGOWE', 600, 'UNPAID', 0, TODAY),                 // today: 600
+  ];
+  // Recovered today = initial 500+700 minus current 300+600 = 300 (from the shared fixture).
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(k.uncolMon, 1000);
+  assert.equal(k.uncolYest, 400);
+  assert.equal(k.uncolWeek, 2000, 'Monday + yesterday + today');
+  assert.equal(k.recovered, 300);
+  assert.equal(k.recPctMon, 30);
+  assert.equal(k.recPctYest, 75);
+  assert.equal(k.recPctWeek, 15);
+});
+
+test('the collection column means today on a weekday and the week at the weekend', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'PAID', 0, MON),        // Monday collected in full
+    E('222', 'KONGOWE', 1000, 'UNPAID', 0, TODAY),    // Friday collected nothing
+  ];
+  const fri = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  const kf = fri.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(kf.basis, 'today');
+  assert.equal(kf.collPct, 0, 'Friday alone');
+  assert.equal(kf.uncollected, 1000);
+  // The parts the grand total is worked out from travel with it.
+  assert.equal(kf.colBasis, 0);
+  assert.equal(kf.expBasis, 1000);
+
+  const sat = await portalApi(fakeDb(t), ADMIN, 'dashboardFull', {}, Date.parse('2026-07-25T09:00:00Z'));
+  const ks = sat.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(ks.basis, 'week');
+  assert.equal(ks.collPct, 50, 'the whole week: 1000 of 2000');
+  assert.equal(ks.uncollected, 1000);
+  assert.equal(ks.colBasis, 1000);
+  assert.equal(ks.expBasis, 2000);
+});
