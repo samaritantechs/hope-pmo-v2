@@ -67,7 +67,10 @@
              upload the same file twice under a second label, and looked like a required step
              nobody could explain. The server still ACCEPTS the type so historic uploads keep
              reading; it is simply not offered any more. -->
-        <option value="expected-yesterday">Expected — Yesterday</option>
+        <!-- "Expected - Yesterday" removed from the list for the same reason as Tomorrow: a day's
+             Expected sheet is filed under ITS OWN DATE, so yesterday's is simply yesterday's date
+             in the box above. A separate type was a second way to say the same thing and read as
+             a report somebody was failing to produce. Still accepted by the server. -->
         <option value="expected-initial">Expected — Initial</option>
       </optgroup>
       <optgroup label="Loan pipeline">
@@ -89,7 +92,10 @@
         <option value="access-codes">Access Codes</option>
         <option value="user-roles">User Roles</option>
         <option value="call-users">Call App Users</option>
-        <option value="call-logs">Call Logs</option>
+        <!-- Call logs are collected by the phones themselves, automatically, every few minutes.
+             There has never been a file to upload here, and offering one implied there was a
+             report somebody was meant to be producing. Still accepted by the server, so a
+             historic v1 export can be loaded if one is ever needed. -->
         <option value="settings">Settings</option>
         <option value="hints">Hints</option>
         <option value="logo">Logo ya kampuni / Company logo (PNG, JPG)</option>
