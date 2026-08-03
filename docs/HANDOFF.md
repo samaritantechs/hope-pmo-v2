@@ -1871,6 +1871,49 @@ has to be pressed twice to leave a screen. Escape does the same on a keyboard.
 
 ---
 
+## Part 14p — The bell that spun, and the customer who would not leave
+
+### Taarifa / Updates stuck on loading
+
+Two different faults produced the same stuck screen, which is why it looked so stubborn.
+
+The refresh updated the count and the little red dot and **stopped there** — it never redrew an
+open sheet. So tapping the bell before the first count had landed drew a spinner that nothing
+ever replaced. And the failure path was swallowed in silence, so a bell that could not reach the
+server spun in exactly the same way, with no means of telling the two apart.
+
+Now the sheet is redrawn the moment the answer arrives, opening the bell always asks again, and
+a failure says so in words with an invitation to retry.
+
+### The customer on Kesho with D.S 9-10 and on Def with D.S 8-9
+
+Being on both lists is correct — they answer different questions. **Two different D.S values is
+not**: it means the Def row came from an older deck than the Kesho row.
+
+A customer stays on the officers' working list until **their weekday's** current deck is
+uploaded again without them. That is the right rule, and it has a hole: if that weekday's deck
+simply stops being uploaded — the customer left the book, the file was renamed, whoever sends it
+went on leave — they sit there for ever, being telephoned about a debt that may be settled.
+
+Every current deck now stamps its own date on the customers it confirms, and any row **nobody
+has re-confirmed for a fortnight** is retired on the next upload. A weekday's deck should come
+round every seven days, so a fortnight is forgiving.
+
+Three things are deliberately never retired:
+
+- somebody **in the file being uploaded** — that settles it, however old their stamp;
+- a row with **no stamp at all** — it predates the column, or is a placeholder holding
+  somebody's comment history, and retiring those would empty the list on the first upload;
+- **anybody's comments.** Retiring a customer clears their deck figures only. The history stays
+  attached to the reference for ever.
+
+`db/migrations/2026-08-04-followup-deck-date.sql` adds the column. **Optional, as always** — the
+code reads it defensively and simply does not stamp on a database that has not had it yet, so
+nothing fails between the deploy and somebody opening the SQL editor. Until it is run, the
+per-weekday rule is all that applies and this particular customer will keep reappearing.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1906,6 +1949,7 @@ being late** — the system falls back to the slower path until they are run.
 | `2026-08-01-storage-counts.sql` | Settings opens instantly; closes a security warning |
 | `2026-08-02-storage-counts-all-reports.sql` | Fast counting for the newer report types |
 | `2026-08-03-followup-cleanup.sql` | Fast counting and cleanup of the follow-up list. **Run this one after `2026-08-02-storage-counts-all-reports.sql`** — both define the same counting function, and the last one to run wins. Filename order is correct order. |
+| `2026-08-04-followup-deck-date.sql` | Retires defaulters no deck has confirmed for a fortnight (Part 14p). Without it they stay on the list for ever. |
 | `2026-07-27-hints-many-per-tab.sql` | Then upload `docs/hints-v2.tsv` as Hints |
 | `2026-07-27-call-agents.sql` | Then re-upload Unassigned/Assigned so CREATED BY lands |
 | `2026-07-28-loan-identity.sql` | One row per loan instead of one per stage |
@@ -1961,7 +2005,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 206 checks of the rules and the sums
+npm test                                    # 210 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 

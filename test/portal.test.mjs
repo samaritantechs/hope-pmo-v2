@@ -2240,3 +2240,115 @@ test('the very first deck for a weekday blanks nobody', async () => {
   assert.equal(by.X1.arrears, 500, 'untouched — there was no Saturday deck to have left');
   assert.equal(by.X2.arrears, 100);
 });
+
+
+/* THE CUSTOMER WHO WOULD NOT LEAVE.
+ *
+ * Reported from the field: somebody showing on Kesho with D.S 9-10 AND on Def with D.S 8-9,
+ * when they are not in the current defaulter file at all. The Def row is an old deck that
+ * nothing came along to clear.
+ *
+ * The per-weekday rule only retires somebody whose OWN weekday deck came round and left them
+ * out. If that weekday's deck simply stops being uploaded, they sit on the officers' list for
+ * ever -- being telephoned about a debt that may be settled.
+ */
+
+const FU_SYNC = async () => (await import('../api/upload.js')).syncFollowupFromDeck;
+
+test('a customer no deck has confirmed for a fortnight is retired', async () => {
+  const syncFollowupFromDeck = await FU_SYNC();
+  const db = fakeDb({
+    followup_status: [
+      // Confirmed three weeks ago and never since -- this is the one in the report.
+      { ref: 'OLD1', team: 'KONGOWE', arrears: 12001, status: 'Partial Defaulter',
+        ds: '8-9', deck_date: '2026-07-03' },
+      // Confirmed last week: still current, must stay.
+      { ref: 'RECENT', team: 'KONGOWE', arrears: 5000, status: 'Defaulter',
+        ds: '3-6', deck_date: '2026-07-20' },
+    ],
+    defaulter_snapshots: [],
+  });
+  await syncFollowupFromDeck(db,
+    [{ ref: 'TODAY1', team: 'KONGOWE', status: 'Defaulter', arrears: 900 }],
+    'FRI', 'newbatch', '2026-07-24');
+
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.OLD1.arrears, null, 'three weeks with no deck confirming them: retired');
+  assert.equal(by.OLD1.status, null);
+  assert.equal(by.OLD1.deck_date, null);
+  assert.equal(by.RECENT.arrears, 5000, 'four days ago is still current');
+  assert.equal(by.TODAY1.arrears, 900);
+  assert.equal(by.TODAY1.deck_date, '2026-07-24', 'and today\'s deck stamps its own date');
+});
+
+test('a row that was never stamped is left alone', async () => {
+  /* Rows predating the column, and the placeholders created so an Expected customer's comment
+     has somewhere to live, have no stamp. Retiring those on the strength of a stamp they never
+     had would empty the working list on the first upload after the deploy. */
+  const syncFollowupFromDeck = await FU_SYNC();
+  const db = fakeDb({
+    followup_status: [
+      { ref: 'LEGACY', team: 'KONGOWE', arrears: 7000, status: 'Defaulter' },   // no deck_date
+    ],
+    defaulter_snapshots: [],
+  });
+  await syncFollowupFromDeck(db, [{ ref: 'X', team: 'KONGOWE', status: 'Defaulter', arrears: 1 }],
+    'FRI', 'b', '2026-07-24');
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.LEGACY.arrears, 7000, 'never stamped is not the same as long overdue');
+});
+
+test('somebody in today\'s deck is never retired, however old their stamp', async () => {
+  const syncFollowupFromDeck = await FU_SYNC();
+  const db = fakeDb({
+    followup_status: [
+      { ref: 'BACK', team: 'KONGOWE', arrears: 100, status: 'Defaulter', deck_date: '2026-01-01' },
+    ],
+    defaulter_snapshots: [],
+  });
+  await syncFollowupFromDeck(db,
+    [{ ref: 'BACK', team: 'KONGOWE', status: 'Defaulter', arrears: 4000 }], 'FRI', 'b', '2026-07-24');
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.BACK.arrears, 4000, 'they are in the file being uploaded — that settles it');
+  assert.equal(by.BACK.deck_date, '2026-07-24');
+});
+
+test('a database without the column still works, and still retires by weekday', async () => {
+  /* Migrations here are run by hand. Between a deploy and somebody opening the SQL editor the
+     column does not exist, and the upload must not fail -- it simply does not stamp. */
+  const syncFollowupFromDeck = await FU_SYNC();
+  const rows = [
+    { ref: 'MON1', team: 'KONGOWE', arrears: 900, status: 'Defaulter' },
+    { ref: 'MONGONE', team: 'KONGOWE', arrears: 400, status: 'Defaulter' },
+  ];
+  const db = fakeDb({
+    followup_status: rows,
+    defaulter_snapshots: [
+      { ref: 'MON1', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-17', upload_batch: 'old', created_at: '2026-07-17T04:00:00Z' },
+      { ref: 'MONGONE', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-17', upload_batch: 'old', created_at: '2026-07-17T04:00:00Z' },
+    ],
+  });
+  // Make the first select fail the way PostgREST does for an unknown column.
+  const realFrom = db.from.bind(db);
+  let first = true;
+  db.from = (name) => {
+    const q = realFrom(name);
+    if (name !== 'followup_status') return q;
+    const realSelect = q.select.bind(q);
+    q.select = (cols) => {
+      if (first && String(cols || '').includes('deck_date')) {
+        first = false;
+        return { then: (res) => res({ data: null, error: { message: 'column followup_status.deck_date does not exist' } }) };
+      }
+      return realSelect(cols);
+    };
+    return q;
+  };
+
+  await syncFollowupFromDeck(db, [{ ref: 'MON1', team: 'KONGOWE', status: 'Defaulter', arrears: 800 }],
+    'MON', 'newmon', '2026-07-24');
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.MON1.arrears, 800, 'the upload still lands');
+  assert.equal(by.MONGONE.arrears, null, 'and the weekday rule still retires the one who left');
+  assert.equal('deck_date' in by.MON1, false, 'nothing tries to write a column that is not there');
+});

@@ -40,11 +40,13 @@ const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', le
                fuNeedDate: ['AMETOA AHADI'], fuNeedComment: [], fuNeedNumber: [],
                systemOpen: false };
 
+let bellFails = false;
 function answer(fn) {
   if (fn === 'api_callBoot') return bootOk ? BOOT : { ok: false };
   if (fn === 'api_callList') return { ok: true, rows: ROWS, asOf: '2026-08-01', stale: false };
   if (fn === 'api_callDailySummary') return { ok: true, col: {}, kesho: {}, weekCol: {}, sales: {}, expdf: {}, recovery: {} };
   if (fn === 'api_callSync') return { ok: true, added: 0, watermark: 1 };
+  if (fn === 'api_callNotifications' && bellFails) return { ok: false, error: 'BOOM' };
   if (fn === 'api_callNotifications') return { ok: true, unseen: 2, seenAt: '', items: [
     { kind:'complaint', id:'c1', ref:'R1', team:'KONGOWE', who:'MAMA A', by:'DESK',
       what:'hakupata risiti', at:'2026-08-02T09:00:00Z', unseen:true },
@@ -161,15 +163,38 @@ check('the next launch settles on sign-in without looping',
   JSON.stringify(again) + ' boots=' + calls.filter(c => c === 'api_callBoot').length);
 bootOk = true;
 
+/* A BELL THAT CANNOT REACH THE SERVER MUST SAY SO, not spin. The failure path was swallowed
+   in silence, which produced the same stuck screen as the missing redraw and gave no way to
+   tell the two apart. */
+bellFails = true;
+await page.evaluate(() => { S.notif = null; S.notifErr = null; bellOpen(); });
+await page.waitForTimeout(600);
+check('a bell that cannot load says so instead of spinning',
+  /Imeshindikana|haijasajiliwa/.test(await page.evaluate(() => document.getElementById('sheetBody').textContent)),
+  (await page.evaluate(() => document.getElementById('sheetBody').textContent)).slice(0, 80));
+await page.evaluate(() => sheetHide());
+bellFails = false;
+
 /* ---------------------------------------------------------------- THE SHEET MUST CLOSE.
    The close handlers were bound inside the CUSTOMER sheet's form wiring, so the bell -- which
    uses the same panel -- opened with no way out. Tapping the X or the dark area did nothing,
    and the only escape was Back, which left the app and landed the officer on the launcher. */
 const sheetOpen = () => page.evaluate(() => document.getElementById('sheet').style.display === 'flex');
 
+/* THE SPINNER THAT NOTHING REPLACED. Tapping the bell before the first count had landed drew
+   a spinner, and the refresh updated the little red dot without ever redrawing the open sheet.
+   S.notif is cleared here to reproduce exactly that: a bell opened with nothing in hand. */
+await page.evaluate(() => { S.notif = null; S.notifErr = null; bellOpen(); });
+await page.waitForTimeout(600);
+const bellText = await page.evaluate(() => document.getElementById('sheetBody').textContent);
+check('the bell fills in when the answer arrives, rather than spinning for ever',
+  /hakupata risiti|ataleta kesho/.test(bellText), bellText.slice(0, 90));
+check('and the sheet is open', await sheetOpen());
+await page.evaluate(() => sheetHide());
+
 // THE BELL FIRST, before any customer sheet has ever been opened. That order is the bug.
 await page.evaluate(() => bellOpen());
-await page.waitForTimeout(300);
+await page.waitForTimeout(400);
 check('the bell opens the sheet', await sheetOpen());
 await page.evaluate(() => document.getElementById('sheetClose').click());
 await page.waitForTimeout(200);
