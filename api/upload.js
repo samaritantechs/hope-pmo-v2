@@ -130,6 +130,38 @@ export async function runReplace(db, table, plan, records) {
   return { replaced: (gone || []).length, replacedDates };
 }
 
+/** TWO ROWS IN ONE FILE CANNOT CLAIM THE SAME KEY.
+ *
+ *  Postgres will not let one statement update the same row twice:
+ *    ON CONFLICT DO UPDATE command cannot affect row a second time
+ *  It does not skip the second row -- it refuses the WHOLE upload, and the message names no
+ *  file, no column and no customer. Somebody holding a year of history has nothing to act on.
+ *
+ *  A v1 comment export genuinely contains duplicates: the same sentence about the same customer
+ *  at the same minute, because the sheet was exported twice or a row was copied down. commentId
+ *  hashes exactly those fields, so those rows share an id BY DESIGN -- which is what makes
+ *  re-uploading a half-loaded history collapse instead of double. The identity that protects
+ *  the second upload is what broke the first.
+ *
+ *  Sending it once is all that was ever meant. THE LAST OCCURRENCE WINS, matching what a
+ *  re-upload does: later in the file is later in time, so the file's own last word stands.
+ *
+ *  Rows with no key are left alone rather than dropped -- the upsert will then fail on its own
+ *  terms, which is a more honest error than quietly discarding somebody's rows here.
+ */
+export function dedupeByKey(records, key) {
+  const seen = new Map();
+  let collapsed = 0;
+  for (const r of records) {
+    const k = r == null ? null : r[key];
+    if (k == null || k === '') continue;
+    if (seen.has(String(k))) collapsed++;
+    seen.set(String(k), r);
+  }
+  if (!collapsed) return { records, collapsed: 0 };
+  return { records: records.filter(r => r == null || r[key] == null || r[key] === '' || seen.get(String(r[key])) === r), collapsed };
+}
+
 export function stampPlan(table, meta = {}, nowMs = Date.now()) {
   if (!STAMPED_TABLES.has(table)) {
     return { stamped: false, uploadDate: null, replace: false, scope: {}, uploadedOnly: false };
@@ -379,6 +411,13 @@ export default withApi(async (req, res) => {
     if (delErr) throw new Error('Could not clear the previous hints: ' + delErr.message);
   }
 
+  // Two rows in one file cannot claim the same key -- see dedupeByKey.
+  let collapsed = 0;
+  if (upsertTables[table]) {
+    const d = dedupeByKey(records, upsertTables[table]);
+    records = d.records; collapsed = d.collapsed;
+  }
+
   const result = upsertTables[table]
     ? await supabase.from(table).upsert(records, { onConflict: upsertTables[table] })
     : await supabase.from(table).insert(records);
@@ -454,6 +493,7 @@ export default withApi(async (req, res) => {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
     followupSynced, behaviour, sameAsToday,
     stubbed: stubbed || undefined,
+    collapsed: collapsed || undefined,
     /* Reading a date column the wrong way round moves history by up to eleven months and looks
        entirely reasonable in the result, so the file is told what was decided about it. */
     dateOrder: commentsOrder ? (commentsOrder.dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
@@ -462,6 +502,7 @@ export default withApi(async (req, res) => {
     message: [
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
+      collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
     ].filter(Boolean).join(' ') || undefined
   };

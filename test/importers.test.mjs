@@ -437,3 +437,65 @@ test('dateOrNull still behaves exactly as it did when nothing is passed', () => 
   assert.equal(dateOrNull('6/7/2026', false), '2026-06-07', 'unless the file said month-first');
   assert.equal(dateOrNull(''), null);
 });
+
+/* THE SAME COMMENT TWICE IN ONE FILE.
+ *
+ * Reported from the field while uploading a year of v1 history:
+ *   Failed: ON CONFLICT DO UPDATE command cannot affect row a second time
+ *
+ * Postgres refuses a statement that would update the same row twice. Not the second row -- the
+ * WHOLE upload, with a message naming no file, no column and no customer.
+ *
+ * The duplicate is real and expected: a v1 sheet exported twice, or a row copied down, gives the
+ * same sentence about the same customer at the same minute. commentId hashes exactly those
+ * fields, so those rows share an id BY DESIGN -- which is what stops a re-upload doubling
+ * everything. The identity that protects the second upload was breaking the first.
+ */
+test('a file containing the same comment twice is written once, not refused', async () => {
+  const { dedupeByKey } = await import('../api/upload.js');
+
+  const rows = [
+    ['TIMESTAMP', 'REF#', 'TEAM', 'FULLNAME', 'COMMENT', 'FU STATUS', 'BY'],
+    ['22-06-2026 08:45', '2202508974', 'KAMARIA', 'JUMA G', 'AMETOA AHADI', 'PROMISE', 'ASHA'],
+    ['22-06-2026 08:45', '2202508974', 'KAMARIA', 'JUMA G', 'AMETOA AHADI', 'PROMISE', 'ASHA'],
+    ['22-06-2026 09:00', '3234909611', 'KAMARIA', 'MARY P', 'ANALIPA LEO', 'PROMISE', 'ASHA'],
+  ];
+  const records = importComments(rows);
+  assert.equal(records.length, 3, 'the importer keeps every row -- deduplication is not its job');
+  assert.equal(records[0].id, records[1].id, 'and the two identical rows DO share an id');
+
+  const { records: out, collapsed } = dedupeByKey(records, 'id');
+  assert.equal(collapsed, 1, 'one row collapsed');
+  assert.equal(out.length, 2, 'two comments survive');
+  assert.equal(new Set(out.map(r => r.id)).size, 2, 'and no id appears twice');
+  assert.deepEqual(out.map(r => r.ref).sort(), ['2202508974', '3234909611']);
+});
+
+test('the LAST version of a repeated row wins, as a re-upload would', async () => {
+  const { dedupeByKey } = await import('../api/upload.js');
+  /* Later in the file is later in time. A sheet corrected in place puts the correction below
+     the mistake, so the file's own last word is the one to keep -- exactly what uploading the
+     file a second time does. */
+  const rows = [{ id: 'a', v: 'first' }, { id: 'b', v: 'other' }, { id: 'a', v: 'corrected' }];
+  const { records, collapsed } = dedupeByKey(rows, 'id');
+  assert.equal(collapsed, 1);
+  assert.deepEqual(records, [{ id: 'b', v: 'other' }, { id: 'a', v: 'corrected' }]);
+});
+
+test('a file with no duplicates is returned untouched', async () => {
+  const { dedupeByKey } = await import('../api/upload.js');
+  const rows = [{ ref: '1' }, { ref: '2' }, { ref: '3' }];
+  const out = dedupeByKey(rows, 'ref');
+  assert.equal(out.collapsed, 0);
+  assert.equal(out.records, rows, 'the same array, not a copy -- nothing to do means no work');
+});
+
+test('rows with no key at all are left for the upsert to complain about honestly', async () => {
+  const { dedupeByKey } = await import('../api/upload.js');
+  /* Silently dropping somebody's rows here would be worse than the error: the upload would
+     report success having written less than it was given. */
+  const rows = [{ ref: '1' }, { ref: null }, { ref: '' }, { ref: '1' }];
+  const { records, collapsed } = dedupeByKey(rows, 'ref');
+  assert.equal(collapsed, 1);
+  assert.equal(records.length, 3, 'the keyless rows stay');
+});

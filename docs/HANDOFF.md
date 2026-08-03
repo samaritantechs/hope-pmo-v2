@@ -1975,6 +1975,31 @@ defaulters-current file is uploaded. Nothing more to do; it clears itself.
 
 ---
 
+## Part 14r — "ON CONFLICT DO UPDATE command cannot affect row a second time"
+
+That is Postgres refusing to update the same row twice in one statement. Not skipping the second
+row — **refusing the whole upload**, with a message that names no file, no column and no
+customer. Somebody holding a year of history has nothing to act on.
+
+The duplicate was real and entirely expected. A v1 comment sheet exported twice, or a row copied
+down, gives you the same sentence about the same customer at the same minute. The system
+identifies a comment by exactly those things — who it is about, when, what was said, by whom —
+and that is **deliberate**: it is what makes re-uploading a half-loaded history collapse instead
+of doubling every comment already in. The identity that protects the second upload was breaking
+the first.
+
+Now a repeated row is written once, and the upload says so: *"3 row(s) in the file were the same
+record twice and were written once."* The **last** version wins, matching what a re-upload does —
+later in the file is later in time, so a sheet corrected in place keeps the correction.
+
+Rows with no key at all are deliberately left alone rather than quietly dropped. An upload that
+reported success having written less than it was given would be worse than the error.
+
+This applies to every report that updates in place rather than appending — comments, loans,
+teams, access codes, roles, settings, officer accounts, call logs — not only the comment log.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
