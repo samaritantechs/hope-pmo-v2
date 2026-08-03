@@ -2000,6 +2000,57 @@ teams, access codes, roles, settings, officer accounts, call logs — not only t
 
 ---
 
+## Part 14s — The performance strip now stays, and follows your uploads
+
+> *"It gets lost so much that I am even not sure if it'll get back."*
+
+Two separate things were wrong, and together they made the strip feel like something that might
+not come back at all.
+
+### It disappeared
+
+The strip was hidden until a request succeeded, and hidden again on every restart. On the cheap
+handsets Android throws the page away after each call — which is most of them — an officer saw
+it for a few seconds after opening the app and then not again. One failed request took it away
+with nothing to say why.
+
+**A figure that comes and goes is worse than no figure**, because nobody can tell whether the
+number is bad or the app is.
+
+Now the last figures are kept on the handset and drawn **before anything is asked of the
+network**, so the strip is on screen the instant the app is. A failed request changes nothing —
+what is showing stays showing until better figures arrive. The only thing that removes it is
+signing out.
+
+Figures kept from an earlier day are still shown, because they are the last true thing that
+officer was told — but the tag reads **Jana** and the strip dims, so yesterday's morning is
+never passed off as this one.
+
+The saved copy is stamped with **whose** figures they are. Handsets get handed on and officers
+get moved; without that, one team's numbers would greet the next person to sign in looking
+exactly as authoritative as their own. Signing out and being de-registered both clear it.
+
+### It didn't follow uploads
+
+The six figures are worked out from the whole book. Recomputing them on a timer for two hundred
+officers is not affordable, so the strip refreshed on entry, on a manual sync tap, or on a
+throttled return to the app — **a quarter of an hour after an upload at best**. Long enough to
+be standing in front of a manager holding a phone that still shows the morning.
+
+Now every upload stamps a version, and the sync each phone already runs every few minutes
+carries that stamp back. The phone asks for new figures **only when the stamp has changed** —
+that is, only when somebody has actually uploaded something.
+
+The cost when nothing has been uploaded is one row read by its key, on a request that was
+happening anyway. Officers with no calls to send, officers who never granted the call-log
+permission, and anyone on a plain browser all still ask the question, because for the strip that
+question *is* the sync.
+
+Nothing to switch on. Upload a report and the strip on every phone updates within one sync
+cycle — five minutes by default, and immediately on a manual sync tap.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live

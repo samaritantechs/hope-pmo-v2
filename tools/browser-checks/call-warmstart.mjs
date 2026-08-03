@@ -38,14 +38,21 @@ const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', le
                // The customer sheet builds its follow-up dropdown from these.
                fuStatuses: ['AMETOA AHADI', 'ANALIPA LEO', 'HAPATIKANI YEYE & MDHAMINI'],
                fuNeedDate: ['AMETOA AHADI'], fuNeedComment: [], fuNeedNumber: [],
-               systemOpen: false };
+               userId: 'U-JUMA', systemOpen: false };
 
 let bellFails = false;
+let summaryFails = false;         // flip to simulate the strip's request failing
+let dataVersion = 'v1';           // bumped by an "upload" further down
 function answer(fn) {
   if (fn === 'api_callBoot') return bootOk ? BOOT : { ok: false };
   if (fn === 'api_callList') return { ok: true, rows: ROWS, asOf: '2026-08-01', stale: false };
-  if (fn === 'api_callDailySummary') return { ok: true, col: {}, kesho: {}, weekCol: {}, sales: {}, expdf: {}, recovery: {} };
-  if (fn === 'api_callSync') return { ok: true, added: 0, watermark: 1 };
+  if (fn === 'api_callDailySummary') {
+    if (summaryFails) return { ok: false, error: 'BOOM' };
+    return { ok: true, period: 'day', col: { pct: 0.42 }, kesho: { pct: 0.11 }, weekCol: { pct: 0.55 },
+             sales: { pct: 0.3 }, expdf: { pct: 0.2, num: 1400000 }, recovery: { pct: 0.6, num: 900000 },
+             dataVersion: dataVersion };
+  }
+  if (fn === 'api_callSync') return { ok: true, added: 0, watermark: 1, dataVersion: dataVersion };
   if (fn === 'api_callNotifications' && bellFails) return { ok: false, error: 'BOOM' };
   if (fn === 'api_callNotifications') return { ok: true, unseen: 2, seenAt: '', items: [
     { kind:'complaint', id:'c1', ref:'R1', team:'KONGOWE', who:'MAMA A', by:'DESK',
@@ -135,6 +142,61 @@ check('the server was asked anyway', calls.indexOf('api_callBoot') >= 0, calls.j
 const settled = await screen();
 check('and the app stayed put while it answered', settled.app && !settled.boot, JSON.stringify(settled));
 
+/* ------------------------------------------------- THE PERFORMANCE STRIP MUST NOT COME AND GO.
+   "It gets lost so much that I am even not sure if it'll get back." It was hidden until a
+   request succeeded and hidden again on every restart -- so on a handset Android throws away
+   after each call it appeared for a few seconds a day, and one failed request took it away with
+   nothing to say why. A figure that comes and goes is worse than no figure: nobody can tell
+   whether the number is bad or the app is. */
+const strip = () => page.evaluate(() => {
+  const el = document.getElementById('dayStrip');
+  return { shown: !el.classList.contains('hide'), stale: el.classList.contains('stale'),
+           col: document.getElementById('dsCol').textContent,
+           rec: document.getElementById('dsRec').textContent,
+           saved: !!localStorage.getItem('hcDaySummary_v1') };
+});
+await page.waitForTimeout(400);
+const s1 = await strip();
+check('the strip is on screen with its figures', s1.shown && s1.col === '42%', JSON.stringify(s1));
+check('and the shillings ride beside the percentage', /60%/.test(s1.rec) && /900k/.test(s1.rec), s1.rec);
+check('the figures are kept on the handset', s1.saved);
+
+// A failed request must not blank it. This is the exact behaviour that made it feel unreliable.
+summaryFails = true;
+await page.evaluate(() => loadDaySummary(true));
+await page.waitForTimeout(400);
+const s2 = await strip();
+check('a failed request leaves the figures on screen instead of blanking them',
+  s2.shown && s2.col === '42%', JSON.stringify(s2));
+summaryFails = false;
+
+// Restart with the server refusing from the very first moment: the strip is there anyway.
+summaryFails = true;
+await page.goto(base + '/');
+await page.waitForTimeout(600);
+const s3 = await strip();
+check('and it is on screen straight after a restart, before the server has answered anything',
+  s3.shown && s3.col === '42%', JSON.stringify(s3));
+summaryFails = false;
+
+/* UPDATING WHENEVER A REPORT IS UPLOADED. The figures are far too expensive to recompute on a
+   timer for two hundred officers, so the phone watches a version stamp the upload changes and
+   asks for new figures only then. */
+await page.evaluate(() => loadDaySummary(true));
+await page.waitForTimeout(400);
+calls.length = 0;
+await page.evaluate(() => versionPing_());        // a routine sync with nothing uploaded
+await page.waitForTimeout(400);
+check('a routine sync with nothing uploaded does NOT re-ask for the figures',
+  calls.indexOf('api_callDailySummary') < 0, calls.join(','));
+
+dataVersion = 'v2';                                // somebody uploads a report
+calls.length = 0;
+await page.evaluate(() => versionPing_());
+await page.waitForTimeout(500);
+check('but the first sync after an upload does',
+  calls.indexOf('api_callDailySummary') >= 0, calls.join(','));
+
 // --- 4. no connection at all: the officer keeps working
 bootHangs = true;
 await page.goto(base + '/');
@@ -152,6 +214,10 @@ const kicked = await screen();
 check('a handset the server no longer knows is put back to sign-in',
   kicked.reg && !kicked.app, JSON.stringify(kicked));
 check('and it forgot who it was', await page.evaluate(() => !localStorage.getItem('hcBoot_v1')));
+/* AND IT FORGOT THEIR FIGURES. Handsets get handed on. One team's numbers sitting there when
+   the next officer signs in would look exactly as authoritative as their own. */
+check('and their team figures went with it',
+  await page.evaluate(() => !localStorage.getItem('hcDaySummary_v1')));
 
 // --- 6. and that must not loop: one more launch, still sign-in, still calm
 calls.length = 0;

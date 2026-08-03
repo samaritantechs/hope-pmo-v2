@@ -725,3 +725,51 @@ test('the bell reaches the field, scoped to the handset\'s own teams', async () 
   // An unregistered phone is told so rather than handed the company's updates.
   assert.equal((await callApi(db, 'api_callNotifications', ['nope'], NOW)).error, 'DEVICE_NOT_REGISTERED');
 });
+
+/* THE PERFORMANCE STRIP HAS TO KEEP UP WITH UPLOADS, AND CANNOT BE RECOMPUTED ON A TIMER.
+ *
+ * "The performance bar in app should be permanent and updating whenever I upload reports; it
+ *  gets lost so much that I am even not sure if it'll get back."
+ *
+ * The figures come from the whole book, so asking for them every few minutes for two hundred
+ * officers is not affordable -- which is why the strip lagged an upload by a quarter of an hour
+ * at best. The signal is DATA_VERSION: uploads stamp it, and the phone's routine sync carries
+ * it back so the phone asks for new figures only when something has actually changed.
+ */
+test('a sync carries the data version, so a phone knows when an upload has happened', async () => {
+  const db = await registeredDb();
+  const before = await callApi(db, 'api_callSync', ['d1', []], NOW);
+  assert.equal(before.ok, true);
+  assert.equal(before.dataVersion, '', 'nothing uploaded yet on this database');
+
+  // What an upload does, at the end of writing its rows.
+  await db.from('settings').upsert({ key: 'DATA_VERSION', value: '1700000000000' }, { onConflict: 'key' });
+
+  const after = await callApi(db, 'api_callSync', ['d1', []], NOW);
+  assert.equal(after.dataVersion, '1700000000000', 'the next sync reports the new version');
+  assert.notEqual(after.dataVersion, before.dataVersion, 'and it differs, which is the whole signal');
+});
+
+test('an empty sync stays cheap -- it is asked far more often than any other question', async () => {
+  /* This runs every few minutes on every handset in the company, including officers with no
+     calls to send at all. If it ever grows a list read it stops being affordable. */
+  const db0 = await registeredDb();
+  let trips = 0;
+  const wrap = q => new Proxy(q, { get(o, p) {
+    if (p === 'then') return (res, rej) => o.then(r => { trips++; return res(r); }, rej);
+    const v = o[p];
+    return typeof v === 'function' ? (...a) => { const out = v.apply(o, a); return out === o ? wrap(o) : out; } : v;
+  } });
+  const db = { from: n => wrap(db0.from(n)), rpc: (...a) => db0.rpc(...a), _dump: n => db0._dump(n) };
+  await callApi(db, 'api_callSync', ['d1', []], NOW);
+  assert.ok(trips <= 3, `an empty sync took ${trips} round trips; it must stay a couple of key lookups`);
+});
+
+test('the daily summary says which upload it was computed from', async () => {
+  const db = await registeredDb();
+  await db.from('settings').upsert({ key: 'DATA_VERSION', value: '1700000000001' }, { onConflict: 'key' });
+  const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
+  assert.equal(d.ok, true);
+  assert.equal(d.dataVersion, '1700000000001',
+    'the figures carry their own version, so the phone cannot store them against the wrong one');
+});
