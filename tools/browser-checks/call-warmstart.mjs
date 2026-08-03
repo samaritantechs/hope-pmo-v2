@@ -197,6 +197,58 @@ await page.waitForTimeout(500);
 check('but the first sync after an upload does',
   calls.indexOf('api_callDailySummary') >= 0, calls.join(','));
 
+/* -------------------------------------------- RUHUSU COMMENT KUSAVE AUTOMATIC.
+   Android stops an app that is not on screen, so a comment typed at a customer's door may never
+   reach the server. The exemption used to be a button on a banner -- something an officer had
+   to notice on a list of customers and decide to press -- and almost nobody did. It is now
+   something the app DOES when it opens, like the call-log permission and the update check.
+   The native bridge is stubbed here because that is the only way to reach this path in a
+   browser: nativeBridge() is what decides whether the app is running inside the APK at all. */
+const bgVisible = () => page.evaluate(() => document.getElementById('bgPrompt').style.display === 'flex');
+const installBridge = (exempt) => page.addInitScript(([ex]) => {
+  window.HopeCalls = {
+    getCalls: () => '[]', setWatermark: () => {}, getDeviceId: () => 'DEV-STUB',
+    hasCallLogPermission: () => '1', getManufacturer: () => 'Tecno',
+    isIgnoringBatteryOptimizations: () => (ex ? '1' : '0'),
+    requestIgnoreBatteryOptimizations: () => { window.__bgAsked = (window.__bgAsked || 0) + 1; },
+  };
+}, [exempt]);
+
+await ctx.clearCookies();
+await page.evaluate(() => { try { localStorage.removeItem('hcBgAsk_v1'); } catch(e){} });
+await installBridge(false);
+await page.goto(base + '/');
+await page.waitForTimeout(1500);
+check('a handset that is not exempt is ASKED, without being sent looking for a button',
+  await bgVisible());
+const bgText = await page.evaluate(() => document.getElementById('bgPrompt').textContent);
+check('and the words are what the permission buys, not what Android calls it',
+  /Ruhusu comment kusave automatic/.test(bgText), bgText.replace(/\s+/g, ' ').slice(0, 70));
+
+// Allowing hands over to Android's own dialog.
+await page.click('#bgYes');
+await page.waitForTimeout(200);
+check('tapping Ruhusu opens the phone\'s own permission dialog',
+  await page.evaluate(() => window.__bgAsked === 1));
+check('and the prompt closes behind it', !(await bgVisible()));
+
+/* ASKED ONCE A DAY, NOT EVERY TIME. Android's dialog is the second step, so a refusal costs two
+   taps -- re-asking on every restart is how people are trained to refuse on sight. */
+await page.goto(base + '/');
+await page.waitForTimeout(1500);
+check('a restart the same day does not ask again', !(await bgVisible()));
+
+// A handset that is already exempt is never asked at all.
+await page.evaluate(() => { try { localStorage.removeItem('hcBgAsk_v1'); } catch(e){} });
+await installBridge(true);
+await page.goto(base + '/');
+await page.waitForTimeout(1500);
+check('a handset that already allows it is never asked', !(await bgVisible()));
+
+// And the old button is gone from the customer list.
+check('the button on the banner is gone -- asking is the app\'s job now',
+  await page.evaluate(() => !document.getElementById('battBtn')));
+
 // --- 4. no connection at all: the officer keeps working
 bootHangs = true;
 await page.goto(base + '/');

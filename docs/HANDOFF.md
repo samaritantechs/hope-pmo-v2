@@ -2051,6 +2051,48 @@ cycle — five minutes by default, and immediately on a manual sync tap.
 
 ---
 
+## Part 14t — "Ruhusu comment kusave automatic"
+
+Android stops an app that is not on screen, and on the handsets actually in the field it does so
+aggressively. For HOPE Calls that means **a comment typed at a customer's door may never reach
+the server** — the officer did the work and the system does not know it. The same for the call
+that went with it.
+
+There has always been a way to fix that: the phone can exempt the app. But it was a **button on
+a banner** — something an officer had to notice on a list of customers and decide to press. Almost
+nobody did, so almost nobody was exempt.
+
+The call-log permission and the update check were never optional in that way: the app asks the
+moment it opens. This now does the same. Every officer who has not already allowed it is asked
+by the app itself, on their next open.
+
+**The wording is the point.** Android calls this "allow background activity", which means nothing
+to somebody standing at a door. The prompt says:
+
+> 🔋 **Ruhusu comment kusave automatic**
+> Simu yako inazima HOPE Calls ikiwa nyuma. Ukiruhusu, maoni na simu zako zinahifadhika zenyewe
+> bila kusubiri. Bonyeza **Ruhusu**, kisha kwenye dirisha la simu chagua **Allow**.
+
+Two taps: **Ruhusu**, then **Allow** on the phone's own dialog.
+
+**Asked at most once a day**, until it is allowed. Android's dialog is the second step, so a
+refusal costs two taps, and re-asking on every restart is exactly how people are trained to
+refuse on sight. The check is the *granted state itself*, not a flag — so an officer who allows
+it and later has it stripped by a battery-saver sweep is asked again.
+
+**Nothing to reinstall.** This lives in the page, not the APK, and the bridge it calls has been
+in the installed app since the beginning — so it reaches every handset in the field on the next
+open.
+
+### What is left on the banner
+
+Only the part Android has no API for. Xiaomi, Oppo, Vivo, Huawei and Samsung each add their own
+kill switch on top of Android's, on their own settings screen, that no dialog can open. Those are
+still described by name for the handsets they apply to. The generic battery line and its button
+are gone.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
