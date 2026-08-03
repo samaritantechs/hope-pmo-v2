@@ -290,7 +290,7 @@ async function list(db, [dev, which, which2], nowMs) {
     // downloads the other thirty-nine teams first.
     const fu = await fetchAll(() => {
       let q = db.from('followup_status').select(
-        'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team');
+        'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team, updated_at');
       if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
       return q;
     });
@@ -303,6 +303,17 @@ async function list(db, [dev, which, which2], nowMs) {
       called: hit(r.contact, r.guarantor_contact),
     }));
     rows.sort((a, b) => b.amt - a.amt);
+    /* HOW OLD IS THIS LIST? A customer stays a defaulter until their weekday's deck is
+       uploaded again WITHOUT them, so a deck that has not been re-uploaded for a fortnight
+       leaves people on the list who may have cleared. The officer could not tell -- the
+       Expected lists say how old they are and this one said nothing.
+
+       The newest update across the list is the honest answer: it is the last time any of these
+       figures were refreshed by an upload. */
+    let newest = '';
+    for (const r of fu) { const u = String(r.updated_at || ''); if (u > newest) newest = u; }
+    asOf = newest ? newest.slice(0, 10) : null;
+    stale = !!(asOf && asOf < todayKey(nowMs));
   } else {
     // KESHO is DERIVED, not a separate upload. The PMO uploads each day's Expected sheet
     // under its own date, exactly as the live system worked -- so tomorrow's list is simply

@@ -1446,6 +1446,14 @@ test('uploading the current deck rebuilds the officers working list', async () =
       { ref: 'GONE', team: 'KONGOWE', full_name: 'CLEARED C', arrears: 400, status: 'Defaulter',
         fu_status: 'ANALIPA LEO', last_comment: 'analipa' },
     ],
+    // LAST MONDAY'S deck, which is what this upload is compared against. Without a previous
+    // deck for the weekday there is nothing to have left, and nobody may be blanked.
+    defaulter_snapshots: [
+      { ref: 'D1', team: 'KONGOWE', snapshot_type: 'current', weekday: 'MON',
+        snapshot_date: '2026-07-17', upload_batch: 'old', created_at: '2026-07-17T04:00:00Z' },
+      { ref: 'GONE', team: 'KONGOWE', snapshot_type: 'current', weekday: 'MON',
+        snapshot_date: '2026-07-17', upload_batch: 'old', created_at: '2026-07-17T04:00:00Z' },
+    ],
   });
   const deck = [
     { ref: 'D1', team: 'KONGOWE', full_name: 'NEW NAME', contact: '0712000001', status: 'Defaulter',
@@ -1453,7 +1461,7 @@ test('uploading the current deck rebuilds the officers working list', async () =
     { ref: 'D2', team: 'KONGOWE', full_name: 'FRESH ONE', contact: '0712000002', status: 'Chronic',
       ds: '1/6', dc: 1, days_elapsed: 120, other_inst: 30000, arrears: 1500 },
   ];
-  const n = await syncFollowupFromDeck(db, deck);
+  const n = await syncFollowupFromDeck(db, deck, 'MON', 'new');
   assert.equal(n, 2);
 
   const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
@@ -2180,4 +2188,55 @@ test('the collection column means today on a weekday and the week at the weekend
   assert.equal(ks.uncollected, 1000);
   assert.equal(ks.colBasis, 1000);
   assert.equal(ks.expBasis, 2000);
+});
+
+
+test('a Monday deck says nothing about Thursday\'s defaulters', async () => {
+  /* THE DEFECT THIS FIXES. The decks are per WEEKDAY, and the sync blanked every customer who
+     was not in the file just uploaded -- so loading Monday's current deck cleared the status
+     and arrears of everybody whose follow-up day is Tuesday through Sunday, and Tuesday's
+     upload then cleared Monday's back again.
+
+     The Defaulters list on every phone showed roughly a seventh of the book, and which seventh
+     depended on whichever deck had been loaded last. */
+  const { syncFollowupFromDeck } = await import('../api/upload.js');
+  const db = fakeDb({
+    followup_status: [
+      { ref: 'MON1', team: 'KONGOWE', arrears: 900, status: 'Defaulter' },
+      { ref: 'THU1', team: 'KONGOWE', arrears: 700, status: 'Defaulter' },
+      { ref: 'MONGONE', team: 'KONGOWE', arrears: 400, status: 'Defaulter' },
+    ],
+    defaulter_snapshots: [
+      // Monday's previous deck had MON1 and MONGONE.
+      { ref: 'MON1', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-17', upload_batch: 'oldmon', created_at: '2026-07-17T04:00:00Z' },
+      { ref: 'MONGONE', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-17', upload_batch: 'oldmon', created_at: '2026-07-17T04:00:00Z' },
+      // Thursday's deck is a different set of people entirely.
+      { ref: 'THU1', snapshot_type: 'current', weekday: 'THU', snapshot_date: '2026-07-20', upload_batch: 'oldthu', created_at: '2026-07-20T04:00:00Z' },
+    ],
+  });
+
+  // Today's Monday deck: MON1 is still there, MONGONE has cleared.
+  await syncFollowupFromDeck(db, [{ ref: 'MON1', team: 'KONGOWE', status: 'Defaulter', arrears: 800 }], 'MON', 'newmon');
+
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.MON1.arrears, 800, 'still on Monday\'s deck, figures refreshed');
+  assert.equal(by.MONGONE.arrears, null, 'left Monday\'s deck, so no longer a live defaulter');
+  assert.equal(by.MONGONE.status, null);
+  // THE LINE THAT MATTERS.
+  assert.equal(by.THU1.arrears, 700, 'Thursday\'s defaulter is untouched by a Monday upload');
+  assert.equal(by.THU1.status, 'Defaulter');
+});
+
+test('the very first deck for a weekday blanks nobody', async () => {
+  /* "No previous deck" must mean "blank nobody", never "blank everybody" -- otherwise the
+     first upload after a new weekday is introduced empties the entire working list. */
+  const { syncFollowupFromDeck } = await import('../api/upload.js');
+  const db = fakeDb({
+    followup_status: [{ ref: 'X1', team: 'KONGOWE', arrears: 500, status: 'Defaulter' }],
+    defaulter_snapshots: [],
+  });
+  await syncFollowupFromDeck(db, [{ ref: 'X2', team: 'KONGOWE', status: 'Defaulter', arrears: 100 }], 'SAT', 'first');
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.X1.arrears, 500, 'untouched — there was no Saturday deck to have left');
+  assert.equal(by.X2.arrears, 100);
 });

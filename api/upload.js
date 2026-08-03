@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { supabase } from './_lib/supabase.js';
 import { gatedUser, can, withApi } from './_lib/auth.js';
+import { pickLatestBatch } from './_lib/snapshots.js';
 import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
@@ -417,7 +418,7 @@ export default withApi(async (req, res) => {
 
   let followupSynced = 0;
   if (type === 'defaulters-current') {
-    followupSynced = await syncFollowupFromDeck(supabase, records);
+    followupSynced = await syncFollowupFromDeck(supabase, records, meta.weekday, uploadBatch);
   }
 
   // "Inserted 412" says nothing about whether a second upload of the same file doubles the
@@ -469,7 +470,37 @@ export default withApi(async (req, res) => {
     already entered. Customers who have left the deck keep their row (their history is still
     worth reading) but stop looking like live defaulters, so they drop off the working list
     instead of being called for a debt they have already cleared. */
-export async function syncFollowupFromDeck(db, records) {
+/** The refs on the latest CURRENT deck for one weekday, other than the one just uploaded.
+ *
+ *  Two bounded queries, never a table scan: the newest date for that weekday, then that date's
+ *  rows. An upload is not a screen, but it is still somebody standing at a laptop waiting.
+ *
+ *  Returns null when there is no previous deck for this weekday at all -- which must mean
+ *  "blank nobody", not "blank everybody". */
+async function prevWeekdayDeck(db, weekday, excludeBatch) {
+  if (!weekday) return null;
+  const base = () => db.from('defaulter_snapshots')
+    .select('ref, snapshot_date, upload_batch, created_at')
+    .eq('snapshot_type', 'current').eq('weekday', weekday);
+  const { data: latest } = await base().order('snapshot_date', { ascending: false }).limit(1).maybeSingle();
+  if (!latest) return null;
+  const { data: rows } = await base().eq('snapshot_date', latest.snapshot_date);
+  const others = (rows || []).filter(r => String(r.upload_batch || '') !== String(excludeBatch || ''));
+  if (!others.length) return null;                       // that date IS this upload, nothing before it
+  return new Set(pickLatestBatch(others).map(r => String(r.ref).trim().toUpperCase()));
+}
+
+/** THE DECKS ARE PER WEEKDAY, and this used to forget that.
+ *
+ *  It blanked every customer who was not in the file just uploaded -- so uploading Monday's
+ *  current deck cleared the status and arrears of every defaulter whose follow-up day is
+ *  Tuesday through Sunday, and then Tuesday's upload cleared Monday's back again. The
+ *  Defaulters list on every phone showed roughly a seventh of the book, and which seventh
+ *  depended on whichever deck had been loaded last.
+ *
+ *  A Monday deck says something about Monday's defaulters and NOTHING about anybody else's, so
+ *  only Monday's are compared against it. */
+export async function syncFollowupFromDeck(db, records, weekday, uploadBatch) {
   const refs = records.map(r => String(r.ref)).filter(Boolean);
   if (!refs.length) return 0;
   const { data: existing, error: exErr } = await db
@@ -498,11 +529,18 @@ export async function syncFollowupFromDeck(db, records) {
       updated_at: new Date().toISOString(),
     };
   });
-  // Customers no longer in the deck: blank the deck-derived figures so they stop showing as
-  // live defaulters, while their comment history stays attached to the ref.
+  /* Customers who have LEFT THIS WEEKDAY'S deck: blank the deck-derived figures so they stop
+     showing as live defaulters, while their comment history stays attached to the ref.
+
+     Only the people who were on this weekday's previous deck are candidates. Somebody whose
+     follow-up day is Thursday is not "gone" because Monday's file does not mention them. */
   const inDeck = new Set(rows.map(r => String(r.ref).trim().toUpperCase()));
-  const gone = (existing || [])
-    .filter(r => !inDeck.has(String(r.ref).trim().toUpperCase()))
+  const wasHere = await prevWeekdayDeck(db, weekday, uploadBatch);
+  const gone = !wasHere ? [] : (existing || [])
+    .filter(r => {
+      const k = String(r.ref).trim().toUpperCase();
+      return wasHere.has(k) && !inDeck.has(k);
+    })
     .map(r => ({ ref: r.ref, status: null, arrears: null, updated_at: new Date().toISOString() }));
 
   for (const batch of [rows, gone]) {

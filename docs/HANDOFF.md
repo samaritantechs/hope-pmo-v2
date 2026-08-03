@@ -1749,6 +1749,84 @@ no new habit of waking the network.
 
 ---
 
+## Part 14l — The bell cost forty megabytes, and a Monday deck was clearing Thursday
+
+### The bell was the most expensive thing on the screen
+
+It shows sixty items. It was reading **every** complaint and **every** follow-up comment ever
+written to find them — measured against a real book after the v1 history import at **204,000
+rows and 40 MB per tap**, and then showing none of them, because none were on that officer's
+team.
+
+That was mine, and putting it on every field officer's phone made it far worse than it had been
+in the portal. The database now does the ordering, the limiting and the team narrowing:
+**3 requests, 120 rows, 0.05 MB.**
+
+The unseen count is therefore "unseen among the newest sixty" rather than in all of history.
+That is the honest thing for a badge to mean — nobody is going to read the four hundred and
+first — and the badge already caps at 9+.
+
+### A Monday deck was clearing Thursday's defaulters
+
+The defaulter decks are **per weekday**. When a current deck was uploaded, the system blanked
+the status and arrears of every customer who was not in that one file — so loading Monday's deck
+cleared every defaulter whose follow-up day is Tuesday to Sunday, and Tuesday's upload cleared
+Monday's back again.
+
+**The Defaulters list on every phone was showing roughly a seventh of the book**, and which
+seventh depended on whichever deck had been loaded last.
+
+A Monday deck says something about Monday's defaulters and nothing about anybody else's, so only
+Monday's are now compared against it. The very first deck for a weekday blanks nobody — "no
+previous deck" must mean "blank nobody", never "blank everybody".
+
+### Why a customer can be on Kesho *and* on Defaulters
+
+This is correct, and worth knowing. They are two different questions:
+
+- **Kesho** — who has money due next
+- **Defaulters** — who is behind
+
+Somebody in arrears still has a repayment schedule running, so the same person is usually on
+both. Being on Kesho does not mean they have cleared.
+
+What *was* missing is how fresh the defaulter list is. A customer stays on it until **their
+weekday's** deck is uploaded again without them, so a deck nobody has re-sent for a fortnight
+leaves people on the list who may already have paid. The Def / Exp / Chr tabs now say when the
+figures were last refreshed, and why that matters.
+
+### HOPE Live said nothing when the system was closed
+
+HOPE Live opens and closes with the system — that was asked for. But when it was closed, the
+code box came back **with nothing written on it**: type your code, press Start, get the same
+empty box. It now names the switch and where to find it.
+
+---
+
+## Part 14m — The speed guard
+
+*"Moving forward everything we do should take speed precaution."*
+
+A promise to be careful is worth nothing six weeks later, so it is written down as something
+that **fails**. `test/speed.test.mjs` gives every screen a budget in **round trips** and turns
+`npm test` red when a change blows it — before it can be deployed.
+
+Round trips are the unit because each one is a separate journey to the database and back, 100
+to 300 thousandths of a second. Rows scale with the book; the number of journeys is a property
+of the **code**, and it is what turned the dashboard into eighty-five seconds of waiting for one
+idle user.
+
+The phone budgets are the tightest, because a field officer on mobile data has the worst
+connection in the company.
+
+**If a change needs more, the question to answer first is "can the database do this instead of
+me?"** — ordering, limiting, filtering and counting all belong there. If the answer is genuinely
+no, the number is raised **in the same commit**, so the cost appears in the diff rather than
+being discovered by somebody in the field. The guard caught HOPE Live at 31 against a budget of
+30 on its very first run; that budget was raised to 35 with the reason written beside it.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1839,7 +1917,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 184 checks of the rules and the sums
+npm test                                    # 202 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 
