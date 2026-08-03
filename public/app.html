@@ -118,6 +118,9 @@
   /* weekday trend grids */
   .tgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:12px 14px}
   .tcell{background:var(--b50);border:1px solid var(--b100);border-radius:10px;padding:9px 10px;text-align:center}
+  /* A day nobody has uploaded yet. Deliberately faint: it is not a bad number, it is not a
+     number. Zero collection and no sheet must never look the same on a wall. */
+  .tcell.pend{background:transparent;border-style:dashed;opacity:.6}
   .tcell.tot{background:var(--b900);border-color:var(--b900);color:#fff}
   .tcell.tot .th,.tcell.tot .mutl{color:var(--b300)}
   .tcell .th{font-size:11.5px;font-weight:800;letter-spacing:.03em;margin-bottom:4px}
@@ -341,6 +344,12 @@ function today(){ var d=new Date(Date.now()+3*3600*1000); return d.toISOString()
 function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
 
 var WDFULL = { MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday' };
+/* THE DAYS AS THE OFFICERS SAY THEM. Swahili weekday names carry their own number -- Jumamosi
+   (mosi, 1st), Jumapili (pili, 2nd), Jumatatu (tatu, 3rd), Jumanne (nne, 4th), Jumatano (tano,
+   5th) -- then Alhamisi and Ijumaa. So the working week reads J3 J4 J5 AL IJ, which is what is
+   written on every board in every branch. MON/TUE/WED is the translation, not the original. */
+var SWDAY = { MON:'J3', TUE:'J4', WED:'J5', THU:'AL', FRI:'IJ', SAT:'J1', SUN:'J2' };
+function wdLabel(w){ return SWDAY[String(w||'').toUpperCase()] || w; }
 var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true,
           sort2:null, asc2:false,
           args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0 };
@@ -1221,32 +1230,40 @@ VIEWS.dashboard = function(){
       + '</div>'
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
       + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
-          d.appsTrend.map(function(x){ return tcell(x.weekday, [
+          d.appsTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['U '+x.unassigned+' · A '+x.assigned, 'mutl'], ['<b>'+x.apps+' apps</b>'], ['TZS '+money(x.amount), 'mutl']]); }),
           tcell('TOTAL', [
             ['U '+d.appsTrend.reduce(function(s,x){return s+x.unassigned;},0)+' · A '+d.appsTrend.reduce(function(s,x){return s+x.assigned;},0), 'mutl'],
             ['<b>'+d.appsTrend.reduce(function(s,x){return s+x.apps;},0)+' apps</b>'],
             ['TZS '+money(d.appsTrend.reduce(function(s,x){return s+x.amount;},0)), 'mutl']], 'tot'))
       + trendGrid('Sales trend (Mon–Fri)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
-          d.salesTrend.map(function(x){ return tcell(x.weekday, [
+          d.salesTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'))
       + trendGrid('Weekly collection trend (Mon–Fri)', 'collected + expected per weekday', 'gCol',
-          d.colTrend.map(function(x){ return tcell(x.weekday, [
+          d.colTrend.map(function(x){ return x.uploaded === false
+            ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
+            : tcell(wdLabel(x.weekday), [
             ['TZS '+money(x.collected)], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
           tcell('TOTAL', [['TZS '+money(d.colTrend.reduce(function(s,x){return s+x.collected;},0))],
             ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
       + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % of that day’s uncollected', 'gRec',
-          d.recTrend.map(function(x){ return tcell(x.weekday, [
+          d.recTrend.map(function(x){ return x.uploaded === false
+            ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
+            : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
-            [money(x.from)+' → '+money(x.to), 'mutl'],
-            [x.full ? '<span class="good">full recovery</span>' : (pct(x.pct)+' of uncol'), 'mutl']]); }),
+            /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
+               This line used to read "3,045,126,092 → 3,037,163,922", which says where the
+               arrears moved but not what the recovery is being measured against. The
+               denominator is the day's uncollected, so that is what belongs here. */
+            ['Hayajarejeshwa TZS '+money(x.uncollected), 'badl'],
+            [x.full ? '<span class="good">full recovery</span>' : ('Rec '+pct(x.pct)), 'good']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
-            ['uncol TZS '+money(d.recTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'mutl'],
-            [pct((function(){var u=d.recTrend.reduce(function(s,x){return s+x.uncollected;},0),r=d.recTrend.reduce(function(s,x){return s+x.recovered;},0);return u>0?Math.round(1000*r/u)/10:null;})())+' of uncol', 'mutl']], 'tot'))
+            ['Hayajarejeshwa TZS '+money(d.recTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
+            ['Rec '+pct((function(){var u=d.recTrend.reduce(function(s,x){return s+x.uncollected;},0),r=d.recTrend.reduce(function(s,x){return s+x.recovered;},0);return u>0?Math.round(1000*r/u)/10:null;})()), 'good']], 'tot'))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){
           var max = Math.max.apply(null, d.funnel.map(function(x){ return x.count; }).concat([1]));
@@ -1269,7 +1286,7 @@ VIEWS.dashboard = function(){
            the percentage, over the teams they cover. */
         + boardPair('bEarlyT','Early collection by officer — today','teams · uncollected · collection %', b.earlyToday,
                     'bEarlyW','Early collection — this week','Mon–Fri', b.earlyWeek,
-                    [col('sn','S/N','num'), col('officer','Officer'), col('teams','Teams','num'),
+                    [col('officer','Officer'), col('teams','Teams','num'),
                      col('uncollected','Uncollected','money'), col('pct','Collection %','pct')],
                     ['teams','uncollected'])
         // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
@@ -2726,7 +2743,7 @@ function presSlides(){
     var tpBasis = d.teamPerf && d.teamPerf.length ? d.teamPerf[0].basis : 'today';
     var tpLab = tpBasis === 'week' ? ' (week)' : ' (today)';
     slides.push({ id:'teams', kind:'table', title:'Team performance — best first', rows:d.teamPerf.slice(0,12),
-      cols:[col('sn','S/N','num'), col('team','Team'),
+      cols:[col('team','Team'),
         col('salesMonth','Monthly sales','money'),
         col('curArrears','Total def','money'), col('defaulters','No. of def','num'),
         col('uncollected','Uncollected'+tpLab,'money'), col('collPct','Collection %'+tpLab,'pct'),
@@ -2771,7 +2788,7 @@ function presSlides(){
     slides.push({ id:'early', kind:'table',
       title:'Early collection — today and this week' + (b.earlySource === 'tomorrow' ? ' (kesho)' : ''),
       rows: earlyRows.slice(0,12),
-      cols:[col('sn','S/N','num'), col('officer','Officer'), col('teams','Teams','num'),
+      cols:[col('officer','Officer'), col('teams','Teams','num'),
         col('uncollected','Uncollected (today)','money'), col('pct','Coll % (today)','pct'),
         col('wUncollected','Uncollected (week)','money'), col('wPct','Coll % (week)','pct')] });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
@@ -2793,7 +2810,7 @@ function presSlides(){
        "is this better or worse than the week?" is the question every one of these boards
        exists to answer. */
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — today and this week', rows:(b.pmo||[]).slice(0,12),
-      cols:[col('sn','S/N','num'), col('officer','PMO'), col('teams','Teams','num'),
+      cols:[col('officer','PMO'), col('teams','Teams','num'),
         col('uncollected','Uncollected (today)','money'), col('pct','Coll % (today)','pct'),
         col('weekUncollected','Uncollected (week)','money'), col('weekPct','Coll % (week)','pct')] });
     slides.push({ id:'cs', kind:'table', title:'Call agents — applications brought in', rows:b.csWeek.slice(0,12),
