@@ -776,6 +776,12 @@ Set these in **Settings → the settings list** (or by uploading a Settings shee
 Do not type this one by hand — there is a real toggle at the **top of Settings**
 ("Mfumo kwa watumiaji wote / The system, for everybody"). See Part 8.
 
+### PMO Collection
+| Key | Default | Meaning |
+|---|---|---|
+| `PMO_ROLE` | `PMO COLLECTION` | The access-code role that marks a collection officer. Case and punctuation ignored. |
+| `PMO_WEEKLY_BONUS` | *(not set)* | The weekly bonus for whoever leads having beaten their own previous week. The rule is built; the amount is yours to choose. |
+
 ### Targets
 | Key | Default | Meaning |
 |---|---|---|
@@ -1538,6 +1544,97 @@ Two things were found while doing it, both worth knowing:
 
 ---
 
+## Part 14h — PMO Collection, and the recovery denominator
+
+### The collection officers
+
+A PMO collection officer holds a distributed set of teams and is judged on **one** thing: the
+percentage of what was expected that actually came in. Not team count, not customer count, not
+amount — the teams are distributed so those even out, and the whole point of the plan is that
+two officers with very different portfolios are paid the same for the same percentage.
+
+**How the system knows who they are:** an access code whose **role** is `PMO COLLECTION`, with
+their teams listed on the code itself. That is where you put them, and it is the right place —
+one officer holds thirty-odd teams, which is a list on the person rather than their name
+repeated in thirty-odd rows of the Teams table.
+
+The role name is the setting `PMO_ROLE`, so a different spelling is fixable without a deploy.
+Case and punctuation are ignored: `PMO-COLLECTION` and `Pmo Collection` both match. An access
+code with **no** teams (meaning *all* teams) is left off the board — their percentage would be
+the company's percentage and would silently outrank everybody.
+
+### The bands
+
+| Collection % | Per day | Week | Month | |
+|---|---|---|---|---|
+| 85–89 | 20,000 | 100,000 | 400,000 | KUFELI |
+| 90–92 | 25,000 | 125,000 | 500,000 | most days |
+| 93–94 | 30,000 | 150,000 | 600,000 | one day in two or three weeks |
+| 95–96 | 40,000 | 200,000 | 800,000 | the target |
+| 97–100 | 60,000 | 300,000 | 1,200,000 | MAFANIKIO |
+
+Below 85% pays nothing, which is intended. The written plan leaves gaps between the bands —
+89 to 90, 92 to 93 — so 89.4% belongs to no band as written; it pays the band **below**, because
+the alternative is a percentage that pays nothing while a lower one pays 20,000.
+
+**The week is each day banded on its own percentage, added up.** A steady 90–92% week therefore
+pays 5 × 25,000 = 125,000, exactly as the plan's table says — but a good Friday still earns
+after a poor Tuesday, which is what rewarding *jitihada binafsi* means. The week's own overall
+percentage is shown beside it, so both readings are visible.
+
+> **This was a judgement call.** The plan's table can also be read as "score the week once and
+> pay the WEEK column". The two agree when performance is steady and differ when it varies. If
+> you want the other reading, say so — it is a small change.
+
+### The weekly bonus
+
+The rule is built: **whoever leads the week, and only if they beat their own previous week.**
+Both halves are checked — leading a week worse than your own last one is not what the plan
+rewards — and when it is not won the screen says *which* half failed.
+
+**The amount is not set**, because the plan names the condition and not the figure, and there is
+no honest default except none. Type it into Settings as `PMO_WEEKLY_BONUS` and it starts paying.
+Until then the panel says so plainly rather than showing a number nobody chose.
+
+### Where the money appears, and where it does not
+
+**Commission panel:** the full board — expected, uncollected, percentage, band, today's rate,
+the week's total, last week's percentage, and the bonus. An officer sees their own row; an admin
+sees everybody.
+
+**Presentation:** five columns only — **S/N, PMO, Teams, Uncollected, Collection %** — for today
+and for the week. No shillings. That is not "not displayed": the presentation is handed a
+different, smaller object built in `pmo.js`, so a future slide cannot include the money by
+reaching for a field that happened to be sitting there. A projector in a meeting room is the
+wrong place for anybody's pay, and it changes what the room talks about.
+
+Early collection (PAID + OVERPAID counts) stays on the dashboard, as asked.
+
+### The recovery denominator was wrong
+
+Adding the uncollected column to the Recovery slide uncovered a real defect.
+
+Recovery % is *recovered ÷ the uncollected the officer is actually chasing*, and which day's
+uncollected that is depends on the day — the rule the dashboard has always used:
+
+| Day | Divided by |
+|---|---|
+| Monday | today's uncollected (no yesterday exists inside a HOPE week) |
+| Tue–Fri | **yesterday's** uncollected |
+| Sat/Sun | the whole week's (the weekend reconciles Mon–Fri) |
+
+**The officer boards were not following it.** They added up every Expected row of the whole week
+— every day, and every *re-upload* of every day — and used that on both the daily and the weekly
+board. So a team whose Tuesday file went in twice had its recovery percentage quietly **halved**,
+and Monday was divided by a week that had barely started.
+
+Fixed, and the denominator is now **on the slide**, immediately before the figure it produced,
+labelled with which day it came from. A recovery percentage with no visible denominator is a
+number the room has to take on trust. On Saturday and Sunday the day's own recovery gets a slide
+beside the week's, both divided by the week's uncollected.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1628,7 +1725,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 164 checks of the rules and the sums
+npm test                                    # 175 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 

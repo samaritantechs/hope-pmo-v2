@@ -4,13 +4,14 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
 import { cachedAnswer } from './answer-cache.js';
+import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
     stopped working must not become a data leak -- but by then there is little left to drop. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
-import { collectedOf, uncollectedOf, num } from './recovery.js';
+import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
 import { buildDashboard } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36 } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
@@ -1435,11 +1436,18 @@ function cmsRateFor(cfg, row) {
 }
 async function commission(db, user, _args, nowMs) {
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6), fri = addDaysKey(mon, 4);
-  const [cfg, teamRows, defWeek, expWeek] = await Promise.all([
+  const prevMon = addDaysKey(mon, -7), prevFri = addDaysKey(prevMon, 4);
+  const [cfg, teamRows, defWeek, expWeek, codeRows, pmoCfg, prevExp] = await Promise.all([
     cmsCfg(db),
     fetchAll(() => db.from('teams').select('*')),
     snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun),
     snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri),
+    fetchAll(() => db.from('access_codes').select('name, role, teams')),
+    settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
+    /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
+       got the previous week". Without last week's figures the condition cannot be checked at
+       all, and a bonus awarded without checking it is just a bonus. */
+    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, prevMon, prevFri),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -1486,7 +1494,58 @@ async function commission(db, user, _args, nowMs) {
     .sort((a, b) => b.total - a.total);
 
   const day = pack(dayAcc), week = pack(weekAcc);
+
+  /* ---- PMO COLLECTION: paid on the percentage, and nothing else ---- */
+  const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const bonusTzs = pmoCfg.num(PMO_BONUS_KEY, 0);
+  const pmoRoster = codeRows
+    .filter(c => isPmoRole(c.role, pmoRoleName))
+    .filter(c => c.teams && c.teams.length)
+    .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
+    .map(c => ({ name: c.name, teams: c.teams }));
+  const pmoDays = WD5.map((_w, i) => addDaysKey(mon, i));
+  const byDay = new Map();
+  for (const d of pmoDays) byDay.set(d, onDate(myExp, d));
+  byDay.set(today, onDate(myExp, today));
+  const pmoRows = pmoBoard(pmoRoster, byDay, today, pmoDays);
+
+  /* Last week's percentage per officer, so "beat your own previous week" can be checked rather
+     than assumed. Same computation, a week earlier. */
+  const prevMine = scoped(user, prevExp);
+  const prevByDay = new Map();
+  const prevDays = WD5.map((_w, i) => addDaysKey(prevMon, i));
+  for (const d of prevDays) prevByDay.set(d, pickLatestBatchRows(prevMine.filter(r => String(r.snapshot_date) === d)));
+  const prevRows = pmoBoard(pmoRoster, prevByDay, prevDays[0], prevDays);
+  const prevPct = {};
+  for (const r of prevRows) prevPct[K(r.officer)] = r.weekPct;
+
+  /* THE WEEKLY BONUS: to whoever leads the week, AND ONLY IF they beat their own previous
+     week. Both halves matter -- leading a week that was worse than your own last one is not
+     what the plan rewards. An officer with no previous week to compare against (their first
+     week, or a week with no uploads) cannot have beaten it, so they do not qualify; that is
+     the cautious direction, and it is said on screen rather than left to be wondered about. */
+  const ranked = pmoRows.filter(r => r.weekPct != null);
+  const leader = ranked.length ? ranked[0] : null;
+  const leaderPrev = leader ? prevPct[K(leader.officer)] : null;
+  const bonusWon = !!(leader && leaderPrev != null && leader.weekPct > leaderPrev);
+  const pmo = pmoRows.map(r => ({ ...r,
+    prevWeekPct: prevPct[K(r.officer)] == null ? null : prevPct[K(r.officer)],
+    isLeader: !!(leader && K(r.officer) === K(leader.officer)),
+    bonus: (bonusWon && leader && K(r.officer) === K(leader.officer)) ? bonusTzs : 0,
+    // Only an admin sees everybody's money; an officer sees their own, exactly as the
+    // recovery and collection boards above already work.
+  })).filter(r => isAdmin || K(r.officer) === K(user.name));
+
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
+    pmo, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
+    pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
+      leader: leader ? leader.officer : null,
+      leaderPct: leader ? leader.weekPct : null, leaderPrevPct: leaderPrev,
+      why: !leader ? 'hakuna takwimu za wiki hii / no figures for this week yet'
+        : leaderPrev == null ? 'hakuna wiki iliyopita ya kulinganisha / no previous week to compare against'
+        : bonusWon ? null : 'kiongozi hajapita asilimia yake ya wiki iliyopita / the leader has not beaten their own previous week' },
+    pmoTotals: { day: pmo.reduce((s, r) => s + r.commission, 0),
+      week: pmo.reduce((s, r) => s + r.weekCommission + r.bonus, 0) },
     paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText, isAdmin, me: user.name,
     weekday: currentWeekday(nowMs), date: today, weekOf: mon,
     day, week,
@@ -2472,6 +2531,30 @@ const WD7 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 /** Snapshot date of a given weekday inside the week containing nowMs. */
 function dateOfWeekday(nowMs, wd) { return addDaysKey(weekMondayKey(nowMs), WD7.indexOf(wd)); }
 
+/** A setting that is TEXT rather than a number. Blank reads as "not set", so a key somebody
+    cleared falls back to the built-in default instead of matching nothing at all. */
+async function settingStr(db, key, dflt) {
+  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
+  const v = String((data && data.value) || '').trim();
+  return v || dflt;
+}
+
+/** SEVERAL SETTINGS, ONE JOURNEY.
+ *
+ *  Reading them one at a time is a round trip each, and the sales target alone cost two before
+ *  it was even used -- `settingNum(A, await settingNum(B, ...))` always evaluates the fallback,
+ *  so the second query ran whether or not the first had an answer.
+ *
+ *  Returns { get(key, dflt), num(key, dflt) }. A key that is absent or blank falls back, so a
+ *  cleared setting behaves the same as one that was never typed. */
+async function settingsMany(db, keys) {
+  const rows = await fetchAll(() => db.from('settings').select('key, value').in('key', keys));
+  const by = {};
+  for (const r of rows) by[String(r.key)] = r.value;
+  const get = (k, dflt) => { const v = String(by[k] == null ? '' : by[k]).trim(); return v || dflt; };
+  return { get, num: (k, dflt) => { const n = parseInt(String(get(k, '')).replace(/[^0-9]/g, ''), 10); return (!n || isNaN(n)) ? dflt : n; } };
+}
+
 async function settingNum(db, key, dflt) {
   const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
   const n = parseInt(String((data && data.value) || '').replace(/[^0-9]/g, ''), 10);
@@ -2772,7 +2855,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      fails a test rather than quietly reporting zero. */
   const EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
   const DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
-  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers] = await Promise.all([
+  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
+         codeRows, cfgS] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
     snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, EXP_COLS),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today, teams: user.teams, columns: EXP_COLS }),
@@ -2786,7 +2870,14 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        different jobs and are measured on different things. */
     fetchAll(() => db.from('call_agents').select('user_id, names')),
     fetchAll(() => onTeams(db.from('call_users').select('user_id, name, team, active'), user.teams)),
+    /* The PMO collection officers. They are ACCESS CODES with a role, not a column on the teams
+       table -- one officer holds thirty-odd teams, which is a list on the person, not a name
+       repeated in thirty-odd rows. */
+    fetchAll(() => db.from('access_codes').select('name, role, teams')),
+    // Every setting this screen needs, in ONE journey rather than three.
+    settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY]),
   ]);
+  const pmoRoleName = cfgS.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myExp = scoped(user, expWeek), myDef = scoped(user, defWeek);
@@ -2820,18 +2911,51 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const earlyToday = earlyBoard(myTmrw);
   const earlyWeek = earlyBoard(myExp);
 
-  /* ---- RECOVERY: per Recovery officer. Today = that day's initial vs current over the
-         WEEK's uncollected (the live system's own denominator for this card). Week = Monday's
-         initial vs today's current, with DEBT CRISIS showing new debt that landed mid-week
-         (current above initial) and RECOVERED summed from each day's own movement. ---- */
-  const weekUncol = WD5.reduce((s, w, i) => s + uncollectedOf(onDate(myExp, addDaysKey(mon, i))), 0);
-  function recBoard(iniRows, curRows, dailyRecovered) {
+  /* ---- RECOVERY: per Recovery officer. ----
+
+     THE DENOMINATOR IS THE UNCOLLECTED THE OFFICER IS ACTUALLY CHASING, and which day's
+     uncollected that is depends on the day of the week. It is the same rule the dashboard's
+     Recovery % has always used (recovery.js, recoveryBasis) -- officers chase what yesterday
+     left behind, so:
+
+         Monday      today's uncollected      (no yesterday exists inside a HOPE week)
+         Tue–Fri     yesterday's uncollected
+         Sat/Sun     the whole week's         (the weekend reconciles Monday to Friday)
+
+     This board was not following that rule. It added up every Expected row of the whole week,
+     every day, every re-upload, and used that as the denominator on BOTH the daily and the
+     weekly board -- so a team whose Tuesday file had been uploaded twice had its recovery
+     percentage quietly halved, and Monday was divided by a week that had barely started. */
+  const uncolOnDate = d => {
     const m = {};
-    for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), { initial: 0, current: 0, recovered: 0, uncollected: 0 }).initial += num(r.arrears);
-    for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), { initial: 0, current: 0, recovered: 0, uncollected: 0 }).current += num(r.arrears);
-    for (const r of myExp) bucket(m, officerOf(teamBy, r.team, 'recovery'), { initial: 0, current: 0, recovered: 0, uncollected: 0 })
-      .uncollected += Math.max(0, num(r.payment_expected) - collectedOf(r));
-    if (dailyRecovered) for (const k of Object.keys(dailyRecovered)) bucket(m, k, { initial: 0, current: 0, recovered: 0, uncollected: 0 }).recovered += dailyRecovered[k];
+    for (const r of onDate(myExp, d)) {
+      bucket(m, officerOf(teamBy, r.team, 'recovery'), { amt: 0 }).amt
+        += Math.max(0, num(r.payment_expected) - collectedOf(r));
+    }
+    return m;
+  };
+  const addUncol = (into, from) => {
+    for (const k of Object.keys(from)) into[k] = (into[k] || 0) + from[k].amt;
+    return into;
+  };
+  // Per officer, for each of the three bases the rule can ask for.
+  const uncolToday = addUncol({}, uncolOnDate(today));
+  const uncolYesterday = addUncol({}, uncolOnDate(addDaysKey(today, -1)));
+  const uncolWeekBy = WD5.reduce((acc, _w, i) => addUncol(acc, uncolOnDate(addDaysKey(mon, i))), {});
+  const weekUncol = Object.values(uncolWeekBy).reduce((s, v) => s + v, 0);
+
+  const basis = recoveryBasis(isoWeekday(nowMs));
+  const basisUncol = basis.kind === 'today' ? uncolToday
+    : basis.kind === 'week' ? uncolWeekBy
+    : uncolYesterday;
+
+  function recBoard(iniRows, curRows, dailyRecovered, uncolBy) {
+    const m = {};
+    const blank = { initial: 0, current: 0, recovered: 0, uncollected: 0 };
+    for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).initial += num(r.arrears);
+    for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).current += num(r.arrears);
+    for (const k of Object.keys(uncolBy)) bucket(m, k, blank).uncollected += uncolBy[k];
+    if (dailyRecovered) for (const k of Object.keys(dailyRecovered)) bucket(m, k, blank).recovered += dailyRecovered[k];
     return Object.values(m).map(b => {
       const rec = dailyRecovered ? b.recovered : (b.initial - b.current);
       return { officer: b.key, initial: b.initial, current: b.current, uncollected: b.uncollected,
@@ -2842,7 +2966,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     }).sort((a, b) => b.recovered - a.recovered);
   }
   const iniToday = onDate(myDef, today, 'initial', wd), curToday = onDate(myDef, today, 'current', wd);
-  const recToday = recBoard(iniToday, curToday, null).map(r => ({ ...r, uncollected: weekUncol && r.uncollected ? r.uncollected : r.uncollected, pct: pctOf(r.recovered, r.uncollected) }));
+  const recToday = recBoard(iniToday, curToday, null, basisUncol);
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
   for (let i = 0; i < 7; i++) {
@@ -2858,7 +2982,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     for (const k of Object.keys(per)) dailyRec[k] = (dailyRec[k] || 0) + per[k];
   }
   const iniMon = onDate(myDef, mon, 'initial', 'MON');
-  const recWeek = recBoard(iniMon, curToday, dailyRec);
+  /* The weekly board always divides by the WEEK's uncollected, whatever day it is read on --
+     that is what makes it the weekly board rather than a second copy of the daily one. */
+  const recWeek = recBoard(iniMon, curToday, dailyRec, uncolWeekBy);
 
   /* Recovery is initial MINUS current, so if one of the two decks is short the difference is
      reported as money recovered. Uploading the same file as both should read as zero
@@ -2875,7 +3001,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   })();
 
   /* ---- CREDIT ANALYSTS: applications they processed, against the sales target ---- */
-  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+  const weeklyTarget = cfgS.num('SALES_TARGET_WEEKLY', cfgS.num('SALES_TARGET', 100000000));
   function creditBoard(from, to) {
     const m = {};
     for (const l of myLoans) {
@@ -2980,6 +3106,29 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      disagree about the same week would be worse than no board at all. */
   const callWeekWorst = callWeek.slice().reverse();
 
+  /* ---- PMO COLLECTION OFFICERS ----
+
+     Judged on one thing: the percentage of what was expected that actually came in, across the
+     teams they were handed. Deliberately not on team count, customer count or amount -- the
+     teams are distributed so those even out, and the whole point of the plan is that two
+     officers with very different portfolios are paid the same for the same percentage.
+
+     Their teams come from their ACCESS CODE, because that is where the owner put them: one
+     officer holds thirty-odd teams, which is a list on the person rather than their name
+     repeated in thirty-odd rows of the teams table. */
+  const pmoRoster = codeRows
+    .filter(c => isPmoRole(c.role, pmoRoleName))
+    // Somebody who sees every team (blank teams = ALL) is not a collection officer with a
+    // distributed portfolio, and putting them on this board would make every percentage the
+    // company's percentage. They are left off rather than shown as the whole book.
+    .filter(c => c.teams && c.teams.length)
+    .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
+    .map(c => ({ name: c.name, teams: c.teams }));
+  const pmoByDay = new Map();
+  for (let i = 0; i < 7; i++) { const d = addDaysKey(mon, i); pmoByDay.set(d, onDate(myExp, d)); }
+  const pmoDays = WD5.map((_w, i) => addDaysKey(mon, i));
+  const pmoRows = pmoBoard(pmoRoster, pmoByDay, today, pmoDays);
+
   /* ---- FOLLOW-UP STATUS across ALL defaulters (what the whole book looks like) ---- */
   const real = myFu.filter(r => !(r.status == null && r.arrears == null));
   const fsm = {};
@@ -2994,6 +3143,13 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     initialCount: iniToday.length, currentCount: curToday.length,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
     callToday, callWeek, callWeekWorst, csToday, csWeek,
+    /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission
+       belongs on the commission panel where the person it concerns can see their own figure;
+       a projector in a meeting room is the wrong place for anybody's pay. Building the row
+       there means a future slide cannot include the money by reaching for a field that
+       happened to be sitting on the object. */
+    pmo: pmoRows.map(pmoPublicRow),
+    pmoBasis: basis.kind, pmoBasisLabel: basis.label,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };
 }

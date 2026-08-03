@@ -1783,11 +1783,55 @@ VIEWS.commission = function(){
       + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
           + esc(d.payText) + '</div>' : '')
       + board('cmDay','Leo / Today','recovery: each customer’s recovered amount × their rate · early collection: PAID/OVERPAID counts',
-          d.day, CMS_COLS, sumRow(d.day, ['recovered','recComm','paid','over','colComm','total']));
+          d.day, CMS_COLS, sumRow(d.day, ['recovered','recComm','paid','over','colComm','total']))
+      /* PMO COLLECTION. Paid on the percentage and nothing else -- not team count, not customer
+         count, not amount. This is the ONE screen the money appears on: the presentation shows
+         the same officers with the shillings deliberately left out. */
+      + ((d.pmo && d.pmo.length) ? (
+          '<div class="card"><div class="card-h">PMO Collection'
+          + '<span class="sub">asilimia ya makusanyo pekee / the collection percentage, and nothing else</span></div>'
+          + '<div class="cleanbox"><div style="display:flex;gap:8px;flex-wrap:wrap">'
+          + (d.pmoBands||[]).map(function(b){
+              return '<span class="chip">' + esc(b.label) + ' &middot; ' + money(b.tzs) + '/siku</span>'; }).join('')
+          + '</div>'
+          /* The bonus condition is checked, not assumed -- and when it is not won the screen
+             says WHICH half failed, because "no bonus" with no reason is the kind of thing
+             somebody has to ring the office about. */
+          + '<div class="note" style="margin-top:10px">'
+          + (!d.pmoBonus.set
+              ? '<b>Bonasi ya wiki haijawekwa.</b> Sheria ipo — atakayeongoza akiwa amepita asilimia yake ya wiki iliyopita —'
+                + ' lakini kiasi hakijawekwa. Weka <code>PMO_WEEKLY_BONUS</code> kwenye Settings.'
+                + ' / <b>The weekly bonus amount is not set.</b> The rule is in place; type the amount into Settings'
+                + ' as <code>PMO_WEEKLY_BONUS</code> and it starts paying.'
+              : d.pmoBonus.won
+                ? '<b>Bonasi ya wiki: ' + money(d.pmoBonus.tzs) + '</b> &rarr; ' + esc(d.pmoBonus.leader||'')
+                  + ' (' + (d.pmoBonus.leaderPct==null?'—':d.pmoBonus.leaderPct+'%') + ' dhidi ya '
+                  + (d.pmoBonus.leaderPrevPct==null?'—':d.pmoBonus.leaderPrevPct+'%') + ' wiki iliyopita)'
+                : '<b>Bonasi ya wiki haijashindwa bado.</b> ' + esc(d.pmoBonus.why||''))
+          + '</div></div></div>')
+        : '')
+      + ((d.pmo && d.pmo.length) ? board('cmPmoDay','PMO Collection — leo / today',
+          'kiwango cha siku kinatokana na asilimia ya siku hiyo / the day’s rate follows that day’s percentage',
+          d.pmo, [col('officer','PMO'), col('teams','Teams','num'), col('customers','Customers','num'),
+            col('expected','Expected','money'), col('uncollected','Uncollected','money'),
+            col('pct','Collection %','pct'), col('band','Band'), col('commission','Today TZS','money')],
+          sumRow(d.pmo, ['teams','customers','expected','uncollected','commission'])) : '');
+    /* The week's PMO board is a board of its own rather than the main table, because the main
+       table is the recovery/early-collection week and the two are different people paid on
+       different things. */
+    if (d.pmo && d.pmo.length) HEAD += board('cmPmoWeek','PMO Collection — wiki hii / this week',
+      'jumla ya viwango vya kila siku, si asilimia ya wiki iliyowekwa kwenye kundi moja'
+      + ' / each day banded on its own percentage and added up, not the week scored once',
+      d.pmo, [col('officer','PMO'), col('teams','Teams','num'),
+        col('weekExpected','Expected','money'), col('weekUncollected','Uncollected','money'),
+        col('weekPct','Collection %','pct'), col('prevWeekPct','Last week %','pct'),
+        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')],
+      sumRow(d.pmo, ['teams','weekExpected','weekUncollected','weekCommission','bonus']));
     S.rows = d.week;
     S.cols = CMS_COLS;
     ONROW = null;
-    S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week);
+    S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week)
+      + ((d.pmo && d.pmo.length) ? ' · PMO Collection: TZS ' + money(d.pmoTotals.week) : '');
   });
 };
 
@@ -2444,9 +2488,26 @@ VIEWS.present = function(){
     slides.push({ id:'teams', kind:'table', title:'Team performance', rows:d.teamPerf.slice(0,12),
       cols:[col('team','Team'), col('recovery','Recovery'), col('curArrears','Current','money'),
         col('recovered','Recovered','money'), col('collPctToday','Coll %','pct'), col('defaulters','Def','num')] });
+    /* Recovery is judged against the uncollected the officer is actually chasing, and which
+       day's uncollected that is depends on the day: Monday divides by Monday, Tuesday to
+       Friday by yesterday, and the weekend by the whole week. So the denominator goes on the
+       slide, immediately before the figure it produced -- a recovery percentage with no
+       visible denominator is a number the room has to take on trust. */
+    var recBasis = d.weekday === 'SAT' || d.weekday === 'SUN' ? 'week' : (d.weekday === 'MON' ? 'today' : 'yesterday');
+    var recUncolLabel = recBasis === 'week' ? 'Uncollected (week)'
+      : recBasis === 'today' ? 'Uncollected (today)' : 'Uncollected (yesterday)';
     slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — this week', rows:b.recWeek.slice(0,12),
       cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+        col('uncollected', recUncolLabel, 'money'),
         col('recovered','Recovered','money'), col('pct','Rec %','pct')] });
+    /* On Saturday and Sunday the week is what is being reconciled, so the day's own recovery
+       gets a slide of its own beside the week's -- both divided by the week's uncollected,
+       which is what the recovery rule says the weekend denominator is. */
+    if (recBasis === 'week') slides.push({ id:'recToday', kind:'table', title:'Recovery today — against the week\'s uncollected',
+      rows:b.recToday.slice(0,12),
+      cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+        col('uncollected','Uncollected (week)','money'),
+        col('recovered','Recovered today','money'), col('pct','Rec %','pct')] });
     slides.push({ id:'early', kind:'table', title:'Early collection — this week', rows:b.earlyWeek.slice(0,12),
       cols:[col('officer','Officer'), col('uncollected','Uncollected','money'),
         col('paidOver','Paid+over','num'), col('pct','Coll %','pct')] });
@@ -2459,6 +2520,18 @@ VIEWS.present = function(){
 
        The HOPE Calls app officers are everybody in the field, and they get their own two
        slides: who is on the phone most, and who is on it least. */
+    /* PMO COLLECTION. Five columns, and deliberately only five: number, name, how many teams
+       they hold, what is still uncollected, and the percentage. NO COMMISSION -- that lives on
+       the commission panel where the person it concerns can see their own figure. A projector
+       in a meeting room is the wrong place for anybody's pay, and it changes what the room
+       talks about. */
+    var PMO_COLS = function(uncol, pct){ return [
+      col('sn','S/N','num'), col('officer','PMO'), col('teams','Teams','num'),
+      col(uncol,'Uncollected','money'), col(pct,'Collection %','pct')]; };
+    slides.push({ id:'pmoDay', kind:'table', title:'PMO Collection — today', rows:(b.pmo||[]).slice(0,12),
+      cols: PMO_COLS('uncollected','pct') });
+    slides.push({ id:'pmoWeek', kind:'table', title:'PMO Collection — this week', rows:(b.pmo||[]).slice(0,12),
+      cols: PMO_COLS('weekUncollected','weekPct') });
     slides.push({ id:'cs', kind:'table', title:'Call agents — applications brought in', rows:b.csWeek.slice(0,12),
       cols:[col('agent','Agent'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
         col('brought','Brought in','num'), col('amount','Amount','money')] });
