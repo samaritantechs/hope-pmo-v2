@@ -55,9 +55,9 @@ export function dateOrNull(v, dayFirst) {
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
     return `${m[1]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
-  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if (m) {
-    const a = Number(m[1]), b = Number(m[2]), year = m[3];
+    const a = Number(m[1]), b = Number(m[2]), year = yearOf(m[3]);
     let day, month;
     if (a > 12 && b <= 12) { day = a; month = b; }                      // 23/7 -> only d/m is possible
     else if (b > 12 && a <= 12) { month = a; day = b; }                 // 7/23 -> only m/d is possible
@@ -92,10 +92,25 @@ export function timeOrNull(v) {
 
     Returns true (day-first), false (month-first), or null when the file offers no evidence
     either way -- a caller that gets null should say so rather than pretend it knew. */
+/** A two-digit year, turned into a four-digit one. "23-06-26" is how a person writes the
+    twenty-third of June twenty twenty-six, and refusing it silently lost every promise date in
+    a file that happened to be exported that way.
+
+    Under fifty means this century. Fifty and over means the last one -- the usual convention,
+    and safe here because these are loan dates: there is no 1998 promise date, and a birth year
+    would never reach this function. */
+export function yearOf(raw) {
+  const t = String(raw == null ? '' : raw).trim();
+  if (t.length === 4) return t;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return t;
+  return String(n < 50 ? 2000 + n : 1900 + n);
+}
+
 export function inferDayFirst(values) {
   let dayFirst = 0, monthFirst = 0;
   for (const v of (values || [])) {
-    const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
     if (!m) continue;
     const a = Number(m[1]), b = Number(m[2]);
     if (a > 12 && b <= 12) dayFirst++;
@@ -132,10 +147,10 @@ export function stampOrNull(v, dayFirst) {
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);                  // ISO -- never ambiguous
   if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
   else {
-    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+    m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
     if (!m) return null;
     const a = +m[1], b = +m[2];
-    y = +m[3];
+    y = +yearOf(m[3]);
     if (a > 12 && b <= 12) { d = a; mo = b; }                        // only d/m is possible
     else if (b > 12 && a <= 12) { mo = a; d = b; }                   // only m/d is possible
     else if (dayFirst === false) { mo = a; d = b; }                  // the file said month-first
