@@ -1827,6 +1827,50 @@ being discovered by somebody in the field. The guard caught HOPE Live at 31 agai
 
 ---
 
+## Part 14n — Why the comments were slow when the defaulters were fast
+
+That is exactly the right question, and the answer is that they were **different shapes of
+read**, not different amounts of data.
+
+The Defaulters list is one query, narrowed to the officer's team, returning the columns the
+screen draws. Four reads of the comment log were the opposite: no filter, no limit, every
+column, every row ever written — and then the work done here afterwards.
+
+| Read | Was | Now |
+|---|---|---|
+| **The phone's search index** — which comments carry a replacement phone number | every comment ever: **28 trips, 202,002 rows** | **8 trips, 2,402 rows** |
+| **One customer's thread** | every column, no ceiling | four columns, newest 100 |
+| **Promise to Pay** | every promise ever made | the caller's teams, the window asked for |
+| **Follow-up report** | every follow-up row, all columns | six columns, team-narrowed |
+
+The phone's search index is the one that was hurting. The portal's copy of that read was fixed
+weeks ago and **the phone's was not**, which is why the app felt slower than the portal on the
+same data.
+
+### The speed guard only counted journeys — now it counts rows
+
+This is the lesson worth keeping. `test/speed.test.mjs` was passing on all four of those reads,
+because **a filtered `fetchAll` is one round trip and can still drag two hundred thousand rows
+across the wire.** Every screen now declares both budgets, and the row budget is the one that
+catches "select everything and sort it here". It caught the follow-up report immediately.
+
+---
+
+## Part 14o — The sheet that would not close
+
+Tapping the **X** or the dark area did nothing; the only escape was Back, which left HOPE Calls
+altogether and landed the officer on the launcher.
+
+The close handlers were bound inside the **customer** sheet's form wiring. The bell uses the
+same panel and never ran that wiring, so it opened a sheet with no way out at all. They are
+bound once now, when the page loads, because the sheet is part of the page from the first byte.
+
+**Back closes the sheet and stays in the app.** Opening it pushes a history entry for the
+phone's Back gesture to consume; closing it by hand takes that entry away again, so Back never
+has to be pressed twice to leave a screen. Escape does the same on a keyboard.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -1917,7 +1961,7 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 202 checks of the rules and the sums
+npm test                                    # 206 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
 

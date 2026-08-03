@@ -458,7 +458,12 @@ async function phoneIndex(db, nowMs) {
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today }),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
-    fetchAll(() => db.from('followup_comments').select('ref, new_number, full_name, team')),
+    /* ONLY the comments that carry a replacement phone number. This read every comment ever
+       written -- after the v1 history import, hundreds of thousands of rows -- to find the few
+       hundred with a number on them. The portal's copy of this was fixed weeks ago and the
+       phone's was not, which is why the app felt slower than the portal on the same data. */
+    fetchAll(() => db.from('followup_comments').select('ref, new_number, full_name, team')
+      .not('new_number', 'is', null).neq('new_number', '')),
   ]);
   const byNum = {};
   const add = (numRaw, name, ref, team, role, src) => {
@@ -530,16 +535,25 @@ async function sync(db, [dev, calls], nowMs) {
 }
 
 /* ---------- comments / follow-up ---------- */
+/* How much of one customer's history the phone asks for. Deliberately generous -- an officer
+   scrolling back through a year of notes is doing their job -- but not unbounded. */
+const COMMENT_LIMIT = 100;
 async function comments(db, [dev, ref]) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const { data, error } = await db.from('followup_comments').select('*').eq('ref', String(ref)).order('created_at', { ascending: false });
+  /* The four columns this list draws, newest first, capped. A customer with three years of
+     imported history has hundreds of notes and nobody scrolls past the last few dozen -- and
+     select('*') carried the promise dates, docket numbers and phone numbers the screen never
+     shows, on a mobile connection, for every one of them. */
+  const { data, error } = await db.from('followup_comments')
+    .select('comment, fu_status, created_by, created_at')
+    .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT);
   if (error) throw new Error(error.message);
   const items = (data || []).map(c => ({
     by: c.created_by || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
     fu: c.fu_status || '', comment: c.comment || '',
   }));
-  return { ok: true, items };
+  return { ok: true, items, capped: items.length >= COMMENT_LIMIT };
 }
 async function addComment(db, [dev, p], nowMs) {
   const cu = await userByDeviceSoft(db, dev);

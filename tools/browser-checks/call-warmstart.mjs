@@ -34,13 +34,24 @@ const ROWS = [
   { ref: 'R2', full_name: 'PILI SALUM', contact: '0714000001', team: 'KONGOWE', due_summary: '3/6', payment_expected: 2000, todays_status: 'UNPAID' },
 ];
 const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', leader: false,
-               expdfLeader: false, logoutEnabled: true, syncEverySec: 300, brand: 'HOPE' };
+               expdfLeader: false, logoutEnabled: true, syncEverySec: 300, brand: 'HOPE',
+               // The customer sheet builds its follow-up dropdown from these.
+               fuStatuses: ['AMETOA AHADI', 'ANALIPA LEO', 'HAPATIKANI YEYE & MDHAMINI'],
+               fuNeedDate: ['AMETOA AHADI'], fuNeedComment: [], fuNeedNumber: [],
+               systemOpen: false };
 
 function answer(fn) {
   if (fn === 'api_callBoot') return bootOk ? BOOT : { ok: false };
   if (fn === 'api_callList') return { ok: true, rows: ROWS, asOf: '2026-08-01', stale: false };
   if (fn === 'api_callDailySummary') return { ok: true, col: {}, kesho: {}, weekCol: {}, sales: {}, expdf: {}, recovery: {} };
   if (fn === 'api_callSync') return { ok: true, added: 0, watermark: 1 };
+  if (fn === 'api_callNotifications') return { ok: true, unseen: 2, seenAt: '', items: [
+    { kind:'complaint', id:'c1', ref:'R1', team:'KONGOWE', who:'MAMA A', by:'DESK',
+      what:'hakupata risiti', at:'2026-08-02T09:00:00Z', unseen:true },
+    { kind:'comment', id:'f1', ref:'R2', team:'KONGOWE', who:'PILI S', by:'JUMA G',
+      what:'ataleta kesho', at:'2026-08-02T08:00:00Z', unseen:true } ] };
+  if (fn === 'api_callComments') return { ok: true, items: [
+    { by:'JUMA G', at:'2026-08-01 10:00', fu:'AMETOA AHADI', comment:'ataleta kesho' } ] };
   return { ok: true };
 }
 
@@ -149,6 +160,52 @@ check('the next launch settles on sign-in without looping',
   again.reg && !again.app && calls.filter(c => c === 'api_callBoot').length === 1,
   JSON.stringify(again) + ' boots=' + calls.filter(c => c === 'api_callBoot').length);
 bootOk = true;
+
+/* ---------------------------------------------------------------- THE SHEET MUST CLOSE.
+   The close handlers were bound inside the CUSTOMER sheet's form wiring, so the bell -- which
+   uses the same panel -- opened with no way out. Tapping the X or the dark area did nothing,
+   and the only escape was Back, which left the app and landed the officer on the launcher. */
+const sheetOpen = () => page.evaluate(() => document.getElementById('sheet').style.display === 'flex');
+
+// THE BELL FIRST, before any customer sheet has ever been opened. That order is the bug.
+await page.evaluate(() => bellOpen());
+await page.waitForTimeout(300);
+check('the bell opens the sheet', await sheetOpen());
+await page.evaluate(() => document.getElementById('sheetClose').click());
+await page.waitForTimeout(200);
+check('and the X closes it, with no customer sheet ever opened first', !(await sheetOpen()));
+
+await page.evaluate(() => bellOpen());
+await page.waitForTimeout(200);
+await page.evaluate(() => document.getElementById('sheet').click());
+await page.waitForTimeout(200);
+check('tapping the dark area closes it too', !(await sheetOpen()));
+
+// And BACK closes the sheet rather than leaving the app.
+await page.evaluate(() => bellOpen());
+await page.waitForTimeout(200);
+check('the sheet is open before going back', await sheetOpen());
+await page.goBack();
+await page.waitForTimeout(300);
+check('Back closes the sheet instead of leaving HOPE Calls', !(await sheetOpen()));
+check('and the app is still loaded, not replaced by the launcher',
+  await page.evaluate(() => typeof S === 'object' && !!document.getElementById('sheet')));
+
+// The customer sheet still closes, which was the one that used to work.
+await page.evaluate(() => {
+  // This check ends on the sign-in screen, so the sheet's own prerequisites are set by hand.
+  S.boot = { fuStatuses: ['AMETOA AHADI', 'ANALIPA LEO'], fuNeedDate: ['AMETOA AHADI'],
+             fuNeedComment: [], fuNeedNumber: [] };
+  S.rows = [{ ref:'R1', name:'AMINA', contact:'0712000001', amt: 900,
+    installment: 100, custStatus:'Defaulter', fuStatus:'', ds:'', days:'', team:'KONGOWE' }];
+  openSheet('R1');
+});
+await page.waitForTimeout(300);
+check('a customer sheet still opens', await sheetOpen());
+await page.evaluate(() => document.getElementById('sheetClose').click());
+await page.waitForTimeout(200);
+check('and still closes', !(await sheetOpen()));
+
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));
