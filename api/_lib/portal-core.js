@@ -2212,6 +2212,79 @@ async function countsByDate(db) {
   return rows;
 }
 
+/* ---------------------------------------------- CLEAN THE FOLLOW-UP LIST, WITHOUT WAITING.
+ *
+ * Reported twice from the field, two different customers: somebody showing on Leo with D.S 9-10
+ * and on Def with D.S 8-9 at the same moment. Being on both lists is right -- they answer
+ * different questions. TWO DIFFERENT D.S VALUES IS NOT: it means the Def row came from an older
+ * deck than the other one, and nothing has come along to correct it.
+ *
+ * The working list only refreshes for customers named in an uploaded current-defaulter deck for
+ * THEIR weekday. That is the right rule -- a Monday file says nothing about Tuesday's people --
+ * and it has a hole: if a weekday's deck stops being uploaded, everybody on it keeps figures
+ * that get older every week, with nothing on any screen to say how old.
+ *
+ * The upload already retires those rows. But it only runs WHEN SOMETHING IS UPLOADED, and the
+ * person looking at the wrong number has no way to make that happen. So it is a button too.
+ *
+ * NOT A DELETE. This blanks the deck-derived figures -- status and arrears -- so the customer
+ * stops looking like a live defaulter. The row stays, every comment stays, and the next deck
+ * that names them puts them straight back. The Settings storage cleanup is the destructive one
+ * (it cascades into the comment log); this deliberately is not, which is why it can be offered
+ * as an ordinary button.
+ */
+export const FU_RETIRE_DEFAULT_DAYS = 14;
+async function followupClean(db, user, p, nowMs) {
+  requireAdmin(user);
+  const days = Math.max(1, parseInt(String((p && p.days) || FU_RETIRE_DEFAULT_DAYS), 10) || FU_RETIRE_DEFAULT_DAYS);
+  const cutoff = addDaysKey(todayKey(nowMs), -days);
+
+  /* deck_date first, updated_at behind it -- the same clock the upload uses, because two
+     answers to "when was this last confirmed" is how the first version of this went wrong.
+     Read defensively: deck_date arrived in a migration that is run by hand. */
+  let rows, stamped = true;
+  try {
+    rows = await fetchAll(() => db.from('followup_status')
+      .select('ref, full_name, team, status, arrears, ds, deck_date, updated_at'));
+  } catch (e) {
+    // The database has not had the deck_date migration yet. PostgREST fails the WHOLE read on
+    // one unknown column, so this is the only way to find out -- and updated_at alone still
+    // answers the question, just less precisely.
+    stamped = false;
+    rows = await fetchAll(() => db.from('followup_status')
+      .select('ref, full_name, team, status, arrears, ds, updated_at'));
+  }
+  rows = rows.filter(r => teamAllowed(user, r.team));
+
+  const confirmedOn = r => String((stamped && r.deck_date) || r.updated_at || '').slice(0, 10);
+  // Only rows that still LOOK like live defaulters are candidates; a blanked row is already done.
+  const stale = rows.filter(r => {
+    const d = confirmedOn(r);
+    return d && d < cutoff && (r.status != null || r.arrears != null);
+  });
+
+  const sample = stale.slice(0, 20).map(r => ({
+    ref: r.ref, name: r.full_name || '', team: r.team || '', ds: r.ds || '',
+    lastSeen: confirmedOn(r),
+  }));
+  // Asking is free and always allowed; acting is a second, explicit call.
+  if (!p || !p.confirm) {
+    return { ok: true, checked: rows.length, stale: stale.length, cutoff, days, sample, applied: false };
+  }
+  let retired = 0;
+  for (let i = 0; i < stale.length; i += 500) {
+    const batch = stale.slice(i, i + 500).map(r => ({
+      ref: r.ref, status: null, arrears: null,
+      ...(stamped ? { deck_date: null } : {}),
+      updated_at: new Date(nowMs).toISOString(),
+    }));
+    const { error } = await db.from('followup_status').upsert(batch, { onConflict: 'ref' });
+    if (error) throw new Error(error.message);
+    retired += batch.length;
+  }
+  return { ok: true, checked: rows.length, stale: stale.length, retired, cutoff, days, sample, applied: true };
+}
+
 async function storageUsage(db, user) {
   requireAdmin(user);
   const out = {};
@@ -2497,7 +2570,7 @@ const FN = {
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
-  storageUsage, purgeSnapshots, uploadStatus,
+  storageUsage, purgeSnapshots, uploadStatus, followupClean,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,

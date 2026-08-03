@@ -2163,6 +2163,66 @@ watch the clock move.
 
 ---
 
+## Part 14w — JOSEPH ANDREA KAHITWA, and a button instead of a wait
+
+Same shape as MATESO: on **Leo** underpaid with D.S 9-10, and on **Def** with D.S 8-9, at the same
+moment. Being on both lists is right — they answer different questions. **Two different D.S
+values is not.**
+
+Here is the honest description of why it is widespread. The working list only refreshes for
+customers named in an uploaded **current-defaulter deck for their own weekday**. That rule is
+right — a Monday file says nothing about Tuesday's people — and it has a hole: if a weekday's
+deck stops arriving, everybody on it keeps figures that get older every week, and nothing on any
+screen says how old.
+
+The upload retires those rows now. But **it only runs when something is uploaded**, and the
+person looking at the wrong number cannot make that happen.
+
+### So it is a button
+
+**Settings → Orodha ya wadaiwa iliyopitwa na wakati / Stale defaulters.**
+
+- **Angalia / Check first** counts them and *names the first twenty*, with their team, their D.S
+  and the date anything last confirmed them. "412 customers" is not a thing to act on without
+  recognising at least one of them.
+- **Safisha / Clean** clears the deck figures — status and arrears — so they stop showing as live
+  defaulters.
+
+**It deletes nothing.** The row stays, every comment stays, and the next deck that names the
+customer puts them straight back with fresh figures. That is what makes it safe to offer as an
+ordinary button, unlike the storage cleanup below it, which really does delete and really does
+take the comment history with it.
+
+Default is 14 days unconfirmed; the box takes any number.
+
+## Part 14x — The Kesho figure that could never fill in
+
+You do not upload "Expected — Tomorrow", and you never should have to: tomorrow's list is the
+ordinary Expected sheet filed under tomorrow's date. The **Kesho tab** has always read it that
+way, with the old explicit type behind it as a fallback.
+
+**The Kesho figure on the performance strip only had the first half of that.** So on your
+deployment — where nothing is ever filed ahead — Kesho on the strip was a permanent dash while
+the Kesho tab immediately below it listed customers.
+
+A number that is always blank looks exactly like a bar that is not working. It now falls back
+exactly as the tab does, and a test asserts the two agree rather than being two derivations that
+happen to match today.
+
+## Part 14y — How old is the app you are holding?
+
+Three rounds of "it still isn't fixed" could each have been a phone running yesterday's page, and
+nobody — in the field or here — could tell.
+
+The bottom of the customer list now says **Toleo la app / App version: 2026-08-03 15:40**. It
+comes from the browser's own record of when it fetched the file, so a stale page cannot lie about
+it the way a number printed into the page would.
+
+**If that timestamp is older than a fix I have just deployed, the phone has not picked it up
+yet** — close the app fully and reopen. That is the first thing to check before anything else.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live

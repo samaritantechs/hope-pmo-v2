@@ -408,8 +408,19 @@ async function summaryFor(db, user, nowMs) {
      thing the phone never shows them. Same derivation as the Kesho tab -- the sheet dated
      tomorrow, with Friday and the weekend rolling on to Monday. */
   const u = isoWeekday(nowMs);
-  const kSnap = await latestSnapshot(db, 'repayment_snapshots',
+  let kSnap = await latestSnapshot(db, 'repayment_snapshots',
     { snapshot_type: 'today' }, { onDate: addDaysKey(today, u >= 5 ? (8 - u) : 1), teams: user.teams });
+  /* THE SAME FALLBACK THE KESHO TAB HAS, AND IT WAS MISSING HERE.
+     Nobody uploads an "Expected - Tomorrow" sheet -- tomorrow's list is the ordinary Expected
+     sheet filed under tomorrow's date, and the tab has always read it that way with the old
+     explicit type behind it. This figure only had the first half, so on any deployment that
+     never files a sheet ahead, Kesho on the strip read a permanent dash while the Kesho tab
+     right below it listed customers. A number that is always blank looks exactly like a bar
+     that is not working. */
+  if (!kSnap.rows.length) {
+    kSnap = await latestSnapshot(db, 'repayment_snapshots',
+      { snapshot_type: 'tomorrow' }, { notAfter: today, teams: user.teams });
+  }
   const kRows = mine(kSnap.rows);
   const kExp = kRows.reduce((s, r) => s + num(r.payment_expected), 0);
   const kCol = kRows.reduce((s, r) => s + collectedOf(r), 0);

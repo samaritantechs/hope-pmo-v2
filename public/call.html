@@ -934,6 +934,13 @@ function summaryVersionCheck_(ver){
    Def/Exp/Chr are three VIEWS over one SOURCE fetch (the full defaulters list) -- split
    client-side by customer status, same "CHRON"/"EXPIR" substring rule the portal's own
    assignment engine uses, so switching between them never needs a second round trip. */
+function pageVersion_(){
+  var d = new Date(document.lastModified);
+  if (isNaN(d.getTime())) return '';
+  var p = function(n){ return ('0' + n).slice(-2); };
+  return 'Toleo la app / App version: ' + d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate())
+    + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
 function classifyStatus_(s){
   var k = String(s||'').toUpperCase();
   if (k.indexOf('CHRON') >= 0) return 'chr';
@@ -1224,7 +1231,14 @@ function drawList(){
   body.innerHTML = banner
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
     + staleNote_()
-    + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>';
+    + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>'
+    /* HOW OLD IS THE APP YOU ARE HOLDING? Three rounds of "it still isn't fixed" could each
+       have been the phone running yesterday's page, and there was no way for anybody -- in the
+       field or here -- to tell. document.lastModified is the browser's own record of when it
+       fetched this file, so a stale page cannot lie about it the way a number printed into the
+       page would. */
+    + '<div style="text-align:center;color:var(--soft);font-size:10.5px;padding:14px 0 4px">'
+      + esc(pageVersion_()) + '</div>';
   $all('.crow').forEach(function(row){
     row.addEventListener('click', function(e){
       if (e.target.closest('.callbtn')) return;

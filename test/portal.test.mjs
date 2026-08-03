@@ -2430,3 +2430,45 @@ test('the working list is never gutted in one upload, and the upload says so', a
   assert.equal(out.staleCapped, 200, 'and the number is reported so it can be acted on');
   assert.equal(db._dump('followup_status').find(r => r.ref === 'S0').arrears, 500);
 });
+
+/* CLEANING THE FOLLOW-UP LIST WITHOUT WAITING FOR AN UPLOAD.
+ *
+ * Reported twice, two different customers: on Leo with D.S 9-10 and on Def with D.S 8-9 at the
+ * same moment. The Def row is older than the other one and nothing has corrected it. The upload
+ * retires such rows, but only WHEN SOMETHING IS UPLOADED -- and whoever is looking at the wrong
+ * number cannot make that happen. So it is a button.
+ */
+test('the follow-up list can be cleaned on demand, and asking first changes nothing', async () => {
+  const db = fakeDb({
+    ...tables(),
+    followup_status: [
+      { ref: 'JOSEPH', team: 'KONGOWE', full_name: 'JOSEPH ANDREA KAHITWA', status: 'Defaulter',
+        arrears: 8000, ds: '8-9', last_comment: 'aliahidi', updated_at: '2026-06-01T04:00:00Z' },
+      { ref: 'LIVE', team: 'KONGOWE', full_name: 'STILL A DEFAULTER', status: 'Defaulter',
+        arrears: 500, ds: '2-6', updated_at: TODAY + 'T04:00:00Z' },
+    ],
+  });
+
+  // ASKING is free, and must not touch anything.
+  const look = await portalApi(db, ADMIN, 'followupClean', {}, NOW);
+  assert.equal(look.applied, false);
+  assert.equal(look.stale, 1);
+  assert.equal(look.sample[0].name, 'JOSEPH ANDREA KAHITWA');
+  assert.equal(db._dump('followup_status').find(r => r.ref === 'JOSEPH').arrears, 8000,
+    'a question is not an instruction');
+
+  // ACTING is a second, explicit call.
+  const done = await portalApi(db, ADMIN, 'followupClean', { confirm: true }, NOW);
+  assert.equal(done.applied, true);
+  assert.equal(done.retired, 1);
+  const by = Object.fromEntries(db._dump('followup_status').map(r => [r.ref, r]));
+  assert.equal(by.JOSEPH.arrears, null, 'stops looking like a live defaulter');
+  assert.equal(by.JOSEPH.status, null);
+  assert.equal(by.JOSEPH.last_comment, 'aliahidi', 'and NOTHING of their history is touched');
+  assert.equal(by.LIVE.arrears, 500, 'somebody confirmed today is left alone');
+});
+
+test('cleaning the follow-up list is admin-only, and honours team scope', async () => {
+  const db = fakeDb({ ...tables(), followup_status: [] });
+  await assert.rejects(() => portalApi(db, GMO, 'followupClean', {}, NOW), e => e.status === 403);
+});
