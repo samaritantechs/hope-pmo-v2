@@ -960,21 +960,45 @@ var LAST_DRAW = null;
 /* Counted quietly on entry and again whenever the app comes back to the foreground -- the same
    moment the list already syncs, so this adds no new habit of waking the network. The number
    is what matters: the list itself is only fetched when somebody actually taps. */
+/* THE SHEET HAS TO BE REDRAWN WHEN THE ANSWER ARRIVES.
+   This updated S.notif and the little red dot and stopped there -- so tapping the bell before
+   the first count had landed drew a spinner that nothing ever replaced. And the failure path
+   was swallowed in silence, so a bell that could not reach the server ALSO spun for ever.
+   Both roads led to the same stuck screen with no way to know which had happened. */
+var BELL_OPEN = false;
 function bellRefresh(){
-  srv('api_callNotifications', DEV).then(function(d){
-    if (!d || d.ok === false) return;
-    S.notif = d;
+  return srv('api_callNotifications', DEV).then(function(d){
+    if (!d || d.ok === false) throw new Error(d && d.error === 'DEVICE_NOT_REGISTERED'
+      ? 'Simu hii haijasajiliwa. / This handset is not registered.'
+      : 'Imeshindikana kupakia. / Could not load.');
+    S.notif = d; S.notifErr = null;
     var dot = $('#bellDot');
     dot.classList.toggle('hide', !d.unseen);
     dot.textContent = d.unseen > 9 ? '9+' : String(d.unseen || '');
-  }).catch(function(){ /* a bell that cannot count is not worth an error on somebody's screen */ });
+    if (BELL_OPEN) bellDraw();
+    return d;
+  }).catch(function(e){
+    // The count quietly failing is fine. A person waiting at an open sheet is not.
+    S.notifErr = String((e && e.message) || e);
+    if (BELL_OPEN) bellDraw();
+  });
 }
 function bellOpen(){
+  BELL_OPEN = true;
+  bellDraw();
+  sheetShow();
+  // Always ask again on opening: the count may be minutes old, and this is the moment somebody
+  // actually wants it to be right.
+  bellRefresh();
+}
+function bellDraw(){
   var d = S.notif;
   $('#sheetBody').innerHTML = '<h3 style="margin:0 0 2px">Taarifa / Updates</h3>'
     + '<div style="font-size:12px;color:var(--mut);margin-bottom:10px">'
     + 'Malalamiko na maoni ya timu zako / complaints and comments on your teams</div>'
-    + (!d ? '<div class="center" style="padding:30px 0"><div class="sk"></div></div>'
+    + (!d && S.notifErr ? '<div class="empty"><b>' + esc(S.notifErr) + '</b>'
+        + 'Funga na ugusa kengele tena. / Close this and tap the bell again.</div>'
+      : !d ? '<div class="center" style="padding:30px 0"><div class="sk"></div></div>'
       : !d.items.length ? '<div class="empty"><b>Hakuna taarifa mpya.</b>Nothing new yet.</div>'
       : d.items.map(function(x){
           return '<div class="notifItem' + (x.unseen ? ' new' : '') + '">'
@@ -985,7 +1009,6 @@ function bellOpen(){
               + ' \u00B7 ' + esc(String(x.at).slice(0, 16).replace('T', ' ')) + '</div></div>'; }).join(''))
     + (d && d.unseen ? '<button class="btn btn-pri" id="notifSeen" style="width:100%;margin-top:12px">'
         + 'Nimesoma zote / Mark all read</button>' : '');
-  sheetShow();
   var b = $('#notifSeen');
   if (b) b.onclick = function(){
     b.disabled = true;
@@ -994,7 +1017,6 @@ function bellOpen(){
       bellRefresh();
     }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
   };
-  if (!d) bellRefresh();
 }
 
 function drawList(){
@@ -1061,6 +1083,7 @@ function sheetShow(){
 }
 function sheetHide(fromBack){
   $('#sheet').style.display = 'none';
+  BELL_OPEN = false;            // stop the bell redrawing into a sheet nobody is looking at
   if (SHEET_STATE && !fromBack){ SHEET_STATE = false; try { history.back(); } catch(e){} }
   else SHEET_STATE = false;
 }

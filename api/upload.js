@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { supabase } from './_lib/supabase.js';
 import { gatedUser, can, withApi } from './_lib/auth.js';
 import { pickLatestBatch } from './_lib/snapshots.js';
+import { addDaysKey as addDays_ } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importFollowup, importComments,
   importLoans, importTeams, importReceivedPayments,
@@ -418,7 +419,7 @@ export default withApi(async (req, res) => {
 
   let followupSynced = 0;
   if (type === 'defaulters-current') {
-    followupSynced = await syncFollowupFromDeck(supabase, records, meta.weekday, uploadBatch);
+    followupSynced = await syncFollowupFromDeck(supabase, records, meta.weekday, uploadBatch, meta.date);
   }
 
   // "Inserted 412" says nothing about whether a second upload of the same file doubles the
@@ -500,12 +501,29 @@ async function prevWeekdayDeck(db, weekday, excludeBatch) {
  *
  *  A Monday deck says something about Monday's defaulters and NOTHING about anybody else's, so
  *  only Monday's are compared against it. */
-export async function syncFollowupFromDeck(db, records, weekday, uploadBatch) {
+/** How long a customer may sit on the working list without a deck confirming them.
+    A weekday's deck should come round every seven days, so a fortnight is forgiving. */
+const FU_STALE_DAYS = 14;
+
+export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, deckDate) {
   const refs = records.map(r => String(r.ref)).filter(Boolean);
   if (!refs.length) return 0;
-  const { data: existing, error: exErr } = await db
-    .from('followup_status').select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at');
-  if (exErr) throw new Error(exErr.message);
+  /* deck_date is read defensively: it arrived in a later migration, and migrations here are
+     run by hand. A database that has not had it yet simply reports the column as unknown, and
+     everything below carries on without the stamp. */
+  let stamped = true;
+  let existing = null;
+  {
+    const withDeck = await db.from('followup_status')
+      .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, deck_date');
+    if (withDeck.error) {
+      stamped = false;
+      const plain = await db.from('followup_status')
+        .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at');
+      if (plain.error) throw new Error(plain.error.message);
+      existing = plain.data;
+    } else existing = withDeck.data;
+  }
   const prev = {};
   for (const r of existing || []) prev[String(r.ref).trim().toUpperCase()] = r;
 
@@ -521,6 +539,8 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch) {
       days_elapsed: d.days_elapsed == null ? null : d.days_elapsed,
       rejesho: d.other_inst == null ? null : d.other_inst,
       arrears: d.arrears == null ? null : d.arrears,
+      // When a deck last confirmed this customer, so a row nobody re-confirms can be retired.
+      ...(stamped ? { deck_date: deckDate || null } : {}),
       // Everything below is the officer's own work -- never overwritten by an upload.
       fu_status: p.fu_status || null, promise_date: p.promise_date || null,
       promise_amt: p.promise_amt == null ? null : p.promise_amt,
@@ -536,12 +556,32 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch) {
      follow-up day is Thursday is not "gone" because Monday's file does not mention them. */
   const inDeck = new Set(rows.map(r => String(r.ref).trim().toUpperCase()));
   const wasHere = await prevWeekdayDeck(db, weekday, uploadBatch);
-  const gone = !wasHere ? [] : (existing || [])
-    .filter(r => {
-      const k = String(r.ref).trim().toUpperCase();
-      return wasHere.has(k) && !inDeck.has(k);
-    })
-    .map(r => ({ ref: r.ref, status: null, arrears: null, updated_at: new Date().toISOString() }));
+  const leftThisWeekday = new Set(!wasHere ? [] : (existing || [])
+    .map(r => String(r.ref).trim().toUpperCase())
+    .filter(k => wasHere.has(k) && !inDeck.has(k)));
+
+  /* AND THE ONES NOBODY HAS RE-CONFIRMED AT ALL.
+     The per-weekday rule above only retires somebody whose own weekday deck came round and
+     left them out. If that weekday's deck simply stops being uploaded -- the customer left the
+     book, the file was renamed, whatever -- they sit on the officers' list for ever. That is
+     the "showing on Def with an eight-day-old D.S when they are not in the current file"
+     report from the field.
+
+     A row STAMPED longer ago than a fortnight is retired. Rows with no stamp at all are left
+     alone: they predate the column or are placeholders holding somebody's comment history, and
+     retiring those on the strength of a stamp they never had would empty the list. */
+  const cutoff = stamped && deckDate ? addDays_(deckDate, -FU_STALE_DAYS) : null;
+  const staleRefs = !cutoff ? [] : (existing || [])
+    .filter(r => r.deck_date && String(r.deck_date).slice(0, 10) < cutoff)
+    .map(r => String(r.ref).trim().toUpperCase())
+    .filter(k => !inDeck.has(k));
+
+  const retire = new Set([...leftThisWeekday, ...staleRefs]);
+  const gone = (existing || [])
+    .filter(r => retire.has(String(r.ref).trim().toUpperCase()))
+    .map(r => ({ ref: r.ref, status: null, arrears: null,
+      ...(stamped ? { deck_date: null } : {}),
+      updated_at: new Date().toISOString() }));
 
   for (const batch of [rows, gone]) {
     if (!batch.length) continue;
