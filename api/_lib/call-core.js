@@ -393,7 +393,35 @@ async function dailySummary(db, [dev], nowMs) {
 /** The six numbers on the phone's top strip, for whoever is asking. Split out from
     dailySummary so the widget can serve the same figures to a screen nobody is holding --
     one derivation, so a wall display and an officer's phone can never disagree. */
+/* THE SIX FIGURES ARE THE DASHBOARD'S OWN, AND THAT IS EXPENSIVE.
+ *
+ * Working them out a second, cheaper way would be two answers that can disagree on a wall in
+ * front of the company, so this deliberately runs buildDashboard -- the heaviest read in the
+ * system. The mistake was letting EVERY PHONE run it. Two hundred officers opening the app, plus
+ * a refresh on every upload, is two hundred whole-book reads; for an all-teams admin that is the
+ * full forty teams, and it is what turned the dashboard into an HTML error page instead of JSON.
+ *
+ * The cache belongs HERE, not on the widget that happened to get one first. Officers on the same
+ * team ask the identical question, so the first one pays and the rest are free for two minutes.
+ * Nothing about the figures changes -- one derivation still, just not one per handset.
+ */
+const SUMMARY_TTL_MS = 120000;
+const summaryCache = new Map();
+function summaryKey_(user) {
+  return (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL');
+}
+export function _clearSummaryCache() { summaryCache.clear(); }   // tests only
 async function summaryFor(db, user, nowMs) {
+  const key = summaryKey_(user);
+  const hit = summaryCache.get(key);
+  if (hit && (nowMs - hit.at) < SUMMARY_TTL_MS && hit.at <= nowMs) {
+    return { ...hit.value, cached: true, computedAt: hit.at };
+  }
+  const value = await summaryCompute(db, user, nowMs);
+  summaryCache.set(key, { at: nowMs, value });
+  return { ...value, cached: false, computedAt: nowMs };
+}
+async function summaryCompute(db, user, nowMs) {
   const d = await buildDashboard(db, user, nowMs);
   const rat = (n, den) => (den > 0 ? n / den : null);
   const mine = rows => rows.filter(r => teamAllowed(user, r.team));
@@ -858,7 +886,9 @@ const widgetCache = new Map();
 function widgetKey_(user) {
   return (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL');
 }
-export function _clearWidgetCache() { widgetCache.clear(); }   // tests only
+// Kept under its old name: it always meant "forget the figures", and now there is only one
+// place to forget them.
+export function _clearWidgetCache() { widgetCache.clear(); summaryCache.clear(); }   // tests only
 
 async function widget(db, [code], nowMs) {
   const raw = String(code == null ? '' : code).trim();
@@ -888,24 +918,24 @@ async function widget(db, [code], nowMs) {
     who = hit.team;
   }
 
-  const key = widgetKey_(user);
-  const hit = widgetCache.get(key);
-  const fresh = hit && (nowMs - hit.at) < WIDGET_TTL_MS && hit.at <= nowMs;
-  let figures;
-  if (fresh) {
-    figures = hit.figures;
-  } else {
-    const s = await summaryFor(db, user, nowMs);
-    // Percentages and totals only. Deliberately no rows: a widget that carried customer data
-    // would be putting names and balances on a lock screen anyone walking past can read.
-    const trim = x => (x ? { pct: x.pct, num: x.num, den: x.den } : { pct: null, num: 0, den: 0 });
-    figures = {
-      col: trim(s.col), kesho: trim(s.kesho), weekCol: trim(s.weekCol),
-      sales: trim(s.sales), expdf: trim(s.expdf), recovery: trim(s.recovery),
-      day: todayKey(nowMs), at: new Date(nowMs).toISOString(),
-    };
-    widgetCache.set(key, { at: nowMs, figures });
-  }
+  /* ONE CACHE, NOT TWO. This used to keep its own beside the figures' -- so the same numbers
+     could be two minutes old here and fresh on a phone, from two different clocks. The cache
+     now lives with the figures themselves and this simply asks for them. */
+  const s = await summaryFor(db, user, nowMs);
+  const fresh = !!s.cached;
+  // Percentages and totals only. Deliberately no rows: a widget that carried customer data
+  // would be putting names and balances on a lock screen anyone walking past can read.
+  const trim = x => (x ? { pct: x.pct, num: x.num, den: x.den } : { pct: null, num: 0, den: 0 });
+  const figures = {
+    col: trim(s.col), kesho: trim(s.kesho), weekCol: trim(s.weekCol),
+    sales: trim(s.sales), expdf: trim(s.expdf), recovery: trim(s.recovery),
+    day: todayKey(nowMs),
+    /* THE MOMENT THE FIGURES WERE WORKED OUT, not the moment they were handed over. A screen
+       saying "live" over numbers computed four minutes ago is lying by a small amount, which
+       is the only kind an unattended display gets away with -- but it has to be the real
+       amount, so this comes from the cache entry and not from now. */
+    at: new Date(s.computedAt == null ? nowMs : s.computedAt).toISOString(),
+  };
 
   return {
     ok: true,

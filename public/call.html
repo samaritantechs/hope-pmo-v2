@@ -347,6 +347,23 @@ function toast(msg, bad){
   var t = $('#toast'); t.textContent = msg; t.className = 'toast' + (bad?' bad':'');
   t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(function(){ t.style.display='none'; }, 3400);
 }
+/* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
+   A function that runs out of time or crashes is answered by the host with an HTML page, so
+   r.json() throws  Unexpected token 'A', "An error o"...  -- which reads like a bug in this page
+   and is in fact the server saying it gave up. Told plainly, with the status, it is something
+   somebody can act on instead of paste into a search engine. */
+function readJson_(r){
+  return r.text().then(function(t){
+    try { return { status: r.status, body: JSON.parse(t) }; }
+    catch (e) {
+      var slow = r.status === 504 || r.status === 408 || /timed? ?out|TIMEOUT/i.test(t);
+      throw new Error((slow
+        ? 'Seva imechukua muda mrefu mno / the server took too long'
+        : 'Seva imeshindwa kujibu / the server could not answer')
+        + ' \u2014 HTTP ' + r.status);
+    }
+  });
+}
 function srv(fn){
   var args = Array.prototype.slice.call(arguments, 1);
   // v2 transport: same fn names the GAS google.script.run bridge used, POSTed to this
@@ -364,7 +381,7 @@ function srv(fn){
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fn: fn, args: args }),
         signal: ctl ? ctl.signal : undefined
-      }).then(function(r){ clearTimeout(timer); return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+      }).then(function(r){ clearTimeout(timer); return readJson_(r); })
         .then(function(x){
           if (x.status >= 200 && x.status < 300) res(x.body);
           else rej((x.body && x.body.error) || ('HTTP ' + x.status));

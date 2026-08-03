@@ -835,3 +835,61 @@ test('an officer with a home team is still scoped to it', async () => {
   assert.equal(d.ok, true);
   assert.equal(d.col.den, 1500, 'KONGOWE only: 1000 + 500, never MBAGALA\'s 800');
 });
+
+/* TWO HUNDRED PHONES MUST NOT EACH RUN THE WHOLE DASHBOARD.
+ *
+ * The six figures on the strip are the dashboard's own, deliberately -- working them out a
+ * second, cheaper way would be two answers that can disagree on a wall in front of the company.
+ * The mistake was letting every handset run that read: two hundred officers opening the app,
+ * plus a refresh on every upload, is two hundred whole-book reads. For an all-teams admin it is
+ * the full forty teams, and it is what turned a JSON reply into an HTML error page.
+ *
+ * The widget already had a cache. The figures themselves did not, so the phones paid full price.
+ */
+test('officers on the same team share one calculation, not one each', async () => {
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const base = fakeDb(makeTables());
+  await callApi(base, 'api_callRegister', ['p1', 'JUMA ISSA', '', '', '0712999991', 'KON123'], NOW);
+  await callApi(base, 'api_callRegister', ['p2', 'ASHA M', '', '', '0712999992', 'KON123'], NOW);
+
+  let reads = 0;
+  const counting = { from(n){ reads++; return base.from(n); }, rpc: base.rpc, _dump: n => base._dump(n) };
+
+  const first = await callApi(counting, 'api_callDailySummary', ['p1'], NOW);
+  const afterFirst = reads;
+  assert.equal(first.ok, true);
+  assert.ok(afterFirst > 8, 'the first officer really does pay for it: ' + afterFirst + ' reads');
+
+  const second = await callApi(counting, 'api_callDailySummary', ['p2'], NOW + 1000);
+  const cost = reads - afterFirst;
+  assert.ok(cost <= 3, 'the next officer costs ' + cost + ' reads, not ' + afterFirst);
+  assert.deepEqual(second.col, first.col, 'and gets the identical figures');
+
+  // Still redone once it is old enough to be worth redoing.
+  const before = reads;
+  await callApi(counting, 'api_callDailySummary', ['p1'], NOW + 130000);
+  assert.ok(reads - before > 8, 'two minutes on, it is worked out again');
+  _clearWidgetCache();
+});
+
+test('the widget and the phone strip read from the SAME cache, not two', async () => {
+  /* They used to keep separate ones, so the same numbers could be two minutes old on a wall and
+     fresh on a handset -- two clocks for one set of figures. */
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const base = fakeDb(makeTables());
+  await callApi(base, 'api_callRegister', ['p1', 'JUMA ISSA', '', '', '0712999991', 'KON123'], NOW);
+  let reads = 0;
+  const counting = { from(n){ reads++; return base.from(n); }, rpc: base.rpc, _dump: n => base._dump(n) };
+
+  await callApi(counting, 'api_callDailySummary', ['p1'], NOW);   // a phone asks first
+  const after = reads;
+  const w = await callApi(counting, 'api_widget', ['KON123'], NOW + 1000);
+  assert.equal(w.cached, true, 'the wall display rides on the phone\'s answer');
+  // access_codes, teams, the system switch and two branding settings -- everything except the
+  // book itself, which is the whole point.
+  assert.ok(reads - after <= 6, 'and pays only for the code lookup and the branding, not the book: '
+    + (reads - after));
+  _clearWidgetCache();
+});
