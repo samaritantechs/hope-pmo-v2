@@ -663,3 +663,35 @@ test('an officer is served only their own team, and case never loses them their 
   const lower = await callApi(db2, 'api_callList', ['d4', 'defaulters'], NOW);
   assert.deepEqual(lower.rows.map(r => r.ref), ['555'], 'lower-case team must still find its list');
 });
+
+
+test('"Amepigiwa leo" ticks for a call by ANYBODY, not just the officer looking', async () => {
+  /* An officer reported that the tick only appeared for their own calls. It does not: the flag
+     is built from every call log of today regardless of who made it, matched on the PHONE
+     NUMBER. This pins that down so the question is settled with evidence rather than opinion.
+
+     What IS true is that another officer's call only counts once their handset has SYNCED --
+     the row has to reach the server before anybody else can see it. That is a delay, not a
+     scope: the default sync is every five minutes. */
+  // Before anybody has called: no tick.
+  const before = await callApi(await registeredDb(), 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(before.rows.find(r => r.ref === '111').called, false);
+
+  // A call to AMINA's number, made by a DIFFERENT officer on a DIFFERENT team's handset.
+  const db = await registeredDb();
+  db._dump('call_logs').push({ id: 'other-1', user_id: 'SOMEBODY-ELSE', officer: 'MBAGALA OFFICER',
+    team: 'MBAGALA', phone: '0712000001', call_date: '2026-07-24', duration: 120,
+    portfolio: true, outcome: 'CONNECTED' });
+  const list = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(list.rows.find(r => r.ref === '111').called, true,
+    'somebody else spoke to her today, so she is ticked for everybody');
+
+  // And a dial attempt is still not a call, whoever made it.
+  const db2 = await registeredDb();
+  db2._dump('call_logs').push({ id: 'other-2', user_id: 'SOMEBODY-ELSE', officer: 'OTHER O',
+    team: 'MBAGALA', phone: '0712000001', call_date: '2026-07-24', duration: 3,
+    portfolio: true, outcome: 'CONNECTED' });
+  const list2 = await callApi(db2, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(list2.rows.find(r => r.ref === '111').called, false,
+    'three seconds is a dial attempt, not a conversation — by anyone');
+});

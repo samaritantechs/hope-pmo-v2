@@ -1536,8 +1536,20 @@ async function commission(db, user, _args, nowMs) {
     // recovery and collection boards above already work.
   })).filter(r => isAdmin || K(r.officer) === K(user.name));
 
+  /* WHY IS THIS BOARD EMPTY? A screen that shows nothing and says nothing sends somebody to
+     the telephone. The two ways it can legitimately be empty are "no access code carries that
+     role" and "the codes that do carry it have no teams", and they need different fixes -- so
+     the answer says which, and lists the roles that ARE in use so a spelling can be compared
+     rather than guessed at. */
+  const pmoDiag = {
+    roleWanted: pmoRoleName,
+    withRole: codeRows.filter(c => isPmoRole(c.role, pmoRoleName)).length,
+    withTeams: pmoRoster.length,
+    rolesSeen: [...new Set(codeRows.map(c => String(c.role || '').trim()).filter(Boolean))].sort(),
+  };
+
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
-    pmo, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
+    pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
       leader: leader ? leader.officer : null,
       leaderPct: leader ? leader.weekPct : null, leaderPrevPct: leaderPrev,
@@ -2895,18 +2907,28 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     && (!weekday || r.weekday === weekday)));
 
   /* ---- EARLY COLLECTION: judged on tomorrow's (kesho) list, per Expected officer ---- */
+  /* Read the same way as the PMO Collection board, because it asks the same question about a
+     different set of officers: how many teams they cover, what is still out, and what share
+     came in. `teams` is counted from the rows actually seen, so it is the number of teams that
+     had customers to collect from today -- not a headcount off the roster that would stay the
+     same on a day when half of them had nothing due. */
   function earlyBoard(rows) {
     const m = {};
     for (const r of rows) {
-      const b = bucket(m, officerOf(teamBy, r.team, 'expected'), { uncollected: 0, paidOver: 0, expected: 0, collected: 0 });
+      const b = bucket(m, officerOf(teamBy, r.team, 'expected'),
+        { uncollected: 0, paidOver: 0, expected: 0, collected: 0, teamSet: {} });
       const c = collectedOf(r);
       b.expected += num(r.payment_expected); b.collected += c;
       b.uncollected += Math.max(0, num(r.payment_expected) - c);
+      if (r.team) b.teamSet[K(r.team)] = 1;
       if (['PAID', 'OVERPAID'].includes(K(r.todays_status))) b.paidOver += 1;
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
+      teams: Object.keys(b.teamSet).length,
       expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
-      .sort((a, b) => b.uncollected - a.uncollected);
+      .sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct))
+      // Numbered after sorting, so S/N is the ranking rather than an accident of map order.
+      .map((r, i) => ({ sn: i + 1, ...r }));
   }
   const earlyToday = earlyBoard(myTmrw);
   const earlyWeek = earlyBoard(myExp);

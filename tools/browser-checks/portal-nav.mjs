@@ -26,6 +26,7 @@ const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linu
 const APP = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'utf8');
 const calls = [];               // every request the page makes, in order
 let lastPurge = null;           // what the Clean button actually asked for
+let srvCalls = 0;               // how many times the page went back to the server
 let ANN = { on: false, ts: 0 }; // what the noticeboard currently says
 let lastSearch = null;          // what the search box actually asked for
 
@@ -35,6 +36,7 @@ const teamRows = [
 ];
 
 function answer(fn, args) {
+  srvCalls++;
   if (fn === 'expectedDay') return {
     ok: true, weekday: 'MON', todayWeekday: 'MON', date: '2026-08-01', weekdays: ['MON', 'TUE'],
     teams: ['KONGOWE', 'MBAGALA'], byStatus: [{ status: 'UNPAID', count: 1 }, { status: 'PAID', count: 1 }],
@@ -62,8 +64,30 @@ function answer(fn, args) {
         ds: '3-6', dc: 6, disb_date: '2026-04-01', last_trans: '2026-07-01',
         last_trans_month: '2026-07', last_comment: '' },
     ] };
-  if (fn === 'dashboardFull') return { ok: true, kpis: {}, teams: [], weekdays: [], pipeline: {}, totals: {} };
-  if (fn === 'officerBoards') return { ok: true, boards: [] };
+  /* Enough of a shape for the PRESENTATION to build every slide. The deck reads d.cards,
+     d.teamPerf, d.colTrend and d.weekday; the boards supply the rest. */
+  if (fn === 'dashboardFull') return { ok: true, kpis: {}, teams: [], weekdays: [], pipeline: {}, totals: {},
+    weekday: 'WED', weekOf: '2026-07-20',
+    cards: { curArrears: 100, recovered: 20, defaulters: 3, salesWeek: 500, uncollectedToday: 80, abnormal: 1 },
+    teamPerf: [{ team: 'KONGOWE', recovery: 'JUMA G', curArrears: 100, recovered: 20, collPctToday: 90, defaulters: 3 }],
+    colTrend: [{ weekday: 'MON', expected: 100, collected: 90, uncollected: 10, pct: 90 }] };
+  if (fn === 'officerBoards') return { ok: true, boards: [],
+    weekday: 'WED', weekOf: '2026-07-20', deckWarning: null,
+    pmo: [{ sn: 1, officer: 'KAMARIA', teams: 35, uncollected: 400, pct: 91, weekUncollected: 900, weekPct: 93 },
+          { sn: 2, officer: 'CATHERINE', teams: 34, uncollected: 700, pct: 86, weekUncollected: 1500, weekPct: 88 }],
+    earlyToday: [{ sn: 1, officer: 'EARLY E', team: 'KONGOWE', teams: 2, uncollected: 400, paidOver: 9, pct: 91 }],
+    earlyWeek: [{ sn: 1, officer: 'EARLY E', team: 'KONGOWE', teams: 2, uncollected: 900, paidOver: 40, pct: 93 }],
+    recToday: [{ officer: 'JUMA G', team: 'KONGOWE', initial: 500, current: 300, uncollected: 400, recovered: 200, pct: 50 }],
+    recWeek: [{ officer: 'JUMA G', team: 'KONGOWE', initial: 500, current: 300, uncollected: 900, debtCrisis: 0, recovered: 200, pct: 22 }],
+    csWeek: [{ agent: 'NEEMA CS', id: 'CS1', unassigned: 3, assigned: 1, brought: 4, amount: 900 }],
+    callWeek: [{ agent: 'BUSY B', team: 'KONGOWE', calls: 90, duration: 3000, portfolio: 70, connectPct: 80 },
+               { agent: 'MID M', team: 'KONGOWE', calls: 10, duration: 300, portfolio: 5, connectPct: 50 },
+               { agent: 'SILENT S', team: 'KONGOWE', calls: 0, duration: 0, portfolio: 0, connectPct: null }],
+    callWeekWorst: [{ agent: 'SILENT S', team: 'KONGOWE', calls: 0, duration: 0, portfolio: 0, connectPct: null },
+                    { agent: 'MID M', team: 'KONGOWE', calls: 10, duration: 300, portfolio: 5, connectPct: 50 },
+                    { agent: 'BUSY B', team: 'KONGOWE', calls: 90, duration: 3000, portfolio: 70, connectPct: 80 }],
+    creditWeek: [{ analyst: 'ANALYST A', apps: 2, amount: 400, salesPct: 40, perf: 45 }],
+    fuStatus: [{ status: 'AMETOA AHADI', customers: 4, pct: 40, arrears: 800 }] };
   if (fn === 'settingSet') return { ok: true };
   if (fn === 'notifications') return { ok: true, unseen: 2, seenAt: '',
     items: [
@@ -511,6 +535,80 @@ await page.evaluate(() => { document.getElementById('findQ').value = 'ZZNOBODY';
 await page.waitForTimeout(400);
 check('nobody found is a sentence, not an empty box',
   /Nobody found|Hakuna aliyepatikana/.test(await page.evaluate(() => document.getElementById('findOut').innerText)));
+
+/* ------------------------------------------------------------------ THE PRESENTATION.
+   Two complaints, both about the deck: ticking a segment box reloaded the whole page, and once
+   it was playing there was no way to move a slide without a keyboard. */
+await page.evaluate(() => { VC.store = {}; go('present'); });
+await page.waitForTimeout(700);
+
+const segs = await page.evaluate(() =>
+  Array.from(document.querySelectorAll('.presSeg')).map(c => c.value));
+check('every board is offered as a segment', segs.length >= 10, segs.join(','));
+for (const id of ['pmoDay', 'pmoWeek', 'early', 'earlyWeek', 'recovery', 'calls', 'cs'])
+  check('  ...including ' + id, segs.includes(id));
+check('the two HOPE Calls ends are ONE slide, not two',
+  segs.includes('calls') && !segs.includes('callsLow'), segs.join(','));
+
+/* THE BUG. This view is never cached (the slideshow runs its own timers), so re-rendering it
+   went back for the dashboard AND the officer boards -- a hundred-odd round trips because
+   somebody chose not to project one slide. */
+const beforeTick = await page.evaluate(() => window.__srvCount || 0);
+const callsBefore = srvCalls;
+await page.evaluate(() => {
+  const box = Array.from(document.querySelectorAll('.presSeg')).find(c => c.value === 'cs');
+  box.checked = false; box.onchange();
+});
+await page.waitForTimeout(400);
+check('ticking a segment off asks the server for NOTHING', srvCalls === callsBefore,
+  (srvCalls - callsBefore) + ' request(s)');
+check('and the slide count drops straight away',
+  await page.evaluate(() => document.getElementById('presCount').textContent.trim()),
+  await page.evaluate(() => String(S.slides.length)));
+check('the hidden one is really gone from the deck',
+  await page.evaluate(() => !S.slides.some(s => s.id === 'cs')));
+check('and the checkbox list is still on screen to un-tick',
+  await page.evaluate(() => !!document.querySelector('.presSeg[value="cs"]')));
+
+// Put it back, and confirm that costs nothing either.
+const callsBefore2 = srvCalls;
+await page.evaluate(() => {
+  const box = Array.from(document.querySelectorAll('.presSeg')).find(c => c.value === 'cs');
+  box.checked = true; box.onchange();
+});
+await page.waitForTimeout(300);
+check('un-ticking is free too', srvCalls === callsBefore2);
+check('and the slide comes back', await page.evaluate(() => S.slides.some(s => s.id === 'cs')));
+
+// Choosing a team is the same kind of choice and must cost the same.
+const callsBefore3 = srvCalls;
+await page.evaluate(() => { const t = document.getElementById('presTeam'); t.value = 'KONGOWE'; t.onchange(); });
+await page.waitForTimeout(300);
+check('picking a team does not go back to the server either', srvCalls === callsBefore3);
+await page.evaluate(() => { const t = document.getElementById('presTeam'); t.value = ''; t.onchange(); });
+
+/* THE ARROWS. On a TV nobody is holding a keyboard, and a phone has no arrow keys at all. */
+await page.evaluate(() => presStart(0));
+await page.waitForTimeout(300);
+check('the deck opens on the first slide', await page.evaluate(() => S.presI) === 0);
+check('there is a forward button', await page.evaluate(() => !!document.querySelector('#pres .pnext')));
+check('and a back button', await page.evaluate(() => !!document.querySelector('#pres .pprev')));
+await page.evaluate(() => document.querySelector('#pres .pnext').click());
+check('forward moves one slide', await page.evaluate(() => S.presI) === 1);
+await page.evaluate(() => document.querySelector('#pres .pprev').click());
+check('back moves one slide', await page.evaluate(() => S.presI) === 0);
+await page.evaluate(() => document.querySelector('#pres .pprev').click());
+check('and back from the first wraps to the last, rather than sticking',
+  await page.evaluate(() => S.presI === S.slides.length - 1));
+check('the slide counter follows',
+  await page.evaluate(() => document.querySelector('#pres .pnum').textContent.trim()),
+  await page.evaluate(() => (S.presI + 1) + ' / ' + S.slides.length));
+/* Moving by hand must restart the countdown -- otherwise the slide somebody just chose is
+   taken away a second later by a timer that was already half spent. */
+check('moving by hand restarts the timer rather than leaving it half spent',
+  await page.evaluate(() => { const before = S.presTimer; presGo(1); return S.presTimer !== before; }));
+await page.evaluate(() => presStop());
+check('and it closes', await page.evaluate(() => document.getElementById('pres').style.display) === 'none');
 
 console.log('\nPASS');
 ok.forEach(s => console.log('  ok   ' + s));
