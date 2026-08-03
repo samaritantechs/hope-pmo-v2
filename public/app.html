@@ -1026,6 +1026,41 @@ function wireBar(){
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   wireClean();
+  wireFollowupClean();
+}
+/* Check counts and NAMES the first few, because "412 customers" is not something anybody should
+   act on without recognising at least one of them. */
+function wireFollowupClean(){
+  var chk = document.getElementById('fcCheck'), run = document.getElementById('fcRun');
+  if (!chk && !run) return;
+  var out = document.getElementById('fcOut');
+  var say = function(html, bad){ out.style.display='block'; out.className='note'+(bad?' bad':''); out.innerHTML = html; };
+  var call = function(confirm){
+    var days = parseInt(document.getElementById('fcDays').value, 10) || 14;
+    say('Inahesabu\u2026 / counting\u2026');
+    srv('followupClean', { days: days, confirm: confirm })
+      .then(function(r){
+        if (!r.stale) return say('Hakuna aliyepitwa na wakati \u2014 kila mtu kwenye orodha amethibitishwa ndani ya siku ' + days
+          + '. / Nobody is stale; everyone on the list was confirmed within ' + days + ' days.');
+        var names = (r.sample||[]).map(function(x){
+          return esc(x.name || x.ref) + ' <span style="color:var(--mut)">(' + esc(x.team) + ', D.S ' + esc(x.ds||'\u2014')
+            + ', ' + esc(x.lastSeen) + ')</span>'; }).join('<br>');
+        if (r.applied) {
+          say('<b>' + money(r.retired) + '</b> wameondolewa kwenye orodha hai. Maoni yao yote yapo pale pale. / '
+            + money(r.retired) + ' taken off the working list. Every comment is untouched.');
+          render();
+          return;
+        }
+        say('<b>' + money(r.stale) + '</b> kati ya ' + money(r.checked) + ' hawajathibitishwa tangu <b>' + esc(r.cutoff) + '</b>.'
+          + '<br><span style="color:var(--mut);font-size:11.5px">Bonyeza <b>Safisha</b> kuwaondoa kwenye orodha hai. Hakuna kinachofutwa.</span>'
+          + (names ? '<div style="margin-top:8px;font-size:12px;line-height:1.6">' + names
+              + (r.stale > (r.sample||[]).length ? '<br><span style="color:var(--mut)">\u2026na wengine ' + money(r.stale - r.sample.length) + '</span>' : '')
+              + '</div>' : ''));
+      })
+      .catch(function(e){ say(esc(String(e.message || e)), true); });
+  };
+  if (chk) chk.onclick = function(){ call(false); };
+  if (run) run.onclick = function(){ call(true); };
 }
 /* Cleaning old reports deletes a DAY OF HISTORY, so the flow is deliberately two-step: Check
    counts the rows without touching anything, Clean asks once more and names the number. */
@@ -2520,6 +2555,27 @@ VIEWS.settings = function(){
               + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
               + ' server refuses those addresses even if somebody types them in directly.')
         + '</div></div></div>'
+      /* THE SAME CUSTOMER WITH TWO DIFFERENT D.S VALUES.
+         The follow-up list only refreshes for people named in an uploaded current-defaulter
+         deck for THEIR weekday. If a weekday's deck stops arriving, everybody on it keeps
+         figures that get older every week -- so somebody shows on Leo with D.S 9-10 and on Def
+         with D.S 8-9 at the same moment. The upload retires those rows, but only when something
+         is uploaded, and whoever is looking at the wrong number cannot make that happen.
+         Deliberately NOT next to the delete box below: this one takes nothing away. */
+      + '<div class="card"><div class="card-h">Orodha ya wadaiwa iliyopitwa na wakati / Stale defaulters'
+        + '<span class="sub">wateja ambao deki halijawathibitisha / customers no deck has confirmed</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="note" style="display:block">Hii <b>haifuti chochote</b>. Inaondoa tu takwimu za deki '
+        + '(hali na deni) kwa yeyote ambaye deki halijamtaja kwa muda mrefu, ili asionekane mdaiwa hai. '
+        + 'Maoni yote yanabaki, na deki lijalo likimtaja anarudi. / <i>Nothing is deleted. It clears the '
+        + 'deck figures for anyone no deck has named in a long time; every comment stays and the next '
+        + 'deck brings them back.</i></div>'
+        + '<div class="fld"><label>Siku bila kuthibitishwa / Days unconfirmed</label>'
+        + '<input type="number" id="fcDays" value="14" min="1" style="max-width:120px"></div>'
+        + '<div class="clact"><button class="btn sm ghost" id="fcCheck">Angalia / Check first</button>'
+        + ' <button class="btn sm" id="fcRun">Safisha / Clean</button></div>'
+        + '<div id="fcOut" class="note" style="display:none"></div>'
+        + '</div></div>'
       /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
          Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
          no cell ceiling), but the plan's disk is finite, so this is where old dates get let go. */

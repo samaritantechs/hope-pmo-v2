@@ -218,6 +218,11 @@ await page.waitForTimeout(400);
 check('tapping the strip asks for the figures again',
   calls.indexOf('api_callDailySummary') >= 0, calls.join(','));
 
+/* HOW OLD IS THE APP YOU ARE HOLDING? Three rounds of "it still is not fixed" could each have
+   been a phone running yesterday's page, and nobody -- in the field or here -- could tell. */
+check('the app says which version of itself is on screen',
+  /Toleo la app.*\d{4}-\d\d-\d\d \d\d:\d\d/.test(await page.evaluate(() => document.getElementById('body').textContent)));
+
 /* -------------------------------------------- RUHUSU COMMENT KUSAVE AUTOMATIC.
    Android stops an app that is not on screen, so a comment typed at a customer's door may never
    reach the server. The exemption used to be a button on a banner -- something an officer had

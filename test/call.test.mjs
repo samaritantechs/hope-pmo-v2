@@ -773,3 +773,32 @@ test('the daily summary says which upload it was computed from', async () => {
   assert.equal(d.dataVersion, '1700000000001',
     'the figures carry their own version, so the phone cannot store them against the wrong one');
 });
+
+/* KESHO ON THE STRIP MUST AGREE WITH THE KESHO TAB.
+ *
+ * Nobody uploads an "Expected - Tomorrow" sheet: tomorrow's list is the ordinary Expected sheet
+ * filed under tomorrow's date, and the tab has always read it that way with the old explicit
+ * type behind it as a fallback. The strip's figure only had the first half -- so on a
+ * deployment that never files a sheet ahead, Kesho on the strip was a permanent dash while the
+ * Kesho tab right underneath it listed customers. A number that is always blank looks exactly
+ * like a bar that is not working.
+ */
+test('the strip\'s Kesho figure falls back exactly as the Kesho tab does', async () => {
+  const db = await registeredDb();
+  // Nothing is filed under tomorrow's date -- only the old explicit type exists.
+  db._dump('repayment_snapshots').length;
+  await db.from('repayment_snapshots').insert([
+    { ref: '901', full_name: 'KESHO ONE', team: 'KONGOWE', payment_expected: 1000, arrears: 0,
+      todays_status: 'PAID', snapshot_type: 'tomorrow', snapshot_date: '2026-07-24',
+      upload_batch: 'kb', created_at: '2026-07-24T04:00:00Z' },
+    { ref: '902', full_name: 'KESHO TWO', team: 'KONGOWE', payment_expected: 1000, arrears: 0,
+      todays_status: 'UNPAID', snapshot_type: 'tomorrow', snapshot_date: '2026-07-24',
+      upload_batch: 'kb', created_at: '2026-07-24T04:00:00Z' },
+  ]);
+  const list = await callApi(db, 'api_callList', ['d1', 'tomorrow'], NOW);
+  assert.ok(list.rows.length > 0, 'the tab shows customers');
+
+  const sum = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
+  assert.notEqual(sum.kesho.pct, null, 'so the strip must not show a dash');
+  assert.equal(sum.kesho.customers, list.rows.length, 'and it is the same list, not a second one');
+});
