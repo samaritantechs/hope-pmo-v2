@@ -363,6 +363,23 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
 var VC = { store:{}, watch:null, key:'' };
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
+/* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
+   A function that runs out of time or crashes is answered by the host with an HTML page, so
+   r.json() throws  Unexpected token 'A', "An error o"...  -- which reads like a bug in this page
+   and is in fact the server saying it gave up. Told plainly, with the status, it is something
+   somebody can act on instead of paste into a search engine. */
+function readJson_(r){
+  return r.text().then(function(t){
+    try { return { status: r.status, body: JSON.parse(t) }; }
+    catch (e) {
+      var slow = r.status === 504 || r.status === 408 || /timed? ?out|TIMEOUT/i.test(t);
+      throw new Error((slow
+        ? 'Seva imechukua muda mrefu mno / the server took too long'
+        : 'Seva imeshindwa kujibu / the server could not answer')
+        + ' \u2014 HTTP ' + r.status);
+    }
+  });
+}
 function srv(fn, args){
   if (!READ_FNS[fn]) {
     VC.store = {};                       // something changed: nothing remembered is trustworthy
@@ -371,7 +388,7 @@ function srv(fn, args){
   return fetch('/api/portal', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ code:S.code, fn:fn, args:args||{} })
-  }).then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+  }).then(readJson_)
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) return x.body;
       /* The admin closed the system while this page was open. Every tab from here on would
@@ -394,7 +411,7 @@ function signIn(){
   if (!code){ $('#inErr').textContent='Weka msimbo. / Enter your code.'; return; }
   $('#inBtn').disabled = true; $('#inBtn').textContent = 'Inaingia…';
   fetch('/api/me?code='+encodeURIComponent(code))
-    .then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(readJson_)
     .then(function(x){
       $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in';
       if (x.status<200||x.status>=300||x.body.ok===false){ $('#inErr').textContent = x.body.error||'Msimbo si sahihi.'; return; }
@@ -3570,7 +3587,7 @@ function settingForm(key, value){
   if (!saved) return;
   S.code = saved;
   fetch('/api/me?code='+encodeURIComponent(saved))
-    .then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(readJson_)
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) start(x.body);
       else { store('hopeCode', null); $('#code').value=''; }
