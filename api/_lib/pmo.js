@@ -86,6 +86,10 @@ export function collectionOf(rows) {
  *  worth. The MONEY is computed here but the presentation never shows it — see the note on
  *  pmoPublicRow.
  */
+/* Jumatatu (tatu, 3rd), Jumanne (nne, 4th), Jumatano (tano, 5th), Alhamisi, Ijumaa -- the
+   working week as it is written on every board in every branch. */
+export const PMO_DAY_KEYS = ['J3', 'J4', 'J5', 'AL', 'IJ'];
+
 export function pmoBoard(roster, byDay, today, days) {
   const rows = roster.map(p => {
     const mine = new Set((p.teams || []).map(t => norm(t)));
@@ -123,6 +127,16 @@ export function pmoBoard(roster, byDay, today, days) {
       weekUncollected: week.uncollected, weekPct: week.pct,
       weekCommission: perDay.reduce((s, d) => s + d.tzs, 0),
       weekDays: perDay,
+      /* THE FIVE DAYS AS COLUMNS, because the week's total is the only thing the officer could
+         see and it is not the thing they are paid on. Pay follows EACH DAY'S OWN band, added up
+         -- a good Ijumaa is worth something after a poor Jumanne -- so the five percentages are
+         what tell somebody what they are earning. Flattened onto the row here rather than dug
+         out of weekDays by whoever draws the table, so the board and the slide cannot disagree
+         about which day is which. */
+      ...Object.fromEntries(perDay.flatMap((d, i) => {
+        const k = PMO_DAY_KEYS[i];
+        return k ? [['pct' + k, d.pct], ['tzs' + k, d.tzs]] : [];
+      })),
     };
   });
   // Best first. An officer with no percentage at all sorts last rather than as a zero.
