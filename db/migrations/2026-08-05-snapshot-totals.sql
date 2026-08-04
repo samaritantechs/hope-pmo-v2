@@ -189,9 +189,36 @@ as $$
   group by s.snapshot_date, s.snapshot_type, s.weekday, s.team, s.upload_batch
 $$;
 
--- The app reads through PostgREST as the service role; make sure it may call these.
+-- ------------------------------------------------------------------------------------
+-- BELT AND BRACES, AND USUALLY UNNECESSARY -- run these LAST, and one at a time.
+--
+-- Postgres already grants EXECUTE on a new function to PUBLIC, and anon / authenticated /
+-- service_role are all covered by that. These two lines only matter on a database whose
+-- default privileges have been changed. They are here because "usually" is not "always", and
+-- a function the app may not call fails in a way nothing on screen explains.
+--
+-- If they time out -- and on a busy database they can -- CHECK BEFORE RETRYING. The query
+-- below reads only the catalogue, takes no locks and answers instantly, and it will normally
+-- tell you these grants were never needed:
+--
+--   select p.proname,
+--          has_function_privilege('service_role', p.oid, 'execute') as service_role_may_call,
+--          has_function_privilege('anon',         p.oid, 'execute') as anon_may_call
+--   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--   where n.nspname = 'public'
+--     and p.proname in ('expected_snapshot_totals', 'defaulter_snapshot_totals');
+--
+-- Two rows with `true` means the work is done. Nothing else is needed and these two lines can
+-- be skipped entirely.
+--
+-- AND IF THEY ARE NEVER RUN AT ALL, nothing breaks. A function the app is refused permission
+-- to call reads to it exactly like a function that does not exist, and both fall back to
+-- reading the rows and adding them up here -- slowly, as it always did. There is no state in
+-- which a missing grant produces a wrong figure or an error on a screen.
+-- ------------------------------------------------------------------------------------
 grant execute on function expected_snapshot_totals(date, date, text, text[])
   to anon, authenticated, service_role;
+
 grant execute on function defaulter_snapshot_totals(date, date, text, text[], text)
   to anon, authenticated, service_role;
 

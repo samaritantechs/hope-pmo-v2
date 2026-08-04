@@ -2496,6 +2496,14 @@ So the migration is split by **how long each half takes**, not by what it is abo
 `concurrently` is what makes the second file safe to run during the working day: it builds
 without blocking, so a defaulter deck can still go in while two hundred officers work from it.
 
+**The two `grant execute` lines at the end of the first file are belt and braces, and usually
+unnecessary.** Postgres already grants EXECUTE on a new function to everybody. They matter only
+on a database whose default privileges have been changed — and if they time out, or are never
+run at all, **nothing breaks**: a function the app may not call reads to it exactly like one
+that does not exist, and both fall back to adding the rows up here. There is no state in which a
+missing grant produces a wrong figure or an error on a screen. The file carries a catalogue-only
+query that answers "was it ever needed?" instantly, without taking a lock.
+
 **The indexes are a refinement, not a requirement.** `idx_repay_snap_lookup` already leads on
 `(snapshot_type, snapshot_date, team)`, which serves the Expected reads well — they always name
 a type, and equality on the first column with a range on the second is exactly what a composite
