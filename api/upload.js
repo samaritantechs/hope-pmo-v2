@@ -36,37 +36,68 @@ import {
  * keyed tables a re-upload corrects in place. Both were already true of a second upload; this
  * only makes a FAILED one land in the same place. The error says how many rows were in when it
  * stopped, so "upload it again" is an instruction somebody can act on rather than a hope. */
-/* HOW BIG A CHUNK. Started at a thousand and came down, because a thousand wide rows is still
-   one STATEMENT, and Postgres cancels a statement that outruns its timeout:
+/* HOW BIG A CHUNK -- AND WHY IT IS NOT A FIXED NUMBER.
+ *
+ * Two different failures sit on either side of this one setting, and a fixed size can only
+ * ever avoid one of them:
+ *
+ *   TOO BIG   "canceling statement due to statement timeout" -- Postgres cancelling ONE
+ *             statement that ran too long. Happens the moment the disk is slower than usual.
+ *   TOO SMALL a thirty-thousand row file becomes hundreds of round trips, and the HOSTING
+ *             platform cuts the whole function off at sixty seconds. HTTP 504, nothing saved.
+ *
+ * I moved it to a flat 250 to solve the first and walked straight into the second: a big deck
+ * went from thirty journeys to a hundred and twenty, each with its own fixed overhead.
+ *
+ * So it adapts. It starts big, and HALVES only when the database says that statement was too
+ * long -- down to a hundred rows. A healthy database therefore pays thirty journeys as before,
+ * and a struggling one finds a size it can actually finish instead of failing at both ends.
+ *
+ * A cancelled statement is rolled back WHOLE, so the chunk that timed out wrote nothing and
+ * re-sending its rows in smaller pieces cannot double them. That is what makes this safe on a
+ * plain insert and not only on an upsert.
+ *
+ * NOT ONE TRANSACTION, and that is worth saying plainly. If the fifth chunk fails, the first
+ * four are already written. For the snapshot tables that is harmless -- every row of an upload
+ * carries one batch stamp and a re-upload supersedes the whole batch -- and the keyed tables
+ * correct in place. Both were already true of a SECOND upload; this only makes a FAILED one
+ * land in the same place. The error says how many rows were in when it stopped, so "upload it
+ * again" is an instruction rather than a hope. */
+const WRITE_CHUNK_MAX = 1000;
+const WRITE_CHUNK_MIN = 100;
 
-       Failed: canceling statement due to statement timeout
+/** Does this error mean "that one statement took too long", as opposed to anything else?
+    Only this failure is worth answering with a smaller chunk; a bad column or a constraint
+    would fail identically at every size, and halving four times over would just be slower. */
+function isStatementTimeout(err) {
+  return /canceling statement|statement timeout/i.test(String((err && err.message) || err));
+}
 
-   That is not the same failure as running out of memory -- the body was fine, the write simply
-   took too long. It happens the moment the database is slower than usual, which is exactly when
-   somebody is most likely to be re-uploading. Two hundred and fifty rows is a statement that
-   finishes even on a database whose disk is being throttled, at the cost of more journeys.
-
-   A cancelled statement is ROLLED BACK -- Postgres does not half-write one. So a chunk that
-   times out has written nothing, and retrying it cannot double anything. That is what makes the
-   retry below safe on a plain insert as well as an upsert. */
-const WRITE_CHUNK = 250;
-
-/** Insert or upsert `records` a chunk at a time. `onConflict` null means a plain insert.
-    Each chunk goes through runQuery, so a database having a bad minute costs a retry rather
-    than the whole upload -- and the message says how much had landed if it gives up. */
+/** Insert or upsert `records`, a chunk at a time, shrinking the chunk if the database says the
+    statement was too long. `onConflict` null means a plain insert. */
 async function writeInChunks(db, table, records, onConflict) {
+  let size = WRITE_CHUNK_MAX;
   let written = 0;
-  for (let i = 0; i < records.length; i += WRITE_CHUNK) {
-    const slice = records.slice(i, i + WRITE_CHUNK);
+  let i = 0;
+  while (i < records.length) {
+    const slice = records.slice(i, i + size);
+    // tries: 2 -- one immediate retry for a blip. Anything more belongs to the halving below,
+    // which is a better answer than the same too-large statement a third time.
     const { error } = await runQuery(() => (onConflict
       ? db.from(table).upsert(slice, { onConflict })
-      : db.from(table).insert(slice)));
+      : db.from(table).insert(slice)), 2);
     if (error) {
-      const slow = isTransient(error);
+      if (isStatementTimeout(error) && size > WRITE_CHUNK_MIN) {
+        size = Math.max(WRITE_CHUNK_MIN, Math.floor(size / 2));
+        continue;                                    // same rows, smaller bite
+      }
       throw new Error(error.message
-        + (slow ? ' -- the database is answering slowly; this is worth trying again in a few minutes' : '')
+        + (isStatementTimeout(error)
+          ? ` -- the database could not write even ${WRITE_CHUNK_MIN} rows in the time it allows, which means it is badly overloaded rather than that this file is wrong`
+          : '')
         + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${records.length.toLocaleString('en-US')} were already written before this stopped -- uploading the file again is safe and will finish the job)` : ''));
     }
+    i += slice.length;
     written += slice.length;
   }
   return written;
