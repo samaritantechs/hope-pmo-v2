@@ -666,6 +666,12 @@ const blackedOut = () => page.evaluate(() => !!document.querySelector('#pres .pb
 const slideNow = () => page.evaluate(() => S.presI);
 const startedOn = await slideNow();
 await page.evaluate(() => presBlank(true));
+/* AND IT HAS TO BE FINDABLE. It was a bare filled circle beside the close cross, which reads as
+   decoration -- the person who asked for it looked at the deck and did not see it. */
+check('the blackout button says what it does, in words',
+  /Skrini nyeusi/.test(await page.evaluate(() => document.querySelector('#pres .phead').textContent)),
+  await page.evaluate(() => document.querySelector('#pres .phead').textContent));
+
 check('the screen can be blacked out mid-deck', await blackedOut());
 check('and the deck is still there underneath, on the same slide', (await slideNow()) === startedOn);
 check('the auto-advance stops with it',

@@ -170,6 +170,9 @@
   /* PRAYERS, AND THE TELEVISION. Switching the TV off and back on costs the meeting a minute
      of waiting for the deck to come back. This covers the screen instead: pure black, one white
      mark to end it, the deck untouched underneath and the clock stopped so nothing is missed. */
+  #pres .pblankbtn{background:var(--psoft);border:1px solid var(--pedge);color:var(--pink);
+    height:38px;padding:0 15px;border-radius:19px;font-size:13.5px;font-weight:700;cursor:pointer;
+    white-space:nowrap;margin-right:8px}
   #pres .pblank{position:fixed;inset:0;background:#000;z-index:99;cursor:pointer;
     display:flex;align-items:center;justify-content:center}
   #pres .pblank .pbx{color:#fff;font-size:34px;opacity:.5;line-height:1;
@@ -2954,6 +2957,11 @@ function presRender(){
       + (d.teamPerf||[]).map(function(t){
           return '<option'+(S.presTeam===t.team?' selected':'')+'>'+esc(t.team)+'</option>'; }).join('')
       + '</select></div></div></div>'
+      + '<div class="note" style="display:block">● <b>Skrini nyeusi / Blank the screen.</b> '
+      + 'Ukishaanza, kitufe cha <b>Skrini nyeusi</b> juu kulia (au herufi <b>B</b>) hufunika skrini '
+      + 'wakati wa maombi. Slaidi hubaki pale pale na saa inasimama; bofya popote kurudi. / '
+      + '<i>Once playing, the <b>Skrini nyeusi</b> button top right — or the <b>B</b> key — covers the '
+      + 'screen for prayers. The deck stays where it is and the clock stops; tap anywhere to come back.</i></div>'
       + bar('<button class="btn" id="presStart">▶ Anza / Play on the TV</button>'
         + '<label style="font-size:12px;color:var(--mut)">Sekunde / Seconds</label>'
         + '<input type="number" id="presSecs" min="5" max="300" value="'+(S.presSecs||15)+'" style="width:80px">'
@@ -3003,7 +3011,11 @@ function presDraw(){
   document.getElementById('pres').innerHTML =
     '<div class="phead"><span>'+esc(s.title)+'</span>'
     + '<span class="pnum">'+(S.presI+1)+' / '+S.slides.length+'</span>'
-    + '<button class="pclose" onclick="presBlank(true)" title="Skrini nyeusi / Blank the screen">&#9679;</button>'
+    /* A LABEL, NOT A DOT. This was a bare filled circle beside the close cross, which reads as
+       decoration rather than a button -- the person it was built for looked at the deck and did
+       not see it. It says what it does now. */
+    + '<button class="pblankbtn" onclick="presBlank(true)" title="Skrini nyeusi (B) / Blank the screen">'
+      + '&#9679; Skrini nyeusi</button>'
     + '<button class="pclose" onclick="presStop()">&#10005;</button></div>'
     + '<div class="pbody">'+body+'</div>'
     + '<button class="pnav pprev" onclick="presGo(-1)" title="Iliyopita / Previous">&#8249;</button>'
