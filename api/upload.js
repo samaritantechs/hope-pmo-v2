@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { supabase, fetchAll } from './_lib/supabase.js';
+import { supabase, fetchAll, runQuery, isTransient } from './_lib/supabase.js';
 import { gatedUser, can, withApi } from './_lib/auth.js';
 import { pickLatestBatch } from './_lib/snapshots.js';
 import { addDaysKey as addDays_ } from './_lib/time.js';
@@ -36,19 +36,36 @@ import {
  * keyed tables a re-upload corrects in place. Both were already true of a second upload; this
  * only makes a FAILED one land in the same place. The error says how many rows were in when it
  * stopped, so "upload it again" is an instruction somebody can act on rather than a hope. */
-const WRITE_CHUNK = 1000;
+/* HOW BIG A CHUNK. Started at a thousand and came down, because a thousand wide rows is still
+   one STATEMENT, and Postgres cancels a statement that outruns its timeout:
 
-/** Insert or upsert `records` a chunk at a time. `onConflict` null means a plain insert. */
+       Failed: canceling statement due to statement timeout
+
+   That is not the same failure as running out of memory -- the body was fine, the write simply
+   took too long. It happens the moment the database is slower than usual, which is exactly when
+   somebody is most likely to be re-uploading. Two hundred and fifty rows is a statement that
+   finishes even on a database whose disk is being throttled, at the cost of more journeys.
+
+   A cancelled statement is ROLLED BACK -- Postgres does not half-write one. So a chunk that
+   times out has written nothing, and retrying it cannot double anything. That is what makes the
+   retry below safe on a plain insert as well as an upsert. */
+const WRITE_CHUNK = 250;
+
+/** Insert or upsert `records` a chunk at a time. `onConflict` null means a plain insert.
+    Each chunk goes through runQuery, so a database having a bad minute costs a retry rather
+    than the whole upload -- and the message says how much had landed if it gives up. */
 async function writeInChunks(db, table, records, onConflict) {
   let written = 0;
   for (let i = 0; i < records.length; i += WRITE_CHUNK) {
     const slice = records.slice(i, i + WRITE_CHUNK);
-    const { error } = onConflict
-      ? await db.from(table).upsert(slice, { onConflict })
-      : await db.from(table).insert(slice);
+    const { error } = await runQuery(() => (onConflict
+      ? db.from(table).upsert(slice, { onConflict })
+      : db.from(table).insert(slice)));
     if (error) {
+      const slow = isTransient(error);
       throw new Error(error.message
-        + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${records.length.toLocaleString('en-US')} were already written before this failed -- uploading the file again is safe and will finish the job)` : ''));
+        + (slow ? ' -- the database is answering slowly; this is worth trying again in a few minutes' : '')
+        + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${records.length.toLocaleString('en-US')} were already written before this stopped -- uploading the file again is safe and will finish the job)` : ''));
     }
     written += slice.length;
   }

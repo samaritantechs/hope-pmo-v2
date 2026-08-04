@@ -20,7 +20,11 @@ export const PAGE_SIZE = 1000;   // kept for the callers that still name it
     One immediate retry, then one more after a short pause, rides out exactly that. It is
     deliberately small: a hammering retry on a database that is already struggling makes it
     worse, which is the same mistake as fetching pages six at a time. */
-const TRANSIENT = /timeout|timed out|fetch failed|network|ECONNRESET|ETIMEDOUT|EAI_AGAIN|502|503|504|522|<!DOCTYPE/i;
+/* `canceling statement` is Postgres itself giving up on ONE statement that outran its timeout.
+   It is named explicitly rather than left to match on the word "timeout", because it is the
+   failure a slow database produces most often and it is worth being able to see it in this
+   list. Retrying it is safe: a cancelled statement is rolled back whole, so it wrote nothing. */
+const TRANSIENT = /timeout|timed out|canceling statement|fetch failed|network|ECONNRESET|ETIMEDOUT|EAI_AGAIN|502|503|504|522|<!DOCTYPE/i;
 
 export function isTransient(err) {
   if (!err) return false;
