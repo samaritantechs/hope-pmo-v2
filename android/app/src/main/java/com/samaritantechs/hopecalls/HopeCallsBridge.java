@@ -8,7 +8,16 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.CallLog;
+import android.content.ContentValues;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.webkit.JavascriptInterface;
+import android.widget.Toast;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -108,6 +117,59 @@ public class HopeCallsBridge {
                     Uri.parse("package:" + activity.getPackageName()));
             activity.startActivity(i);
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * SAVE A FILE THE PAGE BUILT ITSELF.
+     *
+     * Reports, JPGs and spreadsheets are built in the browser, so the page holds the bytes and
+     * has nowhere to put them. Its ordinary way out -- an anchor with a download attribute --
+     * produces a blob: URL, which goes to Android's DownloadManager, which does not understand
+     * blob: and throws. The fallback then tries to open that URL with an ordinary app, nothing
+     * on the handset can, and the process goes down: the app closes with no file and no message.
+     *
+     * So the bytes come here instead, base64 in a string, and are written to the phone's own
+     * Downloads folder -- MediaStore on Android 10 and later, which needs no storage permission,
+     * and the plain public directory before that.
+     *
+     * Returns "OK <name>" or "ERR <reason>". The page shows whichever it gets; a save that fails
+     * silently is the thing this method exists to stop.
+     */
+    @JavascriptInterface
+    public String saveBase64(String name, String mime, String base64) {
+        try {
+            if (name == null || name.trim().isEmpty()) name = "hope-download";
+            // Anything that could climb out of Downloads is stripped rather than trusted.
+            name = name.replaceAll("[/\\\\]", "_").replaceAll("\\.\\.", "_");
+            byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
+            if (mime == null || mime.isEmpty()) mime = "application/octet-stream";
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                ContentValues v = new ContentValues();
+                v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+                v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
+                Uri uri = activity.getContentResolver()
+                        .insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v);
+                if (uri == null) return "ERR could not create the file";
+                OutputStream out = activity.getContentResolver().openOutputStream(uri);
+                if (out == null) return "ERR could not open the file";
+                out.write(bytes);
+                out.close();
+            } else {
+                File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+                if (!dir.exists() && !dir.mkdirs()) return "ERR no Downloads folder";
+                FileOutputStream out = new FileOutputStream(new File(dir, name));
+                out.write(bytes);
+                out.close();
+            }
+            final String shown = name;
+            activity.runOnUiThread(() ->
+                    Toast.makeText(activity, "Imehifadhiwa Downloads: " + shown, Toast.LENGTH_LONG).show());
+            return "OK " + name;
+        } catch (Exception e) {
+            return "ERR " + e.getMessage();
+        }
     }
 
     /* ---- used by the built-in offline/URL screen, not by call.html ---- */

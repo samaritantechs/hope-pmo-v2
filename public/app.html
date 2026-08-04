@@ -795,7 +795,41 @@ function exportCsv(){
   });
   download(new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'}), S.view+'-'+today()+'.csv');
 }
+/* THE APK CANNOT BE HANDED A blob: URL, AND BEING HANDED ONE KILLS IT.
+ *
+ * "Downloading JPG from the call app just closes the app." Exactly that: a download inside the
+ * WebView goes to Android's DownloadManager, DownloadManager does not understand blob: or data:
+ * and throws, the fallback tries to open the same URL with an ordinary app, nothing on the phone
+ * can, and the process goes down. No file, no message, no app.
+ *
+ * So inside the APK the bytes are handed to the app itself. saveBase64 arrived in a later build,
+ * and officers update on their own schedule -- so a handset that does not have it yet is told
+ * plainly to use the browser instead of being walked into the crash. On a real browser nothing
+ * about this changes.
+ */
+function androidBridge_(){ return (window.HopeCalls && window.HopeCalls.getDeviceId) ? window.HopeCalls : null; }
 function download(blob, name){
+  var nb = androidBridge_();
+  if (nb) {
+    if (!nb.saveBase64) {
+      toast('Kupakua hakufanyi kazi ndani ya app bado — fungua mfumo kwenye Chrome kupakua. / '
+        + 'Downloads need the newer app; open the system in Chrome to save this file.', true);
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function(){
+      // dataURL is "data:<mime>;base64,<payload>" -- the app wants the payload and the type.
+      var s = String(fr.result), i = s.indexOf(',');
+      try {
+        var msg = nb.saveBase64(name, blob.type || 'application/octet-stream', s.slice(i + 1));
+        toast(msg && String(msg).indexOf('OK') === 0 ? 'Imehifadhiwa Downloads. / Saved to Downloads.'
+          : ('Imeshindikana kuhifadhi. / Could not save. ' + (msg || '')), !(msg && String(msg).indexOf('OK') === 0));
+      } catch (e) { toast('Imeshindikana kuhifadhi / could not save: ' + (e.message || e), true); }
+    };
+    fr.onerror = function(){ toast('Imeshindikana kusoma faili / could not read the file.', true); };
+    fr.readAsDataURL(blob);
+    return;
+  }
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = name;
   document.body.appendChild(a); a.click();
