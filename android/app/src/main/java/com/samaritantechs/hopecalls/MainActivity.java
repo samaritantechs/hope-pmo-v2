@@ -105,6 +105,18 @@ public class MainActivity extends Activity {
         web.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long size) {
+                /* NEVER HAND DownloadManager A blob: OR data: URL. It does not understand
+                   either, it throws, and the catch below then asks Android to open that same URL
+                   with an ordinary app -- which nothing can, so the app closes with no file and
+                   no message. That is the "downloading JPG just closes the app" report.
+                   The page saves those itself through HopeCalls.saveBase64; if one reaches here
+                   at all it is from an older page, and saying so beats dying. */
+                if (url != null && (url.startsWith("blob:") || url.startsWith("data:"))) {
+                    Toast.makeText(MainActivity.this,
+                            "Fungua mfumo kwenye Chrome kupakua faili hii / open the system in Chrome to save this file",
+                            Toast.LENGTH_LONG).show();
+                    return;
+                }
                 try {
                     String name = URLUtil.guessFileName(url, contentDisposition, mimeType);
                     DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));

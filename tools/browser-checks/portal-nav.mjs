@@ -613,6 +613,49 @@ for (const id of ['pmo', 'early', 'recovery'])
   check('  ...' + id + ' carries today and the week on one slide',
     /today/i.test(bothPeriods[id] || '') && /week/i.test(bothPeriods[id] || ''), bothPeriods[id]);
 
+/* DOWNLOADING INSIDE THE APK USED TO CLOSE IT.
+   An anchor with a download attribute makes a blob: URL. Inside the WebView that goes to
+   Android's DownloadManager, which does not understand blob:, throws, and then the fallback
+   asks Android to open the same URL with an ordinary app -- nothing can, and the process dies.
+   No file, no message, no app. The page must never take that route inside the APK. */
+const downloadRoute = async (hasSave) => page.evaluate((withSave) => {
+  window.HopeCalls = { getDeviceId: () => 'DEV' };
+  const out = { anchorClicked: false, savedName: null, toldUser: false };
+  if (withSave) window.HopeCalls.saveBase64 = (n) => { out.savedName = n; return 'OK ' + n; };
+  const realCreate = document.createElement.bind(document);
+  document.createElement = function(t){
+    const el = realCreate(t);
+    if (t === 'a') { const c = el.click.bind(el); el.click = function(){ out.anchorClicked = true; return c(); }; }
+    return el;
+  };
+  const realToast = window.toast;
+  window.toast = function(m, bad){ out.toldUser = true; out.msg = m; };
+  download(new Blob(['x'], { type: 'image/jpeg' }), 'report.jpg');
+  document.createElement = realCreate;
+  return new Promise(r => setTimeout(() => { window.toast = realToast; delete window.HopeCalls; r(out); }, 300));
+}, hasSave);
+
+const older = await downloadRoute(false);
+check('an older handset is TOLD, never walked into the crash',
+  older.anchorClicked === false && older.toldUser === true, JSON.stringify(older));
+const newer = await downloadRoute(true);
+check('a handset that can save gets the bytes, not a blob: URL',
+  newer.anchorClicked === false && newer.savedName === 'report.jpg', JSON.stringify(newer));
+
+const browser_ = await page.evaluate(() => {
+  const out = { anchorClicked: false };
+  const realCreate = document.createElement.bind(document);
+  document.createElement = function(t){
+    const el = realCreate(t);
+    if (t === 'a') { const c = el.click.bind(el); el.click = function(){ out.anchorClicked = true; }; }
+    return el;
+  };
+  download(new Blob(['x'], { type: 'image/jpeg' }), 'report.jpg');
+  document.createElement = realCreate;
+  return out;
+});
+check('and an ordinary browser still downloads exactly as before', browser_.anchorClicked === true);
+
 /* PRAYERS, AND THE TELEVISION. Switching the TV off and back on costs the meeting a minute of
    watching the deck reload. The blackout has to cover the room WITHOUT losing the deck -- and
    the clock has to stop with it, or the presenter comes back three slides further on with
