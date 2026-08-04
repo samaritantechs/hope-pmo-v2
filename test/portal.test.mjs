@@ -2526,3 +2526,42 @@ test('promises and assignments survive a clean -- it only blanks the deck figure
   assert.equal(row.promise_amt, 1200);
   assert.equal(row.last_comment, 'ataleta kesho');
 });
+
+/* WHAT AN OFFICER EARNS IS FIVE DAYS, NOT ONE WEEK.
+ *
+ * Pay follows each day's OWN band, added up -- a good Ijumaa is worth something after a poor
+ * Jumanne. The board showed only the week's total and the week's single percentage, which is
+ * the one number that does NOT decide the money. The five daily percentages are what tell
+ * somebody what they are making, so they belong on the row.
+ */
+test('the PMO board carries each day\'s own percentage, keyed J3 J4 J5 AL IJ', async () => {
+  const { pmoBoard, PMO_DAY_KEYS } = await import('../api/_lib/pmo.js');
+  assert.deepEqual(PMO_DAY_KEYS, ['J3', 'J4', 'J5', 'AL', 'IJ']);
+
+  const days = ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24'];
+  const row = (paid, total, team) => Array.from({ length: total }, (_, i) => ({
+    ref: 'R' + i, team, payment_expected: 1000, arrears: 0,
+    todays_status: i < paid ? 'PAID' : 'UNPAID',
+  }));
+  const byDay = new Map();
+  // Mon 100%, Tue 50%, Wed 0%, Thu 80%, Fri 100% -- five different bands on purpose.
+  byDay.set(days[0], row(10, 10, 'KONGOWE'));
+  byDay.set(days[1], row(5, 10, 'KONGOWE'));
+  byDay.set(days[2], row(0, 10, 'KONGOWE'));
+  byDay.set(days[3], row(8, 10, 'KONGOWE'));
+  byDay.set(days[4], row(10, 10, 'KONGOWE'));
+
+  const [r] = pmoBoard([{ name: 'KAMARIA', teams: ['KONGOWE'] }], byDay, days[4], days);
+  assert.equal(r.pctJ3, 100);
+  assert.equal(r.pctJ4, 50);
+  assert.equal(r.pctJ5, 0);
+  assert.equal(r.pctAL, 80);
+  assert.equal(r.pctIJ, 100);
+
+  /* AND THE MONEY IS THE SUM OF THE DAYS, not the week's percentage scored once. That is the
+     whole reason the five columns exist -- if Week TZS were worked out from weekPct, a steady
+     week and a spiky one paying the same total would look identical here. */
+  const fromDays = ['J3', 'J4', 'J5', 'AL', 'IJ'].reduce((s, k) => s + r['tzs' + k], 0);
+  assert.equal(r.weekCommission, fromDays);
+  assert.ok(r.weekPct > 0 && r.weekPct < 100, 'the week has its own percentage too, as context');
+});
