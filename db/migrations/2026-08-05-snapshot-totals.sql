@@ -47,6 +47,24 @@
 -- late, and nothing has to be re-deployed after it is run.
 --
 -- SAFE TO RE-RUN. Creates no tables and touches no data.
+--
+-- THIS FILE CREATES NOTHING BUT FUNCTIONS, AND THAT IS DELIBERATE.
+-- It first shipped with two CREATE INDEX statements at the bottom, and pasting the whole
+-- thing into the Supabase SQL editor answered:
+--
+--     Failed to run sql query: Connection terminated due to connection timeout
+--
+-- Building an index takes a lock on a table that is being written to and can run for minutes;
+-- the editor's connection gives up long before Postgres does, and because the editor sends a
+-- whole script as ONE statement, that timeout rolled back the functions too. Nothing was
+-- created, and the message named neither the statement nor the table.
+--
+-- So the two halves are separated by how long they take, not by what they are about. This
+-- half is instant -- defining a function reads no rows and locks nothing -- and it is the half
+-- that actually makes the screens cheap. The indexes are in
+-- `2026-08-05b-snapshot-totals-indexes.sql`, run a line at a time and built without blocking.
+-- They are a refinement, not a requirement: see that file for what they buy and what already
+-- covers it without them.
 -- =====================================================================================
 
 -- ------------------------------------------------------------------------------------
@@ -177,12 +195,8 @@ grant execute on function expected_snapshot_totals(date, date, text, text[])
 grant execute on function defaulter_snapshot_totals(date, date, text, text[], text)
   to anon, authenticated, service_role;
 
--- ------------------------------------------------------------------------------------
--- The date range is now the leading filter on both tables, and the existing indexes lead on
--- snapshot_type (and weekday) instead -- which is the right shape for "one deck" and the
--- wrong shape for "a week of them". These two cover the range scan the functions make.
--- ------------------------------------------------------------------------------------
-create index if not exists idx_repay_snap_date_type
-  on public.repayment_snapshots(snapshot_date, snapshot_type);
-create index if not exists idx_def_snap_date_type
-  on public.defaulter_snapshots(snapshot_date, snapshot_type);
+-- THAT IS THE WHOLE FILE. Both functions exist now, and every screen that reads team-day
+-- totals is using them from the next request -- nothing to re-deploy, nothing to switch on.
+--
+-- The indexes that make them faster still are in 2026-08-05b-snapshot-totals-indexes.sql,
+-- which has to be run differently because it is the part that takes time.
