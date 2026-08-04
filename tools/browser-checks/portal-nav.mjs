@@ -613,6 +613,43 @@ for (const id of ['pmo', 'early', 'recovery'])
   check('  ...' + id + ' carries today and the week on one slide',
     /today/i.test(bothPeriods[id] || '') && /week/i.test(bothPeriods[id] || ''), bothPeriods[id]);
 
+/* PRAYERS, AND THE TELEVISION. Switching the TV off and back on costs the meeting a minute of
+   watching the deck reload. The blackout has to cover the room WITHOUT losing the deck -- and
+   the clock has to stop with it, or the presenter comes back three slides further on with
+   nothing to explain it. */
+await page.evaluate(() => presStart(0));
+await page.waitForTimeout(200);
+const blackedOut = () => page.evaluate(() => !!document.querySelector('#pres .pblank'));
+const slideNow = () => page.evaluate(() => S.presI);
+const startedOn = await slideNow();
+await page.evaluate(() => presBlank(true));
+check('the screen can be blacked out mid-deck', await blackedOut());
+check('and the deck is still there underneath, on the same slide', (await slideNow()) === startedOn);
+check('the auto-advance stops with it',
+  await page.evaluate(() => S.presTimer === null || S.presTimer === undefined));
+// Every key brings it back and NONE of them move the deck -- a hand reaching for the remote in
+// a dark room must not land somewhere else.
+await page.keyboard.press('ArrowRight');
+await page.waitForTimeout(120);
+check('any key brings the deck back', !(await blackedOut()));
+check('and it comes back on the slide it left', (await slideNow()) === startedOn);
+// Blacking out again, then tapping the screen itself.
+await page.evaluate(() => presBlank(true));
+check('it can be blacked out again', await blackedOut());
+await page.click('#pres .pblank');
+await page.waitForTimeout(120);
+check('tapping the black screen ends it', !(await blackedOut()));
+check('a redraw while blacked out does not uncover the room', await page.evaluate(() => {
+  presBlank(true); presDraw();                 // an auto-advance firing behind the black
+  const on = !!document.querySelector('#pres .pblank');
+  presBlank(false);
+  return on;
+}));
+
+await page.evaluate(() => presStart(0));
+await page.waitForTimeout(200);
+check('a fresh play never starts behind the black', !(await blackedOut()));
+
 /* GRAND TOTALS. The number the meeting reads out, missing from every projected table. */
 await page.evaluate(() => presStart(0));
 await page.waitForTimeout(200);
