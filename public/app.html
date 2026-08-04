@@ -439,7 +439,18 @@ function signIn(){
       if (x.status<200||x.status>=300||x.body.ok===false){ $('#inErr').textContent = x.body.error||'Msimbo si sahihi.'; return; }
       S.code = code; store('hopeCode', code); start(x.body);
     })
-    .catch(function(e){ $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in'; $('#inErr').textContent='Hakuna mtandao. ('+e+')'; });
+    /* A SERVER THAT ANSWERED BADLY IS NOT A MISSING NETWORK, and telling somebody to check
+       their connection when the connection is fine sends them looking in the wrong place --
+       which is exactly what happened at 8am with Supabase serving 296,000 requests. readJson_
+       throws a described error for a non-JSON reply; only a fetch that never completed is
+       genuinely "no connection". */
+    .catch(function(e){
+      $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in';
+      var m = String((e && e.message) || e);
+      $('#inErr').textContent = /Seva|HTTP/.test(m)
+        ? m
+        : ('Hakuna mtandao / no connection. (' + m + ')');
+    });
 }
 $('#inBtn').onclick = signIn;
 $('#code').onkeydown = function(e){ if (e.key==='Enter') signIn(); };

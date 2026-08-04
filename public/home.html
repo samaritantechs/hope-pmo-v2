@@ -114,7 +114,12 @@ function signIn(){
       store('hopeCode', code);            // dashboard.html and upload.html read this same key
       renderHome(res.body);
     })
-    .catch(function(e){ renderSignIn('Hakuna mtandao. / No connection. (' + e + ')'); });
+    .catch(function(e){
+      // Same reasoning as app.html: name what actually went wrong, or the message sends
+      // somebody to check a network that was never the problem.
+      var m = String((e && e.message) || e);
+      renderSignIn(/Seva|HTTP/.test(m) ? m : ('Hakuna mtandao / No connection. (' + m + ')'));
+    });
 }
 
 /** A team code goes straight through to HOPE Calls, with the code carried across so the
