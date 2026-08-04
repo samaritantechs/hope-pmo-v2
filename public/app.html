@@ -407,10 +407,24 @@ function srv(fn, args){
     VC.store = {};                       // something changed: nothing remembered is trustworthy
     if (VC.watch) VC.watch.ok = false;   // and a screen built on top of a change is not either
   }
+  /* A DEADLINE. The platform gives up on a function at sixty seconds; this stops just short,
+     so a screen that is never going to arrive says so instead of spinning until somebody
+     reloads the page and starts the same wait again. Longer than the phone's twenty-five
+     seconds on purpose -- the heaviest screens here legitimately take several. */
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 45000);
   return fetch('/api/portal', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ code:S.code, fn:fn, args:args||{} })
-  }).then(readJson_)
+    body: JSON.stringify({ code:S.code, fn:fn, args:args||{} }),
+    signal: ctl ? ctl.signal : undefined
+  }).then(function(r){ clearTimeout(timer); return readJson_(r); },
+     function(e){
+       clearTimeout(timer);
+       if (/abort/i.test(String((e && e.message) || e)) || (e && e.name === 'AbortError')) {
+         throw new Error('Seva haijibu ndani ya sekunde 45 / the server did not answer within 45 seconds');
+       }
+       throw e;
+     })
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) return x.body;
       /* The admin closed the system while this page was open. Every tab from here on would

@@ -117,8 +117,15 @@ function signIn(){
   var code = $('code').value.trim();
   if (!code){ renderSignIn('Weka msimbo wako. / Enter your code.'); return; }
   $('go').disabled = true; $('go').textContent = 'Inaingia…';
-  fetch('/api/me?code=' + encodeURIComponent(code))
-    .then(readJson_)
+  /* A DEADLINE, BECAUSE "Inaingia…" WITH NO END IS THE WORST SCREEN IN THE SYSTEM.
+     Signing in is one tiny read of one row. If it has not answered in twenty seconds the
+     database is not going to answer at all -- and without a deadline the button simply says
+     "Inaingia…" for ever, with nothing to press and nothing to report. The phone app and the
+     customer screen have had one for months; the door everybody comes through did not. */
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 20000);
+  fetch('/api/me?code=' + encodeURIComponent(code), { signal: ctl ? ctl.signal : undefined })
+    .then(function(r){ clearTimeout(timer); return readJson_(r); })
     .then(function(res){
       if (res.status < 200 || res.status >= 300 || res.body.ok === false){
         // A field officer has exactly one code -- their TEAM code -- and typing it here used
@@ -132,9 +139,15 @@ function signIn(){
       renderHome(res.body);
     })
     .catch(function(e){
+      clearTimeout(timer);
       // Same reasoning as app.html: name what actually went wrong, or the message sends
       // somebody to check a network that was never the problem.
       var m = String((e && e.message) || e);
+      // An aborted request is OUR deadline, not the network. Saying "no connection" there
+      // sends somebody to restart a router when the server is the one not answering.
+      if (/abort/i.test(m) || (e && e.name === 'AbortError')) {
+        m = 'Seva haijibu / the server is not answering. Jaribu tena / try again.';
+      }
       renderSignIn(/Seva|HTTP/.test(m) ? m : ('Hakuna mtandao / No connection. (' + m + ')'));
     });
 }
