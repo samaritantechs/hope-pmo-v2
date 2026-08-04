@@ -2644,9 +2644,33 @@ the upload page to send the file in slices — one HTTP request per few thousand
 one upload batch, with the follow-up list rebuilt only on the last one. Then no single request
 can be too big to finish, whatever the database is doing that morning.
 
-**That has not been built.** It touches the batch rule, which is the most safety-critical code in
-the system, and it should be done deliberately with the same both-ways proof the team-day totals
-got — not in the middle of an outage. It is the first thing to do next.
+### Built, and here is exactly how it is safe
+
+The upload page now sends a big file in slices — **2,000 rows per request**, one after another,
+never several at once. A file small enough for one request is still sent whole, unchanged.
+
+Three things have to hold for that to be safe, and **each of them fails silently rather than
+loudly** if it does not. So each is a test.
+
+| Must hold | What happens if it doesn't |
+|---|---|
+| **Every slice shares ONE upload batch** | The readers keep the latest batch and discard the rest — a file arriving as twelve batches is read as **a twelfth of itself**, every figure quietly too low |
+| **Replace-that-date runs on the FIRST slice only** | Slice two deletes slice one, and a replaced file keeps only its last slice |
+| **The working list is rebuilt on the LAST slice only** | "The deck no longer names them" is true of eleven twelfths of the book |
+
+The decision is one small pure function — `partPlan()` in `api/upload.js` — so it is testable
+without a database, and the route only carries it out. Six checks in
+`test/importers.test.mjs` pin it: one batch across twelve slices, exactly one slice allowed to
+replace, exactly one allowed to rebuild, a single slice being both, a malformed id refused
+rather than written into a uuid column, and a garbled count still finishing the upload rather
+than stranding it with the working list never rebuilt.
+
+**If it stops half way**, the slices already in share one batch with each other and the upload is
+simply incomplete. Sending the file again writes a *new* batch, and the batch rule supersedes the
+incomplete one whole — the same protection a re-upload has always had, now covering a case it was
+never designed for. The page says where it stopped and how many rows went in, and that
+re-uploading is safe, because "Failed" on its own leaves somebody wondering whether half the file
+is in and whether sending it again would double it.
 
 ---
 
@@ -2728,8 +2752,6 @@ It would read the same feed `/live` already uses, so the server side is done. **
 built.** Say the word and it will be.
 
 ### Worth doing next
-00. **Uploading a large file in slices instead of one request** — the last thing that cannot
-    survive a weak database. See the end of Part 17.
 0. **Run `2026-08-05-snapshot-totals.sql`** (then `…-05b-…-indexes.sql`, a line at a time). It
    is the one on this page that changes what the system costs to run rather than what it does.
    Everything works without it, slowly.

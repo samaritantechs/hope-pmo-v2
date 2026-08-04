@@ -646,13 +646,10 @@ $('go').addEventListener('click', function(){
     var parsed = sheetToRows(wb, sn);
     lastDiag = parsed.diag;
     $('go').textContent = 'Uploading\u2026';
-    return fetch(apiBase + '/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: code, type: type, meta: meta, rows: parsed.rows }),
+    return sendInSlices_(apiBase, code, type, meta, parsed.rows, function(done, total){
+      $('go').textContent = 'Uploading ' + done + '/' + total + '\u2026';
     });
-  }).then(readJson_)
-    .then(function(res){
+  }).then(function(res){
       $('go').disabled = false; $('go').textContent = 'Upload';
       var zeroRows = res.body && (res.body.inserted === 0);
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
@@ -685,9 +682,96 @@ $('go').addEventListener('click', function(){
     }).catch(function(e){
       $('go').disabled = false; $('go').textContent = 'Upload';
       msg.className = 'msg bad';
-      msg.textContent = 'Failed: ' + e;
+      var at = e && e.uploadStoppedAt;
+      msg.textContent = 'Failed: ' + e
+        + (at ? '\n\nIliishia kipande ' + at.part + ' kati ya ' + at.total + '. / Stopped at slice '
+            + at.part + ' of ' + at.total + ' — about ' + at.rows.toLocaleString() + ' row(s) went in.'
+            + '\nPakia faili hilo hilo tena; hakitarudufu. / Upload the same file again — it will '
+            + 'not double anything, and it will finish the job.'
+          : '');
     });
 });
+
+/* ------------------------------------------------------------------------------------------
+   ONE FILE, SEVERAL REQUESTS.
+
+   A thirty-thousand row deck cannot be relied on to finish inside the sixty seconds the hosting
+   platform gives a function, and on a database having a bad morning it certainly cannot. It
+   failed two ways depending on how the server sized its writes -- "canceling statement due to
+   statement timeout" if the chunks were large, HTTP 504 if there were so many small ones that
+   the whole function outran its clock. Sizing the writes can only find a point between those
+   two; it cannot remove them. Sending less per request can.
+
+   So the file goes in slices, each its own request with its own sixty seconds, sent ONE AFTER
+   ANOTHER -- never several at once, which is the mistake that took this system down once before.
+
+   EVERY SLICE CARRIES THE HEADER ROW, because the server matches columns by name and has no
+   memory between requests. And every slice carries the SAME id, which is what makes them one
+   upload batch rather than twelve -- the readers keep the latest batch and discard the rest, so
+   a file that arrived as twelve batches would be read as a twelfth of itself.
+
+   A file small enough to fit in one request is sent whole, with no slicing, exactly as before. */
+var UPLOAD_SLICE_ROWS = 2000;
+
+function uuid_(){
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  // Older browsers on cheap laptops. Not cryptographic, and it does not need to be -- it only
+  // has to be different from the last one.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : ((r & 0x3) | 0x8)).toString(16);
+  });
+}
+
+function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
+  var header = rows[0];
+  var data = rows.slice(1);
+  var total = Math.max(1, Math.ceil(data.length / UPLOAD_SLICE_ROWS));
+  var id = uuid_();
+
+  function post(body){
+    return fetch(apiBase + '/api/upload', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(readJson_);
+  }
+
+  // Small enough for one request: send it the way it has always been sent, so nothing about the
+  // ordinary case depends on any of this.
+  if (total === 1) return post({ code: code, type: type, meta: meta, rows: rows });
+
+  var inserted = 0;
+  var step = function(i){
+    if (onProgress) onProgress(i, total);
+    var slice = [header].concat(data.slice(i * UPLOAD_SLICE_ROWS, (i + 1) * UPLOAD_SLICE_ROWS));
+    return post({ code: code, type: type, meta: meta, rows: slice,
+                  part: { id: id, index: i, total: total } })
+      .then(function(res){
+        var ok = res.status >= 200 && res.status < 300 && res.body && res.body.ok !== false;
+        if (!ok) {
+          /* NAME WHERE IT STOPPED. "Failed" on its own leaves somebody wondering whether half
+             the file is in and whether sending it again would double it. It would not: the
+             slices that landed share one batch stamp, and a fresh upload writes a new batch
+             which supersedes the incomplete one whole. */
+          var e = new Error((res.body && res.body.error) || ('HTTP ' + res.status)
+            + '');
+          e.uploadStoppedAt = { part: i + 1, total: total, rows: inserted };
+          throw e;
+        }
+        inserted += (res.body.inserted || 0);
+        if (i + 1 >= total) {
+          // The last slice's answer is the file's answer -- it is the one that rebuilt the
+          // working list and moved the phones' stamp -- but the row count is the whole file's.
+          res.body.inserted = inserted;
+          if (onProgress) onProgress(total, total);
+          return res;
+        }
+        return step(i + 1);
+      });
+  };
+  return step(0);
+}
+
 function escHtml_(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 /* How old the page you are holding is. document.lastModified is the browser's own record of
