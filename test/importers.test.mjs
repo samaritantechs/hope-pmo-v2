@@ -499,3 +499,76 @@ test('rows with no key at all are left for the upsert to complain about honestly
   assert.equal(collapsed, 1);
   assert.equal(records.length, 3, 'the keyless rows stay');
 });
+
+/* ONE FILE SENT IN SLICES IS STILL ONE UPLOAD.
+ *
+ * A big deck is now several HTTP requests, because no single request can be relied on to finish
+ * inside the sixty seconds the hosting platform allows. That is a safe change ONLY while three
+ * things hold, and each of them fails silently rather than loudly if it does not:
+ *
+ *   1. Every slice shares ONE upload batch. The readers keep the latest batch of the latest date
+ *      and discard the rest -- so a file arriving as twelve batches is read as a TWELFTH of
+ *      itself, with every figure quietly too low.
+ *   2. Replace-that-date runs on the FIRST slice only, or slice two deletes slice one.
+ *   3. The working list is rebuilt on the LAST slice only, or "the deck no longer names them"
+ *      is true of eleven twelfths of the book.
+ */
+test('a file sent whole behaves exactly as it always did', async () => {
+  const { partPlan } = await import('../api/upload.js');
+  const p = partPlan(null);
+  assert.deepEqual(p, { index: 0, total: 1, isFirst: true, isLast: true, batch: null });
+  // batch null means the route mints its own uuid, which is what it has always done.
+});
+
+test('every slice of one file carries the same upload batch', async () => {
+  const { partPlan } = await import('../api/upload.js');
+  const id = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+  const batches = new Set();
+  for (let i = 0; i < 12; i++) batches.add(partPlan({ id, index: i, total: 12 }).batch);
+  assert.deepEqual([...batches], [id],
+    'twelve slices must be ONE batch -- twelve batches would read as a twelfth of the file');
+});
+
+test('replace runs on the first slice, the rebuild on the last, and never the other way round', async () => {
+  const { partPlan } = await import('../api/upload.js');
+  const id = '3f2504e0-4f89-41d3-9a0c-0305e82c3301';
+  const firsts = [], lasts = [];
+  for (let i = 0; i < 12; i++) {
+    const p = partPlan({ id, index: i, total: 12 });
+    if (p.isFirst) firsts.push(i);
+    if (p.isLast) lasts.push(i);
+  }
+  assert.deepEqual(firsts, [0], 'exactly one slice may replace the date');
+  assert.deepEqual(lasts, [11], 'exactly one slice may rebuild the working list');
+});
+
+test('a single slice is both the first and the last', async () => {
+  const { partPlan } = await import('../api/upload.js');
+  const p = partPlan({ id: '3f2504e0-4f89-41d3-9a0c-0305e82c3301', index: 0, total: 1 });
+  assert.equal(p.isFirst, true);
+  assert.equal(p.isLast, true, 'a one-slice upload must still rebuild the working list');
+});
+
+test('an id that is not a uuid is refused rather than written', async () => {
+  const { partPlan } = await import('../api/upload.js');
+  /* upload_batch is a uuid column. A malformed id would fail the write with a message about
+     syntax rather than about the file, so it falls back to null and the route mints its own --
+     worse, because it splits the batch, but not an error. */
+  for (const bad of ['', 'abc', null, undefined, 42, 'DROP TABLE loans', '3f2504e0-4f89-41d3-9a0c']) {
+    assert.equal(partPlan({ id: bad, index: 0, total: 3 }).batch, null, 'refused: ' + bad);
+  }
+  // And a real one, in either case, is kept exactly as sent.
+  assert.equal(partPlan({ id: '3F2504E0-4F89-41D3-9A0C-0305E82C3301', index: 0, total: 3 }).batch,
+    '3F2504E0-4F89-41D3-9A0C-0305E82C3301');
+});
+
+test('nonsense counts still finish the upload rather than stranding it', async () => {
+  const { partPlan } = await import('../api/upload.js');
+  /* An index past the total, or a garbled total, must still resolve as "this is the last one".
+     The alternative is an upload whose working list is never rebuilt and whose phones never
+     hear about it, with nothing on screen to say why. */
+  assert.equal(partPlan({ index: 9, total: 3 }).isLast, true);
+  assert.equal(partPlan({ index: 'x', total: 'y' }).isLast, true);
+  assert.equal(partPlan({ index: -5, total: 0 }).index, 0);
+  assert.equal(partPlan({ index: -5, total: 0 }).total, 1);
+});
