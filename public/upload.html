@@ -337,6 +337,23 @@ $('snapDate').valueAsDate = new Date();
 
 function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g, function(c){
   return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
+/* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
+   A function that runs out of time or memory is answered by the HOST with an HTML page, so
+   reading the answer as JSON throws  Unexpected token 'A', "An error o"...  -- which looks
+   like a bug in this page and is in fact the server saying it gave up. Told plainly, with the
+   status, it is something somebody can act on instead of paste into a search engine. */
+function readJson_(r){
+  return r.text().then(function(t){
+    try { return { status: r.status, body: JSON.parse(t) }; }
+    catch (e) {
+      var slow = r.status === 504 || r.status === 408 || /timed? ?out|TIMEOUT/i.test(t);
+      throw new Error((slow
+        ? 'Seva imechukua muda mrefu mno / the server took too long'
+        : 'Seva imeshindwa kujibu / the server could not answer')
+        + ' \u2014 HTTP ' + r.status);
+    }
+  });
+}
 function api(){ return ($('apiBase').value.trim().replace(/\/$/, '')) || ''; }
 function loadStatus(){
   var code = $('code').value.trim();
@@ -345,7 +362,7 @@ function loadStatus(){
   box.className = 'hint'; box.textContent = 'Checking\u2026';
   fetch(api() + '/api/portal', { method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ code: code, fn: 'uploadStatus', args: {} }) })
-    .then(function(r){ return r.json(); })
+    .then(readJson_).then(function(x){ return x.body; })
     .then(function(d){
       if (!d.ok){ box.className = 'hint'; box.textContent = d.error || 'Could not check.'; return; }
       var groups = {};
@@ -599,7 +616,7 @@ $('go').addEventListener('click', function(){
     $('go').disabled = true; $('go').textContent = 'Saving logo…';
     fetch(apiBase + '/api/portal', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ code: code, fn: 'settingSet', args: { key: 'CALL_LOGO_URL', value: logoData } }) })
-      .then(function(r){ return r.json(); })
+      .then(readJson_).then(function(x){ return x.body; })
       .then(function(d){
         $('go').disabled = false; $('go').textContent = 'Upload';
         if (!d.ok){ msg.className = 'msg bad'; msg.textContent = 'Failed: ' + (d.error || 'unknown error'); return; }
@@ -634,7 +651,7 @@ $('go').addEventListener('click', function(){
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: code, type: type, meta: meta, rows: parsed.rows }),
     });
-  }).then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+  }).then(readJson_)
     .then(function(res){
       $('go').disabled = false; $('go').textContent = 'Upload';
       var zeroRows = res.body && (res.body.inserted === 0);

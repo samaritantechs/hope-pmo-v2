@@ -21,6 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
+import { SNAPSHOT_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -76,9 +77,13 @@ function bigBook() {
   return t;
 }
 
-/** Counts every request the code sends, exactly as fetchAll issues them. */
-function counting(tables) {
-  const db0 = fakeDb(tables);
+/** Counts every request the code sends, exactly as fetchAll issues them.
+ *
+ *  `rpc` calls count as a round trip AND their rows count too. Leaving the rows out would let
+ *  the whole point of the team-day totals go unmeasured -- and worse, would let a future
+ *  database function that returned a row per customer sail through this guard. */
+function counting(tables, opts) {
+  const db0 = fakeDb(tables, opts);
   let trips = 0, rows = 0;
   const wrap = q => new Proxy(q, { get(o, p) {
     if (p === 'then') return (res, rej) => o.then(r => {
@@ -87,7 +92,13 @@ function counting(tables) {
     const v = o[p];
     return typeof v === 'function' ? (...a) => { const out = v.apply(o, a); return out === o ? wrap(o) : out; } : v;
   } });
-  return { db: { from: n => wrap(db0.from(n)), rpc: async (n, a) => { trips++; return db0.rpc(n, a); },
+  return { db: { from: n => wrap(db0.from(n)),
+                 rpc: async (n, a) => {
+                   trips++;
+                   const r = await db0.rpc(n, a);
+                   if (Array.isArray(r.data)) rows += r.data.length;
+                   return r;
+                 },
                  _dump: n => db0._dump(n) },
            stat: () => ({ trips, rows }) };
 }
@@ -101,29 +112,50 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
    every screen declares both, and the row budget is the one that catches "select everything and
    sort it here".
 
-   screen, portal function, args, who, TRIPS, ROWS */
+   THERE ARE TWO NUMBERS FOR EVERY SCREEN NOW, because there are two live worlds. The team-day
+   totals arrive with db/migrations/2026-08-05-snapshot-totals.sql, which is pasted into the SQL
+   editor by hand -- so until that happens the same code reads rows and adds them up itself. The
+   pair of budgets is what makes the saving a fact rather than a claim, and it stops the SLOW
+   path quietly rotting on deployments that have not run the migration yet.
+
+   screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000],
-  ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000],
-  ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000],
-  ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000],
-  ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000],
-  ['Promise to Pay',          'promises',      {}, ADMIN,   10,  10000],
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  60,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  55,  3000],
+  ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  45,  8000],
+  ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
+  ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
+  ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000,  10, 10000],
+  ['Promise to Pay',          'promises',      {}, ADMIN,   10,  10000,  10, 10000],
   /* A report over a date range must read that range -- there is no honest way to count a
      week's follow-up comments without them. It is already narrowed to the six columns it uses
      and to the window asked for; what is left is proportionate. The officer-scoped row below
      is the proof that the team narrowing works: a fortieth of the same report. */
-  ['Follow-up report',        'followupReport', {}, ADMIN,  10,  30000],
-  ['Follow-up report (one team)', 'followupReport', {}, OFFICER, 10, 1500],
-  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000],
-  ['The bell',                'notifications', {}, ADMIN,    6,    200],
-  ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200],
+  ['Follow-up report',        'followupReport', {}, ADMIN,  10,  30000,  10, 30000],
+  ['Follow-up report (one team)', 'followupReport', {}, OFFICER, 10, 1500, 10, 1500],
+  /* The one that was worst, and the one the Monday meeting is read from. Count 1-6 still reads
+     two decks as customer rows -- it compares each PERSON's Monday arrears against their
+     arrears at the end of the week, which no team total can answer -- so the row budget here
+     stays above zero on purpose. Everything else on the report is a sum. */
+  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  20,  6000],
+  ['The bell',                'notifications', {}, ADMIN,    6,    200,   6,   200],
+  ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200,   6,   200],
 ];
 
-for (const [label, fn, args, user, tripBudget, rowBudget] of BUDGETS) {
-  test(`speed: ${label} stays within ${tripBudget} trips and ${rowBudget.toLocaleString()} rows`, async () => {
-    const c = counting(bigBook());
+/* Both worlds, every screen. `rpc: undefined` is a database where the migration has not been
+   run: the fake answers "could not find the function", which is exactly what PostgREST says,
+   and the code falls back to reading rows. */
+const WORLDS = [
+  ['migration not run yet', undefined, 4, 5],
+  ['team-day totals', { rpc: SNAPSHOT_TOTALS_RPC }, 6, 7],
+];
+
+for (const [world, opts, tripIdx, rowIdx] of WORLDS) {
+for (const B of BUDGETS) {
+  const [label, fn, args, user] = B;
+  const tripBudget = B[tripIdx], rowBudget = B[rowIdx];
+  test(`speed [${world}]: ${label} stays within ${tripBudget} trips and ${rowBudget.toLocaleString()} rows`, async () => {
+    const c = counting(bigBook(), opts);
     await portalApi(c.db, user, fn, args, NOW);
     const { trips, rows } = c.stat();
     const advice = `\n  Before raising these numbers: can the database do the work instead?\n` +
@@ -135,6 +167,7 @@ for (const [label, fn, args, user, tripBudget, rowBudget] of BUDGETS) {
       `${label} read ${rows.toLocaleString()} rows (budget ${rowBudget.toLocaleString()}) in ${trips} trips.` +
       `\n  A filtered read is ONE trip and can still drag a whole table.` + advice);
   });
+}
 }
 
 /* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one

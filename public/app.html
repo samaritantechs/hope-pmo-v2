@@ -557,7 +557,8 @@ function annCheck(){
    it goes to the calls door, not the portal one. */
 function srv2(fn, args){
   return fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ fn:fn, args:args||[] }) }).then(function(r){ return r.json(); });
+      body: JSON.stringify({ fn:fn, args:args||[] }) })
+    .then(readJson_).then(function(x){ return x.body; });
 }
 
 /* THE BELL. How a supervisor learns a complaint was logged without opening the tab. */

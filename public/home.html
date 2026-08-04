@@ -96,12 +96,29 @@ function renderSignIn(err){
   $('code').onkeydown = function(e){ if (e.key === 'Enter') signIn(); };
 }
 
+/* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
+   A function that runs out of time or memory is answered by the HOST with an HTML page, so
+   reading the answer as JSON throws  Unexpected token 'A', "An error o"...  -- which looks
+   like a bug in this page and is in fact the server saying it gave up. Told plainly, with the
+   status, it is something somebody can act on instead of paste into a search engine. */
+function readJson_(r){
+  return r.text().then(function(t){
+    try { return { status: r.status, body: JSON.parse(t) }; }
+    catch (e) {
+      var slow = r.status === 504 || r.status === 408 || /timed? ?out|TIMEOUT/i.test(t);
+      throw new Error((slow
+        ? 'Seva imechukua muda mrefu mno / the server took too long'
+        : 'Seva imeshindwa kujibu / the server could not answer')
+        + ' \u2014 HTTP ' + r.status);
+    }
+  });
+}
 function signIn(){
   var code = $('code').value.trim();
   if (!code){ renderSignIn('Weka msimbo wako. / Enter your code.'); return; }
   $('go').disabled = true; $('go').textContent = 'Inaingia…';
   fetch('/api/me?code=' + encodeURIComponent(code))
-    .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
+    .then(readJson_)
     .then(function(res){
       if (res.status < 200 || res.status >= 300 || res.body.ok === false){
         // A field officer has exactly one code -- their TEAM code -- and typing it here used

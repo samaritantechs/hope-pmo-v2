@@ -2330,17 +2330,22 @@ test('a database without the column still works, and still retires by weekday', 
       { ref: 'MONGONE', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-17', upload_batch: 'old', created_at: '2026-07-17T04:00:00Z' },
     ],
   });
-  // Make the first select fail the way PostgREST does for an unknown column.
+  /* Make any select naming deck_date fail the way PostgREST does for an unknown column: ONE
+     unknown column fails the WHOLE read, whatever else was asked for. The stub answers .limit
+     and .range too, because a real query object does and the reader is free to page. */
   const realFrom = db.from.bind(db);
-  let first = true;
   db.from = (name) => {
     const q = realFrom(name);
     if (name !== 'followup_status') return q;
     const realSelect = q.select.bind(q);
     q.select = (cols) => {
-      if (first && String(cols || '').includes('deck_date')) {
-        first = false;
-        return { then: (res) => res({ data: null, error: { message: 'column followup_status.deck_date does not exist' } }) };
+      if (String(cols || '').includes('deck_date')) {
+        const dead = {
+          limit: () => dead, range: () => dead, order: () => dead, eq: () => dead,
+          maybeSingle: () => dead,
+          then: (res) => res({ data: null, error: { message: 'column followup_status.deck_date does not exist' } }),
+        };
+        return dead;
       }
       return realSelect(cols);
     };
@@ -2536,13 +2541,17 @@ test('promises and assignments survive a clean -- it only blanks the deck figure
  */
 test('the PMO board carries each day\'s own percentage, keyed J3 J4 J5 AL IJ', async () => {
   const { pmoBoard, PMO_DAY_KEYS } = await import('../api/_lib/pmo.js');
+  const { foldExpected } = await import('../api/_lib/snapshot-totals.js');
   assert.deepEqual(PMO_DAY_KEYS, ['J3', 'J4', 'J5', 'AL', 'IJ']);
 
   const days = ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24'];
-  const row = (paid, total, team) => Array.from({ length: total }, (_, i) => ({
+  /* Written as CUSTOMERS and folded into team-day totals, because that is what the board is
+     handed now -- and folding here means the day still reads as "ten customers, six of whom
+     paid" rather than as a pre-computed pair of sums nobody can check by eye. */
+  const row = (paid, total, team) => foldExpected(Array.from({ length: total }, (_, i) => ({
     ref: 'R' + i, team, payment_expected: 1000, arrears: 0,
     todays_status: i < paid ? 'PAID' : 'UNPAID',
-  }));
+  })));
   const byDay = new Map();
   // Mon 100%, Tue 50%, Wed 0%, Thu 80%, Fri 100% -- five different bands on purpose.
   byDay.set(days[0], row(10, 10, 'KONGOWE'));

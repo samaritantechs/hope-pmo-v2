@@ -94,13 +94,30 @@ function money(n){ n = Number(n)||0; return n.toLocaleString('en-US',{maximumFra
 function store(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){} }
 function load(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
 
+/* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
+   A function that runs out of time or memory is answered by the HOST with an HTML page, so
+   reading the answer as JSON throws  Unexpected token 'A', "An error o"...  -- which looks
+   like a bug in this page and is in fact the server saying it gave up. Told plainly, with the
+   status, it is something somebody can act on instead of paste into a search engine. */
+function readJson_(r){
+  return r.text().then(function(t){
+    try { return { status: r.status, body: JSON.parse(t) }; }
+    catch (e) {
+      var slow = r.status === 504 || r.status === 408 || /timed? ?out|TIMEOUT/i.test(t);
+      throw new Error((slow
+        ? 'Seva imechukua muda mrefu mno / the server took too long'
+        : 'Seva imeshindwa kujibu / the server could not answer')
+        + ' \u2014 HTTP ' + r.status);
+    }
+  });
+}
 function srv(fn, args){
   // A customer on a bad connection must be TOLD it failed, not left on a spinner for ever.
   var ctl = window.AbortController ? new AbortController() : null;
   var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 25000);
   return fetch('/api/call', { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ fn:fn, args:args||[] }), signal: ctl ? ctl.signal : undefined })
-    .then(function(r){ return r.json().then(function(d){ return {status:r.status, body:d}; }); })
+    .then(readJson_)
     .then(function(x){
       clearTimeout(timer);
       if (x.status >= 200 && x.status < 300) return x.body;
