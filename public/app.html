@@ -1333,10 +1333,10 @@ VIEWS.dashboard = function(){
                This line used to read "3,045,126,092 → 3,037,163,922", which says where the
                arrears moved but not what the recovery is being measured against. The
                denominator is the day's uncollected, so that is what belongs here. */
-            ['Hayajarejeshwa TZS '+money(x.uncollected), 'badl'],
+            ['Unrecovered TZS '+money(x.uncollected), 'badl'],
             [x.full ? '<span class="good">full recovery</span>' : ('Rec '+pct(x.pct)), 'good']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
-            ['Hayajarejeshwa TZS '+money(d.recTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
+            ['Unrecovered TZS '+money(d.recTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
             ['Rec '+pct((function(){var u=d.recTrend.reduce(function(s,x){return s+x.uncollected;},0),r=d.recTrend.reduce(function(s,x){return s+x.recovered;},0);return u>0?Math.round(1000*r/u)/10:null;})()), 'good']], 'tot'))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){

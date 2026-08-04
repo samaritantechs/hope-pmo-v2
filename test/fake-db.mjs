@@ -26,10 +26,16 @@ class FakeQuery {
       hand back whole rows, which meant a narrowed select that forgot a column passed every
       test and failed in the field -- exactly how customer rows reached officers' phones with
       no name and nothing to tap. Honouring the projection makes that a red test instead. */
-  select(cols) {
+  /* PostgREST also answers "how many?" without sending any of them: select(cols, { count:
+     'exact', head: true }) returns the number in a header and no body at all. That is the
+     cheapest read there is, and the fake has to offer it or the only way to test a count is to
+     fetch the rows and count them here -- which is the thing a count exists to avoid. */
+  select(cols, opts) {
     if (this.mode !== 'select') this.wantRows = true;
     const list = String(cols == null ? '*' : cols).split(',').map(s => s.trim()).filter(Boolean);
     this.cols = (!list.length || list.includes('*')) ? null : list;
+    this.headOnly = !!(opts && opts.head);
+    this.wantCount = !!(opts && opts.count);
     return this;
   }
   eq(k, v) { this.filters.push(r => String(r[k]) === String(v)); return this; }
@@ -45,16 +51,40 @@ class FakeQuery {
   /** PostgREST spells OR as one string: "ref.ilike.%X%,full_name.ilike.%X%". A search across
       several columns is one request because of it, so the fake has to understand it or the
       only way to test a search is to fetch whole tables and filter in JavaScript -- which is
-      the thing the search is written to avoid. */
+      the thing the search is written to avoid.
+
+      EVERY OPERATOR IT UNDERSTANDS HAS TO BEHAVE, not just the ones a search box uses. This
+      recognised `ilike` and treated EVERYTHING ELSE as equality -- so "approved_date.gte.X"
+      quietly meant "approved_date = X". A read narrowed to a date range therefore passed its
+      tests while returning almost nothing, which is the precise shape of bug this fake exists
+      to catch. An operator it does not know is now a thrown error rather than a wrong answer.
+
+      A null never satisfies a comparison, the same as in Postgres -- which is what makes
+      "either of these two dates is recent" exclude a row that has neither. */
   or(expr) {
     const parts = String(expr || '').split(',').map(p => {
       const i = p.indexOf('.'), j = p.indexOf('.', i + 1);
       if (i < 0 || j < 0) return null;
       return { col: p.slice(0, i), op: p.slice(i + 1, j), val: p.slice(j + 1) };
     }).filter(Boolean);
-    this.filters.push(r => parts.some(p => p.op === 'ilike'
-      ? likeMatch(r[p.col], p.val)
-      : String(r[p.col]) === p.val));
+    const test = (p, r) => {
+      const v = r[p.col];
+      switch (p.op) {
+        case 'ilike': return likeMatch(v, p.val);
+        case 'eq':    return String(v) === p.val;
+        case 'neq':   return String(v) !== p.val;
+        case 'gte':   return v != null && String(v) >= p.val;
+        case 'gt':    return v != null && String(v) > p.val;
+        case 'lte':   return v != null && String(v) <= p.val;
+        case 'lt':    return v != null && String(v) < p.val;
+        case 'is':    return p.val === 'null' ? v == null : String(v) === p.val;
+        default:
+          throw new Error('fake-db: .or() does not understand the operator "' + p.op
+            + '" (in "' + p.col + '.' + p.op + '.' + p.val + '"). Add it rather than letting it '
+            + 'be silently treated as equality.');
+      }
+    };
+    this.filters.push(r => parts.some(p => test(p, r)));
     return this;
   }
   order(k, opts) { this.ord = { k, asc: !opts || opts.ascending !== false }; return this; }
@@ -108,6 +138,10 @@ class FakeQuery {
       return { data: this.wantRows ? rows.filter(r => this.filters.every(f => f(r))) : null, error: null, count: n };
     }
     let out = rows.filter(r => this.filters.every(f => f(r)));
+    // The count is of everything that MATCHED, before any range or limit -- which is what
+    // PostgREST's exact count means and the whole reason it is worth asking for.
+    const matched = out.length;
+    if (this.headOnly) return { data: [], error: null, count: matched };
     if (this.ord) {
       const { k, asc } = this.ord;
       out = out.slice().sort((a, b) => (String(a[k]) < String(b[k]) ? -1 : String(a[k]) > String(b[k]) ? 1 : 0) * (asc ? 1 : -1));
@@ -115,8 +149,8 @@ class FakeQuery {
     if (this.rng) out = out.slice(this.rng[0], this.rng[1] + 1);
     out = out.slice(0, Math.min(this.lim != null ? this.lim : PAGE_CAP, PAGE_CAP));
     out = out.map(r => this._project(r));
-    if (this.single) return { data: out[0] || null, error: null };
-    return { data: out, error: null };
+    if (this.single) return { data: out[0] || null, error: null, count: this.wantCount ? matched : null };
+    return { data: out, error: null, count: this.wantCount ? matched : null };
   }
   then(res, rej) { return Promise.resolve(this._exec()).then(res, rej); }
 }

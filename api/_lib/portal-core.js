@@ -1,4 +1,4 @@
-import { fetchAll } from './supabase.js';
+import { fetchAll, runQuery } from './supabase.js';
 import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
@@ -2728,10 +2728,33 @@ async function dashboardFull(db, user, _args, nowMs) {
   const wdToday = currentWeekday(nowMs);
   const base = await buildDashboard(db, user, nowMs);
 
-  const [expWeek, defWeek, loansAll, abn, teamRows] = await Promise.all([
+  /* THE LOANS TABLE, READ TWICE ON PURPOSE, AND NEITHER READ IS THE WHOLE OF IT.
+     One read used to carry every loan the company has ever written, with ten columns each, so
+     that four figures could be worked out. Two figures actually need every loan, and they need
+     two columns; the rest need this week and this month.
+
+       funnel      every loan, but not one row of it. The pipeline funnel is eight COUNTS --
+                   how many applications sit at each stage -- and that is an all-time question
+                   by definition. Eight requests that each answer with a number and no body at
+                   all, instead of thirty thousand rows carried here to be counted. Counting is
+                   the database's job; that is the first question the speed guard asks.
+       loansAll    the trends and the team board: applications by the day they were created,
+                   sales by the day they were approved. Bounded to this week and this month,
+                   which is the furthest either one looks.
+
+     `or` rather than two reads, because a loan qualifies on EITHER date -- an application
+     created this week whose approval is older, or an approval this month on an application
+     from June. A loan with neither is excluded, which is right: every figure below skips a row
+     whose date falls outside its window anyway. */
+  const monthStart0 = String(today).slice(0, 7) + '-01';
+  const loanFloor = monthStart0 < mon ? monthStart0 : mon;
+  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
-    fetchAll(() => db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')),
+    stageCounts(db, user.teams),
+    fetchAll(() => onTeams(db.from('loans')
+      .select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')
+      .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor}`), user.teams)),
     fetchAll(() => db.from('abnormal_payments').select('team, paid')),
     fetchAll(() => db.from('teams').select('*')),
   ]);
@@ -2795,8 +2818,8 @@ async function dashboardFull(db, user, _args, nowMs) {
       full: i >= 5 && rec > 0 };
   });
 
-  /* ---- pipeline funnel ---- */
-  const funnel = STAGES.map(st => ({ stage: st, count: myLoans.filter(l => l.stage === st).length }));
+  /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
+  const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
 
   /* ---- team performance: numbers WITH the leader names beside them ---- */
   const todayExp = pickLatestBatchRows(dayRows(myExpWeek, today));
@@ -2921,6 +2944,30 @@ async function dashboardFull(db, user, _args, nowMs) {
     paired: pairedToday,
   };
 }
+/** How many applications sit at each of the eight stages, RIGHT NOW -- the pipeline funnel.
+ *
+ *  `head: true` means PostgREST answers with the number and no rows at all, so eight of these
+ *  carry nothing across the wire between them. The alternative was reading every loan the
+ *  company has ever written and counting them here, which is thirty thousand rows to produce
+ *  eight small integers.
+ *
+ *  Sequential, not eight at once. A wave of concurrent requests was tried on this system and
+ *  took it down (see the note in supabase.js); eight cheap round trips one after another is the
+ *  shape that has proved safe.
+ *
+ *  Team scoping is applied to each count, so an officer's funnel counts their own teams -- the
+ *  same rows scoped() would have kept. */
+async function stageCounts(db, teams) {
+  const out = {};
+  for (const st of STAGES) {
+    const { count, error } = await runQuery(() =>
+      onTeams(db.from('loans').select('id', { count: 'exact', head: true }).eq('stage', st), teams));
+    if (error) throw error;
+    out[st] = count || 0;
+  }
+  return out;
+}
+
 /** Local copy of the batch rule for rows already fetched in bulk (one date at a time). */
 function pickLatestBatchRows(rows) {
   if (!rows.length) return [];
@@ -3098,8 +3145,23 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     earlyList(db, { today, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     fetchAll(() => onTeams(db.from('followup_status').select('ref, team, status, fu_status, arrears'), user.teams)),
-    fetchAll(() => onTeams(db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt, track_no, upload_date'), user.teams)),
-    fetchAll(() => onTeams(db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun), user.teams)),
+    /* BOUNDED TO THE WEEK. Both boards built from this read a window: the credit analysts by
+       APPROVED DATE, the customer-care agents by UPLOAD DATE, and neither ever looks further
+       back than Monday. It was reading every loan the company has ever written to answer that.
+
+       `or` rather than two reads, because a loan qualifies on EITHER column -- an application
+       uploaded this week whose approval is older, or the reverse. A loan with nothing in either
+       column is excluded, which is correct: both boards already skip a row with no date. */
+    fetchAll(() => onTeams(db.from('loans')
+      .select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt, track_no, upload_date')
+      .or(`approved_date.gte.${mon},upload_date.gte.${mon}`), user.teams)),
+    /* THE COLUMNS THE CALL BOARDS DRAW, not every column of every call in the week. select('*')
+       here carried the phone number, the customer, the match type and the sync stamp of every
+       call two hundred officers made -- none of which appears on a board of counts and talk
+       time. */
+    fetchAll(() => onTeams(db.from('call_logs')
+      .select('officer, team, duration, portfolio, ref, phone, outcome, call_date')
+      .gte('call_date', mon).lte('call_date', sun), user.teams)),
     /* TWO DIFFERENT KINDS OF "AGENT", which the deck had been showing as one.
        call_agents is the CUSTOMER CARE roster -- the people named as CREATED BY on application
        reports. call_users is the HOPE Calls app roster -- field officers with a phone. They do

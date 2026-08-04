@@ -2520,13 +2520,47 @@ five minutes.
 The speed guard now carries **two budgets for every screen**, one for each world, so the slower
 path cannot quietly rot on a deployment that has not run the migration yet.
 
+### And then the loans table, which was the next largest
+
+Done in the same round, once the snapshots were out of the way and it became the biggest thing
+left. Three separate reads were carrying every loan the company has ever written:
+
+| Read | Was | Now |
+|---|---|---|
+| The dashboard's trends and team board | every loan, ten columns | **this week and this month only** — the furthest either one looks |
+| The pipeline funnel | every loan, counted here | **eight counts**, answered by the database with no rows at all |
+| The officer boards' analyst and agent boards | every loan | **this week only** — both are weekly boards |
+| The call boards | `select('*')` over a week of calls | the eight columns a board of counts and talk time actually draws |
+
+The funnel is the interesting one. It is an all-time question by definition — how many
+applications sit at each of the eight stages *right now* — so it cannot be given a window. But
+it is eight numbers, and asking the database for eight numbers costs eight requests that carry
+no rows between them. That is the first question the speed guard tells you to ask, and the
+answer here was yes.
+
+Everything is team-scoped at the database now, which is why the one-team figures fall furthest.
+
+### Where the whole round landed
+
+Measured the same way (`node tools/load-bench.mjs`, 30,000 customers over 20 days):
+
+| Screen | Before any of this | After |
+|---|---|---|
+| **Presentation (all teams)** | 112 requests, 825,080 rows, **141.4 MB** | 38, 50,280, **6.5 MB** |
+| Presentation (one team) | 34 requests, 50,930 rows, 9.1 MB | 34, 3,285, **0.4 MB** |
+| Dashboard (all teams) | 72 requests, 555,040 rows, 94.1 MB | 25, 32,980, **3.5 MB** |
+| Dashboard (one team) | 20 requests, 44,140 rows, 7.9 MB | 22, 2,326, **0.2 MB** |
+| Officer boards | 40 requests, 270,040 rows, 47.3 MB | 13, 17,300, **3.0 MB** |
+| Weekly report | 35 requests, 237,040 rows, 38.4 MB | 12, 27,640, **2.2 MB** |
+
+The Presentation carries **a twenty-second** of what it did. A field officer's dashboard carries
+**a fortieth**.
+
 ### What is still heavy, and honestly
 
-The dashboard still reads **the whole loans table** on every open — 30,000 rows in the
-measurement above, and the largest single thing left on that path. It is not a snapshot read, it
-is not team-narrowed, and the pipeline funnel counts every stage over all time, so narrowing it
-needs the same both-ways proof this change got rather than a hurried edit. **That is the next
-one to do.**
+The Expected Repayment tab and Loan Applications still read 30,000 rows, and they should: they
+are **lists of customers**. That is the screen, not a sum. The follow-up status board reads the
+whole book because it reports on the whole book. None of those is the same kind of waste.
 
 ---
 

@@ -120,9 +120,9 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
 
    screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  60,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  55,  3000],
-  ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  45,  8000],
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  40,  5000],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  40,   400],
+  ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
   ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000,  10, 10000],
@@ -137,7 +137,7 @@ const BUDGETS = [
      two decks as customer rows -- it compares each PERSON's Monday arrears against their
      arrears at the end of the week, which no team total can answer -- so the row budget here
      stays above zero on purpose. Everything else on the report is a sum. */
-  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  20,  6000],
+  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  20,  3500],
   ['The bell',                'notifications', {}, ADMIN,    6,    200,   6,   200],
   ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200,   6,   200],
 ];
