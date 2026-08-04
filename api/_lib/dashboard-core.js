@@ -1,30 +1,28 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { todayKey, currentWeekday, isoWeekday, addDaysKey, weekMondayKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
+import { resolveLatestPerKey, upperTeams } from './snapshots.js';
 import { cachedAnswer } from './answer-cache.js';
+import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, defaulterTotalsLatest,
+  tCustomers, tExpected, tCollected, tUncollected, tArrears } from './snapshot-totals.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
     looking rather than by remembering. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
-import { recoveryBasis, collectedOf, uncollectedOf, num } from './recovery.js';
+import { recoveryBasis, num } from './recovery.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 
-/* WHAT THE DASHBOARD ACTUALLY READS. Every figure it returns is a sum or a count -- no
-   customer's name, phone or balance appears anywhere on it -- yet each snapshot row arrived
-   with all eighteen columns. On a weekend, when the reads cover Monday to Friday, that waste
-   is paid five times over.
+/* THE DASHBOARD NEVER READS A CUSTOMER ROW ANY MORE. Every figure it returns is a sum or a
+   count -- no name, phone or balance appears anywhere on it -- and it used to fetch every
+   snapshot row of the week to work them out: about 161,000 of them here, all held in this
+   process's memory at once. That is the 504s and the memory bill.
 
-   These lists are the whole of it. `snapshot_date` and `weekday` are here because
-   resolveLatestPerKey groups on them, not because a KPI shows them; drop one and every row
-   collapses into a single nameless group. Add a column to a figure below and it must be added
-   here too -- the tests' fake database returns only what is asked for, so an omission fails a
-   test rather than quietly reporting zero. (upload_batch and created_at are appended by the
-   snapshot reader itself, since losing those would stack a re-upload on the file it replaced.) */
-const EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date';
-const DECK_COLS = 'team, arrears, snapshot_date, weekday';
+   It now reads TEAM-DAY TOTALS instead (api/_lib/snapshot-totals.js): one row per team, per
+   day, per upload batch, with the money already added up by the database. Roughly two hundred
+   rows for the same answer. The batch rule still runs here, over those rows, because that rule
+   must have exactly one home -- see snapshots.js. */
 
 /** The whole dashboard computation, separated from the route so the full pipeline runs under
     tests against a fake PostgREST client. `db` is anything with the supabase-js query shape;
@@ -85,8 +83,8 @@ async function buildDashboardUncached(db, user, nowMs) {
   let recovered = 0;
   const recoveredByTeam = {};
   for (const p of deckPairs) {
-    for (const r of p.ini) { recovered += num(r.arrears); bump(recoveredByTeam, r.team, num(r.arrears)); }
-    for (const r of p.cur) { recovered -= num(r.arrears); bump(recoveredByTeam, r.team, -num(r.arrears)); }
+    for (const r of p.ini) { recovered += num(r.arrears_amt); bump(recoveredByTeam, r.team, num(r.arrears_amt)); }
+    for (const r of p.cur) { recovered -= num(r.arrears_amt); bump(recoveredByTeam, r.team, -num(r.arrears_amt)); }
   }
 
   // ---- Recovery denominator, per the basis rule ----
@@ -94,40 +92,40 @@ async function buildDashboardUncached(db, user, nowMs) {
   if (basis.kind === 'today' || basis.kind === 'week') {
     // Monday divides by today's uncollected; the weekend divides by the week's -- and expRows
     // is already exactly that set (today's snapshot / the week's snapshots respectively).
-    recDen = uncollectedOf(expRows);
+    recDen = tUncollected(expRows);
     recDenDates = expected.dates;
   } else {
     const yKey = addDaysKey(today, -1);
     // A fresh Expected-Yesterday file wins. Its snapshot_date convention is ambiguous by
     // nature -- the file DESCRIBES yesterday but may be stamped with today's date -- so the
     // window [yesterday, today] accepts either convention.
-    const yFile = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'yesterday' }, { notBefore: yKey, notAfter: today, teams: user.teams, columns: EXP_COLS });
+    const yFile = await expectedTotalsLatest(db, { type: 'yesterday', notBefore: yKey, notAfter: today, teams: user.teams });
     if (yFile.rows.length) {
-      recDen = uncollectedOf(scoped(yFile.rows));
+      recDen = tUncollected(scoped(yFile.rows));
       recDenDates = [yFile.date];
       yesterdaySource = 'yesterday-file';
     } else {
       // Fall back to the previous 'today' snapshot. This actually improves on the live
       // system: a holiday gap falls back to the prior REAL working day instead of last
       // week's sheet, because "latest date before today" skips as far back as it needs to.
-      const prev = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: yKey, teams: user.teams, columns: EXP_COLS });
-      recDen = uncollectedOf(scoped(prev.rows));
+      const prev = await expectedTotalsLatest(db, { type: 'today', notAfter: yKey, teams: user.teams });
+      recDen = tUncollected(scoped(prev.rows));
       recDenDates = prev.date ? [prev.date] : [];
       yesterdaySource = 'previous-today-snapshot';
     }
   }
 
   const totals = {
-    expectedCustomers: expRows.length,
-    expectedAmount: sum(expRows, 'payment_expected'),
-    collected: expRows.reduce((s, r) => s + collectedOf(r), 0),
-    uncollected: uncollectedOf(expRows),
-    defaulterCustomers: defCurRows.length,
-    defaulterArrears: sum(defCurRows, 'arrears'),
+    expectedCustomers: tCustomers(expRows),
+    expectedAmount: tExpected(expRows),
+    collected: tCollected(expRows),
+    uncollected: tUncollected(expRows),
+    defaulterCustomers: tCustomers(defCurRows),
+    defaulterArrears: tArrears(defCurRows),
     salesCount: sal.length,
     salesAmount: sal.reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0),
     receivedCount: rcv.length,
-    receivedAmount: sum(rcv, 'amount_paid'),
+    receivedAmount: rcv.reduce((s, r) => s + num(r.amount_paid), 0),
     recovery: {
       recovered,
       denominator: recDen,
@@ -147,12 +145,11 @@ async function buildDashboardUncached(db, user, nowMs) {
   }
   for (const r of expRows) {
     const t = team_(r.team);
-    const c = collectedOf(r);
-    t.expectedAmount += num(r.payment_expected);
-    t.collected += c;
-    t.uncollected += Math.max(0, num(r.payment_expected) - c);
+    t.expectedAmount += num(r.expected_amt);
+    t.collected += num(r.collected_amt);
+    t.uncollected += num(r.uncollected_amt);
   }
-  for (const r of defCurRows) { const t = team_(r.team); t.defaulterArrears += num(r.arrears); t.defaulterCustomers += 1; }
+  for (const r of defCurRows) { const t = team_(r.team); t.defaulterArrears += num(r.arrears_amt); t.defaulterCustomers += num(r.customers); }
   for (const [k, v] of Object.entries(recoveredByTeam)) team_(k).recovered = v;
   for (const r of sal) { team_(r.team).salesAmount += (num(r.principal_amt) || num(r.loan_amt)); }
   for (const r of rcv) { team_(r.team).receivedAmount += num(r.amount_paid); }
@@ -182,10 +179,10 @@ async function buildDashboardUncached(db, user, nowMs) {
    single figure is worked out. The platform gives up at 60. */
 async function loadExpected(db, { weekend, today, weekMon, weekFri, teams }) {
   if (!weekend) {
-    const snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today, teams: teams, columns: EXP_COLS });
+    const snap = await expectedTotalsLatest(db, { type: 'today', notAfter: today, teams });
     return { rows: snap.rows, dates: snap.date ? [snap.date] : [] };
   }
-  const all = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, weekMon, weekFri, teams, EXP_COLS);
+  const all = await expectedTotalsInRange(db, { type: 'today', from: weekMon, to: weekFri, teams });
   const perDay = resolveLatestPerKey(all, r => r.snapshot_date);
   const dates = [...perDay.keys()].sort();
   return { rows: dates.flatMap(d => perDay.get(d).rows), dates };
@@ -198,18 +195,18 @@ async function loadExpected(db, { weekend, today, weekMon, weekFri, teams }) {
 async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
   const out = { currentRows: [], pairs: [], dates: {}, note: null };
   if (!weekend) {
-    const cur = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today, teams: teams, columns: DECK_COLS });
+    const cur = await defaulterTotalsLatest(db, { type: 'current', weekday: wd, notAfter: today, teams });
     if (!cur.rows.length) return out;
     out.currentRows = cur.rows;
     out.dates[wd] = cur.date;
-    const ini = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { onDate: cur.date, teams: teams, columns: DECK_COLS });
+    const ini = await defaulterTotalsLatest(db, { type: 'initial', weekday: wd, onDate: cur.date, teams });
     if (ini.rows.length) out.pairs.push({ ini: ini.rows, cur: cur.rows });
     else out.note = `No initial ${wd} deck dated ${cur.date} -- Recovered is 0 rather than a whole-book figure.`;
     return out;
   }
   const [curAll, iniAll] = await Promise.all([
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, weekMon, weekFri, teams, DECK_COLS),
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, weekMon, weekFri, teams, DECK_COLS),
+    defaulterTotalsInRange(db, { type: 'current', from: weekMon, to: weekFri, teams }),
+    defaulterTotalsInRange(db, { type: 'initial', from: weekMon, to: weekFri, teams }),
   ]);
   const curPer = resolveLatestPerKey(curAll, r => r.weekday);
   const iniPer = resolveLatestPerKey(iniAll, r => r.weekday);
@@ -232,4 +229,3 @@ function bump(map, team, v) {
   map[k] = (map[k] || 0) + v;
 }
 
-function sum(rows, field) { return rows.reduce((s, r) => s + num(r[field]), 0); }

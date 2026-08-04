@@ -918,6 +918,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `db/migrations/2026-07-28-loan-identity.sql` | One row per loan; removes duplicates that had been inflating sales |
 | `db/migrations/2026-07-28-upload-stamp.sql` | The report-date stamp that makes Append / Replace-by-date possible |
 | `db/migrations/2026-07-28-speed-indexes.sql` | Indexes for the lookups every screen makes on load |
+| `db/migrations/2026-08-05-snapshot-totals.sql` | **Team-day totals** — the database adds the snapshots up instead of sending them (Part 16) |
 | `db/migrations/2026-08-01-storage-counts.sql` | **Makes the Settings tab open at once** — lets the database count rows instead of sending a million of them over the internet. Also pins `search_path` on both database functions, closing the security warning Supabase reports. |
 
 > Migrations are run **in date order**, once each, by pasting into Supabase's SQL Editor.
@@ -946,6 +947,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `assign.js` | The rotation engine itself (who owns a defaulter today) |
 | `recovery.js` | What "collected" and "uncollected" mean, and the Recovery % basis rule |
 | `snapshots.js` | Finding the right snapshot: latest date, latest batch |
+| `snapshot-totals.js` | Asking the database for team-day totals instead of rows — and folding the rows here when the migration has not been run yet |
 | `importers.js` | Every spreadsheet's column mapping |
 | `parse.js` | Reading numbers, dates and phone numbers safely — including the D.S text protection |
 | `auth.js` | Access codes, team scoping, tab permissions |
@@ -2325,6 +2327,172 @@ a fault.
 
 ---
 
+## Part 16 — 161,000 rows for a page of sums, and the upload that could not finish
+
+Two things reported together on the same morning, and they turned out to be the same problem
+wearing two hats: **too much being carried through the web server at once.**
+
+> *"uploaded expecteds successfully but defaulters — Failed: SyntaxError: Unexpected token 'A',
+> "An error o"... is not valid JSON"*
+>
+> *"in web: Hakuna mtandao / No connection. (Unexpected token 'A', "An error o"...)"*
+
+### First, what that message actually was
+
+**It was not bad data, and it was not a bug in the page.** `An error o…` is the first ten
+characters of *"An error occurred with this application"* — the **hosting platform's own error
+page**, in HTML. The page asked for JSON, got a web page, and reported the only thing it could
+see: that the first character was an `A`.
+
+The platform sends that page when it **kills a function** — out of time, or out of memory. So
+the message meant *"the server gave up"*, and said so in a language that sends somebody to check
+their internet connection instead.
+
+That is fixed on its own account. The portal and the calls app already turned a non-JSON answer
+into words; **the upload page, the launcher and the customer screen did not.** All three now say
+
+> **Seva imechukua muda mrefu mno / the server took too long — HTTP 504**
+> **Seva imeshindwa kujibu / the server could not answer — HTTP 500**
+
+with the status attached. The wrong number is still a problem, but now it is a problem you can
+read.
+
+### Why the defaulters upload in particular
+
+Expected files went in. Defaulter files did not. The difference is that a **current** defaulter
+deck does three heavy things at once, and it did all of them in single gulps:
+
+- it wrote **the whole file in ONE request** — tens of thousands of customers, twenty-five
+  columns each, built into one JSON body of tens of megabytes inside the function's memory
+  before any of it was sent;
+- it then **rebuilt the officers' working list**, which means writing a second body the same
+  size;
+- and to merge that list without losing what officers typed, it held **the entire follow-up
+  list in memory** as well — the one register that only ever grows, with a placeholder for
+  every customer a year of imported v1 comments ever mentioned.
+
+Three copies of the book, in a container with a fixed memory allowance. Expected files are
+narrower and rebuild nothing, which is exactly why they survived.
+
+**Now:** writes go **a thousand rows at a request**, and the working list is **read a page at a
+time**. It costs a few more journeys and a fraction of the memory. This is the same trade the
+reading side already made for the same reason — fewer, bigger journeys rather than one
+impossible one, and never several at once, which was tried and took the whole system down
+(Part 13).
+
+One thing changed with it, and it is worth knowing: **an upload is no longer all-or-nothing.**
+If the fifth chunk fails, the first four are already in. That is harmless here — every row of a
+snapshot upload carries one batch stamp and a re-upload supersedes the whole batch, and the
+keyed tables correct in place — and both were already true of a *second* upload. The error now
+says how many rows were in when it stopped, so *"upload it again"* is an instruction rather
+than a hope.
+
+**And one real bug was found while doing it.** The upload reads the *previous* deck for that
+weekday to work out who has left it. That read was unpaged — and a truncated answer would make
+every customer past the cut look as though they had left, so the upload would have **blanked
+live defaulters off two hundred phones and said nothing.** It reads through the paging path
+now, which is the one read in this system that treats a suspiciously round short page as a
+ceiling rather than as the end.
+
+---
+
+### Second, the 504s on the system side
+
+*The database is 150 MB, fully indexed and analysed.* Nothing about it is slow. What was slow —
+and what was eating the memory — is that **the Dashboard, the Weekly report and the Presentation
+were fetching every snapshot row of the week to add them up here.** About **161,000 rows** on
+your book, per request, serialised by the database, carried over the internet, parsed into
+objects and held in memory all at once, so that a page of sums could be worked out.
+
+**Not one of those screens shows a customer.** Every figure on all three is money or a headcount
+grouped by team and by day. No name, no phone number, no balance appears anywhere on them.
+
+So the adding up moved to where the data already is.
+
+**`db/migrations/2026-08-05-snapshot-totals.sql`** adds two functions that return **one row per
+team, per day, per deck, per upload** with the figures already summed — about **two hundred rows
+instead of a hundred and sixty thousand**.
+
+Measured on a real-sized book (`node tools/load-bench.mjs`, 30,000 customers over 20 days):
+
+| Screen | Before | After |
+|---|---|---|
+| Dashboard (all teams) | 72 requests, 555,040 rows, **94.1 MB** | 19 requests, 52,480 rows, **7.1 MB** |
+| **Presentation (all teams)** | 112 requests, 825,080 rows, **141.4 MB** | 34 requests, 89,280 rows, **14.5 MB** |
+| Officer boards | 40 requests, 270,040 rows, 47.3 MB | 15 requests, 36,800 rows, **7.3 MB** |
+| Weekly report | 35 requests, 237,040 rows, 38.4 MB | 12 requests, 27,640 rows, **2.2 MB** |
+
+The Presentation — the heaviest screen in the system, and the one Part 15 said was still fifteen
+seconds of waiting — now carries **a tenth** of what it did. `node tools/load-bench.mjs --before`
+prints the old figures beside them, so the claim is checkable rather than quoted.
+
+The phone's performance strip was changed the same way, and for a sharper reason: **two hundred
+handsets ask for it every few minutes**, and an admin who sees every team was downloading the
+whole book to work out two percentages on a strip an inch tall.
+
+### "No figure may change" — and how that is proved rather than promised
+
+This is the frightening kind of change to make to a system whose entire value is that its numbers
+are right. A silently wrong total is worse than a screen that does not load, because nobody
+argues with it.
+
+So **`test/snapshot-totals.test.mjs` computes every one of those screens BOTH WAYS over the same
+book** — once with the database grouping and summing, once with the rows read and added up here —
+and asserts the two answers are **identical, field for field**. Not "close", not "the totals
+agree": every team row, every trend day, every percentage, every note, on a weekday **and** at
+the weekend, for an admin **and** for an officer scoped to two teams.
+
+The two sides are deliberately **separate pieces of arithmetic**. A comparison where both halves
+called the same function would prove nothing at all. Changing the database's sum by one shilling
+per customer turns **16 of the 23 checks red**, which is the only way to know a test is doing its
+job.
+
+The book those tests run on is built to be awkward on purpose: every collection status including
+blanks and odd spacing, customers whose arrears exceed what was expected (so the per-row clamp
+matters), a customer with no team, a day **uploaded twice**, and a weekday whose initial deck is
+missing.
+
+### What deliberately did NOT move into the database
+
+**Which upload wins.** Every read resolves the latest date, then the latest batch within it, so
+a corrected re-upload supersedes instead of doubling. Four screens apply that rule at four
+subtly different groupings. A second copy of it written in SQL could drift from the first — and
+a drift *there* silently doubles a figure, which is the exact failure the batch stamp exists to
+prevent. So every summed row still carries its `upload_batch` and the newest moment inside it,
+and the existing rule runs unchanged over a thousand times fewer rows.
+
+**Anything that is about a person rather than a team.** Three things genuinely cannot be answered
+by a team total, and they still read customer rows:
+
+| Still reads customers | Why |
+|---|---|
+| The weekly report's **Count 1-6 / Ongezeko la deni** | It compares each *customer's* Monday arrears against their arrears at the end of the week. No team total can say whether one person cleared. |
+| **Commission's recovery side** | Paid per customer recovered, not per team. |
+| Every **list** — Expected, Followup, the phone's Leo/Kesho/Def | They show customers. That is the point of them. |
+
+Those reads were narrowed to the columns they use — the weekly report's two deck reads were
+asking for every column of every row.
+
+### It is optional, like every migration here
+
+Until `2026-08-05-snapshot-totals.sql` is pasted into Supabase, **the same code reads the rows
+and adds them up itself, exactly as it always has.** Nothing breaks by the migration being late;
+it is only slow. Nothing needs re-deploying after it is run either — the system notices within
+five minutes.
+
+The speed guard now carries **two budgets for every screen**, one for each world, so the slower
+path cannot quietly rot on a deployment that has not run the migration yet.
+
+### What is still heavy, and honestly
+
+The dashboard still reads **the whole loans table** on every open — 30,000 rows in the
+measurement above, and the largest single thing left on that path. It is not a snapshot read, it
+is not team-narrowed, and the pipeline funnel counts every stage over all time, so narrowing it
+needs the same both-ways proof this change got rather than a hurried edit. **That is the next
+one to do.**
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -2361,6 +2529,7 @@ being late** — the system falls back to the slower path until they are run.
 | `2026-08-02-storage-counts-all-reports.sql` | Fast counting for the newer report types |
 | `2026-08-03-followup-cleanup.sql` | Fast counting and cleanup of the follow-up list. **Run this one after `2026-08-02-storage-counts-all-reports.sql`** — both define the same counting function, and the last one to run wins. Filename order is correct order. |
 | `2026-08-04-followup-deck-date.sql` | Retires defaulters no deck has confirmed for a fortnight (Part 14p). Without it they stay on the list for ever. |
+| **`2026-08-05-snapshot-totals.sql`** | **The dashboard, the weekly report and the Presentation stop carrying 161,000 rows to add up a page of sums — the Presentation drops from 141 MB to 14.5 MB. This is the one behind the 504s and the memory bill (Part 16). Until it is run everything works exactly as before, slowly.** |
 | `2026-07-27-hints-many-per-tab.sql` | Then upload `docs/hints-v2.tsv` as Hints |
 | `2026-07-27-call-agents.sql` | Then re-upload Unassigned/Assigned so CREATED BY lands |
 | `2026-07-28-loan-identity.sql` | One row per loan instead of one per stage |
@@ -2401,14 +2570,18 @@ It would read the same feed `/live` already uses, so the server side is done. **
 built.** Say the word and it will be.
 
 ### Worth doing next
-1. **The weekly report's sections** — the largest thing still outstanding from the comparison
+0. **Run `2026-08-05-snapshot-totals.sql`.** It is the one on this page that changes what the
+   system costs to run rather than what it does. Everything works without it, slowly.
+1. **The whole loans table on every dashboard open** — the largest read left, and the reason the
+   dashboard is not cheaper still. See the end of Part 16.
+2. **The weekly report's sections** — the largest thing still outstanding from the comparison
    against the old system. See Part 14b.
-2. **The native Android widget**, above.
-3. **The Presentation for somebody who sees every team** is still the heaviest screen at about
-   fifteen seconds of network waiting on first open (instant on the second, within the minute).
-   Getting it lower means having the database add the figures up rather than sending rows to be
-   added up here — a real change, worth doing deliberately rather than in a hurry.
-4. Direct integration with the HOPE core system. It needs either a sample export of each report
+3. **The native Android widget**, above.
+4. ~~**The Presentation for somebody who sees every team** is still the heaviest screen at about
+   fifteen seconds of network waiting on first open. Getting it lower means having the database
+   add the figures up rather than sending rows to be added up here.~~ **Done — Part 16.** It was
+   825,000 rows and 141 MB; it is now 89,000 rows and 14.5 MB.
+5. Direct integration with the HOPE core system. It needs either a sample export of each report
    (headers plus ~20 rows), API documentation, or a read-only service account.
 
 ---
@@ -2416,9 +2589,10 @@ built.** Say the word and it will be.
 ## How to check the system yourself
 
 ```
-npm test                                    # 210 checks of the rules and the sums
+npm test                                    # 268 checks of the rules and the sums
 node tools/settings-load-bench.mjs          # how much the Settings tab costs to open
 node tools/load-bench.mjs                   # requests, rows and megabytes behind every screen
+node tools/load-bench.mjs --before          # the same, as it was before the team-day totals
 
 npm i --no-save playwright-core             # once, for the browser checks
 node tools/browser-checks/portal-nav.mjs        # navigation, and the cleanup screen

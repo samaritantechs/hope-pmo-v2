@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { supabase } from './_lib/supabase.js';
+import { supabase, fetchAll } from './_lib/supabase.js';
 import { gatedUser, can, withApi } from './_lib/auth.js';
 import { pickLatestBatch } from './_lib/snapshots.js';
 import { addDaysKey as addDays_ } from './_lib/time.js';
@@ -10,6 +10,50 @@ import {
   importAbnormal, importComplaints, importRestructures, importDemandNotices,
   importCallUsers, importCallLogs, importSettings, importHints,
 } from './_lib/importers.js';
+
+/* ONE FILE IS NOT ONE REQUEST.
+ *
+ * A defaulter deck is tens of thousands of customers with twenty-five columns each. Writing it
+ * in a single call meant building one JSON body of tens of megabytes in this process's memory
+ * and pushing all of it at Supabase at once -- and a current-defaulter upload does that TWICE,
+ * once for the deck and once for the officers' working list it rebuilds, while also holding
+ * the whole existing list in memory to merge against.
+ *
+ * That is what "Failed: Unexpected token 'A', "An error o"..." was: not a bug in the page, and
+ * not bad data. The hosting platform killed the function for running out of memory and answered
+ * the browser with its own HTML error page, which the page then tried to read as JSON. Expected
+ * files went in because they are narrower and do not rebuild the working list; the defaulter
+ * deck is the one that tips it over.
+ *
+ * A thousand rows a request costs a few extra round trips and a fraction of the memory. It is
+ * the same trade the READ side already makes for the same reason (see api/_lib/supabase.js):
+ * fewer, bigger journeys rather than one impossible one -- and never several at a time, which
+ * was tried once and took the whole system down.
+ *
+ * NOT ONE TRANSACTION ANY MORE, and that is worth saying plainly. If the fifth chunk fails, the
+ * first four are already written. For the snapshot tables that is harmless -- every row of an
+ * upload carries one batch stamp, and a re-upload supersedes the whole batch -- and for the
+ * keyed tables a re-upload corrects in place. Both were already true of a second upload; this
+ * only makes a FAILED one land in the same place. The error says how many rows were in when it
+ * stopped, so "upload it again" is an instruction somebody can act on rather than a hope. */
+const WRITE_CHUNK = 1000;
+
+/** Insert or upsert `records` a chunk at a time. `onConflict` null means a plain insert. */
+async function writeInChunks(db, table, records, onConflict) {
+  let written = 0;
+  for (let i = 0; i < records.length; i += WRITE_CHUNK) {
+    const slice = records.slice(i, i + WRITE_CHUNK);
+    const { error } = onConflict
+      ? await db.from(table).upsert(slice, { onConflict })
+      : await db.from(table).insert(slice);
+    if (error) {
+      throw new Error(error.message
+        + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${records.length.toLocaleString('en-US')} were already written before this failed -- uploading the file again is safe and will finish the job)` : ''));
+    }
+    written += slice.length;
+  }
+  return written;
+}
 
 // POST /api/upload   { code, type, meta, rows }
 //   rows: the parsed sheet as an array-of-arrays, header row included -- the SAME shape
@@ -387,6 +431,7 @@ export default withApi(async (req, res) => {
           .upsert(stubs.slice(i, i + 500), { onConflict: 'ref', ignoreDuplicates: true });
         if (error) throw new Error('Could not create customer records for the comments: ' + error.message);
       }
+
       stubbed = stubs.length;
     }
   }
@@ -418,10 +463,7 @@ export default withApi(async (req, res) => {
     records = d.records; collapsed = d.collapsed;
   }
 
-  const result = upsertTables[table]
-    ? await supabase.from(table).upsert(records, { onConflict: upsertTables[table] })
-    : await supabase.from(table).insert(records);
-  if (result.error) throw new Error(result.error.message);
+  await writeInChunks(supabase, table, records, upsertTables[table] || null);
 
   /* THE FIGURES ON EVERY PHONE ARE NOW OUT OF DATE, AND ONLY THIS CODE KNOWS IT.
      The performance strip is worked out from the whole book, so it is far too expensive to
@@ -544,7 +586,13 @@ async function prevWeekdayDeck(db, weekday, excludeBatch) {
     .eq('snapshot_type', 'current').eq('weekday', weekday);
   const { data: latest } = await base().order('snapshot_date', { ascending: false }).limit(1).maybeSingle();
   if (!latest) return null;
-  const { data: rows } = await base().eq('snapshot_date', latest.snapshot_date);
+  /* PAGED, and not only for memory. A single unpaged read is capped silently by PostgREST on
+     any deployment that configures a ceiling -- and a TRUNCATED previous deck here means the
+     customers past the cut look as though they left it, so the upload would blank live
+     defaulters off two hundred officers' phones and say nothing. fetchAll is the one read
+     shape in this system that treats a suspiciously round short page as a cap rather than
+     as the end. Four columns, so the body stays small either way. */
+  const rows = await fetchAll(() => base().eq('snapshot_date', latest.snapshot_date));
   const others = (rows || []).filter(r => String(r.upload_batch || '') !== String(excludeBatch || ''));
   if (!others.length) return null;                       // that date IS this upload, nothing before it
   return new Set(pickLatestBatch(others).map(r => String(r.ref).trim().toUpperCase()));
@@ -580,15 +628,28 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, de
        deck stamp has only this to say when anything last confirmed it. Leaving it out of the
        select is not a missing field: the column simply is not there to read, so every row
        looked freshly confirmed and nothing was ever retired. */
-    const withDeck = await db.from('followup_status')
-      .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, updated_at, deck_date');
-    if (withDeck.error) {
+    /* THE WHOLE WORKING LIST, PAGED. This is the register that only ever grows -- one row per
+       customer, plus a placeholder for every customer a year of imported v1 comments mentions
+       -- so it is the largest "current state" table in the system. Reading it in one request
+       held all of it in memory at once, on the one upload that is already holding the deck and
+       the rebuilt list beside it. Paging costs a few round trips and bounds the peak.
+
+       The first select is tried whole so that a database WITHOUT the deck_date migration still
+       falls back cleanly: PostgREST rejects the entire read for one unknown column, and that
+       rejection is the signal, not an error to report. */
+    const cols = 'ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, updated_at';
+    try {
+      existing = await fetchAll(() => db.from('followup_status').select(cols + ', deck_date'));
+    } catch (e) {
+      /* Only an UNKNOWN COLUMN drops the stamp. The previous version fell back on any failure
+         at all, which would have turned a database having a bad minute into a silent decision
+         to stop stamping -- and the stamp is what the retirement clock reads. A real failure is
+         reported as a real failure. */
+      const msg = String((e && e.message) || e);
+      if (!/deck_date/.test(msg)) throw new Error(msg);
       stamped = false;
-      const plain = await db.from('followup_status')
-        .select('ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, updated_at');
-      if (plain.error) throw new Error(plain.error.message);
-      existing = plain.data;
-    } else existing = withDeck.data;
+      existing = await fetchAll(() => db.from('followup_status').select(cols));
+    }
   }
   const prev = {};
   for (const r of existing || []) prev[String(r.ref).trim().toUpperCase()] = r;
@@ -666,10 +727,12 @@ export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, de
       ...(stamped ? { deck_date: null } : {}),
       updated_at: new Date().toISOString() }));
 
+  // Chunked for the same reason the deck itself is: a deck-sized upsert in one request is a
+  // body big enough to end the whole function, and this one runs when the other has already
+  // been built.
   for (const batch of [rows, gone]) {
     if (!batch.length) continue;
-    const { error } = await db.from('followup_status').upsert(batch, { onConflict: 'ref' });
-    if (error) throw new Error(error.message);
+    await writeInChunks(db, 'followup_status', batch, 'ref');
   }
   return { synced: rows.length, retired: gone.length, staleCapped };
 }

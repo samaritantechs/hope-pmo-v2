@@ -53,17 +53,26 @@ export function pickLatestBatch(rows) {
     opts.notAfter / opts.notBefore, or pinned with opts.onDate), then the latest upload batch
     within that date. Returns { rows, date, batch } -- date/batch are null when nothing matched,
     so callers can surface exactly which snapshot a figure came from. */
+/** WHICH DAY IS "THE LATEST" -- one tiny query, no rows carried.
+    Deliberately NOT narrowed by team (see the note further down): the latest snapshot date is
+    a property of the whole upload, and a team with no rows that day must not silently fall
+    back to an older date. Split out of latestSnapshot so the team-day totals path can resolve
+    the same day the same way before asking the database to add it up. */
+export async function latestSnapshotDate(db, table, filters, opts = {}) {
+  let q = db.from(table).select('snapshot_date').order('snapshot_date', { ascending: false }).limit(1);
+  for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
+  if (opts.notAfter) q = q.lte('snapshot_date', opts.notAfter);
+  if (opts.notBefore) q = q.gte('snapshot_date', opts.notBefore);
+  const { data, error } = await q.maybeSingle();
+  if (error) throw error;
+  return data ? data.snapshot_date : null;
+}
+
 export async function latestSnapshot(db, table, filters, opts = {}) {
   let date = opts.onDate || null;
   if (!date) {
-    let q = db.from(table).select('snapshot_date').order('snapshot_date', { ascending: false }).limit(1);
-    for (const [k, v] of Object.entries(filters)) q = q.eq(k, v);
-    if (opts.notAfter) q = q.lte('snapshot_date', opts.notAfter);
-    if (opts.notBefore) q = q.gte('snapshot_date', opts.notBefore);
-    const { data: latest, error } = await q.maybeSingle();
-    if (error) throw error;
-    if (!latest) return { rows: [], date: null, batch: null };
-    date = latest.snapshot_date;
+    date = await latestSnapshotDate(db, table, filters, opts);
+    if (!date) return { rows: [], date: null, batch: null };
   }
   /* opts.teams narrows the ROWS to the teams the caller may see -- at the database, not after
      the fact. A field officer belongs to ONE team; downloading all forty and throwing away

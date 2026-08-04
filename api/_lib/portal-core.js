@@ -3,6 +3,8 @@ import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
+import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
+  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
@@ -1192,13 +1194,18 @@ async function par(db, user, _args, nowMs) {
  */
 const WEEK_EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
 const WEEK_DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
+/* The customer-level columns the weekly report's Count 1-6 section reads: the reference to
+   pair a customer across the two decks, the arrears on each side, and everything paidCount()
+   looks at. `due_summary` is deliberately NOT here -- it is a repayment_snapshots column, and
+   asking defaulter_snapshots for it would fail the WHOLE read rather than return a blank. */
+const WEEK_CREDIT_COLS = 'ref, team, arrears, ds, initial_inst, other_inst, t_payment';
 
 async function weekly(db, user, { weekOf }, nowMs) {
   const mon = /^\d{4}-\d{2}-\d{2}$/.test(String(weekOf)) ? weekOf : weekMondayKey(nowMs);
   const fri = addDaysKey(mon, 4);
   const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, WEEK_EXP_COLS),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, fri, user.teams, WEEK_DEF_COLS),
+    expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
+    defaulterTotalsInRange(db, { from: mon, to: fri, teams: user.teams }),
     fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').eq('stage', 'approved').gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
     fetchAll(() => db.from('received_payments').select('team, amount_paid, paid_at').gte('paid_at', mon).lte('paid_at', addDaysKey(mon, 6))),
   ]);
@@ -1208,13 +1215,13 @@ async function weekly(db, user, { weekOf }, nowMs) {
     const dayRows = scoped(user, expAll.filter(r => String(r.snapshot_date) === date));
     const ini = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'initial'));
     const cur = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'current'));
-    const exp = dayRows.reduce((s, r) => s + num(r.payment_expected), 0);
-    const col = dayRows.reduce((s, r) => s + collectedOf(r), 0);
+    const exp = tExpected(dayRows);
+    const col = tCollected(dayRows);
     days.push({
       date, weekday: ['MON', 'TUE', 'WED', 'THU', 'FRI'][i],
-      customers: dayRows.length, expected: exp, collected: col, uncollected: uncollectedOf(dayRows),
+      customers: tCustomers(dayRows), expected: exp, collected: col, uncollected: tUncollected(dayRows),
       pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null,
-      recovered: (ini.length && cur.length) ? ini.reduce((s, r) => s + num(r.arrears), 0) - cur.reduce((s, r) => s + num(r.arrears), 0) : 0,
+      recovered: (ini.length && cur.length) ? tArrears(ini) - tArrears(cur) : 0,
       received: scoped(user, rcvAll.filter(r => String(r.paid_at) === date)).reduce((s, r) => s + num(r.amount_paid), 0),
     });
   }
@@ -1226,8 +1233,13 @@ async function weekly(db, user, { weekOf }, nowMs) {
      week-end current one, so a positive change means debt FELL. */
   const [teamRows, monIni, endCur] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon }),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: addDaysKey(mon, 6) }),
+    /* THE ONE PART OF THIS REPORT THAT IS NOT A SUM. "Ongezeko la deni" and Count 1-6 compare
+       each CUSTOMER's Monday arrears against their arrears at the end of the week, so these two
+       have to stay customer rows -- a team total cannot say whether one person cleared. They
+       are two single decks rather than a week of them, and they are now narrowed to the seven
+       columns that are actually read instead of select('*'). */
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon, columns: WEEK_CREDIT_COLS }),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: addDaysKey(mon, 6), columns: 'ref, team, arrears' }),
   ]);
   const perTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   const T = {};
@@ -1238,15 +1250,15 @@ async function weekly(db, user, { weekOf }, nowMs) {
   for (const d of days) {
     const dayRows = scoped(user, expAll.filter(r => String(r.snapshot_date) === d.date));
     for (const r of pickLatestBatchRows(dayRows)) {
-      const b = gt(r.team), c = collectedOf(r);
-      b.expected += num(r.payment_expected); b.collected += c;
-      b.uncollected += Math.max(0, num(r.payment_expected) - c);
+      const b = gt(r.team);
+      b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
+      b.uncollected += num(r.uncollected_amt);
     }
     const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'initial')));
     const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'current')));
     if (!ini.length || !cur.length) continue;
-    for (const r of ini) gt(r.team).recovered += num(r.arrears);
-    for (const r of cur) gt(r.team).recovered -= num(r.arrears);
+    for (const r of ini) gt(r.team).recovered += num(r.arrears_amt);
+    for (const r of cur) gt(r.team).recovered -= num(r.arrears_amt);
   }
   const myMonIni = scoped(user, monIni.rows), myEndCur = scoped(user, endCur.rows);
   for (const r of myMonIni) gt(r.team).mondayDebt += num(r.arrears);
@@ -1462,13 +1474,17 @@ async function commission(db, user, _args, nowMs) {
        here made every officer's board come back undefined, which is what the test caught before
        this ever left the machine. */
     snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, WEEK_DEF_COLS + ', ref'),
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, WEEK_EXP_COLS),
+    /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
+       board. The recovery side above cannot: it works out what each CUSTOMER owed on the
+       initial deck against what they still owe on the current one, and a team total cannot
+       answer that. Two different questions, two different reads. */
+    expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
        got the previous week". Without last week's figures the condition cannot be checked at
        all, and a bonus awarded without checking it is just a bonus. */
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, prevMon, prevFri, user.teams, WEEK_EXP_COLS),
+    expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevFri, teams: user.teams }),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -1494,11 +1510,11 @@ async function commission(db, user, _args, nowMs) {
   }
   function colDay(dateKey, acc) {
     for (const r of onDate(myExp, dateKey)) {
-      const s = K(r.todays_status);
-      if (s !== 'PAID' && s !== 'OVERPAID') continue;
+      const paid = num(r.paid_n), over = num(r.over_n);
+      if (!paid && !over) continue;
       const b = bucket(acc, officerOf(teamBy, r.team, 'expected'), blank);
-      if (s === 'OVERPAID') { b.over++; b.colComm += cfg.overTzs; }
-      else { b.paid++; b.colComm += cfg.paidTzs; }
+      b.paid += paid; b.over += over;
+      b.colComm += paid * cfg.paidTzs + over * cfg.overTzs;
     }
   }
   const dayAcc = {}, weekAcc = {};
@@ -2672,12 +2688,10 @@ function dateOfWeekday(nowMs, wd) { return addDaysKey(weekMondayKey(nowMs), WD7.
  *  so rather than look like a team that collected nothing.
  *
  *  Costs one round trip on the normal path -- the fallback only runs when the first is empty. */
-async function earlyList(db, { today, teams, columns }) {
-  const ini = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'initial' },
-    { notAfter: today, teams, columns });
+async function earlyList(db, { today, teams }) {
+  const ini = await expectedTotalsLatest(db, { type: 'initial', notAfter: today, teams });
   if (ini.rows.length) return { ...ini, source: 'initial' };
-  const tmw = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' },
-    { notAfter: today, teams, columns });
+  const tmw = await expectedTotalsLatest(db, { type: 'tomorrow', notAfter: today, teams });
   return { ...tmw, source: tmw.rows.length ? 'tomorrow' : null };
 }
 
@@ -2715,8 +2729,8 @@ async function dashboardFull(db, user, _args, nowMs) {
   const base = await buildDashboard(db, user, nowMs);
 
   const [expWeek, defWeek, loansAll, abn, teamRows] = await Promise.all([
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, sun, user.teams, WEEK_EXP_COLS),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, WEEK_DEF_COLS),
+    expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
+    defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     fetchAll(() => db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')),
     fetchAll(() => db.from('abnormal_payments').select('team, paid')),
     fetchAll(() => db.from('teams').select('*')),
@@ -2753,14 +2767,14 @@ async function dashboardFull(db, user, _args, nowMs) {
   const colTrend = WD5.map((wd, i) => {
     const d = addDaysKey(mon, i);
     const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
-    const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
-    const col = rows.reduce((s, r) => s + collectedOf(r), 0);
+    const exp = tExpected(rows);
+    const col = tCollected(rows);
     /* A DAY NOBODY HAS UPLOADED IS NOT A DAY OF ZERO COLLECTION.
        Thursday showing "TZS 0 / Col 0%" on Wednesday afternoon makes the week look like a
        disaster when nothing has happened yet at all. The totals were always right -- an empty
        day adds nothing to either side of the sum -- but the tile was not, so this says which
        days actually have a sheet behind them and the screen stops guessing. */
-    return { weekday: wd, date: d, expected: exp, collected: col, uncollected: uncollectedOf(rows),
+    return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
       uploaded: rows.length > 0,
       pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null };
   });
@@ -2771,10 +2785,10 @@ async function dashboardFull(db, user, _args, nowMs) {
     const d = addDaysKey(mon, i);
     const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial'));
     const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current'));
-    const from = ini.reduce((s, r) => s + num(r.arrears), 0);
-    const to = cur.reduce((s, r) => s + num(r.arrears), 0);
+    const from = tArrears(ini);
+    const to = tArrears(cur);
     const rec = (ini.length && cur.length) ? from - to : 0;
-    const unc = uncollectedOf(pickLatestBatchRows(dayRows(myExpWeek, d)));
+    const unc = tUncollected(pickLatestBatchRows(dayRows(myExpWeek, d)));
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       uploaded: !!(ini.length || cur.length),
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
@@ -2808,10 +2822,10 @@ async function dashboardFull(db, user, _args, nowMs) {
     s.recovery = t.recovery || null; s.gmo = t.gmo || null; s.manager = t.manager || null;
     s.opm = t.opm || null; s.bike = t.bike || null;
   }
-  for (const r of iniToday) slot(r.team).initArrears += num(r.arrears);
-  for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears); s.defaulters += 1; }
-  for (const r of todayExp) { const s = slot(r.team); s.expToday += num(r.payment_expected); s.colToday += collectedOf(r); }
-  for (const r of earlyExp) { const s = slot(r.team); s.expEarly += num(r.payment_expected); s.colEarly += collectedOf(r); }
+  for (const r of iniToday) slot(r.team).initArrears += num(r.arrears_amt);
+  for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears_amt); s.defaulters += num(r.customers); }
+  for (const r of todayExp) { const s = slot(r.team); s.expToday += num(r.expected_amt); s.colToday += num(r.collected_amt); }
+  for (const r of earlyExp) { const s = slot(r.team); s.expEarly += num(r.expected_amt); s.colEarly += num(r.collected_amt); }
   /* THE THREE RECOVERY DENOMINATORS, per team. Recovery % is recovered over the uncollected
      the team is actually chasing, and which day's that is depends on the day -- Monday by
      Monday, Tuesday to Friday by yesterday, the weekend by the week. The meeting wants to see
@@ -2822,7 +2836,7 @@ async function dashboardFull(db, user, _args, nowMs) {
      cannot double a denominator and halve a percentage. */
   const uncolInto = (d, field) => {
     for (const r of pickLatestBatchRows(dayRows(myExpWeek, d))) {
-      slot(r.team)[field] += Math.max(0, num(r.payment_expected) - collectedOf(r));
+      slot(r.team)[field] += num(r.uncollected_amt);
     }
   };
   uncolInto(mon, 'uncolMon');
@@ -2831,9 +2845,9 @@ async function dashboardFull(db, user, _args, nowMs) {
     const d = addDaysKey(mon, i);
     for (const r of pickLatestBatchRows(dayRows(myExpWeek, d))) {
       const sl = slot(r.team);
-      sl.uncolWeek += Math.max(0, num(r.payment_expected) - collectedOf(r));
-      sl.expWeek += num(r.payment_expected);
-      sl.colWeek += collectedOf(r);
+      sl.uncolWeek += num(r.uncollected_amt);
+      sl.expWeek += num(r.expected_amt);
+      sl.colWeek += num(r.collected_amt);
     }
   }
 
@@ -2893,14 +2907,14 @@ async function dashboardFull(db, user, _args, nowMs) {
       curArrears: teams.reduce((s, t) => s + t.curArrears, 0),
       initArrears: teams.reduce((s, t) => s + t.initArrears, 0),
       recovered: teams.reduce((s, t) => s + t.recovered, 0),
-      defaulters: curToday.length,
-      defaultersInitial: iniToday.length,
-      cleared: Math.max(0, iniToday.length - curToday.length),
+      defaulters: tCustomers(curToday),
+      defaultersInitial: tCustomers(iniToday),
+      cleared: Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
       salesLoans: myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
       abnormal: myAbn.length,
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
-      uncollectedToday: uncollectedOf(todayExp),
+      uncollectedToday: tUncollected(todayExp),
     },
     appsTrend, salesTrend, colTrend, recTrend, funnel,
     teamPerf: teams,
@@ -3077,14 +3091,12 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      Keep this list honest: if a figure below starts reading a new column, it has to be added
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
-  const EXP_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
-  const DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
          codeRows, cfgS] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
-    snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' }, mon, fri, user.teams, EXP_COLS),
-    earlyList(db, { today, teams: user.teams, columns: EXP_COLS }),
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, DEF_COLS),
+    expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
+    earlyList(db, { today, teams: user.teams }),
+    defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     fetchAll(() => onTeams(db.from('followup_status').select('ref, team, status, fu_status, arrears'), user.teams)),
     fetchAll(() => onTeams(db.from('loans').select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt, track_no, upload_date'), user.teams)),
     fetchAll(() => onTeams(db.from('call_logs').select('*').gte('call_date', mon).lte('call_date', sun), user.teams)),
@@ -3133,11 +3145,10 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     for (const r of rows) {
       const b = bucket(m, officerOf(teamBy, r.team, 'expected'),
         { uncollected: 0, paidOver: 0, expected: 0, collected: 0, teamSet: {} });
-      const c = collectedOf(r);
-      b.expected += num(r.payment_expected); b.collected += c;
-      b.uncollected += Math.max(0, num(r.payment_expected) - c);
+      b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
+      b.uncollected += num(r.uncollected_amt);
       if (r.team) b.teamSet[K(r.team)] = 1;
-      if (['PAID', 'OVERPAID'].includes(K(r.todays_status))) b.paidOver += 1;
+      b.paidOver += num(r.paid_n) + num(r.over_n);
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
       teams: Object.keys(b.teamSet).length,
@@ -3167,8 +3178,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const uncolOnDate = d => {
     const m = {};
     for (const r of onDate(myExp, d)) {
-      bucket(m, officerOf(teamBy, r.team, 'recovery'), { amt: 0 }).amt
-        += Math.max(0, num(r.payment_expected) - collectedOf(r));
+      bucket(m, officerOf(teamBy, r.team, 'recovery'), { amt: 0 }).amt += num(r.uncollected_amt);
     }
     return m;
   };
@@ -3190,8 +3200,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   function recBoard(iniRows, curRows, dailyRecovered, uncolBy) {
     const m = {};
     const blank = { initial: 0, current: 0, recovered: 0, uncollected: 0 };
-    for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).initial += num(r.arrears);
-    for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).current += num(r.arrears);
+    for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).initial += num(r.arrears_amt);
+    for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).current += num(r.arrears_amt);
     for (const k of Object.keys(uncolBy)) bucket(m, k, blank).uncollected += uncolBy[k];
     if (dailyRecovered) for (const k of Object.keys(dailyRecovered)) bucket(m, k, blank).recovered += dailyRecovered[k];
     return Object.values(m).map(b => {
@@ -3215,8 +3225,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     const ini = onDate(myDef, d, 'initial', dwd), cur = onDate(myDef, d, 'current', dwd);
     if (!ini.length || !cur.length) continue;
     const per = {};
-    for (const r of ini) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) + num(r.arrears);
-    for (const r of cur) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) - num(r.arrears);
+    for (const r of ini) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) + num(r.arrears_amt);
+    for (const r of cur) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) - num(r.arrears_amt);
     for (const k of Object.keys(per)) dailyRec[k] = (dailyRec[k] || 0) + per[k];
   }
   const iniMon = onDate(myDef, mon, 'initial', 'MON');
@@ -3228,13 +3238,17 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      reported as money recovered. Uploading the same file as both should read as zero
      recovery; a partial or wrong second upload instead shows a large, entirely fictional
      recovery, and nothing on the screen says why. Compare the headcounts and say so. */
+  /* HEADCOUNTS, NOT ROW COUNTS. These rows are team-day totals now, so how many of them there
+     are says how many teams uploaded -- not how many customers are on the deck, which is what
+     this warning is about and what the two figures beside it report. */
+  const iniCustomers = tCustomers(iniToday), curCustomers = tCustomers(curToday);
   const deckWarning = (() => {
-    if (!iniToday.length || !curToday.length) return null;
-    const gap = Math.abs(iniToday.length - curToday.length);
-    if (gap / Math.max(iniToday.length, curToday.length) < 0.02) return null;
-    const short = curToday.length < iniToday.length ? 'current' : 'initial';
-    return `Today's initial deck has ${iniToday.length.toLocaleString('en-US')} customers but the current deck has `
-      + `${curToday.length.toLocaleString('en-US')} — the ${short} upload looks incomplete, so the recovery figures `
+    if (!iniCustomers || !curCustomers) return null;
+    const gap = Math.abs(iniCustomers - curCustomers);
+    if (gap / Math.max(iniCustomers, curCustomers) < 0.02) return null;
+    const short = curCustomers < iniCustomers ? 'current' : 'initial';
+    return `Today's initial deck has ${iniCustomers.toLocaleString('en-US')} customers but the current deck has `
+      + `${curCustomers.toLocaleString('en-US')} — the ${short} upload looks incomplete, so the recovery figures `
       + `below are overstated by the difference. Re-upload it before reading these numbers.`;
   })();
 
@@ -3255,9 +3269,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     return Object.values(m).map(b => {
       // Their recovery share: the movement on the teams whose files they actually processed.
       let ini = 0, cur = 0, unc = 0;
-      for (const r of iniToday) if (b.teams[K(r.team)]) ini += num(r.arrears);
-      for (const r of curToday) if (b.teams[K(r.team)]) cur += num(r.arrears);
-      for (const r of myExp) if (b.teams[K(r.team)]) unc += Math.max(0, num(r.payment_expected) - collectedOf(r));
+      for (const r of iniToday) if (b.teams[K(r.team)]) ini += num(r.arrears_amt);
+      for (const r of curToday) if (b.teams[K(r.team)]) cur += num(r.arrears_amt);
+      for (const r of myExp) if (b.teams[K(r.team)]) unc += num(r.uncollected_amt);
       const salesPct = pctOf(b.amount, target), recPct = pctOf(ini - cur, unc);
       return { analyst: b.key, apps: b.apps, amount: b.amount, salesPct, recPct,
         perf: (salesPct == null && recPct == null) ? null : Math.round(((salesPct || 0) + (recPct || 0)) / 2 * 10) / 10 };
@@ -3378,7 +3392,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     pct: pctOf(b.customers, real.length) })).sort((a, b) => b.customers - a.customers);
 
   return { weekday: wd, weekOf: mon, today, deckWarning,
-    initialCount: iniToday.length, currentCount: curToday.length,
+    initialCount: iniCustomers, currentCount: curCustomers,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
     callToday, callWeek, callWeekWorst, csToday, csWeek,
     /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission

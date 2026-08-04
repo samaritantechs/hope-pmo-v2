@@ -19,6 +19,7 @@ process.env.SUPABASE_URL ||= 'http://x';
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'y';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { fakeDb } = await import(path.join(ROOT, 'test/fake-db.mjs'));
+const { SNAPSHOT_TOTALS_RPC } = await import(path.join(ROOT, 'test/snapshot-totals-rpc.mjs'));
 const { portalApi } = await import(path.join(ROOT, 'api/_lib/portal-core.js'));
 const { PAGE_SIZE } = await import(path.join(ROOT, 'api/_lib/supabase.js'));
 
@@ -75,8 +76,8 @@ const TOTAL = Object.values(t).reduce((s, a) => s + a.length, 0);
 console.log(`  ${TOTAL.toLocaleString()} rows in memory\n`);
 
 /* Wrap the fake so every .range() page is counted the way fetchAll actually issues them. */
-function counting(tables) {
-  const db = fakeDb(tables);
+function counting(tables, opts) {
+  const db = fakeDb(tables, opts);
   let trips = 0, rows = 0, bytes = 0;
   const wrap = q => new Proxy(q, { get(o, p) {
     if (p === 'then') return (res, rej) => o.then(r => {
@@ -91,7 +92,18 @@ function counting(tables) {
     const v = o[p];
     return typeof v === 'function' ? (...a) => { const out = v.apply(o, a); return out === o ? wrap(o) : out; } : v;
   } });
-  return { db: { from: n => wrap(db.from(n)), rpc: async (n, a) => { trips++; return db.rpc(n, a); }, _dump: n => db._dump(n) },
+  return { db: { from: n => wrap(db.from(n)),
+                 rpc: async (n, a) => {
+                   trips++;
+                   const r = await db.rpc(n, a);
+                   // A database function's answer costs exactly what it carries, same as a
+                   // table read -- counting the trip and not the rows would hide whether the
+                   // work actually moved or just changed shape.
+                   if (Array.isArray(r.data)) rows += r.data.length;
+                   if (r.data) bytes += JSON.stringify(r.data).length;
+                   return r;
+                 },
+                 _dump: n => db._dump(n) },
            stat: () => ({ trips, rows, bytes }) };
 }
 
@@ -114,11 +126,20 @@ const SCREENS = [
   ['Weekly report', ['weekly'], {}, ADMIN],
 ];
 
+/* TWO WORLDS, BECAUSE BOTH ARE LIVE. db/migrations/2026-08-05-snapshot-totals.sql is pasted
+   into the SQL editor by hand, so until that happens the same code reads the rows and adds
+   them up itself. Printing both is what makes the saving a measurement rather than a claim --
+   and it keeps the slow path honest on deployments that have not run the migration yet. */
+const world = (process.argv[2] === '--before') ? undefined : { rpc: SNAPSHOT_TOTALS_RPC };
+console.log(world
+  ? 'WITH db/migrations/2026-08-05-snapshot-totals.sql run (pass --before for the other)\n'
+  : 'BEFORE the team-day totals migration -- the rows come here to be added up\n');
+
 console.log('screen                            trips      rows        MB      ms');
 console.log('─'.repeat(70));
 let worstTrips = 0;
 for (const [label, fns, args, user] of SCREENS) {
-  const c = counting(t);
+  const c = counting(t, world);
   const t0 = Date.now();
   let err = '';
   // The browser fires a screen's calls together, so measure them together.

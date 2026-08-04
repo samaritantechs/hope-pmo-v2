@@ -20,7 +20,7 @@
  * intended that. Below 85 pays nothing, which IS intended.
  */
 
-import { collectedOf, num } from './recovery.js';
+import { num } from './recovery.js';
 
 /* Highest first, so the first band whose floor is reached is the answer. */
 export const PMO_BANDS = [
@@ -59,16 +59,18 @@ export function isPmoRole(role, want) {
   return norm(role) === norm(want || PMO_ROLE_DEFAULT);
 }
 
-/** One officer's collection over one set of already-resolved snapshot rows.
-    Uncollected is clamped per row before it is summed, so the total cannot go negative however
-    the day went — the same rule the dashboard's Uncollected KPI uses. */
+/** One officer's collection over one set of already-resolved TEAM-DAY TOTALS -- the rows
+    api/_lib/snapshot-totals.js produces, one per team per day rather than one per customer.
+    Uncollected was clamped per customer before it was ever summed, so the total still cannot go
+    negative however the day went — the same rule the dashboard's Uncollected KPI uses, applied
+    where the summing happens. */
 export function collectionOf(rows) {
   let expected = 0, collected = 0, uncollected = 0, customers = 0;
   for (const r of rows) {
-    const e = num(r.payment_expected), c = collectedOf(r);
-    expected += e; collected += c;
-    uncollected += Math.max(0, e - c);
-    customers++;
+    expected += num(r.expected_amt);
+    collected += num(r.collected_amt);
+    uncollected += num(r.uncollected_amt);
+    customers += num(r.customers);
   }
   return { expected, collected, uncollected, customers,
     // Null, not zero, when nothing was expected. "No percentage" and "nought per cent" are

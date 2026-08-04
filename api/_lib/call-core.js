@@ -2,6 +2,7 @@ import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
+import { expectedTotalsInRange, expectedTotalsLatest, tCustomers, tExpected, tCollected } from './snapshot-totals.js';
 import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
@@ -442,8 +443,11 @@ async function summaryCompute(db, user, nowMs) {
      thing the phone never shows them. Same derivation as the Kesho tab -- the sheet dated
      tomorrow, with Friday and the weekend rolling on to Monday. */
   const u = isoWeekday(nowMs);
-  let kSnap = await latestSnapshot(db, 'repayment_snapshots',
-    { snapshot_type: 'today' }, { onDate: addDaysKey(today, u >= 5 ? (8 - u) : 1), teams: user.teams });
+  /* TEAM-DAY TOTALS, not customers. The strip is six percentages -- no name, no number, no
+     balance -- and two hundred handsets ask for it every few minutes. An all-teams admin was
+     downloading the whole book to work out two of them. */
+  let kSnap = await expectedTotalsLatest(db,
+    { type: 'today', onDate: addDaysKey(today, u >= 5 ? (8 - u) : 1), teams: user.teams });
   /* THE SAME FALLBACK THE KESHO TAB HAS, AND IT WAS MISSING HERE.
      Nobody uploads an "Expected - Tomorrow" sheet -- tomorrow's list is the ordinary Expected
      sheet filed under tomorrow's date, and the tab has always read it that way with the old
@@ -452,22 +456,21 @@ async function summaryCompute(db, user, nowMs) {
      right below it listed customers. A number that is always blank looks exactly like a bar
      that is not working. */
   if (!kSnap.rows.length) {
-    kSnap = await latestSnapshot(db, 'repayment_snapshots',
-      { snapshot_type: 'tomorrow' }, { notAfter: today, teams: user.teams });
+    kSnap = await expectedTotalsLatest(db, { type: 'tomorrow', notAfter: today, teams: user.teams });
   }
   const kRows = mine(kSnap.rows);
-  const kExp = kRows.reduce((s, r) => s + num(r.payment_expected), 0);
-  const kCol = kRows.reduce((s, r) => s + collectedOf(r), 0);
+  const kExp = tExpected(kRows);
+  const kCol = tCollected(kRows);
 
   /* WEEK COL -- collection Mon-Fri to date. A day on its own says nothing about whether the
      week is being carried; the officers are chased on the week, so the week is on the bar.
      Same per-day batch resolution the dashboard uses on weekends, so a re-upload of any day
      supersedes rather than doubles. */
-  const weekAll = await snapshotsInRange(db, 'repayment_snapshots', { snapshot_type: 'today' },
-    weekMondayKey(nowMs), addDaysKey(weekMondayKey(nowMs), 4), user.teams);
+  const weekAll = await expectedTotalsInRange(db, { type: 'today',
+    from: weekMondayKey(nowMs), to: addDaysKey(weekMondayKey(nowMs), 4), teams: user.teams });
   const wRows = mine([...resolveLatestPerKey(weekAll, r => r.snapshot_date).values()].flatMap(s => s.rows));
-  const wExp = wRows.reduce((s, r) => s + num(r.payment_expected), 0);
-  const wCol = wRows.reduce((s, r) => s + collectedOf(r), 0);
+  const wExp = tExpected(wRows);
+  const wCol = tCollected(wRows);
 
   /* EXP.DEF % -- what has come back off the day's expected defaulters against what they owed
      at the start of it. A recycling leader sees their own book; everyone else sees the team's,
@@ -484,8 +487,8 @@ async function summaryCompute(db, user, nowMs) {
     ok: true,
     period: d.period,
     col: { pct: rat(d.totals.collected, d.totals.expectedAmount), num: d.totals.collected, den: d.totals.expectedAmount },
-    kesho: { pct: rat(kCol, kExp), num: kCol, den: kExp, customers: kRows.length },
-    weekCol: { pct: rat(wCol, wExp), num: wCol, den: wExp, customers: wRows.length },
+    kesho: { pct: rat(kCol, kExp), num: kCol, den: kExp, customers: tCustomers(kRows) },
+    weekCol: { pct: rat(wCol, wExp), num: wCol, den: wExp, customers: tCustomers(wRows) },
     sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount, basis: 'month' },
     expdf,
     recovery: { pct: rat(rec.recovered, rec.denominator), num: rec.recovered, den: rec.denominator, basis: rec.basis },
