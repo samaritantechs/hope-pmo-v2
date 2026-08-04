@@ -2564,6 +2564,92 @@ whole book because it reports on the whole book. None of those is the same kind 
 
 ---
 
+## Part 17 — The day the database broke, and what it was NOT
+
+This part exists because I spent most of a day confidently diagnosing the wrong thing, and the
+next person deserves the real answer rather than my reasoning.
+
+### What actually happened
+
+**A Postgres upgrade failed roughly halfway through**, on an instance running Supabase's
+smallest compute tier — **Nano**. Supabase support's words:
+
+> The Postgres upgrade appears to have failed due to resource constraints. The project is
+> currently running on Nano, which has limited CPU and memory. Since Nano and Micro are billed
+> at the same rate in paid organizations, upgrading this project to Micro will not incur any
+> additional compute cost. Please upgrade to Micro and retry the Postgres upgrade.
+
+**Nano and Micro cost the same on a paid plan.** The instance was one size below what it could
+have had for free, and an upgrade could not complete on it.
+
+After that, the database was **intermittent** rather than slow: `select 1` instant, `CREATE
+FUNCTION` two minutes, `GRANT` on one catalogue row timing out, `notify` — which touches nothing
+at all — timing out, a `select` on a four-row table failing while two `update`s on the same table
+succeeded moments later. Supabase's own dashboard showed **4,697 Postgres requests with 3,935
+errors** in twenty-four hours, against 227,000 API gateway requests. The advisor reported no
+issues, because there was nothing wrong with the schema.
+
+### What I said it was, and why I was wrong
+
+I diagnosed **disk I/O throttling** — a spent burst-credit budget — and I was wrong. The evidence
+genuinely fit: instant when served from memory, minutes when it touched disk, no load to explain
+it. But that pattern also fits a half-upgraded instance too small to finish the job, and I never
+considered the second reading.
+
+**The tell I missed:** `notify pgrst, 'reload schema'` timed out. That statement reads nothing,
+writes nothing and takes no lock. No amount of I/O throttling can make it slow. When it failed I
+should have stopped blaming resources being *consumed* and started asking what was *broken* — and
+told the owner to open a support ticket hours before they did.
+
+The lesson, plainly: **when a statement that touches nothing cannot complete, the instance is
+broken, not busy.** Stop tuning and get the platform to look at it.
+
+### What this cost, and what it did not
+
+The performance work in Part 16 was real and it is measured — the Presentation went from 141 MB
+to 6.5 MB per open, the officer boards from 47 MB to 3 MB. **None of it caused this, and none of
+it fixed it.** Two entirely separate problems arriving on the same morning, which is exactly why
+each of them was so hard to see past the other.
+
+The two team-day-total functions were confirmed present in the database throughout, callable by
+every role. They survived the whole episode, as anything that is only two functions and no data
+will.
+
+### Two things worth checking before anything else, next time
+
+**Which deployment are you actually looking at?** The owner found the system working at
+`hope-pmo-v2-ten.vercel.app` while it was failing elsewhere. A Vercel project has several
+addresses — the production domain, a per-branch preview, and a default `*-ten.vercel.app` style
+alias — and they do not all serve the same build. Testing a fix on the wrong one wastes a round
+of "it still is not fixed" for reasons that have nothing to do with the fix. **Check the
+production domain is the one being used, and check its build is the current commit.**
+
+**And what does the Postgres panel say?** Supabase Home shows API Gateway, Postgres, Storage,
+Auth and Realtime side by side, each with its own error count. Postgres failing 84% of its
+requests while the gateway fails 2% is not a slow query — it is the database itself, and it is
+visible in one glance without running any SQL at all.
+
+### The upload, and the thing still worth building
+
+Uploading is the one thing that cannot be made to work on a database in that state, and it is
+also the thing the business cannot do without. It fails in two different ways depending on how
+the writes are sized -- `canceling statement due to statement timeout` when the chunk is too
+large, HTTP 504 when so many small chunks are used that the whole function outruns sixty seconds.
+The adaptive chunk in Part 16 finds a size between those two, and on a healthy database that is
+enough.
+
+**It is not enough on a weak one, and that is a design limit rather than a bug.** A thirty
+thousand row deck should never depend on a single sixty-second window. The durable answer is for
+the upload page to send the file in slices — one HTTP request per few thousand rows, all sharing
+one upload batch, with the follow-up list rebuilt only on the last one. Then no single request
+can be too big to finish, whatever the database is doing that morning.
+
+**That has not been built.** It touches the batch rule, which is the most safety-critical code in
+the system, and it should be done deliberately with the same both-ways proof the team-day totals
+got — not in the middle of an outage. It is the first thing to do next.
+
+---
+
 ## Part 15 — Where things stand
 
 ### Done and live
@@ -2642,6 +2728,8 @@ It would read the same feed `/live` already uses, so the server side is done. **
 built.** Say the word and it will be.
 
 ### Worth doing next
+00. **Uploading a large file in slices instead of one request** — the last thing that cannot
+    survive a weak database. See the end of Part 17.
 0. **Run `2026-08-05-snapshot-totals.sql`** (then `…-05b-…-indexes.sql`, a line at a time). It
    is the one on this page that changes what the system costs to run rather than what it does.
    Everything works without it, slowly.
