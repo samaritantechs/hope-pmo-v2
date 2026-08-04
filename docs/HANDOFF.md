@@ -919,6 +919,7 @@ handed over a team's whole portfolio, and nothing revoked it when an officer wal
 | `db/migrations/2026-07-28-upload-stamp.sql` | The report-date stamp that makes Append / Replace-by-date possible |
 | `db/migrations/2026-07-28-speed-indexes.sql` | Indexes for the lookups every screen makes on load |
 | `db/migrations/2026-08-05-snapshot-totals.sql` | **Team-day totals** — the database adds the snapshots up instead of sending them (Part 16) |
+| `db/migrations/2026-08-05b-snapshot-totals-indexes.sql` | Its indexes, kept apart because they take minutes and must be run a line at a time (Part 16) |
 | `db/migrations/2026-08-01-storage-counts.sql` | **Makes the Settings tab open at once** — lets the database count rows instead of sending a million of them over the internet. Also pins `search_path` on both database functions, closing the security warning Supabase reports. |
 
 > Migrations are run **in date order**, once each, by pasting into Supabase's SQL Editor.
@@ -2473,6 +2474,34 @@ by a team total, and they still read customer rows:
 Those reads were narrowed to the columns they use — the weekly report's two deck reads were
 asking for every column of every row.
 
+### Running it: the functions first, the indexes separately
+
+The first version of this migration ended with two `create index` lines, and pasting the whole
+thing into the Supabase SQL editor answered:
+
+> **Failed to run sql query: Connection terminated due to connection timeout**
+
+Building an index on a live table takes minutes. The editor's connection gives up long before
+Postgres does — and because the editor sends a whole script as **one statement**, that timeout
+rolled back the *functions* along with it. Nothing was created, and the message named neither
+the statement nor the table.
+
+So the migration is split by **how long each half takes**, not by what it is about:
+
+| File | What it does | How to run it |
+|---|---|---|
+| `2026-08-05-snapshot-totals.sql` | The two functions. **This is the half that makes the screens cheap.** | Paste the whole file, press Run. Instant — defining a function reads no rows and locks nothing. |
+| `2026-08-05b-snapshot-totals-indexes.sql` | Two indexes that make them faster still | **One line at a time.** Both use `create index concurrently`, which Postgres refuses to run inside a transaction — and the editor puts everything you paste into one. |
+
+`concurrently` is what makes the second file safe to run during the working day: it builds
+without blocking, so a defaulter deck can still go in while two hundred officers work from it.
+
+**The indexes are a refinement, not a requirement.** `idx_repay_snap_lookup` already leads on
+`(snapshot_type, snapshot_date, team)`, which serves the Expected reads well — they always name
+a type, and equality on the first column with a range on the second is exactly what a composite
+index is for. The reads that gain are the defaulter ones, which ask for both types at once and
+so cannot use an index leading on type.
+
 ### It is optional, like every migration here
 
 Until `2026-08-05-snapshot-totals.sql` is pasted into Supabase, **the same code reads the rows
@@ -2530,6 +2559,7 @@ being late** — the system falls back to the slower path until they are run.
 | `2026-08-03-followup-cleanup.sql` | Fast counting and cleanup of the follow-up list. **Run this one after `2026-08-02-storage-counts-all-reports.sql`** — both define the same counting function, and the last one to run wins. Filename order is correct order. |
 | `2026-08-04-followup-deck-date.sql` | Retires defaulters no deck has confirmed for a fortnight (Part 14p). Without it they stay on the list for ever. |
 | **`2026-08-05-snapshot-totals.sql`** | **The dashboard, the weekly report and the Presentation stop carrying 161,000 rows to add up a page of sums — the Presentation drops from 141 MB to 14.5 MB. This is the one behind the 504s and the memory bill (Part 16). Until it is run everything works exactly as before, slowly.** |
+| `2026-08-05b-snapshot-totals-indexes.sql` | The indexes for the above. **Run it ONE LINE AT A TIME** — see Part 16. A refinement, not a requirement; the functions work without it. |
 | `2026-07-27-hints-many-per-tab.sql` | Then upload `docs/hints-v2.tsv` as Hints |
 | `2026-07-27-call-agents.sql` | Then re-upload Unassigned/Assigned so CREATED BY lands |
 | `2026-07-28-loan-identity.sql` | One row per loan instead of one per stage |
@@ -2570,8 +2600,9 @@ It would read the same feed `/live` already uses, so the server side is done. **
 built.** Say the word and it will be.
 
 ### Worth doing next
-0. **Run `2026-08-05-snapshot-totals.sql`.** It is the one on this page that changes what the
-   system costs to run rather than what it does. Everything works without it, slowly.
+0. **Run `2026-08-05-snapshot-totals.sql`** (then `…-05b-…-indexes.sql`, a line at a time). It
+   is the one on this page that changes what the system costs to run rather than what it does.
+   Everything works without it, slowly.
 1. **The whole loans table on every dashboard open** — the largest read left, and the reason the
    dashboard is not cheaper still. See the end of Part 16.
 2. **The weekly report's sections** — the largest thing still outstanding from the comparison
