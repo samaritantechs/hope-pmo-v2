@@ -18,7 +18,11 @@ on:
         default: 'https://hope-pmo-v2-git-main-samaritantechs.vercel.app'
   push:
     branches: [main]
-    paths: ['android/**', '.github/workflows/android-apk.yml']
+    # app-version.json belongs here as much as android/ does: it IS the version the app
+    # reports and the updater compares against. Left out, an APK could be rebuilt with real
+    # fixes in it and still carry the old versionCode -- so every handset compared 7 against 7,
+    # correctly decided there was nothing new, and the fix never reached anybody.
+    paths: ['android/**', 'app-version.json', '.github/workflows/android-apk.yml']
 
 permissions:
   contents: write
