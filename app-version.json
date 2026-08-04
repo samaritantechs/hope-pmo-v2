@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.5.1",
-  "notes": "Nembo ya HOPE kila mahali pamoja na aikoni ya app, bila kupepesa. / The HOPE logo everywhere including the app icon, with no flicker on open.",
+  "versionCode": 8,
+  "versionName": "1.6.0",
+  "notes": "Kupakua ripoti (JPG, Excel, CSV) sasa kunafanya kazi ndani ya app -- zinahifadhiwa kwenye Downloads za simu. Awali app ilijifunga. / Downloading reports now works inside the app and saves straight to the phone’s Downloads. It used to close the app.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
