@@ -1602,6 +1602,15 @@ async function commissionSave(db, user, p) {
   if (out.statusRates != null) await set('CMS_STATUS_RATES', out.statusRates);
   if (p.paidTzs != null) { out.paidTzs = Math.max(0, num(p.paidTzs) || 0); await set('CMS_PAID_TZS', out.paidTzs); }
   if (p.overTzs != null) { out.overTzs = Math.max(0, num(p.overTzs) || 0); await set('CMS_OVER_TZS', out.overTzs); }
+  /* THE WEEKLY BONUS BELONGS WHERE THE RATES ARE.
+     The rule was built and the amount left deliberately unset, to be typed into Settings under
+     PMO_WEEKLY_BONUS -- which meant the one person deciding what a week is worth had to leave
+     the board showing it, find a raw key by name, and type a number with no context beside it.
+     Every other rate on this panel is set here; this is a rate. */
+  if (p.weeklyBonus != null) {
+    out.weeklyBonus = Math.max(0, num(p.weeklyBonus) || 0);
+    await set(PMO_BONUS_KEY, out.weeklyBonus);
+  }
   // The payout note officers read under their own figure. Capped so a settings box cannot
   // become a place to paste a page of text onto everybody's commission screen.
   if (p.payText != null) { out.payText = String(p.payText).slice(0, 300); await set('COMM_PAY_TEXT', out.payText); }

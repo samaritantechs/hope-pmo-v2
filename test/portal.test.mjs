@@ -2565,3 +2565,38 @@ test('the PMO board carries each day\'s own percentage, keyed J3 J4 J5 AL IJ', a
   assert.equal(r.weekCommission, fromDays);
   assert.ok(r.weekPct > 0 && r.weekPct < 100, 'the week has its own percentage too, as context');
 });
+
+/* THE WEEKLY BONUS IS A RATE, SO IT BELONGS WHERE THE RATES ARE.
+ *
+ * The rule was built and the amount deliberately left unset, to be typed into Settings as a raw
+ * PMO_WEEKLY_BONUS key. So the one person deciding what a week is worth had to leave the board
+ * showing it, find a key by name, and type a number with no context beside it. Every other rate
+ * on the commission panel is set on the commission panel; this is a rate.
+ */
+test('the weekly bonus can be set from the commission panel', async () => {
+  const db = fakeDb(tables());
+  const r = await portalApi(db, ADMIN, 'commissionSave', { weeklyBonus: '250000' }, NOW);
+  assert.equal(r.weeklyBonus, 250000);
+  const row = db._dump('settings').find(s => s.key === 'PMO_WEEKLY_BONUS');
+  assert.equal(row.value, '250000', 'and it writes the same key the rule already reads');
+
+  // Zero is a real answer -- "no bonus this period" -- not a missing one.
+  await portalApi(db, ADMIN, 'commissionSave', { weeklyBonus: '0' }, NOW);
+  assert.equal(db._dump('settings').find(s => s.key === 'PMO_WEEKLY_BONUS').value, '0');
+
+  // Nonsense cannot become a payout.
+  await portalApi(db, ADMIN, 'commissionSave', { weeklyBonus: 'ngapi' }, NOW);
+  assert.equal(db._dump('settings').find(s => s.key === 'PMO_WEEKLY_BONUS').value, '0');
+
+  // Saving the other rates must not silently wipe it.
+  await portalApi(db, ADMIN, 'commissionSave', { weeklyBonus: '90000' }, NOW);
+  await portalApi(db, ADMIN, 'commissionSave', { paidTzs: '100' }, NOW);
+  assert.equal(db._dump('settings').find(s => s.key === 'PMO_WEEKLY_BONUS').value, '90000',
+    'a field left out of one save is untouched, not cleared');
+});
+
+test('setting the bonus is admin-only', async () => {
+  const db = fakeDb(tables());
+  await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { weeklyBonus: '1' }, NOW),
+    e => e.status === 403);
+});
