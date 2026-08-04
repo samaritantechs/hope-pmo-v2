@@ -2029,8 +2029,11 @@ VIEWS.commission = function(){
         : '')
       + ((d.pmo && d.pmo.length) ? board('cmPmoDay','PMO Collection — leo / today',
           'kiwango cha siku kinatokana na asilimia ya siku hiyo / the day’s rate follows that day’s percentage',
+          /* EXPECTED IS GONE FROM BOTH THESE BOARDS. What is owed is not what anybody here is
+             judged on -- uncollected and the percentage are, and a column nobody reads is a
+             column between them and the two that matter. */
           d.pmo, [col('officer','PMO'), col('teams','Teams','num'), col('customers','Customers','num'),
-            col('expected','Expected','money'), col('uncollected','Uncollected','money'),
+            col('uncollected','Uncollected','money'),
             col('pct','Collection %','pct'), col('band','Band'), col('commission','Today TZS','money')]) : '');
     /* The week's PMO board is a board of its own rather than the main table, because the main
        table is the recovery/early-collection week and the two are different people paid on
@@ -2038,10 +2041,16 @@ VIEWS.commission = function(){
     if (d.pmo && d.pmo.length) HEAD += board('cmPmoWeek','PMO Collection — wiki hii / this week',
       'jumla ya viwango vya kila siku, si asilimia ya wiki iliyowekwa kwenye kundi moja'
       + ' / each day banded on its own percentage and added up, not the week scored once',
+      /* THE FIVE DAYS, EACH WITH ITS OWN PERCENTAGE, BEFORE THE WEEK'S.
+         Pay follows each day's own band added up -- a good Ijumaa is worth something after a
+         poor Jumanne -- so the five percentages are what tell somebody what they are earning,
+         and Week TZS is their sum. The week's own percentage is context, not the basis, which
+         is why it sits AFTER them and not in front. */
       d.pmo, [col('officer','PMO'), col('teams','Teams','num'),
-        col('weekExpected','Expected','money'), col('weekUncollected','Uncollected','money'),
-        col('weekPct','Collection %','pct'), col('prevWeekPct','Last week %','pct'),
-        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]);
+        col('weekUncollected','Uncollected','money')]
+        .concat(['J3','J4','J5','AL','IJ'].map(function(k){ return col('pct'+k, k, 'pct'); }))
+        .concat([col('weekPct','Wiki %','pct'), col('prevWeekPct','Last week %','pct'),
+        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]));
     S.rows = d.week;
     S.cols = CMS_COLS;
     ONROW = null;
@@ -2390,6 +2399,10 @@ VIEWS.credit = function(){
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
    report read these columns, so a reassignment has to be editable here, not re-uploaded. */
 var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
+/* credit_id is not a role -- it is the ID that role's holder appears under in the sale-approvals
+   report, which is the only thing standing between an analyst and being named on a slide. It
+   rides in the same form and saves the same way, with a label that says what it is for. */
+var TEAM_EXTRA = [['credit_id', 'CREDIT ID (kwenye ripoti ya mauzo / in the approvals report)']];
 VIEWS.teams = function(){
   return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; })]).then(function(rr){
     var d = rr[0]; S.csAgents = rr[1];
@@ -2442,7 +2455,12 @@ VIEWS.teams = function(){
       {key:'team_code', label:'Msimbo / Code', cls:function(r){ return r.team_code?'':'bad'; },
        get:function(r){ return r.team_code || 'HAKUNA / NONE'; }},
       col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
-      col('manager','Manager'), col('credit','Credit'), col('expected','Expected'), col('bike','Bike')];
+      col('manager','Manager'), col('credit','Credit'),
+      /* The ID this analyst appears under in the sale-approvals report -- the one fact about
+         them no report carries in words, so it has to be written down once. */
+      {key:'credit_id', label:'Credit ID', cls:function(r){ return (r.credit && !r.credit_id)?'bad':''; },
+       get:function(r){ return r.credit_id || (r.credit ? 'HAIJAWEKWA / NOT SET' : '—'); }},
+      col('expected','Expected'), col('bike','Bike')];
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
 };
@@ -2506,6 +2524,9 @@ function teamForm(x){
     + TEAM_ROLES.map(function(c){
         return '<div class="fld"><label>'+c.toUpperCase()+'</label><input id="t_'+c+'" value="'+esc(x&&x[c]?x[c]:'')+'"></div>';
       }).join('')
+    + TEAM_EXTRA.map(function(e){
+        return '<div class="fld"><label>'+esc(e[1])+'</label><input id="t_'+e[0]+'" value="'+esc(x&&x[e[0]]?x[e[0]]:'')+'"></div>';
+      }).join('')
     + '<button class="btn w" id="tSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="tDel">Futa timu / Delete team</button>'));
   // Generate fills the box so the code is visible BEFORE saving -- an admin has to be able to
@@ -2522,6 +2543,7 @@ function teamForm(x){
     var p = { team: document.getElementById('tTeam').value.trim(),
               teamCode: document.getElementById('tCode').value.trim() };
     TEAM_ROLES.forEach(function(c){ p[c] = document.getElementById('t_'+c).value.trim(); });
+    TEAM_EXTRA.forEach(function(e){ p[e[0]] = document.getElementById('t_'+e[0]).value.trim(); });
     srv('saveTeam', p).then(function(r){
       toast(r.rotated
         ? ('Msimbo umebadilishwa — simu ' + money(r.released) + ' zimekatwa. / Code changed, ' + money(r.released) + ' handset(s) released.')

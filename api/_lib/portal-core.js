@@ -1703,6 +1703,17 @@ async function credit(db, user, _args, nowMs) {
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
+  /* THE ID IN THE FILE, THE NAME IN THE ROOM.
+     Approvals name the analyst by an ID. If somebody has written that ID beside an analyst in
+     the Teams panel, use their name; otherwise fall back to the team's credit column, and
+     failing that the raw ID -- which is what it did before, and is better than dropping the
+     row. Built once here rather than looked up per loan. */
+  const byAnalystId = {};
+  for (const t of teamRows || []) {
+    const id = K(t.credit_id || '');
+    if (id && t.credit) byAnalystId[id] = t.credit;
+  }
+  const nameForId = id => byAnalystId[K(id || '')] || null;
   const analystOf = team => officerOf(teamBy, team, 'credit');
 
   const defCur = scoped(user, curSnap.rows);
@@ -2943,10 +2954,20 @@ async function saveTeam(db, user, p) {
   const team = normTeamName(p && p.team);
   if (!team) throw badRequest('team is required');
   const row = { team };
-  for (const c of ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike']) {
+  /* credit_id is the analyst's ID in the sale-approvals report -- the one fact about them that
+     no report carries in words. Saved like any other column here; a database without the
+     migration simply refuses it, which is why it is filtered out below rather than assumed. */
+  for (const c of ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike', 'credit_id']) {
     if (p[c] !== undefined) row[c] = String(p[c] || '').trim() || null;
   }
   const existing = (await fetchAll(() => db.from('teams').select('*'))) || [];
+  /* A DATABASE THAT HAS NOT HAD THE MIGRATION MUST STILL SAVE THE REST. Migrations here are run
+     by hand, so credit_id is dropped rather than sent when no existing row has ever carried it
+     -- otherwise adding the field to the form would break saving a team for everybody until
+     somebody opened the SQL editor. */
+  if (row.credit_id !== undefined && existing.length && !existing.some(t => 'credit_id' in t)) {
+    delete row.credit_id;
+  }
   const mine = existing.find(t => K(t.team) === K(team));
   if (p.generateCode) {
     row.team_code = generatePasscode(6).replace('-', '');
