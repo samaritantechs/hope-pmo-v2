@@ -1094,7 +1094,8 @@ function wireBar(){
   if (cmSave) cmSave.onclick = function(){
     srv('commissionSave', { mode: $('#cmMode').value, yearRates: $('#cmYear').value,
       statusRates: $('#cmStatus').value, paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
-      payText: ($('#cmPayText') ? $('#cmPayText').value : null) })
+      payText: ($('#cmPayText') ? $('#cmPayText').value : null),
+      weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null) })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
@@ -2006,6 +2007,13 @@ VIEWS.commission = function(){
             + '<input id="cmPaid" type="number" min="0" step="50" value="'+(d.paidTzs||0)+'"></div>'
           + '<div class="fld"><label>TZS per OVERPAID client</label>'
             + '<input id="cmOver" type="number" min="0" step="50" value="'+(d.overTzs||0)+'"></div>'
+          /* The weekly bonus, beside the rates it belongs with. It used to live only as a raw
+             key in Settings, so the person deciding what a week is worth had to leave the board
+             showing it and type a number with no context beside it. */
+          + '<div class="fld"><label>Bonasi ya wiki / Weekly bonus (TZS)</label>'
+            + '<input id="cmBonus" type="number" min="0" step="1000" value="'+(d.pmoBonus && d.pmoBonus.tzs || 0)+'">'
+            + '<div class="fldnote">Hulipwa kwa kiongozi mmoja anayeongoza kwa asilimia ya wiki NA amepita asilimia yake ya wiki iliyopita. 0 = hakuna bonasi.'
+            + ' / Paid to the single leader who tops the week AND beat their own previous week. 0 means no bonus.</div></div>'
           + '<div class="fld" style="grid-column:1/-1"><label>Maelezo ya malipo / Payout note shown to officers</label>'
             + '<input id="cmPayText" placeholder="mf. Kamisheni hulipwa kila tarehe 5 ya mwezi" value="'+esc(d.payText||'')+'"></div>'
           + '<button class="btn sm" id="cmSave">Hifadhi / Save &amp; recalculate</button>'
