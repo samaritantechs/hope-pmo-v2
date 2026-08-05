@@ -1330,13 +1330,18 @@ VIEWS.dashboard = function(){
             : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
-               This line used to read "3,045,126,092 → 3,037,163,922", which says where the
-               arrears moved but not what the recovery is being measured against. The
-               denominator is the day's uncollected, so that is what belongs here. */
-            ['Unrecovered TZS '+money(x.uncollected), 'badl'],
+               UNRECOVERED IS WHAT IS STILL OUT: the day's uncollected MINUS what came back.
+               It showed the uncollected itself, under a heading that means something else --
+               so a Tuesday leaving 8m behind, with 2m recovered, read as 8m still out rather
+               than 6m. Worked out on the server beside the figures it comes from, so the tile
+               and the total cannot drift from it. */
+            ['Unrecovered TZS '+money(x.unrecovered), 'badl'],
             [x.full ? '<span class="good">full recovery</span>' : ('Rec '+pct(x.pct)), 'good']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
-            ['Unrecovered TZS '+money(d.recTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
+            /* The sum of what the tiles show, so the column adds up on screen. A day nobody
+               uploaded a deck for still counts: the money is out whether or not anybody
+               measured the recovery on it. */
+            ['Unrecovered TZS '+money(d.recTrend.reduce(function(s,x){return s+(x.unrecovered||0);},0)), 'badl'],
             ['Rec '+pct((function(){var u=d.recTrend.reduce(function(s,x){return s+x.uncollected;},0),r=d.recTrend.reduce(function(s,x){return s+x.recovered;},0);return u>0?Math.round(1000*r/u)/10:null;})()), 'good']], 'tot'))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){
