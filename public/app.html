@@ -398,7 +398,7 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  demandNotices:1, abnormal:1, credit:1, teams:1, settings:1, storageUsage:1,
+  demandNotices:1, abnormal:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
@@ -2502,8 +2502,9 @@ var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
    rides in the same form and saves the same way, with a label that says what it is for. */
 var TEAM_EXTRA = [['credit_id', 'CREDIT ID (kwenye ripoti ya mauzo / in the approvals report)']];
 VIEWS.teams = function(){
-  return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; })]).then(function(rr){
-    var d = rr[0]; S.csAgents = rr[1];
+  return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; }),
+                      srv('staffRoster').catch(function(){ return null; })]).then(function(rr){
+    var d = rr[0]; S.csAgents = rr[1]; S.staff = rr[2];
     var staffed = {};
     d.rows.forEach(function(r){ TEAM_ROLES.forEach(function(c){ if (r[c]) staffed[r[c]] = 1; }); });
     S.roleMeta = d;
@@ -2515,6 +2516,30 @@ VIEWS.teams = function(){
       + '<div class="note">Msimbo wa timu ndio maafisa wanaingia nao. Ukibadilisha, simu zote za timu hiyo zinakatwa mara moja.'
       + ' / The team code is what field officers sign in with. Changing it cuts every handset on that team immediately —'
       + ' that is how you lock out someone who has left. To cut <b>one</b> person only, switch their account off in Settings.</div>'
+      /* WAFANYAKAZI / STAFF -- the same people, listed BY PERSON instead of by team.
+         Moving somebody off ten teams and onto ten others was twenty edits down in the table
+         below, each one a chance to miss a row. Here it is one row, one save.
+         It also shows the COLLECTION OFFICERS, whose teams live on their access code rather
+         than on the teams table -- so they were not on this screen at all. */
+      + (S.me.can.admin && S.staff
+          ? '<div class="card" id="staffCard"><div class="card-h">Wafanyakazi / Staff &mdash; by person'
+            + '<span class="sub"><button class="btn sm" id="newStaff">+ Mpya / New</button></span></div>'
+            + '<div class="note" style="margin:10px 14px">Bofya mtu kubadili timu zake zote kwa mara moja.'
+            + ' / Tap a person to set <b>all</b> their teams at once. Timu usiyoichagua inaondolewa kwake.'
+            + ' / A team you leave unticked is taken off them.</div>'
+            + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Jina / Name</th><th>Wadhifa / Role</th>'
+            + '<th class="r">Timu</th><th>Teams</th><th></th></tr></thead><tbody>'
+            + (S.staff.staff||[]).map(function(x, i){
+                var key = x.role + '\u0001' + x.name;
+                return '<tr class="clickrow" data-staff="'+esc(key)+'"><td class="sn">'+(i+1)+'</td>'
+                  + '<td><b>'+esc(x.name)+'</b></td><td>'+esc(x.roleLabel)+'</td>'
+                  + '<td class="r">'+money((x.teams||[]).length)+'</td>'
+                  + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+                  + esc((x.teams||[]).join(', ') || '—')+'</td>'
+                  + '<td class="r"><button class="btn sm ghost" data-staff="'+esc(key)+'">Badili / Edit</button></td></tr>';
+              }).join('')
+            + '</tbody></table></div></div>'
+          : '')
       // A role's tab list was readable but not editable anywhere, so onboarding a new kind of
       // officer meant a trip to the SQL editor.
       + (S.me.can.admin
@@ -2582,6 +2607,73 @@ function agentForm(x){
       .catch(function(e){ toast(String(e.message||e), true); });
   };
 }
+/* ONE PERSON, ALL THEIR TEAMS, ONE SAVE.
+ *
+ *  The list of ticks IS the answer -- a team left unticked is taken off them. That is the half
+ *  that made this worth building: a reassignment done ten rows at a time and abandoned half way
+ *  leaves a team pointing at somebody who has left, and nothing on any screen says so.
+ *
+ *  The role decides where the save goes. Six of the seven live as a column on the teams table;
+ *  a COLLECTION officer's teams are a list on their access code. Nobody using this screen has
+ *  to know that -- the server writes to whichever place the role actually lives in. */
+function staffForm(x){
+  var meta = S.staff || { roles: [], allTeams: [] };
+  var isNew = !x;
+  var have = (x && x.teams) || [];
+  var roles = meta.roles || [];
+  drawer('<h3>'+(isNew ? 'Mfanyakazi mpya / New staff member' : esc(x.name))+'</h3>'
+    + '<div class="sub">Timu ulizochagua ndio anazokuwa nazo. Usiyoichagua inaondolewa.'
+    + ' / The teams you tick are the ones they hold. Anything unticked is taken off them.</div>'
+    + '<div class="fld"><label>Jina / Name</label><input id="sfName" value="'+esc(x?x.name:'')+'"></div>'
+    + '<div class="fld"><label>Wadhifa / Role</label><select id="sfRole">'
+    + roles.map(function(r){
+        return '<option value="'+esc(r.key)+'"'+((x && x.role===r.key)?' selected':'')+'>'+esc(r.label)+'</option>';
+      }).join('') + '</select></div>'
+    /* A collection officer IS an access code with that role. Saying so here means the refusal
+       from the server is never the first time anybody hears it. */
+    + '<div class="note" id="sfNote" style="display:none">Afisa wa makusanyo lazima awe na msimbo wa kuingia'
+    + ' wenye wadhifa huo. / A collection officer must already have an access code with that role —'
+    + ' create it under Settings first, then set their teams here.</div>'
+    + '<div class="fld"><label>Timu / Teams <span id="sfCount" class="sub"></span></label>'
+    + '<div style="margin:4px 0 8px"><button class="btn sm ghost" type="button" id="sfAll">Chagua zote / All</button> '
+    + '<button class="btn sm ghost" type="button" id="sfNone">Ondoa zote / None</button></div>'
+    + '<div class="checks" style="max-height:46vh;overflow:auto">'
+    + (meta.allTeams||[]).map(function(t){
+        return '<label><input type="checkbox" class="sfTeam" value="'+esc(t)+'"'
+          + (have.indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
+    + '</div></div>'
+    + '<button class="btn w" id="sfSave">Hifadhi / Save</button>');
+
+  var boxes = function(){ return document.querySelectorAll('.sfTeam'); };
+  var recount = function(){
+    var n = 0;
+    Array.prototype.forEach.call(boxes(), function(c){ if (c.checked) n++; });
+    $('#sfCount').textContent = '(' + n + ')';
+    $('#sfNote').style.display = ($('#sfRole').value === 'collection') ? '' : 'none';
+  };
+  Array.prototype.forEach.call(boxes(), function(c){ c.onchange = recount; });
+  $('#sfRole').onchange = recount;
+  $('#sfAll').onclick = function(){ Array.prototype.forEach.call(boxes(), function(c){ c.checked = true; }); recount(); };
+  $('#sfNone').onclick = function(){ Array.prototype.forEach.call(boxes(), function(c){ c.checked = false; }); recount(); };
+  recount();
+
+  $('#sfSave').onclick = function(){
+    var teams = Array.prototype.filter.call(boxes(), function(c){ return c.checked; })
+      .map(function(c){ return c.value; });
+    var name = $('#sfName').value.trim();
+    if (!name) { toast('Jina linahitajika. / A name is required.', true); return; }
+    srv('saveStaffTeams', { role: $('#sfRole').value, name: name, code: (x && x.code) || '', teams: teams })
+      .then(function(r){
+        /* SAY WHAT ACTUALLY HAPPENED. "Saved" after a save that changed nothing, or that quietly
+           took somebody off four teams, is the same word for two very different events. */
+        toast('Imehifadhiwa / Saved — ' + teams.length + ' timu'
+          + (r && r.cleared ? ', ' + r.cleared + ' imeondolewa / removed' : ''));
+        closeDrawer(); render();
+      })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
+
 function roleForm(x){
   var isNew = !x;
   var all = (S.roleMeta && S.roleMeta.allTabs) || [];
@@ -3545,6 +3637,16 @@ function wireForms(){
       e.stopPropagation();
       var id = el.getAttribute('data-agent');
       agentForm(((S.csAgents&&S.csAgents.agents)||[]).filter(function(a){ return a.user_id===id; })[0] || null);
+    };
+  });
+  var nstaff = document.getElementById('newStaff');
+  if (nstaff) nstaff.onclick = function(){ staffForm(null); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-staff]'), function(el){
+    el.onclick = function(e){
+      e.stopPropagation();
+      var key = el.getAttribute('data-staff');
+      var x = (((S.staff||{}).staff)||[]).filter(function(p){ return (p.role+'\u0001'+p.name) === key; })[0];
+      if (x) staffForm(x);
     };
   });
   var nrole = document.getElementById('newRole');
