@@ -2609,3 +2609,37 @@ test('setting the bonus is admin-only', async () => {
   await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { weeklyBonus: '1' }, NOW),
     e => e.status === 403);
 });
+
+/* UNRECOVERED IS WHAT IS STILL OUT, NOT WHAT WAS DUE.
+ *
+ * Reported from the field, and it was a real defect rather than a preference: the recovery
+ * trend tile printed the day's UNCOLLECTED under the heading "Unrecovered". Those are two
+ * different numbers, and the difference between them is the entire point of the row --
+ * "Tuesday left 8m behind, the officers got 2m of it back, so 6m is still out."
+ */
+test('unrecovered is the day\'s uncollected minus what came back', async () => {
+  const d = await run('dashboardFull');
+  for (const x of d.recTrend) {
+    assert.equal(x.unrecovered, Math.max(0, x.uncollected - x.recovered),
+      x.weekday + ': unrecovered must be what is left AFTER recovery, not what was due');
+  }
+  // At least one day in this book has both a real uncollected and a real recovery, or the
+  // assertion above would be passing on a row of zeroes.
+  const live = d.recTrend.filter(x => x.uncollected > 0 && x.recovered > 0);
+  assert.ok(live.length > 0, 'the fixture must contain a day with both, or this proves nothing');
+  for (const x of live) {
+    assert.ok(x.unrecovered < x.uncollected,
+      x.weekday + ': a day with recovery must show LESS still out than it left behind');
+  }
+});
+
+test('unrecovered never goes negative, however good the day was', async () => {
+  /* Recovery comes off the DEFAULTER decks -- a different population from today's expected
+     list -- so a good day can bring back more than the day itself left behind. The tile must
+     read 0 rather than a negative, which looks like a fault; the Rec % beside it goes above
+     100 and that is where the room should be looking. */
+  const { portalApi: api } = await import('../api/_lib/portal-core.js');
+  const d = await run('dashboardFull');
+  for (const x of d.recTrend) assert.ok(x.unrecovered >= 0, x.weekday + ' went negative');
+  assert.ok(typeof api === 'function');
+});

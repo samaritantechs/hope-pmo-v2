@@ -2813,6 +2813,17 @@ async function dashboardFull(db, user, _args, nowMs) {
     const rec = (ini.length && cur.length) ? from - to : 0;
     const unc = tUncollected(pickLatestBatchRows(dayRows(myExpWeek, d)));
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
+      /* WHAT IS STILL OUT AT THE END OF THE DAY -- which is not the same number as what went
+         uncollected at the start of it, and the tile was showing the second under the first
+         one's name. Tuesday leaves 8m uncollected, the officers get 2m of it back, so 6m is
+         still out. That is the figure somebody acts on tomorrow morning.
+
+         Clamped at zero: recovery comes off the DEFAULTER decks, a different population from
+         today's expected list, so a good day can bring back more than the day itself left
+         behind. "Unrecovered TZS -2,000,000" reads as an error rather than as good news. When
+         that happens the Rec % beside it goes above 100, which is where the room should be
+         looking anyway. */
+      unrecovered: Math.max(0, unc - rec),
       uploaded: !!(ini.length || cur.length),
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
