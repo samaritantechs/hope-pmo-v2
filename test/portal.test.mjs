@@ -1853,12 +1853,22 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
 
   /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
-     future slide cannot include it by reaching for a field that happened to be there. */
-  for (const key of ['commission', 'weekCommission', 'bonus', 'band', 'expected', 'collected']) {
+     future slide cannot include it by reaching for a field that happened to be there.
+     The five DAILY RATES are on that list: pay follows each day's own band, so tzsJ3..tzsIJ are
+     shillings and belong on the commission panel with the rest of the money. */
+  for (const key of ['commission', 'weekCommission', 'bonus', 'band', 'expected', 'collected',
+                     'tzsJ3', 'tzsJ4', 'tzsJ5', 'tzsAL', 'tzsIJ', 'weekDays']) {
     assert.equal(key in k, false, key + ' must not travel to the presentation');
   }
+  /* THE FIVE DAILY PERCENTAGES DO travel, because the daily figure is what pay is worked out
+     from -- the week's own percentage is the one number the officers are NOT paid on, and it
+     was the only one the room could see. */
+  for (const key of ['pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ']) {
+    assert.equal(key in k, true, key + ' must reach the slide');
+  }
   assert.deepEqual(Object.keys(k).sort(),
-    ['officer', 'pct', 'sn', 'teams', 'uncollected', 'weekPct', 'weekUncollected'].sort());
+    ['officer', 'pct', 'sn', 'teams', 'uncollected', 'weekPct', 'weekUncollected',
+     'pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ'].sort());
 });
 
 test('the five bands pay what the plan says they pay', async () => {
