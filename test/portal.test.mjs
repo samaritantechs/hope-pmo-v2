@@ -2653,3 +2653,127 @@ test('unrecovered never goes negative, however good the day was', async () => {
   for (const x of d.recTrend) assert.ok(x.unrecovered >= 0, x.weekday + ' went negative');
   assert.ok(typeof api === 'function');
 });
+
+/* STAFF, BY PERSON RATHER THAN BY TEAM.
+ *
+ *   "one staff with 10 teams if changed i have to edit one by one team"
+ *
+ * Twenty edits to move a GMO off ten teams and onto ten others, each one a chance to miss a
+ * row -- and a missed row leaves a team pointing at somebody who has left, silently, on every
+ * board that resolves an officer from it.
+ */
+const STAFF_BOOK = () => ({
+  teams: [
+    { team: 'ALPHA', gmo: 'JUMA G', recovery: 'REC A', expected: 'EXP A' },
+    { team: 'BETA',  gmo: 'JUMA G', recovery: 'REC B', expected: 'EXP A' },
+    { team: 'GAMMA', gmo: 'OTHER P', recovery: 'REC A', expected: 'EXP B' },
+    { team: 'DELTA', gmo: null,     recovery: null,    expected: null },
+  ],
+  access_codes: [
+    { code: 'C1', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['ALPHA', 'BETA'] },
+    { code: 'C2', name: 'KAMARIA', role: 'PMO COLLECTION', teams: ['GAMMA'] },
+    { code: 'C3', name: 'SEES ALL', role: 'PMO COLLECTION', teams: [] },
+    { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null },
+  ],
+  settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }],
+  roles: [],
+});
+const STAFF_ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
+
+test('the roster shows the collection officers beside everybody else', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  const r = await portalApi(db, STAFF_ADMIN, 'staffRoster', {}, NOW);
+
+  const juma = r.staff.find(s => s.name === 'JUMA G' && s.role === 'gmo');
+  assert.deepEqual(juma.teams, ['ALPHA', 'BETA'], 'a team-table role gathers its teams');
+
+  /* THE POINT OF THE MERGE: a collection officer's teams live on their access code, not on the
+     teams table, so they were not on this screen at all. */
+  const cath = r.staff.find(s => s.name === 'CATHERINE');
+  assert.equal(cath.role, 'collection');
+  assert.deepEqual(cath.teams, ['ALPHA', 'BETA']);
+  assert.equal(cath.code, 'C1', 'the code travels, so a save edits the right person');
+
+  /* A code with NO teams means "every team" everywhere else in this system. Such a person is
+     not a collection officer with a distributed portfolio, and listing them with an empty team
+     list would invite somebody to "fix" it by ticking all forty. */
+  assert.equal(r.staff.some(s => s.name === 'SEES ALL'), false);
+
+  assert.ok(r.roles.some(x => x.key === 'collection'), 'collection is offered as a role');
+  assert.deepEqual(r.allTeams, ['ALPHA', 'BETA', 'DELTA', 'GAMMA']);
+});
+
+test('one save moves a person across teams, and clears the ones they left', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  const res = await portalApi(db, STAFF_ADMIN, 'saveStaffTeams',
+    { role: 'gmo', name: 'JUMA G', teams: ['BETA', 'DELTA'] }, NOW);
+
+  const by = Object.fromEntries(db._dump('teams').map(t => [t.team, t]));
+  assert.equal(by.BETA.gmo, 'JUMA G', 'kept');
+  assert.equal(by.DELTA.gmo, 'JUMA G', 'added');
+  /* THE HALF THAT MADE THIS WORTH BUILDING. A reassignment left half-done is a team pointing
+     at somebody who has left, and nothing on any screen says so. */
+  assert.equal(by.ALPHA.gmo, null, 'a team they no longer hold is CLEARED');
+  assert.equal(res.cleared, 1);
+
+  // Nobody else is touched, on any team.
+  assert.equal(by.GAMMA.gmo, 'OTHER P', 'another person keeps their team');
+  assert.equal(by.ALPHA.recovery, 'REC A', 'and every other role on the same row is untouched');
+  assert.equal(by.ALPHA.expected, 'EXP A');
+});
+
+test('only rows that actually change are written', async () => {
+  /* A save that rewrote all forty teams would touch every other role on them for no reason,
+     and on a database having a bad minute that is forty chances to fail instead of two. */
+  const db = fakeDb(STAFF_BOOK());
+  let writes = 0;
+  const realFrom = db.from.bind(db);
+  db.from = (n) => {
+    const q = realFrom(n);
+    if (n !== 'teams') return q;
+    const realUpsert = q.upsert.bind(q);
+    q.upsert = (rows, opts) => { writes += (rows || []).length; return realUpsert(rows, opts); };
+    return q;
+  };
+  const res = await portalApi(db, STAFF_ADMIN, 'saveStaffTeams',
+    { role: 'gmo', name: 'JUMA G', teams: ['ALPHA', 'BETA'] }, NOW);
+  assert.equal(res.changed, 0, 'saving what is already true changes nothing');
+  assert.equal(writes, 0, 'and writes nothing');
+});
+
+test('a collection officer is one write, however many teams they hold', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  const res = await portalApi(db, STAFF_ADMIN, 'saveStaffTeams',
+    { role: 'collection', code: 'C1', name: 'CATHERINE', teams: ['gamma', 'DELTA', 'GAMMA'] }, NOW);
+
+  const row = db._dump('access_codes').find(c => c.code === 'C1');
+  assert.deepEqual(row.teams, ['DELTA', 'GAMMA'],
+    'normalised to uppercase and de-duplicated, like every other team list in the system');
+  assert.equal(res.changed, 1, 'one write, because their teams are a list on the person');
+  // And the teams table is not touched at all -- that is not where their teams live.
+  assert.equal(db._dump('teams').find(t => t.team === 'GAMMA').gmo, 'OTHER P');
+});
+
+test('a collection officer with no access code is refused, and told what to do', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  await assert.rejects(
+    () => portalApi(db, STAFF_ADMIN, 'saveStaffTeams',
+      { role: 'collection', name: 'NOBODY', teams: ['ALPHA'] }, NOW),
+    /access code/i,
+    'the error has to say WHERE a collection officer comes from, or it is a dead end');
+});
+
+test('an unknown role is refused rather than silently doing nothing', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  await assert.rejects(
+    () => portalApi(db, STAFF_ADMIN, 'saveStaffTeams', { role: 'wizard', name: 'X', teams: [] }, NOW),
+    /Unknown role/);
+});
+
+test('only an admin may reassign staff', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  const officer = { code: 'O', name: 'OFF', role: 'GMO', teams: ['ALPHA'], tabs: [] };
+  await assert.rejects(
+    () => portalApi(db, officer, 'saveStaffTeams', { role: 'gmo', name: 'X', teams: [] }, NOW),
+    /admin/i);
+});

@@ -1892,6 +1892,145 @@ async function saveCallAgent(db, user, p) {
   return { userId: id };
 }
 
+/* =======================================================================================
+   STAFF, BY PERSON RATHER THAN BY TEAM.
+
+   "one staff with 10 teams if changed i have to edit one by one team"
+
+   That is exactly what the Teams & Staff tab made you do. The teams table is one row per
+   TEAM with a column per role, so moving a GMO off ten teams and onto ten others was twenty
+   edits, each one a chance to miss a row -- and a missed row leaves that team pointing at
+   somebody who has left, silently, on every board that resolves an officer from it.
+
+   AND THE COLLECTION OFFICERS WERE NOT THERE AT ALL. They are the one kind of staff whose
+   teams do not live on the teams table: a PMO collection officer holds thirty-odd teams, which
+   is a list on the PERSON (their access code) rather than their name repeated in thirty-odd
+   rows. That was the right storage decision and it is unchanged -- but it meant Catherine and
+   Kamaria were invisible on the screen that is supposed to show who does what.
+
+   So the roster reads BOTH and presents one list, and the editor writes back to whichever
+   place that role actually lives in. The person doing the work does not have to know there
+   are two.
+   ======================================================================================= */
+
+/** The roles that live as a column on the teams table, in the order the tab shows them. */
+const STAFF_TEAM_ROLES = TEAM_ROLE_COLS;
+/** And the one that does not. Its teams are an array on the access code. */
+const STAFF_COLLECTION_ROLE = 'collection';
+
+/** Everybody, with the teams they hold -- merged from the teams table's role columns and from
+    the access codes that carry the collection role. */
+async function staffRoster(db, user) {
+  const [teamRows, codeRows, cfg] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
+    fetchAll(() => db.from('access_codes').select('code, name, role, teams')),
+    settingsMany(db, [PMO_ROLE_KEY]),
+  ]);
+  const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const mine = teamRows.filter(t => teamAllowed(user, t.team));
+  const allTeams = mine.map(t => t.team);
+
+  const out = [];
+  for (const roleCol of STAFF_TEAM_ROLES) {
+    const by = new Map();
+    for (const t of mine) {
+      const who = String(t[roleCol] || '').trim();
+      if (!who) continue;
+      if (!by.has(K(who))) by.set(K(who), { name: who, teams: [] });
+      by.get(K(who)).teams.push(t.team);
+    }
+    for (const v of by.values()) {
+      out.push({ name: v.name, role: roleCol, roleLabel: roleCol.toUpperCase(),
+        teams: v.teams.sort(), source: 'teams' });
+    }
+  }
+  /* The collection officers, from their access codes. A code with NO teams means "every team"
+     everywhere else in this system, and such a person is not a collection officer with a
+     distributed portfolio -- they are left off the board for the same reason, and showing them
+     here with an empty team list would invite somebody to "fix" it by ticking all forty. */
+  for (const c of codeRows) {
+    if (!isPmoRole(c.role, pmoRoleName)) continue;
+    if (!c.teams || !c.teams.length) continue;
+    const held = upperTeams(c.teams).filter(t => teamAllowed(user, t));
+    out.push({ name: c.name || c.code, role: STAFF_COLLECTION_ROLE, roleLabel: pmoRoleName,
+      code: c.code, teams: held.sort(), source: 'access_code' });
+  }
+
+  return {
+    staff: out.sort((a, b) => (a.roleLabel + a.name).localeCompare(b.roleLabel + b.name)),
+    allTeams,
+    roles: STAFF_TEAM_ROLES.map(r => ({ key: r, label: r.toUpperCase(), source: 'teams' }))
+      .concat([{ key: STAFF_COLLECTION_ROLE, label: pmoRoleName, source: 'access_code' }]),
+    collectionRole: pmoRoleName,
+  };
+}
+
+/** ONE PERSON, ONE SAVE, HOWEVER MANY TEAMS.
+ *
+ *  `teams` is the WHOLE list this person now holds -- not an addition to it. A team they used
+ *  to hold and no longer does is cleared, which is the half that made this worth building: a
+ *  reassignment left half-done is a team pointing at somebody who has left, and nothing on any
+ *  screen says so.
+ *
+ *  Only rows that actually CHANGE are written. A save that rewrote all forty teams would touch
+ *  every other role on them for no reason, and on a database having a bad minute that is forty
+ *  chances to fail instead of two.
+ */
+async function saveStaffTeams(db, user, p) {
+  requireAdmin(user);
+  const role = String((p && p.role) || '').trim().toLowerCase();
+  const name = String((p && p.name) || '').trim();
+  if (!name) throw badRequest('A staff name is required.');
+  const want = new Set(upperTeams((p && p.teams) || []));
+
+  if (role === STAFF_COLLECTION_ROLE) {
+    /* Their teams are a list on their access code, so this is ONE write however many teams
+       they hold -- which is the whole reason that storage was chosen. */
+    const codes = await fetchAll(() => db.from('access_codes').select('code, name, role, teams'));
+    const cfg = await settingsMany(db, [PMO_ROLE_KEY]);
+    const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+    const wanted = String((p && p.code) || '').trim();
+    const row = codes.find(c => (wanted ? c.code === wanted : K(c.name) === K(name))
+      && isPmoRole(c.role, pmoRoleName));
+    if (!row) {
+      throw badRequest(`No ${pmoRoleName} access code found for "${name}". `
+        + 'A collection officer is an access code with that role -- create the code first, '
+        + 'under Settings, then set their teams here.');
+    }
+    const teams = [...want].sort();
+    const { error } = await db.from('access_codes').update({ teams }).eq('code', row.code);
+    if (error) throw new Error(error.message);
+    return { role, name: row.name || name, teams, changed: 1, cleared: 0 };
+  }
+
+  if (!STAFF_TEAM_ROLES.includes(role)) {
+    throw badRequest(`Unknown role "${role}". Expected one of: `
+      + STAFF_TEAM_ROLES.concat([STAFF_COLLECTION_ROLE]).join(', '));
+  }
+
+  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const writes = [];
+  let cleared = 0;
+  for (const t of teamRows) {
+    if (!teamAllowed(user, t.team)) continue;          // never edit a team you cannot see
+    const held = K(t[role]) === K(name);
+    const shouldHold = want.has(K(t.team));
+    if (shouldHold && !held) writes.push({ team: t.team, [role]: name });
+    else if (!shouldHold && held) { writes.push({ team: t.team, [role]: null }); cleared++; }
+  }
+  for (const batch of chunk_(writes, 200)) {
+    const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+    if (error) throw new Error(error.message);
+  }
+  return { role, name, teams: [...want].sort(), changed: writes.length, cleared };
+}
+
+function chunk_(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
 /* ------------------------------------------------------------------ reference / admin */
 async function teams(db, user) {
   const [rows, roleRows] = await Promise.all([
@@ -2638,6 +2777,7 @@ const FN = {
   demandNotices, addDemandNotice, legalPreview, abnormal, received,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
+  staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
