@@ -196,11 +196,33 @@
   #pres .pkpi{background:var(--psoft);border:1px solid var(--pedge);border-radius:16px;padding:22px}
   #pres .pl{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--plab)}
   #pres .pv{font-size:40px;font-weight:800;margin-top:8px}
-  #pres .ptable{width:100%;border-collapse:collapse;font-size:19px}
-  #pres .ptable th{text-align:left;padding:10px 12px;color:var(--plab);font-size:14px;text-transform:uppercase;
-    border-bottom:1px solid var(--pline);background:transparent}
-  #pres .ptable td{padding:10px 12px;border-bottom:1px solid var(--pedge)}
-  #pres .ptable .r{text-align:right}
+  /* A SLIDE THAT DOES NOT FIT IS A SLIDE NOBODY CAN READ FROM THE BACK OF THE ROOM.
+     The deck was written for six columns and now carries nine -- the five collection days plus
+     the week -- and at a fixed 19px the wide boards ran off the edge of the projector. Nobody
+     scrolls sideways during a meeting; they just do not see the last column.
+
+     So the type SIZES ITSELF to the screen instead of being a number somebody guessed:
+     clamp() keeps it between 11px and 19px and lets the viewport choose in between, and the
+     padding shrinks with it. On a wide monitor nothing changes at all. On a laptop or a small
+     projector the table gets smaller rather than wider, which is the trade a room actually
+     wants.
+
+     `table-layout:fixed` with wrapping headers stops one long officer name stretching a column
+     past its share, which is what turns a table that ALMOST fits into one that does not. */
+  #pres .ptable{width:100%;max-width:100%;border-collapse:collapse;table-layout:fixed;
+    font-size:clamp(11px, 1.25vw, 19px)}
+  #pres .ptable th{text-align:left;padding:clamp(4px,.55vw,10px) clamp(5px,.7vw,12px);color:var(--plab);
+    font-size:clamp(9px,.9vw,14px);text-transform:uppercase;line-height:1.2;
+    border-bottom:1px solid var(--pline);background:transparent;
+    overflow-wrap:anywhere;word-break:break-word}
+  #pres .ptable td{padding:clamp(4px,.55vw,10px) clamp(5px,.7vw,12px);border-bottom:1px solid var(--pedge);
+    overflow-wrap:anywhere}
+  /* The first column is the name and needs the room; the figure columns are all short. */
+  #pres .ptable th:first-child, #pres .ptable td:first-child{width:auto}
+  #pres .ptable .r{text-align:right;white-space:nowrap}
+  /* And a last resort: if a board is still wider than the screen, it scrolls INSIDE its own
+     box rather than pushing the whole slide sideways and hiding the navigation arrows. */
+  #pres .pscroll{overflow-x:auto;max-width:100%}
   /* tips toast */
   #tip{position:fixed;right:18px;bottom:18px;max-width:330px;background:var(--card);border:1px solid var(--line);
     border-left:3px solid var(--b500);border-radius:12px;padding:12px 14px;font-size:12.5px;color:var(--ink);
@@ -2917,9 +2939,15 @@ function presSlides(){
        today's figure, discussed it, and had lost the week by the time it came round -- and
        "is this better or worse than the week?" is the question every one of these boards
        exists to answer. */
-    slides.push({ id:'pmo', kind:'table', title:'PMO Collection — today and this week', rows:(b.pmo||[]).slice(0,12),
+    /* THE FIVE DAYS BEFORE THE WEEK, because the daily percentage is what pay is worked out
+       from -- each day banded on its own and added up -- and the week's figure alone is the one
+       number the officers are NOT paid on. Today is one of these five columns, so it is no
+       longer shown twice. */
+    slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
+      rows:(b.pmo||[]).slice(0,12),
       cols:[col('officer','PMO'), col('teams','Teams','num'),
-        col('uncollected','Uncollected (today)','money'), col('pct','Coll % (today)','pct'),
+        col('pctJ3','J3','pct'), col('pctJ4','J4','pct'), col('pctJ5','J5','pct'),
+        col('pctAL','AL','pct'), col('pctIJ','IJ','pct'),
         col('weekUncollected','Uncollected (week)','money'), col('weekPct','Coll % (week)','pct')] });
     slides.push({ id:'cs', kind:'table', title:'Call agents — applications brought in', rows:b.csWeek.slice(0,12),
       cols:[col('agent','Agent'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
@@ -3039,13 +3067,15 @@ function presDraw(){
        still up. Same rule as everywhere else: counts, money and talk time add up; percentages
        are worked out again from the totals that made them, never summed. */
     var tot = autoTotals(s.rows, s.cols);
-    body = '<table class="ptable"><thead><tr><th>#</th>' + s.cols.map(function(c){
+    /* Wrapped, so a board still wider than the screen scrolls inside its own box rather than
+       pushing the whole slide sideways and taking the navigation arrows off the edge with it. */
+    body = '<div class="pscroll"><table class="ptable"><thead><tr><th>#</th>' + s.cols.map(function(c){
         return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('') + '</tr></thead><tbody>'
       + s.rows.map(function(r,i){ return '<tr><td>'+(i+1)+'</td>'+s.cols.map(function(c){
           return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
       + (tot ? '<tr class="ptot"><td></td>' + s.cols.map(function(c,i){
           return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>' : '')
-      + '</tbody></table>';
+      + '</tbody></table></div>';
   }
   document.getElementById('pres').innerHTML =
     '<div class="phead"><span>'+esc(s.title)+'</span>'

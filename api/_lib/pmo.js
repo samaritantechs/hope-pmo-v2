@@ -157,5 +157,15 @@ export function pmoBoard(roster, byDay, today, days) {
 export function pmoPublicRow(r, i) {
   return { sn: i + 1, officer: r.officer, teams: r.teams,
     uncollected: r.uncollected, pct: r.pct,
+    /* THE FIVE DAYS, because the daily percentage is what the pay is worked out from.
+       Pay follows EACH DAY'S OWN band, added up -- a good Ijumaa is worth something after a
+       poor Jumanne -- so the week's figure alone does not tell an officer what they earned.
+       The room was being shown the one number the officers are NOT paid on.
+
+       PERCENTAGES ONLY. The `tzs` beside each of these on the commission board is that day's
+       rate in shillings, and it stays off the projector for the same reason everything else
+       does. Listed one by one rather than copied wholesale, so a future field added to the
+       board cannot arrive on the slide by accident. */
+    ...Object.fromEntries(PMO_DAY_KEYS.map(k => ['pct' + k, r['pct' + k] == null ? null : r['pct' + k]])),
     weekUncollected: r.weekUncollected, weekPct: r.weekPct };
 }
