@@ -1285,6 +1285,71 @@ function wireClean(){
       + warn)) return;
     call(false);
   };
+
+  /* THE DUPLICATE SWEEP. Check first is the default posture: "delete most of the database" is
+     not a button anybody should press blind, and the count it reports is the whole reassurance
+     that nothing on screen will move. */
+  var dupChk = document.getElementById('dupCheck'), dupRun = document.getElementById('dupRun'),
+      dupOut = document.getElementById('dupOut');
+  function dupSay(html, bad){
+    if (!dupOut) return;
+    dupOut.style.display = 'block';
+    dupOut.className = 'note' + (bad ? ' bad' : '');
+    dupOut.innerHTML = html;
+  }
+  function dupCall(dry){
+    dupSay('Inahesabu\u2026 / counting\u2026');
+    // Bounded on purpose -- a book uploaded every half hour for weeks has hundreds of copies,
+    // and the platform stops a function at sixty seconds.
+    srv('purgeSuperseded', dry ? {} : { confirm: true, limit: 120 })
+      .then(function(r){
+        var detail = (r.report || []).filter(function(x){ return x.losingBatches; })
+          .map(function(x){ return esc(x.label) + ': ' + money(x.rows) + ' rows in ' + x.losingBatches + ' old upload(s)'; })
+          .join('<br>') || 'Hakuna nakala. / No duplicate uploads found.';
+        if (r.dryRun){
+          dupSay('<b>' + money(r.totalRows) + '</b> rows in <b>' + r.totalBatches
+            + '</b> superseded upload(s) would be removed.<br>' + detail
+            + '<br><i>Takwimu hazitabadilika \u2014 hizi ndizo safu ambazo kila usomaji ulikuwa unaziruka. '
+            + '/ No figure will change: these are exactly the rows every read already skipped.</i>');
+        } else {
+          dupSay('<b>' + r.deletedBatches + '</b> old upload(s) removed.'
+            + (r.remainingBatches ? ' <b>' + r.remainingBatches + '</b> left \u2014 bofya tena. / more remain, run it again.' : '')
+            + '<br>' + detail);
+          S.storage = null;
+        }
+      })
+      .catch(function(e){ dupSay(esc(String(e.message || e)), true); });
+  }
+  if (dupChk) dupChk.onclick = function(){ dupCall(true); };
+  if (dupRun) dupRun.onclick = function(){
+    if (!confirm('Ondoa nakala za upakiaji zilizopitwa?\n\nUpakiaji wa mwisho wa kila siku unabaki.'
+      + '\n\nRemove superseded upload copies? The last upload of each day stays, and no figure changes.')) return;
+    dupCall(false);
+  };
+
+  /* CHANGING YOUR OWN CODE. It signs you back in with the new one straight away -- the browser
+     is holding the old code, and a save that quietly left it holding a dead one would look
+     exactly like the change having failed. */
+  var pwSave = document.getElementById('pwSave'), pwOut = document.getElementById('pwOut');
+  if (pwSave) pwSave.onclick = function(){
+    var oldC = document.getElementById('pwOld').value.trim();
+    var newC = document.getElementById('pwNew').value.trim();
+    var newC2 = document.getElementById('pwNew2').value.trim();
+    pwOut.style.display = 'block'; pwOut.className = 'note'; pwOut.textContent = 'Inahifadhi\u2026';
+    srv('changeMyCode', { oldCode: oldC, newCode: newC, confirmCode: newC2 })
+      .then(function(r){
+        store('hopeCode', r.code);
+        S.code = r.code;
+        pwOut.className = 'note';
+        pwOut.innerHTML = 'Msimbo umebadilishwa. / Code changed. '
+          + '<b>Uandike mahali salama.</b> / <b>Write it down somewhere safe.</b>';
+        document.getElementById('pwOld').value = '';
+        document.getElementById('pwNew').value = '';
+        document.getElementById('pwNew2').value = '';
+        toast('Msimbo umebadilishwa. / Code changed.');
+      })
+      .catch(function(e){ pwOut.className = 'note bad'; pwOut.textContent = String(e.message || e); });
+  };
 }
 function exportBoard(id, kind){
   var b = BOARDS[id];
@@ -2993,6 +3058,44 @@ VIEWS.settings = function(){
           sg.dates, [col('date','Date','date')].concat(CLEAN_TYPES.map(function(t){
             return col(t.key, t.label, 'num'); })).concat([col('total','Total','num')]),
           sumRow(sg.dates, CLEAN_TYPES.map(function(t){ return t.key; }).concat(['total'])))
+      /* NAKALA ZILIZOPITWA / SUPERSEDED COPIES.
+         Uploading the same day again does not double a figure -- every read already takes the
+         latest batch -- but it does leave the old copy in the table for ever. This removes
+         exactly the rows every read was already ignoring, which is why it cannot move a number.
+         Deliberately a SEPARATE card from "Clean old reports": that one throws away history by
+         date, this one throws away duplicates of history that is being kept. */
+      + '<div class="card"><div class="card-h">Nakala zilizopitwa / Superseded copies'
+        + '<span class="sub">weka upakiaji wa mwisho, ondoa nakala / keep the last upload, drop the copies</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="note" style="display:block">Ukipakia ripoti ya siku ile ile mara kadhaa, '
+        + 'takwimu hazijirudii &mdash; kila usomaji huchukua upakiaji wa mwisho. Lakini nakala za zamani '
+        + 'hubaki kwenye database. Hii huondoa hizo tu.'
+        + '<br><i>Re-uploading a day never doubled a figure: every read already takes the last upload. '
+        + 'The older copies simply stay in the database. This removes those, and nothing else &mdash; '
+        + 'so no figure on any screen can change.</i></div>'
+        + '<div class="clact"><button class="btn sm ghost" id="dupCheck">Angalia / Check first</button>'
+        + ' <button class="btn sm danger" id="dupRun">Ondoa nakala / Remove copies</button></div>'
+        + '<div id="dupOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+
+      /* YOUR OWN CODE. The access code IS the password here, and changing it used to mean
+         editing your own row in a list of everybody else's -- a screen for administering other
+         people, not for changing your own secret. */
+      + '<div class="card"><div class="card-h">Badilisha msimbo wangu / Change my code'
+        + '<span class="sub">' + esc(S.me && S.me.name ? S.me.name : '') + '</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="fld"><label>Msimbo wa sasa / Current code</label>'
+          + '<input id="pwOld" data-secret data-upper autocomplete="off"></div>'
+        + '<div class="fld"><label>Msimbo mpya / New code</label>'
+          + '<input id="pwNew" data-secret data-upper autocomplete="off"></div>'
+        + '<div class="fld"><label>Rudia mpya / Repeat new code</label>'
+          + '<input id="pwNew2" data-secret data-upper autocomplete="off"></div>'
+        + '<div class="fldnote">Herufi 6 au zaidi, herufi na namba pekee. Utahitaji kuingia upya. '
+          + '/ Six characters or more, letters and numbers only. You will be signed out and back in.</div>'
+        + '<div class="clact"><button class="btn sm" id="pwSave">Hifadhi / Save</button></div>'
+        + '<div id="pwOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+
       + '<div class="card"><div class="card-h">Misimbo ya kuingia / Access codes'
         + '<span class="sub"><button class="btn sm" id="newCode">+ Msimbo mpya / New code</button>'
         + ' <a href="/upload?admin=1" style="margin-left:8px">Pakia orodha / Upload a list &rarr;</a></span></div>'
@@ -3808,6 +3911,11 @@ function openRestructure(r){
 function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'</label><input id="'+id+'"'+(type?' type="'+type+'"':'')+'></div>'; }
 
 function wireForms(){
+  /* Any code box drawn by a tab or a drawer gets masked here. brand.js does the pass at page
+     load, which is too early for anything this file renders -- the Change-my-code form is built
+     when Settings opens, and an unmasked box that is SUPPOSED to be masked is worse than one
+     that never claimed to be. Calling it again is free: a box already masked is left alone. */
+  if (window.hopeSecrets) window.hopeSecrets();
   // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
   // not be counted or filtered, and counting complaints by category is why the register exists.
   var nag = document.getElementById('newAgent');
