@@ -3163,3 +3163,61 @@ test('a re-uploaded day does not double the weekly day strip', async () => {
   assert.equal(w.teamTotals.expected, fri.expected);
   assert.equal(w.teamTotals.recToday, fri.recovered);
 });
+
+/* =====================================================================================
+   THE EXPECTED TAB: FEWER ROWS, FEWER COLUMNS, SAME SCREEN.
+   =====================================================================================
+   This read downloaded every team's customers with every column, and threw away the
+   thirty-nine teams the officer may not see -- the exact shape behind the 521s in the log.
+   Both halves of the narrowing are pinned here: an officer must get their own teams only, and
+   every column the tab draws must still arrive.
+*/
+test('an officer\'s Expected read is scoped to their teams at the database', async () => {
+  const db = fakeDb(tables());
+  const seen = [];
+  const watched = { from(n){ const q = db.from(n); if (n === 'repayment_snapshots') seen.push(q); return q; },
+    rpc: db.rpc, _dump: n => db._dump(n) };
+
+  const officer = await portalApi(watched, GMO, 'expected', {}, NOW);
+  assert.deepEqual(officer.rows.map(r => r.ref).sort(), ['111', '222'],
+    'their own team, and MBAGALA\'s customer is not on the list');
+  assert.ok(officer.rows.every(r => r.team === 'KONGOWE'));
+
+  // An admin sees every team, exactly as before -- null teams means no narrowing at all.
+  const admin = await portalApi(fakeDb(tables()), ADMIN, 'expected', {}, NOW);
+  assert.deepEqual(admin.rows.map(r => r.ref).sort(), ['111', '222', '333']);
+});
+
+test('the Expected tab still receives every column it draws', async () => {
+  const d = await portalApi(fakeDb(tables()), ADMIN, 'expected', {}, NOW);
+  const r = d.rows.find(x => x.ref === '111');
+  // The table's own columns...
+  for (const k of ['ref', 'full_name', 'contact', 'team', 'due_summary',
+    'payment_expected', 'todays_status', 'arrears']) {
+    assert.notEqual(r[k], undefined, k + ' is missing from the narrowed read');
+  }
+  // ...and the pair the follow-up drawer offers to ring when the customer will not answer.
+  assert.notEqual(r.guarantor_name, undefined);
+  assert.notEqual(r.guarantor_contact, undefined);
+  // The three fields collectedOf() reads have to be real numbers, or the totals are silently 0.
+  assert.equal(d.totals.expected, 2300, 'all three teams: 1000 + 500 + 800');
+  assert.equal(d.totals.collected, 500, 'PAID counts the expected amount -- 222 paid 500');
+});
+
+test('the per-weekday Expected read is scoped and complete too', async () => {
+  const officer = await portalApi(fakeDb(tables()), GMO, 'expectedDay', { weekday: 'FRI' }, NOW);
+  assert.ok(officer.rows.every(r => r.team === 'KONGOWE'));
+  assert.deepEqual(officer.teams, ['KONGOWE'], 'and the team filter offers only what they may see');
+  for (const r of officer.rows) {
+    for (const k of ['ref', 'full_name', 'contact', 'payment_expected', 'todays_status']) {
+      assert.notEqual(r[k], undefined, k + ' missing on ' + r.ref);
+    }
+  }
+});
+
+test('the Defaulters tab is scoped to the officer\'s teams as well', async () => {
+  const officer = await portalApi(fakeDb(tables()), GMO, 'defaulters', {}, NOW);
+  assert.ok(officer.rows.length > 0);
+  assert.ok(officer.rows.every(r => r.team === 'KONGOWE'),
+    'MBAGALA\'s defaulter must not be carried here to be dropped in JavaScript');
+});

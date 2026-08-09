@@ -351,6 +351,17 @@ async function roleLimits(db) {
     earlyMaxBehind: await n('CALL_EARLY_MAX_BEHIND', 1) };
 }
 
+/* EXACTLY WHAT THE LEO AND KESHO LISTS DRAW.
+   Ten columns, and this is the read two hundred handsets make several times a day on a mobile
+   connection. It was taking every column of the table -- the docket, four schedule dates, the
+   branch, the zone, the totals -- none of which appears anywhere on a phone.
+
+   IF A FIELD IS ADDED TO THE PHONE'S ROW OR SHEET IT MUST BE ADDED HERE. The fake database
+   honours the projection, so a forgotten one is a red test rather than a customer on somebody's
+   phone with no name and nothing to tap -- which is exactly how that happened once before. */
+const CALL_EXPECTED_COLS = 'ref, full_name, contact, guarantor_name, guarantor_contact, '
+  + 'arrears, payment_expected, todays_status, due_summary, team';
+
 async function list(db, [dev, which, which2], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
@@ -424,16 +435,16 @@ async function list(db, [dev, which, which2], nowMs) {
       const skip = u >= 5 ? (8 - u) : 1;          // Fri +3, Sat +2, Sun +1, otherwise +1
       wantDate = addDaysKey(todayKey(nowMs), skip);
       snap = await latestSnapshot(db, 'repayment_snapshots',
-        { snapshot_type: 'today' }, { onDate: wantDate, teams: user.teams });
+        { snapshot_type: 'today' }, { onDate: wantDate, teams: user.teams, columns: CALL_EXPECTED_COLS });
       // Older uploads that used the explicit "Expected - Tomorrow" type still work.
       if (!snap.rows.length) {
         snap = await latestSnapshot(db, 'repayment_snapshots',
-          { snapshot_type: 'tomorrow' }, { notAfter: todayKey(nowMs), teams: user.teams });
+          { snapshot_type: 'tomorrow' }, { notAfter: todayKey(nowMs), teams: user.teams, columns: CALL_EXPECTED_COLS });
       }
     } else {
       wantDate = todayKey(nowMs);
       snap = await latestSnapshot(db, 'repayment_snapshots',
-        { snapshot_type: 'today' }, { notAfter: wantDate, teams: user.teams });
+        { snapshot_type: 'today' }, { notAfter: wantDate, teams: user.teams, columns: CALL_EXPECTED_COLS });
     }
     /* WHICH DAY IS THE OFFICER ACTUALLY LOOKING AT.
        When today's Expected file has not been uploaded, this read falls back to the most

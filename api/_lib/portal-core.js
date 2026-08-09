@@ -68,9 +68,31 @@ async function loanPipeline(db, user) {
 }
 
 /* ------------------------------------------------------------------ expected repayment */
+/* EXACTLY WHAT THE EXPECTED TAB DRAWS, and nothing else.
+   The table's own columns, plus the guarantor pair the follow-up drawer offers to ring when
+   the customer will not answer, plus the three collectedOf() reads. Everything else on the row
+   -- the docket, four schedule dates, the branch, the totals -- was crossing the internet for
+   every customer of every team on every open of this tab.
+
+   IF A COLUMN IS ADDED TO THE SCREEN IT MUST BE ADDED HERE. The fake database in the tests
+   honours the projection, so a forgotten one shows up as a red test rather than as a blank
+   column in the field. */
+const EXPECTED_TAB_COLS = 'ref, full_name, contact, team, zone, due_summary, initial_inst, '
+  + 'payment_expected, todays_payment, todays_status, arrears, balance, '
+  + 'guarantor_name, guarantor_contact';
+
 async function expected(db, user, { type = 'today', date }, nowMs) {
+  /* TEAM-SCOPED AT THE DATABASE. This downloaded every team's customers and threw away the
+     thirty-nine the officer may not see -- the exact read behind the 521s in the log
+     (`select=*&snapshot_date=eq...&limit=10000`). An officer on one team now carries one
+     team's rows. An admin, whose teams are null, is unchanged.
+
+     Deliberately not applied to the DATE resolution inside latestSnapshot: which day is the
+     latest is a property of the whole upload, and a team with no rows that day must not
+     silently fall back to an older one. */
   const snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type },
-    date ? { onDate: date } : { notAfter: todayKey(nowMs) });
+    date ? { onDate: date, teams: user.teams, columns: EXPECTED_TAB_COLS }
+         : { notAfter: todayKey(nowMs), teams: user.teams, columns: EXPECTED_TAB_COLS });
   const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r) }));
   const expectedAmt = rows.reduce((s, r) => s + num(r.payment_expected), 0);
   const collected = rows.reduce((s, r) => s + r.collected, 0);
@@ -87,8 +109,13 @@ async function expected(db, user, { type = 'today', date }, nowMs) {
 /* ------------------------------------------------------------------ defaulters */
 async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) {
   const wd = weekday || currentWeekday(nowMs);
+  /* Team-scoped at the database, same reasoning as Expected above. Columns are deliberately
+     NOT narrowed here: the Defaulters tab renders a wide row and the Exp.Def rotation reads
+     this same shape, so a hard-coded list is the failure that once put customer rows on
+     officers' phones with no name and nothing to tap. Fewer rows is the safe half of the win
+     and it is the larger half. */
   const snap = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: type, weekday: wd },
-    date ? { onDate: date } : { notAfter: todayKey(nowMs) });
+    date ? { onDate: date, teams: user.teams } : { notAfter: todayKey(nowMs), teams: user.teams });
   const rows = scoped(user, snap.rows);
   return { type, weekday: wd, date: snap.date, rows, count: rows.length,
     arrears: rows.reduce((s, r) => s + num(r.arrears), 0) };
@@ -3232,10 +3259,13 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
   const asked = String(weekday || '').toUpperCase();
   const wd = WD5.includes(asked) ? asked : (WD5.includes(currentWeekday(nowMs)) ? currentWeekday(nowMs) : 'FRI');
   const date = dateOfWeekday(nowMs, wd);
-  let snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { onDate: date });
+  // Same narrowing as the Expected tab -- it is the same table drawn the same way, one weekday
+  // at a time.
+  const dayOpts = { teams: user.teams, columns: EXPECTED_TAB_COLS };
+  let snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { onDate: date, ...dayOpts });
   let fellBack = false;
   if (!snap.rows.length) {
-    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs) });
+    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs), ...dayOpts });
     fellBack = true;
   }
   const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r) }));
