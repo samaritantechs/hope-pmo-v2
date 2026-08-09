@@ -2792,5 +2792,197 @@ must not depend on having a browser installed.
 
 ---
 
+## Part 18 — The day 300 phones were told to use the app
+
+> "Whenever we insist our field officers to use the app, postgres gets full red, i can't even
+> upload report updates, we get delay errors and so on."
+
+This is the most important entry in this document, because it is the one that decides whether
+the system works when the whole company is on it rather than when six people are.
+
+### What was actually happening
+
+Nobody could point at a slow query, because there wasn't one. Every individual request looked
+reasonable. The fault was only visible if you asked a different question: **what does the
+SECOND handset cost, and the three hundredth?**
+
+Measured against a 40-team book, one sync carrying one call cost **11 round trips and 4,002
+rows** — every row of `followup_status`, every row of today's *and* tomorrow's repayment
+snapshot, and the numbered comments. The whole company book, to answer one question: *whose
+number is this?*
+
+And nothing cached it. It was rebuilt from scratch on every sync.
+
+Three hundred handsets sync every five minutes. Through a working day that is roughly **one
+full-book scan per second, sustained, for eight hours** — from the same tables that have to
+accept the day's upload. The uploads then queue behind the officers, which is the "I can't even
+upload" half of the complaint. The database was not broken and it was not too small. It was
+being asked to read its largest tables a thousand times an hour for an answer that had not
+changed between any two of them.
+
+### The fix was already in the code, two lines above
+
+`DATA_VERSION` is stamped by the upload page the moment anything is uploaded, and the sync
+already read it on every request to tell the phone its figures were stale. The index is now
+remembered against exactly that, so **it can never outlive an upload**:
+
+| | |
+|---|---|
+| first officer after an upload | pays the read, once |
+| the other 299 | free |
+| somebody uploads | `DATA_VERSION` moves, the next sync rebuilds |
+
+**The cost, stated plainly.** A replacement number recorded in a comment is not in the index
+until it rebuilds — at most five minutes, sooner if anything is uploaded. The call is still
+logged, still named, still theirs; it can only be marked non-portfolio for those few minutes.
+Against a database too busy to accept the day's upload, that is not a close call.
+
+### The second one, which got worse as the day went on
+
+"Amepigiwa leo" — the grey tick that stops two officers ringing the same customer within the
+hour — read **every call log made anywhere in the company today**, on every list load. Small at
+eight in the morning. At four in the afternoon, three hundred officers making fifty calls each
+is fifteen thousand rows, dragged again for every list every handset opens.
+
+That shape is the worst one a fault can have: **the system feels fine when it is tested and
+fails when it is used.**
+
+**And the obvious fix was wrong.** Dropping the cache whenever a sync writes a call looks
+right, and destroys the entire saving — with three hundred officers syncing, something is
+always writing, so the cache is invalidated faster than it can ever be used. Measured that way
+`call_logs` still cost 1,513,700 rows: the exact number the cache was added to remove. A sync
+now *merges* its own numbers into the warm set instead of throwing it away, so the officer's
+own call is ticked the instant they look and the set stays warm for everybody else.
+
+### Opening the app was ten waits in single file
+
+`boot` took ten round trips **one after another**: the teams list, the device, `CALL_BRAND`,
+`CALL_LOGO_URL`, the open/closed switch, today's calls, `CALL_SYNC_SECONDS`,
+`CALL_LOGOUT_ENABLED`, **the teams table a second time** for the rotation check, and the
+follow-up status list. Nine of those ten waits bought one small answer each, and none of them
+depended on the one before it. On mobile data that is the difference between the app opening
+and the app appearing to hang.
+
+Five settings are now one query, the teams table is read once, and the rest are issued
+together. **10 round trips → 5.**
+
+### The numbers
+
+Per request, 40-team book:
+
+| | before | after |
+|---|---|---|
+| Opening the app | 10 trips, 81 rows | **5 trips, 41 rows** |
+| Sync — first handset after an upload | 11 trips, 4,002 rows | 11 trips, 4,002 rows |
+| Sync — every handset after that | 11 trips, 4,002 rows | **4 trips, 2 rows** |
+
+300 handsets, one sync cycle plus 100 list loads, against one warm instance:
+
+| | round trips | rows | per handset |
+|---|---|---|---|
+| before | 2,107 | 1,513,700 | 5,046 rows |
+| **after** | **1,711** | **28,700** | **96 rows** |
+
+**A 98% reduction in read volume.**
+
+### Why the speed guard did not catch any of this
+
+`test/speed.test.mjs` gives every screen a budget in round trips and rows — and it has been
+doing its job. But it measures **one** request, and one request always looked reasonable. A
+whole-book read that is *shared* and a whole-book read that is *repeated three hundred times*
+are identical when you measure one of them.
+
+There are now guards that measure **the second handset and the twelfth**, and that assert an
+upload still forces a rebuild. That is the shape of test this class of fault requires, and it
+is worth remembering the next time something is fast in testing and slow in the field.
+
+### What to do if it ever happens again
+
+See **[OPERATIONS.md](../OPERATIONS.md#when-something-breaks)**. The short version: **close the
+system** (Settings). The officers keep working — HOPE Calls is never gated — and the office
+load stops instantly, because a refused request costs two or three tiny queries and never runs
+a dashboard. Then upload what you need to (admin is never gated), and re-open.
+
+---
+
+## Part 19 — Four smaller things, from the same week
+
+### "Catherine at leo just the first customer is 6-10, at kesho 4-12"
+
+6-10 is four instalments behind; 4-12 is eight. Neither belongs in front of a collection
+officer, so the narrowing was not running for her — and the cause was one string.
+
+The rule matched a role by **exact equality** against the literal word `COLLECTION`. No access
+code in this system says that. A collection officer's role is **`PMO COLLECTION`** — `pmo.js`
+names it, the staff roster resolves it through `isPmoRole`, and registration copies whatever
+the access code says straight onto the handset. So her role read `PMO COLLECTION`, matched
+nothing, and the code concluded "no special case" — which means the whole book.
+
+The name fallback underneath could not save her either: it looks a person up in the **teams
+table's** own columns, and a PMO collection officer is deliberately not there — one person
+holds thirty-odd teams, so their teams live on their *access code*.
+
+The collection role is now resolved the way the rest of the system resolves it: through the
+`PMO_ROLE` setting, compared with `isPmoRole`, which forgives case and punctuation. **Rename
+the role in Settings and this follows, with no deploy.** Credit and Expected now match on a
+contained *word* rather than the exact spelling. No role that was untouched before is narrowed
+now — `RECOVERY`, `GMO`, `MANAGER`, `BIKE`, `OPM`, `LEGAL`, `ADMIN`, `OFFICER` carry none of
+those words, and that is asserted by a test rather than assumed.
+
+### The Exp.Def role pills that lit up but changed nothing
+
+On the phone's Muhtasari strip, pressing **Bike**, **GMO** or **Manager** set the value and
+redrew — but the redraw painted the same rows, because the row list was only ever rebuilt on a
+tab switch or a fetch. **The pill lit up, the summary moved, and the list underneath stayed
+exactly as it was.** Pressing *Bike* showed the GMO's customers with the word *Bike*
+highlighted.
+
+The list now rebuilds, and the summary above it describes the list below it — otherwise you get
+the GMO's money sitting over the bike officer's customers, the wrong number in bigger type.
+
+### The week picker that looked dead
+
+> "I tried pressing the date picker to 10th august ... but didn't work and the pressable day
+> should be Monday only"
+
+Two faults, neither visible.
+
+**A future week was ignored in silence.** Picked on Sunday the 9th, the 10th is next week. The
+code accepted only a Monday strictly *earlier* than the current one and otherwise returned the
+current week with nothing to say so — the screen redrew with identical figures. A control that
+overrules you without saying so is indistinguishable from a broken one.
+
+The clamp itself is right and stays: a week that has not happened has no snapshots, so reading
+it would paint a screen of zeroes that looks like a collapse rather than a calendar. **What was
+missing was the saying so**, and the bar now prints which week is on screen and why.
+
+**Any day could be picked**, and a Thursday was quietly snapped to its Monday — correct, and
+invisible. The field now snaps *visibly*, and gained ◀ ▶ buttons that step a whole week.
+(An HTML date box has no attribute that greys out non-Mondays; an instant, visible snap is the
+honest version of "Mondays only".) All three screens — dashboard, weekly report, presentations
+— now share one bar.
+
+### Every leader on the weekly report
+
+The weekly report answered *"how is each **team** doing"*. A director asks the other question,
+and most supervisors carry several teams, so their real week is the roll-up across all of them.
+That roll-up existed nowhere on the screen: the leader columns were carried on every row and
+never added up.
+
+There is now one board per role column — OPM, RECOVERY, GMO, MANAGER, CREDIT, EXPECTED, BIKE —
+naming **all** of them, **including anyone whose teams produced nothing**. "This GMO sold
+nothing this week" is precisely what a Monday meeting needs to see, and dropping them would
+make the report quietly flattering. A team whose column is blank groups under *(hakuna / nobody
+named)*, which is the prompt to go and fill it in.
+
+Also on that report: **Recovered and Sales now carry a percentage**, like Expected and
+Collected always did. Recovery is measured against the week's uncollected; Sales against the
+company target the note under the bar already states. Both are divided from the figures shown
+on the same bar rather than from the server's own percentages — the weekly answer carries two
+sums of the same week (one adding up the days, one adding up the teams), and printing one's
+percentage over the other's money would let the screen contradict itself.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

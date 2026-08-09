@@ -1,5 +1,10 @@
 # HOPE PMO v2 — Supabase + Vercel foundation
 
+> **New here? Read [START-HERE.md](START-HERE.md) first** — it is the map to everything else.
+> Running the system day to day: **[OPERATIONS.md](OPERATIONS.md)**.
+> Looking for the file that does something: **[MANIFEST.md](MANIFEST.md)**.
+> The full account, for the owner: **[docs/HANDOFF.md](docs/HANDOFF.md)**.
+
 ## Using the deployed system
 
 Once deployed, the whole thing lives at your Vercel domain:
