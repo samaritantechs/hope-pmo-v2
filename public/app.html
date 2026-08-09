@@ -364,7 +364,14 @@ var $ = function(s){ return document.querySelector(s); };
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
-function pct(v){ return (v==null||isNaN(v)) ? '—' : v + '%'; }
+/* A percentage, or a string that is ALREADY one. The grand-total row hands back "~62.5%" for
+   a column it could only average rather than recompute -- the ~ is the whole point of it, so
+   this has to let a formatted string through instead of running it past isNaN and printing a
+   dash where a real summary was worked out. */
+function pct(v){
+  if (typeof v === 'string' && v.charAt(v.length-1) === '%') return v;
+  return (v==null||isNaN(v)) ? '\u2014' : v + '%';
+}
 function mb(b){ b = Number(b)||0;
   if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
   if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
@@ -1713,18 +1720,25 @@ VIEWS.assignments = function(){
   });
 };
 
+/* THE ORDER ASKED FOR, WHICH IS THE ORDER THE WORK HAPPENS IN:
+     S/N Team REF Customer Contact New no Guarantor G. Contact Disb date Last trans
+     D.S D.C Rejesho Arrears Recovered Status Follow-up Promise Last comment By When
+   Same columns as before, and the S/N is the table's own. Who and how to reach them first,
+   then the dates that say how long this has been going on, then the money, then what was done
+   about it -- rather than the money interrupting the contact details half way down the row. */
 function FOLLOWUP_COLS(){
-  return [col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+  return [col('team','Team'), col('ref','REF'), col('full_name','Customer'),
     {key:'contact', label:'Contact', kind:'tel'},
     {key:'new_no', label:'New no', kind:'tel'},
     col('guarantor_name','Guarantor'),
     {key:'guarantor_contact', label:'G. Contact', kind:'tel'},
-    col('arrears','Arrears','money'), col('rejesho','Rejesho','money'),
+    col('disb_date','Disb date','date'), col('last_trans','Last trans','date'),
+    col('ds','D.S'), col('dc','D.C','num'),
+    col('rejesho','Rejesho','money'), col('arrears','Arrears','money'),
     col('recovered','Recovered','money'),
     {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
     {key:'fu_status', label:'Follow-up', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
-    col('promise_date','Promise','date'), col('ds','D.S'), col('dc','D.C','num'),
-    col('disb_date','Disb date','date'), col('last_trans','Last trans','date'),
+    col('promise_date','Promise','date'),
     col('last_comment','Last comment'),
     col('comment_by','By'), col('comment_at','When','dt')];
 }
@@ -1814,9 +1828,14 @@ VIEWS.fureport = function(){
           [col('officer','Officer'), col('total','Total','num')].concat(
             (d.statuses||[]).map(function(s){ return col(s, s, 'num'); })),
           sumRow(d.byOfficerStatus, ['total'].concat(d.statuses||[])))
-      + board('frStatus','Kwa hali / By follow-up status', null, d.byStatus,
-          [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')],
-          sumRow(d.byStatus, ['customers','arrears']))
+      + board('frStatus','Kwa hali / By follow-up status',
+          'wateja wote watatu / all three categories: ' + money(d.totals.defaulters) + ' defaulters · '
+            + money(d.totals.expired) + ' expired · ' + money(d.totals.chronic) + ' chronic',
+          d.byStatus,
+          [col('status','Status'), col('customers','Customers','num'),
+           col('defaulters','Defaulters','num'), col('expired','Expired','num'), col('chronic','Chronic','num'),
+           col('arrears','Arrears','money')],
+          sumRow(d.byStatus, ['customers','defaulters','expired','chronic','arrears']))
       + board('frOfficer','Kwa afisa / By officer', null, d.byOfficer,
           [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')],
           sumRow(d.byOfficer, ['comments','customers']))
@@ -1908,14 +1927,40 @@ function autoTotals(rows, cols){
     }
   });
   if (!any) return null;
-  // Percentages last, so the totals they are built from are already in place.
+  /* PERCENTAGES LAST, so the totals they are built from are already in place.
+
+     "The grand total bars in reports and presentations should have averages where applicable
+      not leave data unsummarized."
+
+     A percentage cannot be added up, so the right answer is to work it out AGAIN from the
+     summed parts -- 12m collected of 20m expected is 60%, whatever the individual teams did.
+     That is what PCT_FROM is for and it is exact.
+
+     But a percentage whose two parts are not both on the table had nowhere to go, so the grand
+     total simply left that cell empty -- on a projector, next to a row of real figures, an
+     empty cell reads as zero or as a fault. Where the parts are missing the honest summary is
+     the AVERAGE of the rows, and it is marked with a leading ~ so nobody reads it as the
+     recomputed ratio beside it. An average of percentages is not the percentage of the totals,
+     and a slide should not pretend otherwise. */
   cols.forEach(function(c){
     if (c.kind !== 'pct') return;
     var src = PCT_FROM[c.key];
-    if (!src) return;
-    var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
-    var d = rows.reduce(function(s, r){ return s + (Number(r[src[1]]) || 0); }, 0);
-    if (d > 0) t[c.key] = Math.round((n / d) * 1000) / 10;
+    if (src){
+      var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
+      var d = rows.reduce(function(s, r){ return s + (Number(r[src[1]]) || 0); }, 0);
+      if (d > 0) t[c.key] = Math.round((n / d) * 1000) / 10;
+      return;
+    }
+    // Rows that have no value at all are left out of the average rather than counted as zero,
+    // which would drag every board with a blank row towards nothing.
+    var vals = [];
+    rows.forEach(function(r){
+      var v = c.get ? c.get(r) : r[c.key];
+      if (v !== null && v !== undefined && v !== '' && !isNaN(Number(v))) vals.push(Number(v));
+    });
+    if (!vals.length) return;
+    var avg = vals.reduce(function(s, v){ return s + v; }, 0) / vals.length;
+    t[c.key] = '~' + (Math.round(avg * 10) / 10) + '%';
   });
   return t;
 }
@@ -1985,7 +2030,12 @@ VIEWS.weekly = function(){
       + kpi('Expected', money(t.expected), d.weekOf+' → '+d.weekEnd)
       + kpi('Collected', money(t.collected), t.expected? Math.round(1000*t.collected/t.expected)/10+'%':'', 'good')
       + kpi('Uncollected', money(t.uncollected), null, 'bad')
-      + kpi('Recovered', money(t.recovered), null, 'good')
+      + kpi('Recovered', money(t.recovered), 'wiki nzima / the whole week', 'good')
+      /* LEO. The week's figure cannot answer "are we moving today" -- by Thursday it is mostly
+         Monday and Tuesday, and a day of nothing disappears inside it. */
+      + kpi('Leo rec / Recovered today', money(t.recoveredToday),
+            t.isCurrentWeek ? 'leo pekee / today alone' : 'wiki iliyopita \u2014 hakuna leo / past week, no today',
+            t.isCurrentWeek && t.recoveredToday > 0 ? 'good' : '')
       + kpi('Received', money(t.received))
       + kpi('Sales', money(t.salesCount), money(t.salesAmount))
       + '</div>'
@@ -2020,9 +2070,13 @@ VIEWS.weekly = function(){
       + board('wRec','Urejeshaji / Recovery','recovered ÷ the week’s uncollected', d.teams,
           [col('team','Team'),
            {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
-           {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':(r.recovered<0?'bad':''); }},
+           {key:'recovered', label:'Recovered (week)', kind:'money', cls:function(r){ return r.recovered>0?'good':(r.recovered<0?'bad':''); }},
+           // Leo, per team, beside the week -- which team moved TODAY is the question a
+           // Thursday morning actually asks, and the week's column cannot answer it.
+           {key:'recToday', label:'Leo rec / today', kind:'money', cls:function(r){ return r.recToday>0?'good':(r.recToday<0?'bad':''); }},
            col('recPct','Recovery %','pct')],
-          {team:'', uncollected:d.teamTotals.uncollected, recovered:d.teamTotals.recovered, recPct:d.teamTotals.recPct})
+          {team:'', uncollected:d.teamTotals.uncollected, recovered:d.teamTotals.recovered,
+           recToday:d.teamTotals.recToday, recPct:d.teamTotals.recPct})
       /* Ongezeko la deni: Monday's debt against the week-end's. A POSITIVE change means the
          debt fell, which is why it reads green with a minus sign in front of it. */
       + board('wDebt','Ongezeko la deni (Monday → '+esc(d.weekEndDate||'week end')+')',
@@ -3101,7 +3155,13 @@ function presSlides(){
         col('pctJ3','J3','pct'), col('pctJ4','J4','pct'), col('pctJ5','J5','pct'),
         col('pctAL','AL','pct'), col('pctIJ','IJ','pct'),
         col('weekUncollected','Uncollected (week)','money'), col('weekPct','Coll % (week)','pct')] });
-    slides.push({ id:'cs', kind:'table', title:'Call agents — applications brought in', rows:b.csWeek.slice(0,12),
+    /* "the callagents/customer service reports of assigned and unassigned at presentation i
+        need it to always be sum of weekly from mon to sun"
+       csWeek is already the Mon-Sun sum -- the title said neither which days nor that it was a
+       sum, so on a Tuesday the room read it as Tuesday's. Now it says so. */
+    slides.push({ id:'cs', kind:'table',
+      title:'Call agents — applications brought in · jumla ya wiki Jumatatu–Jumapili / week total Mon–Sun',
+      rows:b.csWeek.slice(0,12),
       cols:[col('agent','Agent'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
         col('brought','Brought in','num'), col('amount','Amount','money')] });
     /* BOTH ENDS ON ONE PAGE. Split across two slides the room saw the busiest, talked about
@@ -3109,15 +3169,36 @@ function presSlides(){
        side the slide answers the question people actually ask: who is working the phone and
        who is not. An officer who never opened the app is IN this list at zero rather than
        missing from it, which is the whole reason it is worth projecting. */
-    var callTop = (b.callWeek || []).slice(0, 6).map(function(x){ return { ...x, end:'Busiest' }; });
+    /* THE THREE PMO UNITS ONLY.
+       "For the presentation slides am interested in the 3 PMO department's Units (expected,
+        collection and recovery officers - show only those for busiest and least active ones)"
+
+       Everybody in the field calls, so this board was every registered handset in the company
+       -- and the twelve names it had room for were whoever happened to call most, which on any
+       given week is rarely one of the three units the meeting is about. The unit is decided on
+       the server, off the teams table and the access codes, so this is a filter and not a
+       second opinion about who is a recovery officer.
+
+       If NOBODY on the board holds one of the three units -- a book where the columns are not
+       filled in -- the slide falls back to the whole list rather than going blank. An empty
+       slide in a meeting reads as a broken system; a full one reads as "nobody is labelled",
+       which is a thing somebody can go and fix. */
+    var PMO_UNITS = { EXPECTED:1, COLLECTION:1, RECOVERY:1 };
+    var callPool = (b.callWeek || []).filter(function(x){ return PMO_UNITS[x.unit]; });
+    var callPoolWorst = (b.callWeekWorst || []).filter(function(x){ return PMO_UNITS[x.unit]; });
+    var unitOnly = callPool.length > 0;
+    if (!unitOnly) { callPool = b.callWeek || []; callPoolWorst = b.callWeekWorst || []; }
+    var callTop = callPool.slice(0, 6).map(function(x){ return { ...x, end:'Busiest' }; });
     var topNames = {};
     callTop.forEach(function(x){ topNames[x.agent] = 1; });
-    var callLow = (b.callWeekWorst || []).filter(function(x){ return !topNames[x.agent]; })
+    var callLow = callPoolWorst.filter(function(x){ return !topNames[x.agent]; })
       .slice(0, 6).map(function(x){ return { ...x, end:'Least active' }; });
-    slides.push({ id:'calls', kind:'table', title:'HOPE Calls — busiest and least active this week',
+    slides.push({ id:'calls', kind:'table',
+      title:'HOPE Calls — busiest and least active this week'
+        + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),
       rows: callTop.concat(callLow),
       cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest'?'good':'bad'; } },
-        col('agent','Officer'), col('team','Team'), col('calls','Calls','num'),
+        col('agent','Officer'), col('unit','Unit'), col('team','Team'), col('calls','Calls','num'),
         col('duration','Talk time','dur'), col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
     slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
       cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
