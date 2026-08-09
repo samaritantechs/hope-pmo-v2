@@ -4104,3 +4104,51 @@ test('the Count 1-6 list carries the guarantor and their number', async () => {
     assert.notEqual(p.guarantor_contact, undefined, p.ref + ' has no guarantor number field');
   }
 });
+
+/* =====================================================================================
+   THE HOUSEKEEPING IS THE SYSTEM'S ACT, NOT THE UPLOADER'S.
+   =====================================================================================
+   Uploading requires the `upload` tab; the sweep and the retire rule require `settings`.
+   Somebody granted upload-only would have had the automatic tidying refused with a 403 that
+   the fire-and-forget catch swallows -- silently doing nothing, for ever. That is the exact
+   failure shape that has already cost two rounds of this, so it gets a test of its own.
+
+   The actor is built on the server and never from the request: it keeps the real person's name
+   and code so the audit log still says who was at the keyboard, and carries the permission
+   because THE SYSTEM is what decided to tidy up.
+*/
+test('an upload-only user cannot sweep on their own account', async () => {
+  const db = fakeDb(DUP_BOOK());
+  const uploader = { code: 'U', name: 'THE UPLOADER', role: 'CLERK', teams: null, tabs: ['upload'] };
+  await assert.rejects(() => portalApi(db, uploader, 'purgeSuperseded', { confirm: true }, NOW),
+    e => e.status === 403, 'which is right -- asking for it by hand is an admin act');
+  await assert.rejects(() => portalApi(db, uploader, 'followupClean', { days: 1, confirm: true }, NOW),
+    e => e.status === 403);
+});
+
+test('the same user, as the system tidies up after their upload, succeeds', async () => {
+  /* Exactly the object api/upload.js builds: their identity, the system's permission. */
+  const db = fakeDb(DUP_BOOK());
+  const housekeeper = { code: 'U', name: 'THE UPLOADER', role: 'CLERK',
+    teams: null, tabs: ['upload', 'settings'] };
+  const r = await portalApi(db, housekeeper, 'purgeSuperseded',
+    { confirm: true, keep: 2, to: TODAY, days: 1, limit: 200 }, NOW);
+  assert.equal(r.deletedBatches, 1, 'the third copy of the day goes, two are kept');
+  assert.deepEqual([...new Set(db._dump('repayment_snapshots').map(x => x.upload_batch))].sort(),
+    ['b09', 'b10']);
+});
+
+test('the audit log still names the person, not "the system"', async () => {
+  /* The permission is the system's; the name has to stay theirs, or the log answers "who did
+     this" with a word nobody can go and ask. */
+  const book = DUP_BOOK();
+  book.audit_log = [];
+  const db = fakeDb(book);
+  const housekeeper = { code: 'U', name: 'THE UPLOADER', role: 'CLERK',
+    teams: null, tabs: ['upload', 'settings'] };
+  await portalApi(db, housekeeper, 'purgeSuperseded', { confirm: true, to: TODAY }, NOW);
+  const entry = db._dump('audit_log').find(a => a.action === 'purgeSuperseded');
+  assert.ok(entry, 'a destructive act is always recorded');
+  assert.equal(entry.actor_name, 'THE UPLOADER');
+  assert.equal(entry.actor_code, 'U');
+});

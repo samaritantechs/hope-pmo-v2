@@ -742,12 +742,23 @@ export default withApi(async (req, res) => {
      and the batch rule already makes it the one that counts -- everything below is only
      cleaning up behind it. */
   let autoSwept = null, autoRetired = null;
+  /* WHO IS DOING THE TIDYING. Uploading requires the `upload` tab; the sweep and the retire
+     rule require `settings`. Somebody granted upload-only would therefore have had the
+     housekeeping refused with a 403 that the catch below swallows -- silently doing nothing,
+     for ever, which is the exact failure shape that has already cost two rounds of this.
+
+     So the actor is built HERE, on the server, never from the request. It keeps the real
+     person's name and code, so the audit log still says who was at the keyboard, and carries
+     the permission because THE SYSTEM is what decided to tidy up -- not them. The arguments
+     below are fixed by this file, so nothing a caller sends can widen what runs. */
+  const housekeeper = { code: user.code, name: user.name, role: user.role,
+    teams: null, tabs: ['upload', 'settings'] };
   if (isLastPart && SNAPSHOT_TABLES.has(table)) {
     try {
       /* The same sweep the Settings card runs, on this date only, keeping two: the file just
          uploaded and the one it replaced -- so a wrong file can still be undone by sending the
          right one again, which is the whole reason two are kept rather than one. */
-      const r = await portalApi(supabase, user, 'purgeSuperseded',
+      const r = await portalApi(supabase, housekeeper, 'purgeSuperseded',
         { confirm: true, keep: 2, to: uploadDate || meta.date, days: 1, limit: 200 }, Date.now());
       autoSwept = { batches: r.deletedBatches, rows: r.totalRows };
     } catch (e) { /* the upload stands */ }
@@ -757,7 +768,7 @@ export default withApi(async (req, res) => {
       /* "1 day and above" -- a defaulter whose own weekday deck has come round without them is
          off the working list the moment the next day's deck lands, not a fortnight later.
          Nothing is deleted: every comment and promise stays exactly where it is. */
-      const r = await portalApi(supabase, user, 'followupClean', { days: 1, confirm: true }, Date.now());
+      const r = await portalApi(supabase, housekeeper, 'followupClean', { days: 1, confirm: true }, Date.now());
       autoRetired = r.retired || 0;
     } catch (e) { /* the upload stands */ }
   }
