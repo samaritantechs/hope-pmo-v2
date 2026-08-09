@@ -428,3 +428,80 @@ test('a genuinely newer upload still wins, timestamps being what they are for', 
   ]);
   assert.deepEqual(out.map(r => r.v), ['new']);
 });
+
+/* =====================================================================================
+   A DAY UPLOADED AS SEVERAL FILES IS STILL ONE DAY.
+   =====================================================================================
+   "the weekly report is still showing nothing"
+   "defaulters current 2,000 on the system yet they 8,000+ on my pc"
+
+   The batch rule was written for one shape of upload: ONE file containing the whole day, sent
+   again if it was wrong. Under that shape "keep the newest batch of this date" is exactly
+   right, and every test above models it.
+
+   But a day can also arrive as SEVERAL files -- a region at a time, a branch at a time -- and
+   each gets its own upload_batch, because each IS its own upload. Resolved per DAY, whichever
+   file was sent last wins and the rest are thrown away: seventeen files, one survives, and the
+   report reads a seventeenth of the day. Nothing warns anybody, because from the inside it is
+   indistinguishable from a day where only one file was ever sent.
+*/
+test('three teams uploaded as three files all survive', async () => {
+  const at = h => '2026-07-20T' + h + ':00:00Z';
+  const kept = pickLatestBatch([
+    { team: 'A', upload_batch: 'f1', created_at: at('08'), v: 'A' },
+    { team: 'B', upload_batch: 'f2', created_at: at('09'), v: 'B' },
+    { team: 'C', upload_batch: 'f3', created_at: at('10'), v: 'C' },
+  ]);
+  assert.deepEqual(kept.map(r => r.v).sort(), ['A', 'B', 'C'],
+    'resolving per DAY kept only C and lost two thirds of the book');
+});
+
+test('a corrected file for one team supersedes only that team', async () => {
+  const at = h => '2026-07-20T' + h + ':00:00Z';
+  const kept = pickLatestBatch([
+    { team: 'A', upload_batch: 'f1', created_at: at('08'), v: 'A-old' },
+    { team: 'B', upload_batch: 'f2', created_at: at('09'), v: 'B' },
+    { team: 'A', upload_batch: 'f3', created_at: at('10'), v: 'A-fixed' },
+  ]);
+  assert.deepEqual(kept.map(r => r.v).sort(), ['A-fixed', 'B'],
+    'A is corrected, B is untouched, and neither is doubled');
+});
+
+test('the whole book re-uploaded still supersedes, exactly as before', async () => {
+  /* The shape the rule was written for. This must not change by so much as a row -- it is the
+     protection against a re-upload doubling every figure. */
+  const at = h => '2026-07-20T' + h + ':00:00Z';
+  const kept = pickLatestBatch([
+    { team: 'A', upload_batch: 'old', created_at: at('08'), v: 'A-old' },
+    { team: 'B', upload_batch: 'old', created_at: at('08'), v: 'B-old' },
+    { team: 'A', upload_batch: 'new', created_at: at('10'), v: 'A-new' },
+    { team: 'B', upload_batch: 'new', created_at: at('10'), v: 'B-new' },
+  ]);
+  assert.deepEqual(kept.map(r => r.v).sort(), ['A-new', 'B-new']);
+});
+
+test('the whole day is read when the day arrived in pieces', async () => {
+  /* End to end, through the dashboard: Monday sent as one file per team instead of one file.
+     Before this, the KPI read one team and looked like a collapse in collection. */
+  const tables = makeTables();
+  tables.repayment_snapshots = [
+    { ...T('2026-07-20', 'A', 1000, 'UNPAID', 0, 'file-A', 8) },
+    { ...T('2026-07-20', 'B', 500, 'UNPAID', 0, 'file-B', 9) },
+  ];
+  const d = await run(noonEAT('2026-07-20'), ALL, tables);
+  assert.equal(d.totals.expectedAmount, 1500, 'both files, not just the later one');
+  assert.equal(d.totals.recovery.denominator, 1500);
+});
+
+test('a defaulter deck sent team by team is whole too', async () => {
+  const tables = makeTables();
+  tables.defaulter_snapshots = [
+    D('2026-07-20', 'MON', 'initial', 'A', 500, 'i-A'), D('2026-07-20', 'MON', 'initial', 'B', 300, 'i-B'),
+    D('2026-07-20', 'MON', 'current', 'A', 400, 'c-A'), D('2026-07-20', 'MON', 'current', 'B', 100, 'c-B'),
+  ];
+  // Each file its own moment, an hour apart, exactly as separate uploads arrive.
+  tables.defaulter_snapshots.forEach((r, i) => { r.created_at = '2026-07-20T0' + (5 + i) + ':00:00Z'; });
+  const d = await run(noonEAT('2026-07-20'), ALL, tables);
+  assert.equal(d.totals.defaulterArrears, 500, 'both teams current: 400 + 100');
+  assert.equal(d.totals.recovery.recovered, 300, '(500+300) initial - (400+100) current');
+});
