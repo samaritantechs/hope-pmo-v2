@@ -3441,24 +3441,28 @@ const DUP_BOOK = () => {
   return t;
 };
 
-test('a dry run counts the duplicates and deletes nothing', async () => {
+test('a dry run counts what is beyond the last two, and deletes nothing', async () => {
   const db = fakeDb(DUP_BOOK());
   const r = await portalApi(db, ADMIN, 'purgeSuperseded', {}, NOW);
   assert.equal(r.dryRun, true);
-  assert.equal(r.totalBatches, 2, 'two losing uploads of the one day');
-  assert.equal(r.totalRows, 4);
+  assert.equal(r.keep, 2, 'the one in use and the one it replaced');
+  assert.equal(r.totalBatches, 1, 'three uploads, two kept, so one goes');
+  assert.equal(r.totalRows, 2);
   assert.equal(r.deletedBatches, 0);
   assert.equal(db._dump('repayment_snapshots').length, 6, 'and nothing was touched');
 });
 
-test('confirming keeps the last upload and removes the rest', async () => {
+test('confirming keeps the last TWO uploads and removes the rest', async () => {
+  /* "just keep two copies if unsuccessful uploads are an issue" -- the one in use, and the one
+     it replaced, so a bad upload can still be undone by sending the right file again. */
   const db = fakeDb(DUP_BOOK());
   const before = await portalApi(db, ADMIN, 'expected', {}, NOW);
   const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true }, NOW);
-  assert.equal(r.deletedBatches, 2);
+  assert.equal(r.deletedBatches, 1);
   const left = db._dump('repayment_snapshots');
-  assert.equal(left.length, 2);
-  assert.ok(left.every(x => x.upload_batch === 'b10'), 'the 10:00 upload is the one that stayed');
+  assert.equal(left.length, 4);
+  assert.deepEqual([...new Set(left.map(x => x.upload_batch))].sort(), ['b09', 'b10'],
+    'the 10:00 upload and the 09:00 one it replaced; the 08:00 one goes');
 
   // THE POINT: the figures cannot move, because what went is what every read already skipped.
   const after = await portalApi(db, ADMIN, 'expected', {}, NOW);
@@ -3469,13 +3473,31 @@ test('confirming keeps the last upload and removes the rest', async () => {
   assert.equal(again.totalBatches, 0);
 });
 
+test('keeping one is allowed, for a deployment that wants the space back', async () => {
+  const db = fakeDb(DUP_BOOK());
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true, keep: 1 }, NOW);
+  assert.equal(r.keep, 1);
+  assert.equal(r.deletedBatches, 2);
+  const left = db._dump('repayment_snapshots');
+  assert.ok(left.every(x => x.upload_batch === 'b10'), 'only the 10:00 upload survives');
+});
+
 test('the sweep works in bounded bites and says what is left', async () => {
   /* A book uploaded every half hour for weeks has hundreds of losing batches, and one delete
      per batch would run past the platform's sixty seconds. */
   const db = fakeDb(DUP_BOOK());
-  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true, limit: 1 }, NOW);
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true, keep: 1, limit: 1 }, NOW);
   assert.equal(r.deletedBatches, 1);
   assert.equal(r.remainingBatches, 1, 'so it can be run again until it reports none');
+  assert.equal(db._dump('repayment_snapshots').length, 4);
+});
+
+test('a day with two uploads is already at the limit and is left alone', async () => {
+  const book = DUP_BOOK();
+  book.repayment_snapshots = book.repayment_snapshots.filter(r => r.upload_batch !== 'b08');
+  const db = fakeDb(book);
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true }, NOW);
+  assert.equal(r.totalBatches, 0);
   assert.equal(db._dump('repayment_snapshots').length, 4);
 });
 

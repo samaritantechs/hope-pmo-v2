@@ -2668,6 +2668,10 @@ async function purgeSuperseded(db, user, p, nowMs) {
   const from = /^\d{4}-\d{2}-\d{2}$/.test(String(p && p.from)) ? p.from : '0001-01-01';
   const dryRun = !(p && p.confirm === true);
   const limit = Math.max(1, Math.min(400, parseInt((p && p.limit) || 0, 10) || 120));
+  /* How many uploads of each day survive. Two by default: the one in use and the one it
+     replaced. One is allowed for a deployment that wants the space back and accepts that a bad
+     upload can only be undone by sending the right file again. */
+  const keepN = Math.max(1, Math.min(10, parseInt((p && p.keep) || 0, 10) || 2));
 
   const report = [];
   let deletedBatches = 0, remaining = 0;
@@ -2687,16 +2691,34 @@ async function purgeSuperseded(db, user, p, nowMs) {
     let losing = 0, rowsGoing = 0;
     const doomed = [];
     for (const [, rows] of groups) {
-      const keep = pickLatestBatch(rows);
-      const winner = keep.length ? (keep[0].upload_batch || null) : null;
-      const others = new Map();
+      /* KEEP THE LAST `keepN` UPLOADS OF EACH DAY, NOT ONLY THE WINNER.
+
+         "just keep two copies if unsuccessful uploads are an issue"
+
+         Which is the right shape. Keeping EVERY copy was safe and unbounded -- a file sent
+         every half hour for weeks is hundreds of copies of a day nobody will ever read.
+         Keeping only the winner is bounded and gives up the safety net: if the newest upload
+         turns out to be the wrong file, half a sheet, or a corrupted export, the good figures
+         it superseded are gone with it.
+
+         Two is the middle: the one in use, and the one it replaced. A bad upload is undone by
+         sending the right file again, and until that happens the previous good copy is still
+         underneath.
+
+         Ranked the way the batch rule ranks -- created_at, then the batch id to settle a tie --
+         so "the last two" here and "the one that counts" everywhere else can never disagree
+         about which upload is newest. */
+      const byBatch = new Map();
       for (const r of rows) {
         const b = r.upload_batch || null;
-        if (b === winner) continue;
-        if (!others.has(b)) others.set(b, { batch: b, n: 0, row: r });
-        others.get(b).n += r.n;
+        if (!byBatch.has(b)) byBatch.set(b, { batch: b, n: 0, row: r, rank: '' });
+        const g = byBatch.get(b);
+        g.n += r.n;
+        const rank = String(r.created_at || '') + ' ' + String(b || '');
+        if (rank > g.rank) { g.rank = rank; g.row = r; }
       }
-      for (const o of others.values()) { losing++; rowsGoing += o.n; doomed.push({ ...o, keyRow: o.row }); }
+      const ordered = [...byBatch.values()].sort((a, b) => (a.rank < b.rank ? 1 : a.rank > b.rank ? -1 : 0));
+      for (const o of ordered.slice(keepN)) { losing++; rowsGoing += o.n; doomed.push({ ...o, keyRow: o.row }); }
     }
     report.push({ table: src.table, label: src.label, groups: groups.size, losingBatches: losing, rows: rowsGoing });
 
@@ -2720,7 +2742,7 @@ async function purgeSuperseded(db, user, p, nowMs) {
     }
   }
   return {
-    dryRun, from, to, limit,
+    dryRun, from, to, limit, keep: keepN,
     report,
     totalBatches: report.reduce((s, r) => s + r.losingBatches, 0),
     totalRows: report.reduce((s, r) => s + r.rows, 0),
