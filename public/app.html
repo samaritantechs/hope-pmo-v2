@@ -1084,6 +1084,7 @@ function wireBar(){
     }
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
+  wireWeekBar();
   // The two-level sort. Changing it re-sorts what is already on screen -- no trip to the
   // server, because sorting is not a question the server was ever asked.
   var sa = document.getElementById('sortA');
@@ -1547,14 +1548,84 @@ function tcell(head, lines, cls){
    What this side has to get right is saying so: a dashboard showing a finished week looks
    exactly like a dashboard showing today, and somebody reading last week's arrears as this
    morning's would act on it. */
-function weekBar(d){
+/* THE WEEK PICKER, ONE OF THEM, USED BY ALL THREE SCREENS.
+
+     "I tried pressing the date picker to 10th august ... but didn't work and the pressable day
+      should be Monday only letting these date pickers work at dashboard, presentations and
+      weekly report."
+
+   Two separate faults sat behind "didn't work".
+
+   ANY DAY COULD BE PICKED. A week here always starts on a Monday, so a Thursday was quietly
+   snapped to the Monday it belongs to -- correct, and invisible. Pick Thursday the 13th, get a
+   screen headed "10 August", and it reads like the control moved on its own. The field now
+   snaps VISIBLY: whatever is chosen, the box immediately shows the Monday it resolved to, and
+   the \u25C0 \u25B6 buttons step a whole week at a time, which is what anybody actually wants from it.
+   (An HTML date box cannot grey out non-Mondays -- there is no such attribute -- so making the
+   snap instant and visible is the honest version of "Mondays only".)
+
+   A FUTURE WEEK WAS IGNORED IN SILENCE. Picked on Sunday the 9th, the 10th is next week; the
+   server accepted only an EARLIER Monday and otherwise returned the current week with nothing
+   to say so. The screen redrew with the identical figures and looked dead. The clamp is right
+   -- a week that has not happened has no snapshots, so reading it would paint a screen of
+   zeros that looks like a collapse rather than a calendar -- but it now SAYS which week is on
+   screen and why. */
+function mondayOf(key){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(key||''))) return '';
+  var d = new Date(String(key) + 'T09:00:00Z');
+  var u = d.getUTCDay();                       // 0=Sun
+  d.setUTCDate(d.getUTCDate() - ((u + 6) % 7));  // back to Monday
+  return d.toISOString().slice(0, 10);
+}
+function weekBar(d, extra){
+  var shown = d.weekOf || '';
+  var asked = d.weekRequested || '';
   return bar('<label style="font-size:12px;color:var(--mut)">Wiki (Jumatatu) / Week starting Monday</label>'
-    + '<input type="date" data-arg="weekOf" value="' + esc(d.weekOf||'') + '">'
+    + '<button class="btn sm ghost" data-week-step="-1" title="Wiki iliyopita / previous week">\u25C0</button>'
+    + '<input type="date" data-week="1" value="' + esc(shown) + '">'
+    + '<button class="btn sm ghost" data-week-step="1" title="Wiki ijayo / next week">\u25B6</button>'
     + (d.pastWeek
-        ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(d.weekOf)
+        ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(shown)
           + ' \u2192 ' + esc(d.weekEnd||'') + ' \u00B7 kama ilivyokuwa ' + esc(d.asOfDate||'') + '</span>'
         : '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>')
-    + (d.pastWeek ? ' <button class="btn sm ghost" data-arg="weekOf" data-val="">Rudi wiki hii / Back to this week</button>' : ''));
+    + (d.pastWeek ? ' <button class="btn sm ghost" data-week-set="">Rudi wiki hii / Back to this week</button>' : '')
+    + (extra || ''))
+    /* SAYING WHAT HAPPENED TO THE CHOICE. Only ever shown when the answer differs from the
+       ask, so the ordinary case stays quiet. */
+    + (d.weekFuture
+        ? '<div class="note">Wiki ya <b>' + esc(asked) + '</b> bado haijaanza \u2014 hakuna ripoti'
+          + ' iliyopakiwa. Inaonyeshwa wiki hii (<b>' + esc(shown) + '</b>).'
+          + ' / The week of ' + esc(asked) + ' has not started yet, so nothing has been uploaded'
+          + ' for it. Showing this week instead.</div>'
+        : (asked && asked !== shown
+            ? '<div class="note">Umechagua <b>' + esc(asked) + '</b> \u2014 wiki huanza Jumatatu,'
+              + ' hivyo inaonyeshwa <b>' + esc(shown) + '</b>.'
+              + ' / A week starts on Monday, so that date resolved to ' + esc(shown) + '.</div>'
+            : ''));
+}
+/* Wired once, beside the other global handlers, so every screen that prints a week bar gets
+   the same behaviour rather than three copies that drift apart. */
+function wireWeekBar(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-week]'), function(el){
+    el.onchange = function(){
+      var m = mondayOf(el.value);
+      if (m) el.value = m;                     // snap in front of them, before the redraw
+      S.args.weekOf = m;
+      render();
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-week-step]'), function(el){
+    el.onclick = function(){
+      var base = mondayOf(S.args.weekOf || '') || mondayOf(today());
+      var d = new Date(base + 'T09:00:00Z');
+      d.setUTCDate(d.getUTCDate() + 7 * Number(el.getAttribute('data-week-step')));
+      S.args.weekOf = d.toISOString().slice(0, 10);
+      render();
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-week-set]'), function(el){
+    el.onclick = function(){ S.args.weekOf = el.getAttribute('data-week-set') || ''; render(); };
+  });
 }
 VIEWS.dashboard = function(){
   return srv('dashboardFull', { weekOf: S.args.weekOf || '' }).then(function(d){
@@ -2315,9 +2386,9 @@ VIEWS.weekly = function(){
          than on a screen where the week would have to be chosen again. Pressing it on a week
          already stamped OVERWRITES -- which is the point: a week corrected by a re-upload is
          corrected in the record too. */
-      + bar('<label style="font-size:12px;color:var(--mut)">Week starting (Monday)</label>'
-        + '<input type="date" data-arg="weekOf" value="'+esc(d.weekOf)+'">'
-        + '<button class="btn sm" id="wkStamp" style="margin-left:8px">\u2b07 Stamp report / Hifadhi wiki hii</button>'
+      // The SAME week bar the dashboard and the presentation use -- Monday-snapping, with the
+      // stamp button riding along beside it rather than on a second row of its own.
+      + weekBar(d, '<button class="btn sm" id="wkStamp" style="margin-left:8px">\u2b07 Stamp report / Hifadhi wiki hii</button>'
         + '<span class="sub" id="wkStampOut" style="margin-left:8px;color:var(--mut);font-size:12px"></span>')
       + ((!d.hasMonday || !d.hasWeekEnd)
           ? '<div class="note">Kwa wiki nzima pakia <b>Def Initial Monday</b> na <b>Def Current</b> ya mwisho wa wiki.'
@@ -2365,7 +2436,9 @@ VIEWS.weekly = function(){
            {key:'debtDelta', label:'Change', kind:'num', cls:function(r){ return r.debtDelta>=0?'good':'bad'; },
             get:function(r){ return (r.debtDelta>=0?'−':'+') + money(Math.abs(r.debtDelta)); }}],
           {team:'', mondayDebt:d.teamTotals.mondayDebt, curDebt:d.teamTotals.curDebt,
-           debtDelta:(d.teamTotals.debtDelta>=0?'−':'+') + money(Math.abs(d.teamTotals.debtDelta))});
+           debtDelta:(d.teamTotals.debtDelta>=0?'−':'+') + money(Math.abs(d.teamTotals.debtDelta))})
+      /* "weekly report is intended to have reports of all leaders in the leaders' table" */
+      + weeklyLeaderBoards(d);
     S.rows = d.days;
     S.cols = [col('weekday','Day'), col('date','Date','date'), col('customers','Customers','num'),
       col('expected','Expected','money'), col('collected','Collected','money'), col('uncollected','Uncollected','money'),
@@ -2375,6 +2448,81 @@ VIEWS.weekly = function(){
       + ' · Collection: '+pct(d.teamTotals.collPct)+' · Recovery: '+pct(d.teamTotals.recPct);
   });
 };
+
+/* =====================================================================================
+   EVERY LEADER IN THE LEADERS' TABLE, ON THE WEEKLY REPORT.
+
+     "weekly report is intended to have reports of all leaders in the leaders' table"
+
+   The weekly report answered "how is each TEAM doing". A director asks the other question --
+   "how is each PERSON doing" -- and most supervisors carry several teams, so their real week
+   is the roll-up across all of them. That roll-up existed nowhere on this screen: the leader
+   columns were carried on every row and never added up.
+
+   ALL of them, not just the ones with figures. Somebody named in the table whose teams
+   produced nothing appears with zeros, because "this GMO sold nothing this week" is precisely
+   what a Monday meeting needs to see, and dropping them would make the report quietly
+   flattering. A team whose column is blank is grouped under (hakuna / nobody named), which is
+   the prompt to go and fill it in.
+
+   COMPUTED ON THIS SCREEN, from the team rows and the leaders table the weekly response
+   already carries. No extra request, no second definition of what a week is -- these are the
+   same numbers the boards above print, added up a different way, so the two can never
+   disagree. */
+function weeklyLeaderBoards(d){
+  var cols = d.leadCols || ['opm','recovery','gmo','manager','credit','expected','bike'];
+  var byTeam = {};
+  (d.teams||[]).forEach(function(t){ byTeam[String(t.team||'').trim().toUpperCase()] = t; });
+  var any = false;
+  var out = cols.map(function(colKey){
+    var by = {};
+    (d.teamRows||[]).forEach(function(tr){
+      var who = String(tr[colKey]==null?'':tr[colKey]).trim();
+      var k = who ? who.toUpperCase() : ' ';        // blank sorts last, under one heading
+      if (!by[k]) by[k] = { leader: who || '(hakuna / nobody named)', teams:0, teamList:[],
+        sales:0, expected:0, collected:0, uncollected:0, recovered:0 };
+      var b = by[k];
+      b.teams++; b.teamList.push(tr.team);
+      var t = byTeam[String(tr.team||'').trim().toUpperCase()];
+      if (t){
+        b.sales += Number(t.sales)||0;             b.expected += Number(t.expected)||0;
+        b.collected += Number(t.collected)||0;     b.uncollected += Number(t.uncollected)||0;
+        b.recovered += Number(t.recovered)||0;
+      }
+    });
+    var rows = Object.keys(by).map(function(k){
+      var b = by[k];
+      b.teamList = b.teamList.slice().sort().join(', ');
+      b.collPct = b.expected > 0 ? Math.round(1000*b.collected/b.expected)/10 : null;
+      b.recPct = b.uncollected > 0 ? Math.round(1000*b.recovered/b.uncollected)/10 : null;
+      return b;
+    }).sort(function(a,b){ return (b.collected - a.collected) || (b.sales - a.sales); });
+    if (!rows.length) return '';
+    any = true;
+    var sum = function(f){ return rows.reduce(function(s,r){ return s + (Number(r[f])||0); }, 0); };
+    var tExp = sum('expected'), tCol = sum('collected'), tUnc = sum('uncollected'), tRec = sum('recovered');
+    var named = rows.filter(function(r){ return r.leader.charAt(0) !== '('; }).length;
+    return board('wl_' + colKey, 'Kwa ' + colKey.toUpperCase() + ' / By ' + colKey.toUpperCase(),
+      money(named) + ' named · ' + money(sum('teams')) + ' teams · wiki nzima / the whole week',
+      rows,
+      [{key:'leader', label:colKey.toUpperCase(),
+        cls:function(r){ return r.leader.charAt(0)==='(' ? 'bad' : ''; }},
+       col('teams','Teams','num'), col('teamList','Which teams'),
+       col('sales','Sales','money'),
+       col('expected','Expected','money'),
+       {key:'collected', label:'Collected', kind:'money', cls:function(){ return 'good'; }},
+       col('collPct','Collection %','pct'),
+       {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
+       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+       col('recPct','Recovery %','pct')],
+      {leader:'', teams:sum('teams'), teamList:'', sales:sum('sales'),
+       expected:tExp, collected:tCol,
+       collPct: tExp>0 ? Math.round(1000*tCol/tExp)/10 : null,
+       uncollected:tUnc, recovered:tRec,
+       recPct: tUnc>0 ? Math.round(1000*tRec/tUnc)/10 : null});
+  }).join('');
+  return any ? out : '';
+}
 
 /* Per-team numbers answer "how is this team doing". A leader report answers "how is this
    PERSON doing" — and most supervisors carry several teams, so their real performance is the
