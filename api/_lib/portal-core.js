@@ -330,11 +330,24 @@ async function followupReport(db, user, { from, to }, nowMs) {
   ]);
   const mineFu = scoped(user, fu).filter(r => !(r.status == null && r.arrears == null));
   const mineCm = scoped(user, cm);
+  /* "Kwa hali / By follow-up status - should pick all 3 defaulter categories (defaulters
+      expired and chronic) the whole Followup Report"
+
+     It always counted all three -- this read is the whole followup_status table and never
+     filtered on category -- but it could not SHOW that it did, so a board that looked short
+     was indistinguishable from a board that was missing two thirds of the book. Splitting the
+     count three ways answers the question directly, and if expired and chronic come back as
+     zeroes that is a gap in the uploads made visible rather than hidden inside one total. */
+  const catOf = v => {
+    const k = K(v);
+    return k.includes('CHRON') ? 'chronic' : k.includes('EXPIR') ? 'expired' : 'defaulters';
+  };
   const byStatus = {}, byOfficer = {}, byTeam = {};
   for (const r of mineFu) {
     const k = K(r.fu_status) || '(NOT TOUCHED)';
-    if (!byStatus[k]) byStatus[k] = { status: k, customers: 0, arrears: 0 };
+    if (!byStatus[k]) byStatus[k] = { status: k, customers: 0, arrears: 0, defaulters: 0, expired: 0, chronic: 0 };
     byStatus[k].customers++; byStatus[k].arrears += num(r.arrears);
+    byStatus[k][catOf(r.status)]++;
     const t = r.team || '(no team)';
     if (!byTeam[t]) byTeam[t] = { team: t, customers: 0, touched: 0, arrears: 0 };
     byTeam[t].customers++; byTeam[t].arrears += num(r.arrears);
@@ -377,7 +390,12 @@ async function followupReport(db, user, { from, to }, nowMs) {
     statuses, byOfficerStatus, rows: log,
     officers: [...new Set(log.map(r => r.by))].sort(),
     teams: [...new Set(log.map(r => r.team).filter(Boolean))].sort(),
-    totals: { customers: mineFu.length, touched: mineFu.filter(r => r.fu_status).length, comments: mineCm.length },
+    totals: { customers: mineFu.length, touched: mineFu.filter(r => r.fu_status).length, comments: mineCm.length,
+      // The same three-way split across the whole report, so the board's columns have a total
+      // to reconcile against.
+      defaulters: mineFu.filter(r => catOf(r.status) === 'defaulters').length,
+      expired: mineFu.filter(r => catOf(r.status) === 'expired').length,
+      chronic: mineFu.filter(r => catOf(r.status) === 'chronic').length },
   };
 }
 
@@ -1214,15 +1232,22 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const days = [];
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
-    const dayRows = scoped(user, expAll.filter(r => String(r.snapshot_date) === date));
+    /* THE BATCH RULE, WHICH THIS STRIP WAS THE ONE PLACE NOT TO APPLY.
+       Every other read in the system takes the latest upload_batch within a date, so a
+       corrected re-upload supersedes rather than doubles. These five tiles summed EVERY batch
+       -- so on any day somebody uploaded twice, the strip showed roughly double while the team
+       section underneath it, which does apply the rule, showed the truth. Two figures for the
+       same money on the same screen, and only after a re-upload, which is exactly when
+       somebody is already looking for a discrepancy. */
+    const dayRows = pickLatestBatchRows(scoped(user, expAll.filter(r => String(r.snapshot_date) === date)));
     /* PAIRED ON DATE, TYPE **AND WEEKDAY**. The decks are per weekday; an initial MON deck
        against a current TUE deck compares two different populations and reports the gap
        between them as recovery. That is the mistake that once produced -194 million, and it
        was still here -- which is why the RECOVERED card (which does match on weekday) and
        this row disagreed on the same book. */
     const dwd = WD5[i];
-    const ini = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'initial' && r.weekday === dwd));
-    const cur = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'current' && r.weekday === dwd));
+    const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'initial' && r.weekday === dwd)));
+    const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'current' && r.weekday === dwd)));
     const exp = tExpected(dayRows);
     const col = tCollected(dayRows);
     days.push({
@@ -1252,7 +1277,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const perTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   const T = {};
   const gt = team => bucket(T, String(team || '(no team)').trim() || '(no team)',
-    { sales: 0, expected: 0, collected: 0, uncollected: 0, recovered: 0,
+    { sales: 0, expected: 0, collected: 0, uncollected: 0, recovered: 0, recToday: 0,
       mondayDebt: 0, curDebt: 0, c16: 0, cleared: 0, reduced: 0, bad: 0, stat: 0 });
   for (const r of sales) gt(r.team).sales += num(r.principal_amt) || num(r.loan_amt);
   for (const d of days) {
@@ -1266,8 +1291,15 @@ async function weekly(db, user, { weekOf }, nowMs) {
     const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'initial' && r.weekday === d.weekday)));
     const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'current' && r.weekday === d.weekday)));
     if (!ini.length || !cur.length) continue;
-    for (const r of ini) gt(r.team).recovered += num(r.arrears_amt);
-    for (const r of cur) gt(r.team).recovered -= num(r.arrears_amt);
+    /* TODAY'S OWN RECOVERY, KEPT SEPARATE FROM THE WEEK'S.
+       "On wiki report add leo rec b/se we only seeing total week rec at call app without
+        noticing todays progress in app"
+       The week's figure cannot answer "are we moving today" -- by Thursday it is mostly
+       Monday and Tuesday, and a day of nothing is invisible inside it. Accumulated in the
+       same pass, off the same paired decks, so the two can never disagree about the day. */
+    const isToday = d.date === todayKey(nowMs);
+    for (const r of ini) { const b = gt(r.team); b.recovered += num(r.arrears_amt); if (isToday) b.recToday += num(r.arrears_amt); }
+    for (const r of cur) { const b = gt(r.team); b.recovered -= num(r.arrears_amt); if (isToday) b.recToday -= num(r.arrears_amt); }
   }
   const myMonIni = scoped(user, monIni.rows), myEndCur = scoped(user, endCur.rows);
   for (const r of myMonIni) gt(r.team).mondayDebt += num(r.arrears);
@@ -1291,6 +1323,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
     expected: b.expected, collected: b.collected, uncollected: b.uncollected,
     collPct: pctOf(b.collected, b.expected),
     recovered: b.recovered, recPct: pctOf(b.recovered, b.uncollected),
+    recToday: b.recToday,
     mondayDebt: b.mondayDebt, curDebt: b.curDebt, debtDelta: b.mondayDebt - b.curDebt,
     c16: b.c16, cleared: b.cleared, reduced: b.reduced, bad: b.bad, stat: b.stat,
     success: pctOf(b.cleared + b.reduced, b.c16),
@@ -1298,7 +1331,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const sum = f => teamsOut.reduce((s, r) => s + (r[f] || 0), 0);
   const teamTotals = {
     sales: sum('sales'), expected: sum('expected'), collected: sum('collected'),
-    uncollected: sum('uncollected'), recovered: sum('recovered'),
+    uncollected: sum('uncollected'), recovered: sum('recovered'), recToday: sum('recToday'),
     mondayDebt: sum('mondayDebt'), curDebt: sum('curDebt'),
     c16: sum('c16'), cleared: sum('cleared'), reduced: sum('reduced'), bad: sum('bad'), stat: sum('stat'),
   };
@@ -1318,6 +1351,11 @@ async function weekly(db, user, { weekOf }, nowMs) {
       collected: days.reduce((s, d) => s + d.collected, 0),
       uncollected: days.reduce((s, d) => s + d.uncollected, 0),
       recovered: days.reduce((s, d) => s + d.recovered, 0),
+      /* Leo. Zero when the shown week is not the current one -- a past week has no "today" in
+         it, and printing Friday's figure under that heading would be a different number
+         wearing the same label. */
+      recoveredToday: (days.find(d => d.date === todayKey(nowMs)) || { recovered: 0 }).recovered,
+      isCurrentWeek: days.some(d => d.date === todayKey(nowMs)),
       received: days.reduce((s, d) => s + d.received, 0),
       salesCount: sales.length,
       salesAmount: sales.reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0),
@@ -3653,6 +3691,22 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      call log, the officer who never opened the app simply does not appear -- and that is the
      one name a meeting about underperformance most needs to see. An officer whose account is
      switched off is left out: they are not expected to be calling. */
+  /* Name -> PMO unit. Expected and recovery officers are named in the TEAMS table (holding one
+     of those columns anywhere is what counts, the same rule the recycling rotation uses);
+     collection officers hold their teams on an ACCESS CODE, which is where the owner put them.
+     Built once, ahead of both boards, so today and the week cannot label the same person
+     differently. */
+  const unitBy = {};
+  for (const t of teamRows) {
+    if (t.expected) unitBy[K(t.expected)] = unitBy[K(t.expected)] || 'EXPECTED';
+    if (t.recovery) unitBy[K(t.recovery)] = unitBy[K(t.recovery)] || 'RECOVERY';
+  }
+  // From codeRows rather than from pmoRoster, which is built further down for the board that
+  // needs its team lists. This only needs the NAMES, and reaching forward for a const that
+  // does not exist yet would throw before a single slide was drawn.
+  for (const c of codeRows) if (c.name && isPmoRole(c.role, pmoRoleName)) unitBy[K(c.name)] = 'COLLECTION';
+  const unitOf = name => unitBy[K(name)] || null;
+
   function callBoard(from, to) {
     const m = {};
     for (const c of myCalls) {
@@ -3673,6 +3727,14 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     }
     return Object.values(m).map(b => ({ agent: b.key, team: b.team, calls: b.calls, duration: b.duration,
       portfolio: b.portfolio, customers: Object.keys(b.customers).length,
+      /* WHICH OF THE THREE PMO UNITS THIS PERSON BELONGS TO, or null for everybody else.
+         "For the presentation slides am interested in the 3 PMO department's Units (expected,
+         collection and recovery officers - show only those for busiest and least active ones)"
+
+         Attached here rather than worked out at the screen: the slide would otherwise have to
+         re-derive it from the teams table it does not hold, and a second derivation of "who is
+         a recovery officer" is a second answer that can disagree with the boards above. */
+      unit: unitOf(b.key),
       connectPct: pctOf(b.connected, b.calls), portfolioPct: pctOf(b.portfolio, b.calls) }))
       .sort((a, b) => b.calls - a.calls);
   }

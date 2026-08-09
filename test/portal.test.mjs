@@ -3060,3 +3060,106 @@ test('the weekly report snaps a mid-week date to its Monday too', async () => {
   const w = await portalApi(db, ADMIN, 'weekly', { weekOf: '2026-07-15' }, NOW);
   assert.equal(w.weekOf, '2026-07-13');
 });
+
+/* =====================================================================================
+   TODAY'S RECOVERY, BESIDE THE WEEK'S.
+   =====================================================================================
+   "On wiki report add leo rec b/se we only seeing total week rec at call app without noticing
+    todays progress in app"
+
+   By Thursday the week's figure is mostly Monday and Tuesday, so a day of nothing disappears
+   inside it. Both numbers come off the SAME paired decks in the same pass, so they cannot
+   disagree about the day.
+*/
+test('the weekly report separates today\'s recovery from the week\'s', async () => {
+  const book = tables();
+  const THU = '2026-07-23';
+  book.defaulter_snapshots.push(
+    // Thursday: 900 -> 400, so 500 recovered on a day that is NOT today.
+    { ...D('W1', 'KONGOWE', 900, 'initial', 45, THU, 'THU'), upload_batch: 'it', created_at: THU + 'T04:00:00Z' },
+    { ...D('W1', 'KONGOWE', 400, 'current', 45, THU, 'THU'), upload_batch: 'ct', created_at: THU + 'T04:00:00Z' });
+  const w = await portalApi(fakeDb(book), ADMIN, 'weekly', {}, NOW);   // NOW is Friday
+
+  const fri = w.days.find(d => d.weekday === 'FRI');
+  assert.equal(w.totals.isCurrentWeek, true);
+  assert.equal(w.totals.recoveredToday, fri.recovered,
+    'leo is exactly the day strip\'s Friday, not a second calculation');
+  assert.ok(w.totals.recovered > w.totals.recoveredToday,
+    'and the week is more than today, or Thursday\'s 500 went missing');
+
+  // ADMIN sees every team, so the day strip is the COMPANY's Friday and one team's column is
+  // a part of it. The grand total is what has to reconcile.
+  assert.equal(w.teamTotals.recToday, w.totals.recoveredToday,
+    'the team section\'s grand total and the day strip are the same money');
+  const kongowe = w.teams.find(t => t.team === 'KONGOWE');
+  assert.ok(kongowe.recToday > 0 && kongowe.recToday <= fri.recovered,
+    'and one team is a part of it, not more than it');
+});
+
+test('a past week has no "today", and says so rather than borrowing Friday', async () => {
+  /* With the Monday picker, the weekly report can be pointed at a finished week. Printing that
+     week's Friday under the heading "Leo" would be a different number wearing the same label. */
+  const w = await portalApi(fakeDb(tables()), ADMIN, 'weekly', { weekOf: '2026-07-13' }, NOW);
+  assert.equal(w.weekOf, '2026-07-13');
+  assert.equal(w.totals.isCurrentWeek, false);
+  assert.equal(w.totals.recoveredToday, 0);
+});
+
+/* =====================================================================================
+   "KWA HALI" COUNTS ALL THREE CATEGORIES, AND CAN NOW SHOW THAT IT DOES.
+   ===================================================================================== */
+test('the follow-up status board splits defaulters, expired and chronic', async () => {
+  const book = tables();
+  book.followup_status = [
+    { ref: 'F1', team: 'KONGOWE', status: 'Defaulter', arrears: 100, fu_status: 'AMETOA AHADI' },
+    { ref: 'F2', team: 'KONGOWE', status: 'Expired', arrears: 200, fu_status: 'AMETOA AHADI' },
+    { ref: 'F3', team: 'KONGOWE', status: 'Chronic', arrears: 300, fu_status: 'AMETOA AHADI' },
+    { ref: 'F4', team: 'KONGOWE', status: 'Chronic', arrears: 400, fu_status: '' },
+  ];
+  const d = await portalApi(fakeDb(book), ADMIN, 'followupReport', {}, NOW);
+  const promised = d.byStatus.find(s => s.status === 'AMETOA AHADI');
+  assert.equal(promised.customers, 3);
+  assert.deepEqual([promised.defaulters, promised.expired, promised.chronic], [1, 1, 1],
+    'one of each, rather than three of an unnamed kind');
+  assert.equal(promised.defaulters + promised.expired + promised.chronic, promised.customers,
+    'the split has to add back up to the count beside it');
+
+  const untouched = d.byStatus.find(s => s.status === '(NOT TOUCHED)');
+  assert.equal(untouched.chronic, 1);
+  assert.deepEqual([d.totals.defaulters, d.totals.expired, d.totals.chronic], [1, 1, 2],
+    'and the report totals carry the same three-way split');
+});
+
+/* THE DAY STRIP OBEYS THE BATCH RULE, LIKE EVERYTHING ELSE.
+ *
+ * Every read in this system takes the latest upload_batch within a date, so a corrected
+ * re-upload supersedes rather than doubles. The weekly report's five day tiles were the one
+ * place that did not: they summed EVERY batch. So on any day somebody uploaded twice, the
+ * strip read roughly double while the team section underneath it -- which does apply the rule
+ * -- read the truth. Two figures for the same money on one screen, appearing only after a
+ * re-upload, which is precisely when somebody is already hunting a discrepancy.
+ */
+test('a re-uploaded day does not double the weekly day strip', async () => {
+  const book = tables();
+  const FRI = TODAY;
+  // The same Friday, uploaded twice: a wrong file at 04:00, the corrected one at 09:00.
+  book.repayment_snapshots = [
+    { ...E('R1', 'KONGOWE', 5000, 'UNPAID', 0, FRI), upload_batch: 'bad', created_at: FRI + 'T04:00:00Z' },
+    { ...E('R1', 'KONGOWE', 1000, 'UNPAID', 0, FRI), upload_batch: 'fix', created_at: FRI + 'T09:00:00Z' },
+  ];
+  book.defaulter_snapshots = [
+    { ...D('R1', 'KONGOWE', 9000, 'initial', 45, FRI, 'FRI'), upload_batch: 'ibad', created_at: FRI + 'T04:00:00Z' },
+    { ...D('R1', 'KONGOWE', 2000, 'initial', 45, FRI, 'FRI'), upload_batch: 'ifix', created_at: FRI + 'T09:00:00Z' },
+    { ...D('R1', 'KONGOWE', 1500, 'current', 45, FRI, 'FRI'), upload_batch: 'cfix', created_at: FRI + 'T09:00:00Z' },
+  ];
+  const w = await portalApi(fakeDb(book), ADMIN, 'weekly', {}, NOW);
+  const fri = w.days.find(d => d.weekday === 'FRI');
+
+  assert.equal(fri.expected, 1000, 'the corrected upload, not both added together');
+  assert.equal(fri.customers, 1, 'and one customer, not the same person twice');
+  assert.equal(fri.recovered, 500, '2000 initial - 1500 current, off the winning batches only');
+
+  // And the two halves of the screen agree, which is the whole point.
+  assert.equal(w.teamTotals.expected, fri.expected);
+  assert.equal(w.teamTotals.recToday, fri.recovered);
+});
