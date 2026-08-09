@@ -261,6 +261,93 @@ async function calledTodaySet(db, nowMs) {
   }
   return set;
 }
+/* =====================================================================================
+   THREE KINDS OF USER SEE A NARROWER LIST -- AND ONLY THOSE THREE.
+   =====================================================================================
+   "i have a special case for credit analysts, expected and collection officers in call app
+    only and not in system ... thats for 3 kind of users only and not the rest"
+
+   Everybody else keeps exactly the list they have always had. These three are chased on a
+   subset of the book, and scrolling past the customers they are not measured on is how the
+   ones they ARE measured on get missed.
+
+   CREDIT ANALYSTS -- customers who have not passed the fifth instalment.
+     "e.g. 3-5, 4-12, 5-9, 0-3 -- not 6-9, 10-12"
+     D.S / DUE SUMMARY is paid-of-target, so this is simply: paid <= 5. Every example fits.
+
+   EXPECTED AND COLLECTION OFFICERS -- early collection, on the Leo and Kesho lists ONLY.
+     "see only dc/nc 1 customers in Leo and Kesho lists ONLY (e.g. 0-1, 2-3, 6-9 -- not 5-9
+      or 3-9)"
+     The words say one, the examples say three: the five examples separate cleanly on how far
+     BEHIND the customer is (target minus paid) -- kept 1, 1, 3 against dropped 4, 6 -- and on
+     nothing else. No threshold on either number alone fits them.
+
+     So the number is a setting rather than a decision made here, and the default is the wider
+     reading. A filter that is too loose costs somebody a little scrolling; one that is too
+     tight hides customers from the officer who is supposed to be ringing them, and does it
+     silently. When the two readings disagree, show more.
+
+       CALL_CREDIT_MAX_PAID    default 5   credit: keep paid <= this
+       CALL_EARLY_MAX_BEHIND   default 3   expected/collection: keep (target - paid) <= this
+
+   A ROW WITH NO D.S AT ALL IS ALWAYS KEPT. An unreadable or missing due summary is a fault in
+   the upload, and answering it by hiding the customer would turn a bad column into a customer
+   nobody calls.
+*/
+const EARLY_ROLES = ['EXPECTED', 'COLLECTION'];
+
+/** paid-of-target off a "4/6" or "4-6" due summary. null when there is nothing to read. */
+export function dsParts(v) {
+  const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})\s*[\/\-]\s*(\d{1,2})$/);
+  if (!m) return null;
+  return { paid: Number(m[1]), target: Number(m[2]) };
+}
+
+/** WHICH OF THE THREE, IF ANY, THIS PERSON IS.
+    Two sources, because the three roles are held in two different places: credit and expected
+    are columns on the teams table (holding one anywhere is what counts, the same rule the
+    recycling rotation uses), while a collection officer's teams live on their access code and
+    the role is written there. Either is enough. */
+export async function callRoleKind(db, user) {
+  const role = K(user && user.role);
+  if (role === 'CREDIT' || role === 'CREDIT ANALYST') return 'CREDIT';
+  if (EARLY_ROLES.includes(role)) return role;
+  const n = K(user && user.name);
+  if (!n) return null;
+  const rows = await fetchAll(() => db.from('teams').select('credit, expected'));
+  if (rows.some(t => K(t.credit) === n)) return 'CREDIT';
+  if (rows.some(t => K(t.expected) === n)) return 'EXPECTED';
+  return null;
+}
+
+/** The narrowing itself, kept pure so the rule can be read and tested on its own. */
+export function narrowForRole(rows, kind, which, limits) {
+  if (!kind) return rows;
+  if (kind === 'CREDIT') {
+    return rows.filter(r => {
+      const d = dsParts(r.ds);
+      return !d || d.paid <= limits.creditMaxPaid;
+    });
+  }
+  // Leo and Kesho ONLY. The defaulter lists are the whole point of an early-collection
+  // officer's follow-up work and must not be touched.
+  if (which !== 'today' && which !== 'tomorrow') return rows;
+  return rows.filter(r => {
+    const d = dsParts(r.ds);
+    return !d || (d.target - d.paid) <= limits.earlyMaxBehind;
+  });
+}
+
+async function roleLimits(db) {
+  const n = async (k, dflt) => {
+    const v = await settingGet(db, k);
+    const x = parseInt(v, 10);
+    return isNaN(x) || x < 0 ? dflt : x;
+  };
+  return { creditMaxPaid: await n('CALL_CREDIT_MAX_PAID', 5),
+    earlyMaxBehind: await n('CALL_EARLY_MAX_BEHIND', 3) };
+}
+
 async function list(db, [dev, which, which2], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
@@ -364,7 +451,18 @@ async function list(db, [dev, which, which2], nowMs) {
       return pa !== pb ? pa - pb : b.amt - a.amt;   // unpaid first, then largest arrears
     });
   }
-  return { ok: true, rows, asOf, stale };
+  /* The three special cases, applied LAST -- after the list is built, sorted and scoped to the
+     officer's teams -- so it is visibly a narrowing of the ordinary list and nothing else.
+     `narrowed` is reported so the phone can say so rather than leaving somebody wondering
+     where half the book went. */
+  const kind = await callRoleKind(db, user);
+  let narrowed = null;
+  if (kind) {
+    const before = rows.length;
+    rows = narrowForRole(rows, kind, which, await roleLimits(db));
+    if (rows.length !== before) narrowed = { role: kind, shown: rows.length, of: before };
+  }
+  return { ok: true, rows, asOf, stale, narrowed };
 }
 
 /* ---------- daily summary strip ---------- */

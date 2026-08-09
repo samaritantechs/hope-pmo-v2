@@ -965,3 +965,125 @@ test('every expected-defaulter row on the phone names the role and the leader', 
   assert.equal(by.B2.leader, '(unassigned)',
     'a team that names nobody for the role says so, rather than leaving the chip blank');
 });
+
+/* =====================================================================================
+   THREE KINDS OF USER SEE A NARROWER LIST -- AND ONLY THOSE THREE.
+   =====================================================================================
+   "i have a special case for credit analysts, expected and collection officers in call app
+    only and not in system ... thats for 3 kind of users only and not the rest"
+
+   The examples given, which are what these assertions are built from:
+     credit               3-5, 4-12, 5-9, 0-3 in   ·   6-9, 10-12 out
+     expected/collection  0-1, 2-3, 6-9 in         ·   5-9, 3-9 out
+*/
+const { narrowForRole, dsParts } = await import('../api/_lib/call-core.js');
+const DSROWS = ds => ds.map(v => ({ ref: v, ds: v }));
+
+test('a due summary reads as paid-of-target, in either spelling', () => {
+  assert.deepEqual(dsParts('4/6'), { paid: 4, target: 6 });
+  assert.deepEqual(dsParts('4-6'), { paid: 4, target: 6 });
+  assert.equal(dsParts(''), null);
+  assert.equal(dsParts('n/a'), null);
+  assert.equal(dsParts(null), null);
+});
+
+test('a credit analyst sees only customers short of the fifth instalment', () => {
+  const rows = DSROWS(['3-5', '4-12', '5-9', '0-3', '6-9', '10-12']);
+  const kept = narrowForRole(rows, 'CREDIT', 'today', { creditMaxPaid: 5, earlyMaxBehind: 3 });
+  assert.deepEqual(kept.map(r => r.ref), ['3-5', '4-12', '5-9', '0-3'],
+    'exactly the worked example, and 6-9 / 10-12 are past the fifth');
+});
+
+test('the credit rule applies to every list they hold, not just Leo and Kesho', () => {
+  const rows = DSROWS(['3-5', '6-9']);
+  for (const which of ['today', 'tomorrow', 'defaulters']) {
+    assert.deepEqual(
+      narrowForRole(rows, 'CREDIT', which, { creditMaxPaid: 5, earlyMaxBehind: 3 }).map(r => r.ref),
+      ['3-5'], which);
+  }
+});
+
+test('expected and collection officers see the barely-behind, on Leo and Kesho only', () => {
+  const rows = DSROWS(['0-1', '2-3', '6-9', '5-9', '3-9']);
+  for (const role of ['EXPECTED', 'COLLECTION']) {
+    assert.deepEqual(
+      narrowForRole(rows, role, 'today', { creditMaxPaid: 5, earlyMaxBehind: 3 }).map(r => r.ref),
+      ['0-1', '2-3', '6-9'], role + ' on Leo');
+    assert.deepEqual(
+      narrowForRole(rows, role, 'tomorrow', { creditMaxPaid: 5, earlyMaxBehind: 3 }).map(r => r.ref),
+      ['0-1', '2-3', '6-9'], role + ' on Kesho');
+    // "in Leo and Kesho lists ONLY" -- the defaulter lists are the follow-up work itself.
+    assert.equal(narrowForRole(rows, role, 'defaulters', { creditMaxPaid: 5, earlyMaxBehind: 3 }).length, 5,
+      role + ' must keep the whole defaulter list');
+  }
+});
+
+test('the threshold is a setting, so a wrong reading is one Settings edit and not a deploy', () => {
+  const rows = DSROWS(['0-1', '2-3', '6-9', '5-9', '3-9']);
+  // The literal reading of "dc/nc 1".
+  assert.deepEqual(
+    narrowForRole(rows, 'EXPECTED', 'today', { creditMaxPaid: 5, earlyMaxBehind: 1 }).map(r => r.ref),
+    ['0-1', '2-3']);
+});
+
+test('everybody else keeps the whole list -- "that\'s for 3 kind of users only"', () => {
+  const rows = DSROWS(['0-1', '6-9', '10-12']);
+  assert.equal(narrowForRole(rows, null, 'today', { creditMaxPaid: 5, earlyMaxBehind: 3 }).length, 3);
+});
+
+test('a customer with no readable due summary is never hidden', () => {
+  /* A missing or unreadable D.S is a fault in the upload. Answering it by hiding the customer
+     turns a bad column into somebody nobody rings, silently -- which is far worse than the
+     bad column. */
+  const rows = [{ ref: 'NODS', ds: '' }, { ref: 'JUNK', ds: 'n/a' }, { ref: 'OK', ds: '10-12' }];
+  const lim = { creditMaxPaid: 5, earlyMaxBehind: 3 };
+  assert.deepEqual(narrowForRole(rows, 'CREDIT', 'today', lim).map(r => r.ref), ['NODS', 'JUNK'],
+    'the readable one is past the fifth instalment, so only the unreadable pair survive');
+  // 10-12 is two instalments behind, which the early-collection rule keeps -- so here the
+  // unreadable rows are kept ALONGSIDE it rather than instead of it.
+  assert.deepEqual(narrowForRole(rows, 'EXPECTED', 'today', lim).map(r => r.ref), ['NODS', 'JUNK', 'OK']);
+});
+
+test('the narrowing runs end to end, and the phone is told it happened', async () => {
+  const t = makeTables();
+  // The signed-in leader holds the `credit` column, which is what makes them a credit analyst
+  // here -- the same rule the recycling rotation uses for its three.
+  t.teams[0] = { ...t.teams[0], credit: 'ASHA JUMA' };
+  t.repayment_snapshots = [
+    { ref: 'P1', full_name: 'EARLY', contact: '0712000011', team: 'KONGOWE', payment_expected: 1000,
+      arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today',
+      snapshot_date: '2026-07-24', upload_batch: 'z1', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'P2', full_name: 'LATE', contact: '0712000012', team: 'KONGOWE', payment_expected: 1000,
+      arrears: 0, todays_status: 'UNPAID', due_summary: '9/12', snapshot_type: 'today',
+      snapshot_date: '2026-07-24', upload_batch: 'z1', created_at: '2026-07-24T04:00:00Z' },
+  ];
+  const db = fakeDb(t);
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'LEAD1', '0788111333'], NOW);
+
+  const d = await callApi(db, 'api_callList', ['d9', 'today'], NOW);
+  assert.deepEqual(d.rows.map(r => r.ref), ['P1'], 'only the one short of the fifth instalment');
+  assert.deepEqual(d.narrowed, { role: 'CREDIT', shown: 1, of: 2 },
+    'and the phone is told, or a shorter list is just a discrepancy nobody can explain');
+});
+
+test('a field officer on the same book still sees everybody', async () => {
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], credit: 'ASHA JUMA' };
+  t.repayment_snapshots = [
+    { ref: 'P1', full_name: 'EARLY', contact: '0712000011', team: 'KONGOWE', payment_expected: 1000,
+      arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today',
+      snapshot_date: '2026-07-24', upload_batch: 'z1', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'P2', full_name: 'LATE', contact: '0712000012', team: 'KONGOWE', payment_expected: 1000,
+      arrears: 0, todays_status: 'UNPAID', due_summary: '9/12', snapshot_type: 'today',
+      snapshot_date: '2026-07-24', upload_batch: 'z1', created_at: '2026-07-24T04:00:00Z' },
+  ];
+  const db = fakeDb(t);
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  await callApi(db, 'api_callRegister', ['d8', 'JUMA ISSA', '', '', '0712999998', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d8', 'today'], NOW);
+  assert.deepEqual(d.rows.map(r => r.ref).sort(), ['P1', 'P2']);
+  assert.equal(d.narrowed, null);
+});
