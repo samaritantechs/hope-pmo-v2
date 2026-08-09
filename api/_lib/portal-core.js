@@ -1380,7 +1380,8 @@ const WEEK_CREDIT_COLS = 'ref, team, arrears, ds, initial_inst, other_inst, t_pa
 async function weekly(db, user, { weekOf }, nowMs) {
   // Snapped to its Monday rather than trusted to be one, so a date arrived at any other way
   // reads as the week it falls in instead of as a week starting mid-way through.
-  const mon = asOfWeek(nowMs, weekOf).weekOf;
+  const asOf = asOfWeek(nowMs, weekOf);
+  const mon = asOf.weekOf;
   const fri = addDaysKey(mon, 4);
   const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
@@ -1509,6 +1510,8 @@ async function weekly(db, user, { weekOf }, nowMs) {
   recordPerformance(db, teamsOut, teamRows, mon, nowMs);
 
   return { weekOf: mon, weekEnd: fri, days,
+    // What was ASKED for, so the week bar can say when a choice was overruled and why.
+    weekRequested: asOf.requested, weekFuture: asOf.future, pastWeek: asOf.past,
     teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
     // The leader columns as they stand, so a hand-stamp records the same names the automatic
     // one does rather than reading the table a second time and possibly a moment later.
@@ -3471,15 +3474,34 @@ async function settingNum(db, key, dflt) {
    ANY DAY IN THE WEEK WILL DO. The picker offers Mondays, but a date typed by hand, or pasted,
    or arrived at through a phone's date wheel, is snapped to its own Monday instead of being
    rejected or quietly read as a different week. */
+/* WHY PRESSING A DATE LOOKED LIKE IT DID NOTHING.
+
+     "I tried pressing the date picker to 10th august so that all info start of next week but
+      didn't work"
+
+   Picked on Sunday the 9th, the 10th is NEXT week. This function accepted only a Monday
+   strictly EARLIER than the current one and otherwise returned the current week -- silently.
+   So the screen redrew with exactly the same figures it already had, and there was nothing
+   anywhere to say the choice had been overruled. A control that ignores you without saying so
+   is indistinguishable from a broken one, and it was reported as broken.
+
+   The clamp itself is right and stays: a week that has not happened has no snapshots in it, so
+   reading it would produce a screen of zeros that looks like a collapse rather than a calendar.
+   What was missing was the SAYING SO. `requested` and `future` now come back with the answer,
+   and the week bar prints a line explaining which week is actually on screen and why. */
 export function asOfWeek(nowMs, weekOf) {
   const thisMon = weekMondayKey(nowMs);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || ''))) {
-    return { ms: nowMs, weekOf: thisMon, past: false };
-  }
+  const blank = { ms: nowMs, weekOf: thisMon, past: false, requested: null, future: false };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || ''))) return blank;
   // Midday, so no amount of timezone arithmetic can roll the chosen date onto its neighbour.
   const pickedMon = weekMondayKey(Date.parse(String(weekOf) + 'T09:00:00Z'));
-  if (!(pickedMon < thisMon)) return { ms: nowMs, weekOf: thisMon, past: false };
-  return { ms: Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z'), weekOf: pickedMon, past: true };
+  if (pickedMon > thisMon) {
+    // A week that has not started. Answer with this one, and say that is what happened.
+    return { ms: nowMs, weekOf: thisMon, past: false, requested: pickedMon, future: true };
+  }
+  if (pickedMon === thisMon) return { ...blank, requested: pickedMon };
+  return { ms: Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z'), weekOf: pickedMon,
+    past: true, requested: pickedMon, future: false };
 }
 
 async function dashboardFull(db, user, args, nowMs) {
@@ -3710,6 +3732,8 @@ async function dashboardFull(db, user, args, nowMs) {
        dashboard showing a finished week looks exactly like a dashboard showing today, and
        somebody reading last week's arrears as this morning's would act on it. */
     asOfDate: today, pastWeek: asOf.past,
+    // What was ASKED for, so the week bar can say when a choice was overruled and why.
+    weekRequested: asOf.requested, weekFuture: asOf.future,
     weeklyTarget: weeklyTarget * Math.max(myTeams.length, 1), teamCount: myTeams.length,
     cards: {
       curArrears: teams.reduce((s, t) => s + t.curArrears, 0),

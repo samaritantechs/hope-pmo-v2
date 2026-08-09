@@ -3039,6 +3039,41 @@ test('this week, a future week, and no choice at all leave the clock exactly alo
   }
 });
 
+/* "I tried pressing the date picker to 10th august so that all info start of next week but
+   didn't work". Picked on the Sunday, the 10th is NEXT week -- and the clamp answered with
+   the current week SILENTLY, so the screen redrew with the identical figures and looked
+   broken. The clamp is right; the silence was the bug. */
+test('a week that has not started says so, instead of pretending nothing was pressed', () => {
+  const a = asOfWeek(NOW, '2026-09-01');            // NOW is Friday 2026-07-24
+  assert.equal(a.future, true, 'the screen has to be able to say the week has not started');
+  assert.equal(a.requested, '2026-08-31', 'and which week was actually asked for, as its Monday');
+  assert.equal(a.weekOf, MON, 'while still showing the live week rather than a screen of zeroes');
+  assert.equal(a.ms, NOW);
+});
+
+test('a mid-week date reports the Monday it resolved to, so the snap is explainable', () => {
+  // Thursday of a past week. The screen shows that week; the bar can now say why.
+  const a = asOfWeek(NOW, '2026-07-16');
+  assert.equal(a.weekOf, '2026-07-13');
+  assert.equal(a.requested, '2026-07-13');
+  assert.equal(a.future, false);
+});
+
+test('no choice at all reports no request -- the ordinary case stays quiet', () => {
+  for (const pick of ['', null, undefined, 'rubbish']) {
+    const a = asOfWeek(NOW, pick);
+    assert.equal(a.requested, null, String(pick));
+    assert.equal(a.future, false, String(pick));
+  }
+});
+
+test('the weekly report carries the week bar its own answer', async () => {
+  const d = await portalApi(fakeDb(tables()), ADMIN, 'weekly', { weekOf: '2026-09-01' }, NOW);
+  assert.equal(d.weekFuture, true);
+  assert.equal(d.weekRequested, '2026-08-31');
+  assert.equal(d.weekOf, MON, 'and still shows the live week');
+});
+
 test('the dashboard computes a past week from that week, not from today', async () => {
   const book = tables();
   const LASTMON = '2026-07-13', LASTFRI = '2026-07-17';
