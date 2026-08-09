@@ -1201,3 +1201,83 @@ test('a customer with no team recorded still counts as portfolio', async () => {
   ]], NOW);
   assert.equal(r.portfolio, 1);
 });
+
+/* =====================================================================================
+   WHO THE THREE SPECIAL CASES ACTUALLY REACH.
+
+     "logged in to catherine and at leo just the first customer is 6-10, at kesho 4-12"
+
+   6-10 is four behind, 4-12 is eight. Neither belongs in front of a collection officer, so
+   the narrowing was not running for her at all -- and the cause was that the rule matched a
+   role by exact equality against the literal word 'COLLECTION', while every collection
+   officer in this system carries 'PMO COLLECTION' (pmo.js names it, register() copies it off
+   the access code onto call_users.role verbatim).
+
+   These assertions pin the role RESOLUTION on its own, which is where the fault was -- the
+   arithmetic below it was always right and was never the problem.
+   ===================================================================================== */
+const { callRoleKind } = await import('../api/_lib/call-core.js');
+const roleDb = (role, extra = {}) => ({ db: fakeDb(Object.assign(makeTables(), extra)),
+  user: { name: 'CATHERINE', role } });
+
+test('a PMO collection officer is recognised -- the spelling every access code actually uses', async () => {
+  // THE REPORTED BUG. 'PMO COLLECTION' is what pmo.js calls the role and what register()
+  // writes; matching the bare word 'COLLECTION' never saw it.
+  const a = roleDb('PMO COLLECTION');
+  assert.equal(await callRoleKind(a.db, a.user), 'COLLECTION');
+});
+
+test('the collection role forgives case and punctuation, as isPmoRole always has', async () => {
+  for (const spelling of ['PMO COLLECTION', 'pmo collection', 'PMO-COLLECTION', 'Pmo  Collection',
+                          'COLLECTION', 'Collection Officer', 'EARLY COLLECTION']) {
+    const { db, user } = roleDb(spelling);
+    const got = await callRoleKind(db, user);
+    // 'EARLY COLLECTION' carries both words; either early rule narrows identically, which is
+    // the point -- EXPECTED and COLLECTION share one threshold.
+    assert.ok(got === 'COLLECTION' || got === 'EXPECTED',
+      spelling + ' must reach the early-collection rule, got ' + got);
+  }
+});
+
+test('renaming the role in Settings moves the rule with it, with no deploy', async () => {
+  /* The whole reason PMO_ROLE is a setting. A deployment that calls them something else must
+     not silently lose the narrowing. */
+  const { db, user } = roleDb('WAKUSANYAJI', { settings: [{ key: 'PMO_ROLE', value: 'WAKUSANYAJI' }] });
+  assert.equal(await callRoleKind(db, user), 'COLLECTION');
+});
+
+test('a credit analyst is recognised however the role was typed', async () => {
+  for (const spelling of ['CREDIT', 'CREDIT ANALYST', 'Credit Analyst', 'credit-analyst']) {
+    const { db, user } = roleDb(spelling);
+    assert.equal(await callRoleKind(db, user), 'CREDIT', spelling);
+  }
+});
+
+test('no other role is narrowed -- everybody else keeps the whole book', async () => {
+  /* The one real risk in matching on a contained word rather than the whole string: a role
+     that was never special quietly becoming so, and an officer losing customers with nothing
+     to explain it. None of these carries any of the three words. */
+  for (const role of ['OFFICER', 'RECOVERY', 'GMO', 'MANAGER', 'BIKE', 'OPM', 'LEGAL',
+                      'ADMIN', 'MANAGEMENT', 'LEADER', '']) {
+    const { db, user } = roleDb(role);
+    assert.equal(await callRoleKind(db, user), null,
+      role + ' must keep the whole book');
+  }
+});
+
+test('failing the role, the teams table still recognises somebody by name', async () => {
+  // The credit analyst and the expected officer genuinely are columns there.
+  const t = makeTables();
+  t.teams[0].credit = 'CATHERINE';
+  const db = fakeDb(t);
+  assert.equal(await callRoleKind(db, { name: 'CATHERINE', role: 'OFFICER' }), 'CREDIT');
+});
+
+test('an early-collection officer with a leader role name is still narrowed to behind = 1', async () => {
+  /* End to end, the way Catherine actually meets it: the role resolves, so the Leo list drops
+     6-10 (four behind) and keeps 2-3 (one). Before the fix both stayed. */
+  const rows = DSROWS(['2-3', '6-10', '4-12']);
+  const kept = narrowForRole(rows, 'COLLECTION', 'today', { creditMaxPaid: 5, earlyMaxBehind: 1 });
+  assert.deepEqual(kept.map(r => r.ref), ['2-3'],
+    'the two she reported seeing are exactly the two that go');
+});
