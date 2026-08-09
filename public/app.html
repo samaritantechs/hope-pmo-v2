@@ -2984,15 +2984,34 @@ VIEWS.abnormal = function(){
     HEAD = '<div class="kpis">'
       + kpi('Flagged payments', money(d.count), 'amounts not in multiples of TZS 500 / 1,000', d.count?'bad':'good')
       + kpi('Flagged amount', money(amt), 'verify with the field officers', d.count?'warnc':'good')
-      + '</div>';
+      + '</div>'
+      + (d.pmoFilled
+          ? '<div class="note"><b>' + money(d.pmoFilled) + '</b> hazikuwa na PMO — zimejazwa'
+            + ' kutokana na hatua ya mteja (· = imejazwa na mfumo).'
+            + ' / ' + money(d.pmoFilled) + ' rows had no PMO on the sheet; they are filled in from'
+            + ' the customer’s stage — early collection, collection or recovery. A dot marks a'
+            + ' filled one. Anything the sheet named is untouched.</div>'
+          : '');
     S.rows = d.rows;
-    S.cols = [col('gmo','GMO'), col('team','Team'), col('pmo','PMO'),
-      {key:'contact_no', label:'Customer No', kind:'tel'},
-      {key:'phone_number', label:'Payment No', kind:'tel'},
-      col('ref_no','REF No'), col('customer_name','Customer Name'),
-      col('transaction_id','Transaction ID'),
-      {key:'paid', label:'Paid', kind:'money', cls:function(){ return 'bad'; }},
-      col('sender_name','Sender Name'), col('payment','Payment')];
+    /* THE TWELVE COLUMNS THE SHEET CARRIES, IN THE ORDER IT CARRIES THEM.
+       REF ID was the one missing: the table has always held it and the importer has always
+       read it, but it was never put on screen, so a column of the source sheet could not be
+       seen anywhere in the system. PAID / REF ID / PAYMENT / SENDER NAME now run in the
+       sheet's own order rather than a rearranged one. */
+    S.cols = [col('gmo','GMO'), col('team','TEAM'),
+      /* PMO is a STAGE as much as a person: early collection while a customer is still
+         performing, collection once they fall behind, recovery once expired or chronic. The
+         sheet's own value is always kept; a BLANK is filled in from the customer's actual
+         stage and marked, because a flagged payment with nobody named against it is the row
+         that gets left. */
+      {key:'pmo', label:'PMO', cls:function(r){ return r.pmo_stage ? 'mut' : ''; },
+       get:function(r){ return (r.pmo || '') + (r.pmo_stage ? ' ·' : ''); }},
+      {key:'contact_no', label:'CUSTOMER NO', kind:'tel'},
+      {key:'phone_number', label:'PAYMENT NO', kind:'tel'},
+      col('ref_no','REF NO'), col('customer_name','CUSTOMER NAME'),
+      col('transaction_id','TRANSACTION ID'),
+      {key:'paid', label:'PAID', kind:'money', cls:function(){ return 'bad'; }},
+      col('ref_id','REF ID'), col('payment','PAYMENT'), col('sender_name','SENDER NAME')];
     ONROW = null;
     S.foot = 'Total flagged: TZS ' + money(amt);
   });

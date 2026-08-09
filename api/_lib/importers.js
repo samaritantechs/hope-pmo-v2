@@ -348,8 +348,19 @@ export function importAbnormal(csvRows) {
     gmo: textOrNull(col(r, h, 'GMO')),
     team: normTeam(col(r, h, 'TEAM')),
     pmo: textOrNull(col(r, h, 'PMO')),
-    contact_no: normPhone(col(r, h, 'CONTACT NO')),
-    phone_number: normPhone(col(r, h, 'PHONE NUMBER')),
+    /* THE TWO THAT WERE ARRIVING EMPTY, EVERY TIME.
+       col() matches a header by its exact normalised name, and these asked only for
+       'CONTACT NO' and 'PHONE NUMBER'. The sheet's headers are CUSTOMER NO and PAYMENT NO --
+       so neither ever matched, and the customer's number and the paying number imported as
+       NULL on every abnormal-payments upload since the beginning. Two blank columns on the
+       one report whose entire purpose is to let somebody ring the payer and ask what the
+       money was.
+
+       Nothing warned about it: a header that matches nothing is indistinguishable from a
+       column of empty cells, which is exactly why this survived so long. Both spellings are
+       accepted now, the sheet's own first. */
+    contact_no: normPhone(col(r, h, 'CUSTOMER NO', 'CUSTOMER NUMBER', 'CONTACT NO', 'CONTACT NUMBER')),
+    phone_number: normPhone(col(r, h, 'PAYMENT NO', 'PAYMENT NUMBER', 'PHONE NUMBER', 'PHONE NO')),
     ref_no: textOrNull(col(r, h, 'REF NO')),
     ref_id: textOrNull(col(r, h, 'REF ID')),
     customer_name: textOrNull(col(r, h, 'CUSTOMER NAME')),
