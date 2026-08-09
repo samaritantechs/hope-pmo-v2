@@ -900,3 +900,68 @@ test('the widget and the phone strip read from the SAME cache, not two', async (
     + (reads - after));
   _clearWidgetCache();
 });
+
+/* =====================================================================================
+   WHOSE CUSTOMER IS THIS? -- the fourth chip.
+   =====================================================================================
+   "On the status, default days and default summary at customer widgets in the exp.def add the
+    4th -- Leader (Show -- Bike, Manager, or GMO so that we know whose customer followup it is)"
+
+   The rotation moves every defaulter between a GMO, a MANAGER and a BIKE officer on a clock,
+   so on any given day whose customer this is genuinely cannot be guessed from the row. The
+   phone showed status, cycle and D.S and stopped there.
+
+   Also the fourth special case: a BIKE leader must get their own book on a handset exactly as
+   a MANAGER or a GMO does. That is decided by holding the `bike` column on a team -- not by
+   the role written on their access code -- and this pins it.
+*/
+async function bikeLeaderDb() {
+  const t = makeTables();
+  // ASHA JUMA holds the BIKE column, and nothing else. LEAD1 is their portal code.
+  t.teams[0] = { ...t.teams[0], gmo: null, manager: null, bike: 'ASHA JUMA', recovery: null };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' },
+    { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  const D = (ref, arrears, type, days) => ({
+    ref, full_name: 'C' + ref, contact: '07140000' + ref, team: 'KONGOWE', arrears,
+    status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: days,
+    disb_date: '2026-07-21',                       // a Tuesday -> due Tue and Fri; NOW is Friday
+    snapshot_type: type, weekday: 'FRI', snapshot_date: '2026-07-24',
+    upload_batch: 'b' + type, created_at: '2026-07-24T04:00:00Z',
+  });
+  t.defaulter_snapshots = [
+    D('B1', 1000, 'initial', 1), D('B1', 600, 'current', 1),     // days 1-2 -> bucket 1 -> BIKE
+    D('B2', 2000, 'initial', 3), D('B2', 2000, 'current', 3),    // days 3-4 -> bucket 2 -> MANAGER
+  ];
+  const db = fakeDb(t);
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  return db;
+}
+
+test('a BIKE leader gets their own expected defaulters on the phone', async () => {
+  const db = await bikeLeaderDb();
+  const d = await callApi(db, 'api_callList', ['d2', 'expdf'], NOW);
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.rows.map(r => r.ref), ['B1'],
+    'the bike officer\'s own bucket, not the manager\'s');
+  assert.equal(d.expdf.scope, 'mine');
+  assert.equal(d.expdf.canSwitch, true, 'and they are recognised as a leader, so they may widen it');
+});
+
+test('every expected-defaulter row on the phone names the role and the leader', async () => {
+  const db = await bikeLeaderDb();
+  const d = await callApi(db, 'api_callList', ['d2', 'expdf', 'team'], NOW);
+  assert.equal(d.rows.length, 2, 'the whole team book');
+  for (const r of d.rows) {
+    assert.ok(r.role, 'the chip has nothing to draw without a role: ' + r.ref);
+    assert.ok(r.leader, 'nor without a leader name: ' + r.ref);
+  }
+  const by = {};
+  for (const r of d.rows) by[r.ref] = r;
+  assert.equal(by.B1.role, 'BIKE');
+  assert.equal(by.B1.leader, 'ASHA JUMA');
+  assert.equal(by.B2.role, 'MANAGER');
+  assert.equal(by.B2.leader, '(unassigned)',
+    'a team that names nobody for the role says so, rather than leaving the chip blank');
+});
