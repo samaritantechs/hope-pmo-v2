@@ -130,6 +130,19 @@ async function settingGet(db, key) {
   return data ? data.value : null;
 }
 
+/** SEVERAL SETTINGS, ONE ROUND TRIP. Boot asked for five of them one after another -- five
+    separate journeys to the database, each returning a single row, each one holding a
+    connection while three hundred handsets opened the app on the same Monday morning. They
+    are all in the same table and none of them depends on the answer to another, so they are
+    one `in` query. Same values, a fifth of the traffic, and four fewer things to wait for on
+    a mobile connection. */
+async function settingsMany(db, keys) {
+  const rows = await fetchAll(() => db.from('settings').select('key, value').in('key', keys));
+  const by = {};
+  for (const r of rows) by[String(r.key)] = r.value;
+  return k => (by[k] == null ? null : by[k]);
+}
+
 /* ---------- users ---------- */
 /** Every request resolves the device to an account here, so this is the one place that has
     to honour deactivation. Checking `active` only at registration would mean a revoked
@@ -181,13 +194,35 @@ async function teamList(db) {
 }
 
 /* ---------- boot / register ---------- */
+/* THREE HUNDRED HANDSETS OPEN THIS AT THE SAME TIME ON A MONDAY MORNING, and it used to be
+   TEN ROUND TRIPS TAKEN ONE AFTER THE OTHER: the teams list, the device, CALL_BRAND,
+   CALL_LOGO_URL, the open/closed switch, today's calls, CALL_SYNC_SECONDS,
+   CALL_LOGOUT_ENABLED, the teams table AGAIN for the rotation check, and the follow-up status
+   list. Nine of those ten waits bought one small answer each.
+
+   Nothing here depended on the answer to the thing before it, so nothing here should have been
+   waiting for it:
+
+     five settings   -> ONE `in` query (settingsMany)
+     teams read x2   -> ONE read, shared with the rotation check
+     what is left    -> issued together, not in single file
+
+   The officer's app opens in one wait instead of ten, and a Monday-morning rush costs the
+   database a third of the connections it used to. */
 async function boot(db, [dev], nowMs) {
-  const teams = await teamList(db);
+  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY];
   let cu = null, accountOff = false;
-  try { cu = await userByDevice(db, dev); }
-  catch (e) { if (e && e.accountOff) accountOff = true; else throw e; }
-  const brand = (await settingGet(db, 'CALL_BRAND')) || APP.BRAND;
-  const logo = (await settingGet(db, 'CALL_LOGO_URL')) || '';
+  const [teamRows, setting] = await Promise.all([
+    fetchAll(() => db.from('teams').select('team, gmo, manager, bike')),
+    settingsMany(db, BOOT_KEYS),
+    (async () => {
+      try { cu = await userByDevice(db, dev); }
+      catch (e) { if (e && e.accountOff) accountOff = true; else throw e; }
+    })(),
+  ]);
+  const teams = teamRows.filter(r => r.team).map(r => r.team).sort();
+  const brand = setting('CALL_BRAND') || APP.BRAND;
+  const logo = setting('CALL_LOGO_URL') || '';
   // An unauthenticated device gets branding only. The team list used to be handed out here,
   // which is half of what made self-registration work: pick a team off the list, get its book.
   /* Whether to show the way across to the system at all. Calls itself is NEVER gated -- an
@@ -199,8 +234,11 @@ async function boot(db, [dev], nowMs) {
     teams: [], brand, motto: APP.MOTTO, logo, systemOpen };
   const today = todayKey(nowMs);
   const logs = await fetchAll(() => db.from('call_logs').select('duration, portfolio').eq('user_id', cu.user_id).eq('call_date', today));
-  const syncSec = parseInt(await settingGet(db, 'CALL_SYNC_SECONDS'), 10);
-  const logoutSetting = K(await settingGet(db, 'CALL_LOGOUT_ENABLED'));
+  const syncSec = parseInt(setting('CALL_SYNC_SECONDS'), 10);
+  const logoutSetting = K(setting('CALL_LOGOUT_ENABLED'));
+  // The rotation check, off the teams read above rather than a second one of the same table.
+  const me = K(cu.name);
+  const expdfOwner = !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me);
   return {
     ok: true,
     systemOpen,
@@ -211,11 +249,12 @@ async function boot(db, [dev], nowMs) {
     // Everyone follows up in this mode, so everyone gets the tab. The flag now only says
     // whether this person ALSO has a list of their own to switch to.
     expdfLeader: true,
-    expdfOwner: await isRecycleLeader(db, cu.name),
+    expdfOwner,
     leaderTeams: cu.is_leader ? (!cu.leader_teams || !cu.leader_teams.length ? 'ALL' : cu.leader_teams.join(',')) : '',
     teams,
     watermark: num(cu.last_ts),
-    ...(await fuStatusConfig(db)),
+    // From the same settings query as everything else above, not a sixth journey.
+    ...fuStatusShape(parseFuStatuses(setting(FU_STATUS_KEY))),
     brand, motto: APP.MOTTO, logo,
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
@@ -755,8 +794,71 @@ async function summaryCompute(db, user, nowMs) {
 /** Phone -> {name, ref, team, role C|G, src EXP|DEF} index over exactly the universe the
     officers work: followup (defaulters) + today/tomorrow expected + alternate numbers logged
     via ANA NAMBA NYINGINE follow-ups. Customers win over guarantors for the same number. */
-async function phoneIndex(db, nowMs) {
+/* =======================================================================================
+   THE ONE THAT TURNED THE DATABASE RED.
+
+     "Whenever we insist our field officers to use the app, postgres gets full red, i can't
+      even upload report updates, we get delay errors and so on."
+
+   Measured, on a 40-team book: ONE sync carrying ONE call = 11 round trips and 4,002 rows.
+   Every row of followup_status, every row of today's AND tomorrow's repayment snapshot, and
+   the numbered comments -- the WHOLE COMPANY BOOK, on a request that only needed to answer
+   "whose number is this".
+
+   And it was rebuilt from scratch EVERY TIME. Nothing cached it.
+
+   Three hundred handsets sync every five minutes. Through a working day that is roughly ONE
+   FULL-BOOK SCAN PER SECOND, sustained, for eight hours -- from a table that also has to
+   accept uploads. That is not a slow query anybody can point at; it is the database being
+   asked to read its largest tables a thousand times an hour to answer a question whose answer
+   did not change between any two of them. The uploads then queue behind it, which is exactly
+   the "I can't even upload" half of the report.
+
+   THE ANSWER WAS ALREADY IN THIS FUNCTION'S CALLER, two lines above the call to it.
+   DATA_VERSION is stamped by api/upload.js the moment anything is uploaded, and sync already
+   reads it on every request to tell the phone its figures are stale. So the index is cached
+   against exactly that: same DATA_VERSION and same day means the same index, byte for byte,
+   because the tables it reads only change when something is uploaded.
+
+     first officer after an upload   pays the read, once
+     the other 299                   free
+     someone uploads                 DATA_VERSION moves, the next sync rebuilds
+
+   No staleness window to get wrong, and no way for an officer to work an index older than the
+   last upload -- which a plain time-to-live could not promise. The TTL underneath is a
+   backstop for a deployment whose DATA_VERSION never moves (nothing uploaded yet, or an older
+   upload path), so an unset key degrades to "rebuild every 5 minutes" rather than "cache
+   forever".
+
+   THE COST, STATED PLAINLY. A replacement number an officer records in a comment is not in
+   the index until it rebuilds -- at most five minutes, sooner if anything is uploaded. Their
+   call is still logged, still named and still theirs; it can only be marked non-portfolio for
+   those few minutes. Against a database too busy to accept the day's upload, that is not a
+   close call.
+
+   Held against the DATABASE CLIENT like every other cache here, so a test's fake cannot hand
+   its answer to the next test. In production that is one long-lived client per warm lambda,
+   which is where the sharing happens. */
+const PHONE_INDEX_TTL_MS = 300000;
+const phoneIndexCache = new WeakMap();          // db -> { key, at, value }
+
+/** `version` is DATA_VERSION, which the caller has ALREADY read -- sync sends it to the phone
+    on every request so the handset knows when its figures went stale. Passing it in rather
+    than re-reading it here keeps the cache free on a hit: a served index costs zero queries,
+    not one. */
+async function phoneIndex(db, nowMs, version) {
   const today = todayKey(nowMs);
+  const key = today + '|' + String(version == null ? '' : version);
+  const hit = phoneIndexCache.get(db);
+  if (hit && hit.key === key && hit.at <= nowMs && (nowMs - hit.at) < PHONE_INDEX_TTL_MS) {
+    return hit.value;
+  }
+  const value = await phoneIndexCompute(db, nowMs, today);
+  phoneIndexCache.set(db, { key, at: nowMs, value });
+  return value;
+}
+
+async function phoneIndexCompute(db, nowMs, today) {
   const [fu, eT, eM, cm] = await Promise.all([
     // The phone index needs names and numbers, nothing else.
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
@@ -809,7 +911,7 @@ async function sync(db, [dev, calls], nowMs) {
      One read of one row by primary key, on a request that was happening anyway. */
   const dataVersion = (await settingGet(db, 'DATA_VERSION')) || '';
   if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
-  const byNum = await phoneIndex(db, nowMs);
+  const byNum = await phoneIndex(db, nowMs, dataVersion);
   const records = [];
   const seenBatch = {};
   let pf = 0, npf = 0, batchDup = 0;

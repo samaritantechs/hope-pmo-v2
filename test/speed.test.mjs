@@ -232,3 +232,66 @@ test('speed: the bell reads a page, not a table', async () => {
   const { rows } = c.stat();
   assert.ok(rows <= 200, `the bell read ${rows.toLocaleString()} rows to show at most 60 items`);
 });
+
+/* =====================================================================================
+   THE ONE THAT TURNED THE DATABASE RED.
+
+     "Whenever we insist our field officers to use the app, postgres gets full red, i can't
+      even upload report updates, we get delay errors and so on."
+
+   The budget above bounds ONE sync. It could not see the real fault, which was that the
+   phone index was rebuilt from scratch on EVERY sync -- the whole company book, per handset,
+   every five minutes, all day. One request looked reasonable; three hundred of them were a
+   full-book scan roughly once a second, and the uploads queued behind them.
+
+   So this measures what the budget could not: the SECOND handset, and the three hundredth.
+   ===================================================================================== */
+test('speed: the phone index is built once and shared, not rebuilt per handset', async () => {
+  const t = bigBook();
+  for (let i = 1; i <= 12; i++) {
+    t.call_users.push({ user_id: 'U' + i, name: 'OFF' + i, team: TEAMS[i % TEAMS.length],
+      role: 'OFFICER', device_id: 'DEV' + i, active: true });
+  }
+  t.settings.push({ key: 'DATA_VERSION', value: '1000' });
+  const c = counting(t);
+  const sync = i => callApi(c.db, 'api_callSync',
+    ['DEV' + i, [{ num: '0712000001', ts: Date.parse('2026-07-24T07:00:00Z') + i, dur: 60, outcome: 'CONNECTED' }]], NOW);
+
+  await sync(1);
+  const first = c.stat().rows;
+  assert.ok(first > 1000, 'the first handset does build the index -- ' + first + ' rows');
+
+  let before = c.stat().rows;
+  for (let i = 2; i <= 12; i++) {
+    await sync(i);
+    const after = c.stat().rows;
+    assert.ok(after - before < 100,
+      `handset ${i} re-read ${after - before} rows to sync one call -- the index is not being shared. `
+      + 'This is the exact regression that made the database unusable with the officers on it.');
+    before = after;
+  }
+
+  /* AND IT MUST NOT GO STALE PAST AN UPLOAD. DATA_VERSION is stamped by api/upload.js, so a
+     newly uploaded customer has to be matchable on the very next sync -- a cache that outlived
+     an upload would quietly mark real portfolio calls as somebody else's. */
+  c.db._dump('settings').find(r => r.key === 'DATA_VERSION').value = '2000';
+  before = c.stat().rows;
+  await sync(1);
+  assert.ok(c.stat().rows - before > 1000,
+    'an upload must force the index to rebuild on the next sync');
+});
+
+test('speed: opening the app is one wait, not ten', async () => {
+  /* Three hundred handsets open this on the same Monday morning. Every round trip here is a
+     connection held while they all do it, and they used to be taken strictly one after
+     another -- the teams list, the device, five separate single-row settings reads, the
+     teams table a second time for the rotation check. */
+  const t = bigBook();
+  t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER',
+    device_id: 'DEV1', active: true });
+  const c = counting(t);
+  await callApi(c.db, 'api_callBoot', ['DEV1'], NOW);
+  const { trips } = c.stat();
+  assert.ok(trips <= 6, `boot took ${trips} round trips (budget 6). `
+    + 'Settings belong in one `in` query and the teams table should be read once.');
+});
