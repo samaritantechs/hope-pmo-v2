@@ -398,3 +398,33 @@ test('speed: calls-per-officer is counted by the database, not by reading every 
     `callUsers read ${rows.toLocaleString()} rows. call_logs grows forever -- 300 officers at `
     + 'fifty calls a day is five and a half million a year, and counting them here read all of it.');
 });
+
+test('speed: an officer does not download forty teams of abnormal payments to read one', async () => {
+  /* listTable feeds Abnormal Payments, Restructures and Demand Notices. It read the WHOLE
+     table and discarded what the viewer may not see -- on tables that only ever grow. */
+  const t = bigBook();
+  for (let i = 0; i < 4000; i++) {
+    t.abnormal_payments.push({ id: 'A' + i, team: TEAMS[i % 40], paid: 1234,
+      ref_no: 'R' + i, customer_name: 'C' + i, created_at: '2026-07-20T08:00:00Z' });
+  }
+  const c = counting(t);
+  const d = await portalApi(c.db, OFFICER, 'abnormal', {}, NOW);
+  const { rows } = c.stat();
+  assert.equal(d.count, 100, 'one team of the forty -- the same answer as before');
+  assert.ok(rows <= 400,
+    `an officer read ${rows.toLocaleString()} rows to see ${d.count}. Team scoping belongs in `
+    + 'the query, not in a filter after the whole table has crossed the wire.');
+});
+
+test('scoping abnormal payments at the database keeps EXACTLY the rows it kept before', async () => {
+  /* The optimisation must not change the answer. A row with NO team is the case that could
+     have gone wrong: teamAllowed() rejects it for a scoped user, so an `in` filter that drops
+     it agrees -- but an ALL-teams admin must still see it. */
+  const t = bigBook();
+  t.abnormal_payments.push({ id: 'N1', team: null, paid: 500, ref_no: 'NOTEAM', created_at: '2026-07-20T08:00:00Z' });
+  t.abnormal_payments.push({ id: 'T1', team: TEAMS[0], paid: 700, ref_no: 'MINE', created_at: '2026-07-20T08:00:00Z' });
+  const asOfficer = await portalApi(fakeDb(t), OFFICER, 'abnormal', {}, NOW);
+  assert.deepEqual(asOfficer.rows.map(r => r.ref_no), ['MINE'], 'a team-less row is not theirs');
+  const asAdmin = await portalApi(fakeDb(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(asAdmin.rows.length, 2, 'but the admin still sees it -- nothing is lost from the table');
+});
