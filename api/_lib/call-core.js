@@ -356,17 +356,67 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
     and the officer moved on. Anything at or under CALL_MIN_SECS seconds is a dial attempt,
     not a call, and no longer counts. */
 const CALL_MIN_SECS_DEFAULT = 5;
+/* "AMEPIGIWA LEO" -- THE SECOND WHOLE-TABLE READ ON A HOT PATH, and the one that gets worse
+   as the day goes on.
+
+   Every list load read EVERY call log made anywhere in the company today. That is small at
+   eight in the morning and it is not small at four in the afternoon: three hundred officers
+   making fifty calls each is fifteen thousand rows, dragged again for every list every
+   handset opens. The cost grows exactly as the day gets busier, which is the worst possible
+   shape for it to have -- the system feels fine when it is tested and fails when it is used.
+
+   IT IS AN ADVISORY TICK. It greys a row and prints "Amepigiwa leo" so two officers do not
+   ring the same customer within the hour. It is deliberately COMPANY-WIDE and stays that way:
+   scoping it to the signed-in officer would answer a different, less useful question.
+
+   Half a minute of staleness cannot be noticed here, because THE PHONE ALREADY CACHES THE
+   WHOLE LIST FOR AN HOUR -- the ticks on an officer's screen are routinely fifty minutes old
+   already. So this is invisible to them and removes the read for everybody who asks in the
+   same half-minute, which on three hundred handsets is most of them.
+
+   WITH ONE EXCEPTION, WHICH IS THE ONE THAT WOULD HAVE BEEN NOTICED: your OWN call. An officer
+   rings a customer, the handset syncs, and the tick has to be there when they look.
+
+   THE OBVIOUS ANSWER TO THAT IS WRONG, and a 300-handset simulation is what showed it. Dropping
+   the cache whenever a sync writes a call looks right and destroys the whole saving: with three
+   hundred officers syncing, SOMETHING is always writing, so the cache is invalidated faster
+   than it can ever be used. Measured that way, call_logs still cost 1.5 million rows -- exactly
+   the number the cache was added to remove.
+
+   So a sync MERGES its own numbers into the warm set instead of throwing it away. The officer's
+   call is ticked the instant they look, the set stays warm for the other 299, and no read is
+   spent on either. The duration threshold is remembered alongside the set so the merge applies
+   the same rule the read did -- a dial attempt still must not tick. */
+const CALLED_TTL_MS = 30000;
+const calledCache = new WeakMap();              // db -> { at, day, min, value }
+
+/** Fold calls just written into the warm set, if there is one. Never fetches: with nothing
+    cached there is nothing to correct, and the next read builds it fresh anyway. */
+function noteCalledToday(db, nowMs, records) {
+  const hit = calledCache.get(db);
+  if (!hit || hit.day !== todayKey(nowMs)) return;
+  for (const r of records || []) {
+    if (r.call_date !== hit.day) continue;
+    if (num(r.duration) <= hit.min) continue;              // a dial attempt is not a call
+    const d = pnorm(r.phone);
+    if (d) hit.value[d] = 1;
+  }
+}
 async function calledTodaySet(db, nowMs) {
+  const day = todayKey(nowMs);
+  const hit = calledCache.get(db);
+  if (hit && hit.day === day && hit.at <= nowMs && (nowMs - hit.at) < CALLED_TTL_MS) return hit.value;
   const raw = parseInt(String(await settingGet(db, 'CALL_MIN_SECS') || '').replace(/[^0-9]/g, ''), 10);
   const min = (isNaN(raw) || raw < 0) ? CALL_MIN_SECS_DEFAULT : raw;
   // Filtered here rather than in the query: durations are numbers, and PostgREST-style range
   // filters on this path compare as text, where '60' sorts below '6'.
-  const rows = await fetchAll(() => db.from('call_logs').select('phone, duration').eq('call_date', todayKey(nowMs)));
+  const rows = await fetchAll(() => db.from('call_logs').select('phone, duration').eq('call_date', day));
   const set = {};
   for (const r of rows) {
     if (num(r.duration) <= min) continue;
     const d = pnorm(r.phone); if (d) set[d] = 1;
   }
+  calledCache.set(db, { at: nowMs, day, min, value: set });
   return set;
 }
 /* =====================================================================================
@@ -513,13 +563,16 @@ export function narrowForRole(rows, kind, which, limits) {
 }
 
 async function roleLimits(db) {
-  const n = async (k, dflt) => {
-    const v = await settingGet(db, k);
-    const x = parseInt(v, 10);
+  // Two settings from the same table, in ONE query rather than one after the other. Neither
+  // depends on the other, and this runs on every list an early-collection or credit officer
+  // opens -- a wait bought nothing.
+  const setting = await settingsMany(db, ['CALL_CREDIT_MAX_PAID', 'CALL_EARLY_MAX_BEHIND']);
+  const n = (k, dflt) => {
+    const x = parseInt(setting(k), 10);
     return isNaN(x) || x < 0 ? dflt : x;
   };
-  return { creditMaxPaid: await n('CALL_CREDIT_MAX_PAID', 5),
-    earlyMaxBehind: await n('CALL_EARLY_MAX_BEHIND', 1) };
+  return { creditMaxPaid: n('CALL_CREDIT_MAX_PAID', 5),
+    earlyMaxBehind: n('CALL_EARLY_MAX_BEHIND', 1) };
 }
 
 /* EXACTLY WHAT THE LEO AND KESHO LISTS DRAW.
@@ -961,6 +1014,9 @@ async function sync(db, [dev, calls], nowMs) {
     .upsert(records, { onConflict: 'id', ignoreDuplicates: true }).select('id');
   if (error) throw new Error(error.message);
   const added = (inserted || []).length;
+  // Their own calls are folded into the warm set, so they are ticked the moment they look --
+  // without throwing away an index the other 299 handsets are about to use.
+  noteCalledToday(db, nowMs, records);
   const { error: e2 } = await db.from('call_users')
     .update({ last_sync: new Date(nowMs).toISOString(), last_ts: wm }).eq('user_id', cu.user_id);
   if (e2) throw new Error(e2.message);

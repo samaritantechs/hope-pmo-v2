@@ -295,3 +295,34 @@ test('speed: opening the app is one wait, not ten', async () => {
   assert.ok(trips <= 6, `boot took ${trips} round trips (budget 6). `
     + 'Settings belong in one `in` query and the teams table should be read once.');
 });
+
+test('speed: "amepigiwa leo" is read once per half-minute, not once per list', async () => {
+  /* The second whole-table read on a hot path, and the one that gets WORSE as the day goes on:
+     three hundred officers making fifty calls each is fifteen thousand rows of call_logs, and
+     every list load from every handset dragged all of them. A system that is fine when it is
+     tested and fails when it is busy. */
+  const t = bigBook();
+  for (let i = 1; i <= 6; i++) {
+    t.call_users.push({ user_id: 'U' + i, name: 'OFF' + i, team: TEAMS[i], role: 'OFFICER',
+      device_id: 'DEV' + i, active: true });
+  }
+  // An afternoon's worth of calls.
+  for (let i = 0; i < 3000; i++) {
+    t.call_logs.push({ id: 'L' + i, user_id: 'U1', phone: '07120' + String(i).padStart(5, '0'),
+      duration: 60, call_date: '2026-07-24', portfolio: true });
+  }
+  const c = counting(t);
+  await callApi(c.db, 'api_callList', ['DEV1', 'today'], NOW);
+  const first = c.stat().rows;
+  assert.ok(first > 2000, 'the first list does read the log -- ' + first + ' rows');
+
+  let before = c.stat().rows;
+  for (let i = 2; i <= 6; i++) {
+    await callApi(c.db, 'api_callList', ['DEV' + i, 'today'], NOW);
+    const after = c.stat().rows;
+    assert.ok(after - before < 2000,
+      `handset ${i} re-read ${after - before} rows -- the called-today set is not being shared, `
+      + 'and this read grows all day as the officers work.');
+    before = after;
+  }
+});
