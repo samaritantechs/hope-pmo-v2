@@ -1287,7 +1287,86 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
     asOf: cur.date || null };
 }
 
-async function abnormal(db, user) { return listTable(db, user, 'abnormal_payments'); }
+/* =====================================================================================
+   ABNORMAL PAYMENTS -- and who is supposed to be chasing each one.
+
+     "the columns in the system should be GMO TEAM PMO CUSTOMER NO PAYMENT NO REF NO
+      CUSTOMER NAME TRANSACTION ID PAID REF ID PAYMENT SENDER NAME
+      where pmo is of either early collection, collection or recovery depending on the
+      customer stage"
+
+   REF ID was the missing one. It has always been in the table and the importer has always
+   read it -- it simply was never put on the screen, so a column the sheet carries could not be
+   seen anywhere in the system.
+
+   THE PMO COLUMN NAMES A STAGE, AND THE STAGE DECIDES WHOSE JOB IT IS:
+
+     still performing, on the expected book   EARLY COLLECTION
+     fallen behind, in the defaulter register COLLECTION
+     expired or chronic                       RECOVERY
+
+   The sheet carries this column, and whatever it says is kept -- untouched, always. But a
+   blank PMO cell on a flagged payment is the worst kind of blank: an unexplained amount with
+   nobody named against it, which is exactly the row that gets left. So a blank is FILLED from
+   the customer's actual stage, and named to the person the teams table holds for that stage
+   where there is one.
+
+   ONLY WHEN IT CAN BE ANSWERED. A reference that appears in neither book is left blank rather
+   than guessed at -- an unknown customer wrongly labelled "early collection" would send
+   somebody to the wrong desk, which is worse than an empty cell that says "find out". */
+const ABN_STAGE = [
+  { stage: 'RECOVERY', label: 'RECOVERY', col: 'recovery' },
+  { stage: 'COLLECTION', label: 'COLLECTION', col: 'collection' },
+  { stage: 'EARLY COLLECTION', label: 'EARLY COLLECTION', col: 'expected' },
+];
+const abnKey = r => K(r.ref_no || r.ref_id || '');
+
+async function abnormal(db, user, _args, nowMs) {
+  const base = await listTable(db, user, 'abnormal_payments');
+  const blanks = base.rows.filter(r => !String(r.pmo == null ? '' : r.pmo).trim());
+  if (!blanks.length) return { ...base, pmoFilled: 0 };
+
+  /* Two narrow, team-scoped reads -- only the columns the stage question needs. The defaulter
+     register says who has fallen behind and how far; the expected deck says who is still
+     performing. A reference in neither is left alone. */
+  const [fu, exp, teamRows] = await Promise.all([
+    fetchAll(() => {
+      let q = db.from('followup_status').select('ref, status, team');
+      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      return q;
+    }),
+    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' },
+      { notAfter: todayKey(nowMs), teams: user.teams, columns: 'ref, team' }),
+    fetchAll(() => db.from('teams').select('*')),
+  ]);
+
+  const stageOf = {};
+  for (const r of exp.rows) { const k = K(r.ref); if (k) stageOf[k] = 'EARLY COLLECTION'; }
+  // The defaulter register wins over the expected deck: a customer on both has fallen behind.
+  for (const r of fu) {
+    const k = K(r.ref);
+    if (!k) continue;
+    const st = K(r.status);
+    stageOf[k] = (st.includes('CHRON') || st.includes('EXPIR')) ? 'RECOVERY'
+      : (st.includes('DEFAULT') ? 'COLLECTION' : (stageOf[k] || 'COLLECTION'));
+  }
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+
+  let filled = 0;
+  for (const r of blanks) {
+    const stage = stageOf[abnKey(r)];
+    if (!stage) continue;                      // in neither book -- say nothing rather than guess
+    const spec = ABN_STAGE.find(x => x.stage === stage);
+    const who = String((teamBy[K(r.team)] || {})[spec.col] || '').trim();
+    // The person where the teams table names one, else the stage itself -- the role is still
+    // the useful half of the answer.
+    r.pmo = who || spec.label;
+    r.pmo_stage = stage;
+    filled++;
+  }
+  return { ...base, pmoFilled: filled };
+}
 
 async function received(db, user, { from, to }, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : weekMondayKey(nowMs);

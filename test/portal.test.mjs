@@ -4222,3 +4222,70 @@ test('the audit log still names the person, not "the system"', async () => {
   assert.equal(entry.actor_name, 'THE UPLOADER');
   assert.equal(entry.actor_code, 'U');
 });
+
+/* =====================================================================================
+   ABNORMAL PAYMENTS -- the twelve columns, and who is chasing each one.
+
+     "the columns in the system should be GMO TEAM PMO CUSTOMER NO PAYMENT NO REF NO
+      CUSTOMER NAME TRANSACTION ID PAID REF ID PAYMENT SENDER NAME
+      where pmo is of either early collection, collection or recovery depending on the
+      customer stage"
+   ===================================================================================== */
+function abnBook() {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], expected: 'EARLY E', collection: 'COLLECT C', recovery: 'JUMA G' };
+  // Three customers of KONGOWE, one at each stage.
+  t.followup_status.push(
+    { ref: 'D1', team: 'KONGOWE', full_name: 'BEHIND', status: 'Defaulter', arrears: 100 },
+    { ref: 'C1', team: 'KONGOWE', full_name: 'CHRONIC ONE', status: 'Chronic', arrears: 900 });
+  t.abnormal_payments = [
+    { id: 'A1', team: 'KONGOWE', pmo: null, ref_no: 'D1', ref_id: 'RID1', paid: 1234,
+      customer_name: 'BEHIND', created_at: '2026-07-24T08:00:00Z' },
+    { id: 'A2', team: 'KONGOWE', pmo: null, ref_no: 'C1', ref_id: 'RID2', paid: 2345,
+      customer_name: 'CHRONIC ONE', created_at: '2026-07-24T08:00:00Z' },
+    { id: 'A3', team: 'KONGOWE', pmo: null, ref_no: '111', ref_id: 'RID3', paid: 3456,
+      customer_name: 'AMINA H', created_at: '2026-07-24T08:00:00Z' },
+    { id: 'A4', team: 'KONGOWE', pmo: 'SOMEBODY REAL', ref_no: 'D1', ref_id: 'RID4', paid: 4567,
+      customer_name: 'BEHIND', created_at: '2026-07-24T08:00:00Z' },
+    { id: 'A5', team: 'KONGOWE', pmo: null, ref_no: 'NOBODY-KNOWS', ref_id: 'RID5', paid: 5678,
+      customer_name: '?', created_at: '2026-07-24T08:00:00Z' },
+  ];
+  return t;
+}
+
+test('abnormal payments: a blank PMO is filled from the customer\'s stage', async () => {
+  const d = await portalApi(dbWithRpc(abnBook()), ADMIN, 'abnormal', {}, NOW);
+  const by = Object.fromEntries(d.rows.map(r => [r.id, r]));
+  // A defaulter is the collection officer's; chronic is recovery's; still on the expected
+  // deck is early collection's. Each named from the teams table.
+  assert.equal(by.A1.pmo, 'COLLECT C');
+  assert.equal(by.A1.pmo_stage, 'COLLECTION');
+  assert.equal(by.A2.pmo, 'JUMA G');
+  assert.equal(by.A2.pmo_stage, 'RECOVERY');
+  assert.equal(by.A3.pmo, 'EARLY E');
+  assert.equal(by.A3.pmo_stage, 'EARLY COLLECTION');
+});
+
+test('abnormal payments: what the sheet said is NEVER overwritten', async () => {
+  /* The sheet is the record. Filling a blank helps; replacing a name somebody typed would be
+     the system quietly disagreeing with the document it was given. */
+  const d = await portalApi(dbWithRpc(abnBook()), ADMIN, 'abnormal', {}, NOW);
+  const a4 = d.rows.find(r => r.id === 'A4');
+  assert.equal(a4.pmo, 'SOMEBODY REAL');
+  assert.equal(a4.pmo_stage, undefined, 'and it is not marked as filled, because it was not');
+});
+
+test('abnormal payments: a reference in neither book is left blank, not guessed at', async () => {
+  /* An unknown customer wrongly labelled "early collection" sends somebody to the wrong desk,
+     which is worse than an empty cell that says "find out". */
+  const d = await portalApi(dbWithRpc(abnBook()), ADMIN, 'abnormal', {}, NOW);
+  const a5 = d.rows.find(r => r.id === 'A5');
+  assert.ok(!a5.pmo, 'no stage could be established, so nothing is claimed');
+  assert.equal(d.pmoFilled, 3, 'three of the four blanks were answerable');
+});
+
+test('abnormal payments: REF ID survives the round trip -- it was never on screen before', async () => {
+  const d = await portalApi(dbWithRpc(abnBook()), ADMIN, 'abnormal', {}, NOW);
+  assert.deepEqual(d.rows.map(r => r.ref_id).sort(),
+    ['RID1', 'RID2', 'RID3', 'RID4', 'RID5']);
+});

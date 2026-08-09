@@ -652,3 +652,53 @@ test('a row with no team is dropped rather than stored against nobody', () => {
   assert.deepEqual(out.map(r => r.team), ['GRAND TOTAL'],
     'a blank team goes; a total ROW is a team name we cannot tell apart and is left to the eye');
 });
+
+/* =====================================================================================
+   THE TWO ABNORMAL-PAYMENT COLUMNS THAT WERE ARRIVING EMPTY.
+
+     "the columns in the system should be GMO TEAM PMO CUSTOMER NO PAYMENT NO REF NO
+      CUSTOMER NAME TRANSACTION ID PAID REF ID PAYMENT SENDER NAME"
+
+   col() matches a header by its exact normalised name, and importAbnormal asked only for
+   'CONTACT NO' and 'PHONE NUMBER'. The sheet says CUSTOMER NO and PAYMENT NO, so neither ever
+   matched and both imported as NULL -- two blank columns on the one report whose whole purpose
+   is to let somebody ring the payer and ask what the money was.
+
+   A header that matches nothing looks exactly like a column of empty cells. That is why it
+   survived, and it is why this test exists.
+   ===================================================================================== */
+const { importAbnormal: importAbn } = await import('../api/_lib/importers.js');
+
+test('abnormal payments: the sheet\'s own headers import, all twelve of them', () => {
+  const rows = [
+    ['GMO', 'TEAM', 'PMO', 'CUSTOMER NO', 'PAYMENT NO', 'REF NO', 'CUSTOMER NAME',
+     'TRANSACTION ID', 'PAID', 'REF ID', 'PAYMENT', 'SENDER NAME'],
+    ['G ONE', 'kongowe', 'EARLY E', '0712 000 111', '0755000222', 'R99', 'AMINA H',
+     'TX123', '12,345', 'RID9', 'MPESA', 'MAMA A'],
+  ];
+  const [x] = importAbn(rows);
+  assert.equal(x.gmo, 'G ONE');
+  assert.equal(x.team, 'KONGOWE');
+  assert.equal(x.pmo, 'EARLY E');
+  assert.equal(x.contact_no, '712000111', 'CUSTOMER NO -- this was importing as null');
+  assert.equal(x.phone_number, '755000222', 'PAYMENT NO -- this was importing as null');
+  assert.equal(x.ref_no, 'R99');
+  assert.equal(x.customer_name, 'AMINA H');
+  assert.equal(x.transaction_id, 'TX123');
+  assert.equal(x.paid, 12345);
+  assert.equal(x.ref_id, 'RID9');
+  assert.equal(x.payment, 'MPESA');
+  assert.equal(x.sender_name, 'MAMA A');
+});
+
+test('abnormal payments: the older header spellings still import', () => {
+  /* Sheets already uploaded under the old names must not stop working because the new ones
+     were added. Both are accepted; neither is preferred at the other's expense. */
+  const rows = [
+    ['TEAM', 'CONTACT NO', 'PHONE NUMBER', 'REF NO', 'PAID'],
+    ['KONGOWE', '0712000111', '0755000222', 'R99', '500'],
+  ];
+  const [x] = importAbn(rows);
+  assert.equal(x.contact_no, '712000111');
+  assert.equal(x.phone_number, '755000222');
+});
