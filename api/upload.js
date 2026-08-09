@@ -4,7 +4,8 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
 import { pickLatestBatch } from './_lib/snapshots.js';
 import { addDaysKey as addDays_ } from './_lib/time.js';
 import {
-  importDefaulters, importExpected, importFollowup, importComments, commentsDateOrder,
+  importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
+  importFollowup, importComments, commentsDateOrder,
   importLoans, importTeams, importReceivedPayments,
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices,
@@ -380,6 +381,25 @@ export default withApi(async (req, res) => {
       table = 'repayment_snapshots';
       records = importExpected(rows, { snapshotType: type.replace('expected-', ''), snapshotDate: meta.date });
       break;
+    /* A DAY WITHOUT ITS CUSTOMERS. The company's own summary sheet -- money per team, no
+       names -- for the mornings the full export was missed. It goes to its own table, shaped
+       like what the totals functions already return, so the batch rule decides between a
+       summary and a list exactly as it decides between two lists: the later upload wins. The
+       customer lists are untouched, so the phone, the follow-up tab and the rotation go on
+       reading them whatever the reports are using. */
+    case 'expected-summary':
+      if (!meta.date) { const e = new Error('date is required for an Expected summary.'); e.status = 400; throw e; }
+      table = 'snapshot_summaries';
+      records = importExpectedSummary(rows, {
+        snapshotType: String(meta.expectedType || 'today').toLowerCase(), snapshotDate: meta.date });
+      break;
+    case 'defaulters-summary':
+      if (!meta.weekday || !meta.date) { const e = new Error('weekday and date are required for a Defaulters summary — recovery is only honest when an initial deck is compared against the current deck of the SAME weekday.'); e.status = 400; throw e; }
+      if (meta.defType !== 'initial' && meta.defType !== 'current') { const e = new Error('Choose Initial or Current for a Defaulters summary.'); e.status = 400; throw e; }
+      table = 'snapshot_summaries';
+      records = importDefaulterSummary(rows, {
+        snapshotType: meta.defType, snapshotDate: meta.date, weekday: meta.weekday });
+      break;
     case 'followup':
       table = 'followup_status';
       records = importFollowup(rows);
@@ -465,7 +485,7 @@ export default withApi(async (req, res) => {
   // re-upload stacked both copies into every KPI. Readers resolve latest date -> latest
   // batch within it (api/_lib/snapshots.js), so the newest upload wins while the full
   // history stays underneath.
-  const SNAPSHOT_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots']);
+  const SNAPSHOT_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots', 'snapshot_summaries']);
   let uploadBatch;
   if (SNAPSHOT_TABLES.has(table)) {
     uploadBatch = partBatch || randomUUID();
@@ -501,7 +521,7 @@ export default withApi(async (req, res) => {
   // register it first. New teams get blank role columns (no leader assigned yet) -- fill those
   // in later via Leaders/Teams or a teams-editing screen.
   const TEAM_REF_TABLES = new Set(['defaulter_snapshots', 'repayment_snapshots', 'followup_status', 'loans',
-    'followup_comments']);
+    'followup_comments', 'snapshot_summaries']);
   let newTeams = [], stubbed = 0;
   if (TEAM_REF_TABLES.has(table)) {
     const incomingTeams = [...new Set(records.map(r => r.team).filter(Boolean))];

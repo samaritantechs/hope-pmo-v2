@@ -37,7 +37,9 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ||
 const { portalApi } = await import('../api/_lib/portal-core.js');
 const { callApi, _clearSummaryCache } = await import('../api/_lib/call-core.js');
 const { buildDashboard } = await import('../api/_lib/dashboard-core.js');
-const { foldExpected, foldDefaulter } = await import('../api/_lib/snapshot-totals.js');
+const { foldExpected, foldDefaulter, expectedTotalsLatest, expectedTotalsInRange,
+        defaulterTotalsLatest, tExpected, tCollected, tArrears }
+  = await import('../api/_lib/snapshot-totals.js');
 const { collectedOf, uncollectedOf, num } = await import('../api/_lib/recovery.js');
 
 const FRIDAY = Date.parse('2026-07-24T09:00:00Z');   // Friday, midday EAT
@@ -288,4 +290,117 @@ test('an officer is handed their own teams only, by the database', () => {
   assert.ok(mine.length > 0);
   assert.deepEqual([...new Set(mine.map(r => r.team))], ['KONGOWE'],
     'team scoping happens at the database -- a filter applied after the rows arrive is a download');
+});
+
+/* =====================================================================================
+   A SUMMARY IS MORE ROWS OF THE SAME ANSWER.
+   =====================================================================================
+   "So from now on we keep both the last customers default report list and the default summary
+    but use the latest among the two on displaying report data"
+
+   Which is not a new rule. The summary table is shaped like what these functions already
+   return, carries its own upload_batch and created_at, and is handed to the batch rule that has
+   always decided which upload wins. The customer lists stay exactly where they are -- the phone,
+   the follow-up tab and the rotation go on reading them whatever the reports use.
+*/
+const SUMM = (over = {}) => ({
+  id: 's' + (SUMM.n = (SUMM.n || 0) + 1), kind: 'expected', snapshot_type: 'today',
+  snapshot_date: '2026-07-24', weekday: null, team: 'A', customers: null,
+  expected_amt: 0, collected_amt: 0, uncollected_amt: 0, arrears_amt: null,
+  upload_batch: 'sum', created_at: '2026-07-24T10:00:00Z', ...over,
+});
+const LIST = (over = {}) => ({
+  id: 'e' + (LIST.n = (LIST.n || 0) + 1), ref: 'R' + (LIST.n), team: 'A',
+  payment_expected: 0, todays_status: 'UNPAID', arrears: 0,
+  snapshot_type: 'today', snapshot_date: '2026-07-24',
+  upload_batch: 'list', created_at: '2026-07-24T06:00:00Z', ...over,
+});
+
+test('a summary uploaded after the list is what the reports read', async () => {
+  const db = fakeDb({
+    repayment_snapshots: [LIST({ payment_expected: 1000 }), LIST({ payment_expected: 500 })],
+    snapshot_summaries: [SUMM({ expected_amt: 9000, collected_amt: 7000, uncollected_amt: 2000 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(tExpected(r.rows), 9000, 'the summary is newer, so the summary wins');
+  assert.equal(tCollected(r.rows), 7000);
+  assert.equal(r.batch, 'sum');
+  // And the customer list is untouched underneath -- the phone still has its names.
+  assert.equal(db._dump('repayment_snapshots').length, 2);
+});
+
+test('a list uploaded after the summary wins it back', async () => {
+  const db = fakeDb({
+    repayment_snapshots: [LIST({ payment_expected: 1000, upload_batch: 'late', created_at: '2026-07-24T14:00:00Z' })],
+    snapshot_summaries: [SUMM({ expected_amt: 9000 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(tExpected(r.rows), 1000, 'the export arrived at last, so it is the record again');
+  assert.equal(r.batch, 'late');
+});
+
+test('a day that exists ONLY as a summary is still the latest day', async () => {
+  /* The morning the export was missed entirely. Resolving the latest date off the customer
+     lists alone would step straight past it to an older, fuller day and report last week's
+     money as today's -- which is worse than showing nothing. */
+  const db = fakeDb({
+    repayment_snapshots: [LIST({ snapshot_date: '2026-07-23', payment_expected: 400 })],
+    snapshot_summaries: [SUMM({ snapshot_date: '2026-07-24', expected_amt: 7777 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(r.date, '2026-07-24');
+  assert.equal(tExpected(r.rows), 7777);
+});
+
+test('a stale summary cannot outrank a newer day\'s list', async () => {
+  const db = fakeDb({
+    repayment_snapshots: [LIST({ snapshot_date: '2026-07-24', payment_expected: 400 })],
+    snapshot_summaries: [SUMM({ snapshot_date: '2026-07-20', expected_amt: 999999 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(r.date, '2026-07-24');
+  assert.equal(tExpected(r.rows), 400, 'Monday\'s summary is Monday\'s, whatever size it is');
+});
+
+test('the week reads a summary day beside its list days', async () => {
+  const db = fakeDb({
+    repayment_snapshots: [
+      LIST({ snapshot_date: '2026-07-20', payment_expected: 100 }),
+      LIST({ snapshot_date: '2026-07-21', payment_expected: 200 }),
+    ],
+    snapshot_summaries: [SUMM({ snapshot_date: '2026-07-22', expected_amt: 300 })],
+  });
+  const rows = await expectedTotalsInRange(db, { type: 'today', from: '2026-07-20', to: '2026-07-24' });
+  const byDay = {};
+  for (const r of rows) byDay[r.snapshot_date] = (byDay[r.snapshot_date] || 0) + Number(r.expected_amt || 0);
+  assert.deepEqual(byDay, { '2026-07-20': 100, '2026-07-21': 200, '2026-07-22': 300 });
+});
+
+test('defaulter summaries pair initial against current on the same weekday', async () => {
+  /* The worked example: 108,781,206 initial and 108,771,206 current is 10,000 recovered. And
+     the weekday has to survive, or the pairing compares two different populations -- the fault
+     that once produced minus 194 million. */
+  const D = (type, amt, wd) => ({ id: 'd' + type + wd, kind: 'defaulter', snapshot_type: type,
+    snapshot_date: '2026-07-24', weekday: wd, team: 'A', customers: null,
+    expected_amt: null, collected_amt: null, uncollected_amt: null, arrears_amt: amt,
+    upload_batch: 'ds' + type + wd, created_at: '2026-07-24T10:00:00Z' });
+  const db = fakeDb({ defaulter_snapshots: [], snapshot_summaries: [
+    D('initial', 108781206, 'FRI'), D('current', 108771206, 'FRI'),
+    D('initial', 500, 'MON'), D('current', 100, 'MON'),
+  ] });
+  const ini = await defaulterTotalsLatest(db, { type: 'initial', weekday: 'FRI', notAfter: '2026-07-24' });
+  const cur = await defaulterTotalsLatest(db, { type: 'current', weekday: 'FRI', notAfter: '2026-07-24' });
+  assert.equal(tArrears(ini.rows) - tArrears(cur.rows), 10000);
+  assert.equal(tArrears(ini.rows), 108781206, 'Monday\'s deck is not swept into Friday\'s');
+});
+
+test('a database with no summaries table behaves exactly as it always did', async () => {
+  /* The migration is run by hand like all of them, and every deployment is in this state
+     between a deploy and somebody opening the SQL editor. */
+  const base = fakeDb({ repayment_snapshots: [LIST({ payment_expected: 1000 })] });
+  const db = { from(n) { if (n === 'snapshot_summaries') throw new Error('relation does not exist'); return base.from(n); },
+    rpc: base.rpc, _dump: n => base._dump(n) };
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(tExpected(r.rows), 1000);
+  assert.equal(r.batch, 'list');
 });

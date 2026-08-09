@@ -73,6 +73,13 @@
              a report somebody was failing to produce. Still accepted by the server. -->
         <option value="expected-initial">Expected — Initial</option>
       </optgroup>
+      <!-- MUHTASARI / SUMMARY -- a day's figures without the customers behind them, for the
+           mornings the full export was missed. The customer lists already uploaded are left
+           exactly where they are; the later of the two is simply what the reports read. -->
+      <optgroup label="Muhtasari / Summary (no customer list)">
+        <option value="expected-summary">Expected — Summary (Data sheet: TEAMS, EXPECTED, PAID, ILIYONASIA, EXP TOMMR, UNCOLLECTED)</option>
+        <option value="defaulters-summary">Defaulters — Summary (Data sheet: team_id, team_name, amount_defaulted)</option>
+      </optgroup>
       <optgroup label="Loan pipeline">
         <option value="loans">Loan pipeline (pick stage below)</option>
       </optgroup>
@@ -117,6 +124,36 @@
         <br><b>Kesho / tomorrow:</b> there is no separate "tomorrow" report. If you have the sheet
         for tomorrow, upload it as <b>Expected — Today</b> with <b>tomorrow's date</b> here, and the
         Kesho tab reads it. If you never file ahead, leave it — Kesho simply stays empty.</div>
+    </div>
+
+    <!-- WHICH EXPECTED THIS SUMMARY IS. The same vocabulary the customer files use, so a
+         summary and a list of the same day are directly comparable and the batch rule can
+         choose between them. -->
+    <div id="expTypeWrap" class="hide">
+      <label>Which Expected?</label>
+      <select id="expType">
+        <option value="today">Today</option>
+        <option value="initial">Initial</option>
+      </select>
+      <div class="hint">Karatasi ya <b>Data</b>, safu wima: TEAMS, EXPECTED, PAID, ILIYONASIA, EXP TOMMR, UNCOLLECTED.
+        <br>Collected = PAID + ILIYONASIA + EXP TOMMR. Asilimia inahesabiwa upya kutoka kwa hizo mbili.
+        <br><i>Sheet named <b>Data</b>, headers on row 1. The % column is recomputed from the two amounts
+        rather than stored, so it can never disagree with its own parts.</i></div>
+    </div>
+
+    <!-- INITIAL OR CURRENT, and the weekday above. Recovery is initial minus current PAIRED ON
+         THE SAME WEEKDAY -- a summary that could not be paired that way would compare two
+         different populations. -->
+    <div id="defTypeWrap" class="hide">
+      <label>Initial or Current?</label>
+      <select id="defType">
+        <option value="initial">Initial</option>
+        <option value="current">Current</option>
+      </select>
+      <div class="hint">Karatasi ya <b>Data</b>: team_id, team_name, amount_defaulted.
+        <br>Mfano: initial 108,781,206 kisha current 108,771,206 &rarr; marejesho 10,000.
+        <br><i>Upload the Initial summary and the Current summary for the same date and weekday;
+        recovered is the difference, exactly as it is for the customer lists.</i></div>
     </div>
 
     <div id="stageWrap" class="hide">
@@ -204,6 +241,12 @@ var TYPE_META = {
   'defaulters-initial': ['weekdayWrap', 'dateWrap'],
   'expected-today': ['dateWrap'], 'expected-tomorrow': ['dateWrap'],
   'expected-yesterday': ['dateWrap'], 'expected-initial': ['dateWrap'],
+  /* The Expected summary needs a date and which Expected it is. The Defaulters summary needs
+     the weekday as well as Initial/Current, because recovery is initial minus current PAIRED
+     ON THE SAME WEEKDAY -- a summary that could not be paired that way would compare two
+     different populations, which is the fault that once produced minus 194 million. */
+  'expected-summary': ['dateWrap', 'expTypeWrap'],
+  'defaulters-summary': ['weekdayWrap', 'dateWrap', 'defTypeWrap'],
   'loans': ['stageWrap'],
   'followup': [], 'comments': [], 'teams': [], 'received': [],
   'access-codes': [], 'user-roles': [],
@@ -281,6 +324,9 @@ var TYPE_BEHAVIOUR = {
   'defaulters-current': 'supersede', 'defaulters-initial': 'supersede',
   'expected-today': 'supersede', 'expected-tomorrow': 'supersede',
   'expected-yesterday': 'supersede', 'expected-initial': 'supersede',
+  // A summary supersedes the same way a list does -- and supersedes a LIST of the same day too,
+  // which is the whole point of it.
+  'expected-summary': 'supersede', 'defaulters-summary': 'supersede',
   // One loan is ONE row whose stage moves, matched on its own number -- so the Approved file
   // can be re-uploaded without doubling sales, and a loan that advances a stage moves rather
   // than being duplicated. It also carries an upload stamp, so a whole day's report can be
@@ -637,6 +683,8 @@ $('go').addEventListener('click', function(){
   if (TYPE_META[type].indexOf('weekdayWrap') >= 0) meta.weekday = $('weekday').value;
   if (TYPE_META[type].indexOf('dateWrap') >= 0) meta.date = $('snapDate').value;
   if (TYPE_META[type].indexOf('stageWrap') >= 0) meta.stage = $('stage').value;
+  if (TYPE_META[type].indexOf('expTypeWrap') >= 0) meta.expectedType = $('expType').value;
+  if (TYPE_META[type].indexOf('defTypeWrap') >= 0) meta.defType = $('defType').value;
   if (isStamped_()){ meta.uploadDate = $('uploadDate').value; meta.mode = uploadMode; }
 
   $('go').disabled = true; $('go').textContent = 'Reading file\u2026';

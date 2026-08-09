@@ -37,7 +37,7 @@
  *  if any figure differs by so much as a shilling.
  */
 
-import { runQuery } from './supabase.js';
+import { runQuery, fetchAll } from './supabase.js';
 import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch } from './snapshots.js';
 import { collectedOf, num } from './recovery.js';
 
@@ -163,16 +163,130 @@ function teamsArg(teams) {
   return t.length ? t : null;
 }
 
+/* =====================================================================================
+   SUMMARY UPLOADS: MORE ROWS OF THE SAME ANSWER.
+   =====================================================================================
+   A day can be uploaded as the company's summary sheet instead of the full customer export --
+   money per team, no names. See db/migrations/2026-08-09b-snapshot-summaries.sql.
+
+   The table is deliberately shaped like what these functions already return, so a summary is
+   not a second kind of answer needing a merge rule. It is simply MORE ROWS, carrying their own
+   upload_batch and created_at, handed to the batch rule that has always decided which upload
+   wins. Upload a summary after a list and the summary is newer, so it wins; upload the list
+   again and the list wins. "The latest list/summary uploaded is the one used for reports" is
+   the rule this system already had, applied across one more source.
+
+   `is_summary` rides along so a screen can say where a figure came from. Nothing depends on it
+   for arithmetic.
+
+   IF THE TABLE IS NOT THERE, this reads as no summaries at all -- every screen behaves exactly
+   as it does today. The migration is run by hand like all of them, and a deployment between a
+   deploy and somebody opening the SQL editor has to keep working. */
+const SUMMARY_TABLE = 'snapshot_summaries';
+const SUMMARY_COLS = 'snapshot_date, snapshot_type, weekday, team, upload_batch, created_at, '
+  + 'customers, expected_amt, collected_amt, uncollected_amt, arrears_amt';
+
+/* DOES THIS DATABASE USE SUMMARIES AT ALL?
+   Most do not, and most never will -- the summary upload exists for the mornings the full
+   export was missed. Asking for summary rows on every totals call would put a round trip on
+   every screen of every deployment to be told "none", and the phone's performance strip alone
+   makes several of those calls.
+
+   So it is asked ONCE per database per minute, with a count that sends no rows at all -- the
+   cheapest read there is -- and the answer is remembered. A deployment with no summaries pays
+   one count a minute for the whole company; a deployment that uses them pays the reads it
+   actually needs. The minute is short enough that a summary uploaded now is used almost at
+   once, which is the same promise the answer cache makes about an upload. */
+const usesSummaries = new WeakMap();
+const SUMMARY_PROBE_TTL_MS = 60000;
+
+function anySummaries(db, nowMs = Date.now()) {
+  const hit = usesSummaries.get(db);
+  /* THE IN-FLIGHT PROMISE IS WHAT IS REMEMBERED, not just the answer.
+     Every screen asks several totals questions AT ONCE -- the phone's strip alone asks four --
+     so caching only the resolved value meant all four probed before any of them had finished,
+     and the "asked once" promise cost four round trips instead of one. Handing the same pending
+     promise to everyone makes concurrent callers share the single request they are waiting on. */
+  if (hit && hit.at <= nowMs && (nowMs - hit.at) < SUMMARY_PROBE_TTL_MS) return hit.p;
+  const p = (async () => {
+    try {
+      const { count, error } = await runQuery(() =>
+        db.from(SUMMARY_TABLE).select('id', { count: 'exact', head: true }));
+      return !error && !!count;
+    } catch (e) {
+      return false;                             // table not created yet
+    }
+  })();
+  usesSummaries.set(db, { at: nowMs, p });
+  // A probe that FAILS must not be remembered as an answer for a minute.
+  p.catch(() => usesSummaries.delete(db));
+  return p;
+}
+
+/** Called after a summary is written, so the next read does not wait out the minute to notice
+    the very upload somebody just made. */
+export function noteSummaryWritten(db) { usesSummaries.delete(db); }
+
+async function summaryRows(db, kind, { from, to, type = null, weekday = null, teams = null }) {
+  if (!(await anySummaries(db))) return [];
+  try {
+    const rows = await fetchAll(() => {
+      let q = db.from(SUMMARY_TABLE).select(SUMMARY_COLS).eq('kind', kind)
+        .gte('snapshot_date', from).lte('snapshot_date', to);
+      if (type) q = q.eq('snapshot_type', type);
+      if (weekday) q = q.eq('weekday', weekday);
+      const t = upperTeams(teams);
+      if (t.length) q = q.in('team', t);        // team scoping at the database, like every read
+      return q;
+    });
+    return rows.map(r => ({ ...r, is_summary: true }));
+  } catch (e) {
+    return [];                                  // table not created yet -- see the note above
+  }
+}
+
+/** The newest date a summary exists for. Read alongside the snapshot table's own latest date,
+    because a day uploaded ONLY as a summary is still the latest day -- and resolving the date
+    off the customer lists alone would skip straight past it to an older, fuller one. */
+/** THE SUMMARY SIDE OF "WHICH DAY IS THE LATEST", IN ONE TRIP RATHER THAN TWO.
+
+    Asking for the newest summary date and then for that date's rows is two journeys to answer
+    one question. Instead this asks for every summary from the list's own latest date onwards --
+    anything older cannot win, because the list already beats it -- and JavaScript takes the
+    newest date that came back. On a book with no summaries it returns nothing and the caller
+    carries on exactly as before.
+
+    `floor` is the date the customer lists resolved to, or null when there are none at all, in
+    which case any summary is a candidate. */
+async function summariesFrom(db, kind, { floor, type = null, weekday = null, notAfter = null, teams = null }) {
+  const rows = await summaryRows(db, kind, {
+    from: floor || '0001-01-01', to: notAfter || '9999-12-31', type, weekday, teams,
+  });
+  if (!rows.length) return { date: null, rows: [] };
+  let newest = null;
+  for (const r of rows) if (!newest || String(r.snapshot_date) > String(newest)) newest = r.snapshot_date;
+  return { date: newest, rows: rows.filter(r => String(r.snapshot_date) === String(newest)) };
+}
+
+/** The later of the two dates, either of which may be missing. */
+const laterDate = (a, b) => (!a ? b : !b ? a : (String(a) > String(b) ? a : b));
+
 /* ------------------------------------------------------------------------- expected totals */
 
 /** Every day in [from, to] of one Expected type, summed per team and per upload batch. */
 export async function expectedTotalsInRange(db, { type = null, from, to, teams = null } = {}) {
-  const agg = await callTotals(db, EXPECTED_TOTALS_FN,
-    { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams) });
-  if (agg) return agg;
-  const raw = await snapshotsInRange(db, 'repayment_snapshots',
-    type ? { snapshot_type: type } : {}, from, to, teams, EXP_FOLD_COLS);
-  return foldExpected(raw);
+  const [lists, sums] = await Promise.all([
+    (async () => {
+      const agg = await callTotals(db, EXPECTED_TOTALS_FN,
+        { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams) });
+      if (agg) return agg;
+      const raw = await snapshotsInRange(db, 'repayment_snapshots',
+        type ? { snapshot_type: type } : {}, from, to, teams, EXP_FOLD_COLS);
+      return foldExpected(raw);
+    })(),
+    summaryRows(db, 'expected', { from, to, type, teams }),
+  ]);
+  return sums.length ? lists.concat(sums) : lists;
 }
 
 /** The latest Expected snapshot of one type, batch-resolved -- the totals twin of
@@ -181,35 +295,51 @@ export async function expectedTotalsInRange(db, { type = null, from, to, teams =
 export async function expectedTotalsLatest(db, { type = null, teams = null, onDate = null,
   notAfter = null, notBefore = null } = {}) {
   const filters = type ? { snapshot_type: type } : {};
+  /* WHICH DAY IS THE LATEST, over BOTH sources. A day uploaded only as a summary is still the
+     latest day; resolving off the customer lists alone would step straight past it to an older,
+     fuller one and report last week's money as today's. */
+  const listDate = onDate || await latestSnapshotDate(db, 'repayment_snapshots', filters, { notAfter, notBefore });
+  const summ = onDate
+    ? { date: onDate, rows: await summaryRows(db, 'expected', { from: onDate, to: onDate, type, teams }) }
+    : await summariesFrom(db, 'expected', { floor: listDate, type, notAfter, teams });
+  const date = onDate || laterDate(listDate, summ.date);
+  if (!date) return { rows: [], date: null, batch: null };
+  // A summary from an older day than the winning one cannot count -- the list beat it.
+  const sums = summ.rows.filter(r => String(r.snapshot_date) === String(date));
+
   if (knownMissing(db, EXPECTED_TOTALS_FN)) {
     const snap = await latestSnapshot(db, 'repayment_snapshots', filters,
-      { onDate, notAfter, notBefore, teams, columns: EXP_FOLD_COLS });
-    return { rows: foldExpected(snap.rows), date: snap.date, batch: snap.batch };
+      { onDate: date, teams, columns: EXP_FOLD_COLS });
+    return resolved(foldExpected(snap.rows).concat(sums), date);
   }
-  const date = onDate || await latestSnapshotDate(db, 'repayment_snapshots', filters, { notAfter, notBefore });
-  if (!date) return { rows: [], date: null, batch: null };
   const agg = await callTotals(db, EXPECTED_TOTALS_FN,
     { p_from: date, p_to: date, p_type: type, p_teams: teamsArg(teams) });
   if (!agg) {
     const snap = await latestSnapshot(db, 'repayment_snapshots', filters,
       { onDate: date, teams, columns: EXP_FOLD_COLS });
-    return { rows: foldExpected(snap.rows), date: snap.date, batch: snap.batch };
+    return resolved(foldExpected(snap.rows).concat(sums), date);
   }
-  return resolved(agg, date);
+  return resolved(agg.concat(sums), date);
 }
 
 /* ------------------------------------------------------------------------ defaulter totals */
 
 /** Every deck in [from, to], summed per team, per weekday and per upload batch. */
 export async function defaulterTotalsInRange(db, { type = null, weekday = null, from, to, teams = null } = {}) {
-  const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
-    { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
-  if (agg) return agg;
-  const filters = {};
-  if (type) filters.snapshot_type = type;
-  if (weekday) filters.weekday = weekday;
-  const raw = await snapshotsInRange(db, 'defaulter_snapshots', filters, from, to, teams, DEF_FOLD_COLS);
-  return foldDefaulter(raw);
+  const [lists, sums] = await Promise.all([
+    (async () => {
+      const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
+        { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
+      if (agg) return agg;
+      const filters = {};
+      if (type) filters.snapshot_type = type;
+      if (weekday) filters.weekday = weekday;
+      const raw = await snapshotsInRange(db, 'defaulter_snapshots', filters, from, to, teams, DEF_FOLD_COLS);
+      return foldDefaulter(raw);
+    })(),
+    summaryRows(db, 'defaulter', { from, to, type, weekday, teams }),
+  ]);
+  return sums.length ? lists.concat(sums) : lists;
 }
 
 /** The latest deck matching type/weekday, batch-resolved. */
@@ -218,21 +348,28 @@ export async function defaulterTotalsLatest(db, { type = null, weekday = null, t
   const filters = {};
   if (type) filters.snapshot_type = type;
   if (weekday) filters.weekday = weekday;
+  // Both sources decide the latest date -- see the note in expectedTotalsLatest.
+  const listDate = onDate || await latestSnapshotDate(db, 'defaulter_snapshots', filters, { notAfter, notBefore });
+  const summ = onDate
+    ? { date: onDate, rows: await summaryRows(db, 'defaulter', { from: onDate, to: onDate, type, weekday, teams }) }
+    : await summariesFrom(db, 'defaulter', { floor: listDate, type, weekday, notAfter, teams });
+  const date = onDate || laterDate(listDate, summ.date);
+  if (!date) return { rows: [], date: null, batch: null };
+  const sums = summ.rows.filter(r => String(r.snapshot_date) === String(date));
+
   if (knownMissing(db, DEFAULTER_TOTALS_FN)) {
     const snap = await latestSnapshot(db, 'defaulter_snapshots', filters,
-      { onDate, notAfter, notBefore, teams, columns: DEF_FOLD_COLS });
-    return { rows: foldDefaulter(snap.rows), date: snap.date, batch: snap.batch };
+      { onDate: date, teams, columns: DEF_FOLD_COLS });
+    return resolved(foldDefaulter(snap.rows).concat(sums), date);
   }
-  const date = onDate || await latestSnapshotDate(db, 'defaulter_snapshots', filters, { notAfter, notBefore });
-  if (!date) return { rows: [], date: null, batch: null };
   const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
     { p_from: date, p_to: date, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
   if (!agg) {
     const snap = await latestSnapshot(db, 'defaulter_snapshots', filters,
       { onDate: date, teams, columns: DEF_FOLD_COLS });
-    return { rows: foldDefaulter(snap.rows), date: snap.date, batch: snap.batch };
+    return resolved(foldDefaulter(snap.rows).concat(sums), date);
   }
-  return resolved(agg, date);
+  return resolved(agg.concat(sums), date);
 }
 
 /** The latest upload of one day wins, whole-batch -- the same rule, run over summed rows.
