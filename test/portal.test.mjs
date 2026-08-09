@@ -14,6 +14,7 @@ const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/por
 // what one writes the other must be willing to show.
 const { callApi } = await import('../api/_lib/call-core.js');
 
+const { todayKey: todayKeyOf } = await import('../api/_lib/time.js');
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20';
 const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
@@ -2960,4 +2961,102 @@ test('a team with history is refused, and told exactly what is holding it', asyn
 test('only an admin may delete a team', async () => {
   const db = fakeDb(TEAM_TO_DELETE());
   await assert.rejects(() => portalApi(db, GMO, 'deleteTeam', { team: 'OLDTEAM' }, NOW), e => e.status === 403);
+});
+
+/* =====================================================================================
+   A WEEK THAT HAS ALREADY HAPPENED.
+   =====================================================================================
+   "I need a Mondays date picker at dashboard and presentations so that if I choose a last
+    weeks Monday then I get last weeks reports / performances"
+
+   Every figure on those screens is derived from ONE moment, so the moment itself moves and
+   the ordinary code produces the answer -- no second path for history to drift down.
+*/
+const { asOfWeek } = await import('../api/_lib/portal-core.js');
+
+test('picking a past Monday reads that week, as it stood on its Friday', () => {
+  // NOW is Friday 2026-07-24; this week's Monday is 2026-07-20.
+  const a = asOfWeek(NOW, '2026-07-13');
+  assert.equal(a.weekOf, '2026-07-13');
+  assert.equal(a.past, true);
+  assert.equal(todayKeyOf(a.ms), '2026-07-17', 'the Friday of the chosen week, not its Monday');
+});
+
+test('any day of a past week snaps to that week, not to a week starting mid-way', () => {
+  for (const d of ['2026-07-13', '2026-07-15', '2026-07-19']) {
+    assert.equal(asOfWeek(NOW, d).weekOf, '2026-07-13', d);
+  }
+});
+
+test('this week, a future week, and no choice at all leave the clock exactly alone', () => {
+  /* The live screen has to be bit-for-bit what it was before the picker existed. A future
+     week is clamped rather than honoured: there is nothing in it, and a dashboard of zeroes
+     reads as a broken system rather than as an empty future. */
+  for (const pick of ['', null, undefined, 'rubbish', '2026-07-20', '2026-07-24', '2026-09-01']) {
+    const a = asOfWeek(NOW, pick);
+    assert.equal(a.ms, NOW, String(pick));
+    assert.equal(a.past, false, String(pick));
+    assert.equal(a.weekOf, MON, String(pick));
+  }
+});
+
+test('the dashboard computes a past week from that week, not from today', async () => {
+  const book = tables();
+  const LASTMON = '2026-07-13', LASTFRI = '2026-07-17';
+  // Last week's book: a different expected sheet, and a defaulter deck that recovered.
+  book.repayment_snapshots.push(
+    { ...E('LW1', 'KONGOWE', 9000, 'UNPAID', 0, LASTFRI), upload_batch: 'blw', created_at: LASTFRI + 'T04:00:00Z' });
+  book.defaulter_snapshots.push(
+    { ...D('LW1', 'KONGOWE', 5000, 'initial', 45, LASTFRI, 'FRI'), upload_batch: 'ilw', created_at: LASTFRI + 'T04:00:00Z' },
+    { ...D('LW1', 'KONGOWE', 4000, 'current', 45, LASTFRI, 'FRI'), upload_batch: 'clw', created_at: LASTFRI + 'T04:00:00Z' });
+  const db = fakeDb(book);
+
+  const now = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(now.weekOf, MON);
+  assert.equal(now.pastWeek, false);
+
+  const last = await portalApi(db, ADMIN, 'dashboardFull', { weekOf: LASTMON }, NOW);
+  assert.equal(last.weekOf, LASTMON, 'the week it says it is showing');
+  assert.equal(last.pastWeek, true, 'and it says out loud that this is not today');
+  assert.equal(last.asOfDate, LASTFRI);
+  assert.equal(last.weekday, 'FRI');
+
+  // The figures are that week's, worked out from that week's decks.
+  assert.equal(last.cards.curArrears, 4000);
+  assert.equal(last.cards.initArrears, 5000);
+  assert.equal(last.cards.recovered, 1000);
+  // And this week's screen is untouched by the existence of last week's.
+  assert.notEqual(now.cards.curArrears, 4000);
+});
+
+test('the recovery trend of a past week lands on that week\'s own days', async () => {
+  const book = tables();
+  const LASTMON = '2026-07-13';
+  book.defaulter_snapshots.push(
+    { ...D('LW2', 'KONGOWE', 800, 'initial', 45, LASTMON, 'MON'), upload_batch: 'i2', created_at: LASTMON + 'T04:00:00Z' },
+    { ...D('LW2', 'KONGOWE', 300, 'current', 45, LASTMON, 'MON'), upload_batch: 'c2', created_at: LASTMON + 'T04:00:00Z' });
+  const d = await portalApi(fakeDb(book), ADMIN, 'dashboardFull', { weekOf: LASTMON }, NOW);
+  const mon = d.recTrend.find(x => x.weekday === 'MON');
+  assert.equal(mon.date, LASTMON, 'Monday of the CHOSEN week');
+  assert.equal(mon.recovered, 500);
+  assert.equal(d.recTrend.length, 7);
+  assert.equal(d.recTrend[6].date, '2026-07-19', 'through to that week\'s Sunday');
+});
+
+test('the officer boards follow the same week, so a deck cannot pair two of them', async () => {
+  /* The Presentation asks for the dashboard AND the boards. If only one of them honoured the
+     week, the slides would set one week's cards beside another week's officers -- the sort of
+     thing nobody notices in a dark room. */
+  const db = fakeDb(tables());
+  const a = await portalApi(db, ADMIN, 'officerBoards', { weekOf: '2026-07-13' }, NOW);
+  const b = await portalApi(db, ADMIN, 'officerBoards', {}, NOW);
+  assert.equal(a.weekOf, '2026-07-13');
+  assert.equal(b.weekOf, MON, 'and the two answers are not the same cache entry');
+});
+
+test('the weekly report snaps a mid-week date to its Monday too', async () => {
+  const db = fakeDb(tables());
+  // A Wednesday. All three screens have to agree on what "that week" means.
+  const w = await portalApi(db, ADMIN, 'weekly', { weekOf: '2026-07-15' }, NOW);
+  assert.equal(w.weekOf, '2026-07-13');
 });

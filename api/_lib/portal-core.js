@@ -1201,7 +1201,9 @@ const WEEK_DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
 const WEEK_CREDIT_COLS = 'ref, team, arrears, ds, initial_inst, other_inst, t_payment';
 
 async function weekly(db, user, { weekOf }, nowMs) {
-  const mon = /^\d{4}-\d{2}-\d{2}$/.test(String(weekOf)) ? weekOf : weekMondayKey(nowMs);
+  // Snapped to its Monday rather than trusted to be one, so a date arrived at any other way
+  // reads as the week it falls in instead of as a week starting mid-way through.
+  const mon = asOfWeek(nowMs, weekOf).weekOf;
   const fri = addDaysKey(mon, 4);
   const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
@@ -2870,7 +2872,45 @@ async function settingNum(db, key, dflt) {
   return (!n || isNaN(n)) ? dflt : n;
 }
 
-async function dashboardFull(db, user, _args, nowMs) {
+/* =====================================================================================
+   READING A WEEK THAT HAS ALREADY HAPPENED.
+   =====================================================================================
+   "I need a Mondays date picker at dashboard and presentations so that if I choose a last
+    weeks Monday then I get last weeks reports / performances"
+
+   Every figure on these two screens is derived from one moment -- todayKey, weekMondayKey and
+   currentWeekday all read it, and so does buildDashboard. So rather than teach a hundred
+   derivations about a second date, the MOMENT ITSELF moves. Pick a past week and the screen is
+   computed exactly as it would have been computed then, by the same code, with no branch that
+   only runs for history and can therefore drift from the one people watch every day.
+
+   A FINISHED WEEK READS AS OF ITS FRIDAY. The dashboard is "today, and the week around it", so
+   a past week needs a "today" -- and for a week that is over, the honest one is the last
+   working day. Choose last Monday and you get the week as it stood at the close of business on
+   Friday, which is the week the room actually discusses.
+
+   THE CURRENT WEEK IS ALWAYS NOW. Picking this week's Monday -- or a future one, or nothing at
+   all -- leaves the clock alone, so the live screen is bit-for-bit what it was before this
+   existed. A future week is clamped rather than honoured: there is nothing in it, and a
+   dashboard of zeroes reads as a broken system rather than as an empty future.
+
+   ANY DAY IN THE WEEK WILL DO. The picker offers Mondays, but a date typed by hand, or pasted,
+   or arrived at through a phone's date wheel, is snapped to its own Monday instead of being
+   rejected or quietly read as a different week. */
+export function asOfWeek(nowMs, weekOf) {
+  const thisMon = weekMondayKey(nowMs);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || ''))) {
+    return { ms: nowMs, weekOf: thisMon, past: false };
+  }
+  // Midday, so no amount of timezone arithmetic can roll the chosen date onto its neighbour.
+  const pickedMon = weekMondayKey(Date.parse(String(weekOf) + 'T09:00:00Z'));
+  if (!(pickedMon < thisMon)) return { ms: nowMs, weekOf: thisMon, past: false };
+  return { ms: Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z'), weekOf: pickedMon, past: true };
+}
+
+async function dashboardFull(db, user, args, nowMs) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  nowMs = asOf.ms;
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
   const wdToday = currentWeekday(nowMs);
   const base = await buildDashboard(db, user, nowMs);
@@ -3092,6 +3132,10 @@ async function dashboardFull(db, user, _args, nowMs) {
   return {
     ...base,
     weekOf: mon, weekEnd: sun, weekday: wdToday, dailyTarget,
+    /* WHICH WEEK THIS IS, and whether it is the live one. The screen has to say so: a
+       dashboard showing a finished week looks exactly like a dashboard showing today, and
+       somebody reading last week's arrears as this morning's would act on it. */
+    asOfDate: today, pastWeek: asOf.past,
     weeklyTarget: weeklyTarget * Math.max(myTeams.length, 1), teamCount: myTeams.length,
     cards: {
       curArrears: teams.reduce((s, t) => s + t.curArrears, 0),
@@ -3335,7 +3379,13 @@ function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
    reasoning -- see answer-cache.js. Opening the deck straight after the Dashboard now costs
    this half only, and re-opening it costs neither. */
 async function officerBoards(db, user, args, nowMs) {
-  return cachedAnswer(db, 'officerBoards', user, nowMs, () => officerBoardsUncached(db, user, args, nowMs));
+  /* The chosen week goes in the cache NAME, and the real clock stays as the cache's own
+     timestamp. Shifting nowMs into the cache instead would make every past-week answer look
+     older than the cache allows, so it would never be kept -- and the Presentation asks for
+     this twice over. */
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  return cachedAnswer(db, 'officerBoards|' + asOf.weekOf, user, nowMs,
+    () => officerBoardsUncached(db, user, args, asOf.ms));
 }
 
 async function officerBoardsUncached(db, user, _args, nowMs) {

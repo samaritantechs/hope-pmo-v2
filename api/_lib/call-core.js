@@ -282,13 +282,16 @@ async function calledTodaySet(db, nowMs) {
      BEHIND the customer is (target minus paid) -- kept 1, 1, 3 against dropped 4, 6 -- and on
      nothing else. No threshold on either number alone fits them.
 
-     So the number is a setting rather than a decision made here, and the default is the wider
-     reading. A filter that is too loose costs somebody a little scrolling; one that is too
-     tight hides customers from the officer who is supposed to be ringing them, and does it
-     silently. When the two readings disagree, show more.
+     Asked, and answered: "keep those with behind = 1 only". So one it is -- and it stays a
+     setting, because the answer to that question was worth asking for and will be worth
+     changing without a deploy.
 
        CALL_CREDIT_MAX_PAID    default 5   credit: keep paid <= this
-       CALL_EARLY_MAX_BEHIND   default 3   expected/collection: keep (target - paid) <= this
+       CALL_EARLY_MAX_BEHIND   default 1   expected/collection: keep (target - paid) <= this
+
+     The credit rule is confirmed too: "0 to 5-12 are under credit analysts supervision from
+     6/6 not" -- paid 0 through 5 are theirs, 6 and up are not, whether the instalment was met
+     or missed.
 
    A ROW WITH NO D.S AT ALL IS ALWAYS KEPT. An unreadable or missing due summary is a fault in
    the upload, and answering it by hiding the customer would turn a bad column into a customer
@@ -345,7 +348,7 @@ async function roleLimits(db) {
     return isNaN(x) || x < 0 ? dflt : x;
   };
   return { creditMaxPaid: await n('CALL_CREDIT_MAX_PAID', 5),
-    earlyMaxBehind: await n('CALL_EARLY_MAX_BEHIND', 3) };
+    earlyMaxBehind: await n('CALL_EARLY_MAX_BEHIND', 1) };
 }
 
 async function list(db, [dev, which, which2], nowMs) {
