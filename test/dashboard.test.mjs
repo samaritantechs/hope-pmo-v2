@@ -373,3 +373,58 @@ test('the dashboard is worked out once a minute, per set of teams', async () => 
   await buildDashboard(db2, ADMIN2, NOW2);
   assert.ok(otherReads > 5, 'a different database does its own work');
 });
+
+/* =====================================================================================
+   WHICH UPLOAD WINS CANNOT DEPEND ON WHAT ORDER THE ROWS CAME BACK IN.
+   =====================================================================================
+   An upload stamps ONE created_at across every row it writes, so two uploads of the same date
+   a moment apart can carry the same timestamp -- and the rule only moved on a strictly newer
+   one, starting from whichever row happened to be first. That made the winner a property of
+   the database's row order, and Postgres does not promise a row order.
+
+   So the same unchanged rows could resolve to a different batch on the next refresh, and two
+   screens reading the same day at the same moment could pick different ones. It is the same
+   family of fault as unordered paging, and it produces the same complaint: figures that move
+   with nothing behind them.
+*/
+test('two uploads with the same timestamp resolve to the same batch every time', async () => {
+  const same = '2026-07-20T06:00:00Z';
+  const rows = [
+    { upload_batch: 'b-alpha', created_at: same, v: 'A' },
+    { upload_batch: 'b-omega', created_at: same, v: 'O' },
+    { upload_batch: 'b-alpha', created_at: same, v: 'A2' },
+  ];
+  const first = pickLatestBatch(rows).map(r => r.v).sort();
+  // Every ordering of the same three rows has to give the same answer, because in the field
+  // every ordering of them is possible.
+  const orderings = [
+    [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ];
+  for (const o of orderings) {
+    const got = pickLatestBatch(o.map(i => rows[i])).map(r => r.v).sort();
+    assert.deepEqual(got, first, 'the winning batch moved with the row order: ' + o.join(''));
+  }
+  assert.deepEqual(first, ['O'], 'and it is one whole batch, never a mixture of two');
+});
+
+test('a stamped batch still beats the legacy rows it was uploaded to replace', async () => {
+  /* Rows written before upload_batch existed carry NULL and resolve as one nameless batch.
+     A corrected upload of the same date normally wins on created_at; when the timestamps tie,
+     the tiebreaker has to fall the same way or the re-upload is silently ignored. */
+  const same = '2026-07-20T06:00:00Z';
+  const out = pickLatestBatch([
+    { upload_batch: null, created_at: same, v: 'legacy' },
+    { upload_batch: 'b-new', created_at: same, v: 'new' },
+  ]);
+  assert.deepEqual(out.map(r => r.v), ['new']);
+});
+
+test('a genuinely newer upload still wins, timestamps being what they are for', async () => {
+  // The tiebreaker must not become the rule. An OLDER batch with a name that sorts higher
+  // must still lose to a newer upload.
+  const out = pickLatestBatch([
+    { upload_batch: 'z-old', created_at: '2026-07-20T06:00:00Z', v: 'old' },
+    { upload_batch: 'a-new', created_at: '2026-07-20T09:00:00Z', v: 'new' },
+  ]);
+  assert.deepEqual(out.map(r => r.v), ['new']);
+});

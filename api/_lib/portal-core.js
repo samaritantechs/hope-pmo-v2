@@ -2,7 +2,7 @@ import { fetchAll, runQuery } from './supabase.js';
 import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, upperTeams } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
@@ -3135,14 +3135,11 @@ async function stageCounts(db, teams) {
   return out;
 }
 
-/** Local copy of the batch rule for rows already fetched in bulk (one date at a time). */
-function pickLatestBatchRows(rows) {
-  if (!rows.length) return [];
-  let newest = rows[0];
-  for (const r of rows) if (String(r.created_at || '') > String(newest.created_at || '')) newest = r;
-  const win = newest.upload_batch || null;
-  return rows.filter(r => (r.upload_batch || null) === win);
-}
+/** The batch rule for rows already fetched in bulk (one date at a time).
+    THIS WAS A SECOND COPY OF pickLatestBatch, character for character, and the two then had to
+    be fixed twice for the same tie-breaking fault -- which is exactly the drift the rest of
+    this file goes out of its way to avoid. It is now the one rule, called by both names. */
+const pickLatestBatchRows = pickLatestBatch;
 
 /** Expected for ONE weekday of this week -- the Mon..Fri pills the officers actually use,
     instead of only ever "the latest". Falls back to the latest snapshot when that weekday

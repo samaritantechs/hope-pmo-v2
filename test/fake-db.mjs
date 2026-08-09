@@ -19,9 +19,23 @@ function likeMatch(value, pattern) {
   return new RegExp('^' + rx + '$', 'i').test(v);
 }
 
+/* Set by setUnstableOrder(). Module-level so it survives across the several fakeDb
+   instances one test may build. */
+export let UNSTABLE = false;
+export function setUnstableOrder(on) { UNSTABLE = !!on; FakeQuery._scan = 0; }
+
 class FakeQuery {
   static _seq = 0;
-  constructor(table) { this.table = table; this.filters = []; this.ord = null; this.lim = null; this.rng = null; this.single = false; this.mode = 'select'; this.payload = null; this.opts = null; this.wantRows = false; this.cols = null; }
+  static _scan = 0;
+  constructor(table, name) {
+    this.table = table;
+    this.tableName = name;
+    /* The URL the real client would be about to request. fetchAll reads the table name off
+       this to decide which unique column settles a paged read's order, so the fake has to
+       offer it or that decision is untestable -- and untested, it is the kind of thing that
+       silently stops happening. */
+    this.url = { pathname: '/rest/v1/' + String(name) };
+    this.filters = []; this.ords = []; this.lim = null; this.rng = null; this.single = false; this.mode = 'select'; this.payload = null; this.opts = null; this.wantRows = false; this.cols = null; }
   /** PostgREST returns ONLY the columns asked for. The fake used to ignore the argument and
       hand back whole rows, which meant a narrowed select that forgot a column passed every
       test and failed in the field -- exactly how customer rows reached officers' phones with
@@ -87,7 +101,12 @@ class FakeQuery {
     this.filters.push(r => parts.some(p => test(p, r)));
     return this;
   }
-  order(k, opts) { this.ord = { k, asc: !opts || opts.ascending !== false }; return this; }
+  /** PostgREST accepts SEVERAL order columns and applies them left to right, which is the
+      whole mechanism behind a tiebreaker: `order=created_at.desc,id.asc` sorts by the date and
+      settles the ties by id. The fake kept only the last one, so a tiebreaker would have
+      REPLACED the caller's sort here and matched it in the field -- the fake has to model
+      this properly or it hides the very thing being added. */
+  order(k, opts) { this.ords.push({ k, asc: !opts || opts.ascending !== false }); return this; }
   limit(n) { this.lim = n; return this; }
   range(a, b) { this.rng = [a, b]; return this; }
   maybeSingle() { this.single = true; return this; }
@@ -142,8 +161,20 @@ class FakeQuery {
     // PostgREST's exact count means and the whole reason it is worth asking for.
     const matched = out.length;
     if (this.headOnly) return { data: [], error: null, count: matched };
-    if (this.ord) {
-      const { k, asc } = this.ord;
+    /* WITHOUT AN ORDER BY, POSTGRES DOES NOT PROMISE AN ORDER -- and on a big table it
+       genuinely does not give the same one twice. `synchronize_seqscans` is on by default, so
+       a sequential scan joins whichever scan is already running, wherever it has got to, and
+       wraps round at the end. Two requests for the same unchanged rows come back rotated
+       against each other, which is exactly what breaks offset/limit paging.
+
+       Off by default so every existing test keeps the tidy insertion order it was written
+       against; switched on, it reproduces the live fault. */
+    if (UNSTABLE && !this.ords.length && out.length > 1) {
+      const k = (FakeQuery._scan++) % out.length;
+      out = out.slice(k).concat(out.slice(0, k));
+    }
+    for (let i = this.ords.length - 1; i >= 0; i--) {
+      const { k, asc } = this.ords[i];
       out = out.slice().sort((a, b) => (String(a[k]) < String(b[k]) ? -1 : String(a[k]) > String(b[k]) ? 1 : 0) * (asc ? 1 : -1));
     }
     if (this.rng) out = out.slice(this.rng[0], this.rng[1] + 1);
@@ -165,7 +196,7 @@ export function fakeDb(tables, opts = {}) {
   for (const [name, rows] of Object.entries(tables || {})) store[name] = { rows: rows.map(r => ({ ...r })) };
   const rpcs = opts.rpc || {};
   return {
-    from(name) { if (!store[name]) store[name] = { rows: [] }; return new FakeQuery(store[name]); },
+    from(name) { if (!store[name]) store[name] = { rows: [] }; return new FakeQuery(store[name], name); },
     async rpc(name, args) {
       if (!Object.prototype.hasOwnProperty.call(rpcs, name) || rpcs[name] == null) {
         // What PostgREST actually says when the function is missing.

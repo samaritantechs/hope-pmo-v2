@@ -104,7 +104,84 @@ export const MAX_PAGE = 10000;
    and paying an extra round trip for it on every read is a tax on being ordinary. */
 const LIKELY_CAPS = new Set([1000, 2000, 5000, 10000, 20000, 25000, 50000, 100000]);
 
-export async function fetchAll(buildQuery) {
+/* =====================================================================================
+   A PAGED READ NEEDS A TOTAL ORDER, OR THE PAGES DO NOT FIT TOGETHER.
+   =====================================================================================
+   Reported from the field, and it is the most corrosive kind of bug there is:
+
+     "The dashboard reads different stats after every visit or refresh without even any
+      update being uploaded."
+
+   Nothing was being uploaded and nothing was random in our arithmetic. The randomness was in
+   the DATABASE, and it is documented behaviour rather than a fault.
+
+   `offset`/`limit` slice a result set by POSITION. Postgres only promises a position when the
+   query says ORDER BY -- without one it is free to hand rows back in whatever order the plan
+   happens to produce, and that order is not stable between two separate statements. It is
+   least stable on exactly the tables this matters for: `synchronize_seqscans` is on by default,
+   so a sequential scan over a big table starts wherever another scan already in flight has got
+   to, and finishes by wrapping round. Two users refreshing at once therefore get two DIFFERENT
+   orderings of the same unchanged rows.
+
+   Page 1 is then rows 0-9,999 of one ordering and page 2 is rows 10,000-19,999 of a different
+   one. Some customers arrive twice and others not at all -- so the total moves every refresh,
+   by a plausible-looking amount, with no error anywhere and nothing in the data to blame. It
+   also explains the shape of the complaint that came with it: figures that look "abnormal"
+   rather than obviously broken.
+
+   The fix is to give every paged read a tiebreaker on a column that is UNIQUE, which pins the
+   ordering down completely. It is added AFTER whatever the caller already ordered by, so the
+   caller's own sort still decides and this only settles the ties -- which is the only place
+   the ambiguity ever was.
+
+   COST. Sorting is not free, but it is small next to what these reads already do: a sort of ten
+   thousand rows costs a few milliseconds, against the tens of milliseconds it takes merely to
+   serialise them and put them on the wire. Where the tiebreaker is the primary key, Postgres can
+   often walk the index and not sort at all.
+
+   IF THE SERVER WILL NOT ACCEPT THE ORDER -- an un-migrated table that has no `id` yet, a view,
+   a column renamed -- the read falls back to exactly what it did before: unordered, one page at
+   a time. A tiebreaker that cannot be applied must never turn a working screen into an error. */
+
+/* Tables whose primary key is not called `id`. Everything else that is big enough to page has
+   one that is, so `id` is the default rather than a guess. */
+const PAGE_KEY = {
+  teams: 'team',
+  access_codes: 'code',
+  roles: 'role',
+  settings: 'key',
+  followup_status: 'ref',
+  call_users: 'user_id',
+  call_agents: 'user_id',
+};
+
+/** The table a built query points at, read off the URL PostgREST is about to be asked for.
+    Taken from the query rather than passed in by a hundred call sites: a parameter that has to
+    be remembered at every read is a parameter that will be forgotten at one of them, and a
+    forgotten one here is silent. */
+function tableOf(q) {
+  try {
+    const path = q && q.url && q.url.pathname;
+    if (!path) return null;
+    const name = String(path).split('/').filter(Boolean).pop();
+    return name || null;
+  } catch { return null; }
+}
+
+/** The unique column that settles the order for this query, or null if we cannot tell which
+    table it reads -- in which case nothing is added and the read behaves as it always did. */
+export function pageKeyFor(q) {
+  const t = tableOf(q);
+  if (!t) return null;
+  return Object.prototype.hasOwnProperty.call(PAGE_KEY, t) ? PAGE_KEY[t] : 'id';
+}
+
+/** `state.key` is decided from the FIRST query this builds and remembered for the rest of the
+    read -- deliberately not by building a throwaway query to look at, because a caller counting
+    how many times it is asked for a table would then see one extra per read, and one of them
+    does exactly that to prove the widget is riding on the cache rather than the book.
+    Pass state.key = null to force the plain, unordered read this always used to do. */
+async function readPages(buildQuery, state) {
   const all = [];
   let from = 0;
   // Deliberately NOT remembered between reads. A filtered query that legitimately returns
@@ -113,7 +190,11 @@ export async function fetchAll(buildQuery) {
   // request per read is a cheap price for not carrying a mistake around.
   let size = MAX_PAGE;
   while (true) {
-    const { data, error } = await runQuery(() => buildQuery().range(from, from + size - 1));
+    const { data, error } = await runQuery(() => {
+      const q = buildQuery();
+      if (state.key === undefined) state.key = pageKeyFor(q);
+      return (state.key ? q.order(state.key, { ascending: true }) : q).range(from, from + size - 1);
+    });
     if (error) throw error;
     const got = data ? data.length : 0;
     for (const r of (data || [])) all.push(r);
@@ -130,4 +211,18 @@ export async function fetchAll(buildQuery) {
     from += size;
   }
   return all;
+}
+
+export async function fetchAll(buildQuery) {
+  const state = { key: undefined };
+  try {
+    return await readPages(buildQuery, state);
+  } catch (e) {
+    /* A database that is unreachable is not a bad column name, and pretending otherwise would
+       hide an outage behind a second doomed attempt. Nor is there anything to retry if no
+       tiebreaker was applied in the first place -- that read already failed on its own terms.
+       Only a refusal of the ORDER is worth a second, plainer attempt. */
+    if (isTransient(e) || !state.key) throw e;
+    return readPages(buildQuery, { key: null });
+  }
 }
