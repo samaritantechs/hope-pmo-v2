@@ -106,6 +106,112 @@ async function expected(db, user, { type = 'today', date }, nowMs) {
   };
 }
 
+/* =====================================================================================
+   THE DEMAND MESSAGE -- one wording, one number, WhatsApp or SMS.
+   =====================================================================================
+   "We need a WHATSApp & Normal sms demand message pretext button that lands at message with
+      Habari
+      Unakumbushwa kulipa deni lako (Arreas) kuepusha usumbufu.
+      Kwa maelezo Zaidi piga (user phone no from leader table chat, if not in chat default to
+      pmo recovery no)"
+
+   COMPOSED ON THE SERVER, not in the page. Two screens send it -- the portal's follow-up
+   drawer and the phone's customer sheet -- and a demand notice whose wording depends on which
+   screen it was sent from is two different notices going out under one company's name. The
+   text is a setting, so it can be changed without a deploy.
+
+   THE NUMBER IS THE POINT. A demand notice telling a customer to ring a number nobody answers
+   is worse than sending nothing, so it is resolved in the order of who actually knows this
+   customer:
+
+     1. the sender's OWN number, if the teams table has one for the role they hold on THIS
+        customer's team -- "the user phone no from the leader table"
+     2. the team's recovery officer, who owns the book this customer is in
+     3. PMO_RECOVERY_NO from Settings -- "if not in chat default to pmo recovery no"
+
+   If none of those exist the message goes out WITHOUT the "piga" line rather than with an
+   empty one or the word "undefined". A reminder with no number is still a reminder; a reminder
+   telling somebody to call nothing is a complaint waiting to happen.
+
+   NOTHING IS SENT FROM HERE. This returns the text and the links; the officer's own phone opens
+   WhatsApp or the SMS app with it, from their own number, which is the number the customer
+   already knows. No gateway, no cost, no third party holding the book. */
+const DEMAND_TEXT_KEY = 'DEMAND_MESSAGE_TEXT';
+const DEMAND_DEFAULT =
+  'Habari\n'
+  + 'Unakumbushwa kulipa deni lako (Arreas) kuepusha usumbufu.\n'
+  + 'Kwa maelezo Zaidi piga {phone}';
+
+/** Digits only, with Tanzania's country code, which is what wa.me expects. Leaves anything it
+    does not recognise alone rather than mangling it -- a number it cannot parse is still a
+    number a person can read in the text. */
+export function waNumber(v) {
+  const d = String(v == null ? '' : v).replace(/[^0-9]/g, '');
+  if (!d) return '';
+  if (d.startsWith('255')) return d;
+  if (d.startsWith('0')) return '255' + d.slice(1);
+  if (d.length === 9) return '255' + d;
+  return d;
+}
+
+/** Which number a customer should be told to ring. Exported so the rule is testable on its own
+    -- it is three fallbacks deep and the wrong one printed on a demand notice is a phone that
+    rings in the wrong office. */
+export function demandContact(user, teamRow, pmoDefault) {
+  const t = teamRow || {};
+  const me = K(user && user.name);
+  // 1. The sender's own number, found by the role THEY hold on THIS team.
+  for (const role of Object.keys(TEAM_PHONE_OF)) {
+    if (me && K(t[role]) === me && t[TEAM_PHONE_OF[role]]) {
+      return { phone: String(t[TEAM_PHONE_OF[role]]).trim(), source: role };
+    }
+  }
+  // 2. The recovery officer, who owns the book this customer is in.
+  if (t.recovery_no) return { phone: String(t.recovery_no).trim(), source: 'recovery' };
+  // 3. The PMO's own number.
+  if (pmoDefault) return { phone: String(pmoDefault).trim(), source: 'pmo' };
+  return { phone: '', source: 'none' };
+}
+
+async function demandMessage(db, user, { ref, team }, nowMs) {
+  const wanted = String(ref == null ? '' : ref).trim();
+  if (!wanted) throw badRequest('ref is required');
+
+  /* The customer is looked up so the team is OURS to decide rather than the caller's to claim
+     -- otherwise anybody could pass another team's name and read its officer's phone number. */
+  const [fuRows, teamRows, pmoNo] = await Promise.all([
+    fetchAll(() => db.from('followup_status').select('ref, full_name, contact, team').eq('ref', wanted)),
+    fetchAll(() => db.from('teams').select('*')),
+    settingGet(db, 'PMO_RECOVERY_NO'),
+  ]);
+  const found = fuRows[0] || null;
+  const teamName = found ? found.team : normTeamName(team);
+  if (teamName && !teamAllowed(user, teamName)) {
+    throw forbidden(`You do not have access to team ${teamName}.`);
+  }
+  const teamRow = teamRows.find(t => K(t.team) === K(teamName)) || null;
+  const { phone, source } = demandContact(user, teamRow, pmoNo);
+
+  const template = (await settingGet(db, DEMAND_TEXT_KEY)) || DEMAND_DEFAULT;
+  /* A template with no {phone} in it is honoured as written -- somebody who deliberately
+     removed the line meant to remove it. A template that HAS the placeholder and no number to
+     put in it loses that whole line, not just the token. */
+  const text = phone
+    ? template.split('{phone}').join(phone)
+    : template.split('\n').filter(l => l.indexOf('{phone}') < 0).join('\n');
+
+  const to = waNumber(found ? found.contact : '');
+  return {
+    ref: wanted, name: found ? found.full_name : '', team: teamName || '',
+    contact: found ? found.contact : '', phone, phoneSource: source, text,
+    // Both links are built here so the two screens cannot drift into two different messages.
+    whatsapp: to ? ('https://wa.me/' + to + '?text=' + encodeURIComponent(text))
+      : ('https://wa.me/?text=' + encodeURIComponent(text)),
+    sms: 'sms:' + (found && found.contact ? String(found.contact).trim() : '')
+      + '?body=' + encodeURIComponent(text),
+  };
+}
+
 /* ------------------------------------------------------------------ defaulters */
 async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) {
   const wd = weekday || currentWeekday(nowMs);
@@ -1390,6 +1496,21 @@ async function weekly(db, user, { weekOf }, nowMs) {
 }
 /** The supervisory roles a weekly report can be grouped by -- the teams table's own columns. */
 const TEAM_ROLE_COLS = ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike'];
+/* THE OFFLINE SHEET'S OTHER HALF -- added by 2026-08-09-team-contacts.sql, and optional like
+   every migration here. Every role that has a name column now has a number column beside it,
+   because a demand notice that tells a customer to ring a number nobody answers is worse than
+   no notice at all, and because the sheet the PMO already keeps has always carried both.
+
+   `legal` and `collection` are names, not numbers: the legal officer had no column at all, and
+   a collection officer's name normally lives on their access code -- one person holds thirty
+   teams -- so this is here for the teams whose collection officer is not an app user. */
+const TEAM_PHONE_OF = {
+  opm: 'opm_no', recovery: 'recovery_no', gmo: 'gmo_no', manager: 'manager_no',
+  credit: 'credit_no', expected: 'expected_no', bike: 'bike_no',
+  legal: 'legal_no', collection: 'collection_no',
+};
+const TEAM_OPTIONAL_COLS = ['region', 'zone', 'legal', 'collection']
+  .concat(Object.values(TEAM_PHONE_OF));
 
 /** Leader Reports / Team Progress: per-team initial vs current arrears, recovered and
     progress %, mirroring the live Team Progress sheet. */
@@ -2848,7 +2969,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
-  demandNotices, addDemandNotice, legalPreview, abnormal, received,
+  demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -2929,6 +3050,14 @@ async function settingsMany(db, keys) {
   for (const r of rows) by[String(r.key)] = r.value;
   const get = (k, dflt) => { const v = String(by[k] == null ? '' : by[k]).trim(); return v || dflt; };
   return { get, num: (k, dflt) => { const n = parseInt(String(get(k, '')).replace(/[^0-9]/g, ''), 10); return (!n || isNaN(n)) ? dflt : n; } };
+}
+
+/** One setting's value as text, or '' when it is not set. settingNum's sibling -- several
+    settings are words or phone numbers rather than amounts, and stripping them to digits the
+    way settingNum does would turn a message template into nothing. */
+async function settingGet(db, key) {
+  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
+  return String((data && data.value) || '').trim();
 }
 
 async function settingNum(db, key, dflt) {
@@ -3303,16 +3432,20 @@ async function saveTeam(db, user, p) {
   /* credit_id is the analyst's ID in the sale-approvals report -- the one fact about them that
      no report carries in words. Saved like any other column here; a database without the
      migration simply refuses it, which is why it is filtered out below rather than assumed. */
-  for (const c of ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike', 'credit_id']) {
+  for (const c of TEAM_ROLE_COLS.concat(['credit_id'], TEAM_OPTIONAL_COLS)) {
     if (p[c] !== undefined) row[c] = String(p[c] || '').trim() || null;
   }
   const existing = (await fetchAll(() => db.from('teams').select('*'))) || [];
   /* A DATABASE THAT HAS NOT HAD THE MIGRATION MUST STILL SAVE THE REST. Migrations here are run
-     by hand, so credit_id is dropped rather than sent when no existing row has ever carried it
-     -- otherwise adding the field to the form would break saving a team for everybody until
-     somebody opened the SQL editor. */
-  if (row.credit_id !== undefined && existing.length && !existing.some(t => 'credit_id' in t)) {
-    delete row.credit_id;
+     by hand, so a column no existing row has ever carried is dropped rather than sent --
+     otherwise adding a field to the form would break saving a team for everybody until
+     somebody opened the SQL editor.
+
+     Generalised from the single credit_id case, because 2026-08-09-team-contacts.sql adds
+     thirteen more of exactly the same kind: the region and zone, a phone number for every role
+     that already had a name, and the legal and collection officers. */
+  for (const c of ['credit_id'].concat(TEAM_OPTIONAL_COLS)) {
+    if (row[c] !== undefined && existing.length && !existing.some(t => c in t)) delete row[c];
   }
   const mine = existing.find(t => K(t.team) === K(team));
   if (p.generateCode) {

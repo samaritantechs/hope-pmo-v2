@@ -656,6 +656,9 @@ const OUTCOMES = { CONNECTED: 1, MISSED: 1, REJECTED: 1, BLOCKED: 1 };
 async function sync(db, [dev, calls], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  // The same {name, role, teams} shape every other team check in this system uses, so
+  // "is this customer mine" is answered by the one rule rather than by a second one here.
+  const user = pseudoUser(cu);
   calls = calls || [];
   let wm = num(cu.last_ts);
   /* WHY A SYNC CARRIES A NUMBER THAT HAS NOTHING TO DO WITH CALLS.
@@ -682,16 +685,32 @@ async function sync(db, [dev, calls], nowMs) {
     if (seenBatch[id]) { batchDup++; continue; }
     seenBatch[id] = 1;
     const m = byNum[d];
+    /* PORTFOLIO MEANS *THEIR* BOOK, NOT THE COMPANY'S.
+       "A user's portfolio calls should count for their assigned team's customers only, a call
+        in other teams not assigned to the users are non portfolio."
+
+       A match against any customer anywhere used to count -- so ringing a friend who happens
+       to borrow from another branch scored as portfolio work, and an officer's portfolio ratio
+       was not a measure of their own book at all.
+
+       A customer with NO team recorded still counts as portfolio. That is a gap in the upload,
+       not evidence the call was outside their book, and demoting it would dock an officer for
+       somebody else's blank cell. A leader who sees every team keeps every match, which is
+       right: every team is their book. */
+    const mine = !!m && (!m.T || teamAllowed(user, m.T));
     records.push({
       id, user_id: cu.user_id, officer: cu.name, team: cu.team, phone: d,
       direction: c.dir === 'in' ? 'IN' : 'OUT',
       call_date: eatDate(ts), call_time: eatTime(ts), duration: dur,
-      portfolio: !!m, match_type: m ? (m.C === 'G' ? 'GUARANTOR' : 'CUSTOMER') : null,
+      /* The customer is still NAMED on an out-of-book match -- the officer dialled the number,
+         so this hides nothing from them, and a report that says "this call was to another
+         team's customer" is more useful than one that says only "unmatched". */
+      portfolio: mine, match_type: m ? (m.C === 'G' ? 'GUARANTOR' : 'CUSTOMER') : null,
       ref: m ? m.R : null, customer: m ? m.N : null,
       synced_at: new Date(nowMs).toISOString(),
-      outcome, category: m ? (m.S === 'EXP' ? 'EXPECTED' : 'DEFAULTER') : null,
+      outcome, category: mine ? (m.S === 'EXP' ? 'EXPECTED' : 'DEFAULTER') : null,
     });
-    if (m) pf++; else npf++;
+    if (mine) pf++; else npf++;
     if (ts > wm) wm = ts;
   }
   if (!records.length) return { ok: true, added: 0, dup: batchDup, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };

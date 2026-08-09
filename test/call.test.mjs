@@ -1135,3 +1135,69 @@ test('the phone\'s Kesho list carries the same fields', async () => {
     }
   }
 });
+
+/* =====================================================================================
+   PORTFOLIO MEANS *THEIR* BOOK, NOT THE COMPANY'S.
+   =====================================================================================
+   "A user's portfolio calls should count for their assigned team's customers only, a call in
+    other teams not assigned to the users are non portfolio."
+
+   A match against any customer anywhere used to count, so ringing somebody who happens to
+   borrow from another branch scored as portfolio work -- and an officer's portfolio ratio was
+   not a measure of their own book at all.
+*/
+test('a call to another team\'s customer is not portfolio work', async () => {
+  const db = await registeredDb();          // d1 = JUMA ISSA, a field officer on KONGOWE
+  const r = await callApi(db, 'api_callSync', ['d1', [
+    // 0712000001 is AMINA H on KONGOWE -- this officer's own team.
+    { num: '0712000001', ts: Date.parse('2026-07-24T07:00:00Z'), dur: 60, outcome: 'CONNECTED' },
+    // 0712000003 is OTHER TEAM on MBAGALA -- a real customer, but not theirs.
+    { num: '0712000003', ts: Date.parse('2026-07-24T07:05:00Z'), dur: 60, outcome: 'CONNECTED' },
+    // Nobody at all.
+    { num: '0755999999', ts: Date.parse('2026-07-24T07:10:00Z'), dur: 30, outcome: 'MISSED' },
+  ]], NOW);
+  assert.equal(r.ok, true);
+  assert.equal(r.portfolio, 1, 'only the KONGOWE customer counts');
+  assert.equal(r.nonPortfolio, 2, 'the other team\'s customer counts as non-portfolio, like a stranger');
+
+  const logs = db._dump('call_logs');
+  const mbagala = logs.find(l => l.phone.slice(-9) === '712000003');
+  assert.equal(mbagala.portfolio, false);
+  assert.equal(mbagala.customer, 'OTHER TEAM',
+    'but the customer is still named -- the officer dialled the number, so this hides nothing');
+  assert.equal(mbagala.category, null, 'and it is not filed under a category it does not belong to');
+});
+
+test('a leader who sees every team keeps every match', async () => {
+  /* Their book IS every team, so narrowing would take away exactly the thing that makes a
+     leader's ratio meaningful. d2 registers with LEAD1, whose teams are KONGOWE only, so this
+     uses the admin code to get the all-teams case. */
+  const t = makeTables();
+  t.access_codes.push({ code: 'ALLT', name: 'BIG BOSS', role: 'MANAGEMENT', teams: null, tabs: [] });
+  const db = fakeDb(t);
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  await callApi(db, 'api_callRegister', ['dz', '', '', 'ALLT', '0788000111'], NOW);
+  const r = await callApi(db, 'api_callSync', ['dz', [
+    { num: '0712000001', ts: Date.parse('2026-07-24T07:00:00Z'), dur: 60, outcome: 'CONNECTED' },
+    { num: '0712000003', ts: Date.parse('2026-07-24T07:05:00Z'), dur: 60, outcome: 'CONNECTED' },
+  ]], NOW);
+  assert.equal(r.portfolio, 2, 'every team is their book');
+  assert.equal(r.nonPortfolio, 0);
+});
+
+test('a customer with no team recorded still counts as portfolio', async () => {
+  /* That is a gap in the upload, not evidence the call was outside their book. Demoting it
+     would dock an officer for somebody else's blank cell. */
+  const t = makeTables();
+  t.followup_status.push({ ref: 'NOTEAM', team: null, full_name: 'NO TEAM GUY',
+    contact: '0719000001', arrears: 500, status: 'Defaulter', fu_status: '' });
+  const db = fakeDb(t);
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  await callApi(db, 'api_callRegister', ['dn', 'JUMA ISSA', '', '', '0712999777', 'KON123'], NOW);
+  const r = await callApi(db, 'api_callSync', ['dn', [
+    { num: '0719000001', ts: Date.parse('2026-07-24T07:00:00Z'), dur: 60, outcome: 'CONNECTED' },
+  ]], NOW);
+  assert.equal(r.portfolio, 1);
+});
