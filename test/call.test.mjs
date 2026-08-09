@@ -1003,27 +1003,28 @@ test('the credit rule applies to every list they hold, not just Leo and Kesho', 
   }
 });
 
-test('expected and collection officers see the barely-behind, on Leo and Kesho only', () => {
+test('expected and collection officers see only the one-behind, on Leo and Kesho only', () => {
+  /* "expected for earl col and collection leaders only (keep those which behind = 1 only)".
+     6-9 is three behind and therefore NOT theirs, which settles the one thing the original
+     examples left ambiguous. */
   const rows = DSROWS(['0-1', '2-3', '6-9', '5-9', '3-9']);
+  const lim = { creditMaxPaid: 5, earlyMaxBehind: 1 };
   for (const role of ['EXPECTED', 'COLLECTION']) {
-    assert.deepEqual(
-      narrowForRole(rows, role, 'today', { creditMaxPaid: 5, earlyMaxBehind: 3 }).map(r => r.ref),
-      ['0-1', '2-3', '6-9'], role + ' on Leo');
-    assert.deepEqual(
-      narrowForRole(rows, role, 'tomorrow', { creditMaxPaid: 5, earlyMaxBehind: 3 }).map(r => r.ref),
-      ['0-1', '2-3', '6-9'], role + ' on Kesho');
+    assert.deepEqual(narrowForRole(rows, role, 'today', lim).map(r => r.ref), ['0-1', '2-3'],
+      role + ' on Leo');
+    assert.deepEqual(narrowForRole(rows, role, 'tomorrow', lim).map(r => r.ref), ['0-1', '2-3'],
+      role + ' on Kesho');
     // "in Leo and Kesho lists ONLY" -- the defaulter lists are the follow-up work itself.
-    assert.equal(narrowForRole(rows, role, 'defaulters', { creditMaxPaid: 5, earlyMaxBehind: 3 }).length, 5,
+    assert.equal(narrowForRole(rows, role, 'defaulters', lim).length, 5,
       role + ' must keep the whole defaulter list');
   }
 });
 
-test('the threshold is a setting, so a wrong reading is one Settings edit and not a deploy', () => {
+test('the threshold is a setting, so it can be widened without a deploy', () => {
   const rows = DSROWS(['0-1', '2-3', '6-9', '5-9', '3-9']);
-  // The literal reading of "dc/nc 1".
   assert.deepEqual(
-    narrowForRole(rows, 'EXPECTED', 'today', { creditMaxPaid: 5, earlyMaxBehind: 1 }).map(r => r.ref),
-    ['0-1', '2-3']);
+    narrowForRole(rows, 'EXPECTED', 'today', { creditMaxPaid: 5, earlyMaxBehind: 3 }).map(r => r.ref),
+    ['0-1', '2-3', '6-9']);
 });
 
 test('everybody else keeps the whole list -- "that\'s for 3 kind of users only"', () => {
@@ -1036,12 +1037,11 @@ test('a customer with no readable due summary is never hidden', () => {
      turns a bad column into somebody nobody rings, silently -- which is far worse than the
      bad column. */
   const rows = [{ ref: 'NODS', ds: '' }, { ref: 'JUNK', ds: 'n/a' }, { ref: 'OK', ds: '10-12' }];
-  const lim = { creditMaxPaid: 5, earlyMaxBehind: 3 };
+  const lim = { creditMaxPaid: 5, earlyMaxBehind: 1 };
   assert.deepEqual(narrowForRole(rows, 'CREDIT', 'today', lim).map(r => r.ref), ['NODS', 'JUNK'],
     'the readable one is past the fifth instalment, so only the unreadable pair survive');
-  // 10-12 is two instalments behind, which the early-collection rule keeps -- so here the
-  // unreadable rows are kept ALONGSIDE it rather than instead of it.
-  assert.deepEqual(narrowForRole(rows, 'EXPECTED', 'today', lim).map(r => r.ref), ['NODS', 'JUNK', 'OK']);
+  assert.deepEqual(narrowForRole(rows, 'EXPECTED', 'today', lim).map(r => r.ref), ['NODS', 'JUNK'],
+    '10-12 is two behind, so the early rule drops it -- but neither unreadable row is hidden');
 });
 
 test('the narrowing runs end to end, and the phone is told it happened', async () => {

@@ -1336,10 +1336,27 @@ function tcell(head, lines, cls){
     + lines.map(function(l){ return '<div class="tl '+(l[1]||'')+'">'+l[0]+'</div>'; }).join('') + '</div>';
 }
 
+/* A MONDAY PICKER, AND A LOUD LABEL WHEN IT IS NOT THIS WEEK.
+   "if I choose a last weeks Monday then I get last weeks reports / performances"
+
+   The server moves its own clock to the Friday of the chosen week and recomputes everything
+   with the code that runs every day, so there is no second path for history to drift down.
+   What this side has to get right is saying so: a dashboard showing a finished week looks
+   exactly like a dashboard showing today, and somebody reading last week's arrears as this
+   morning's would act on it. */
+function weekBar(d){
+  return bar('<label style="font-size:12px;color:var(--mut)">Wiki (Jumatatu) / Week starting Monday</label>'
+    + '<input type="date" data-arg="weekOf" value="' + esc(d.weekOf||'') + '">'
+    + (d.pastWeek
+        ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(d.weekOf)
+          + ' \u2192 ' + esc(d.weekEnd||'') + ' \u00B7 kama ilivyokuwa ' + esc(d.asOfDate||'') + '</span>'
+        : '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>')
+    + (d.pastWeek ? ' <button class="btn sm ghost" data-arg="weekOf" data-val="">Rudi wiki hii / Back to this week</button>' : ''));
+}
 VIEWS.dashboard = function(){
-  return srv('dashboardFull').then(function(d){
+  return srv('dashboardFull', { weekOf: S.args.weekOf || '' }).then(function(d){
     var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
-    HEAD = '<div class="kpis">'
+    HEAD = weekBar(d) + '<div class="kpis">'
       + kpi('Current arrears', money(c.curArrears), 'initial upload: ' + money(c.initArrears))
       + kpi('Recovered', money(c.recovered), 'initial − current · ' + money(c.cleared) + ' cleared', 'good')
       + kpi('Defaulters', money(c.defaulters), 'of ' + money(c.defaultersInitial) + ' on the initial list')
@@ -2973,7 +2990,10 @@ VIEWS.settings = function(){
    whole board (the same numbers the tabs show), so a meeting reads live figures rather than
    a screenshot someone exported that morning. */
 VIEWS.present = function(){
-  return Promise.all([srv('dashboardFull'), srv('officerBoards')]).then(function(r){
+  // BOTH halves take the same week, or the slides would pair one week's cards against another
+  // week's officer boards -- which is the sort of thing nobody notices in a dark room.
+  var wk = { weekOf: S.args.weekOf || '' };
+  return Promise.all([srv('dashboardFull', wk), srv('officerBoards', wk)]).then(function(r){
     /* KEPT, so ticking a segment box does not go back to the server. Rebuilding this screen is
        the most expensive thing the system does -- the dashboard AND the officer boards, a
        hundred-odd round trips -- and it was being done again on every tick of every checkbox.
@@ -3141,7 +3161,7 @@ function presRender(){
     var d = S.presData.d;
     var slides = presApply();
 
-    HEAD = '<div class="kpis">'
+    HEAD = weekBar(d) + '<div class="kpis">'
       + kpi('Slides', money(S.slides.length), (S.presOff.length? money(S.presOff.length)+' hidden' : 'live figures, not a screenshot'), '', 'presCount')
       + kpi('Seconds per slide', String(S.presSecs || 15), 'change below')
       + kpi('Weekday', esc(d.weekday), d.weekOf) + '</div>'
