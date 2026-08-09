@@ -5,6 +5,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
+/* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
+   unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
+   and a plain fakeDb(tables()) is one that does not -- both states are exercised. */
+import { UPLOAD_STATUS_RPC } from './snapshot-totals-rpc.mjs';
+const dbWithRpc = t => fakeDb(t || tables(), { rpc: UPLOAD_STATUS_RPC });
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -90,7 +95,7 @@ function tables() {
     ],
   };
 }
-const run = (fn, args, user = ADMIN, db = fakeDb(tables())) => portalApi(db, user, fn, args, NOW);
+const run = (fn, args, user = ADMIN, db = dbWithRpc()) => portalApi(db, user, fn, args, NOW);
 
 test('every dispatched function name is reachable', () => {
   assert.ok(PORTAL_FUNCTIONS.length >= 30);
@@ -489,7 +494,7 @@ test('access codes: add, edit, delete -- and never your own', async () => {
 });
 
 test('phone users: list with call counts, sign-out keeps history, delete removes both', async () => {
-  const db = fakeDb(tables());
+  const db = dbWithRpc();
   db._dump('call_users')[0].device_id = 'dev-1';
   let d = await portalApi(db, ADMIN, 'callUsers', {}, NOW);
   assert.equal(d.count, 1);

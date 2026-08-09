@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -325,4 +325,76 @@ test('speed: "amepigiwa leo" is read once per half-minute, not once per list', a
       + 'and this read grows all day as the officers work.');
     before = after;
   }
+});
+
+/* =====================================================================================
+   THE PANEL THAT STOPPED THE UPLOADS IT WAS THERE TO HELP WITH.
+
+     "i can't even upload report appdates we get delay errors and so on"
+
+   The upload page's "what is already in?" panel read FOUR WHOLE TABLES with no date filter --
+   every expected row, every defaulter row, every payment and every call ever recorded -- to
+   answer a question about ONE DAY, on the page whose entire job is to accept an upload.
+
+   Not one of those rows was ever shown: every figure on it is a count or a maximum. Both
+   budgets below are deliberately far below the size of the book they run against, so a return
+   to reading rows fails here instead of in the field on a Monday morning.
+   ===================================================================================== */
+const UPLOADER = { code: 'U', name: 'UPLOADER', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
+
+function yearOfHistory() {
+  const t = bigBook();
+  const day = i => new Date(Date.parse('2026-07-24') - i * 86400000).toISOString().slice(0, 10);
+  for (let d = 7; d < 120; d++) {
+    for (let i = 0; i < 500; i++) {
+      t.repayment_snapshots.push({ ref: 'H' + i, team: TEAMS[i % 40], payment_expected: 1000,
+        todays_status: 'PAID', arrears: 0, snapshot_type: 'today', snapshot_date: day(d),
+        upload_batch: 'h' + d, created_at: day(d) + 'T04:00:00Z' });
+    }
+  }
+  for (let i = 0; i < 30000; i++) {
+    t.call_logs.push({ id: 'CL' + i, user_id: 'U' + (i % 300), phone: '0712',
+      duration: 60, call_date: day(i % 120) });
+  }
+  return t;
+}
+
+test('speed: the upload panel asks the database to count, instead of reading the book', async () => {
+  const t = yearOfHistory();
+  const total = t.repayment_snapshots.length + t.defaulter_snapshots.length + t.call_logs.length;
+  const c = counting(t, { rpc: UPLOAD_STATUS_RPC });
+  const d = await portalApi(c.db, UPLOADER, 'uploadStatus', {}, NOW);
+  const { trips, rows } = c.stat();
+  assert.equal(d.lifetime, true, 'with the migration it reports real lifetime totals');
+  assert.ok(trips <= 3, `uploadStatus took ${trips} round trips (budget 3) -- it is a count, not a read`);
+  assert.ok(rows <= 60,
+    `uploadStatus read ${rows.toLocaleString()} rows out of a book of ${total.toLocaleString()}. `
+    + 'Every figure on that panel is a count or a maximum; none of them needs a customer row.');
+});
+
+test('speed: without the migration the upload panel still reads ONE DAY, never the book', async () => {
+  /* Migrations here are run by hand, so between a deploy and that being done this page still
+     has to work -- but it must never go back to reading everything. It answers from the chosen
+     day and reports the lifetime totals as unknown, which is the honest trade. */
+  const t = yearOfHistory();
+  const total = t.repayment_snapshots.length + t.defaulter_snapshots.length + t.call_logs.length;
+  const c = counting(t);                       // no rpc -- the un-migrated world
+  const d = await portalApi(c.db, UPLOADER, 'uploadStatus', {}, NOW);
+  const { rows } = c.stat();
+  assert.equal(d.lifetime, false);
+  assert.ok(d.note && /2026-08-10-upload-status/.test(d.note), 'and says which file to run');
+  assert.ok(rows < total / 10,
+    `the fallback read ${rows.toLocaleString()} of ${total.toLocaleString()} rows -- it must read `
+    + 'the chosen day only, not the whole book.');
+});
+
+test('speed: calls-per-officer is counted by the database, not by reading every call', async () => {
+  const t = yearOfHistory();
+  t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER', device_id: 'DEV1', active: true });
+  const c = counting(t, { rpc: UPLOAD_STATUS_RPC });
+  await portalApi(c.db, UPLOADER, 'callUsers', {}, NOW);
+  const { rows } = c.stat();
+  assert.ok(rows <= 400,
+    `callUsers read ${rows.toLocaleString()} rows. call_logs grows forever -- 300 officers at `
+    + 'fifty calls a day is five and a half million a year, and counting them here read all of it.');
 });
