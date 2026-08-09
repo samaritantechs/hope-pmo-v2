@@ -121,6 +121,8 @@ const SCREENS = [
   ['Officer boards alone', ['officerBoards'], {}, ADMIN],
   ['Defaulters Followup', ['followup'], {}, ADMIN],
   ['Expected Repayment', ['expectedDay'], { type: 'today' }, ADMIN],
+  ['Expected Repayment (one team)', ['expectedDay'], { type: 'today' }, OFFICER],
+  ['Leo list (one officer)', ['expected'], { type: 'today' }, OFFICER],
   ['Loan Applications', ['loanPipeline'], {}, ADMIN],
   ['Promise to Pay', ['promises'], {}, ADMIN],
   ['Weekly report', ['weekly'], {}, ADMIN],

@@ -1087,3 +1087,51 @@ test('a field officer on the same book still sees everybody', async () => {
   assert.deepEqual(d.rows.map(r => r.ref).sort(), ['P1', 'P2']);
   assert.equal(d.narrowed, null);
 });
+
+/* =====================================================================================
+   THE NARROWED READ STILL CARRIES EVERYTHING THE PHONE DRAWS.
+   =====================================================================================
+   The Leo and Kesho lists now ask for ten named columns instead of every column of the table
+   -- this is the read two hundred handsets make several times a day on a mobile connection,
+   and it was carrying the docket, four schedule dates, the branch, the zone and the totals,
+   none of which appears anywhere on a phone.
+
+   The saving is only safe if the list is complete. A forgotten column is not an error: it is
+   a customer on somebody's phone with no name and nothing to tap, which is exactly how that
+   happened once before. The fake database honours the projection, so this test is the guard.
+*/
+test('the phone\'s Leo list carries every field its row and sheet render', async () => {
+  const db = await registeredDb();
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  const r = d.rows.find(x => x.ref === '111');
+  assert.ok(r, 'the fixture customer is on the list');
+
+  // rowHtml: the name, the team, the arrears, the instalment, the status chips, the D.S.
+  assert.equal(r.name, 'AMINA H');
+  assert.equal(r.team, 'KONGOWE');
+  assert.equal(r.contact, '0712000001');
+  assert.equal(r.custStatus, 'UNPAID');
+  assert.equal(r.ds, '2/6');
+  assert.equal(r.installment, 1000, 'the expected amount is what Leo shows as the instalment');
+  // sheetSkeleton: the guarantor, and their number, which is who an officer rings when the
+  // customer does not answer.
+  assert.equal(r.gName, 'G ONE');
+  assert.equal(r.gContact, '0713000001');
+  // Nothing may be undefined -- an undefined field renders as the word "undefined" or as blank,
+  // and both look like a data problem rather than a narrowed read.
+  for (const k of ['ref', 'name', 'contact', 'gName', 'gContact', 'amt', 'installment',
+    'custStatus', 'fuStatus', 'ds', 'team', 'called']) {
+    assert.notEqual(r[k], undefined, k + ' is missing from the narrowed read');
+  }
+});
+
+test('the phone\'s Kesho list carries the same fields', async () => {
+  const db = await registeredDb();
+  const d = await callApi(db, 'api_callList', ['d1', 'tomorrow'], NOW);
+  assert.ok(d.rows.length, 'the fixture has a Kesho customer');
+  for (const r of d.rows) {
+    for (const k of ['ref', 'name', 'contact', 'gName', 'gContact', 'amt', 'team']) {
+      assert.notEqual(r[k], undefined, k + ' is missing on ' + r.ref);
+    }
+  }
+});
