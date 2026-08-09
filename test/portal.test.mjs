@@ -3933,3 +3933,61 @@ test('a leader filter narrows what you may see, never widens it', async () => {
   const none = await portalApi(db, elsewhere, 'callReport', { leader: 'JUMA G' }, NOW);
   assert.deepEqual(none.scope, [], 'and nothing at all when there is no overlap');
 });
+
+/* =====================================================================================
+   THE SWEEP IS BOUNDED, AND SAYS HOW FAR BACK TO ASK NEXT.
+   =====================================================================================
+   Reported from the field: "angalia/check first loads nothing".
+
+   The first version defaulted `from` to the year 0001, which asked the totals function to
+   aggregate every snapshot row the company has ever written in ONE call. On a real book that
+   does not come back inside the platform's sixty seconds, so the button appeared to do
+   nothing at all. Bounded to a window, it finishes -- and says which window it covered and the
+   date to ask for next, so the screen can walk backwards until there is nothing older.
+*/
+test('the sweep covers a window, not the whole history', async () => {
+  const db = fakeDb(DUP_BOOK());
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { to: TODAY }, NOW);
+  assert.equal(r.days, 31, 'a month at a time by default');
+  assert.equal(r.to, TODAY);
+  assert.equal(r.from, '2026-06-24', 'thirty-one days ending today, not the year 0001');
+  assert.equal(r.before, '2026-06-23', 'and the day before it, to ask for next');
+});
+
+test('it says when there is nothing older left to ask for', async () => {
+  const db = fakeDb(DUP_BOOK());
+  // Everything in this book is on TODAY, so one window covers it.
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { to: TODAY }, NOW);
+  assert.equal(r.oldest, TODAY, 'the earliest date anything is held on');
+  assert.equal(r.done, true, 'so the walk stops rather than marching back through empty years');
+});
+
+test('a window that predates the data is done immediately', async () => {
+  const db = fakeDb(DUP_BOOK());
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { to: '2026-01-31' }, NOW);
+  assert.equal(r.totalBatches, 0);
+  assert.equal(r.done, true);
+});
+
+test('an older window finds its own duplicates and points further back', async () => {
+  const book = DUP_BOOK();
+  const OLD = '2026-05-10';
+  const E3 = (ref, batch, hour) => ({
+    ref, full_name: 'C' + ref, team: 'KONGOWE', payment_expected: 100, arrears: 0,
+    todays_status: 'UNPAID', snapshot_type: 'today', snapshot_date: OLD,
+    upload_batch: batch, created_at: OLD + 'T' + hour + ':00:00Z',
+  });
+  book.repayment_snapshots.push(E3('X', 'o08', '08'), E3('X', 'o09', '09'), E3('X', 'o10', '10'));
+  const db = fakeDb(book);
+
+  // This month's window does not reach May.
+  const now = await portalApi(db, ADMIN, 'purgeSuperseded', { to: TODAY }, NOW);
+  assert.equal(now.done, false, 'there IS something older, so keep walking');
+  assert.equal(now.oldest, OLD);
+
+  // The May window finds it.
+  const may = await portalApi(db, ADMIN, 'purgeSuperseded', { to: '2026-05-31', confirm: true }, NOW);
+  assert.equal(may.deletedBatches, 1, 'three uploads that day, two kept');
+  assert.deepEqual([...new Set(db._dump('repayment_snapshots')
+    .filter(r => r.snapshot_date === OLD).map(r => r.upload_batch))].sort(), ['o09', 'o10']);
+});

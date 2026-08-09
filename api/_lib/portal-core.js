@@ -2664,14 +2664,39 @@ async function changeMyCode(db, user, p) {
 
 async function purgeSuperseded(db, user, p, nowMs) {
   requireAdmin(user);
+  /* A WINDOW, NOT THE WHOLE HISTORY.
+
+     The first version defaulted `from` to the year 0001, which asked the totals function to
+     aggregate every snapshot row the company has ever written in ONE call -- and on a real book
+     that does not come back inside the platform's sixty seconds. The button appeared to do
+     nothing, which is exactly what "Angalia/check first loads nothing" looked like from the
+     other side. My fault, and the fix is the same one every other heavy read here already uses:
+     bound it, and let it be run again.
+
+     A month at a time, newest first. The answer says which window it covered and the date to
+     ask for next, so the screen can walk backwards until there is nothing older left. */
   const to = /^\d{4}-\d{2}-\d{2}$/.test(String(p && p.to)) ? p.to : todayKey(nowMs);
-  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(p && p.from)) ? p.from : '0001-01-01';
+  const days = Math.max(1, Math.min(120, parseInt((p && p.days) || 0, 10) || 31));
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(p && p.from)) ? p.from : addDaysKey(to, -(days - 1));
   const dryRun = !(p && p.confirm === true);
   const limit = Math.max(1, Math.min(400, parseInt((p && p.limit) || 0, 10) || 120));
   /* How many uploads of each day survive. Two by default: the one in use and the one it
      replaced. One is allowed for a deployment that wants the space back and accepts that a bad
      upload can only be undone by sending the right file again. */
   const keepN = Math.max(1, Math.min(10, parseInt((p && p.keep) || 0, 10) || 2));
+
+  /* One tiny read per table -- one column, one row -- to learn how far back there is anything
+     at all. Without it the screen has no way to know when to stop asking for older windows. */
+  let oldest = null;
+  for (const src of SUPERSEDED_SOURCES) {
+    try {
+      const { data, error } = await runQuery(() => db.from(src.table)
+        .select('snapshot_date').order('snapshot_date', { ascending: true }).limit(1).maybeSingle());
+      if (error || !data || !data.snapshot_date) continue;
+      const d = String(data.snapshot_date).slice(0, 10);
+      if (!oldest || d < oldest) oldest = d;
+    } catch (e) { /* table not there yet */ }
+  }
 
   const report = [];
   let deletedBatches = 0, remaining = 0;
@@ -2741,8 +2766,14 @@ async function purgeSuperseded(db, user, p, nowMs) {
       }
     }
   }
+  /* The day before this window, so the screen can walk back one month at a time. `oldest` is
+     the earliest date any of the three tables actually holds -- once the window has passed it
+     there is nothing older to sweep and the walk stops, rather than marching backwards through
+     empty years. */
+  const before = addDaysKey(from, -1);
   return {
-    dryRun, from, to, limit, keep: keepN,
+    dryRun, from, to, limit, keep: keepN, days,
+    before, done: !oldest || String(before) < String(oldest), oldest,
     report,
     totalBatches: report.reduce((s, r) => s + r.losingBatches, 0),
     totalRows: report.reduce((s, r) => s + r.rows, 0),
