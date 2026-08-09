@@ -105,3 +105,86 @@
     }).catch(function () { /* offline or the API is down -- the drawn mark stands */ });
   } catch (e) { /* no fetch on a very old WebView -- the drawn mark stands */ }
 })();
+
+/* =====================================================================================
+   AN ACCESS CODE TYPED IN PUBLIC IS AN ACCESS CODE SOMEBODY BEHIND YOU HAS READ.
+   =====================================================================================
+   "writing password during login should show dots not display while typing"
+
+   Every door in this system is opened by a short code typed into a plain text box, on a phone,
+   in an office or a bank hall, in front of whoever happens to be standing there. A leader's
+   code is their whole authority -- it decides which teams they see and what they may change --
+   and it was on screen in full while they typed it.
+
+   So: dots, and an eye to check what was typed. The eye matters as much as the dots do. These
+   codes are six characters of unpredictable letters and digits, entered on a phone keyboard by
+   somebody who may be outdoors; a masked field with no way to look is a field people get
+   locked out of, and locked-out people write the code on the desk.
+
+   `data-upper` keeps the uppercasing that autocapitalize="characters" used to do, because a
+   password field turns the browser's own autocapitalize off. Only the boxes that already had
+   it get it, so nothing that accepted a lower-case code stops accepting one -- and the server
+   now matches case-insensitively as a second line of defence.
+
+   Written the same way as the rest of this file: no framework, no CSS file to load, nothing
+   that a five-year-old WebView will not run. */
+(function () {
+  function attach(inp) {
+    if (inp.getAttribute('data-secret-on')) return;      // idempotent: pages re-render
+    inp.setAttribute('data-secret-on', '1');
+    inp.type = 'password';
+    inp.setAttribute('autocomplete', 'off');
+    inp.setAttribute('autocorrect', 'off');
+    inp.setAttribute('spellcheck', 'false');
+
+    if (inp.hasAttribute('data-upper')) {
+      inp.addEventListener('input', function () {
+        var v = inp.value.toUpperCase();
+        if (v === inp.value) return;
+        // Keep the caret where the typist left it, or editing the middle of a code throws you
+        // to the end on every keystroke.
+        var a = inp.selectionStart, b = inp.selectionEnd;
+        inp.value = v;
+        try { inp.setSelectionRange(a, b); } catch (e) {}
+      });
+    }
+
+    /* The input is wrapped rather than restyled: every page here has its own CSS for inputs and
+       a shared stylesheet would be one more thing to load. A relative wrapper and an absolutely
+       positioned button need nothing from the page at all. */
+    var wrap = document.createElement('span');
+    wrap.style.cssText = 'position:relative;display:block';
+    inp.parentNode.insertBefore(wrap, inp);
+    wrap.appendChild(inp);
+    inp.style.paddingRight = '44px';
+
+    var eye = document.createElement('button');
+    eye.type = 'button';
+    eye.setAttribute('aria-label', 'Onyesha / Show');
+    eye.style.cssText = 'position:absolute;right:6px;top:50%;transform:translateY(-50%);'
+      + 'width:32px;height:28px;line-height:1;padding:0;border:0;background:transparent;'
+      + 'cursor:pointer;font-size:15px;opacity:.65';
+    eye.innerHTML = '&#128065;';                      // an eye, which needs no translating
+    eye.onclick = function () {
+      var hidden = inp.type === 'password';
+      inp.type = hidden ? 'text' : 'password';
+      eye.style.opacity = hidden ? '1' : '.65';
+      eye.setAttribute('aria-label', hidden ? 'Ficha / Hide' : 'Onyesha / Show');
+      inp.focus();
+    };
+    wrap.appendChild(eye);
+  }
+
+  /** Called again after any screen that re-renders its sign-in form. Safe to call as often as
+      you like -- a box that is already masked is left alone. */
+  window.hopeSecrets = function (root) {
+    var list = (root || document).querySelectorAll('input[data-secret]');
+    for (var i = 0; i < list.length; i++) attach(list[i]);
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { window.hopeSecrets(); });
+  } else {
+    window.hopeSecrets();
+  }
+})();

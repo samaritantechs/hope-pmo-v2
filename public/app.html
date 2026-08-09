@@ -316,7 +316,7 @@
   <div class="box">
     <h2>HOPE PMO</h2>
     <p>Weka msimbo wako wa kuingia. / Enter your access code.</p>
-    <input id="code" placeholder="Access code" autocomplete="off">
+    <input id="code" placeholder="Access code" autocomplete="off" data-secret>
     <button class="btn w" id="inBtn">Ingia / Sign in</button>
     <div id="inErr" style="color:var(--bad);font-size:12.5px;margin-top:10px"></div>
     <a href="/" style="display:block;text-align:center;margin-top:14px;font-size:12.5px;color:var(--mut)">&larr; Menu</a>
@@ -549,6 +549,23 @@ function buildNav(){
 function go(view){
   S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   S.args={}; S.filters={}; S.foot='';
+  /* THE TABLE BELONGS TO THE TAB, AND IT WAS BEING INHERITED.
+     Reported from the field: "downloading most reports excel brings team performance report
+     instead of the desired one; found this at expected and so on."
+
+     S.rows / S.cols / HEAD are what paint() draws and what Excel, CSV and JPG all export, and
+     they were the only parts of the view state this did not clear. A tab that draws no table
+     of its own -- there are several, they set KPIs and boards and expect paintHeadOnly() --
+     therefore kept whatever the LAST tab had left in them. The dashboard is where everybody
+     lands, and it leaves S.rows holding Team Performance, so that is the report that followed
+     people around.
+
+     Worse, the view cache then stored that borrowed table AS the new tab's snapshot, so it
+     came back on every later visit to it within the cache window.
+
+     Cleared here, a tab with no table of its own now exports nothing and says so, which is the
+     honest answer. A tab with a table sets these before it paints, exactly as it always did. */
+  S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
   var t = NAV.filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
@@ -2744,8 +2761,12 @@ function teamForm(x){
   var del = document.getElementById('tDel');
   if (del) del.onclick = function(){
     if (!confirm('Futa timu '+x.team+'?\n\nDelete this team?')) return;
-    srv('deleteTeam', { team:x.team }).then(function(){ toast('Imefutwa.'); closeDrawer(); render(); })
-      .catch(function(e){ toast(String(e.message||e), true); });
+    srv('deleteTeam', { team:x.team }).then(function(r){
+      toast(r && r.released
+        ? ('Imefutwa \u2014 simu ' + r.released + ' zimekatwa. / Deleted, ' + r.released + ' handset(s) released.')
+        : 'Imefutwa. / Deleted.');
+      closeDrawer(); render();
+    }).catch(function(e){ toast(String(e.message||e), true); });
   };
 }
 

@@ -3237,17 +3237,66 @@ async function saveTeam(db, user, p) {
   }
   return { team, teamCode: row.team_code, rotated: !!rotated, released };
 }
+/* WHAT HOLDS A TEAM IN PLACE.
+   Five tables carry `team text references teams(team)`, and Postgres refuses to delete a row
+   any of them still points at. The guard here only ever asked about `loans`, so a team with a
+   single day of snapshots behind it failed on the other four -- and failed with the database's
+   own words:
+
+     update or delete on table "teams" violates foreign key constraint ...
+
+   which names a constraint rather than a thing an admin can go and deal with. "I need to delete
+   team from the team and staff table" is what that looks like from the other side.
+
+   The two kinds are treated differently on purpose:
+
+   HISTORY blocks the delete. Snapshots, follow-ups and loans are the record of work that was
+   actually done, and dropping a team to make a tidy list is not a reason to lose it. The refusal
+   now names every table that is holding on and how many rows each has, so the admin knows
+   whether they are looking at one stray upload or a year of trading.
+
+   HANDSETS do not. call_users is a registration, not a record: the officers of a team that no
+   longer exists have to register again whatever happens, and saveTeam already releases them
+   when a team code is rotated for exactly the same reason. They are released here and counted
+   in the answer, so nothing happens silently. */
+const TEAM_HOLDS = [
+  { table: 'repayment_snapshots', what: 'expected snapshots' },
+  { table: 'defaulter_snapshots', what: 'defaulter decks' },
+  { table: 'followup_status', what: 'follow-up records' },
+  { table: 'loans', what: 'loans' },
+];
+
 async function deleteTeam(db, user, p) {
   requireAdmin(user);
   const team = normTeamName(p && p.team);
   if (!team) throw badRequest('team is required');
-  // Every snapshot, loan and call user references teams(team); deleting one with data would
-  // be refused by the database anyway, so say so in words the admin can act on.
-  const { data: used } = await db.from('loans').select('id').eq('team', team).limit(1);
-  if (used && used.length) throw badRequest(`Team ${team} still has loans attached -- reassign them first.`);
+
+  const blocking = [];
+  for (const h of TEAM_HOLDS) {
+    /* head:true with an exact count asks the database to COUNT rather than to send anything --
+       the cheapest read there is, and the point of it here is that "how many" is the number the
+       admin needs in order to decide. */
+    const { count, error } = await runQuery(() =>
+      db.from(h.table).select('team', { count: 'exact', head: true }).eq('team', team));
+    if (error) throw new Error(error.message);
+    if (count) blocking.push(`${count} ${h.what}`);
+  }
+  if (blocking.length) {
+    throw badRequest(
+      `Timu ${team} bado ina kumbukumbu: ${blocking.join(', ')}. Futa kumbukumbu hizo kwanza `
+      + `(Settings → Clean reports), au ibadilishe jina badala ya kuifuta.`
+      + `\n\nTeam ${team} still holds ${blocking.join(', ')}. Clear those first `
+      + `(Settings → Clean reports), or rename the team rather than deleting it.`);
+  }
+
+  // Nothing is holding it. The handsets registered to it go with it -- they have nothing to
+  // sign in to once the team is gone.
+  const { data: released, error: relErr } = await db.from('call_users').delete().eq('team', team).select('user_id');
+  if (relErr) throw new Error(relErr.message);
+
   const { error } = await db.from('teams').delete().eq('team', team);
   if (error) throw new Error(error.message);
-  return { team };
+  return { team, released: (released || []).length };
 }
 function normTeamName(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
 

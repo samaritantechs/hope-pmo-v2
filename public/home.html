@@ -77,7 +77,7 @@ function renderSignIn(err){
   $('view').innerHTML =
     '<div class="card">'
     + '<label>Msimbo wako / Your access code</label>'
-    + '<input id="code" placeholder="Weka msimbo" autocomplete="off" autocapitalize="characters">'
+    + '<input id="code" placeholder="Weka msimbo" autocomplete="off" data-secret data-upper>'
     + '<button class="btn" id="go">Ingia / Sign in</button>'
     + (err ? '<div class="err">' + esc(err) + '</div>' : '')
     + '</div>'
@@ -91,6 +91,8 @@ function renderSignIn(err){
       + tile('/mkopo', '&#128100;', 'Mkopo Wangu / My loan', 'Wateja: weka namba yako ya kumbukumbu / customers: your reference number')
     + '</div>'
     + '<div class="hint">Maafisa wa simu hawahitaji msimbo &mdash; bofya HOPE Calls.<br>Field officers do not need a code &mdash; tap HOPE Calls.</div>';
+  // The form is rebuilt on every error, so the masking is re-applied with it.
+  if (window.hopeSecrets) window.hopeSecrets();
   $('code').value = load('hopeCode');
   $('go').onclick = signIn;
   $('code').onkeydown = function(e){ if (e.key === 'Enter') signIn(); };

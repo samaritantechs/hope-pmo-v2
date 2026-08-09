@@ -8,14 +8,27 @@
 export let PAGE_CAP = 100000;
 export function setPageCap(n) { PAGE_CAP = n; }
 
-/** Postgres LIKE, near enough: % is anything, and the comparison ignores case. Regex
-    metacharacters in the pattern are escaped, so searching for "C++" or "(a)" matches those
-    characters rather than blowing up or matching everything. */
+/** Postgres LIKE, properly: `%` is any run of characters, `_` is exactly one, and a backslash
+    escapes either of them into its literal self. Regex metacharacters in the pattern are escaped
+    so searching for "C++" or "(a)" matches those characters rather than blowing up.
+
+    IT USED TO KNOW ONLY ABOUT `%`, which made it useless for the one thing LIKE most needs
+    testing for: a pattern built from something a PERSON typed. `_` went through as a literal,
+    so a test could prove an unescaped user string was harmless when in the real database it is
+    a wildcard -- and on the access-code look-up that is the difference between "invalid code"
+    and being signed in as somebody else. */
+const rxEsc = c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function likeMatch(value, pattern) {
   const v = String(value == null ? '' : value);
-  const rx = String(pattern == null ? '' : pattern)
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    .replace(/%/g, '.*');
+  const p = String(pattern == null ? '' : pattern);
+  let rx = '';
+  for (let i = 0; i < p.length; i++) {
+    const c = p.charAt(i);
+    if (c === '\\' && i + 1 < p.length) { rx += rxEsc(p.charAt(++i)); continue; }
+    if (c === '%') { rx += '.*'; continue; }
+    if (c === '_') { rx += '.'; continue; }
+    rx += rxEsc(c);
+  }
   return new RegExp('^' + rx + '$', 'i').test(v);
 }
 
