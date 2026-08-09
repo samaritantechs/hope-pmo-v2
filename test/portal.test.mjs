@@ -3760,3 +3760,154 @@ test('the bell survives a promise read that fails', async () => {
   assert.ok(Array.isArray(d.items), 'the bell still answers');
   assert.equal(d.items.filter(x => x.kind === 'promise').length, 0);
 });
+
+/* =====================================================================================
+   WHO WAS BEST, AND WHEN -- WRITTEN DOWN AT THE TIME.
+   =====================================================================================
+   "the system needs to always keep record of best team and leaders weekly, monthly and yearly
+    progress REGARDLESS OF FUTURE LEADER TABLE ALTERATIONS"
+
+   The last five words are the whole design. Every report here resolves a leader by looking
+   them up NOW -- right for today's work, and it means the past is rewritten every time
+   somebody is moved. A record copies the name and position AS TEXT at the moment it is
+   written: a photograph, not a pointer.
+*/
+const { recordsFor, periodsOf } = await import('../api/_lib/performance.js');
+
+test('one date belongs to a week, a month and a year', () => {
+  assert.deepEqual(periodsOf('2026-07-24'), [
+    { period: 'week', period_start: '2026-07-20' },
+    { period: 'month', period_start: '2026-07-01' },
+    { period: 'year', period_start: '2026-01-01' },
+  ]);
+});
+
+test('a record carries the leader\'s name and position as text', () => {
+  const teams = [{ team: 'KONGOWE', sales: 500, collected: 800, expected: 1000, recovered: 300, uncollected: 600 }];
+  const leadBy = { KONGOWE: { team: 'KONGOWE', gmo: 'GEE MO', manager: 'BOSS', recovery: 'JUMA G' } };
+  const rows = recordsFor(teams, leadBy, '2026-07-24');
+
+  const rec = rows.find(r => r.period === 'week' && r.metric === 'recovery' && r.scope === 'leader');
+  assert.equal(rec.name, 'JUMA G');
+  assert.equal(rec.position, 'RECOVERY', 'the position they held THEN, not a lookup done later');
+  assert.equal(rec.value, 300);
+  assert.equal(rec.basis, 600);
+  assert.equal(rec.pct, 50);
+
+  // All three metrics, both scopes, all three periods.
+  assert.deepEqual([...new Set(rows.map(r => r.metric))].sort(), ['collection', 'recovery', 'sales']);
+  assert.deepEqual([...new Set(rows.map(r => r.scope))].sort(), ['leader', 'team']);
+  assert.deepEqual([...new Set(rows.map(r => r.period))].sort(), ['month', 'week', 'year']);
+});
+
+test('a leader holding several teams is one record, added up', () => {
+  const teams = [
+    { team: 'A', sales: 100, collected: 0, expected: 0, recovered: 40, uncollected: 100 },
+    { team: 'B', sales: 300, collected: 0, expected: 0, recovered: 60, uncollected: 100 },
+  ];
+  const leadBy = { A: { recovery: 'JUMA G' }, B: { recovery: 'JUMA G' } };
+  const rows = recordsFor(teams, leadBy, '2026-07-24');
+  const rec = rows.filter(r => r.period === 'week' && r.metric === 'recovery' && r.scope === 'leader');
+  assert.equal(rec.length, 1);
+  assert.equal(rec[0].value, 100, '40 + 60 across both their teams');
+  assert.equal(rec[0].pct, 50, 'and the percentage from the summed parts, not an average of two');
+});
+
+test('a zero is not an achievement worth a row', () => {
+  const rows = recordsFor([{ team: 'A', sales: 0, collected: 0, expected: 0, recovered: 0, uncollected: 0 }],
+    { A: { recovery: 'X' } }, '2026-07-24');
+  assert.equal(rows.length, 0);
+});
+
+test('the weekly report writes the record, and a later reassignment cannot rewrite it', async () => {
+  /* THE TEST THE FEATURE EXISTS FOR. Record a week with JUMA G on KONGOWE, then move the team
+     to somebody else. The record must still say JUMA G. */
+  const book = tables();
+  book.performance_records = [];
+  book.teams[0] = { ...book.teams[0], recovery: 'JUMA G', gmo: 'GEE MO', manager: 'BOSS' };
+  const db = fakeDb(book);
+
+  await portalApi(db, ADMIN, 'weekly', {}, NOW);
+  const written = db._dump('performance_records');
+  assert.ok(written.length > 0, 'opening the weekly report is what writes the record');
+  const rec = written.find(r => r.period === 'week' && r.metric === 'recovery' && r.scope === 'leader');
+  assert.ok(rec, 'a recovery leader was recorded');
+  assert.equal(rec.name, 'JUMA G');
+  assert.equal(rec.period_start, MON);
+
+  // The leader table changes. Everything live re-points -- that is correct and deliberate.
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', recovery: 'SOMEBODY ELSE' }, NOW);
+
+  // The RECORD does not.
+  const after = await portalApi(db, ADMIN, 'perfHistory', { period: 'week', metric: 'recovery' }, NOW);
+  const still = after.rows.find(r => r.scope === 'leader' && r.period_start === MON);
+  assert.equal(still.name, 'JUMA G',
+    'last week still says who actually earned it, whoever holds the team today');
+  assert.equal(still.position, 'RECOVERY');
+});
+
+test('re-opening the report updates the period rather than piling up rows', async () => {
+  /* A week is written many times while it is running and settles on its final figures when it
+     ends -- which is exactly how a record of "this week" should behave. */
+  const book = tables();
+  book.performance_records = [];
+  book.teams[0] = { ...book.teams[0], recovery: 'JUMA G' };
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'weekly', {}, NOW);
+  const first = db._dump('performance_records').length;
+  await portalApi(db, ADMIN, 'weekly', {}, NOW);
+  await portalApi(db, ADMIN, 'weekly', {}, NOW);
+  assert.equal(db._dump('performance_records').length, first, 'three reads, one set of records');
+});
+
+test('a database with no history table still shows the weekly report', async () => {
+  /* A report that failed because its history could not be written would be a worse report than
+     one with no history. */
+  const base = fakeDb(tables());
+  const db = { from(n) { if (n === 'performance_records') throw new Error('relation does not exist'); return base.from(n); },
+    rpc: base.rpc, _dump: n => base._dump(n) };
+  const w = await portalApi(db, ADMIN, 'weekly', {}, NOW);
+  assert.ok(w.teams.length > 0);
+  const h = await portalApi(db, ADMIN, 'perfHistory', {}, NOW);
+  assert.equal(h.available, false);
+  assert.match(h.note, /2026-08-09d-performance-records\.sql/);
+});
+
+/* =====================================================================================
+   RIPOTI, SORTED BY A LEADER.
+   ===================================================================================== */
+test('naming a leader scopes the call report to the teams they hold', async () => {
+  const book = tables();
+  book.teams = [
+    { team: 'KONGOWE', recovery: 'JUMA G' },
+    { team: 'MBAGALA', recovery: 'JUMA G' },
+    { team: 'SINZA', recovery: 'OTHER P' },
+  ];
+  const db = fakeDb(book);
+  const d = await portalApi(db, ADMIN, 'callReport', { leader: 'JUMA G' }, NOW);
+  assert.deepEqual(d.scope.slice().sort(), ['KONGOWE', 'MBAGALA'],
+    'their two teams, and not the third');
+  assert.equal(d.leader, 'JUMA G');
+  // The dropdown is built from the same map the scoping uses, not a second guess about who
+  // counts as a leader.
+  assert.deepEqual(d.leaders.map(l => l.name).sort(), ['JUMA G', 'OTHER P']);
+  assert.equal(d.leaders.find(l => l.name === 'JUMA G').teams, 2);
+});
+
+test('a leader filter narrows what you may see, never widens it', async () => {
+  /* Choosing a leader whose teams overlap yours shows the overlap; choosing one whose teams you
+     hold none of shows nothing. A leader filter must not become a way round team scoping. */
+  const book = tables();
+  book.teams = [
+    { team: 'KONGOWE', recovery: 'JUMA G' },
+    { team: 'MBAGALA', recovery: 'JUMA G' },
+  ];
+  const db = fakeDb(book);
+  const onlyKongowe = { code: 'X', name: 'NOBODY', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+  const d = await portalApi(db, onlyKongowe, 'callReport', { leader: 'JUMA G' }, NOW);
+  assert.deepEqual(d.scope, ['KONGOWE'], 'the overlap only');
+
+  const elsewhere = { code: 'Y', name: 'NOBODY2', role: 'GMO', teams: ['SINZA'], tabs: [] };
+  const none = await portalApi(db, elsewhere, 'callReport', { leader: 'JUMA G' }, NOW);
+  assert.deepEqual(none.scope, [], 'and nothing at all when there is no overlap');
+});

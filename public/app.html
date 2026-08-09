@@ -530,12 +530,15 @@ var NAV = [
   /* Deliberately NOT in ALWAYS below -- this one is granted, not assumed. Admins hold it from
      the start; anyone else gets it when the tab is ticked on their role, which is the same
      mechanism every other tab uses. */
+  /* WHO WAS BEST, AND WHEN. A read of what was RECORDED, never a recomputation -- the whole
+     point is that these figures are not re-derived from a teams table that has since changed. */
+  { id:'perf',        label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
   { id:'audit',       label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' }
 ];
 /* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
    visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
    the gate that matters is upload/settings, which are checked on the server too. */
-var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps'];
+var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf'];
 
 function allowed(id){
   if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
@@ -2366,7 +2369,7 @@ VIEWS.commission = function(){
 
 VIEWS.calls = function(){
   var from = S.args.from || addDays(today(), -7), to = S.args.to || today();
-  return srv('callReport', {from:from, to:to}).then(function(d){
+  return srv('callReport', {from:from, to:to, leader:S.args.leader||'', team:S.args.team||''}).then(function(d){
     var t=d.totals;
     HEAD = '<div class="kpis">'
       + kpi('Calls', money(t.calls), d.from+' → '+d.to)
@@ -2374,7 +2377,22 @@ VIEWS.calls = function(){
       + kpi('Portfolio', money(t.portfolio), Math.round(100*(t.ratio||0))+'% of calls', 'good')
       + kpi('Non-portfolio', money(t.nonPortfolio))
       + '</div>'
-      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">')
+      /* SORT BY A LEADER, NOT ONLY BY A TEAM. A leader holds several teams, and "how is this
+         person's book doing" meant picking their teams out of a forty-line list one at a time
+         and adding the answers up by hand. Naming them scopes the whole report to exactly the
+         teams they hold, so every officer under them appears together. */
+      + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">'
+        + '<select data-arg="leader"><option value="">Viongozi wote / Every leader</option>'
+        + (d.leaders||[]).map(function(x){
+            return '<option value="'+esc(x.name)+'"'+(S.args.leader===x.name?' selected':'')+'>'
+              + esc(x.name) + ' \u00B7 ' + esc(x.position) + ' \u00B7 ' + x.teams + ' timu</option>'; }).join('')
+        + '</select>'
+        + '<select data-arg="team"><option value="">Timu zote / All teams</option>'
+        + (d.teams||[]).map(function(x){
+            return '<option value="'+esc(x.team)+'"'+(S.args.team===x.team?' selected':'')+'>'+esc(x.team)+'</option>'; }).join('')
+        + '</select>'
+        + (d.leader ? '<span class="chip ok" style="margin-left:8px">' + esc(d.leader) + ' \u00B7 '
+            + (d.scope === 'ALL' ? 'timu zote' : (d.scope||[]).length + ' timu') + '</span>' : ''))
       // The backend already computed all five of v1's breakdowns; only the officer table was
       // ever shown, so category, outcome, team and per-day were computed and thrown away.
       // Category and outcome answer different questions and carry different columns, so they
@@ -2996,6 +3014,46 @@ var CLEAN_TYPES = [
 /* WHO DID WHAT. Reads from the top, because that is how a log is read -- and says plainly when
    the table does not exist yet, rather than showing an empty one. An empty audit log reads as
    "nobody has done anything", which is the single conclusion it must never invite by accident. */
+VIEWS.perf = function(){
+  var a = S.args || {};
+  var period = a.period || 'week';
+  return srv('perfHistory', { period: period, metric: a.metric || '', scope: a.scope || '' }).then(function(d){
+    var best = function(scope, metric){
+      var top = (d.rows||[]).filter(function(r){ return r.scope===scope && r.metric===metric; })[0];
+      return top ? (top.name + ' · TZS ' + money(top.value)) : '—';
+    };
+    HEAD = '<div class="kpis">'
+      + kpi('Rekodi / Records', money(d.count), d.available ? (d.periods||[]).length + ' periods' : 'not set up yet')
+      + kpi('Mauzo / Sales', best('leader','sales'), 'best leader in the newest period')
+      + kpi('Makusanyo / Collection', best('leader','collection'), null, 'good')
+      + kpi('Urejeshaji / Recovery', best('leader','recovery'), null, 'good')
+      + '</div>'
+      + (d.available ? '' : '<div class="note bad">' + esc(d.note) + '</div>')
+      + '<div class="note" style="display:block">Majina hapa ni ya WAKATI ULE. Ukibadilisha viongozi kesho, '
+      + 'rekodi za nyuma hazibadiliki.<br><i>The names here are as they were AT THE TIME. Reassign a leader '
+      + 'tomorrow and every live board re-points with them — these records do not, which is the only thing '
+      + 'that makes a year of them worth keeping.</i></div>'
+      + bar(['week','month','year'].map(function(p){
+          return '<button class="pill'+(p===period?' on':'')+'" data-arg="period" data-val="'+p+'">'
+            + (p==='week'?'Wiki / Weekly':p==='month'?'Mwezi / Monthly':'Mwaka / Yearly') + '</button>'; }).join('')
+        + '<select data-filter="metric" style="margin-left:auto"><option value="">Vyote / All three</option>'
+        + ['sales','collection','recovery'].map(function(m){
+            return '<option'+(S.filters.metric===m?' selected':'')+'>'+m+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="scope"><option value="">Timu na viongozi / Teams and leaders</option>'
+        + ['team','leader'].map(function(x){
+            return '<option'+(S.filters.scope===x?' selected':'')+'>'+x+'</option>'; }).join('') + '</select>');
+    S.rows = d.rows || [];
+    S.cols = [col('period_start','Period','date'),
+      {key:'metric', label:'Metric', kind:'chip', chip:function(r){
+        return r.metric==='recovery'?'ok':(r.metric==='sales'?'warn':'mut'); }},
+      {key:'scope', label:'Team or leader', kind:'chip', chip:function(r){ return r.scope==='leader'?'ok':'mut'; }},
+      col('name','Name'), col('position','Position then'),
+      col('value','Value','money'), col('basis','Out of','money'), col('pct','%','pct'),
+      col('recorded_at','Recorded','dt')];
+    S.foot = 'Imehifadhiwa wakati ripoti ya wiki ilipofunguliwa. / Written when the weekly report is opened.';
+  });
+};
+
 VIEWS.audit = function(){
   var a = S.args || {};
   return srv('auditLog', { limit: 300, actor: a.actor || '', action: a.action || '',

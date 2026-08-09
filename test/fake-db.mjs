@@ -146,10 +146,25 @@ class FakeQuery {
       return { data: this.wantRows ? made.map(r => ({ ...r })) : null, error: null };
     }
     if (this.mode === 'upsert') {
-      const key = this.opts.onConflict || 'id';
+      /* POSTGREST TAKES SEVERAL CONFLICT COLUMNS, comma-separated, matching a composite unique
+         index. The fake took the whole string as ONE column name -- so `onConflict:
+         'period,period_start,metric,scope,name'` looked up a column nothing has, every row
+         compared undefined against undefined, they all "matched" the first row, and an upsert
+         of forty records left ONE. Silently, and only for composite keys, which is the worst
+         possible shape for a fake to be wrong in.
+
+         It now splits the list, and REFUSES a key the payload does not carry rather than
+         treating two undefineds as a match -- that comparison is what made the bug invisible. */
+      const keys = String(this.opts.onConflict || 'id').split(',').map(k => k.trim()).filter(Boolean);
       const inserted = [];
       for (const r of this.payload) {
-        const i = rows.findIndex(x => String(x[key]) === String(r[key]));
+        for (const k of keys) {
+          if (r[k] === undefined) {
+            throw new Error('upsert onConflict names "' + k + '" but the row does not carry it: '
+              + JSON.stringify(r).slice(0, 120));
+          }
+        }
+        const i = rows.findIndex(x => keys.every(k => String(x[k]) === String(r[k])));
         if (i >= 0) { if (!this.opts.ignoreDuplicates) rows[i] = { ...rows[i], ...r }; }
         else { rows.push({ ...r }); inserted.push({ ...r }); }
       }

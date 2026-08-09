@@ -61,7 +61,7 @@ export function teamAllowed(user, team) {
     ONE place keeps /api/me (which draws the UI) and /api/portal (which enforces) agreeing. */
 export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promises', 'fureport',
   'complaints', 'restructure', 'legal', 'expected', 'defexp', 'expdfrep', 'credit', 'abnormal', 'reports',
-  'weekly', 'par', 'present', 'teams', 'commission', 'calls'];
+  'weekly', 'par', 'present', 'teams', 'commission', 'calls', 'perf'];
 /* `audit` is deliberately NOT in USER_TABS: it starts admin-only, and is opened to a role the
    ordinary way -- tick it on that role in Teams & Staff and both the nav item and the function
    follow. One mechanism, the same one every other tab uses. */
