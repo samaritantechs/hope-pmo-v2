@@ -2226,14 +2226,40 @@ VIEWS.weekly = function(){
       + kpi('Expected', money(t.expected), d.weekOf+' → '+d.weekEnd)
       + kpi('Collected', money(t.collected), t.expected? Math.round(1000*t.collected/t.expected)/10+'%':'', 'good')
       + kpi('Uncollected', money(t.uncollected), null, 'bad')
-      + kpi('Recovered', money(t.recovered), 'wiki nzima / the whole week', 'good')
+      /* RECOVERY %, which this tile never printed: recovered over the uncollected it was chased
+         against. A figure with no denominator beside it is a number nobody can judge -- 45m is
+         excellent against 96m and poor against 900m, and the tile said nothing either way.
+
+         WORKED OUT FROM THE TWO TILES ON THIS BAR, not from teamTotals.recPct, even though the
+         server has always computed exactly that. The server has TWO sums of the same week:
+         `totals` adds up the DAYS and `teamTotals` adds up the TEAMS. They are built from
+         different reads and there is no promise they land on the same figure. Printing
+         teamTotals' percentage under totals' money would let the screen contradict itself --
+         a numerator and a denominator that are both visible, and a percentage between them
+         that does not divide. So the tile divides what it shows. */
+      + kpi('Recovered', money(t.recovered),
+            (t.uncollected > 0
+              ? pct(Math.round(1000 * t.recovered / t.uncollected) / 10) + ' ya ambayo hayakukusanywa / of uncollected'
+              : 'wiki nzima / the whole week'), 'good')
       /* LEO. The week's figure cannot answer "are we moving today" -- by Thursday it is mostly
          Monday and Tuesday, and a day of nothing disappears inside it. */
       + kpi('Leo rec / Recovered today', money(t.recoveredToday),
             t.isCurrentWeek ? 'leo pekee / today alone' : 'wiki iliyopita \u2014 hakuna leo / past week, no today',
             t.isCurrentWeek && t.recoveredToday > 0 ? 'good' : '')
       + kpi('Received', money(t.received))
-      + kpi('Sales', money(t.salesCount), money(t.salesAmount))
+      /* SALES %, against the company target the note under this bar already states in full.
+         The count was the headline and the money the subtitle -- so the one number the target
+         exists to be measured against was the one thing not shown. Swapped, because a target
+         is money and a percentage of it has to be money over money.
+
+         Same rule as Recovered: divided from the amount ON THIS TILE by the target printed
+         below it, so the three figures agree with each other on screen. */
+      + kpi('Sales', money(t.salesAmount),
+            money(t.salesCount) + ' mikopo / loans'
+              + (d.teamTotals.companyTarget > 0
+                ? ' \u00B7 ' + pct(Math.round(1000 * t.salesAmount / d.teamTotals.companyTarget) / 10) + ' ya lengo / of target'
+                : ''),
+            (d.teamTotals.companyTarget > 0 && t.salesAmount >= d.teamTotals.companyTarget) ? 'good' : '')
       + '</div>'
       /* STAMP. The week is already chosen on this bar, so the button belongs beside it rather
          than on a screen where the week would have to be chosen again. Pressing it on a week
