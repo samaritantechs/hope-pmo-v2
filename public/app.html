@@ -1320,30 +1320,65 @@ function wireClean(){
     dupOut.className = 'note' + (bad ? ' bad' : '');
     dupOut.innerHTML = html;
   }
+  /* WALKS BACKWARDS A MONTH AT A TIME.
+     The server bounds each call to a window -- asking it to aggregate every snapshot the
+     company has ever written does not come back inside sixty seconds, which is what made this
+     button appear to do nothing at all. So the screen does the walking: one window, then the
+     one before it, until the server says there is nothing older. Progress is shown as it goes,
+     because a button that is working silently is indistinguishable from one that is broken. */
   function dupCall(dry){
-    dupSay('Inahesabu\u2026 / counting\u2026');
-    // Bounded on purpose -- a book uploaded every half hour for weeks has hundreds of copies,
-    // and the platform stops a function at sixty seconds.
     var keepEl = document.getElementById('dupKeep');
     var keepN = keepEl ? Number(keepEl.value) || 2 : 2;
-    srv('purgeSuperseded', dry ? { keep: keepN } : { confirm: true, keep: keepN, limit: 120 })
-      .then(function(r){
-        var detail = (r.report || []).filter(function(x){ return x.losingBatches; })
-          .map(function(x){ return esc(x.label) + ': ' + money(x.rows) + ' rows in ' + x.losingBatches + ' old upload(s)'; })
-          .join('<br>') || 'Hakuna nakala. / No duplicate uploads found.';
-        if (r.dryRun){
-          dupSay('<b>' + money(r.totalRows) + '</b> rows in <b>' + r.totalBatches
-            + '</b> upload(s) beyond the last <b>' + r.keep + '</b> would be removed.<br>' + detail
-            + '<br><i>Takwimu hazitabadilika \u2014 hizi ndizo safu ambazo kila usomaji ulikuwa unaziruka. '
-            + '/ No figure will change: these are exactly the rows every read already skipped.</i>');
-        } else {
-          dupSay('<b>' + r.deletedBatches + '</b> old upload(s) removed.'
-            + (r.remainingBatches ? ' <b>' + r.remainingBatches + '</b> left \u2014 bofya tena. / more remain, run it again.' : '')
-            + '<br>' + detail);
-          S.storage = null;
-        }
-      })
-      .catch(function(e){ dupSay(esc(String(e.message || e)), true); });
+    var tot = { batches: 0, rows: 0, deleted: 0, remaining: 0 }, byLabel = {}, windows = 0;
+    var stop = false;
+
+    function fmt(){
+      var detail = Object.keys(byLabel).map(function(k){
+        return esc(k) + ': ' + money(byLabel[k].rows) + ' rows in ' + byLabel[k].batches + ' old upload(s)';
+      }).join('<br>');
+      return detail || 'Hakuna nakala. / No duplicate uploads found.';
+    }
+
+    function step(to){
+      if (stop) return;
+      dupSay('Inahesabu\u2026 / counting\u2026 <span style="color:var(--mut)">(hadi ' + esc(to) + ')</span>'
+        + (tot.batches ? '<br>' + fmt() : ''));
+      srv('purgeSuperseded', dry
+        ? { keep: keepN, to: to }
+        : { confirm: true, keep: keepN, to: to, limit: 120 })
+        .then(function(r){
+          windows++;
+          tot.batches += r.totalBatches || 0;
+          tot.rows += r.totalRows || 0;
+          tot.deleted += r.deletedBatches || 0;
+          tot.remaining += r.remainingBatches || 0;
+          (r.report || []).forEach(function(x){
+            if (!x.losingBatches) return;
+            if (!byLabel[x.label]) byLabel[x.label] = { rows: 0, batches: 0 };
+            byLabel[x.label].rows += x.rows;
+            byLabel[x.label].batches += x.losingBatches;
+          });
+          /* Keep walking while there is older data. Capped so a database with years in it
+             cannot spin the browser forever -- it reports how far it got and can be run again. */
+          if (!r.done && windows < 60) { step(r.before); return; }
+
+          if (dry){
+            dupSay('<b>' + money(tot.rows) + '</b> rows in <b>' + tot.batches
+              + '</b> upload(s) beyond the last <b>' + keepN + '</b> would be removed.'
+              + ' <span style="color:var(--mut)">(' + windows + ' window(s) back to ' + esc(r.oldest || '\u2014') + ')</span>'
+              + '<br>' + fmt()
+              + '<br><i>Takwimu hazitabadilika \u2014 hizi ndizo safu ambazo kila usomaji ulikuwa unaziruka. '
+              + '/ No figure will change: these are exactly the rows every read already skipped.</i>');
+          } else {
+            dupSay('<b>' + tot.deleted + '</b> old upload(s) removed.'
+              + (tot.remaining ? ' <b>' + tot.remaining + '</b> left \u2014 bofya tena. / more remain, run it again.' : '')
+              + '<br>' + fmt());
+            S.storage = null;
+          }
+        })
+        .catch(function(e){ stop = true; dupSay(esc(String(e.message || e)), true); });
+    }
+    step(today());
   }
   if (dupChk) dupChk.onclick = function(){ dupCall(true); };
   if (dupRun) dupRun.onclick = function(){
