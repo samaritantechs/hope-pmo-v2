@@ -1004,7 +1004,7 @@ async function report(db, [dev, from, to, team], nowMs) {
     the access code's own teams (widened by any teams that person leads live off the teams
     role columns), optionally narrowed to one team the caller may already see. Port of
     api_callReportPortal -- one report implementation for both front ends. */
-export async function reportCoreForPortal(db, user, { from, to, team, leader } = {}, nowMs = Date.now()) {
+export async function reportCoreForPortal(db, user, { from, to, team, leader, user: user_ } = {}, nowMs = Date.now()) {
   const teamRows = await fetchAll(() => db.from('teams').select('*'));
   const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(user.name)] || {});
@@ -1036,6 +1036,41 @@ export async function reportCoreForPortal(db, user, { from, to, team, leader } =
     if (allowed) scope = [want];                               // not allowed -> keep their normal scope
   }
   const out = await reportCore(db, scope, from, to, null, nowMs);
+
+  /* SORTING BY A USER, AND GETTING THEIR TEAMS' USERS WITH THEM.
+     "sort call ripoti by user and their assigned teams' users"
+
+     A leader narrows to the teams they HOLD. This narrows to the teams one person WORKS -- and
+     then shows everybody on those teams, not that person alone. Which is the question a
+     supervisor actually asks: not "how did Juma do" but "how is Juma's patch doing", and the
+     answer is meaningless without the officers beside him.
+
+     Applied to the built report rather than to the scope, because the officer's own team comes
+     from the report itself -- resolving it beforehand would mean reading call_users twice and
+     risking two answers about which team somebody is on. */
+  const wantUser = String(user_ || '').trim();
+  if (wantUser) {
+    const theirTeams = new Set((out.byDay || [])
+      .filter(r => K(r.officer) === K(wantUser)).map(r => K(r.team)).filter(Boolean));
+    const mate = r => theirTeams.has(K(r.team));
+    if (theirTeams.size) {
+      out.users = (out.users || []).filter(mate);
+      out.byDay = (out.byDay || []).filter(mate);
+      out.teams = (out.teams || []).filter(mate);
+      out.totals = {
+        calls: out.users.reduce((s, u) => s + (u.calls || 0), 0),
+        duration: out.users.reduce((s, u) => s + (u.duration || 0), 0),
+        portfolio: out.users.reduce((s, u) => s + (u.portfolio || 0), 0),
+        nonPortfolio: out.users.reduce((s, u) => s + (u.nonPortfolio || 0), 0),
+      };
+      out.totals.ratio = out.totals.calls ? out.totals.portfolio / out.totals.calls : 0;
+    }
+    out.userTeams = [...theirTeams];
+  }
+  out.user = wantUser;
+  /* Everybody who made a call in the window, so the dropdown offers people the report can
+     actually answer for rather than the whole staff list. */
+  out.users_ = [...new Set((out.byDay || []).map(r => r.officer).filter(Boolean))].sort();
   out.ok = true;
   out.scope = scope || 'ALL';
   /* Every name the teams table carries in a leader column, with the position they hold, so the

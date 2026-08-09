@@ -27,6 +27,10 @@ const E = (ref, team, exp, status, arrears, date = TODAY, type = 'today') => ({
 });
 const D = (ref, team, arrears, type, days = 45, date = TODAY, wd = 'FRI') => ({
   ref, full_name: 'C' + ref, contact: '07140000' + ref, team, arrears, status: 'Defaulter',
+  /* A real deck carries the guarantor -- they are who an officer rings when the customer will
+     not answer. The fixture did not, which is why no test noticed the Count 1-6 list had been
+     built without them. */
+  guarantor_name: 'G' + ref, guarantor_contact: '07150000' + ref,
   ds: '3-6', dc: 3, days_elapsed: days, disb_date: '2026-07-21',        // a Tuesday -> Day 1 Tue, Day 2 Fri
   initial_inst: 100000, other_inst: 40000, balance: 500000,
   snapshot_type: type, weekday: wd, snapshot_date: date,
@@ -3990,4 +3994,113 @@ test('an older window finds its own duplicates and points further back', async (
   assert.equal(may.deletedBatches, 1, 'three uploads that day, two kept');
   assert.deepEqual([...new Set(db._dump('repayment_snapshots')
     .filter(r => r.snapshot_date === OLD).map(r => r.upload_batch))].sort(), ['o09', 'o10']);
+});
+
+/* =====================================================================================
+   STAMPING A WEEK BY HAND, AND RE-STAMPING IT.
+   =====================================================================================
+   "i always want to choose week and press stamp report so as to ferment permanent data of
+    current uploaded weekly data and if i do so to that week again meaning i could overwrite it
+    too in case like i reuploaded something to those dates"
+*/
+test('stamping a week writes that week\'s records', async () => {
+  const book = tables();
+  book.performance_records = [];
+  book.teams[0] = { ...book.teams[0], recovery: 'JUMA G', gmo: 'GEE MO', manager: 'BOSS' };
+  const db = fakeDb(book);
+  const r = await portalApi(db, ADMIN, 'stampWeek', {}, NOW);
+  assert.equal(r.weekOf, MON);
+  assert.ok(r.records > 0, 'it says what it wrote');
+  assert.equal(r.empty, false);
+  assert.ok(db._dump('performance_records').length > 0);
+});
+
+test('re-stamping the same week overwrites rather than piling up', async () => {
+  /* The case the request names: a week corrected by a re-upload is corrected in the record. */
+  const book = tables();
+  book.performance_records = [];
+  book.teams[0] = { ...book.teams[0], recovery: 'JUMA G' };
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'stampWeek', {}, NOW);
+  const first = db._dump('performance_records').length;
+  const before = db._dump('performance_records')
+    .find(x => x.metric === 'recovery' && x.scope === 'leader').value;
+
+  // More recovery arrives for that week, and the week is stamped again.
+  db._dump('defaulter_snapshots').forEach(d => { if (d.snapshot_type === 'current') d.arrears = 0; });
+  await portalApi(db, ADMIN, 'stampWeek', {}, NOW);
+
+  assert.equal(db._dump('performance_records').length, first, 'same rows, not twice as many');
+  const after = db._dump('performance_records')
+    .find(x => x.metric === 'recovery' && x.scope === 'leader').value;
+  assert.ok(after > before, 'and the figure was updated: ' + before + ' -> ' + after);
+});
+
+test('stamping a week with nothing in it says so', async () => {
+  const book = tables();
+  book.performance_records = [];
+  const db = fakeDb(book);
+  const r = await portalApi(db, ADMIN, 'stampWeek', { weekOf: '2026-05-04' }, NOW);
+  assert.equal(r.empty, true, 'rather than silently recording nothing');
+});
+
+test('only an admin may stamp', async () => {
+  const db = fakeDb(tables());
+  await assert.rejects(() => portalApi(db, GMO, 'stampWeek', {}, NOW), e => e.status === 403);
+});
+
+/* =====================================================================================
+   THE LEADERS SHEET, OUT AND BACK IN.
+   =====================================================================================
+   "I want to upload updated leaders table but have an opt to download existing one so that I
+    make the few updates and upload current"
+*/
+test('the leaders export carries every column, in the importer\'s own shape', async () => {
+  const book = tables();
+  book.teams = [{ team: 'KONGOWE', team_code: 'KON123', region: 'DAR', zone: 'A',
+    recovery: 'JUMA G', recovery_no: '0713000001', gmo: 'GEE MO', gmo_no: '0714000002',
+    manager: 'BOSS', manager_no: '0715000003', credit: 'ANALYST A', credit_id: 'CA9',
+    credit_no: '0716000004', expected: 'EXP A', expected_no: '0717000005',
+    bike: 'BIKE B', bike_no: '0718000006', legal: 'LEGAL L', legal_no: '0719000007',
+    collection: 'CATHERINE', collection_no: '0720000008', opm: 'OPM O', opm_no: '0721000009' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teamsExport', {}, NOW);
+  assert.equal(d.count, 1);
+  assert.ok(d.headers.includes('COL NO'));
+  assert.ok(d.headers.includes('REGION'));
+  assert.equal(d.headers.length, d.rows[0].length, 'every header has a cell under it');
+
+  // THE ROUND TRIP: what came out goes back in and nothing is lost.
+  const { importTeams } = await import('../api/_lib/importers.js');
+  const back = importTeams([d.headers].concat(d.rows))[0];
+  assert.equal(back.team, 'KONGOWE');
+  assert.equal(back.region, 'DAR');
+  assert.equal(back.collection, 'CATHERINE');
+  assert.equal(back.legal, 'LEGAL L');
+  assert.equal(back.credit_id, 'CA9');
+  for (const k of ['recovery_no', 'gmo_no', 'manager_no', 'expected_no', 'bike_no', 'legal_no', 'collection_no']) {
+    assert.ok(back[k], k + ' was lost on the way back');
+  }
+});
+
+test('only an admin may download the leaders sheet', async () => {
+  await assert.rejects(() => portalApi(fakeDb(tables()), GMO, 'teamsExport', {}, NOW),
+    e => e.status === 403);
+});
+
+/* =====================================================================================
+   COUNT 1-6 SHOWS THE GUARANTOR.
+   =====================================================================================
+   "Count 1-6 (payments brlow 6 full payments) at credit analyst aint showing guarantors"
+   It is a list built for RINGING PEOPLE, and the number you ring when the customer does not
+   answer was the one column not on it.
+*/
+test('the Count 1-6 list carries the guarantor and their number', async () => {
+  const d = await portalApi(fakeDb(tables()), ADMIN, 'credit', {}, NOW);
+  assert.ok(d.portfolio.length > 0, 'the fixture has customers under the threshold');
+  const withG = d.portfolio.filter(p => p.guarantor_name || p.guarantor_contact);
+  assert.ok(withG.length > 0, 'at least one carries a guarantor');
+  for (const p of d.portfolio) {
+    assert.notEqual(p.guarantor_name, undefined, p.ref + ' has no guarantor field at all');
+    assert.notEqual(p.guarantor_contact, undefined, p.ref + ' has no guarantor number field');
+  }
 });

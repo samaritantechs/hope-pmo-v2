@@ -2,6 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { supabase, fetchAll, runQuery, isTransient } from './_lib/supabase.js';
 import { gatedUser, can, withApi } from './_lib/auth.js';
 import { pickLatestBatch } from './_lib/snapshots.js';
+/* The upload page calls the SAME functions the Settings cards call, rather than a second copy
+   of the sweep and the retire rule. Two implementations of "which uploads are superseded" is
+   two answers that can disagree, and the disagreement would only ever show up as a figure
+   nobody can account for. */
+import { portalApi } from './_lib/portal-core.js';
 import { addDaysKey as addDays_ } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
@@ -417,6 +422,20 @@ export default withApi(async (req, res) => {
     case 'teams':
       table = 'teams';
       records = importTeams(rows);
+      /* COLUMNS A DATABASE HAS NOT GOT YET ARE DROPPED, NOT SENT. The leaders sheet carries
+         region, zone and a phone per role, all added by 2026-08-09-team-contacts.sql -- and
+         migrations here are run by hand. Sending a column that does not exist fails the WHOLE
+         file, so an admin who had not yet pasted that SQL would find the leaders upload broken
+         with an error naming a column they never asked about. Same guard saveTeam has. */
+      {
+        const probe = await supabase.from('teams').select('*').limit(1);
+        const known = probe.data && probe.data.length ? Object.keys(probe.data[0]) : null;
+        if (known) records = records.map(r => {
+          const out = {};
+          for (const k of Object.keys(r)) if (known.includes(k)) out[k] = r[k];
+          return out;
+        });
+      }
       break;
     case 'received':
       table = 'received_payments';
@@ -707,8 +726,45 @@ export default withApi(async (req, res) => {
         ? { mode: 'update', text: `Existing rows were UPDATED in place (matched on ${upsertTables[table] === 'id' && table === 'loans' ? 'the loan\'s own number' : upsertTables[table]}). Re-uploading corrects rather than duplicates.` }
         : { mode: 'append', text: 'These rows were ADDED to the history. Uploading the same file twice would store it twice.' };
 
+  /* =====================================================================================
+     TWO THINGS THAT NOW HAPPEN BY THEMSELVES, ON THE LAST SLICE OF EVERY SNAPSHOT UPLOAD.
+     =====================================================================================
+     "always auto delete all the same date previos reports whenever i upload and remove the
+      manual setting"
+     "Remove the manual checking and always delete 1 day and above stale defaulters"
+
+     Both were buttons in Settings, and a button is a thing somebody has to remember. Nobody
+     remembers a housekeeping button, which is how a database ends up holding a million rows
+     nobody reads and a working list full of people who cleared last week.
+
+     They are deliberately fire-and-forget, like the audit log: an upload that succeeded must
+     never be reported as failed because the tidying after it did not. The file is already in
+     and the batch rule already makes it the one that counts -- everything below is only
+     cleaning up behind it. */
+  let autoSwept = null, autoRetired = null;
+  if (isLastPart && SNAPSHOT_TABLES.has(table)) {
+    try {
+      /* The same sweep the Settings card runs, on this date only, keeping two: the file just
+         uploaded and the one it replaced -- so a wrong file can still be undone by sending the
+         right one again, which is the whole reason two are kept rather than one. */
+      const r = await portalApi(supabase, user, 'purgeSuperseded',
+        { confirm: true, keep: 2, to: uploadDate || meta.date, days: 1, limit: 200 }, Date.now());
+      autoSwept = { batches: r.deletedBatches, rows: r.totalRows };
+    } catch (e) { /* the upload stands */ }
+  }
+  if (isLastPart && table === 'defaulter_snapshots') {
+    try {
+      /* "1 day and above" -- a defaulter whose own weekday deck has come round without them is
+         off the working list the moment the next day's deck lands, not a fortnight later.
+         Nothing is deleted: every comment and promise stays exactly where it is. */
+      const r = await portalApi(supabase, user, 'followupClean', { days: 1, confirm: true }, Date.now());
+      autoRetired = r.retired || 0;
+    } catch (e) { /* the upload stands */ }
+  }
+
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
+    autoSwept, autoRetired,
     /* Which slice this was. The page adds them up and only shows a result when the last one
        lands, so "Done -- 2,000 rows" twelve times over never appears. `partial` is the flag it
        reads: true means the file is not all in yet and nothing has been rebuilt from it. */

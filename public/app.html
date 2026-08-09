@@ -509,8 +509,11 @@ var NAV = [
   { id:'complaints',  label:'Complaint Register', ic:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M12 7v4M12 14h.01"/>' },
   { id:'expected',    label:'Expected Repayment', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15h8"/>' },
   { id:'assignments', label:'Defaulter Assignment', ic:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3 3-1.5-1.5"/>' },
-  { id:'expdfrep',    label:'Exp.Def Recovery', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h2M8 18h2M13 17l2 2 4-4"/>' },
   { id:'defexp',      label:'Expected Defaulters', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h3M8 18h3M14.5 14.5l1.5 1.5 3-3"/>' },
+  /* DIRECTLY UNDER Expected Defaulters, and called Report rather than Recovery: it is the
+     same book split three ways, so it belongs beside the list it summarises rather than
+     filed under a different word higher up the nav. */
+  { id:'expdfrep',    label:'Exp.Def Report', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h2M8 18h2M13 17l2 2 4-4"/>' },
   { id:'followup',    label:'Defaulters Followup', ic:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>' },
   { id:'commission',  label:'My Commission', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
   { id:'promises',    label:'Promise to Pay', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
@@ -1203,6 +1206,59 @@ function wireBar(){
   };
   wireClean();
   wireFollowupClean();
+  wireStampWeek();
+  wireTeamsDownload();
+}
+
+/* SEPARATE FROM wireClean ON PURPOSE. wireClean returns early when the Settings cards are not
+   on screen -- which is every screen except Settings, including the Weekly report this button
+   lives on. Wired here it is reached wherever it is drawn, and does nothing where it is not. */
+/* The leaders sheet, out as a CSV in the importer's own shape. Built from what the SERVER says
+   the columns are rather than from a list here, so the round trip cannot drift: if the importer
+   learns a column, the download carries it without this file being touched. */
+function wireTeamsDownload(){
+  var b = document.getElementById('teamsDl');
+  if (!b) return;
+  b.onclick = function(){
+    b.disabled = true;
+    srv('teamsExport').then(function(d){
+      var q = function(v){ return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+      var lines = [d.headers.map(q).join(',')];
+      (d.rows || []).forEach(function(r){ lines.push(r.map(q).join(',')); });
+      download(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' }),
+        'leaders-' + today() + '.csv');
+      toast(money(d.count) + ' timu zimepakuliwa. / ' + d.count + ' teams downloaded.');
+      b.disabled = false;
+    }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
+  };
+}
+
+function wireStampWeek(){
+  /* STAMP THIS WEEK. Writes the week, month and year it falls in, copying each leader's name
+     and position as text -- so a reassignment tomorrow cannot rewrite what this week was. */
+  var wkStamp = document.getElementById('wkStamp'), wkStampOut = document.getElementById('wkStampOut');
+  if (wkStamp) wkStamp.onclick = function(){
+    wkStamp.disabled = true;
+    wkStampOut.style.color = 'var(--mut)';
+    wkStampOut.textContent = 'Inahifadhi\u2026';
+    srv('stampWeek', { weekOf: S.args.weekOf || '' })
+      .then(function(r){
+        wkStamp.disabled = false;
+        if (r.empty){
+          wkStampOut.style.color = 'var(--bad)';
+          wkStampOut.textContent = 'Wiki hii haina takwimu \u2014 hakuna kilichohifadhiwa. / Nothing uploaded for that week, so nothing was recorded.';
+          return;
+        }
+        wkStampOut.style.color = 'var(--ok)';
+        wkStampOut.textContent = '\u2713 ' + r.weekOf + ': ' + r.records + ' rekodi, ' + r.teams
+          + ' timu. Ukibonyeza tena inaandika upya. / re-stamping overwrites.';
+      })
+      .catch(function(e){
+        wkStamp.disabled = false;
+        wkStampOut.style.color = 'var(--bad)';
+        wkStampOut.textContent = String(e.message || e);
+      });
+  };
 }
 /* Check counts and NAMES the first few, because "412 customers" is not something anybody should
    act on without recognising at least one of them. */
@@ -2179,8 +2235,14 @@ VIEWS.weekly = function(){
       + kpi('Received', money(t.received))
       + kpi('Sales', money(t.salesCount), money(t.salesAmount))
       + '</div>'
+      /* STAMP. The week is already chosen on this bar, so the button belongs beside it rather
+         than on a screen where the week would have to be chosen again. Pressing it on a week
+         already stamped OVERWRITES -- which is the point: a week corrected by a re-upload is
+         corrected in the record too. */
       + bar('<label style="font-size:12px;color:var(--mut)">Week starting (Monday)</label>'
-        + '<input type="date" data-arg="weekOf" value="'+esc(d.weekOf)+'">')
+        + '<input type="date" data-arg="weekOf" value="'+esc(d.weekOf)+'">'
+        + '<button class="btn sm" id="wkStamp" style="margin-left:8px">\u2b07 Stamp report / Hifadhi wiki hii</button>'
+        + '<span class="sub" id="wkStampOut" style="margin-left:8px;color:var(--mut);font-size:12px"></span>')
       + ((!d.hasMonday || !d.hasWeekEnd)
           ? '<div class="note">Kwa wiki nzima pakia <b>Def Initial Monday</b> na <b>Def Current</b> ya mwisho wa wiki.'
             + ' / For the full week upload Monday’s initial deck and the week-end current one — week-end currently = <b>'
@@ -2406,7 +2468,8 @@ VIEWS.commission = function(){
 
 VIEWS.calls = function(){
   var from = S.args.from || addDays(today(), -7), to = S.args.to || today();
-  return srv('callReport', {from:from, to:to, leader:S.args.leader||'', team:S.args.team||''}).then(function(d){
+  return srv('callReport', {from:from, to:to, leader:S.args.leader||'', team:S.args.team||'',
+                            user:S.args.user||''}).then(function(d){
     var t=d.totals;
     HEAD = '<div class="kpis">'
       + kpi('Calls', money(t.calls), d.from+' → '+d.to)
@@ -2428,8 +2491,16 @@ VIEWS.calls = function(){
         + (d.teams||[]).map(function(x){
             return '<option value="'+esc(x.team)+'"'+(S.args.team===x.team?' selected':'')+'>'+esc(x.team)+'</option>'; }).join('')
         + '</select>'
+        /* BY USER: their teams, and everybody on them. Not that one person -- "how is Juma's
+           patch doing" is meaningless without the officers beside him. */
+        + '<select data-arg="user"><option value="">Watumiaji wote / Every user</option>'
+        + (d.users_||[]).map(function(x){
+            return '<option value="'+esc(x)+'"'+(S.args.user===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('')
+        + '</select>'
         + (d.leader ? '<span class="chip ok" style="margin-left:8px">' + esc(d.leader) + ' \u00B7 '
-            + (d.scope === 'ALL' ? 'timu zote' : (d.scope||[]).length + ' timu') + '</span>' : ''))
+            + (d.scope === 'ALL' ? 'timu zote' : (d.scope||[]).length + ' timu') + '</span>' : '')
+        + (d.user ? '<span class="chip ok" style="margin-left:8px">' + esc(d.user) + ' \u00B7 '
+            + (d.userTeams||[]).length + ' timu \u00B7 na wenzake / with their teams\u2019 users</span>' : ''))
       // The backend already computed all five of v1's breakdowns; only the officer table was
       // ever shown, so category, outcome, team and per-day were computed and thrown away.
       // Category and outcome answer different questions and carry different columns, so they
@@ -2744,7 +2815,12 @@ VIEWS.credit = function(){
             return '<option'+(S.filters.state===s?' selected':'')+'>'+s+'</option>'; }).join('') + '</select>'
         + '<span class="chip">Count 1–6 portfolio · '+money(d.portfolio.length)+' customers</span>');
     S.rows = d.portfolio;
+    /* The guarantor and their number: this is a list for RINGING PEOPLE, and the number you
+       ring when the customer does not answer was the one column not on it. */
     S.cols = [col('ref','REF#'), col('full_name','Customer'), col('team','Team'), col('analyst','Analyst'),
+      {key:'contact', label:'Contact', kind:'tel'},
+      col('guarantor_name','Guarantor'),
+      {key:'guarantor_contact', label:'G. Contact', kind:'tel'},
       {key:'paid', label:'Paid', kind:'num', get:function(r){ return (r.paid||0)+'/12'; }},
       col('initArr','Init arrears','money'), col('curArr','Current','money'),
       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
@@ -2843,8 +2919,13 @@ VIEWS.teams = function(){
                   + '<td class="r"><button class="btn sm ghost" data-agent="'+esc(a.user_id)+'">Badili / Edit</button></td></tr>';
               }).join('') + '</tbody></table></div></div>'
           : '')
+      /* DOWNLOAD, EDIT, UPLOAD. Forty rows of twenty columns is not something anybody should
+         retype, and the file that comes out is in exactly the shape the importer reads -- so
+         it goes straight back in through Upload Reports > Teams after a few cells change. */
       + (S.me.can.admin ? bar('<button class="btn sm" id="newTeam">+ Timu mpya / New team</button>'
-          + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
+          + '<button class="btn sm ghost" id="teamsDl" style="margin-left:8px">\u2b07 Pakua orodha / Download leaders sheet</button>'
+          + '<a class="btn sm ghost" href="/upload?admin=1" style="margin-left:8px">\u2b06 Pakia iliyohaririwa / Upload the edited one</a>'
+          + '<span style="font-size:12px;color:var(--mut);margin-left:8px">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
     S.cols = [col('team','Team'),
       // The code field officers sign in with. Shown in clear on purpose: the PMO reads it out
