@@ -2545,6 +2545,179 @@ async function removeCallUser(db, user, p) {
    row per customer, rebuilt from each Current deck, holding the officers' live working list
    with their promises and comments on it. "Delete a date" has no meaning there, and the
    nearest thing it could mean would wipe the book everyone is working from. */
+/* =====================================================================================
+   THE SUPERSEDED UPLOADS -- every copy of a day except the one that counts.
+   =====================================================================================
+   "Help me delete if there exist duplicate data since I thought we weren't overiting a days
+    reports and I was uploading like every half an hour so leave the last uploads"
+
+   Nothing was ever double-counted: the snapshot tables are append-only BY DESIGN and every
+   read takes the latest upload_batch within a date, so a file sent thirty times shows up once.
+   What it does do is FILL THE DATABASE -- thirty copies of thirty thousand customers is nine
+   hundred thousand rows nobody will ever read, and every range read pays to skip past them.
+
+   So this deletes the losing batches and keeps the winning one, per day, per type, per weekday.
+   It is exactly the batch rule, run as a broom rather than as a filter -- which is why it can
+   never change a figure: the rows it removes are precisely the rows every read was already
+   ignoring.
+
+   IT COUNTS BEFORE IT CUTS. Called with dryRun it reports what would go and touches nothing,
+   because "delete most of the database" is not a button anybody should press blind.
+
+   IT WORKS IN BOUNDED BITES. A book uploaded every half hour for weeks has hundreds of losing
+   batches, and one delete per batch would run past the platform's sixty seconds. It stops at
+   `limit` batches and says how many are left, so it can be run again until it reports none. */
+const SUPERSEDED_SOURCES = [
+  { table: 'repayment_snapshots', label: 'Expected Repayment',
+    fn: 'expected_snapshot_totals', keys: ['snapshot_date', 'snapshot_type'] },
+  { table: 'defaulter_snapshots', label: 'Defaulters',
+    fn: 'defaulter_snapshot_totals', keys: ['snapshot_date', 'snapshot_type', 'weekday'] },
+  { table: 'snapshot_summaries', label: 'Summaries',
+    fn: null, keys: ['kind', 'snapshot_date', 'snapshot_type', 'weekday'] },
+];
+
+/** One row per (group, batch) with a row count and the batch's newest created_at -- which is
+    everything the batch rule needs and nothing else. Taken from the totals functions where they
+    exist, because asking the database to group is the whole point of them; where they do not,
+    the grouping columns are read directly, which is narrow enough to be affordable for a
+    maintenance action nobody runs twice a day. */
+async function batchCensus(db, src, from, to) {
+  if (src.fn) {
+    const args = src.table === 'repayment_snapshots'
+      ? { p_from: from, p_to: to, p_type: null, p_teams: null }
+      : { p_from: from, p_to: to, p_type: null, p_teams: null, p_weekday: null };
+    const { data, error } = await runQuery(() => db.rpc(src.fn, args));
+    if (!error && Array.isArray(data)) {
+      return data.map(r => ({ ...r, n: num(r.customers) }));
+    }
+  }
+  const cols = src.keys.concat(['upload_batch', 'created_at']).join(', ');
+  const rows = await fetchAll(() => db.from(src.table).select(cols)
+    .gte('snapshot_date', from).lte('snapshot_date', to));
+  return rows.map(r => ({ ...r, n: 1 }));
+}
+
+/* =====================================================================================
+   CHANGING YOUR OWN CODE.
+   =====================================================================================
+   "and i can change my admin password in my admin a/c please"
+
+   The access code IS the password in this system -- it decides who you are, which teams you
+   see and what you may change. Until now it could only be changed from the Access Codes screen,
+   which is an admin editing SOMEBODY ELSE's row; changing your own meant typing your new secret
+   into a list of everyone's, in a screen designed for administering other people.
+
+   THE OLD CODE IS REQUIRED even though the caller is already signed in. A portal session is a
+   code held in a browser, so "already signed in" is exactly the state somebody is in when they
+   have walked away from an unlocked screen -- and this is the one change that would lock the
+   real owner out of their own account.
+
+   NOTHING ELSE IN THE DATABASE POINTS AT A CODE. Nothing carries it as a foreign key, so this
+   is a straight update of one row -- but the phones that registered with the OLD code are
+   holding a device registration, not the code itself, so they keep working. That is the right
+   outcome: changing a password should not un-register the field.
+
+   It is NOT admin-only. Every leader has a code and every leader's code is their authority; a
+   rule that only admins may change their own would be the wrong way round. */
+async function changeMyCode(db, user, p) {
+  const oldCode = String((p && p.oldCode) || '').trim();
+  const newCode = String((p && p.newCode) || '').trim();
+  const again = String((p && p.confirmCode) || '').trim();
+
+  if (!oldCode || !newCode) throw badRequest('Weka msimbo wa sasa na mpya. / Enter your current code and the new one.');
+  if (String(oldCode).toUpperCase() !== String(user.code || '').toUpperCase()) {
+    throw forbidden('Msimbo wa sasa si sahihi. / That is not your current code.');
+  }
+  if (again && again !== newCode) {
+    throw badRequest('Misimbo miwili mipya haifanani. / The two new codes do not match.');
+  }
+  /* Six characters is the same floor a team code has, and for the same reason: a short one gets
+     guessed. Letters and digits only -- a code is read out over the phone and written on paper,
+     and a space or a punctuation mark in it is a support call. */
+  if (newCode.length < 6) throw badRequest('Msimbo mpya uwe na herufi 6 au zaidi. / The new code needs 6 characters or more.');
+  if (!/^[0-9A-Za-z]+$/.test(newCode)) throw badRequest('Tumia herufi na namba pekee. / Letters and numbers only.');
+  if (String(newCode).toUpperCase() === String(oldCode).toUpperCase()) {
+    throw badRequest('Msimbo mpya ni ule ule. / That is the same code.');
+  }
+
+  // Case-insensitively, because sign-in now matches that way -- so a code differing only in
+  // case from somebody else's would be an ambiguity the door refuses, locking BOTH of them out.
+  const taken = await fetchAll(() => db.from('access_codes').select('code'));
+  if (taken.some(c => String(c.code).toUpperCase() === newCode.toUpperCase())) {
+    throw badRequest('Msimbo huo unatumika. / That code is already in use.');
+  }
+
+  const { error } = await db.from('access_codes').update({ code: newCode }).eq('code', user.code);
+  if (error) throw new Error(error.message);
+  return { ok: true, code: newCode };
+}
+
+async function purgeSuperseded(db, user, p, nowMs) {
+  requireAdmin(user);
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(p && p.to)) ? p.to : todayKey(nowMs);
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(p && p.from)) ? p.from : '0001-01-01';
+  const dryRun = !(p && p.confirm === true);
+  const limit = Math.max(1, Math.min(400, parseInt((p && p.limit) || 0, 10) || 120));
+
+  const report = [];
+  let deletedBatches = 0, remaining = 0;
+  for (const src of SUPERSEDED_SOURCES) {
+    let census;
+    try { census = await batchCensus(db, src, from, to); }
+    catch (e) { continue; }                    // a table that does not exist yet: nothing to sweep
+    if (!census.length) { report.push({ table: src.table, label: src.label, groups: 0, losingBatches: 0, rows: 0 }); continue; }
+
+    // Group exactly the way every read groups, then let the shared rule name the winner.
+    const groups = new Map();
+    for (const r of census) {
+      const k = src.keys.map(c => String(r[c] == null ? '' : r[c])).join('\u0001');
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    let losing = 0, rowsGoing = 0;
+    const doomed = [];
+    for (const [, rows] of groups) {
+      const keep = pickLatestBatch(rows);
+      const winner = keep.length ? (keep[0].upload_batch || null) : null;
+      const others = new Map();
+      for (const r of rows) {
+        const b = r.upload_batch || null;
+        if (b === winner) continue;
+        if (!others.has(b)) others.set(b, { batch: b, n: 0, row: r });
+        others.get(b).n += r.n;
+      }
+      for (const o of others.values()) { losing++; rowsGoing += o.n; doomed.push({ ...o, keyRow: o.row }); }
+    }
+    report.push({ table: src.table, label: src.label, groups: groups.size, losingBatches: losing, rows: rowsGoing });
+
+    if (!dryRun) {
+      for (const d of doomed) {
+        if (deletedBatches >= limit) { remaining++; continue; }
+        /* Scoped to the GROUP as well as the batch. An upload_batch is a uuid and is already
+           unique to one upload, but naming the day and type too means a delete can never reach
+           further than the group it was decided in -- and this is a delete of most of the
+           database, so it is worth being unable to go wrong rather than merely unlikely to. */
+        let q = db.from(src.table).delete();
+        for (const c of src.keys) {
+          const v = d.keyRow[c];
+          q = (v == null ? q.is(c, null) : q.eq(c, v));
+        }
+        q = d.batch == null ? q.is('upload_batch', null) : q.eq('upload_batch', d.batch);
+        const { error } = await q;
+        if (error) throw new Error(error.message);
+        deletedBatches++;
+      }
+    }
+  }
+  return {
+    dryRun, from, to, limit,
+    report,
+    totalBatches: report.reduce((s, r) => s + r.losingBatches, 0),
+    totalRows: report.reduce((s, r) => s + r.rows, 0),
+    deletedBatches, remainingBatches: remaining,
+  };
+}
+
 const SNAPSHOT_SOURCES = {
   expected: { table: 'repayment_snapshots', label: 'Expected Repayment', dateCol: 'snapshot_date', bytes: 456 },
   defaulters: { table: 'defaulter_snapshots', label: 'Defaulters', dateCol: 'snapshot_date', bytes: 498 },
@@ -2976,7 +3149,7 @@ const FN = {
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
-  storageUsage, purgeSnapshots, uploadStatus, followupClean,
+  storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,

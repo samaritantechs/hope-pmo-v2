@@ -3325,3 +3325,165 @@ test('the fallback order is a rule of its own, testable without a database', () 
   assert.deepEqual(demandContact({ name: 'A' }, { team: 'T', gmo: 'A', recovery_no: '222' }, '999'),
     { phone: '222', source: 'recovery' });
 });
+
+/* =====================================================================================
+   CHANGING YOUR OWN CODE.
+   =====================================================================================
+   "and i can change my admin password in my admin a/c please"
+
+   The access code IS the password: it decides who you are, which teams you see and what you
+   may change. This is the one change that can lock the real owner out of their own account, so
+   every guard on it is worth a test.
+*/
+const CODE_OWNER = () => ({
+  access_codes: [
+    { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] },
+    { code: 'LEADER1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] },
+  ],
+  teams: [{ team: 'KONGOWE' }],
+});
+const ME = { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
+
+test('an admin can change their own code', async () => {
+  const db = fakeDb(CODE_OWNER());
+  const r = await portalApi(db, ME, 'changeMyCode',
+    { oldCode: 'ADMIN1', newCode: 'NEWPASS9', confirmCode: 'NEWPASS9' }, NOW);
+  assert.equal(r.ok, true);
+  const codes = db._dump('access_codes').map(c => c.code).sort();
+  assert.deepEqual(codes, ['LEADER1', 'NEWPASS9']);
+  // Their name, role and teams survive -- this changes the secret, not the person.
+  const row = db._dump('access_codes').find(c => c.code === 'NEWPASS9');
+  assert.equal(row.name, 'THE ADMIN');
+  assert.equal(row.role, 'ADMIN');
+});
+
+test('the current code is required, even though you are already signed in', async () => {
+  /* A portal session is a code held in a browser, so "already signed in" is exactly the state
+     somebody is in when they have walked away from an unlocked screen. */
+  const db = fakeDb(CODE_OWNER());
+  await assert.rejects(
+    () => portalApi(db, ME, 'changeMyCode', { oldCode: 'WRONG1', newCode: 'NEWPASS9' }, NOW),
+    e => e.status === 403);
+  assert.deepEqual(db._dump('access_codes').map(c => c.code).sort(), ['ADMIN1', 'LEADER1']);
+});
+
+test('a new code that is already somebody else\'s is refused', async () => {
+  /* Case-insensitively, because sign-in now matches that way -- so a code differing only in
+     case from somebody else's would be an ambiguity the door refuses, locking BOTH out. */
+  const db = fakeDb(CODE_OWNER());
+  await assert.rejects(
+    () => portalApi(db, ME, 'changeMyCode', { oldCode: 'ADMIN1', newCode: 'LEADER1' }, NOW),
+    /already in use/i);
+  await assert.rejects(
+    () => portalApi(db, ME, 'changeMyCode', { oldCode: 'ADMIN1', newCode: 'leader1' }, NOW),
+    /already in use/i);
+});
+
+test('a short, punctuated, mistyped or unchanged code is refused', async () => {
+  const db = fakeDb(CODE_OWNER());
+  const bad = async (p, re) => assert.rejects(
+    () => portalApi(db, ME, 'changeMyCode', { oldCode: 'ADMIN1', ...p }, NOW), re);
+  await bad({ newCode: 'AB12' }, /6 characters/);
+  await bad({ newCode: 'NEW PASS 9' }, /Letters and numbers/);
+  await bad({ newCode: 'NEWPASS9', confirmCode: 'NEWPASS8' }, /do not match/);
+  await bad({ newCode: 'ADMIN1' }, /same code/);
+  await bad({ newCode: '' }, /current code and the new one/);
+  assert.deepEqual(db._dump('access_codes').map(c => c.code).sort(), ['ADMIN1', 'LEADER1']);
+});
+
+test('a leader can change their own code too -- it is not an admin privilege', async () => {
+  /* Every leader has a code and every leader's code is their authority. A rule that only
+     admins may change their own would be the wrong way round. */
+  const db = fakeDb(CODE_OWNER());
+  const lead = { code: 'LEADER1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] };
+  await portalApi(db, lead, 'changeMyCode', { oldCode: 'LEADER1', newCode: 'ASHA2026' }, NOW);
+  assert.ok(db._dump('access_codes').some(c => c.code === 'ASHA2026'));
+});
+
+test('nobody can change somebody else\'s code through this door', async () => {
+  const db = fakeDb(CODE_OWNER());
+  const lead = { code: 'LEADER1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] };
+  await assert.rejects(
+    () => portalApi(db, lead, 'changeMyCode', { oldCode: 'ADMIN1', newCode: 'STOLEN99' }, NOW),
+    e => e.status === 403);
+  assert.deepEqual(db._dump('access_codes').map(c => c.code).sort(), ['ADMIN1', 'LEADER1']);
+});
+
+/* =====================================================================================
+   SWEEPING UP THE SUPERSEDED UPLOADS.
+   =====================================================================================
+   "I thought we weren't overiting a days reports and I was uploading like every half an hour
+    so leave the last uploads"
+
+   Nothing was ever double-counted -- every read already takes the latest batch. What thirty
+   copies of a day do is fill the database. This removes precisely the rows every read was
+   already ignoring, which is why it cannot change a figure.
+*/
+const DUP_BOOK = () => {
+  const t = tables();
+  const E2 = (ref, amt, batch, hour) => ({
+    ref, full_name: 'C' + ref, team: 'KONGOWE', payment_expected: amt, arrears: 0,
+    todays_status: 'UNPAID', snapshot_type: 'today', snapshot_date: TODAY,
+    upload_batch: batch, created_at: TODAY + 'T' + hour + ':00:00Z',
+  });
+  // The same day uploaded three times, half an hour apart.
+  t.repayment_snapshots = [
+    E2('A', 100, 'b08', '08'), E2('B', 100, 'b08', '08'),
+    E2('A', 200, 'b09', '09'), E2('B', 200, 'b09', '09'),
+    E2('A', 300, 'b10', '10'), E2('B', 300, 'b10', '10'),
+  ];
+  t.defaulter_snapshots = [];
+  return t;
+};
+
+test('a dry run counts the duplicates and deletes nothing', async () => {
+  const db = fakeDb(DUP_BOOK());
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', {}, NOW);
+  assert.equal(r.dryRun, true);
+  assert.equal(r.totalBatches, 2, 'two losing uploads of the one day');
+  assert.equal(r.totalRows, 4);
+  assert.equal(r.deletedBatches, 0);
+  assert.equal(db._dump('repayment_snapshots').length, 6, 'and nothing was touched');
+});
+
+test('confirming keeps the last upload and removes the rest', async () => {
+  const db = fakeDb(DUP_BOOK());
+  const before = await portalApi(db, ADMIN, 'expected', {}, NOW);
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true }, NOW);
+  assert.equal(r.deletedBatches, 2);
+  const left = db._dump('repayment_snapshots');
+  assert.equal(left.length, 2);
+  assert.ok(left.every(x => x.upload_batch === 'b10'), 'the 10:00 upload is the one that stayed');
+
+  // THE POINT: the figures cannot move, because what went is what every read already skipped.
+  const after = await portalApi(db, ADMIN, 'expected', {}, NOW);
+  assert.equal(after.totals.expected, before.totals.expected);
+  assert.equal(after.count, before.count);
+  // Running it again finds nothing left to do.
+  const again = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true }, NOW);
+  assert.equal(again.totalBatches, 0);
+});
+
+test('the sweep works in bounded bites and says what is left', async () => {
+  /* A book uploaded every half hour for weeks has hundreds of losing batches, and one delete
+     per batch would run past the platform's sixty seconds. */
+  const db = fakeDb(DUP_BOOK());
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true, limit: 1 }, NOW);
+  assert.equal(r.deletedBatches, 1);
+  assert.equal(r.remainingBatches, 1, 'so it can be run again until it reports none');
+  assert.equal(db._dump('repayment_snapshots').length, 4);
+});
+
+test('a day with only one upload is left completely alone', async () => {
+  const db = fakeDb(tables());
+  const before = db._dump('repayment_snapshots').length;
+  const r = await portalApi(db, ADMIN, 'purgeSuperseded', { confirm: true }, NOW);
+  assert.equal(r.totalBatches, 0);
+  assert.equal(db._dump('repayment_snapshots').length, before);
+});
+
+test('only an admin may sweep', async () => {
+  const db = fakeDb(DUP_BOOK());
+  await assert.rejects(() => portalApi(db, GMO, 'purgeSuperseded', { confirm: true }, NOW),
+    e => e.status === 403);
+});
