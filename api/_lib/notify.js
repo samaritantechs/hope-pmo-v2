@@ -45,23 +45,58 @@ export const notifKeyFor = who => 'NOTIF_SEEN_' + String(who || '').toUpperCase(
  *  history. That is the honest thing for a badge to mean: nobody is going to read the four
  *  hundred and first, and the badge already caps its display at 9+.
  */
-export async function notifCore(db, user, seenKey) {
+/* `nowMs` is injected like every other core function in this system. It used to read the real
+   clock for the promise window, which made the bell the one thing that could not be tested at a
+   pinned time -- and a notification about a DATE is exactly the thing worth testing at a pinned
+   time. */
+export async function notifCore(db, user, seenKey, nowMs = Date.now()) {
   const teams = user && user.teams ? upper(user.teams) : null;
   const newest = (table, cols) => {
     let q = db.from(table).select(cols).order('created_at', { ascending: false }).limit(NOTIF_LIMIT);
     if (teams && teams.length) q = q.in('team', teams);
     return q;
   };
-  const [compRes, cmtRes, seenRes] = await Promise.all([
+  /* PROMISES THAT HAVE COME DUE.
+     "Ameweka ahadi should also pop into notification when their date reaches"
+
+     A promise is the one thing in this system with a date attached that nobody is told about.
+     It was logged days ago, it sits in the Promise to Pay tab, and unless somebody opens that
+     tab on the right morning it passes silently -- which is exactly the day it was worth
+     acting on.
+
+     TODAY AND THE DAYS JUST BEHIND IT, not today alone: a promise that came due on Saturday
+     has to still be on the bell on Monday, and one nobody chased on Tuesday is more urgent on
+     Wednesday, not less. Bounded at a week so the bell stays a list of what is live rather
+     than a graveyard.
+
+     A promise whose customer has since cleared is dropped -- they paid, which is the outcome
+     the promise existed for, and telling somebody to chase it would be worse than saying
+     nothing. */
+  const todayKey = new Date(nowMs + 3 * 3600 * 1000).toISOString().slice(0, 10);   // EAT
+  const weekBack = new Date(nowMs + 3 * 3600 * 1000 - 7 * 86400000).toISOString().slice(0, 10);
+  const promiseQ = () => {
+    let q = db.from('followup_status')
+      .select('ref, team, full_name, contact, arrears, promise_date, promise_amt, fu_status, comment_by')
+      .gte('promise_date', weekBack).lte('promise_date', todayKey)
+      .order('promise_date', { ascending: false }).limit(NOTIF_LIMIT);
+    if (teams && teams.length) q = q.in('team', teams);
+    return q;
+  };
+  const [compRes, cmtRes, promRes, seenRes] = await Promise.all([
     /* logged_by, not created_by -- that is the column complaints actually has, and asking for
        the other one failed the WHOLE read, which is what left the bell saying it could not
        load. The comment log does use created_by; the two tables simply name it differently. */
     runQuery(() => newest('complaints', 'id, ref, team, complainant, details, category, created_at, logged_by')),
     runQuery(() => newest('followup_comments', 'id, ref, team, full_name, comment, fu_status, created_at, created_by')),
+    runQuery(promiseQ),
     runQuery(() => db.from('settings').select('key, value').eq('key', seenKey)),
   ]);
   for (const r of [compRes, cmtRes, seenRes]) if (r.error) throw new Error(r.error.message || String(r.error));
+  /* The promise read is allowed to fail quietly. It is an addition to the bell, and a bell that
+     stops showing complaints and comments because one extra query was refused is a worse bell
+     than one without promises in it. */
   const comp = compRes.data || [], cmts = cmtRes.data || [], seenRows = seenRes.data || [];
+  const proms = (promRes && !promRes.error && promRes.data) ? promRes.data : [];
   const seenAt = (seenRows[0] && seenRows[0].value) || '';
 
   /* scoped() still runs. It is the rule, and a narrowing that quietly stopped working must not
@@ -80,6 +115,24 @@ export async function notifCore(db, user, seenKey) {
       what: String(c.comment || c.fu_status || 'Follow-up').slice(0, 160),
       at: String(c.created_at || ''),
     })),
+    ...scoped(user, proms)
+      .filter(p => p.promise_date && Number(p.arrears || 0) > 0)
+      .map(p => {
+        const due = String(p.promise_date).slice(0, 10);
+        const late = due < todayKey;
+        return {
+          kind: 'promise', id: 'p' + p.ref + due, ref: p.ref, team: p.team,
+          who: p.full_name || '', by: p.comment_by || '',
+          what: (late ? 'Ahadi imepita / promise overdue' : 'Ahadi ya leo / promise due today')
+            + (Number(p.promise_amt || 0) > 0 ? ' \u00B7 TZS ' + Math.round(Number(p.promise_amt)) : '')
+            + ' \u00B7 ' + due,
+          /* Stamped at the START of the due day rather than when the promise was written, so it
+             surfaces on the morning it matters -- a promise made a fortnight ago would
+             otherwise arrive already buried under everything logged since. */
+          at: due + 'T06:00:00.000Z',
+          due, late,
+        };
+      }),
   ].filter(x => x.at)
     /* Two sorted lists merged into one. Each arrived newest-first; interleaving them needs one
        more sort, over a hundred and twenty rows rather than two hundred thousand. */

@@ -928,17 +928,22 @@ test('the bell merges complaints and comments, scoped to your own teams', async 
 
   // A leader over KONGOWE sees their own two and not the other team's.
   const mine = await portalApi(db, GMO, 'notifications', {}, NOW);
-  // Ids are prefixed by stream so a complaint and a comment can never collide on the same key.
-  assert.deepEqual(mine.items.map(i => i.id), ['cp1', 'ff1']);
+  /* Ids are prefixed by stream so a complaint, a comment and a promise can never collide on
+     the same key. Filtered to the two streams this test is about -- the fixture also carries a
+     promise that came due yesterday, which the bell now shows and which has its own tests. */
+  const twoStreams = mine.items.filter(i => i.kind === 'complaint' || i.kind === 'comment');
+  assert.deepEqual(twoStreams.map(i => i.id), ['cp1', 'ff1']);
   assert.equal(mine.items.every(i => i.team === 'KONGOWE'), true);
   assert.equal(JSON.stringify(mine).includes('nje ya timu'), false, "another team's complaint leaked");
 
   // Newest first -- the complaint at 09:00 above the comment at 08:00.
-  assert.equal(mine.items[0].kind, 'complaint');
-  assert.equal(mine.items[1].kind, 'comment');
+  assert.equal(twoStreams[0].kind, 'complaint');
+  assert.equal(twoStreams[1].kind, 'comment');
 
-  // Everything is unseen until somebody says otherwise.
-  assert.equal(mine.unseen, 2);
+  // Everything is unseen until somebody says otherwise -- the two here plus the fixture's
+  // promise, which came due yesterday and is now on the bell too.
+  assert.equal(mine.unseen, mine.items.length);
+  assert.equal(twoStreams.filter(i => i.unseen).length, 2);
 
   // Marking them read is PER CODE: one supervisor clearing their bell must not clear another's.
   await portalApi(db, GMO, 'notifSeen', {}, Date.parse(TODAY + 'T11:00:00Z'));
@@ -3606,4 +3611,152 @@ test('the log reads newest first and says so when it is not set up', async () =>
   assert.equal(gone.available, false);
   assert.match(gone.note, /2026-08-09c-audit-log\.sql/,
     'an empty audit log reads as "nobody did anything" -- it has to say which it is');
+});
+
+/* =====================================================================================
+   THE FOLLOW-UP STATUS LIST IS EDITABLE; ITS BEHAVIOURS ARE NOT.
+   =====================================================================================
+   "edit existing/add new fu_status; new ones should be plain-comment type with no calendar or
+    new-number characteristics"
+
+   The built-in ten are the ones the SYSTEM behaves differently for -- AMETOA AHADI opens a
+   promise date and feeds the promise report and now the bell; ANA NAMBA NYINGINE opens a
+   replacement number. Those are wired into other screens, not decorations on a word.
+*/
+test('an admin can add a status, and it is a plain comment', async () => {
+  const db = fakeDb(tables());
+  const before = await portalApi(db, ADMIN, 'fuStatuses', {}, NOW);
+  assert.ok(before.fuStatuses.includes('AMETOA AHADI'));
+  assert.deepEqual(before.fuNeedDate, ['AMETOA AHADI']);
+
+  const after = await portalApi(db, ADMIN, 'fuStatusesSave',
+    { list: before.fuStatuses.join('\n') + '\nAMEHAMIA\nKAFARIKI' }, NOW);
+  assert.ok(after.fuStatuses.includes('AMEHAMIA'));
+  assert.ok(after.fuStatuses.includes('KAFARIKI'));
+  // THE POINT: nothing new acquires a calendar or a number box.
+  assert.deepEqual(after.fuNeedDate, ['AMETOA AHADI']);
+  assert.deepEqual(after.fuNeedNumber, ['ANA NAMBA NYINGINE']);
+  assert.ok(!after.fuNeedDate.includes('AMEHAMIA'));
+});
+
+test('removing a built-in takes its behaviour with it', async () => {
+  /* A deployment with no use for AMETOA AHADI must not be left with a calendar for a word
+     nobody can choose. */
+  const db = fakeDb(tables());
+  const r = await portalApi(db, ADMIN, 'fuStatusesSave',
+    { list: 'HAPATIKANI\nANALIPA LEO\nANA NAMBA NYINGINE' }, NOW);
+  assert.deepEqual(r.fuStatuses, ['HAPATIKANI', 'ANALIPA LEO', 'ANA NAMBA NYINGINE']);
+  assert.deepEqual(r.fuNeedDate, [], 'the promise date goes with the promise status');
+  assert.deepEqual(r.fuNeedNumber, ['ANA NAMBA NYINGINE'], 'and the one still listed keeps its box');
+});
+
+test('the list cannot be emptied by accident', async () => {
+  /* An empty dropdown is a screen nobody can use. Somebody clearing the box must not be able
+     to stop the whole company logging a follow-up. */
+  const db = fakeDb(tables());
+  for (const empty of ['', '   ', '\n\n', null, undefined]) {
+    const r = await portalApi(db, ADMIN, 'fuStatusesSave', { list: empty }, NOW);
+    assert.ok(r.fuStatuses.length >= 10, 'falls back to the built-in ten: ' + JSON.stringify(empty));
+  }
+});
+
+test('the same word twice is one option, not two', async () => {
+  const db = fakeDb(tables());
+  const r = await portalApi(db, ADMIN, 'fuStatusesSave',
+    { list: 'ANALIPA LEO\nanalipa leo\nAMEHAMIA' }, NOW);
+  assert.deepEqual(r.fuStatuses, ['ANALIPA LEO', 'AMEHAMIA']);
+});
+
+test('only an admin may edit the list', async () => {
+  const db = fakeDb(tables());
+  await assert.rejects(() => portalApi(db, GMO, 'fuStatusesSave', { list: 'X\nY' }, NOW),
+    e => e.status === 403);
+  // But anyone signed in may read it -- every screen with a follow-up form needs it.
+  const r = await portalApi(db, GMO, 'fuStatuses', {}, NOW);
+  assert.ok(r.fuStatuses.length > 0);
+});
+
+test('the phone gets the edited list, not the built-in one', async () => {
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'fuStatusesSave', { list: 'ANALIPA LEO\nAMEHAMIA' }, NOW);
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const t = db._dump('teams').find(x => x.team === 'KONGOWE');
+  t.team_code = 'KON123';                       // this book has no codes; the phone needs one
+  await callApi(db, 'api_callRegister', ['dfu', 'JUMA ISSA', '', '', '0712999444', 'KON123'], NOW);
+  const boot = await callApi(db, 'api_callBoot', ['dfu'], NOW);
+  assert.deepEqual(boot.fuStatuses, ['ANALIPA LEO', 'AMEHAMIA'],
+    'one list, or the office and the field are logging different vocabularies');
+  assert.deepEqual(boot.fuNeedDate, []);
+});
+
+/* =====================================================================================
+   A PROMISE THAT HAS COME DUE REACHES THE BELL.
+   =====================================================================================
+   "Ameweka ahadi should also pop into notification when their date reaches"
+
+   A promise is the one thing in this system with a date attached that nobody was told about.
+   It sat in the Promise to Pay tab, and unless somebody opened that tab on the right morning
+   it passed silently -- which is exactly the day it was worth acting on.
+*/
+const PROMISE_BOOK = (dates) => {
+  const t = tables();
+  t.followup_status = dates.map((d, i) => ({
+    ref: 'P' + i, team: 'KONGOWE', full_name: 'PROMISER ' + i, contact: '07140001' + i,
+    arrears: d.arrears == null ? 5000 : d.arrears, status: 'Defaulter',
+    fu_status: 'AMETOA AHADI', promise_date: d.on, promise_amt: 2000, comment_by: 'JUMA G',
+  }));
+  return t;
+};
+
+test('a promise due today is on the bell', async () => {
+  const d = await portalApi(fakeDb(PROMISE_BOOK([{ on: TODAY }])), ADMIN, 'notifications', {}, NOW);
+  const p = d.items.find(x => x.kind === 'promise');
+  assert.ok(p, 'the promise has to appear at all');
+  assert.equal(p.ref, 'P0');
+  assert.equal(p.late, false);
+  assert.match(p.what, /leo|today/i);
+  assert.match(p.what, new RegExp(TODAY));
+});
+
+test('a promise nobody chased is more urgent, not less', async () => {
+  const d = await portalApi(fakeDb(PROMISE_BOOK([{ on: YEST }])), ADMIN, 'notifications', {}, NOW);
+  const p = d.items.find(x => x.kind === 'promise');
+  assert.ok(p, 'a promise that came due on Saturday must still be there on Monday');
+  assert.equal(p.late, true);
+  assert.match(p.what, /overdue|imepita/i);
+});
+
+test('a promise still in the future is not on the bell yet', async () => {
+  const later = '2026-07-31';
+  const d = await portalApi(fakeDb(PROMISE_BOOK([{ on: later }])), ADMIN, 'notifications', {}, NOW);
+  assert.equal(d.items.filter(x => x.kind === 'promise').length, 0);
+});
+
+test('a promise whose customer has cleared is dropped', async () => {
+  /* They paid, which is the outcome the promise existed for. Telling somebody to chase it
+     would be worse than saying nothing. */
+  const d = await portalApi(fakeDb(PROMISE_BOOK([{ on: TODAY, arrears: 0 }])), ADMIN, 'notifications', {}, NOW);
+  assert.equal(d.items.filter(x => x.kind === 'promise').length, 0);
+});
+
+test('a promise on another team stays on that team', async () => {
+  const book = PROMISE_BOOK([{ on: TODAY }]);
+  book.followup_status[0].team = 'MBAGALA';
+  const d = await portalApi(fakeDb(book), GMO, 'notifications', {}, NOW);
+  assert.equal(d.items.filter(x => x.kind === 'promise').length, 0);
+});
+
+test('the bell survives a promise read that fails', async () => {
+  /* An addition to the bell must not be able to take the bell down. A bell that stops showing
+     complaints because one extra query was refused is worse than one without promises. */
+  const base = fakeDb(PROMISE_BOOK([{ on: TODAY }]));
+  const db = { from(n) {
+      const q = base.from(n);
+      if (n === 'followup_status') { q.then = (res) => Promise.resolve({ data: null, error: { message: 'nope' } }).then(res); }
+      return q;
+    }, rpc: base.rpc, _dump: n => base._dump(n) };
+  const d = await portalApi(db, ADMIN, 'notifications', {}, NOW);
+  assert.ok(Array.isArray(d.items), 'the bell still answers');
+  assert.equal(d.items.filter(x => x.kind === 'promise').length, 0);
 });

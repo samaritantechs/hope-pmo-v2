@@ -44,6 +44,7 @@ export const AUDITED = new Set([
   'saveCallAgent', 'removeCallUser', 'saveOfficerAccount', 'deleteOfficerAccount',
   // settings & the system switch
   'settingSet', 'settingDelete', 'systemOpenSet', 'commissionSave', 'announceSave',
+  'fuStatusesSave',
   // the customer registers
   'addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint', 'deleteComplaint',
   'addRestructure', 'decideRestructure', 'addDemandNotice',

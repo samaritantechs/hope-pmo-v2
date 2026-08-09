@@ -704,6 +704,22 @@ function findOpen(prefill){
 
 function start(me){
   S.me = me;
+  /* THE FOLLOW-UP STATUS LIST COMES FROM THE DATABASE, not from this file. It is editable in
+     Settings, and the office and the field must offer the same words -- two hard-coded copies
+     drifting apart would have officers and supervisors logging different vocabularies for the
+     same thing, which is invisible until somebody tries to count them.
+
+     Asked for once at sign-in and kept: it changes when an admin edits it, which is roughly
+     never. If the call fails the built-in list below stands, so a follow-up can always be
+     logged -- a form nobody can submit is worse than one offering a slightly old word. */
+  srv('fuStatuses').then(function(f){
+    if (f && f.fuStatuses && f.fuStatuses.length) {
+      FU_STATUSES = f.fuStatuses;
+      FU_NEED_DATE = f.fuNeedDate || [];
+      FU_NEED_NUMBER = f.fuNeedNumber || [];
+      S.fuMeta = f;
+    }
+  }).catch(function(){});
   // Before anything is drawn: the first tab load already uses the remembered-screen window.
   applyCadences(me.ui);
   $('#signin').classList.add('hide');
@@ -1329,6 +1345,21 @@ function wireClean(){
     if (!confirm('Ondoa nakala za upakiaji zilizopitwa?\n\nUpakiaji wa mwisho wa kila siku unabaki.'
       + '\n\nRemove superseded upload copies? The last upload of each day stays, and no figure changes.')) return;
     dupCall(false);
+  };
+
+  var fuListSave = document.getElementById('fuListSave'), fuListOut = document.getElementById('fuListOut');
+  if (fuListSave) fuListSave.onclick = function(){
+    fuListOut.style.display = 'block'; fuListOut.className = 'note';
+    fuListOut.textContent = 'Inahifadhi\u2026';
+    srv('fuStatusesSave', { list: document.getElementById('fuList').value })
+      .then(function(f){
+        FU_STATUSES = f.fuStatuses; FU_NEED_DATE = f.fuNeedDate || [];
+        FU_NEED_NUMBER = f.fuNeedNumber || []; S.fuMeta = f;
+        fuListOut.innerHTML = '<b>' + f.fuStatuses.length + '</b> hali zimehifadhiwa. / statuses saved.'
+          + ' Simu zitapata orodha hii mara moja. / The phones get this list at once.';
+        toast('Imehifadhiwa. / Saved.');
+      })
+      .catch(function(e){ fuListOut.className = 'note bad'; fuListOut.textContent = String(e.message || e); });
   };
 
   /* CHANGING YOUR OWN CODE. It signs you back in with the new one straight away -- the browser
@@ -3114,6 +3145,31 @@ VIEWS.settings = function(){
         + '<div class="clact"><button class="btn sm ghost" id="dupCheck">Angalia / Check first</button>'
         + ' <button class="btn sm danger" id="dupRun">Ondoa nakala / Remove copies</button></div>'
         + '<div id="dupOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+
+      /* THE FOLLOW-UP STATUS LIST. Editable, one per line. The BEHAVIOURS are not editable and
+         the note says so: the built-in words are the ones other screens know by name -- the
+         promise date feeds the Promise to Pay tab and now the bell, the replacement number
+         feeds the phone index -- and a new word that silently acquired a promise date would
+         start writing rows no report knows how to read. */
+      + '<div class="card"><div class="card-h">Hali za ufuatiliaji / Follow-up statuses'
+        + '<span class="sub">moja kwa kila mstari / one per line</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="note" style="display:block">Unaweza kuhariri au kuongeza. Mpya zote ni '
+        + '<b>maoni tu</b> &mdash; hazina kalenda wala kisanduku cha namba mpya.'
+        + '<br><i>Edit or add freely. Anything new is a <b>plain comment</b>: no calendar, no '
+        + 'new-number box. Those belong to the built-in words below, which other screens know by '
+        + 'name &mdash; remove one and its behaviour goes with it.</i></div>'
+        + '<div class="fld"><label>Orodha / The list</label>'
+          + '<textarea id="fuList" rows="12" style="width:100%;padding:10px 12px;border:1.5px solid var(--line);border-radius:11px;font-family:inherit">'
+          + esc((S.fuMeta && S.fuMeta.fuStatuses ? S.fuMeta.fuStatuses : FU_STATUSES).join('\n'))
+          + '</textarea></div>'
+        + '<div class="fldnote">Zenye kalenda / with a calendar: <b>'
+          + esc(((S.fuMeta && S.fuMeta.fuNeedDate) || FU_NEED_DATE).join(', ') || '\u2014') + '</b>'
+          + ' &middot; zenye namba mpya / with a new-number box: <b>'
+          + esc(((S.fuMeta && S.fuMeta.fuNeedNumber) || FU_NEED_NUMBER).join(', ') || '\u2014') + '</b></div>'
+        + '<div class="clact"><button class="btn sm" id="fuListSave">Hifadhi / Save</button></div>'
+        + '<div id="fuListOut" class="note" style="display:none"></div>'
         + '</div></div>'
 
       /* YOUR OWN CODE. The access code IS the password here, and changing it used to mean
