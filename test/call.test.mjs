@@ -58,6 +58,13 @@ function makeTables() {
 // not a team picker -- and their phone still decides who they are.
 const ADMIN_U = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
 async function registeredDb() {
+  /* The summary/widget cache is MODULE-level -- one cache for the whole process, which is right
+     in production (two hundred handsets asking for the same six figures) and wrong between
+     tests: it is keyed on the device, and every fixture here uses the same device names. A test
+     that built a fresh database could therefore be served an answer computed from a PREVIOUS
+     test's book, and pass or fail on that. */
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
   const db = fakeDb(makeTables());
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
