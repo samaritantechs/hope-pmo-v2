@@ -9,6 +9,7 @@ import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList } from './audit.js';
+import { recordPerformance, performanceHistory } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
@@ -1476,6 +1477,13 @@ async function weekly(db, user, { weekOf }, nowMs) {
   teamTotals.recPct = pctOf(teamTotals.recovered, teamTotals.uncollected);
   teamTotals.success = pctOf(teamTotals.cleared + teamTotals.reduced, teamTotals.c16);
   teamTotals.companyTarget = perTarget * Math.max(teamsOut.length, 1);
+
+  /* WRITTEN DOWN AT THE TIME. A record that depends on somebody remembering to press a button
+     is a record with holes in it, and the holes are always the weeks nobody was paying
+     attention -- which are the weeks worth having. This report is opened constantly, so every
+     time it is, the week, month and year it falls in are stamped with what they look like now,
+     copying each leader's NAME AND POSITION as text. See api/_lib/performance.js. */
+  recordPerformance(db, teamsOut, teamRows, mon, nowMs);
 
   return { weekOf: mon, weekEnd: fri, days,
     teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
@@ -3152,12 +3160,19 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
+
+/** THE PERFORMANCE HISTORY TAB. A read of what was recorded, never a recomputation -- the
+    whole point is that these figures are NOT re-derived from a teams table that has since
+    changed. */
+async function perfHistory(db, user, args) {
+  return performanceHistory(db, args || {});
+}
 
 /* THE FOLLOW-UP STATUS LIST. Read by anyone signed in -- every screen with a follow-up form
    needs it -- and written by an admin. The behaviours stay in code; see the note in

@@ -1004,11 +1004,32 @@ async function report(db, [dev, from, to, team], nowMs) {
     the access code's own teams (widened by any teams that person leads live off the teams
     role columns), optionally narrowed to one team the caller may already see. Port of
     api_callReportPortal -- one report implementation for both front ends. */
-export async function reportCoreForPortal(db, user, { from, to, team } = {}, nowMs = Date.now()) {
+export async function reportCoreForPortal(db, user, { from, to, team, leader } = {}, nowMs = Date.now()) {
   const teamRows = await fetchAll(() => db.from('teams').select('*'));
-  const { teamsOf } = buildLeaderMaps(teamRows);
+  const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(user.name)] || {});
   let scope = live.length ? live : user.teams;                 // null stays null = ALL
+
+  /* SORTING BY A LEADER, NOT ONLY BY A TEAM.
+     "at Ripoti not only sorting teams we should also be able to sort by any leaders and their
+      teams will show e.g sorting a pmo recovery then the pmo and other call app users of their
+      intermatching teams appear"
+
+     A leader holds several teams, and the question somebody actually asks is "how is this
+     person's book doing" -- which meant picking their teams out of a forty-line dropdown one at
+     a time and adding the answers up by hand. Naming the leader resolves to exactly the teams
+     they hold, so every officer working under them appears together.
+
+     NARROWED BY WHAT THE CALLER MAY SEE, never widened. Choosing a leader whose teams overlap
+     yours shows the overlap; choosing one whose teams you hold none of shows nothing rather
+     than showing you somebody else's book. A leader filter must not become a way round team
+     scoping. */
+  const wantLead = String(leader || '').trim();
+  if (wantLead) {
+    const theirs = Object.keys(teamsOf[K(wantLead)] || {});
+    scope = scope ? theirs.filter(t => scope.some(s => K(s) === K(t))) : theirs;
+  }
+
   const want = String(team || '').trim();
   if (want) {
     const allowed = !scope || scope.some(t => K(t) === K(want));
@@ -1017,6 +1038,12 @@ export async function reportCoreForPortal(db, user, { from, to, team } = {}, now
   const out = await reportCore(db, scope, from, to, null, nowMs);
   out.ok = true;
   out.scope = scope || 'ALL';
+  /* Every name the teams table carries in a leader column, with the position they hold, so the
+     dropdown can be built from the same map the scoping uses rather than from a second guess
+     about who counts as a leader. */
+  out.leaders = Object.keys(teamsOf).sort().map(n => ({
+    name: n, position: positionOf(posOf, n, ''), teams: Object.keys(teamsOf[n]).length }));
+  out.leader = wantLead || '';
   return out;
 }
 
