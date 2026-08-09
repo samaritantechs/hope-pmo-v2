@@ -8,6 +8,10 @@ import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
+/* The collection role has ONE definition in this system and it lives here -- a setting, not a
+   constant, because it is typed by a person. Asking the same question the PMO board asks is
+   what stops the two screens disagreeing about who is a collection officer. */
+import { isPmoRole, PMO_ROLE_KEY, PMO_ROLE_DEFAULT } from './pmo.js';
 
 /** The HOPE Calls backend, ported from the api_call* family in the live Code.gs -- same
     endpoints, same shapes, so call.html works against either system. Differences are all
@@ -362,7 +366,42 @@ async function calledTodaySet(db, nowMs) {
    the upload, and answering it by hiding the customer would turn a bad column into a customer
    nobody calls.
 */
-const EARLY_ROLES = ['EXPECTED', 'COLLECTION'];
+/* =====================================================================================
+   WHY CATHERINE SAW THE WHOLE BOOK ANYWAY.
+
+     "logged in to catherine and at leo just the first customer is 6-10, at kesho 4-12"
+
+   6-10 is four behind and 4-12 is eight. Neither should have been in front of a collection
+   officer at all -- so the narrowing was not running for her, and the reason was one string.
+
+   This list matched a role by EXACT EQUALITY against the literal word 'COLLECTION'. But no
+   access code in this system says that. A collection officer's role is 'PMO COLLECTION' --
+   pmo.js names it, PMO_ROLE_DEFAULT sets it, the staff roster resolves it through isPmoRole,
+   and register() copies whatever the access code says straight onto call_users.role. So the
+   role on Catherine's handset read 'PMO COLLECTION', matched nothing here, and callRoleKind
+   returned null. Null means "no special case", and no special case means the whole book.
+
+   The name fallback underneath could not save her either: it looks a person up in the teams
+   table's own columns, and a PMO collection officer is deliberately NOT there -- one person
+   holds thirty-odd teams, so their teams live on their ACCESS CODE. That is the right storage
+   decision and it is unchanged; it just meant neither route reached her.
+
+   THE RULE IS NOW WRITTEN THE WAY THE REST OF THE SYSTEM WRITES IT: the collection role is
+   whatever the PMO_ROLE setting says, compared with isPmoRole -- which already forgives case
+   and punctuation, so 'PMO COLLECTION', 'PMO-Collection' and 'pmo collection' are one answer.
+   Rename the role in Settings and this follows it, with no deploy, exactly as intended.
+
+   The other two are matched on the WORD rather than the whole string, because these are typed
+   by a person into a form: 'CREDIT ANALYST', 'Credit', 'EARLY COLLECTION', 'Expected
+   Collection Officer' all say the same thing and all used to fail unless spelled to the
+   character. Deciding on a contained word cannot reach RECOVERY, GMO, MANAGER, BIKE, OPM,
+   LEGAL or ADMIN -- none of them carries any of these words -- so no role that was untouched
+   before becomes narrowed now. */
+const CREDIT_WORDS = ['CREDIT'];
+const EXPECTED_WORDS = ['EXPECTED', 'EARLY'];
+const COLLECTION_WORDS = ['COLLECTION', 'COLLECTOR'];
+const normRole = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+const hasWord = (role, words) => words.some(w => (' ' + role + ' ').includes(' ' + w + ' '));
 
 /** paid-of-target off a "4/6" or "4-6" due summary. null when there is nothing to read. */
 export function dsParts(v) {
@@ -377,14 +416,42 @@ export function dsParts(v) {
     recycling rotation uses), while a collection officer's teams live on their access code and
     the role is written there. Either is enough. */
 export async function callRoleKind(db, user) {
-  const role = K(user && user.role);
-  if (role === 'CREDIT' || role === 'CREDIT ANALYST') return 'CREDIT';
-  if (EARLY_ROLES.includes(role)) return role;
+  /* THE FREE CHECKS FIRST, AND THEY COST NOTHING. This runs on EVERY list load from every
+     handset, so the three special roles resolve on the string alone -- no query at all, where
+     the old code always went on to read the teams table. */
+  const role = normRole(user && user.role);
+  if (role) {
+    if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
+    if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
+    if (hasWord(role, COLLECTION_WORDS)) return 'COLLECTION';
+  }
   const n = K(user && user.name);
   if (!n) return null;
-  const rows = await fetchAll(() => db.from('teams').select('credit, expected'));
+  /* Everyone else -- which on two hundred handsets means nearly everyone, all of them plain
+     OFFICERs -- reaches here, so the two remaining questions are asked SIDE BY SIDE rather
+     than one after the other. The teams read was already on this path before; the setting is
+     new, and in parallel it costs no extra waiting.
+
+     PMO_ROLE is the same question isPmoRole answers for the PMO board, asked the same way, so
+     the two screens can never disagree about who is a collection officer. It is consulted
+     even when the role carries none of the three words, because a deployment is free to
+     rename the role to something with no English in it at all.
+
+     `collection` on the teams table arrived with the contacts migration and is optional like
+     every migration here, so asking for it on a database that has not run one must not take
+     the other two columns down with it -- a thrown column error here would empty the
+     officer's whole list rather than merely skip a rule. */
+  const [pmoName, rows] = await Promise.all([
+    settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT),
+    fetchAll(() => db.from('teams').select('credit, expected, collection'))
+      .catch(() => fetchAll(() => db.from('teams').select('credit, expected'))),
+  ]);
+  if (role && isPmoRole(role, pmoName)) return 'COLLECTION';
+  // Failing the role, by NAME -- the credit analyst and the expected officer genuinely are
+  // columns on the teams table, and `collection` is a name column just like them.
   if (rows.some(t => K(t.credit) === n)) return 'CREDIT';
   if (rows.some(t => K(t.expected) === n)) return 'EXPECTED';
+  if (rows.some(t => K(t.collection) === n)) return 'COLLECTION';
   return null;
 }
 
@@ -444,6 +511,13 @@ async function list(db, [dev, which, which2], nowMs) {
       ref: r.ref, name: r.full_name, contact: r.contact,
       gName: r.guarantor_name, gContact: r.guarantor_contact,
       amt: r.arrears, installment: r.rejesho, custStatus: r.status, fuStatus: r.cycle,
+      /* `initial` is the baseline Rec % divides by. It was left off because nothing on the
+         phone printed it -- but the summary now re-adds itself whenever the GMO/Manager/Bike
+         pill narrows the list, and a percentage cannot be re-derived from arrears and
+         recovered alone (a customer whose arrears GREW has recovered 0, and 0 + arrears is
+         not their baseline). One number per row, so the handset can recompute exactly rather
+         than approximately. */
+      initial: r.initial,
       recovered: r.recovered,
       ds: dsFmt(r.ds), days: r.dc == null ? '' : r.dc, team: r.team,
       called: hit(r.contact, r.guarantor_contact),

@@ -1038,11 +1038,49 @@ function globalSearchRows_(q){
 /* What the leader is owed on this list and what has come back. Sums first, because the
    question at the door is "how much is on me today", and the cycle split under it because
    D-buckets, E-W and C-W are worked differently. */
+/* The server's own sums, re-added on the handset over whichever rows are showing. Identical
+   arithmetic to sumExpdf in api/_lib/expdf.js on purpose -- including Rec % being recovered
+   over INITIAL rather than over arrears -- so the pill narrows the summary without changing
+   what any of its five numbers mean. */
+function xdNum_(v){ return Number(v) || 0; }
+function xdSum_(list){
+  var rec = 0, ini = 0, arr = 0;
+  list.forEach(function(r){ rec += xdNum_(r.recovered); ini += xdNum_(r.initial); arr += xdNum_(r.amt); });
+  return { customers: list.length, arrears: arr, initial: ini, recovered: rec,
+    pct: ini > 0 ? Math.round((rec / ini) * 1000) / 10 : null };
+}
+function xdGroup_(list, keyFn, label){
+  var by = {};
+  list.forEach(function(r){
+    var k = keyFn(r);
+    if (!by[k]) by[k] = { key: k, rows: [] };
+    by[k].rows.push(r);
+  });
+  return Object.keys(by).map(function(k){
+    var s = xdSum_(by[k].rows), o = { customers: s.customers, arrears: s.arrears,
+      initial: s.initial, recovered: s.recovered, pct: s.pct };
+    o[label] = k;
+    return o;
+  }).sort(function(a, b){ return b.arrears - a.arrears; });
+}
 function drawExpdfStrip_(){
   var el = $('#expdfStrip');
   if (!el) return;
   if (S.view !== 'expdf' || !S.expdf){ el.classList.add('hide'); return; }
-  var t = S.expdf.totals || {};
+  /* THE SUMMARY DESCRIBES THE LIST UNDERNEATH IT, whichever role pill is pressed.
+     The server sends totals for the whole scope. Leaving them there while Bike narrows the
+     list below would print the GMO's money over the bike officer's customers -- the summary
+     and the list would be two different answers stacked on top of each other, and the one in
+     bigger type would be the wrong one. So when a role is selected every figure here is
+     re-added from the rows actually showing. With no role selected the server's own totals
+     are used untouched, so nothing moves for anyone who does not press a pill. */
+  var rShown = S.expdfRole ? filterForView_(S.cache.expdf || [], 'expdf') : null;
+  var t = rShown ? xdSum_(rShown) : (S.expdf.totals || {});
+  var byCycle = rShown ? xdGroup_(rShown, function(r){ return r.fuStatus || '—'; }, 'cycle')
+    : (S.expdf.byCycle || []);
+  var byLeader = rShown ? xdGroup_(rShown, function(r){
+      return (r.leader || '(unassigned)') + ' · ' + (r.role || ''); }, 'leader')
+    : (S.expdf.byLeader || []);
   var m = mc_;
   el.classList.remove('hide');
   if (S.expdfOpen == null) { try { S.expdfOpen = localStorage.getItem('hcXdOpen') !== '0'; } catch(e){ S.expdfOpen = true; } }
@@ -1068,13 +1106,13 @@ function drawExpdfStrip_(){
     + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : t.pct + '%') + '</b></div>'
     + (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
     + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '')
-    + ((S.expdf.byCycle||[]).length
-        ? '<div class="xcyc">' + S.expdf.byCycle.map(function(c){
+    + (byCycle.length
+        ? '<div class="xcyc">' + byCycle.map(function(c){
             return '<span>' + esc(c.cycle) + ' \u00B7 ' + c.customers + ' \u00B7 ' + m(c.arrears) + '</span>'; }).join('') + '</div>'
         : '')
     // Who is carrying what, so anyone on the list can see the split without leaving it.
-    + ((S.expdf.scope==='team' && (S.expdf.byLeader||[]).length)
-        ? '<div class="xcyc">' + S.expdf.byLeader.map(function(x){
+    + ((S.expdf.scope==='team' && byLeader.length)
+        ? '<div class="xcyc">' + byLeader.map(function(x){
             return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers + ' \u00B7 ' + m(x.recovered)
               + (x.pct==null?'':' \u00B7 '+x.pct+'%') + '</span>'; }).join('') + '</div>'
         : ''));
@@ -1089,7 +1127,20 @@ function drawExpdfStrip_(){
     b.onclick = function(){
       S.expdfRole = b.getAttribute('data-xr') || '';
       try { localStorage.setItem('hcXdRole', S.expdfRole); } catch(e){}
-      // A narrowing of rows already on the phone: redraw, do not re-fetch.
+      /* "switching bike, gmo or manager at the muhtasari should also switch the whole expdf
+         customer list to be of the selected role only"
+
+         It did not. This set S.expdfRole and redrew -- but drawList paints S.rows, and S.rows
+         was only ever rebuilt in setView and fetchSource_. So the pill lit up, the summary
+         above it moved, and the list underneath stayed exactly as it was. Pressing Bike showed
+         you the GMO's customers with the word Bike highlighted.
+
+         S.rows is now rebuilt from the cached deck through the SAME filterForView_ every other
+         path uses, so the list, the pill and the summary are one answer. Still no re-fetch --
+         every row is already on the handset, which is the whole reason this is a pill and not
+         a query. A search in progress keeps its own result set, or pressing a role would
+         silently throw the search away. */
+      S.rows = S.q.trim() ? globalSearchRows_(S.q) : filterForView_(S.cache.expdf || [], 'expdf');
       drawList(); drawExpdfStrip_();
     };
   });
