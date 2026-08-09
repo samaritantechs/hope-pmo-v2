@@ -8,6 +8,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
+import { audited, auditList } from './audit.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
@@ -3150,16 +3151,34 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
+  auditLog,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
 
+/** THE AUDIT TAB. Admin-only to start with, and openable to others the ordinary way: the tab
+    is called `audit`, so ticking it on a role in Teams & Staff gives that role the nav item and
+    this function, exactly as every other tab in this system is granted. There is no second
+    permission mechanism here, because a second mechanism is a second thing to get wrong. */
+async function auditLog(db, user, args) {
+  const tabs = user.tabs || [];
+  if (!tabs.includes('settings') && !tabs.includes('audit')) {
+    throw forbidden('Kumbukumbu ya matendo ni ya admin. / The audit log is admin-only until the tab is granted to your role.');
+  }
+  return auditList(db, args || {});
+}
+
 export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
   const h = FN[fn];
   if (!h) throw badRequest('Unknown portal function: ' + fn);
-  return h(db, user, args || {}, nowMs);
+  /* THE ONE DOOR, so the audit log has one place to be written from. A log that has to be
+     remembered at each of a hundred call sites is a log with holes in it, and a log with holes
+     invites the conclusion that what is missing did not happen. Reads pass straight through --
+     see api/_lib/audit.js for why only the writes are recorded, and why the arguments are
+     reduced to a few identifying fields rather than stored whole. */
+  return audited(db, user, fn, args || {}, () => h(db, user, args || {}, nowMs));
 }
 
 export { assignFor };
