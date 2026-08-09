@@ -742,9 +742,16 @@ function filtered(){
   // Dropdown filters (team / status) narrow BEFORE the text search, so the footer totals and
   // the CSV/Excel export always describe exactly what is on screen.
   if (S.filters.team) rows = rows.filter(function(r){ return String(r.team||'')===S.filters.team; });
+  /* "Status" is spelled two ways in this system and the dropdown only knew one of them.
+     Expected reads `todays_status` (PAID / UNPAID / UNDERPAID); the defaulter tabs read
+     `status` (DEFAULTER / EXPIRED / CHRONIC). Filtering only on the first meant that picking
+     a status on Expected Defaulters compared 'CHRONIC' against an absent column, matched
+     nothing, and emptied the table -- which reads as "there are none" rather than as a
+     dropdown that does not work. */
   if (S.filters.status) rows = rows.filter(function(r){
-    return String(r.todays_status||'').trim().toUpperCase() === S.filters.status
-        || (!r.todays_status && S.filters.status === '(BLANK)'); });
+    var v = r.todays_status == null || r.todays_status === '' ? r.status : r.todays_status;
+    return String(v||'').trim().toUpperCase() === S.filters.status
+        || (!v && S.filters.status === '(BLANK)'); });
   // Any other data-filter="x" narrows on the row property of the same name, so a tab can add
   // a dropdown (analyst, state, officer, follow-up status) without touching this function.
   Object.keys(S.filters).forEach(function(k){
@@ -1620,6 +1627,18 @@ VIEWS.defexp = function(){
         + '<select data-filter="status"><option value="">All statuses</option>'
         + ['DEFAULTER','EXPIRED','CHRONIC'].map(function(s){
             return '<option'+(S.filters.status===s?' selected':'')+'>'+s+'</option>'; }).join('') + '</select>'
+        /* WHOSE CUSTOMERS THESE ARE, on the day they are due.
+           The rotation hands every defaulter to a GMO, a MANAGER or a BIKE officer, and the
+           two columns saying which have been on this table all along -- but with forty teams
+           on screen there was no way to ask "show me only the bike officers' customers for
+           Tuesday", which is exactly the question somebody planning a day asks. */
+        + '<select data-filter="role"><option value="">Viongozi wote / All leaders</option>'
+        + ['GMO','MANAGER','BIKE'].map(function(s){
+            return '<option'+(S.filters.role===s?' selected':'')+'>'+s+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="leader"><option value="">Kila mtu / Every leader</option>'
+        + Object.keys(onDay.reduce(function(m,r){ if (r.leader) m[r.leader]=1; return m; },{})).sort()
+            .map(function(x){
+              return '<option'+(S.filters.leader===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
         + '</div>';
     S.rows = onDay;
     S.cols = [col('team','Team'), col('ref','REF#'), col('full_name','Fullname'),

@@ -190,6 +190,10 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
   .expdfstrip .xscope{flex-basis:100%;display:flex;gap:6px;margin-bottom:2px}
   .expdfstrip .xscope button{flex:1;padding:5px 8px;border:1px solid var(--line);background:transparent;color:var(--mut);border-radius:8px;font-size:11.5px;font-weight:700}
   .expdfstrip .xscope button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
+  .expdfstrip .xrole{flex-basis:100%;display:flex;gap:5px;margin-bottom:4px}
+  .expdfstrip .xrole button{flex:1;padding:5px 4px;border:1px solid var(--line);background:transparent;
+    color:var(--mut);border-radius:8px;font-size:11px;font-weight:700}
+  .expdfstrip .xrole button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
   .expdfstrip .xcyc span{font-size:10.5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
 </style>
 </head>
@@ -427,7 +431,11 @@ function deviceId(){
 
 /* ================= state ================= */
 var DEV = deviceId();
-var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', syncEverySec:300, permOk:null };
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', syncEverySec:300, permOk:null,
+  /* Which of the three recycling roles the Exp.Def list is narrowed to, remembered across
+     restarts the same way the scope and the open/shut summary are. Somebody who works the
+     bike officers' book works it every day. */
+  expdfRole: (function(){ try { return localStorage.getItem('hcXdRole') || ''; } catch(e){ return ''; } })() };
 var LIST_SOURCE = { today:'today', tomorrow:'tomorrow', def:'defaulters', exp:'defaulters', chr:'defaulters', expdf:'expdf' };
 // Exp.Def is the recycling rotation's own list and is already scoped to the signed-in leader
 // by the server, so it must NOT be re-filtered here by customer status the way def/exp/chr are.
@@ -985,7 +993,14 @@ function classifyStatus_(s){
   return 'def';
 }
 function filterForView_(rows, v){
-  if (v === 'today' || v === 'tomorrow' || v === 'expdf') return rows;
+  /* "be able to sort manager, bike or gmo customers only per specific day within app"
+     The rows already carry the role the rotation put each customer in, so this is a narrowing
+     of what is on the phone rather than another question for the server -- which matters on a
+     handset on a mobile connection. */
+  if (v === 'expdf') return S.expdfRole
+    ? rows.filter(function(r){ return String(r.role||'').toUpperCase() === S.expdfRole; })
+    : rows;
+  if (v === 'today' || v === 'tomorrow') return rows;
   return rows.filter(function(r){ return classifyStatus_(r.custStatus) === v; });
 }
 function segLabel_(src, r){
@@ -1042,6 +1057,11 @@ function drawExpdfStrip_(){
         + '<button data-xs="team"' + (S.expdf.scope==='team'?' class="on"':'') + '>Timu yote</button>'
         + '</div>'
       : '')
+    + '<div class="xrole">'
+      + [['', 'Wote'], ['GMO', 'GMO'], ['MANAGER', 'Manager'], ['BIKE', 'Bike']].map(function(o){
+          return '<button data-xr="' + o[0] + '"' + ((S.expdfRole||'') === o[0] ? ' class="on"' : '')
+            + '>' + o[1] + '</button>'; }).join('')
+      + '</div>'
     + '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
     + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
     + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
@@ -1063,6 +1083,14 @@ function drawExpdfStrip_(){
       S.expdfOpen = !S.expdfOpen;
       try { localStorage.setItem('hcXdOpen', S.expdfOpen ? '1' : '0'); } catch(e){}
       drawExpdfStrip_();
+    };
+  });
+  $all('#expdfStrip [data-xr]').forEach(function(b){
+    b.onclick = function(){
+      S.expdfRole = b.getAttribute('data-xr') || '';
+      try { localStorage.setItem('hcXdRole', S.expdfRole); } catch(e){}
+      // A narrowing of rows already on the phone: redraw, do not re-fetch.
+      drawList(); drawExpdfStrip_();
     };
   });
   $all('#expdfStrip [data-xs]').forEach(function(b){
@@ -1292,9 +1320,16 @@ function rowHtml(r, showSeg){
   var href = telHref(r.contact);
   var subBits = [esc(r.team), 'Deni TZS ' + money(r.amt)];
   if (r.installment !== '' && r.installment != null) subBits.push('Rejesho TZS ' + money(r.installment));
+  /* THE FOURTH CHIP: WHOSE CUSTOMER THIS IS.
+     Status, cycle and D.S say what the customer is; none of them said who is supposed to be
+     following them up. The rotation moves every defaulter between a GMO, a MANAGER and a BIKE
+     officer on a clock, so on any given day the answer is genuinely not guessable -- and an
+     officer holding the phone needs to know who to ask before they call. */
   var chips = (showSeg && r._seg ? '<span class="chip">' + esc(r._seg) + '</span>' : '')
     + (r.custStatus ? statusChip(r.custStatus) : '') + (r.fuStatus ? statusChip(r.fuStatus) : '')
-    + (r.ds ? '<span class="chip mut">D.S ' + esc(r.ds) + '</span>' : '');
+    + (r.ds ? '<span class="chip mut">D.S ' + esc(r.ds) + '</span>' : '')
+    + (r.role ? '<span class="chip mut">' + esc(r.role)
+        + (r.leader && r.leader !== '(unassigned)' ? ' \u00B7 ' + esc(r.leader) : '') + '</span>' : '');
   return '<div class="crow' + (r.called?' called':'') + '" data-ref="' + esc(r.ref) + '">'
     + '<div class="crow-main">'
     + '<div class="crow-name">' + esc(r.name) + (r.called ? ' <span class="tick">\u2713 Amepigiwa leo</span>' : '') + '</div>'
@@ -1361,6 +1396,9 @@ function sheetSkeleton(r){
     + (r.custStatus ? '<div class="factrow"><span>Hali ya mteja / Customer status</span>' + statusChip(r.custStatus) + '</div>' : '')
     + (r.fuStatus ? '<div class="factrow"><span>Ufuatiliaji wa mwisho / Last follow-up</span>' + statusChip(r.fuStatus) + '</div>' : '')
     + (r.ds ? '<div class="factrow"><span>D.S</span><span>' + esc(r.ds) + '</span></div>' : '')
+    + (r.role ? '<div class="factrow"><span>Kiongozi / Follow-up leader</span><span>' + esc(r.role)
+        + ' \u00B7 ' + esc(r.leader && r.leader !== '(unassigned)' ? r.leader : 'hajapangwa / unassigned')
+        + '</span></div>' : '')
     + '<div class="factrow"><span>Mdhamini / Guarantor</span><span>' + esc(r.gName||'\u2014') + '</span></div>'
     + '<div class="callrow">'
     + (cHref!=='#' ? '<a class="btn btn-pri" href="tel:'+cHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mteja \u00B7 ' + esc(r.contact) + '</a>' : '<span class="btn btn-ghost">Hana namba</span>')
