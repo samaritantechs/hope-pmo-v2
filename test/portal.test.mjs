@@ -3221,3 +3221,107 @@ test('the Defaulters tab is scoped to the officer\'s teams as well', async () =>
   assert.ok(officer.rows.every(r => r.team === 'KONGOWE'),
     'MBAGALA\'s defaulter must not be carried here to be dropped in JavaScript');
 });
+
+/* =====================================================================================
+   THE DEMAND MESSAGE.
+   =====================================================================================
+   "We need a WHATSApp & Normal sms demand message pretext button ... Kwa maelezo Zaidi piga
+    (user phone no from leader table chat, if not in chat default to pmo recovery no)"
+
+   The number is the point. A demand notice telling a customer to ring a number nobody answers
+   is worse than sending nothing, so the three fallbacks are pinned here one at a time.
+*/
+const { demandContact, waNumber } = await import('../api/_lib/portal-core.js');
+const DEMAND_BOOK = () => {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], recovery: 'JUMA G', recovery_no: '0713000001',
+    gmo: 'GEE MO', gmo_no: '0714000002', manager: 'BOSS', manager_no: '0715000003' };
+  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0800111222' });
+  t.followup_status = [{ ref: '555', team: 'KONGOWE', full_name: 'DEF GUY',
+    contact: '0714000001', arrears: 900, status: 'Defaulter', fu_status: '' }];
+  return t;
+};
+
+test('the number is the sender\'s own, found by the role they hold on that team', async () => {
+  const gmo = { code: 'G', name: 'GEE MO', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+  const d = await portalApi(fakeDb(DEMAND_BOOK()), gmo, 'demandMessage', { ref: '555' }, NOW);
+  assert.equal(d.phone, '0714000002');
+  assert.equal(d.phoneSource, 'gmo');
+  assert.match(d.text, /Kwa maelezo Zaidi piga 0714000002/);
+  assert.match(d.text, /^Habari/);
+  assert.match(d.text, /Unakumbushwa kulipa deni lako \(Arreas\) kuepusha usumbufu\./);
+});
+
+test('somebody with no number of their own falls back to the recovery officer', async () => {
+  const other = { code: 'X', name: 'NOBODY IN PARTICULAR', role: 'ADMIN', teams: null, tabs: [] };
+  const d = await portalApi(fakeDb(DEMAND_BOOK()), other, 'demandMessage', { ref: '555' }, NOW);
+  assert.equal(d.phone, '0713000001');
+  assert.equal(d.phoneSource, 'recovery');
+});
+
+test('a team with no numbers at all falls back to the PMO', async () => {
+  const book = DEMAND_BOOK();
+  delete book.teams[0].recovery_no;
+  const d = await portalApi(fakeDb(book), ADMIN, 'demandMessage', { ref: '555' }, NOW);
+  assert.equal(d.phone, '0800111222');
+  assert.equal(d.phoneSource, 'pmo');
+});
+
+test('with no number anywhere the "piga" line is dropped, not left empty', async () => {
+  /* A reminder with no number is still a reminder. A reminder telling somebody to call
+     nothing -- or to call "undefined" -- is a complaint waiting to happen. */
+  const book = DEMAND_BOOK();
+  delete book.teams[0].recovery_no;
+  book.settings = book.settings.filter(s => s.key !== 'PMO_RECOVERY_NO');
+  const d = await portalApi(fakeDb(book), ADMIN, 'demandMessage', { ref: '555' }, NOW);
+  assert.equal(d.phone, '');
+  assert.ok(d.text.indexOf('piga') < 0, 'the whole line goes, not just the token');
+  assert.ok(d.text.indexOf('{phone}') < 0, 'and certainly not the placeholder');
+  assert.match(d.text, /Unakumbushwa kulipa deni lako/, 'but the reminder itself survives');
+});
+
+test('the wording is a setting, so it changes without a deploy', async () => {
+  const book = DEMAND_BOOK();
+  book.settings.push({ key: 'DEMAND_MESSAGE_TEXT', value: 'Salamu. Lipa deni. Piga {phone}' });
+  const d = await portalApi(fakeDb(book), ADMIN, 'demandMessage', { ref: '555' }, NOW);
+  assert.equal(d.text, 'Salamu. Lipa deni. Piga 0713000001');
+});
+
+test('both links carry the same message, addressed to the customer', async () => {
+  const d = await portalApi(fakeDb(DEMAND_BOOK()), ADMIN, 'demandMessage', { ref: '555' }, NOW);
+  assert.ok(d.whatsapp.startsWith('https://wa.me/255714000001?text='),
+    'a local 07... number becomes 2557... for wa.me: ' + d.whatsapp);
+  assert.equal(decodeURIComponent(d.whatsapp.split('?text=')[1]), d.text);
+  assert.ok(d.sms.startsWith('sms:0714000001?body='));
+  assert.equal(decodeURIComponent(d.sms.split('?body=')[1]), d.text);
+});
+
+test('a phone number is normalised for WhatsApp, or left alone if it cannot be', () => {
+  assert.equal(waNumber('0714000001'), '255714000001');
+  assert.equal(waNumber('714000001'), '255714000001');
+  assert.equal(waNumber('+255 714 000 001'), '255714000001');
+  assert.equal(waNumber('255714000001'), '255714000001');
+  assert.equal(waNumber(''), '');
+  assert.equal(waNumber(null), '');
+});
+
+test('nobody can read another team\'s officer number by naming it', async () => {
+  /* The customer decides the team, not the caller -- otherwise passing a team name would be a
+     way to read that team's officers' phone numbers. */
+  const gmo = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['MBAGALA'], tabs: [] };
+  await assert.rejects(
+    () => portalApi(fakeDb(DEMAND_BOOK()), gmo, 'demandMessage', { ref: '555', team: 'MBAGALA' }, NOW),
+    e => e.status === 403);
+});
+
+test('the fallback order is a rule of its own, testable without a database', () => {
+  const team = { team: 'T', gmo: 'A', gmo_no: '111', recovery: 'B', recovery_no: '222' };
+  assert.deepEqual(demandContact({ name: 'A' }, team, '999'), { phone: '111', source: 'gmo' });
+  assert.deepEqual(demandContact({ name: 'B' }, team, '999'), { phone: '222', source: 'recovery' });
+  assert.deepEqual(demandContact({ name: 'C' }, team, '999'), { phone: '222', source: 'recovery' });
+  assert.deepEqual(demandContact({ name: 'C' }, { team: 'T' }, '999'), { phone: '999', source: 'pmo' });
+  assert.deepEqual(demandContact({ name: 'C' }, null, ''), { phone: '', source: 'none' });
+  // A name on the team with no number beside it must not win and then print nothing.
+  assert.deepEqual(demandContact({ name: 'A' }, { team: 'T', gmo: 'A', recovery_no: '222' }, '999'),
+    { phone: '222', source: 'recovery' });
+});

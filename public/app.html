@@ -2607,7 +2607,19 @@ var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
 /* credit_id is not a role -- it is the ID that role's holder appears under in the sale-approvals
    report, which is the only thing standing between an analyst and being named on a slide. It
    rides in the same form and saves the same way, with a label that says what it is for. */
-var TEAM_EXTRA = [['credit_id', 'CREDIT ID (kwenye ripoti ya mauzo / in the approvals report)']];
+/* THE OFFLINE SHEET, TYPED IN HERE INSTEAD OF KEPT IN A SPREADSHEET.
+   region · zone · a phone number beside every role that has a name · the legal officer · the
+   collection officer. Optional columns: until 2026-08-09-team-contacts.sql is run, saveTeam
+   drops them rather than sending them, so the form saves everything else exactly as before. */
+var TEAM_EXTRA = [
+  ['region', 'REGION'], ['zone', 'ZONE'],
+  ['credit_id', 'CREDIT ID (kwenye ripoti ya mauzo / in the approvals report)'],
+  ['opm_no', 'OPM No'], ['recovery_no', 'RECOVERY No'], ['gmo_no', 'GMO No'],
+  ['manager_no', 'MANAGER No'], ['credit_no', 'C. ANALYST No'], ['expected_no', 'EXPECTED No'],
+  ['bike_no', 'BIKE No'],
+  ['legal', 'LEGAL'], ['legal_no', 'LEGAL No'],
+  ['collection', 'COLLECTION'], ['collection_no', 'COL No'],
+];
 VIEWS.teams = function(){
   return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; }),
                       srv('staffRoster').catch(function(){ return null; })]).then(function(rr){
@@ -3551,7 +3563,34 @@ function openFollowup(r){
     + '<div class="fld hide" id="wAmt"><label>Kiasi / Promise amount</label><input type="number" id="fuAmt"></div>'
     + '<div class="fld hide" id="wNo"><label>Namba mpya / New number</label><input id="fuNo"></div>'
     + '<div class="fld"><label>Maoni / Comment</label><textarea id="fuComment" rows="3"></textarea></div>'
-    + '<button class="btn w" id="fuSave">Hifadhi / Save</button>');
+    + '<button class="btn w" id="fuSave">Hifadhi / Save</button>'
+    /* THE DEMAND MESSAGE. Composed on the server -- the wording and the number are one rule,
+       so the portal and the phone cannot send two different notices under one company's name.
+       Nothing is sent from here: the officer's own WhatsApp or SMS app opens with the text in
+       it, from their own number, which is the number the customer already knows. */
+    + '<div class="fld" style="margin-top:14px"><label>Ujumbe wa kudai / Demand message</label>'
+      + '<div style="display:flex;gap:8px"><button class="btn ghost" id="dmWa" style="flex:1">WhatsApp</button>'
+      + '<button class="btn ghost" id="dmSms" style="flex:1">SMS</button></div>'
+      + '<div class="fldnote" id="dmNote">Inaandaliwa\u2026 / preparing\u2026</div></div>');
+  (function(){
+    var wa = document.getElementById('dmWa'), sms = document.getElementById('dmSms'),
+        note = document.getElementById('dmNote');
+    if (!wa) return;
+    wa.disabled = true; sms.disabled = true;
+    srv('demandMessage', { ref: r.ref, team: r.team }).then(function(m){
+      if (!document.getElementById('dmWa')) return;        // drawer closed while we asked
+      wa.disabled = false; sms.disabled = false;
+      wa.onclick = function(){ window.open(m.whatsapp, '_blank'); };
+      sms.onclick = function(){ location.href = m.sms; };
+      // The number that will be printed, and WHOSE it is -- a demand notice carrying the wrong
+      // office's phone is worth catching before it is sent, not after.
+      note.textContent = m.phone
+        ? ('Namba ya kupigiwa: ' + m.phone + ' (' + m.phoneSource + ')')
+        : 'Hakuna namba \u2014 weka PMO_RECOVERY_NO kwenye Settings. / No number set.';
+    }).catch(function(e){
+      if (note) note.textContent = String(e.message || e);
+    });
+  })();
   srv('comments', {ref:r.ref}).then(function(d){
     var h = $('#hist'); if (!h) return;
     h.innerHTML = (d.rows||[]).length ? d.rows.map(function(c){
