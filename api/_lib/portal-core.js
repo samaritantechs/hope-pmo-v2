@@ -277,7 +277,30 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     dist[r.primary]++;
     if (dist[r.secondary] != null) dist[r.secondary]++;
   }
+  /* ================================================================================
+     "Manager bike and gm should see their own list at expdef so as to work on their
+     report too."
+
+     The phone has had this since the rotation went in -- expdfMine defaults a recycling
+     leader to their OWN customers and lets them switch out to the team's. The system did
+     not: it handed a GMO the whole scoped book, forty teams deep, with their own name
+     merely one option inside a dropdown they had to go and find. Their list was present
+     and unfindable, which for a leader working a rotation is the same as absent.
+
+     So the screen is told two things and decides for itself: who is signed in, and
+     whether the teams table names them as a recycling leader anywhere. The narrowing is
+     deliberately NOT done here -- the client already holds every row and recomputes the
+     KPIs, the weekly distribution and the day pills from whichever list is showing, so
+     the toggle costs no round trip and the whole screen agrees with itself either way.
+
+     `iAmLeader` is asked of the teams table, not of the login role, exactly as
+     isRecycleLeader does for the phone: holding a gmo/manager/bike column ANYWHERE is
+     what gives somebody a rotation list, and moving them between teams re-points it with
+     no other change. */
+  const me = K(user && user.name);
   return { rows, count: rows.length, dist, dayNames: DAY_NAMES,
+    me: user && user.name ? String(user.name).trim() : '',
+    iAmLeader: !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me),
     unplaced: dist[0],
     todayIndex: rollSun(isoWeekday(nowMs)),
     teams: [...new Set(rows.map(r => r.team).filter(Boolean))].sort(),

@@ -1816,33 +1816,83 @@ VIEWS.defexp = function(){
     var day = (S.args.day == null || S.args.day === '') ? Number(d.todayIndex || 1) : Number(S.args.day);
     S.args.day = day;
     var names = d.dayNames || ['','Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    /* "Manager bike and gm should see their own list at expdef so as to work on their
+       report too."
+
+       A recycling leader now OPENS on their own customers, the way the phone has always
+       done, and steps out to the whole book with one press. Their list was here before --
+       as one option inside a dropdown, forty teams down the screen. Present and
+       unfindable is the same as absent to somebody working a rotation.
+
+       Anyone who is not named as a GMO / MANAGER / BIKE on any team sees exactly what
+       they saw before: everything in their scope, no toggle. */
+    var meK = String(d.me||'').trim().toUpperCase();
+    var mineAll = meK ? d.rows.filter(function(r){
+      return String(r.leader||'').trim().toUpperCase() === meK; }) : [];
+    var who = S.args.who || (d.iAmLeader ? 'mine' : 'all');
+    S.args.who = who;
+    var book = (who === 'mine' && d.iAmLeader) ? mineAll : d.rows;
+
+    /* EVERY FIGURE ON THIS SCREEN IS RECOMPUTED FROM `book`. The server sends its own
+       count, distribution, chronic/expired split and arrears -- all of them describing
+       the WHOLE scope. Printing those above a narrowed list would put a leader's twelve
+       customers under a headline of four thousand and a day pill promising rows that are
+       not there. The distribution rule is the server's own, kept identical on purpose:
+       each customer counts on BOTH of their days, so on 'all' every number here lands
+       exactly where it did before this change. */
+    var dist = {0:0,1:0,2:0,3:0,4:0,5:0,6:0};
+    book.forEach(function(r){
+      if (!r.primary) { dist[0]++; return; }
+      dist[r.primary]++;
+      if (dist[r.secondary] != null) dist[r.secondary]++;
+    });
+    var unplaced = dist[0];
+    var chronic = book.filter(function(r){ return r.status==='CHRONIC'; }).length;
+    var expired = book.filter(function(r){ return r.status==='EXPIRED'; }).length;
+    var arrears = book.reduce(function(s,r){ return s + (Number(r.arrears)||0); }, 0);
+    var teamsIn = Object.keys(book.reduce(function(m,r){ if (r.team) m[r.team]=1; return m; }, {})).sort();
+
     // Day 0 is the "no disbursement date" bucket -- those customers cannot be placed on a
     // weekday, and they must still be reachable rather than quietly missing.
-    var onDay = d.rows.filter(function(r){
+    var onDay = book.filter(function(r){
       return day===0 ? !r.primary : (r.primary===day || r.secondary===day); });
-    HEAD = '<div class="kpis">'
-      + kpi('In the weekly cycle', money(d.count), 'chronic + expired + defaulters needing follow-up')
+    HEAD = (d.iAmLeader
+        ? bar('<button class="pill'+(who==='mine'?' on':'')+'" data-arg="who" data-val="mine">'
+              + 'Wangu / My list <b>('+money(mineAll.length)+')</b></button>'
+            + '<button class="pill'+(who==='all'?' on':'')+'" data-arg="who" data-val="all">'
+              + 'Wote / Everyone <b>('+money(d.rows.length)+')</b></button>'
+            + '<span style="margin-left:8px;color:var(--mut);font-size:12px">'
+              + esc(d.me) + ' · mzunguko / recycling leader</span>')
+        : '')
+      + (d.iAmLeader && who==='mine' && !mineAll.length
+          ? '<div class="note">Hakuna wateja waliopangwa kwako kwenye orodha ya leo.'
+            + ' / No customers are assigned to you in today’s deck — press'
+            + ' <b>Wote / Everyone</b> to see the whole book.</div>'
+          : '')
+      + '<div class="kpis">'
+      + kpi('In the weekly cycle', money(book.length), 'chronic + expired + defaulters needing follow-up')
       + kpi('Expected ' + (names[day]||''), money(onDay.length), 'due on the selected day', onDay.length?'warnc':'good')
-      + kpi('Chronic', money(d.chronic), 'past the grace weeks', d.chronic?'bad':'good')
-      + kpi('Expired', money(d.expired), 'within grace weeks')
-      + kpi('Their arrears', money(d.arrears), null, 'bad')
+      + kpi('Chronic', money(chronic), 'past the grace weeks', chronic?'bad':'good')
+      + kpi('Expired', money(expired), 'within grace weeks')
+      + kpi('Their arrears', money(arrears), null, 'bad')
       + '</div>'
-      + (d.unplaced ? '<div class="note"><b>'+money(d.unplaced)+'</b> wateja hawana tarehe ya kutolewa mkopo,'
+      + (unplaced ? '<div class="note"><b>'+money(unplaced)+'</b> wateja hawana tarehe ya kutolewa mkopo,'
           + ' hivyo hawawezi kupangwa siku. / customers carry no disbursement date, so they cannot be placed on a'
           + ' weekday. They are under the <b>No date</b> tab — work them, and fix the upload.</div>' : '')
       + board('dxDist','Mgawanyo wa wiki / Weekly distribution',
           'each customer appears twice: disbursement weekday + 3 days (Sunday → Monday)',
-          [1,2,3,4,5,6].map(function(u){ return { day:names[u], customers:(d.dist[u]||0) }; })
-            .concat(d.unplaced ? [{ day:'No date', customers:d.unplaced }] : []),
+          [1,2,3,4,5,6].map(function(u){ return { day:names[u], customers:(dist[u]||0) }; })
+            .concat(unplaced ? [{ day:'No date', customers:unplaced }] : []),
           [col('day','Day'), col('customers','Customers','num')],
-          {day:'', customers:[1,2,3,4,5,6].reduce(function(s,u){ return s+(d.dist[u]||0); },0) + (d.unplaced||0)})
+          {day:'', customers:[1,2,3,4,5,6].reduce(function(s,u){ return s+(dist[u]||0); },0) + (unplaced||0)})
       + '<div class="pills">' + [1,2,3,4,5,6].map(function(u){
           return '<button class="pill'+(u===day?' on':'')+'" data-day="'+u+'">'+names[u]
-            + ' <b>('+(d.dist[u]||0)+')</b>' + (u===d.todayIndex?' · leo':'') + '</button>'; }).join('')
-        + (d.unplaced ? '<button class="pill'+(day===0?' on':'')+'" data-day="0">No date <b>('
-            + d.unplaced + ')</b></button>' : '')
+            + ' <b>('+(dist[u]||0)+')</b>' + (u===d.todayIndex?' · leo':'') + '</button>'; }).join('')
+        + (unplaced ? '<button class="pill'+(day===0?' on':'')+'" data-day="0">No date <b>('
+            + unplaced + ')</b></button>' : '')
         + '<select data-filter="team" style="margin-left:auto"><option value="">All teams</option>'
-        + (d.teams||[]).map(function(x){
+        + (teamsIn||[]).map(function(x){
             return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
         + '<select data-filter="status"><option value="">All statuses</option>'
         + ['DEFAULTER','EXPIRED','CHRONIC'].map(function(s){
@@ -2226,14 +2276,40 @@ VIEWS.weekly = function(){
       + kpi('Expected', money(t.expected), d.weekOf+' → '+d.weekEnd)
       + kpi('Collected', money(t.collected), t.expected? Math.round(1000*t.collected/t.expected)/10+'%':'', 'good')
       + kpi('Uncollected', money(t.uncollected), null, 'bad')
-      + kpi('Recovered', money(t.recovered), 'wiki nzima / the whole week', 'good')
+      /* RECOVERY %, which this tile never printed: recovered over the uncollected it was chased
+         against. A figure with no denominator beside it is a number nobody can judge -- 45m is
+         excellent against 96m and poor against 900m, and the tile said nothing either way.
+
+         WORKED OUT FROM THE TWO TILES ON THIS BAR, not from teamTotals.recPct, even though the
+         server has always computed exactly that. The server has TWO sums of the same week:
+         `totals` adds up the DAYS and `teamTotals` adds up the TEAMS. They are built from
+         different reads and there is no promise they land on the same figure. Printing
+         teamTotals' percentage under totals' money would let the screen contradict itself --
+         a numerator and a denominator that are both visible, and a percentage between them
+         that does not divide. So the tile divides what it shows. */
+      + kpi('Recovered', money(t.recovered),
+            (t.uncollected > 0
+              ? pct(Math.round(1000 * t.recovered / t.uncollected) / 10) + ' ya ambayo hayakukusanywa / of uncollected'
+              : 'wiki nzima / the whole week'), 'good')
       /* LEO. The week's figure cannot answer "are we moving today" -- by Thursday it is mostly
          Monday and Tuesday, and a day of nothing disappears inside it. */
       + kpi('Leo rec / Recovered today', money(t.recoveredToday),
             t.isCurrentWeek ? 'leo pekee / today alone' : 'wiki iliyopita \u2014 hakuna leo / past week, no today',
             t.isCurrentWeek && t.recoveredToday > 0 ? 'good' : '')
       + kpi('Received', money(t.received))
-      + kpi('Sales', money(t.salesCount), money(t.salesAmount))
+      /* SALES %, against the company target the note under this bar already states in full.
+         The count was the headline and the money the subtitle -- so the one number the target
+         exists to be measured against was the one thing not shown. Swapped, because a target
+         is money and a percentage of it has to be money over money.
+
+         Same rule as Recovered: divided from the amount ON THIS TILE by the target printed
+         below it, so the three figures agree with each other on screen. */
+      + kpi('Sales', money(t.salesAmount),
+            money(t.salesCount) + ' mikopo / loans'
+              + (d.teamTotals.companyTarget > 0
+                ? ' \u00B7 ' + pct(Math.round(1000 * t.salesAmount / d.teamTotals.companyTarget) / 10) + ' ya lengo / of target'
+                : ''),
+            (d.teamTotals.companyTarget > 0 && t.salesAmount >= d.teamTotals.companyTarget) ? 'good' : '')
       + '</div>'
       /* STAMP. The week is already chosen on this bar, so the button belongs beside it rather
          than on a screen where the week would have to be chosen again. Pressing it on a week
