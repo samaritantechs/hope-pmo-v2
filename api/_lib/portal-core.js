@@ -1885,7 +1885,15 @@ async function commissionSave(db, user, p) {
 async function assignments(db, user, _args, nowMs) {
   const [snap, fu, teamRows, strat] = await Promise.all([
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) }),
-    fetchAll(() => db.from('followup_status').select('ref, fu_status, comment_by, comment_at, promise_date')),
+    /* SCOPED AT THE DATABASE, like every other read in this system. This one was not: an
+       officer with one team read the follow-up register for all forty and threw away
+       thirty-nine. `team` is stored uppercase on every write path, so this matches exactly
+       what the JS filter downstream would have kept -- it just no longer downloads the rest. */
+    fetchAll(() => {
+      let q = db.from('followup_status').select('ref, fu_status, comment_by, comment_at, promise_date, team');
+      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      return q;
+    }),
     fetchAll(() => db.from('teams').select('*')),
     assignStrategy(db),
   ]);
@@ -2413,15 +2421,34 @@ async function deleteAccessCode(db, user, p) {
 /** Phone (calls app) registrations. Test devices and mistyped names accumulate fast during a
     rollout, and every one of them shows up in call reports -- this is how they get cleaned up
     without a database console. */
+/* CALLS PER OFFICER -- the other whole-table read, and the one that never stops growing.
+   Two admin screens showed "how many calls has each officer made", and read EVERY ROW of
+   call_logs to count them here. Three hundred officers at fifty calls a day is fifteen
+   thousand rows a day and five and a half million a year, read in full every time an admin
+   opened Teams & Staff.
+
+   It is a GROUP BY, so it belongs in the database. Without the migration the count is reported
+   as unknown rather than paid for -- a dash in a column is a far smaller failure than a screen
+   that will not open, and it is the same bargain performanceHistory already makes. */
+async function callCountsByUser(db) {
+  try {
+    const { data, error } = await db.rpc('call_counts_by_user');
+    if (error) throw error;
+    if (!Array.isArray(data)) return null;
+    const out = {};
+    for (const r of data) out[String(r.user_id)] = num(r.calls);
+    return out;
+  } catch (e) { return null; }
+}
+
 async function callUsers(db, user) {
   requireAdmin(user);
-  const [users, logs] = await Promise.all([
+  const [users, counts] = await Promise.all([
     fetchAll(() => db.from('call_users').select('*').order('registered_at', { ascending: false })),
-    fetchAll(() => db.from('call_logs').select('user_id')),
+    callCountsByUser(db),
   ]);
-  const counts = {};
-  for (const l of logs) counts[l.user_id] = (counts[l.user_id] || 0) + 1;
-  return { rows: users.map(u => ({ ...u, calls: counts[u.user_id] || 0 })), count: users.length };
+  return { rows: users.map(u => ({ ...u, calls: counts ? (counts[u.user_id] || 0) : null })),
+    count: users.length, callCounts: !!counts };
 }
 /** Field officer accounts. An officer cannot create their own -- an admin creates it here,
     against the officer's phone number, and issues a passcode. That passcode is shown ONCE, at
@@ -2441,13 +2468,12 @@ async function callUsers(db, user) {
     across a lost phone, a reinstall or a new handset. */
 async function officerAccounts(db, user) {
   requireAdmin(user);
-  const [rows, logs, teamRows] = await Promise.all([
+  const [rows, counts0, teamRows] = await Promise.all([
     fetchAll(() => db.from('call_users').select('*').order('name', { ascending: true })),
-    fetchAll(() => db.from('call_logs').select('user_id')),
+    callCountsByUser(db),
     fetchAll(() => db.from('teams').select('team')),
   ]);
-  const counts = {};
-  for (const l of logs) counts[l.user_id] = (counts[l.user_id] || 0) + 1;
+  const counts = counts0 || {};
   const out = rows.map(u => ({
     user_id: u.user_id, name: u.name, team: u.team, role: u.role, phone: u.phone,
     is_leader: !!u.is_leader, leader_teams: u.leader_teams,
@@ -3004,75 +3030,101 @@ async function storageUsage(db, user) {
 
     Gated on UPLOAD, not settings: the person doing the uploading is exactly who needs it. */
 const UPLOAD_EXPECTED_TYPES = ['today', 'tomorrow', 'yesterday', 'initial'];
+/* =====================================================================================
+   THE PANEL THAT STOPPED THE UPLOADS IT WAS THERE TO HELP WITH.
+
+     "i can't even upload report appdates we get delay errors and so on"
+
+   This read FOUR WHOLE TABLES with no date filter -- every expected row, every defaulter row,
+   every payment and every call ever recorded -- to answer a question about ONE DAY. On a book
+   of a million snapshot rows that is over a thousand round trips and hundreds of megabytes, on
+   the page whose entire job is to accept an upload. The upload queued behind it and timed out.
+   The panel that exists to say "your report is missing" was itself why the report could not be
+   loaded.
+
+   NOT ONE OF THOSE ROWS WAS EVER SHOWN. Every figure on this panel is a count or a maximum,
+   and both are things a database answers without moving a row. So it asks the database --
+   db/migrations/2026-08-10-upload-status.sql -- and gets about twenty summary rows back.
+
+   THE FALLBACK IS BOUNDED TOO, which is the part that matters. Migrations here are run by
+   hand, so between a deploy and that being done this function still has to work -- but it must
+   never go back to reading the whole book. It reads THE CHOSEN DAY ONLY, which is what the
+   panel is actually asking about, and reports the lifetime totals as unknown rather than
+   dragging a million rows to find them. Missing information is a smaller failure than a page
+   that cannot load, and the screen says which file to run.
+   ===================================================================================== */
 async function uploadStatus(db, user, { date } = {}, nowMs) {
   if (!(user.tabs || []).includes('upload')) throw forbidden('Upload permission is required.');
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(date)) ? date : todayKey(nowMs);
-  const [rep, def, rcv, calls] = await Promise.all([
-    fetchAll(() => db.from('repayment_snapshots').select('snapshot_type, snapshot_date')),
-    fetchAll(() => db.from('defaulter_snapshots').select('snapshot_type, weekday, snapshot_date')),
-    fetchAll(() => db.from('received_payments').select('paid_at')),
-    fetchAll(() => db.from('call_logs').select('call_date')),
-  ]);
-  // Snapshots are append-only, so a corrected re-upload leaves BOTH copies on disk while
-  // every read resolves to the latest batch. Counting raw rows therefore showed double after
-  // a re-upload and made it look like the data had doubled. Count what a read would actually
-  // see, and say separately how many uploads are stacked underneath.
-  const tally = (rows, keyOf, dateOf, batchOf) => {
-    const m = {};
-    for (const r of rows) {
-      const k = keyOf(r), d = dayOf(dateOf(r));
-      if (!k || !d) continue;
-      if (!m[k]) m[k] = { key: k, latest: null, today: 0, total: 0, _day: {} };
-      m[k].total++;
-      if (!m[k].latest || d > m[k].latest) m[k].latest = d;
-      if (d === day) {
-        m[k].today++;
-        if (batchOf) {
-          const b = batchOf(r) || 'legacy';
-          m[k]._day[b] = (m[k]._day[b] || 0) + 1;
-        }
-      }
-    }
-    // today = the live count (newest batch), uploads = how many times it was loaded today.
-    for (const b of Object.values(m)) {
-      const keys = Object.keys(b._day);
-      if (keys.length) {
-        b.uploads = keys.length;
-        b.today = Math.max(...keys.map(k => b._day[k]));
-      } else { b.uploads = b.today ? 1 : 0; }
-      delete b._day;
-    }
-    return m;
-  };
-  const repBy = tally(rep, r => r.snapshot_type, r => r.snapshot_date, r => r.upload_batch);
-  const defBy = tally(def, r => `${r.snapshot_type}:${r.weekday}`, r => r.snapshot_date, r => r.upload_batch);
 
+  /* ---- THE FAST PATH: one round trip, ~20 rows, no customer data at all. ---- */
+  let sum = null;
+  try {
+    const { data, error } = await db.rpc('upload_status_summary', { p_day: day });
+    if (error) throw error;
+    if (Array.isArray(data)) sum = data;
+  } catch (e) { /* function not created yet -- bounded fallback below */ }
+
+  const byKey = {};                     // 'source|kind|weekday' -> { latest, total, today, uploads }
+  let lifetime = true;
+  if (sum) {
+    for (const r of sum) {
+      byKey[`${r.source}|${r.kind || ''}|${r.weekday || ''}`] = {
+        latest: r.latest ? String(r.latest).slice(0, 10) : null,
+        total: num(r.total), today: num(r.today), uploads: num(r.uploads),
+      };
+    }
+  } else {
+    lifetime = false;
+    /* ONE DAY, four filtered reads. `today` is the LARGEST SINGLE BATCH of that day, not the
+       sum of them: snapshots are append-only, so a corrected re-upload leaves both copies on
+       disk while every read resolves to the latest batch. Adding them reported double after a
+       re-upload and made it look as though the data had doubled. */
+    const [rep, def, rcv, calls] = await Promise.all([
+      fetchAll(() => db.from('repayment_snapshots').select('snapshot_type, upload_batch').eq('snapshot_date', day)),
+      fetchAll(() => db.from('defaulter_snapshots').select('snapshot_type, weekday, upload_batch').eq('snapshot_date', day)),
+      fetchAll(() => db.from('received_payments').select('paid_at').gte('paid_at', day).lte('paid_at', day + 'T23:59:59.999Z')),
+      fetchAll(() => db.from('call_logs').select('call_date').eq('call_date', day)),
+    ]);
+    const fold = (rows, source, keyOf, wdOf) => {
+      const per = {};
+      for (const r of rows) {
+        const k = `${source}|${keyOf(r)}|${wdOf ? wdOf(r) : ''}`;
+        if (!per[k]) per[k] = {};
+        const b = r.upload_batch || 'legacy';
+        per[k][b] = (per[k][b] || 0) + 1;
+      }
+      for (const [k, batches] of Object.entries(per)) {
+        const counts = Object.values(batches);
+        byKey[k] = { latest: day, total: null, today: Math.max(...counts), uploads: counts.length };
+      }
+    };
+    fold(rep, 'expected', r => r.snapshot_type || '');
+    fold(def, 'defaulters', r => r.snapshot_type || '', r => r.weekday || '');
+    byKey['received||'] = { latest: rcv.length ? day : null, total: null, today: rcv.length, uploads: 0 };
+    byKey['calls||'] = { latest: calls.length ? day : null, total: null, today: calls.length, uploads: 0 };
+  }
+
+  const at = k => byKey[k] || { latest: null, total: lifetime ? 0 : null, today: 0, uploads: 0 };
   const items = [];
   for (const t of UPLOAD_EXPECTED_TYPES) {
-    const b = repBy[t] || { latest: null, today: 0, total: 0, uploads: 0 };
+    const b = at(`expected|${t}|`);
     items.push({ group: 'Expected repayment', label: `Expected — ${t}`, key: `expected-${t}`,
       latest: b.latest, today: b.today, total: b.total, uploads: b.uploads, loadedToday: b.today > 0 });
   }
   for (const type of ['current', 'initial']) {
     for (const wd of WD7) {
-      const b = defBy[`${type}:${wd}`] || { latest: null, today: 0, total: 0, uploads: 0 };
+      const b = at(`defaulters|${type}|${wd}`);
       items.push({ group: `Defaulters — ${type}`, label: `Defaulters ${type} — ${wd}`,
         key: `defaulters-${type}-${wd}`, weekday: wd,
         latest: b.latest, today: b.today, total: b.total, uploads: b.uploads, loadedToday: b.today > 0 });
     }
   }
-  const simple = (label, key, rows, dateOf) => {
-    let latest = null, today = 0;
-    for (const r of rows) {
-      const d = dayOf(dateOf(r));
-      if (!d) continue;
-      if (!latest || d > latest) latest = d;
-      if (d === day) today++;
-    }
-    items.push({ group: 'Other', label, key, latest, today, total: rows.length, loadedToday: today > 0 });
-  };
-  simple('Received Payments', 'received', rcv, r => r.paid_at);
-  simple('Call Logs', 'calls', calls, r => r.call_date);
+  for (const [label, key, k] of [['Received Payments', 'received', 'received||'], ['Call Logs', 'calls', 'calls||']]) {
+    const b = at(k);
+    items.push({ group: 'Other', label, key, latest: b.latest, today: b.today,
+      total: b.total, loadedToday: b.today > 0 });
+  }
 
   // Today's OWN weekday is the one that actually has to be in for the dashboard to be right;
   // the other six weekday decks are history and their absence is not a problem.
@@ -3080,6 +3132,12 @@ async function uploadStatus(db, user, { date } = {}, nowMs) {
   const required = items.filter(i =>
     i.key === 'expected-today' || i.key === `defaulters-current-${wdToday}`);
   return { date: day, weekday: wdToday, items,
+    // Whether the lifetime columns are real. False means the migration has not been run and
+    // the page is answering from the chosen day alone -- which is the whole point of it.
+    lifetime,
+    note: lifetime ? null
+      : 'Jumla ya rekodi zote haipatikani — endesha db/migrations/2026-08-10-upload-status.sql. '
+        + '/ Lifetime totals need db/migrations/2026-08-10-upload-status.sql; showing this day only.',
     missing: required.filter(i => !i.loadedToday).map(i => i.label),
     ready: required.every(i => i.loadedToday) };
 }

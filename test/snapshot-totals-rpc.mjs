@@ -110,3 +110,66 @@ export const SNAPSHOT_TOTALS_RPC = {
     return [...out.values()];
   },
 };
+
+/* =====================================================================================
+   THE TWO AGGREGATES FROM db/migrations/2026-08-10-upload-status.sql, as Postgres answers
+   them -- transcribed for the same reason as the pair above, so both worlds can be exercised.
+
+   These replaced four unbounded whole-table reads on the UPLOAD PAGE: every expected row,
+   every defaulter row, every payment and every call ever recorded, to answer a question about
+   one day. Every figure they return is a count or a maximum, and neither moves a customer row.
+   ===================================================================================== */
+const day10 = v => (v == null ? null : String(v).slice(0, 10));
+// The fake's store wraps every table as { rows: [...] }, exactly as fake-db.mjs builds it.
+const tbl = t => (t && t.rows) ? t.rows : [];
+
+export const UPLOAD_STATUS_RPC = {
+  upload_status_summary(store, args) {
+    const day = day10(args && (args.p_day || args.day));
+    const out = [];
+    const group = (rows, source, keyOf, wdOf, dateOf) => {
+      const all = {};
+      for (const r of rows || []) {
+        const k = keyOf(r) + '\u0000' + (wdOf ? wdOf(r) : '');
+        const d = day10(dateOf(r));
+        if (!all[k]) all[k] = { latest: null, total: 0, batches: {} };
+        const b = all[k];
+        b.total++;
+        if (d && (!b.latest || d > b.latest)) b.latest = d;
+        if (d === day) {
+          const bt = r.upload_batch || 'legacy';
+          b.batches[bt] = (b.batches[bt] || 0) + 1;
+        }
+      }
+      for (const [k, b] of Object.entries(all)) {
+        const [kind, wd] = k.split('\u0000');
+        const counts = Object.values(b.batches);
+        out.push({ source, kind, weekday: wd, latest: b.latest, total: b.total,
+          today: counts.length ? Math.max(...counts) : 0, uploads: counts.length });
+      }
+    };
+    group(tbl(store.repayment_snapshots), 'expected', r => r.snapshot_type || '', null, r => r.snapshot_date);
+    group(tbl(store.defaulter_snapshots), 'defaulters', r => r.snapshot_type || '', r => r.weekday || '', r => r.snapshot_date);
+    const plain = (rows, source, dateOf) => {
+      let latest = null, total = 0, today = 0;
+      for (const r of rows || []) {
+        total++;
+        const d = day10(dateOf(r));
+        if (d && (!latest || d > latest)) latest = d;
+        if (d === day) today++;
+      }
+      out.push({ source, kind: '', weekday: '', latest, total, today, uploads: 0 });
+    };
+    plain(tbl(store.received_payments), 'received', r => r.paid_at);
+    plain(tbl(store.call_logs), 'calls', r => r.call_date);
+    return out;
+  },
+  call_counts_by_user(store) {
+    const by = {};
+    for (const r of tbl(store.call_logs)) {
+      if (r.user_id == null) continue;
+      by[String(r.user_id)] = (by[String(r.user_id)] || 0) + 1;
+    }
+    return Object.entries(by).map(([user_id, calls]) => ({ user_id, calls }));
+  },
+};
