@@ -1213,8 +1213,14 @@ async function weekly(db, user, { weekOf }, nowMs) {
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
     const dayRows = scoped(user, expAll.filter(r => String(r.snapshot_date) === date));
-    const ini = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'initial'));
-    const cur = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'current'));
+    /* PAIRED ON DATE, TYPE **AND WEEKDAY**. The decks are per weekday; an initial MON deck
+       against a current TUE deck compares two different populations and reports the gap
+       between them as recovery. That is the mistake that once produced -194 million, and it
+       was still here -- which is why the RECOVERED card (which does match on weekday) and
+       this row disagreed on the same book. */
+    const dwd = WD5[i];
+    const ini = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'initial' && r.weekday === dwd));
+    const cur = scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'current' && r.weekday === dwd));
     const exp = tExpected(dayRows);
     const col = tCollected(dayRows);
     days.push({
@@ -1254,8 +1260,9 @@ async function weekly(db, user, { weekOf }, nowMs) {
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
       b.uncollected += num(r.uncollected_amt);
     }
-    const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'initial')));
-    const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'current')));
+    // Same population on both sides -- see the note above.
+    const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'initial' && r.weekday === d.weekday)));
+    const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'current' && r.weekday === d.weekday)));
     if (!ini.length || !cur.length) continue;
     for (const r of ini) gt(r.team).recovered += num(r.arrears_amt);
     for (const r of cur) gt(r.team).recovered -= num(r.arrears_amt);
@@ -2946,8 +2953,14 @@ async function dashboardFull(db, user, _args, nowMs) {
           Sat/Sun have no collection baseline, so they read "full recovery" like v1. ---- */
   const recTrend = WD7.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial'));
-    const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current'));
+    /* DATE, TYPE **AND WEEKDAY**. Without the weekday this paired whichever initial batch was
+       newest on that date against whichever current batch was newest -- possibly two different
+       weekdays, i.e. two different populations -- and reported the gap between them as
+       recovery. On a real book that produced 2.9 billion recovered on one day and MINUS 1.9
+       billion on the next, against a whole book of 2.1 billion. */
+    const dwd = WD7[i];
+    const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
+    const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
     const from = tArrears(ini);
     const to = tArrears(cur);
     const rec = (ini.length && cur.length) ? from - to : 0;
@@ -2976,8 +2989,11 @@ async function dashboardFull(db, user, _args, nowMs) {
   const todayExp = pickLatestBatchRows(dayRows(myExpWeek, today));
   const tomorrowSnap = await earlyList(db, { today, teams: user.teams });
   const earlyExp = scoped(user, tomorrowSnap.rows);
-  const iniToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'initial'));
-  const curToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'current'));
+  /* Today's own weekday, so the headline counts and the team board describe ONE deck rather
+     than whichever two happened to be uploaded last. This is the same rule the RECOVERED card
+     has always used -- the card was right and these were not. */
+  const iniToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'initial' && r.weekday === wdToday));
+  const curToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'current' && r.weekday === wdToday));
   const pairedToday = !!(iniToday.length && curToday.length);
 
   const T = {};

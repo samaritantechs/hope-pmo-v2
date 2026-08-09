@@ -2777,3 +2777,78 @@ test('only an admin may reassign staff', async () => {
     () => portalApi(db, officer, 'saveStaffTeams', { role: 'gmo', name: 'X', teams: [] }, NOW),
     /admin/i);
 });
+
+/* THE DECKS ARE PAIRED WEEKDAY BY WEEKDAY, NOT JUST DATE BY DATE.
+ *
+ * A defaulter upload is one file per DATE that carries every weekday's customers inside it, so
+ * a single snapshot_date holds a MON deck, a TUE deck and so on -- each one a different set of
+ * people. "Recovered" is initial-minus-current, and it is only a real figure when both sides
+ * describe the SAME people.
+ *
+ * The recovered CARD has always matched on weekday. The recovery trend, the weekly day strip,
+ * the weekly team section and the dashboard's team board did not: they took the newest initial
+ * batch on the date and the newest current batch on the date, which on a real book were
+ * frequently two DIFFERENT weekdays. The gap between two unrelated populations was then printed
+ * as recovery -- which is how one live week read 2.9 billion recovered on one day and MINUS 1.9
+ * billion on the next, against a whole book of 2.1 billion, while the card beside it read a
+ * sane 874 million off the very same data.
+ *
+ * The book below is that situation in miniature: on Monday's date the newest INITIAL batch
+ * belongs to the TUE deck and the newest CURRENT batch belongs to the MON deck. Pair them and
+ * Monday "recovers" 4.1 million out of a Monday book of 1 million. Pair each weekday with
+ * itself and it recovers the 100,000 it actually recovered.
+ */
+const CROSS_WEEKDAY_BOOK = () => {
+  const t = tables();
+  const dd = (wd, type, arrears, hour, batch) => ({
+    ref: 'X' + wd + type, full_name: 'C' + wd, contact: '0714000000', team: 'KONGOWE',
+    arrears, status: 'Defaulter', ds: '3-6', dc: 3, days_elapsed: 45, disb_date: '2026-07-21',
+    initial_inst: 100000, other_inst: 40000, balance: 500000,
+    snapshot_type: type, weekday: wd, snapshot_date: MON,
+    upload_batch: batch, created_at: MON + 'T' + hour + ':00:00Z',
+  });
+  t.defaulter_snapshots = [
+    dd('MON', 'initial', 1000000, '04', 'i-mon'),
+    dd('MON', 'current',  900000, '05', 'c-mon'),    // newest CURRENT batch on this date
+    dd('TUE', 'initial', 5000000, '05', 'i-tue'),    // newest INITIAL batch on this date
+    dd('TUE', 'current', 4800000, '04', 'c-tue'),
+  ];
+  return t;
+};
+
+test('the recovery trend pairs each weekday against itself, not across populations', async () => {
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(CROSS_WEEKDAY_BOOK()));
+  const mon = d.recTrend.find(x => x.weekday === 'MON');
+  assert.equal(mon.from, 1000000, "Monday's baseline is the MON deck, not whichever was newest");
+  assert.equal(mon.to, 900000, "and Monday's current is the MON deck too");
+  assert.equal(mon.recovered, 100000,
+    'cross-pairing would read 4,100,000 -- four times the whole Monday book');
+});
+
+test('the weekly day strip pairs each weekday against itself', async () => {
+  const w = await run('weekly', {}, ADMIN, fakeDb(CROSS_WEEKDAY_BOOK()));
+  const mon = w.days.find(x => x.weekday === 'MON');
+  assert.equal(mon.recovered, 100000);
+  // Tuesday's DATE carries no decks at all in this book, so Tuesday recovered nothing. It must
+  // not borrow Monday's TUE-weekday deck: the deck belongs to the date it was uploaded on.
+  assert.equal(w.days.find(x => x.weekday === 'TUE').recovered, 0);
+});
+
+test('the weekly team section pairs each weekday against itself', async () => {
+  const w = await run('weekly', {}, ADMIN, fakeDb(CROSS_WEEKDAY_BOOK()));
+  const kongowe = w.teams.find(t => t.team === 'KONGOWE');
+  assert.equal(kongowe.recovered, 100000,
+    'the team row and the day strip are the same money and must agree');
+});
+
+test('a weekday with no deck of its own recovers nothing, rather than the whole book', async () => {
+  /* The other half of the same rule. Drop the MON current deck and Monday has a baseline and
+     nothing to compare it against -- which must read 0, not "recovered the entire 1,000,000",
+     and certainly not "recovered 1,000,000 minus some other weekday's current deck". */
+  const book = CROSS_WEEKDAY_BOOK();
+  book.defaulter_snapshots = book.defaulter_snapshots.filter(r => !(r.weekday === 'MON' && r.snapshot_type === 'current'));
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(book));
+  const mon = d.recTrend.find(x => x.weekday === 'MON');
+  assert.equal(mon.recovered, 0);
+  assert.equal(mon.to, 0);
+});
