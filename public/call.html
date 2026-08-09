@@ -1103,6 +1103,21 @@ function drawExpdfStrip_(){
 }
 /* "Orodha hii iko wazi" told an officer nothing they could act on. Each list is empty for a
    specific reason -- almost always a report nobody has uploaded yet -- so say which one. */
+/** WHY THIS LIST IS SHORTER THAN THE BOOK.
+    Credit analysts, expected officers and collection officers are shown only the part of the
+    book they are chased on. That is what was asked for -- but a list that is quietly shorter
+    than the one on the next desk is a list somebody stops trusting, and then works around. It
+    says what was applied and how many it left out, so the narrowing is a decision somebody can
+    see rather than a discrepancy they have to explain. */
+function narrowNote_(){
+  var src = LIST_SOURCE[S.view], n = S.narrowed && S.narrowed[src];
+  if (!n || !n.of) return '';
+  var label = n.role === 'CREDIT' ? 'hawajavuka awamu ya 5 / not past the 5th instalment'
+    : 'wako nyuma kidogo tu / only slightly behind';
+  return '<div class="hint" style="color:var(--mut);font-size:11.5px;margin-bottom:8px">'
+    + 'Orodha yako imechujwa: ' + n.shown + ' kati ya ' + n.of + ' \u00B7 ' + esc(label) + '</div>';
+}
+
 /** Says so, loudly, when the list on screen is not the day it claims to be. */
 function staleNote_(){
   var src = LIST_SOURCE[S.view], a = src && S.asOf[src];
@@ -1179,6 +1194,8 @@ function fetchSource_(src, showSpinner){
     if (myId !== S.reqId) return;
     S.cache[src] = d.rows || [];
     S.asOf[src] = { date: d.asOf || null, stale: !!d.stale };
+    S.narrowed = S.narrowed || {};
+    S.narrowed[src] = d.narrowed || null;
     if (src === 'expdf') S.expdf = d.expdf || null;
     S.cacheAt[src] = Date.now();
     saveCacheToDevice_();
@@ -1296,6 +1313,7 @@ function drawList(){
   body.innerHTML = banner
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
     + staleNote_()
+    + narrowNote_()
     + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>'
     /* HOW OLD IS THE APP YOU ARE HOLDING? Three rounds of "it still isn't fixed" could each
        have been the phone running yesterday's page, and there was no way for anybody -- in the
