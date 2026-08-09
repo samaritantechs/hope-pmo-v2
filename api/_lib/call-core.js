@@ -29,6 +29,71 @@ export const FU_NEED_DATE = ['AMETOA AHADI'];
 export const FU_NEED_COMMENT = ['AMETUMA KWA AFISA', 'REJESHO LIMELIWA', 'OTHERS'];
 export const FU_NEED_NUMBER = ['ANA NAMBA NYINGINE'];
 
+/* =====================================================================================
+   THE FOLLOW-UP STATUS LIST IS EDITABLE, AND A NEW ONE IS ALWAYS A PLAIN COMMENT.
+   =====================================================================================
+   "defaulters followup status management -- edit existing/add new fu_status; new ones should
+    be plain-comment type with no calendar or new-number characteristics"
+
+   The ten above are the ones the system BEHAVES differently for: AMETOA AHADI opens a promise
+   date, ANA NAMBA NYINGINE opens a replacement number, and three of them require a comment.
+   Those behaviours are wired into the promise report, the bell, the assignment rotation and
+   the phone's follow-up sheet -- they are not decorations on a word.
+
+   So the list is editable and the BEHAVIOURS ARE NOT. A status somebody adds is a plain
+   comment: no calendar, no number box, nothing downstream that has to know its name. That is
+   what was asked for, and it is also the only version that is safe -- a new word that silently
+   acquired a promise date would start writing rows into the promise report that no report
+   knows how to read.
+
+   A built-in status can be REMOVED from the list, and its behaviour goes with it: the need-date
+   and need-number sets are intersected with whatever the list actually contains, so a
+   deployment that has no use for AMETOA AHADI is not left with a calendar for a word nobody
+   can choose.
+
+   Stored as one setting, one per line. Until an admin edits it the built-in list is what
+   everybody sees, so nothing changes by this existing. */
+export const FU_STATUS_KEY = 'FU_STATUSES';
+
+/** Parse the stored list. Blank, missing, or nothing but whitespace all mean "use the built-in
+    ten" rather than "no statuses at all" -- an empty dropdown is a screen nobody can use, and
+    somebody clearing the box by accident must not be able to stop the whole company logging a
+    follow-up. */
+export function parseFuStatuses(raw) {
+  const list = String(raw == null ? '' : raw)
+    .split(/[\r\n]+/).map(x => x.trim()).filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const x of list) {
+    const k = x.toUpperCase();
+    if (seen.has(k)) continue;                 // the same word twice is one option, not two
+    seen.add(k);
+    out.push(x);
+  }
+  return out.length ? out : FU_STATUSES.slice();
+}
+
+/** The list plus the behaviours that survive it. */
+export function fuStatusShape(list) {
+  const has = new Set(list.map(x => String(x).trim().toUpperCase()));
+  const keep = arr => arr.filter(x => has.has(x.toUpperCase()));
+  return {
+    fuStatuses: list,
+    fuNeedDate: keep(FU_NEED_DATE),
+    fuNeedComment: keep(FU_NEED_COMMENT),
+    fuNeedNumber: keep(FU_NEED_NUMBER),
+    // Which of them are the built-ins, so an editing screen can show that removing one takes a
+    // behaviour with it, and that the rest are plain comments.
+    fuBuiltIn: FU_STATUSES.slice(),
+  };
+}
+
+/** Read the list for this database. */
+export async function fuStatusConfig(db) {
+  const raw = await settingGet(db, FU_STATUS_KEY);
+  return fuStatusShape(parseFuStatuses(raw));
+}
+
 /* ---------- small ports, byte-faithful to Code.gs ---------- */
 export function pnorm(v) {
   let d = String(v == null ? '' : v).replace(/\D/g, '');
@@ -146,7 +211,7 @@ async function boot(db, [dev], nowMs) {
     leaderTeams: cu.is_leader ? (!cu.leader_teams || !cu.leader_teams.length ? 'ALL' : cu.leader_teams.join(',')) : '',
     teams,
     watermark: num(cu.last_ts),
-    fuStatuses: FU_STATUSES, fuNeedDate: FU_NEED_DATE, fuNeedComment: FU_NEED_COMMENT, fuNeedNumber: FU_NEED_NUMBER,
+    ...(await fuStatusConfig(db)),
     brand, motto: APP.MOTTO, logo,
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
@@ -1200,10 +1265,10 @@ async function teamCode(db, [code]) {
 
    "Read up to here" is remembered against the handset's own user id, so an officer marking
    theirs read does not mark anybody else's. */
-async function callNotifications(db, [dev]) {
+async function callNotifications(db, [dev], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const d = await notifCore(db, pseudoUser(cu), notifKeyFor(cu.user_id));
+  const d = await notifCore(db, pseudoUser(cu), notifKeyFor(cu.user_id), nowMs);
   return { ok: true, ...d };
 }
 async function callNotifSeen(db, [dev], nowMs) {

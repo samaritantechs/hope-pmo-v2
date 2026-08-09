@@ -17,7 +17,8 @@ import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.j
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
 import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
 import { buildDashboard } from './dashboard-core.js';
-import { reportCoreForPortal, pnorm, h36 } from './call-core.js';
+import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
+  FU_STATUS_KEY } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport } from './expdf.js';
 
@@ -1199,8 +1200,8 @@ async function announceSave(db, user, p = {}, nowMs = Date.now()) {
    everything else, newest first. "Unseen" is a per-CODE stamp, so marking them read on one
    person's screen does not mark them read on everybody's. */
 const NOTIF_LIMIT = 60;
-async function notifications(db, user) {
-  return notifCore(db, user, notifKey_(user));
+async function notifications(db, user, _args, nowMs) {
+  return notifCore(db, user, notifKey_(user), nowMs);
 }
 const notifKey_ = user => notifKeyFor(user.code || user.name);
 /** Marks everything currently visible as read, for THIS code only. */
@@ -3151,12 +3152,31 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog,
+  auditLog, fuStatuses, fuStatusesSave,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
+
+/* THE FOLLOW-UP STATUS LIST. Read by anyone signed in -- every screen with a follow-up form
+   needs it -- and written by an admin. The behaviours stay in code; see the note in
+   call-core.js for why a status somebody adds is always a plain comment. */
+async function fuStatuses(db) {
+  return fuStatusConfig(db);
+}
+
+async function fuStatusesSave(db, user, p) {
+  requireAdmin(user);
+  const list = parseFuStatuses(p && p.list);
+  /* parseFuStatuses falls back to the built-in ten on an empty box, so this cannot save an
+     empty list -- an empty dropdown is a screen nobody can use, and somebody clearing the box
+     by accident must not be able to stop the whole company logging a follow-up. */
+  const value = list.join('\n');
+  const { error } = await db.from('settings').upsert({ key: FU_STATUS_KEY, value }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  return fuStatusShape(list);
+}
 
 /** THE AUDIT TAB. Admin-only to start with, and openable to others the ordinary way: the tab
     is called `audit`, so ticking it on a role in Teams & Staff gives that role the nav item and
