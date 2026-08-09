@@ -468,3 +468,89 @@ export function importHints(csvRows) {
     sw_message: textOrNull(col(r, h, 'SW-MESSAGE', 'SW MESSAGE')),
   })).filter(x => x.tab);
 }
+
+/* =====================================================================================
+   SUMMARY UPLOADS -- a day's figures without the customers behind them.
+   =====================================================================================
+   "I need at uploading I choose to upload summary or customers ... if I upload summary the
+    latest defaulters lists stay but the latest list/summary uploaded is the one used for
+    reports"
+
+   Both of these produce rows in the SHAPE THE TOTALS FUNCTIONS RETURN -- one per team, figures
+   already added up -- so they need no merging rule of their own. They carry an upload_batch and
+   a created_at like every other upload and go to the same batch rule that has always decided
+   which upload wins.
+
+   The sheets are the company's own, described exactly as they arrive: data from A1 of a sheet
+   named Data, headers on row 1. Mapping is by HEADER NAME like every other importer here, so a
+   column moving does not silently read the wrong one. */
+
+/** THE EXPECTED SUMMARY.
+
+      TEAMS | EXPECTED | PAID | ILIYONASIA | EXP TOMMR | UNCOLLECTED | %
+
+    "Read expected as expected collection, sum of the next 3 collumns (paid+iliyonasia+exp
+     tommr) as collected, uncollected and collection %"
+
+    The percentage in the file is deliberately NOT stored. Every screen works a percentage out
+    from the two amounts it is made of, so keeping a second copy would be a figure that could
+    disagree with its own parts after a rounding -- and the one on screen has to be the one the
+    totals produce. */
+export function importExpectedSummary(csvRows, { snapshotType, snapshotDate }) {
+  return rowsToObjects(csvRows).map(({ raw: r, h }) => {
+    const expected = num(col(r, h, 'EXPECTED'));
+    const paid = num(col(r, h, 'PAID'));
+    const nasia = num(col(r, h, 'ILIYONASIA'));
+    const tommr = num(col(r, h, 'EXP TOMMR', 'EXP TOMORROW', 'EXP TOMM'));
+    const collected = paid + nasia + tommr;
+    /* UNCOLLECTED is taken from the file when it is there, because that is the company's own
+       figure and the sheet is the record. Where the column is blank -- and in these exports it
+       often is, shown as a dash -- it is expected minus collected, clamped at zero exactly as
+       the customer-level rule clamps it per row. Never negative: a team that overpaid has
+       collected everything, not less than nothing. */
+    const stated = col(r, h, 'UNCOLLECTED');
+    const hasStated = String(stated == null ? '' : stated).replace(/[\s,-]/g, '') !== '';
+    return {
+      kind: 'expected',
+      snapshot_type: snapshotType,
+      snapshot_date: snapshotDate,
+      weekday: null,
+      team: normTeam(col(r, h, 'TEAMS', 'TEAM')),
+      customers: null,                       // a summary is money, not a list of people
+      expected_amt: expected,
+      collected_amt: collected,
+      uncollected_amt: hasStated ? num(stated) : Math.max(expected - collected, 0),
+      arrears_amt: null,
+    };
+  }).filter(x => x.team);
+}
+
+/** THE DEFAULTER SUMMARY.
+
+      team_id | team_name | amount_defaulted
+
+    "Where if initial defaulters was uploaded by file 108781206 then current 108771206
+     therefore recovered is 10,000."
+
+    Which is the recovery rule this system already has -- initial minus current, paired on the
+    same date, type and WEEKDAY -- so the weekday comes from the upload screen exactly as it
+    does for a customer file. A summary that could not be paired on weekday would compare two
+    different populations, which is the fault that once produced minus 194 million.
+
+    team_id is read but not stored: the teams table is keyed on the NAME everywhere else in
+    this system, and introducing a second key here would be a second way for a team to be
+    identified and therefore a second way for one to go missing. */
+export function importDefaulterSummary(csvRows, { snapshotType, snapshotDate, weekday }) {
+  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+    kind: 'defaulter',
+    snapshot_type: snapshotType,
+    snapshot_date: snapshotDate,
+    weekday,
+    team: normTeam(col(r, h, 'team_name', 'TEAM_NAME', 'TEAM', 'TEAMS')),
+    customers: null,
+    expected_amt: null,
+    collected_amt: null,
+    uncollected_amt: null,
+    arrears_amt: num(col(r, h, 'amount_defaulted', 'AMOUNT_DEFAULTED', 'AMOUNT DEFAULTED', 'ARREARS', 'ARREAS')),
+  })).filter(x => x.team);
+}

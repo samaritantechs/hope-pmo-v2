@@ -189,8 +189,20 @@ const PHONE = [
      figures on it are the dashboard's own figures, and computing them a second, cheaper way
      would be two answers that could disagree on a wall in front of the company.
      It is also the one screen nobody is waiting on: the figures are kept for two minutes per
-     scope, so a display refreshing every twenty seconds pays this once every two minutes. */
-  ['HOPE Live widget',   'api_widget',            ['TEAM01'], 35, 60000],
+     scope, so a display refreshing every twenty seconds pays this once every two minutes.
+
+     35 -> 36 ON 2026-08-09, and the one trip is worth naming. It is the summary probe: a
+     single count that sends NO ROWS, asking whether this database has any summary uploads at
+     all, remembered for a minute per database and shared between the several totals questions
+     a screen asks at once. On a deployment that never uses summaries that is the entire cost;
+     on one that does, the summary rows are then read alongside the lists rather than instead
+     of them.
+
+     It bought a day being uploadable as the company's summary sheet when the full export was
+     missed -- which is the difference between a report that is right and one that is a day
+     behind. The first attempt cost FIVE trips; sharing the in-flight probe and folding the
+     "which date" question into the same read as the rows took it to one. */
+  ['HOPE Live widget',   'api_widget',            ['TEAM01'], 36, 60000],
 ];
 
 for (const [label, fn, args, tripBudget, rowBudget] of PHONE) {

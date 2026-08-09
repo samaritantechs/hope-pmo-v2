@@ -572,3 +572,83 @@ test('nonsense counts still finish the upload rather than stranding it', async (
   assert.equal(partPlan({ index: -5, total: 0 }).index, 0);
   assert.equal(partPlan({ index: -5, total: 0 }).total, 1);
 });
+
+/* =====================================================================================
+   SUMMARY UPLOADS -- a day's figures without the customers behind them.
+   =====================================================================================
+   The sheets are the company's own, described exactly as they arrive. Both produce rows in the
+   shape the totals functions return, so a summary needs no merging rule of its own -- it is
+   more rows for the batch rule to judge.
+*/
+const { importExpectedSummary, importDefaulterSummary } = await import('../api/_lib/importers.js');
+
+test('the expected summary reads collected as PAID + ILIYONASIA + EXP TOMMR', () => {
+  const rows = [
+    ['TEAMS', 'EXPECTED', 'PAID', 'ILIYONASIA', 'EXP TOMMR', 'UNCOLLECTED', '%'],
+    ['BABATI', '2045653', '1909654', '-', '-', '135,999.00', '93%'],
+    ['BARIADI', '0', '0', '-', '-', '-', '100%'],
+    ['BOMA NGOMBE', '2515992', '2413992', '', '', '102,000.00', '96%'],
+  ];
+  const out = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-07' });
+  assert.equal(out.length, 3);
+  const babati = out.find(r => r.team === 'BABATI');
+  assert.equal(babati.expected_amt, 2045653);
+  assert.equal(babati.collected_amt, 1909654, 'the dashes are nothing, not NaN');
+  assert.equal(babati.uncollected_amt, 135999, 'the file\'s own uncollected, commas and all');
+  assert.equal(babati.kind, 'expected');
+  assert.equal(babati.snapshot_type, 'today');
+  assert.equal(babati.snapshot_date, '2026-08-07');
+  assert.equal(babati.customers, null, 'a summary is money, not a list of people');
+  // A team that owes nothing is a real row, not a blank one to drop.
+  assert.equal(out.find(r => r.team === 'BARIADI').expected_amt, 0);
+});
+
+test('the three collected columns really are added together', () => {
+  const rows = [
+    ['TEAMS', 'EXPECTED', 'PAID', 'ILIYONASIA', 'EXP TOMMR', 'UNCOLLECTED'],
+    ['MABIBO', '1000', '400', '250', '150', ''],
+  ];
+  const r = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-07' })[0];
+  assert.equal(r.collected_amt, 800);
+  assert.equal(r.uncollected_amt, 200, 'blank uncollected is worked out, not left at zero');
+});
+
+test('an overpaying team is not shown as owing less than nothing', () => {
+  const rows = [['TEAMS', 'EXPECTED', 'PAID', 'ILIYONASIA', 'EXP TOMMR', 'UNCOLLECTED'],
+    ['SINZA', '1000', '1400', '0', '0', '']];
+  const r = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-07' })[0];
+  assert.equal(r.uncollected_amt, 0, 'clamped, exactly as the customer-level rule clamps per row');
+});
+
+test('the defaulter summary reads team_name and amount_defaulted', () => {
+  const rows = [
+    ['team_id', 'team_name', 'amount_defaulted'],
+    ['202-2026', 'MABIBO', '108781206'],
+    ['202-2027', 'SINZA', '123465272'],
+  ];
+  const out = importDefaulterSummary(rows, {
+    snapshotType: 'initial', snapshotDate: '2026-08-07', weekday: 'FRI' });
+  assert.deepEqual(out.map(r => r.team), ['MABIBO', 'SINZA']);
+  assert.equal(out[0].arrears_amt, 108781206);
+  assert.equal(out[0].kind, 'defaulter');
+  assert.equal(out[0].snapshot_type, 'initial');
+  assert.equal(out[0].weekday, 'FRI', 'the weekday is what makes the deck pairable at all');
+  assert.equal(out[0].customers, null);
+});
+
+test('the worked example: initial minus current is the recovery', () => {
+  const head = ['team_id', 'team_name', 'amount_defaulted'];
+  const ini = importDefaulterSummary([head, ['202-2026', 'MABIBO', '108781206']],
+    { snapshotType: 'initial', snapshotDate: '2026-08-07', weekday: 'FRI' })[0];
+  const cur = importDefaulterSummary([head, ['202-2026', 'MABIBO', '108771206']],
+    { snapshotType: 'current', snapshotDate: '2026-08-07', weekday: 'FRI' })[0];
+  assert.equal(ini.arrears_amt - cur.arrears_amt, 10000);
+});
+
+test('a row with no team is dropped rather than stored against nobody', () => {
+  const rows = [['TEAMS', 'EXPECTED', 'PAID', 'ILIYONASIA', 'EXP TOMMR', 'UNCOLLECTED'],
+    ['', '100', '0', '0', '0', '100'], ['GRAND TOTAL', '', '', '', '', '']];
+  const out = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-07' });
+  assert.deepEqual(out.map(r => r.team), ['GRAND TOTAL'],
+    'a blank team goes; a total ROW is a team name we cannot tell apart and is left to the eye');
+});
