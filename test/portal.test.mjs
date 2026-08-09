@@ -3487,3 +3487,123 @@ test('only an admin may sweep', async () => {
   await assert.rejects(() => portalApi(db, GMO, 'purgeSuperseded', { confirm: true }, NOW),
     e => e.status === 403);
 });
+
+/* =====================================================================================
+   WHO DID WHAT.
+   =====================================================================================
+   "Add an audit log nav and start with access for admin only, I may tyick it to be seen on
+    others via settings as usual so that we know who did what"
+
+   Written from the ONE door every portal call goes through, so it cannot be forgotten at the
+   hundredth call site -- a log with holes in it invites the conclusion that what is missing
+   did not happen.
+*/
+const AUDIT_BOOK = () => {
+  const t = tables();
+  t.audit_log = [];
+  return t;
+};
+
+test('a change is recorded: who, what, and what it was about', async () => {
+  const db = fakeDb(AUDIT_BOOK());
+  await portalApi(db, ADMIN, 'settingSet', { key: 'SALES_TARGET', value: '5000000' }, NOW);
+  const log = db._dump('audit_log');
+  assert.equal(log.length, 1);
+  const r = log[0];
+  assert.equal(r.action, 'settingSet');
+  assert.equal(r.actor_name, 'THE ADMIN');
+  assert.equal(r.actor_code, 'A');
+  assert.equal(r.actor_role, 'ADMIN');
+  assert.equal(r.ok, true);
+  assert.match(r.subject, /key=SALES_TARGET/);
+});
+
+test('the payload never reaches the log', async () => {
+  /* An audit log is read by whoever is allowed to see the log, so one carrying its arguments in
+     full would be a second, unguarded copy of the customer book. Only the identifying fields
+     survive -- and the list is of what is KEPT, so an argument nobody thought about is excluded
+     by default rather than included by default. */
+  const db = fakeDb(AUDIT_BOOK());
+  await portalApi(db, ADMIN, 'addComment', {
+    ref: '555', team: 'KONGOWE', comment: 'Ana pesa nyingi, mkewe 0714999888',
+    promiseAmt: 250000, newNumber: '0714999888',
+  }, NOW);
+  const r = db._dump('audit_log')[0];
+  assert.equal(r.ref, '555', 'which customer, yes');
+  assert.equal(r.team, 'KONGOWE');
+  const whole = JSON.stringify(r);
+  assert.ok(whole.indexOf('mkewe') < 0, 'the comment text must not be in the log: ' + whole);
+  assert.ok(whole.indexOf('0714999888') < 0, 'nor a phone number');
+  assert.ok(whole.indexOf('250000') < 0, 'nor an amount');
+});
+
+test('a refused attempt is recorded, and the refusal still happens', async () => {
+  /* Somebody trying to delete a team they may not touch is precisely what this exists to show,
+     so a failure is worth MORE than a success, not less. */
+  const db = fakeDb(AUDIT_BOOK());
+  await assert.rejects(() => portalApi(db, GMO, 'deleteTeam', { team: 'KONGOWE' }, NOW),
+    e => e.status === 403);
+  const r = db._dump('audit_log')[0];
+  assert.equal(r.action, 'deleteTeam');
+  assert.equal(r.actor_name, 'JUMA G');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /admin/i);
+});
+
+test('reads are not logged', async () => {
+  /* Two hundred officers opening a dashboard every few minutes would bury the twelve writes a
+     day that matter. This table exists to be read by a person. */
+  const db = fakeDb(AUDIT_BOOK());
+  await portalApi(db, ADMIN, 'expected', {}, NOW);
+  await portalApi(db, ADMIN, 'followup', {}, NOW);
+  await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(db._dump('audit_log').length, 0);
+});
+
+test('a database with no audit table still saves', async () => {
+  /* An audit log that could fail a save would turn every write in the system into two things
+     that must both succeed -- a worse system than one with no audit log at all. */
+  const base = fakeDb(AUDIT_BOOK());
+  const db = { from(n) { if (n === 'audit_log') throw new Error('relation does not exist'); return base.from(n); },
+    rpc: base.rpc, _dump: n => base._dump(n) };
+  const r = await portalApi(db, ADMIN, 'settingSet', { key: 'X', value: '1' }, NOW);
+  assert.ok(r);
+  assert.ok(base._dump('settings').some(s => s.key === 'X'), 'the setting was saved regardless');
+});
+
+test('the log is admin-only until the tab is granted', async () => {
+  const db = fakeDb(AUDIT_BOOK());
+  await assert.rejects(() => portalApi(db, GMO, 'auditLog', {}, NOW), e => e.status === 403);
+  // "I may tyick it to be seen on others via settings as usual" -- ticking the tab is the whole
+  // mechanism, the same one every other tab uses.
+  const granted = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: ['audit'] };
+  const d = await portalApi(db, granted, 'auditLog', {}, NOW);
+  assert.ok(Array.isArray(d.rows));
+});
+
+test('the tab is offered to roles, so it can be ticked without a deploy', async () => {
+  const db = fakeDb(AUDIT_BOOK());
+  const d = await portalApi(db, ADMIN, 'teams', {}, NOW);
+  assert.ok(d.allTabs.includes('audit'),
+    'the role editor has to offer it, or "tick it via settings" is not a thing anybody can do');
+});
+
+test('the log reads newest first and says so when it is not set up', async () => {
+  const book = AUDIT_BOOK();
+  book.audit_log = [
+    { at: '2026-07-24T08:00:00Z', actor_name: 'A', action: 'settingSet', ok: true },
+    { at: '2026-07-24T09:00:00Z', actor_name: 'B', action: 'saveTeam', ok: true },
+  ];
+  const d = await portalApi(fakeDb(book), ADMIN, 'auditLog', {}, NOW);
+  assert.deepEqual(d.rows.map(r => r.actor_name), ['B', 'A']);
+  assert.equal(d.available, true);
+  assert.equal(d.note, null);
+
+  const base = fakeDb(AUDIT_BOOK());
+  const missing = { from(n) { if (n === 'audit_log') throw new Error('relation does not exist'); return base.from(n); },
+    rpc: base.rpc, _dump: n => base._dump(n) };
+  const gone = await portalApi(missing, ADMIN, 'auditLog', {}, NOW);
+  assert.equal(gone.available, false);
+  assert.match(gone.note, /2026-08-09c-audit-log\.sql/,
+    'an empty audit log reads as "nobody did anything" -- it has to say which it is');
+});
