@@ -227,11 +227,11 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     </div>
     <div class="fld" id="regNameWrap"><label>Jina lako / Your name</label><input id="regName" placeholder="e.g. Juma Issa"></div>
     <div class="fld" id="regPassWrap"><label>Msimbo wa timu / Team code</label>
-      <input id="regPass" placeholder="XXXXXX" autocapitalize="characters" autocomplete="off">
+      <input id="regPass" placeholder="XXXXXX" autocomplete="off" data-secret data-upper>
       <div class="note">Umepewa na afisa wa PMO. Msimbo ndio unaonyesha timu yako &#x2014; hakuna haja ya kuichagua. / Issued by your PMO officer. The code identifies your team, so there is nothing to pick.</div>
     </div>
     <div class="fld hide" id="regCodeWrap"><label>Msimbo wa uongozi / Leader access code</label>
-      <input id="regCode" placeholder="Enter your portal access code">
+      <input id="regCode" placeholder="Enter your portal access code" data-secret>
       <div class="note">Your name and teams load automatically from your access code &#x2014; same as the portal. No need to type a name or pick a team.</div>
     </div>
     <div class="fld"><button class="btn btn-pri" id="regBtn">Endelea / Continue</button></div>

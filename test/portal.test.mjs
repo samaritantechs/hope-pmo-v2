@@ -2852,3 +2852,112 @@ test('a weekday with no deck of its own recovers nothing, rather than the whole 
   assert.equal(mon.recovered, 0);
   assert.equal(mon.to, 0);
 });
+
+/* =====================================================================================
+   THE DOOR.
+   =====================================================================================
+   Who gets in and who does not is the most consequential rule in this system, and it had no
+   test at all -- authCode reached for the database client directly instead of being handed one,
+   so there was no way to write one. It takes an optional db now, and nothing else changed.
+
+   The masked sign-in box is what made this urgent. A password field turns the browser's own
+   autocapitalize="characters" off, so a phone that used to upper-case the code before sending
+   it stopped doing so -- and a leader typing their own code in lower case would have been told
+   it was invalid, with the box showing dots and no way to check.
+*/
+const { authCode } = await import('../api/_lib/auth.js');
+const CODE_BOOK = () => ({ access_codes: [
+  { code: 'KON123', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] },
+  { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] },
+] });
+
+test('an access code typed in the wrong case still opens the door', async () => {
+  const db = fakeDb(CODE_BOOK());
+  const u = await authCode('kon123', db);
+  assert.equal(u.code, 'KON123', 'and it is the STORED code that comes back, not what was typed');
+  assert.deepEqual(u.teams, ['KONGOWE'], 'with their real teams, not a guess');
+});
+
+test('the exact code still wins, so nothing about an existing one changes', async () => {
+  const book = CODE_BOOK();
+  // Two codes that differ only in case. The one typed exactly is the one that gets in.
+  book.access_codes.push({ code: 'kon123', name: 'SOMEBODY ELSE', role: 'GMO', teams: ['MBAGALA'], tabs: [] });
+  const db = fakeDb(book);
+  assert.equal((await authCode('KON123', db)).name, 'ASHA JUMA');
+  assert.equal((await authCode('kon123', db)).name, 'SOMEBODY ELSE');
+});
+
+test('an ambiguous code is refused rather than guessed', async () => {
+  /* Two codes differing only in case, and neither typed exactly: signing somebody in on a coin
+     toss would hand them another person's teams. Being told the code is invalid is the safe
+     answer, and the admin can see both codes in Settings. */
+  const book = CODE_BOOK();
+  book.access_codes.push({ code: 'kon123', name: 'SOMEBODY ELSE', role: 'GMO', teams: ['MBAGALA'], tabs: [] });
+  const db = fakeDb(book);
+  await assert.rejects(() => authCode('KoN123', db), /Invalid access code/);
+});
+
+test('a wildcard in a typed code cannot match somebody else', async () => {
+  /* The case-insensitive look-up is a LIKE, where % and _ are wildcards. Unescaped, typing
+     "KON12_" or even "%" would match a real code and open somebody else's account. */
+  const db = fakeDb(CODE_BOOK());
+  await assert.rejects(() => authCode('%', db), /Invalid access code/);
+  await assert.rejects(() => authCode('KON12_', db), /Invalid access code/);
+  await assert.rejects(() => authCode('KON%', db), /Invalid access code/);
+});
+
+test('no code, and an unknown code, are both refused', async () => {
+  const db = fakeDb(CODE_BOOK());
+  await assert.rejects(() => authCode('', db), /required/i);
+  await assert.rejects(() => authCode('NOPE99', db), /Invalid access code/);
+});
+
+/* =====================================================================================
+   DELETING A TEAM.
+   =====================================================================================
+   "I need to delete team from the team and staff table."
+
+   Five tables carry `team text references teams(team)` and Postgres refuses to delete a row any
+   of them still points at. The guard only ever asked about `loans`, so a team with one day of
+   snapshots behind it failed on the other four -- with the database's own words, naming a
+   constraint rather than anything an admin can go and deal with.
+*/
+const TEAM_TO_DELETE = () => ({
+  teams: [{ team: 'KONGOWE' }, { team: 'OLDTEAM' }],
+  access_codes: [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] }],
+  call_users: [
+    { user_id: 'u1', team: 'OLDTEAM', name: 'OFFICER ONE' },
+    { user_id: 'u2', team: 'KONGOWE', name: 'OFFICER TWO' },
+  ],
+  repayment_snapshots: [], defaulter_snapshots: [], followup_status: [], loans: [],
+});
+
+test('a team with nothing behind it is deleted, and its handsets go with it', async () => {
+  const db = fakeDb(TEAM_TO_DELETE());
+  const r = await portalApi(db, ADMIN, 'deleteTeam', { team: 'oldteam' }, NOW);
+  assert.equal(r.team, 'OLDTEAM', 'the name is normalised the same way every write path does');
+  assert.equal(r.released, 1, 'the officers of a team that no longer exists must register again');
+  assert.deepEqual(db._dump('teams').map(t => t.team), ['KONGOWE']);
+  assert.deepEqual(db._dump('call_users').map(c => c.user_id), ['u2'],
+    'and ONLY that team\'s handsets -- the rest of the company keeps working');
+});
+
+test('a team with history is refused, and told exactly what is holding it', async () => {
+  const book = TEAM_TO_DELETE();
+  book.repayment_snapshots = [
+    { id: 'e1', ref: '1', team: 'OLDTEAM' }, { id: 'e2', ref: '2', team: 'OLDTEAM' },
+  ];
+  book.followup_status = [{ ref: '1', team: 'OLDTEAM' }];
+  const db = fakeDb(book);
+  await assert.rejects(
+    () => portalApi(db, ADMIN, 'deleteTeam', { team: 'OLDTEAM' }, NOW),
+    e => /2 expected snapshots/.test(e.message) && /1 follow-up records/.test(e.message),
+    'the refusal has to name the tables AND the counts, or there is nothing to act on');
+  assert.equal(db._dump('teams').length, 2, 'and nothing was deleted');
+  assert.equal(db._dump('call_users').length, 2, 'not even the handsets');
+});
+
+test('only an admin may delete a team', async () => {
+  const db = fakeDb(TEAM_TO_DELETE());
+  await assert.rejects(() => portalApi(db, GMO, 'deleteTeam', { team: 'OLDTEAM' }, NOW), e => e.status === 403);
+});

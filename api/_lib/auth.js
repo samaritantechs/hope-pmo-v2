@@ -4,13 +4,29 @@ import { requireSystemOpen } from './system-gate.js';
 /** Same shape and job as auth_() in Code.gs: resolve an access code to
     {code, name, role, teams, tabs}. Throws on an invalid code -- callers don't need to
     re-check, same as before. */
-export async function authCode(code) {
+/* `db` defaults to the real client. It exists so the door can be tested -- who gets in and who
+   does not is the single most consequential rule in this system, and it was the one rule with
+   no test at all, because the client was reached for directly instead of passed in. Every
+   caller still calls authCode(code) and nothing about them changes. */
+export async function authCode(code, db = supabase) {
   if (!code) throw new AuthError('Access code required.');
   // Sign-in is the one request EVERYTHING else waits behind, so it is the one that most needs
   // to survive a momentary blip rather than turn the whole company away at the door.
-  const { data, error } = await runQuery(() =>
-    supabase.from('access_codes').select('code, name, role, teams, tabs').eq('code', code).maybeSingle());
+  const { data: exact, error } = await runQuery(() =>
+    db.from('access_codes').select('code, name, role, teams, tabs').eq('code', code).maybeSingle());
   if (error) throw new AuthError(friendlyDbError(error));
+  /* CASE IS NOT PART OF THE SECRET.
+     The sign-in box used to carry autocapitalize="characters", so on a phone the code was
+     upper-cased before it ever got here and an exact match was enough. Masking the box takes
+     that away -- a password field turns the browser's own autocapitalize off -- so somebody
+     typing their code in lower case would suddenly be told it was invalid, with the box showing
+     dots and nothing to check it against.
+
+     The exact match still runs first and still wins, so nothing about an existing code changes.
+     This is only a second look for the same code typed in a different case. `code` is escaped
+     for LIKE first: `%` and `_` are wildcards there, and a code containing one would otherwise
+     match more rows than itself. */
+  const data = exact || await caseInsensitiveCode(code, db);
   if (!data) throw new AuthError('Invalid access code.');
   return {
     code: data.code,
@@ -19,6 +35,18 @@ export async function authCode(code) {
     teams: data.teams && data.teams.length ? data.teams : null,   // null = ALL teams, matching Code.gs's convention
     tabs: data.tabs || [],
   };
+}
+
+/** The same code, matched without regard to case. Returns a row only when EXACTLY ONE code
+    matches: two codes differing only in case are a real (if unlikely) possibility, and guessing
+    between them would hand somebody another person's teams. Better to refuse and be told the
+    code is invalid than to sign the wrong person in. */
+async function caseInsensitiveCode(code, db) {
+  const pattern = String(code).replace(/([\\%_])/g, '\\$1');
+  const { data, error } = await runQuery(() =>
+    db.from('access_codes').select('code, name, role, teams, tabs').ilike('code', pattern).limit(2));
+  if (error) throw new AuthError(friendlyDbError(error));
+  return (data && data.length === 1) ? data[0] : null;
 }
 
 /** Same as teamAllowed_() -- null teams (ALL access) always passes. */
