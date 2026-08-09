@@ -559,8 +559,26 @@ async function followupReport(db, user, { from, to }, nowMs) {
 }
 
 /* ------------------------------------------------------------------ operational registers */
+/* SCOPED AT THE DATABASE, not after the fact.
+
+   This is the shared reader behind Abnormal Payments, Restructures and Demand Notices, and it
+   pulled EVERY row of the table across the wire and then threw away the ones the signed-in
+   person may not see. An officer holding one team downloaded all forty and kept a fortieth --
+   the same mistake, on tables that only ever grow, that once turned 0.147 GB of data into
+   81 GB of transfer in a month.
+
+   The filter is EXACTLY what scoped() would have applied. teamAllowed() returns false for a
+   row with no team once a user is scoped to any team at all, so an `in` filter keeps precisely
+   the same rows -- it just no longer fetches the rest first. scoped() still runs afterwards,
+   deliberately: it stays the single definition of who may see what, and this is only an
+   optimisation of how much has to travel to reach the same answer. An ALL-teams user (teams
+   null) is unfiltered, as they always were. */
 async function listTable(db, user, table, order = 'created_at') {
-  const rows = await fetchAll(() => db.from(table).select('*').order(order, { ascending: false }));
+  const rows = await fetchAll(() => {
+    let q = db.from(table).select('*').order(order, { ascending: false });
+    if (user && user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+    return q;
+  });
   const mine = scoped(user, rows);
   return { rows: mine, count: mine.length };
 }
@@ -3596,7 +3614,15 @@ async function dashboardFull(db, user, args, nowMs) {
     fetchAll(() => onTeams(db.from('loans')
       .select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')
       .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor}`), user.teams)),
-    fetchAll(() => db.from('abnormal_payments').select('team, paid')),
+    /* Team-scoped at the database. The dashboard is the most-opened screen in the system and
+       this read had no filter at all -- every abnormal payment ever recorded, on every load,
+       for a figure that is then narrowed to the viewer's own teams anyway. The number on
+       screen does not change; the amount of table that has to move to produce it does. */
+    fetchAll(() => {
+      let q = db.from('abnormal_payments').select('team, paid');
+      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      return q;
+    }),
     fetchAll(() => db.from('teams').select('*')),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
