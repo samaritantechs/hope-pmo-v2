@@ -9,7 +9,7 @@ import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList } from './audit.js';
-import { recordPerformance, performanceHistory } from './performance.js';
+import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
@@ -1487,6 +1487,9 @@ async function weekly(db, user, { weekOf }, nowMs) {
 
   return { weekOf: mon, weekEnd: fri, days,
     teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
+    // The leader columns as they stand, so a hand-stamp records the same names the automatic
+    // one does rather than reading the table a second time and possibly a moment later.
+    teamRows,
     leadCols: TEAM_ROLE_COLS.slice(),
     hasMonday: myMonIni.length > 0, hasWeekEnd: myEndCur.length > 0, weekEndDate: endCur.date,
     totals: {
@@ -1994,6 +1997,9 @@ async function credit(db, user, _args, nowMs) {
     // No Monday record means new this week -- 0 recovered rather than silently dropped.
     const initA = Object.prototype.hasOwnProperty.call(iniArrBy, k) ? iniArrBy[k] : cur;
     return { ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
+      /* THE GUARANTOR, which is who an officer rings when the customer will not answer -- and
+         was the one column missing from a list whose entire purpose is ringing people. */
+      guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
       analyst: analystOf(d.team), paid: curPaidBy[k], initArr: initA, curArr: cur,
       recovered: Math.max(0, initA - cur), state: creditState(initA, cur, true) };
   }).sort((a, b) => b.recovered - a.recovered);
@@ -3213,12 +3219,83 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave, perfHistory,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
 };
+
+/* THE LEADERS TABLE, OUT AND BACK IN.
+   "I want to upload updated leaders table but have an opt to download existing one so that I
+    make the few updates and upload current"
+
+   Which is the only sane way to edit forty rows of twenty columns. The export is deliberately
+   in the SAME shape the importer reads, so the file that comes out goes straight back in after
+   a few cells are changed -- an export in a different shape is a spreadsheet somebody has to
+   re-type.
+
+   Header names come from the importer's own vocabulary, not from the database column names, so
+   the round trip cannot drift: if the importer learns a new column, it appears here too. */
+const TEAM_EXPORT_COLS = [
+  ['team', 'TEAM'], ['team_code', 'TEAM CODE'], ['region', 'REGION'], ['zone', 'ZONE'],
+  ['opm', 'OPM'], ['opm_no', 'OPM NO'],
+  ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'],
+  ['gmo', 'GMO'], ['gmo_no', 'GMO NO'],
+  ['manager', 'MANAGER'], ['manager_no', 'MANAGER NO'],
+  ['credit', 'CREDIT'], ['credit_id', 'CREDIT ID'], ['credit_no', 'CREDIT NO'],
+  ['expected', 'EXPECTED'], ['expected_no', 'EXPECTED NO'],
+  ['bike', 'BIKE'], ['bike_no', 'BIKE NO'],
+  ['legal', 'LEGAL'], ['legal_no', 'LEGAL NO'],
+  ['collection', 'COLLECTION'], ['collection_no', 'COL NO'],
+];
+
+async function teamsExport(db, user) {
+  requireAdmin(user);
+  const rows = await fetchAll(() => db.from('teams').select('*').order('team', { ascending: true }));
+  return {
+    headers: TEAM_EXPORT_COLS.map(c => c[1]),
+    /* Every column the export names, even where the migration that adds it has not been run --
+       a blank column in the file is something an admin can fill in, whereas a MISSING column is
+       a file that quietly cannot carry that field back. */
+    rows: rows.map(t => TEAM_EXPORT_COLS.map(c => (t[c[0]] == null ? '' : String(t[c[0]])))),
+    count: rows.length,
+  };
+}
+
+/* STAMPING A WEEK BY HAND.
+   "i always want to choose week and press stamp report so as to ferment permanent data of
+    current uploaded weekly data and if i do so to that week again meaning i could overwrite it
+    too in case like i reuploaded something to those dates"
+
+   The weekly report already stamps the week it is showing every time it is opened, which is
+   what makes the record fill itself in. This is the same act on purpose rather than by
+   accident: pick a week, press the button, and that week's figures are written down as they
+   stand right now.
+
+   RE-STAMPING OVERWRITES, because the natural key is (period, period_start, metric, scope,
+   name) -- so a week corrected by a re-upload is corrected in the record too, which is exactly
+   the case the request names. Nothing accumulates and nothing has to be deleted first.
+
+   It reports what it wrote, because a button that says nothing is a button nobody trusts. */
+async function stampWeek(db, user, args, nowMs) {
+  requireAdmin(user);
+  const w = await weekly(db, user, { weekOf: args && args.weekOf }, nowMs);
+  const leadBy = {};
+  for (const t of (w.teamRows || [])) leadBy[K(t.team)] = t;
+  const rows = recordsFor(w.teams || [], leadBy, w.weekOf);
+  recordPerformance(db, w.teams || [], w.teamRows || [], w.weekOf, nowMs);
+  return {
+    weekOf: w.weekOf, weekEnd: w.weekEnd,
+    teams: (w.teams || []).length,
+    records: rows.length,
+    /* What was actually captured, so pressing it on a week with no uploads behind it says so
+       instead of silently writing nothing. */
+    totals: { sales: w.teamTotals.sales, collected: w.teamTotals.collected,
+      recovered: w.teamTotals.recovered, expected: w.teamTotals.expected },
+    empty: rows.length === 0,
+  };
+}
 
 /** THE PERFORMANCE HISTORY TAB. A read of what was recorded, never a recomputation -- the
     whole point is that these figures are NOT re-derived from a teams table that has since

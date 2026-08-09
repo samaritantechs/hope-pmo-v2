@@ -258,16 +258,38 @@ export function importLoans(csvRows, stage) {
   }).filter(x => x.full_name).map(o => ({ ...o, id: loanId(o), updated_at: new Date().toISOString() }));
 }
 
+/* THE WHOLE SHEET, so the file that Teams & Staff exports goes straight back in after a few
+   cells are changed. It used to read eight columns; the offline sheet has twenty-three, and
+   every one it did not read was silently dropped on the way back -- which turns "download,
+   edit, upload" into "download, edit, upload, then re-type the phone numbers by hand".
+
+   Columns added by a migration are read the same as any other. api/upload.js drops the ones a
+   database has not got yet rather than failing the whole file, exactly as saveTeam does. */
 export function importTeams(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     team: normTeam(col(r, h, 'TEAM')),
+    team_code: textOrNull(col(r, h, 'TEAM CODE', 'TEAM_CODE')),
+    region: textOrNull(col(r, h, 'REGION')),
+    zone: textOrNull(col(r, h, 'ZONE')),
     opm: textOrNull(col(r, h, 'OPM')),
+    opm_no: normPhone(col(r, h, 'OPM NO', 'OPM_NO')),
     recovery: textOrNull(col(r, h, 'RECOVERY')),
+    recovery_no: normPhone(col(r, h, 'RECOVERY NO', 'RECOVERY_NO')),
     gmo: textOrNull(col(r, h, 'GMO')),
+    gmo_no: normPhone(col(r, h, 'GMO NO', 'GMO_NO')),
     manager: textOrNull(col(r, h, 'MANAGER')),
-    credit: textOrNull(col(r, h, 'CREDIT')),
+    manager_no: normPhone(col(r, h, 'MANAGER NO', 'MANAGER_NO')),
+    credit: textOrNull(col(r, h, 'C. ANALYST', 'CREDIT')),
+    credit_id: textOrNull(col(r, h, 'CREDIT ID', 'CREDIT_ID')),
+    credit_no: normPhone(col(r, h, 'CREDIT NO', 'C. ANALYST NO')),
     expected: textOrNull(col(r, h, 'EXPECTED')),
+    expected_no: normPhone(col(r, h, 'EXPECTED NO', 'EXPECTED_NO')),
     bike: textOrNull(col(r, h, 'BIKE')),
+    bike_no: normPhone(col(r, h, 'BIKE NO', 'BIKE_NO')),
+    legal: textOrNull(col(r, h, 'LEGAL')),
+    legal_no: normPhone(col(r, h, 'LEGAL NO', 'LEGAL_NO')),
+    collection: textOrNull(col(r, h, 'COLLECTION')),
+    collection_no: normPhone(col(r, h, 'COL NO', 'COLLECTION NO')),
   })).filter(x => x.team);
 }
 
