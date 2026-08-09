@@ -404,3 +404,41 @@ test('a database with no summaries table behaves exactly as it always did', asyn
   assert.equal(tExpected(r.rows), 1000);
   assert.equal(r.batch, 'list');
 });
+
+/* THE SUMMARY LOOK-UP IS BOUNDED TOO.
+ *
+ * The duplicate sweep taught this the hard way: a range of 0001-01-01 to 9999-12-31 is instant
+ * on a fixture and does not come back on a live database. The same shape was in this read,
+ * harmless only while nobody used summaries -- so it would have started biting at exactly the
+ * moment somebody came to rely on the feature.
+ */
+test('a summary far in the past is not "the latest"', async () => {
+  const db = fakeDb({
+    repayment_snapshots: [],
+    snapshot_summaries: [SUMM({ snapshot_date: '2019-01-04', expected_amt: 12345 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(r.date, null, 'seven years back is history, not today');
+  assert.equal(r.rows.length, 0);
+});
+
+test('a summary inside the look-back window still wins', async () => {
+  const db = fakeDb({
+    repayment_snapshots: [],
+    snapshot_summaries: [SUMM({ snapshot_date: '2026-07-01', expected_amt: 4321 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(r.date, '2026-07-01');
+  assert.equal(tExpected(r.rows), 4321);
+});
+
+test('a year of history is still reachable', async () => {
+  /* Thirteen months, so a full year of records can be read back without the window being the
+     thing that hides them. */
+  const db = fakeDb({
+    repayment_snapshots: [],
+    snapshot_summaries: [SUMM({ snapshot_date: '2025-09-01', expected_amt: 999 })],
+  });
+  const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
+  assert.equal(r.date, '2025-09-01', 'ten months back is inside the window');
+});

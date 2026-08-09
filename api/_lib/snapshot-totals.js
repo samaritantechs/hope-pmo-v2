@@ -39,6 +39,7 @@
 
 import { runQuery, fetchAll } from './supabase.js';
 import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch } from './snapshots.js';
+import { todayKey, addDaysKey } from './time.js';
 import { collectedOf, num } from './recovery.js';
 
 export const EXPECTED_TOTALS_FN = 'expected_snapshot_totals';
@@ -256,11 +257,29 @@ async function summaryRows(db, kind, { from, to, type = null, weekday = null, te
     newest date that came back. On a book with no summaries it returns nothing and the caller
     carries on exactly as before.
 
-    `floor` is the date the customer lists resolved to, or null when there are none at all, in
-    which case any summary is a candidate. */
+    `floor` is the date the customer lists resolved to, or null when there are none at all -- in
+    which case any summary is a candidate, but only back to SUMMARY_LOOKBACK_DAYS.
+
+    THAT BOUND IS NOT DECORATION. This read used to start at the year 0001 and end at 9999, and
+    the identical mistake in the duplicate sweep is what made its button appear to do nothing on
+    a real book: an unbounded range is instant on a fixture and does not come back on a live
+    database. It is harmless here only while nobody uses summaries -- the probe short-circuits an
+    empty table -- so it would have started biting at exactly the moment somebody came to rely
+    on the feature, which is the worst time for a read to discover it is unbounded.
+
+    Thirteen months, because a summary older than a year is not "the latest" by any reading, and
+    because it leaves a full year of history reachable. */
+const SUMMARY_LOOKBACK_DAYS = 400;
+
 async function summariesFrom(db, kind, { floor, type = null, weekday = null, notAfter = null, teams = null }) {
+  /* The ceiling is the caller's own cap where it has one. Callers pass today; Date.now() is the
+     last resort rather than the normal path, and it only ever widens the window by hours. */
+  const ceiling = notAfter || todayKey(Date.now());
+  const earliest = addDaysKey(ceiling, -SUMMARY_LOOKBACK_DAYS);
   const rows = await summaryRows(db, kind, {
-    from: floor || '0001-01-01', to: notAfter || '9999-12-31', type, weekday, teams,
+    // The later of the two: a floor from the customer lists already excludes anything older.
+    from: (floor && String(floor) > earliest) ? floor : earliest,
+    to: ceiling, type, weekday, teams,
   });
   if (!rows.length) return { date: null, rows: [] };
   let newest = null;
