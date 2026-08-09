@@ -135,6 +135,36 @@ test('expected defaulters place every customer on two weekdays', async () => {
   assert.equal(d.unplaced, 0);
 });
 
+/* "Manager bike and gm should see their own list at expdef so as to work on their report too."
+   The tab has to tell the screen WHO is looking and whether the rotation gives them a list of
+   their own -- without that it can only ever show everybody's book. */
+test('expected defaulters names the viewer, and says whether the rotation gives them a list', async () => {
+  // KONGOWE's manager. Holding a gmo/manager/bike column ANYWHERE is what counts.
+  const boss = { code: 'B', name: 'BOSS', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+  const d = await portalApi(fakeDb(tables()), boss, 'expectedDefaulters', {}, NOW);
+  assert.equal(d.me, 'BOSS');
+  assert.equal(d.iAmLeader, true);
+  // ...and their own customers are actually reachable in what comes back, which is what the
+  // screen narrows on. Anything else and the toggle would open on an empty list.
+  assert.ok(d.rows.some(r => String(r.leader).toUpperCase() === 'BOSS'));
+});
+
+test('a recovery officer is not a recycling leader -- the rotation is gmo/manager/bike only', async () => {
+  // JUMA G is KONGOWE's RECOVERY officer and nobody's gmo, manager or bike.
+  const d = await portalApi(fakeDb(tables()), GMO, 'expectedDefaulters', {}, NOW);
+  assert.equal(d.me, 'JUMA G');
+  assert.equal(d.iAmLeader, false);
+  // The whole scoped book still comes back untouched -- narrowing is the screen's job, and it
+  // only narrows for somebody the rotation actually named.
+  assert.equal(d.count, d.rows.length);
+});
+
+test('the admin sees everything: named, but never narrowed to a list of their own', async () => {
+  const d = await run('expectedDefaulters');
+  assert.equal(d.me, 'THE ADMIN');
+  assert.equal(d.iAmLeader, false);
+});
+
 test('a defaulter with no disbursement date is bucketed, never dropped', async () => {
   const t = tables();
   t.defaulter_snapshots.push({ ref: '888', full_name: 'C888', team: 'KONGOWE', arrears: 400,
