@@ -1265,6 +1265,7 @@ function wireBar(){
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   wireClean();
+  wireRebuildFu();
   wireFollowupClean();
   wireStampWeek();
   wireTeamsDownload();
@@ -1356,6 +1357,23 @@ function wireFollowupClean(){
 }
 /* Cleaning old reports deletes a DAY OF HISTORY, so the flow is deliberately two-step: Check
    counts the rows without touching anything, Clean asks once more and names the number. */
+function wireRebuildFu(){
+  var b = document.getElementById('fuRebuild');
+  if (!b) return;
+  b.onclick = function(){
+    var out = document.getElementById('fuRebuildOut');
+    b.disabled = true; b.textContent = '\u23f3 Inaendelea / working...';
+    srv('rebuildFollowup', {}).then(function(r){
+      out.style.display = 'block';
+      out.textContent = r.note + '  (deki ' + money(r.deck) + ' \u00b7 rejista ' + money(r.register)
+        + ' \u00b7 ' + (r.date || '') + ' \u00b7 ' + (r.weekdays || []).join(', ') + ')';
+      b.disabled = false; b.textContent = '\u21bb Rekebisha rejista / Rebuild register';
+    }).catch(function(e){
+      out.style.display = 'block'; out.textContent = String(e.message || e);
+      b.disabled = false; b.textContent = '\u21bb Rekebisha rejista / Rebuild register';
+    });
+  };
+}
 function wireClean(){
   var run = document.getElementById('clRun'), chk = document.getElementById('clCheck');
   if (!run && !chk) return;
@@ -3790,6 +3808,25 @@ VIEWS.settings = function(){
         + '<div class="clact"><button class="btn sm ghost" id="dupCheck">Angalia / Check first</button>'
         + ' <button class="btn sm danger" id="dupRun">Ondoa nakala / Remove copies</button></div>'
         + '<div id="dupOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+
+      /* THE PHONE READS THE REGISTER, NOT THE DECK.
+         HOPE Calls builds its Defaulters list from followup_status, because an officer's own
+         statuses, promises and comments live there. Normally every deck upload rebuilds it and
+         the two agree -- but a customer retired for going a fortnight without their weekday's
+         deck coming round, or one loaded before the register was being written, ends up in the
+         deck and not in the register: on every portal screen and no handset, with each half
+         individually correct and nothing to say so. */
+      + '<div class="card"><div class="card-h">Rejista ya ufuatiliaji / Follow-up register</div>'
+        + '<div class="cleanbox">'
+        + '<div class="note" style="display:block">HOPE Calls hutumia rejista hii, si deki.'
+        + ' Mteja aliyeko kwenye deki lakini si kwenye rejista hataonekana kwenye simu yoyote.'
+        + ' / HOPE Calls builds its Defaulters list from this register rather than from the deck.'
+        + ' A customer in the deck but not in the register is visible on every portal screen and'
+        + ' on no handset. This puts them back — it only ADDS what is missing and never touches a'
+        + ' row that is already there, so no follow-up status, promise or comment can be lost.</div>'
+        + '<div class="clact"><button class="btn sm" id="fuRebuild">\u21bb Rekebisha rejista / Rebuild register</button></div>'
+        + '<div id="fuRebuildOut" class="note" style="display:none"></div>'
         + '</div></div>'
 
       /* THE FOLLOW-UP STATUS LIST. Editable, one per line. The BEHAVIOURS are not editable and
