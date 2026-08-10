@@ -1199,12 +1199,12 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     totals,
   };
 }
-async function report(db, [dev, from, to, team], nowMs) {
+async function report(db, [dev, from, to, team, leader], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   if (!cu.is_leader) throw new Error('Leader access only.');
   const teamRows = await fetchAll(() => db.from('teams').select('*'));
-  const { teamsOf } = buildLeaderMaps(teamRows);
+  const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(cu.name)] || {});
   const lt = cu.leader_teams;
   const full = live.length ? live : ((!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null : lt);
@@ -1218,22 +1218,60 @@ async function report(db, [dev, from, to, team], nowMs) {
     .filter((t, i, a) => a.findIndex(x => K(x) === K(t)) === i)
     .sort();
 
-  // A team picked in the dropdown narrows the scope, but only to a team they could already see.
-  // An unrecognised or out-of-scope name is ignored rather than obeyed, so the dropdown can
-  // never be used to read a team the leader has no business reading.
+  /* SORTING BY A LEADER, ON THE PHONE TOO.
+
+       "Add leader drop down after team selection in Ripoti, so if I choose leader from a
+        dropdown of present system leaders eg Catherine then the below calls appear of
+        catherine's teams and leaders too"
+
+     The portal has had this since the same request was made about it; Ripoti was left with the
+     team dropdown alone, so answering "how is Catherine's book doing" on a handset meant picking
+     her teams out of a forty-line list one at a time and adding them up by hand.
+
+     A leader holds several teams, so naming one resolves to exactly those -- and everybody
+     working under them, other leaders included, comes back together because the report is built
+     from the teams rather than from the person.
+
+     NARROWED BY WHAT THE CALLER MAY SEE, NEVER WIDENED. Choosing a leader whose teams overlap
+     yours shows the overlap; choosing one whose teams you hold none of shows nothing rather than
+     showing you somebody else's book. A leader filter must not become a way round team scoping,
+     and on the phone that matters more, not less. */
+  const wantLead = String(leader == null ? '' : leader).trim();
+  const leadName = (wantLead && Object.keys(teamsOf).find(n => K(n) === K(wantLead))) || '';
+  let scope = full;
+  if (leadName) {
+    const theirs = Object.keys(teamsOf[K(leadName)] || {});
+    scope = scope ? theirs.filter(t => scope.some(s => K(s) === K(t))) : theirs;
+  }
+
+  // A team picked in the dropdown narrows the scope further, but only to a team they could
+  // already see. An unrecognised or out-of-scope name is ignored rather than obeyed, so the
+  // dropdown can never be used to read a team the leader has no business reading -- and with a
+  // leader chosen, "in scope" means inside THAT leader's teams as well.
   const want = String(team == null ? '' : team).trim();
   const picked = want && choices.find(t => K(t) === K(want)) || '';
-  const scope = picked ? [picked] : full;
+  if (picked && (!scope || scope.some(t => K(t) === K(picked)))) scope = [picked];
 
-  // While looking at one chosen team, the leader's own calls stay out of it unless that IS
-  // their team. Otherwise a manager filtering to Team B would see their own Team A calls
-  // mixed in and think Team B made them.
-  const alwaysUid = picked ? (K(cu.team) === K(picked) ? cu.user_id : null) : cu.user_id;
+  /* While looking at somebody else's book, the leader's own calls stay out of it unless their
+     own team is inside what is being looked at. Otherwise a manager filtering to Catherine
+     would see their own Team A calls mixed in and read them as hers. */
+  const filtered = !!(picked || leadName);
+  const alwaysUid = !filtered ? cu.user_id
+    : ((scope && scope.some(t => K(t) === K(cu.team))) ? cu.user_id : null);
 
   const out = await reportCore(db, scope, from, to, alwaysUid, nowMs);
   out.ok = true;
   out.teamChoices = choices;
   out.team = picked;
+  /* Only the leaders this person may actually look at -- somebody holding four teams should not
+     be handed a dropdown of forty names, thirty-six of which answer "nothing". Built from the
+     same map the scoping uses, so the list and the rule can never disagree. */
+  const mine = full ? new Set(full.map(K)) : null;
+  out.leaderChoices = Object.keys(teamsOf)
+    .filter(n => !mine || Object.keys(teamsOf[n]).some(t => mine.has(K(t))))
+    .sort()
+    .map(n => ({ name: n, position: positionOf(posOf, n, ''), teams: Object.keys(teamsOf[n]).length }));
+  out.leader = leadName;
   out.debugScope = scope || 'ALL';
   out.debugHomeTeam = cu.team || '';
   return out;

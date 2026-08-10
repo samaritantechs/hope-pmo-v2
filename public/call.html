@@ -469,7 +469,7 @@ function deviceId(){
 
 /* ================= state ================= */
 var DEV = deviceId();
-var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', syncEverySec:300, permOk:null,
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', repLeader:'', syncEverySec:300, permOk:null,
   /* Which of the three recycling roles the Exp.Def list is narrowed to, remembered across
      restarts the same way the scope and the open/shut summary are. Somebody who works the
      bike officers' book works it every day. */
@@ -1568,7 +1568,7 @@ function wireSheetForm(r){
 function renderReports(){
   var body = $('#body');
   body.innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
-  srv('api_callReport', DEV, S.repFrom, S.repTo, S.repTeam).then(function(d){
+  srv('api_callReport', DEV, S.repFrom, S.repTo, S.repTeam, S.repLeader).then(function(d){
     S.repData = d;
     drawReports();
   }).catch(function(e){ body.innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>'; });
@@ -1585,6 +1585,19 @@ function drawReports(){
     + '<select id="repTeam"><option value="">Timu zote</option>'
     + (d.teamChoices || []).map(function(tm){
         return '<option value="' + esc(tm) + '"' + (K_(tm) === K_(d.team) ? ' selected' : '') + '>' + esc(tm) + '</option>';
+      }).join('') + '</select>'
+    /* THE LEADER PICKER, AFTER THE TEAM ONE.
+       "if I choose leader from a dropdown of present system leaders eg Catherine then the below
+        calls appear of catherine's teams and leaders too"
+       A leader holds several teams, so naming one answers "how is this person's book doing"
+       without picking their teams out of the list one at a time. The count beside each name is
+       how many teams they hold, because two people can share a first name and the number is the
+       fastest way to tell which book you are about to open. */
+    + '<select id="repLeader"><option value="">Viongozi wote / All leaders</option>'
+    + (d.leaderChoices || []).map(function(L){
+        return '<option value="' + esc(L.name) + '"' + (K_(L.name) === K_(d.leader) ? ' selected' : '') + '>'
+          + esc(L.name) + (L.position ? ' \u00B7 ' + esc(L.position) : '')
+          + ' (' + money(L.teams) + ')</option>';
       }).join('') + '</select></div>'
     + '<div class="kpis">'
     + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
@@ -1604,6 +1617,10 @@ function drawReports(){
   $('#repFrom').onchange = function(){ S.repFrom = this.value; renderReports(); };
   $('#repTo').onchange = function(){ S.repTo = this.value; renderReports(); };
   $('#repTeam').onchange = function(){ S.repTeam = this.value; renderReports(); };
+  /* Choosing a leader clears the team, because a team from the previous leader's list is either
+     already inside the new one -- in which case nothing is lost -- or outside it, where keeping
+     it would silently answer for a team the chosen leader does not hold. */
+  $('#repLeader').onchange = function(){ S.repLeader = this.value; S.repTeam = ''; renderReports(); };
 }
 
 $('#bootRetry').onclick = function(){

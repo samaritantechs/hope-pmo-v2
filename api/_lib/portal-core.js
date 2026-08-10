@@ -4,7 +4,7 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
-  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam } from './snapshot-totals.js';
+  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
@@ -315,16 +315,48 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
       { notAfter: to, teams: user.teams, columns });
     return { ...snap, perTeam: false };
   }
-  // Group teams by the date THEY resolved to: usually one or two distinct days in all.
-  const byDate = new Map();
-  for (const [team, d] of dates) {
-    if (!byDate.has(d)) byDate.set(d, []);
-    byDate.get(d).push(team);
+  /* Group the resolved decks by the date THEY landed on. A deck is a team AND a weekday, so
+     Monday's GOBA and Thursday's GOBA are two different decks that were uploaded on two
+     different days -- reading only the team's newest date kept whichever weekdays went up last
+     and dropped the rest of the week. In practice this is still a handful of distinct dates,
+     because a week's uploads cluster. */
+  const byDate = new Map();                    // date -> { teams:Set, weekdays:Set, want:Set }
+  for (const [key, d] of dates) {
+    if (!byDate.has(d)) byDate.set(d, { teams: new Set(), weekdays: new Set(), want: new Set() });
+    const g = byDate.get(d);
+    const [team, wd] = key.split('|');
+    g.teams.add(team);
+    g.weekdays.add(wd);
+    g.want.add(key);
   }
-  const chunks = await Promise.all([...byDate.entries()].map(([d, teamList]) =>
-    fetchAll(() => db.from('defaulter_snapshots').select(withBatchKeys(columns))
-      .eq('snapshot_type', type).eq('snapshot_date', d).in('team', upperTeams(teamList)))));
-  const all = [].concat(...chunks);
+  /* ONE DATE AT A TIME, NOT ALL OF THEM AT ONCE.
+
+     This loop used to be a Promise.all, and that was defensible while it resolved ONE date per
+     team: a week's uploads cluster, so it was two requests in flight. Per weekday it is one per
+     distinct upload day -- six or seven in a normal week, and more on a deployment that has been
+     catching up. Firing those together is precisely the change that was tried once on the paging
+     side and reverted the same day: every screen fires several of these at once, and with two
+     hundred handsets the multiplied concurrency exhausted the connection pool. Logins started
+     failing with "failed to fetch" and the data-heavy tabs errored.
+
+     Sequential costs latency on one screen. Concurrent costs the whole system. */
+  const all = [];
+  for (const [d, g] of byDate) {
+    /* Narrowed on BOTH columns at the database, then matched on the exact pairs here. The
+       filters cannot express "these team/weekday combinations" on their own, so they fetch the
+       rectangle and this keeps the cells -- but the rectangle is one date's rows for teams that
+       genuinely have a deck on it, not a week of everything. */
+    const rows = await fetchAll(() => {
+      let q = db.from('defaulter_snapshots').select(withBatchKeys(columns))
+        .eq('snapshot_type', type).eq('snapshot_date', d).in('team', upperTeams([...g.teams]));
+      const wds = [...g.weekdays].filter(Boolean);
+      // Only when every resolved deck on this date names a weekday -- a null weekday is a real
+      // stored value and an .in() list can never match it.
+      if (wds.length === g.weekdays.size) q = q.in('weekday', wds);
+      return q;
+    });
+    for (const r of rows) if (g.want.has(deckKey(r.team, r.weekday))) all.push(r);
+  }
   const rows = pickLatestPerCustomer(all);
   const seen = [...byDate.keys()].sort();
   return { rows, date: seen[seen.length - 1] || null, dates: seen,
