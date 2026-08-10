@@ -15,6 +15,7 @@ import {
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices,
   importCallUsers, importCallLogs, importSettings, importHints,
+  REF_HEADERS,
 } from './_lib/importers.js';
 
 /* ONE FILE IS NOT ONE REQUEST.
@@ -512,6 +513,48 @@ export default withApi(async (req, res) => {
 
   if (!records.length) return { inserted: 0, table, message: 'File parsed but no valid rows were found -- check the key column (REF#, FULLNAME, etc.) is present and populated.' };
 
+  /* =====================================================================================
+     A ROW THE FILE HAD AND THE SYSTEM DID NOT USE MUST BE COUNTED OUT LOUD.
+
+       "am not yet seeing 2209728651  2-209-72865  ESTER PETER OMARY"
+       "Some customers werent seen ... yet they are in the uploaded file"
+
+     Every importer ends `.filter(x => x.ref)`, and that filter is correct -- a row with no
+     reference cannot be joined to anything. What was not correct is that it happened in
+     SILENCE. `inserted` has always been the count AFTER the filter, so a file of nine thousand
+     customers whose reference column is spelled in a way no candidate matched reports "8,783
+     rows uploaded" and looks like a clean upload. The rows are not rejected loudly; they are
+     subtracted from the number you are reading.
+
+     That is the same shape three times over now, and it is the reason this particular hunt has
+     run for days: every screen was searched for a customer who may never have been written.
+
+     So the file's own row count is compared against what came out of the importer, and any
+     difference is reported with NAMES -- because "217 rows were skipped" is a statistic and
+     "ESTER PETER OMARY was skipped" is an answer. It is computed from the parsed sheet already
+     in memory: no extra read, no extra round trip. */
+  const dataRows = rows.slice(1).filter(r => Array.isArray(r) && r.some(v => String(v == null ? '' : v).trim() !== '')).length;
+  const skipped = Math.max(0, dataRows - records.length);
+  let skippedNames = [];
+  if (skipped) {
+    /* Which ones. The importers key on the reference, so a dropped row is one whose reference
+       could not be read -- name it by whatever the sheet DOES carry, so it can be found in the
+       file by eye. */
+    const h = {};
+    (rows[0] || []).forEach((c, i) => { h[String(c == null ? '' : c).trim().toUpperCase().replace(/\s+/g, ' ')] = i; });
+    const pick = (r, names) => { for (const n of names) { const i = h[n]; if (i !== undefined && String(r[i] || '').trim()) return String(r[i]).trim(); } return ''; };
+    const kept = new Set(records.map(x => String(x.ref == null ? '' : x.ref).trim().toUpperCase()));
+    for (const r of rows.slice(1)) {
+      if (!Array.isArray(r) || !r.some(v => String(v == null ? '' : v).trim() !== '')) continue;
+      const ref = pick(r, REF_HEADERS.map(x => x.toUpperCase()));
+      if (ref && kept.has(ref.toUpperCase())) continue;
+      const name = pick(r, ['FULLNAME', 'FULL NAME', 'CUSTOMER NAME', 'NAME']);
+      const any = pick(r, ['CUSTOMER NO', 'DOCKET#', 'DOCKET #', 'LOAN ID', 'TRACK#']);
+      skippedNames.push([name, ref || any].filter(Boolean).join(' — ') || '(row with nothing readable in it)');
+      if (skippedNames.length >= 12) break;
+    }
+  }
+
   // One uuid per upload, stamped across every row of it. Snapshots are append-only -- a
   // re-upload of the same date ADDS rows, never overwrites -- so without this, a corrected
   // re-upload stacked both copies into every KPI. Readers resolve latest date -> latest
@@ -819,19 +862,37 @@ export default withApi(async (req, res) => {
      have to upload Saturday's report today to see Saturday's defaulters" true, rather than true
      only for whoever remembers the button.
 
-     It never overwrites an officer's work -- only deck columns are written -- and a failure here
-     leaves the upload standing, exactly like the sweep above. */
-  if (isLastPart && table === 'defaulter_snapshots') {
-    try {
-      const r = await portalApi(supabase, housekeeper, 'rebuildFollowup', {}, Date.now());
-      autoRegister = { added: r.added || 0, restored: r.restored || 0 };
-    } catch (e) { /* the upload stands */ }
-  }
+     AND IT CANNOT LIVE HERE, which the field found within the hour:
+
+       "uploading now fails at 4/5 Failed: Error: Seva imechukua muda mrefu mno / the server took
+        too long — HTTP 504"
+
+     That is mine. The last slice of a defaulter upload was already the heaviest request in the
+     system -- it writes the deck, then reads the WHOLE working register to merge the officers'
+     work into it, then sweeps superseded batches. Adding a full rebuild on top meant reading
+     every weekday's deck across the company and the register a second time, inside the same
+     sixty seconds the platform allows. It went over, and an upload that fails is worse than any
+     list being short: nothing lands at all.
+
+     SO IT IS SPLIT BY WHAT IT IS FOR. Un-blanking the deck that was just uploaded is
+     syncFollowupFromDeck's own job and it already does it, for free, from rows it is holding
+     anyway -- so a weekday's people come back the moment their weekday is uploaded, with no
+     extra read. What that cannot reach is a customer on a DIFFERENT weekday's deck who is still
+     blanked from before, and that is now a one-off repair rather than a standing cost, because
+     the thing that blanked them (followupClean at days:1) is gone. Nothing is producing new
+     damage for a per-upload repair to chase.
+
+     The button stays gone from Settings as asked, and nothing replaces it, because after the
+     one-off repair there is nothing left for it to do: each weekday's own upload restores its
+     own people from rows already in hand, so any row still blanked from the old sweep corrects
+     itself the next time its weekday comes round -- within a week, without anybody pressing
+     anything. Automatic, and free. */
 
 
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
     autoSwept, autoRetired, autoRegister,
+    fileRows: dataRows, skipped: skipped || undefined,
     /* Which slice this was. The page adds them up and only shows a result when the last one
        lands, so "Done -- 2,000 rows" twelve times over never appears. `partial` is the flag it
        reads: true means the file is not all in yet and nothing has been rebuilt from it. */
@@ -845,6 +906,8 @@ export default withApi(async (req, res) => {
       : commentsOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
     message: [
+      /* NAMED, not counted. This is the line that would have ended a week of searching. */
+      skipped ? `\u26a0\ufe0f ${skipped} row(s) of the ${dataRows} in this file were NOT uploaded, because their reference column could not be read. They are not in the system and no screen can show them. Check the header spelling of the reference column against the rest of the file. Skipped: ${skippedNames.join('; ')}${skipped > skippedNames.length ? `; and ${skipped - skippedNames.length} more` : ''}.` : '',
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
