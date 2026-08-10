@@ -40,9 +40,11 @@ export function setUnstableOrder(on) { UNSTABLE = !!on; FakeQuery._scan = 0; }
 class FakeQuery {
   static _seq = 0;
   static _scan = 0;
-  constructor(table, name) {
+  constructor(table, name, missingCols) {
     this.table = table;
     this.tableName = name;
+    // Columns this table has not got yet -- see select(). Empty for an up-to-date database.
+    this.missingCols = missingCols || [];
     /* The URL the real client would be about to request. fetchAll reads the table name off
        this to decide which unique column settles a paged read's order, so the fake has to
        offer it or that decision is untestable -- and untested, it is the kind of thing that
@@ -57,9 +59,25 @@ class FakeQuery {
      'exact', head: true }) returns the number in a header and no body at all. That is the
      cheapest read there is, and the fake has to offer it or the only way to test a count is to
      fetch the rows and count them here -- which is the thing a count exists to avoid. */
+  /* A COLUMN THE DATABASE HAS NOT GOT YET IS NOT AN EMPTY COLUMN -- IT IS A REJECTED READ.
+     PostgREST refuses the WHOLE query for one unknown column, and migrations here are run by
+     hand, so every deployment spends some time in that state. Code that asks for an optional
+     column must therefore fall back, in BOTH directions: the write path was guarded and the
+     read path was not, which took the Abnormal Payments screen down with "column
+     received_payments.ref_id does not exist".
+
+     The fake had no way to express this, so no test could catch it. `missingColumns` names
+     columns a table does not have yet, per table, and a select naming one is refused exactly
+     as PostgREST refuses it. Opt-in, because the fixtures are deliberately sparse -- a row
+     without a column is a normal null, and only a column the SCHEMA lacks is an error. */
   select(cols, opts) {
     if (this.mode !== 'select') this.wantRows = true;
     const list = String(cols == null ? '*' : cols).split(',').map(s => s.trim()).filter(Boolean);
+    const absent = (this.missingCols || []).filter(c => list.includes(c));
+    if (absent.length) {
+      this.rejectWith = { code: '42703',
+        message: 'column ' + this.tableName + '.' + absent[0] + ' does not exist' };
+    }
     this.cols = (!list.length || list.includes('*')) ? null : list;
     this.headOnly = !!(opts && opts.head);
     this.wantCount = !!(opts && opts.count);
@@ -136,6 +154,8 @@ class FakeQuery {
     return out;
   }
   _exec() {
+    // A column the schema lacks refuses the whole query, exactly as PostgREST does.
+    if (this.rejectWith) return { data: null, error: this.rejectWith };
     const rows = this.table.rows;
     if (this.mode === 'insert') {
       // Postgres fills `id` from `default gen_random_uuid()`, and code that inserts a parent
@@ -224,7 +244,8 @@ export function fakeDb(tables, opts = {}) {
   for (const [name, rows] of Object.entries(tables || {})) store[name] = { rows: rows.map(r => ({ ...r })) };
   const rpcs = opts.rpc || {};
   return {
-    from(name) { if (!store[name]) store[name] = { rows: [] }; return new FakeQuery(store[name], name); },
+    from(name) { if (!store[name]) store[name] = { rows: [] };
+      return new FakeQuery(store[name], name, (opts.missingColumns || {})[name]); },
     async rpc(name, args) {
       if (!Object.prototype.hasOwnProperty.call(rpcs, name) || rpcs[name] == null) {
         // What PostgREST actually says when the function is missing.
