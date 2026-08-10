@@ -2,7 +2,7 @@ import { fetchAll, runQuery } from './supabase.js';
 import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
@@ -340,8 +340,15 @@ async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) 
      this same shape, so a hard-coded list is the failure that once put customer rows on
      officers' phones with no name and nothing to tap. Fewer rows is the safe half of the win
      and it is the larger half. */
-  const snap = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: type, weekday: wd },
-    date ? { onDate: date, teams: user.teams } : { notAfter: todayKey(nowMs), teams: user.teams });
+  /* A DEFAULTER IS A DEFAULTER EVERY DAY. The tab still has its weekday buttons -- pressing one
+     asks for that deck and gets exactly it -- but the DEFAULT is every deck, one row per
+     customer. Pinned to today's weekday, somebody whose deck was filed under Tuesday was
+     missing from this list on Monday with nothing to say so. */
+  const pickedWd = weekday ? wd : null;
+  const opts = date ? { onDate: date, teams: user.teams } : { notAfter: todayKey(nowMs), teams: user.teams };
+  const snap = pickedWd
+    ? await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: type, weekday: pickedWd }, opts)
+    : await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type }, opts);
   const rows = scoped(user, snap.rows);
   return { type, weekday: wd, date: snap.date, rows, count: rows.length,
     arrears: rows.reduce((s, r) => s + num(r.arrears), 0) };
@@ -359,7 +366,7 @@ const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function rollSun(u) { return u === 7 ? 1 : u; }        // Sunday -> Monday
 async function expectedDefaulters(db, user, _args, nowMs) {
   const [def, teamRows, strat] = await Promise.all([
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) }),
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: todayKey(nowMs) }),
     fetchAll(() => db.from('teams').select('*')),
     assignStrategy(db),
   ]);
@@ -452,7 +459,7 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
        Two clauses do the same job at the database: not null, and not empty. */
     fetchAll(() => onTeams(db.from('followup_comments').select('ref, new_number, created_at')
       .not('new_number', 'is', null).neq('new_number', ''), user.teams)),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: currentWeekday(nowMs) },
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'initial' },
       { notAfter: today, teams: user.teams }),
   ]);
   const rows = scoped(user, raw);
@@ -555,7 +562,7 @@ async function promises(db, user, { from, to } = {}, nowMs) {
       .select('ref, team, fu_status, promise_date, promise_amt, comment, created_by, created_at')
       .eq('fu_status', 'AMETOA AHADI')
       .gte('created_at', addDaysKey(fromKey || todayKey(nowMs), -120)), user.teams)),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: today }),
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: today }),
   ]);
   const stillOwing = {};
   for (const d of curSnap.rows) stillOwing[K(d.ref)] = num(d.arrears);
@@ -974,8 +981,8 @@ async function restructures(db, user, _args, nowMs) {
 /** Look a customer up by REF and say whether they can be restructured at all. */
 async function restructureEligible(db, user, { ref }, nowMs) {
   if (!ref) throw badRequest('A customer REF# is required.');
-  const snap = await latestSnapshot(db, 'defaulter_snapshots',
-    { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) });
+  const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots',
+    { snapshot_type: 'current' }, { notAfter: todayKey(nowMs) });
   const found = snap.rows.find(d => K(d.ref) === K(ref));
   if (!found) return { found: false };
   if (!teamAllowed(user, found.team)) throw forbidden(`You do not have access to team ${found.team}.`);
@@ -1101,8 +1108,8 @@ function legalAmounts(d, fine) {
 }
 
 async function findDefaulter(db, user, ref, nowMs) {
-  const snap = await latestSnapshot(db, 'defaulter_snapshots',
-    { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) });
+  const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots',
+    { snapshot_type: 'current' }, { notAfter: todayKey(nowMs) });
   const found = snap.rows.find(d => K(d.ref) === K(ref));
   if (!found) return null;
   if (!teamAllowed(user, found.team)) throw forbidden(`You do not have access to team ${found.team}.`);
@@ -1377,7 +1384,7 @@ async function notifSeen(db, user, _p, nowMs = Date.now()) {
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
   const [r, cur] = await Promise.all([
     listTable(db, user, 'demand_notices'),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) },
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' },
       { notAfter: todayKey(nowMs), teams: user.teams }),
   ]);
   const nowBy = {};
@@ -1642,8 +1649,8 @@ function paidCount(r) {
 }
 
 async function par(db, user, _args, nowMs) {
-  const snap = await latestSnapshot(db, 'defaulter_snapshots',
-    { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) });
+  const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots',
+    { snapshot_type: 'current' }, { notAfter: todayKey(nowMs) });
   const rows = scoped(user, snap.rows);
   const bands = PAR_BANDS.map(b => ({ band: b.key, customers: 0, arrears: 0 }));
   const pbands = PRINCIPAL_BANDS.map(b => ({ band: b.label, customers: 0, arrears: 0, balance: 0, loanSum: 0 }));
@@ -2241,7 +2248,7 @@ async function commissionSave(db, user, p) {
     up -- so a leader sees both who SHOULD be calling and whether anyone HAS. */
 async function assignments(db, user, _args, nowMs) {
   const [snap, fu, teamRows, strat] = await Promise.all([
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: currentWeekday(nowMs) }, { notAfter: todayKey(nowMs) }),
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: todayKey(nowMs) }),
     /* SCOPED AT THE DATABASE, like every other read in this system. This one was not: an
        officer with one team read the follow-up register for all forty and threw away
        thirty-nine. `team` is stored uppercase on every write path, so this matches exactly
@@ -2320,9 +2327,12 @@ async function credit(db, user, _args, nowMs) {
   const wd = currentWeekday(nowMs);
   const [teamRows, curSnap, monSnap, todaySnap, loansAll] = await Promise.all([
     fetchAll(() => db.from('teams').select('*')),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today }),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon }),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: today }),
+    /* EVERY DECK, ONE ROW PER CUSTOMER. The credit book pairs current against initial BY REF
+       -- customer by customer -- so the weekday pin never protected the arithmetic here; it
+       only hid analysts' customers whose deck happened to be filed under another day. */
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: today }),
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, { onDate: mon }),
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, { notAfter: today }),
     fetchAll(() => onTeams(db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').eq('stage', 'approved'), user.teams)),
   ]);
   const teamBy = {};
