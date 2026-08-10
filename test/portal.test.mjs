@@ -432,7 +432,12 @@ test('registers: complaints, restructures, notices, abnormal, received', async (
   await portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', team: 'KONGOWE', totalDemand: 700 }, NOW);
   assert.equal((await portalApi(db, ADMIN, 'demandNotices', {}, NOW)).count, 2);
 
-  assert.equal((await portalApi(db, ADMIN, 'abnormal', {}, NOW)).count, 1);
+  /* One uploaded row, plus one the system now works out for itself: the fixture's 900/= is not
+     a whole multiple of 500, so it is flagged where before nothing was. */
+  const ab = await portalApi(db, ADMIN, 'abnormal', {}, NOW);
+  assert.equal(ab.uploaded, 1);
+  assert.equal(ab.derived, 1);
+  assert.equal(ab.count, 2);
   const rcv = await portalApi(db, ADMIN, 'received', {}, NOW);
   assert.equal(rcv.count, 2); assert.equal(rcv.amount, 2400);
 });
@@ -4286,8 +4291,95 @@ test('abnormal payments: a reference in neither book is left blank, not guessed 
 
 test('abnormal payments: REF ID survives the round trip -- it was never on screen before', async () => {
   const d = await portalApi(dbWithRpc(abnBook()), ADMIN, 'abnormal', {}, NOW);
-  assert.deepEqual(d.rows.map(r => r.ref_id).sort(),
+  assert.deepEqual(d.rows.filter(r => r.source === 'upload').map(r => r.ref_id).sort(),
     ['RID1', 'RID2', 'RID3', 'RID4', 'RID5']);
+});
+
+/* =====================================================================================
+   "I uploaded received payments but not a single abnormal payment was flagged"
+
+   Because nothing flagged anything. The screen has always said "amounts not in multiples of
+   TZS 500 / 1,000", and that sentence was the only place the rule existed -- no code applied
+   it. Uploading the payments themselves did nothing at all.
+   ===================================================================================== */
+const { isAbnormalAmount } = await import('../api/_lib/portal-core.js');
+
+test('the rule itself: a whole multiple of the step is clean, anything else is not', () => {
+  for (const ok of [79500, 100000, 500, 1000, 250000]) {
+    assert.equal(isAbnormalAmount(ok, 500), false, String(ok));
+  }
+  for (const bad of [79543, 900, 1001, 12345]) {
+    assert.equal(isAbnormalAmount(bad, 500), true, String(bad));
+  }
+  // Zero and blank are a gap in the file, not an irregular payment.
+  for (const none of [0, null, undefined, '', 'x']) {
+    assert.equal(isAbnormalAmount(none, 500), false, String(none));
+  }
+  // The step is company policy, not arithmetic: at 1000, 79,500 becomes irregular.
+  assert.equal(isAbnormalAmount(79500, 1000), true);
+});
+
+test('an irregular received payment is flagged, carrying its own columns across', async () => {
+  const t = tables();
+  t.received_payments = [{ id: 'r9', team: 'KONGOWE', amount_paid: 79543, paid_at: TODAY,
+    customer_name: 'ASHA CHOMBINGA', customer_no: '686852827', payment_no: '255675218973',
+    transaction_id: 'TX9', ref_no: 'R9', ref_id: 'RID9', sender_name: 'ASHA C' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  const r = d.rows.find(x => x.transaction_id === 'TX9');
+  assert.ok(r, '79,543 is not a whole multiple of 500');
+  assert.equal(r.source, 'received', 'and it is marked as one the system worked out');
+  assert.equal(r.paid, 79543);
+  assert.equal(r.contact_no, '686852827');
+  assert.equal(r.phone_number, '255675218973');
+  assert.equal(r.ref_id, 'RID9');
+  assert.equal(r.customer_name, 'ASHA CHOMBINGA');
+});
+
+test('an uploaded row wins over the derived one for the same transaction', async () => {
+  /* Somebody typed the uploaded row. It is not this code's place to duplicate their work. */
+  const t = tables();
+  t.received_payments = [{ id: 'r9', team: 'KONGOWE', amount_paid: 79543, paid_at: TODAY,
+    transaction_id: 'TX9', customer_name: 'FROM PAYMENTS' }];
+  t.abnormal_payments = [{ id: 'a9', team: 'KONGOWE', paid: 79543, transaction_id: 'TX9',
+    customer_name: 'FROM THE SHEET', pmo: 'TYPED BY HAND', created_at: TODAY + 'T05:00:00Z' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.rows.filter(r => r.transaction_id === 'TX9').length, 1, 'not two');
+  assert.equal(d.rows[0].customer_name, 'FROM THE SHEET');
+  assert.equal(d.rows[0].pmo, 'TYPED BY HAND', 'and what somebody typed is untouched');
+});
+
+test('a clean payment is never flagged -- the reported sample stays quiet', async () => {
+  // The two rows from the real sheet: 79,500 and 100,000, both whole multiples of 500.
+  const t = tables();
+  t.abnormal_payments = [];
+  t.received_payments = [
+    { id: 'p1', team: 'KONGOWE', amount_paid: 79500, paid_at: TODAY, transaction_id: 'T1' },
+    { id: 'p2', team: 'KONGOWE', amount_paid: 100000, paid_at: TODAY, transaction_id: 'T2' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.derived, 0);
+  assert.equal(d.count, 0);
+  assert.equal(d.scanned, 2, 'both were looked at, and both were clean');
+});
+
+test('the step is a setting, so the policy can change without a deploy', async () => {
+  const t = tables();
+  t.abnormal_payments = [];
+  t.settings.push({ key: 'ABNORMAL_STEP', value: '1000' });
+  t.received_payments = [{ id: 'p1', team: 'KONGOWE', amount_paid: 79500, paid_at: TODAY, transaction_id: 'T1' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.step, 1000);
+  assert.equal(d.derived, 1, 'clean at 500, irregular at 1000');
+});
+
+test('an officer only ever sees their own team\'s irregular payments', async () => {
+  const t = tables();
+  t.abnormal_payments = [];
+  t.received_payments = [
+    { id: 'p1', team: 'KONGOWE', amount_paid: 901, paid_at: TODAY, transaction_id: 'T1' },
+    { id: 'p2', team: 'MBAGALA', amount_paid: 902, paid_at: TODAY, transaction_id: 'T2' }];
+  const d = await portalApi(dbWithRpc(t), GMO, 'abnormal', {}, NOW);
+  assert.equal(d.count, 1);
+  assert.equal(d.rows[0].transaction_id, 'T1');
 });
 
 /* =====================================================================================

@@ -1330,8 +1330,87 @@ const ABN_STAGE = [
 ];
 const abnKey = r => K(r.ref_no || r.ref_id || '');
 
-async function abnormal(db, user, _args, nowMs) {
-  const base = await listTable(db, user, 'abnormal_payments');
+/* =====================================================================================
+   WHAT MAKES A PAYMENT ABNORMAL -- WRITTEN DOWN AT LAST.
+
+     "I uploaded received payments but not a single abnormal payment was flagged"
+
+   Because nothing flagged anything. The screen has always said "amounts not in multiples of
+   TZS 500 / 1,000" -- and that sentence was the ONLY place the rule existed. No code applied
+   it. Abnormal Payments was a table you uploaded a separate sheet into, so it could only ever
+   show what somebody had already worked out somewhere else, and uploading the payments
+   themselves did nothing at all.
+
+   The rule now runs. A received payment whose amount is not a whole multiple of the step is
+   flagged, and the step is a SETTING (ABNORMAL_STEP, default 500) because it is a company
+   policy, not a fact about arithmetic -- 79,500 and 100,000 are clean at 500; 79,543 is not.
+
+   ADDITIVE, AND THE UPLOAD PATH IS UNTOUCHED. Rows uploaded to abnormal_payments still appear
+   exactly as they did, still first. Derived rows are added beside them and marked, so the two
+   are never confused -- and where a payment appears in BOTH (the sheet was uploaded as well),
+   the UPLOADED row wins and the derived one is dropped, matched on transaction id. Somebody
+   typed the uploaded one; it is not this code's place to duplicate their work.
+
+   POSTGRES: one read, TEAM-SCOPED and DATE-WINDOWED at the database -- the same discipline as
+   every other read on this screen. received_payments only grows, so an unbounded scan here
+   would have undone the whole load pass. The window is a parameter, 60 days by default.
+   ===================================================================================== */
+const ABN_STEP_KEY = 'ABNORMAL_STEP';
+const ABN_STEP_DEFAULT = 500;
+const ABN_WINDOW_DAYS = 60;
+
+/** Not a whole multiple of `step`. Zero and blank are not flagged: an amount nobody recorded is
+    a gap in the file, not an irregular payment. */
+export function isAbnormalAmount(amount, step) {
+  const a = Number(amount);
+  const st = Number(step) > 0 ? Number(step) : ABN_STEP_DEFAULT;
+  if (!a || !isFinite(a) || a <= 0) return false;
+  return Math.abs(a % st) > 1e-9;
+}
+
+async function abnormal(db, user, args, nowMs) {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.from))
+    ? args.from : addDaysKey(todayKey(nowMs), -ABN_WINDOW_DAYS);
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.to)) ? args.to : todayKey(nowMs);
+
+  const [base, cfg, paid] = await Promise.all([
+    listTable(db, user, 'abnormal_payments'),
+    settingsMany(db, [ABN_STEP_KEY]),
+    // Scoped and windowed IN THE QUERY. This table only ever grows.
+    fetchAll(() => onTeams(db.from('received_payments')
+      .select('paid_at, team, customer_name, customer_no, transaction_id, ref_no, ref_id, amount_paid, payment_no, sender_name')
+      .gte('paid_at', from).lte('paid_at', to), user.teams)),
+  ]);
+  const step = cfg.num(ABN_STEP_KEY, ABN_STEP_DEFAULT);
+
+  // An uploaded row for the same transaction wins -- somebody typed it.
+  const already = new Set(base.rows
+    .map(r => K(r.transaction_id)).filter(Boolean));
+  const derived = scoped(user, paid)
+    .filter(r => isAbnormalAmount(r.amount_paid, step))
+    .filter(r => !already.has(K(r.transaction_id)))
+    .map(r => ({
+      id: 'rcv:' + (r.transaction_id || r.ref_id || r.ref_no || Math.random()),
+      team: r.team, gmo: null, pmo: null,
+      contact_no: r.customer_no, phone_number: r.payment_no,
+      ref_no: r.ref_no, ref_id: r.ref_id,
+      customer_name: r.customer_name, sender_name: r.sender_name,
+      transaction_id: r.transaction_id, paid: num(r.amount_paid),
+      payment: null, created_at: r.paid_at,
+      // So the screen can say which rows the system worked out and which were uploaded.
+      source: 'received',
+    }));
+  for (const r of base.rows) r.source = r.source || 'upload';
+
+  base.rows = base.rows.concat(derived)
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  base.count = base.rows.length;
+  base.step = step;
+  base.from = from; base.to = to;
+  base.uploaded = base.count - derived.length;
+  base.derived = derived.length;
+  base.scanned = paid.length;
+
   const blanks = base.rows.filter(r => !String(r.pmo == null ? '' : r.pmo).trim());
   if (!blanks.length) return { ...base, pmoFilled: 0 };
 
