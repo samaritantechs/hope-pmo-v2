@@ -4817,6 +4817,7 @@ test('a team still cannot be merged into itself, compared as stored', async () =
    The data is right and the screens are right, and the person looking has no way to tell which
    of the two is lying to them. That is what this answers.
    ===================================================================================== */
+const K2 = v => String(v == null ? '' : v).trim().toUpperCase();
 function estherBook(weekday) {
   const t = tables();
   t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
@@ -4831,13 +4832,55 @@ function estherBook(weekday) {
   return t;
 }
 
-test('a customer in another weekday\'s deck IS invisible -- that is the fault, reproduced', async () => {
-  /* Pinned so nobody "fixes" the weekday rule by accident: this behaviour is correct and
-     deliberate. What was missing was any way to find out. */
-  const t = estherBook('TUE');                     // NOW is Friday
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'expectedDefaulters', {}, NOW);
-  assert.ok(!d.rows.some(r => r.ref === '2-209-72865'),
-    'she is genuinely not on the screen, even for an admin');
+/* "As a defaulter; they are meant to be visible everyday unless its expected defaulter"
+
+   The rule, stated by the person who owns it. A defaulter does not stop being a defaulter
+   because the deck they arrived in was filed under Tuesday. Only the Exp.Def ROTATION is
+   weekday-shaped, and that is because its whole purpose is a two-day cycle.
+
+   This was the opposite before: every daily list pinned itself to today's weekday, so a
+   customer in Tuesday's deck was nowhere on Monday -- for everybody, admin included. */
+test('a defaulter is visible EVERY day, whatever weekday their deck was filed under', async () => {
+  const t = estherBook('TUE');                     // NOW is Friday -- a different weekday
+  /* The deck-driven screens. followup/promises read the follow-up REGISTER, which the upload
+     rebuilds separately -- a different path, and not what the weekday pin ever touched. */
+  for (const fn of ['defaulters', 'expectedDefaulters']) {
+    const d = await portalApi(dbWithRpc(t), ADMIN, fn, {}, NOW);
+    assert.ok((d.rows || []).some(r => K2(r.ref) === '2-209-72865'),
+      fn + ' hides a defaulter whose deck was filed under another weekday');
+  }
+  // PAR reports aggregates rather than customers, so it is checked on its own count.
+  const par = await portalApi(dbWithRpc(t), ADMIN, 'par', {}, NOW);
+  assert.ok(par.totals.customers >= 1, 'PAR counts her too');
+});
+
+test('and the credit analyst has them in their book on any day', async () => {
+  const d = await portalApi(dbWithRpc(estherBook('TUE')), ADMIN, 'credit', {}, NOW);
+  const a = d.rows.find(r => r.analyst === 'ANALYST A');
+  assert.ok(a && a.cnt >= 1, 'the analyst who owns GOBA can see their count 1-6 customer');
+});
+
+test('the Defaulters tab still honours an EXPLICIT weekday choice', async () => {
+  /* The day buttons must keep meaning what they say -- "show me Tuesday's deck" is a real
+     question, and the change is only to what happens when nobody asked. */
+  const t = estherBook('TUE');
+  const tue = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { weekday: 'TUE' }, NOW);
+  assert.ok(tue.rows.some(r => K2(r.ref) === '2-209-72865'));
+  const mon = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { weekday: 'MON' }, NOW);
+  assert.ok(!mon.rows.some(r => K2(r.ref) === '2-209-72865'), 'Monday\'s deck is Monday\'s deck');
+});
+
+test('a customer in two weekdays\' decks is listed ONCE, from the newer one', async () => {
+  /* A day can hold several weekdays' decks and the same person may sit in more than one.
+     Counting them twice would be a worse fault than the one being fixed. */
+  const t = estherBook('TUE');
+  const hers = t.defaulter_snapshots.find(r => r.ref === '2-209-72865' && r.snapshot_type === 'current');
+  t.defaulter_snapshots.push({ ...hers, weekday: 'WED',
+    arrears: 999, upload_batch: 'bz', created_at: TODAY + 'T06:00:00Z' });
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
+  const hits = d.rows.filter(r => K2(r.ref) === '2-209-72865');
+  assert.equal(hits.length, 1, 'once, not twice');
+  assert.equal(Number(hits[0].arrears), 999, 'and it is the newer upload that wins');
 });
 
 test('and Find customer says exactly where she is and why she cannot be seen', async () => {
