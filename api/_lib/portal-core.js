@@ -487,6 +487,10 @@ async function findCustomer(db, user, args, nowMs) {
   const follow = matches(fuRows).map(r => ({
     where: 'Follow-up register', ref: r.ref, name: r.full_name, team: r.team,
     status: r.status, ds: r.ds, arrears: num(r.arrears), fu: r.fu_status, updated: r.updated_at,
+    /* READ OFF THE RAW ROW, because `num` turns a null arrears into 0 and 0 is a real figure.
+       Blanked means the columns are ABSENT, not zero -- that distinction is the entire signal,
+       and computing it from the mapped value quietly reported every blanked customer as live. */
+    blank: r.status == null && r.arrears == null,
   }));
 
   /* THE VERDICT, IN WORDS. A list of rows still leaves somebody to work out for themselves why
@@ -498,19 +502,39 @@ async function findCustomer(db, user, args, nowMs) {
       + 'register you can see. If they are in the file, the upload did not land: check the '
       + 'upload page for the day, and that their TEAM exists in Teams & Staff.');
   } else {
+    /* =====================================================================================
+       THIS VERDICT HAD GONE STALE, WHICH IS WORSE THAN HAVING NONE.
+
+       It was written against rules that have since been fixed, and it was still handing them
+       out as instructions. It told you a customer filed under Thursday is invisible today and
+       to re-upload their team's deck under today's weekday -- which is exactly the thing the
+       owner said should never be necessary:
+
+         "defaulters have no day ... not that i have to upload saturady report today to see the
+          defaulter"
+
+       And it pointed at "Settings -> Rebuild follow-up register", a button that no longer
+       exists. A screen whose whole job is to explain an empty list must not send somebody after
+       a fault that was fixed weeks ago. What follows is the CURRENT set of reasons.
+       ===================================================================================== */
     const wdays = [...new Set(decks.map(d => d.weekday).filter(Boolean))];
     if (decks.length && !decks.some(d => d.onToday)) {
-      notes.push(`Yupo kwenye deki ya ${wdays.join(', ')} — leo ni ${wdToday}.`
-        + ` / They ARE in the defaulter deck, but under weekday ${wdays.join(', ')} while today `
-        + `is ${wdToday}. Every defaulter screen reads TODAY'S weekday, which is why they are `
-        + `nowhere — the deck is per weekday and pairing must match. Re-upload their team's deck `
-        + `under ${wdToday}, or look on the day their deck belongs to.`);
+      notes.push(`Yupo kwenye deki ya ${wdays.join(', ')} \u2014 hiyo ni sawa kabisa.`
+        + ` / They are in the deck under weekday ${wdays.join(', ')}, and today is ${wdToday}. `
+        + 'THAT IS NORMAL AND IS NOT THE PROBLEM: a defaulter is a defaulter every day, and every '
+        + "weekday's deck is read at its own date. The weekday only pairs an initial against a "
+        + 'current for recovery. Do NOT re-upload their deck under today to "fix" this.');
     }
-    if (decks.length && !decks.some(d => d.dated)) {
-      notes.push(`Deki yao ni ya ${decks[0].date}, si ya leo (${today}).`
-        + ` / Their newest deck row is dated ${decks[0].date}, not today (${today}). Screens read `
-        + 'the latest date in the whole table, so if another team was uploaded with a later date '
-        + 'this customer falls out of view.');
+    /* The date only matters now if it has fallen out of the look-back window entirely -- it is
+       resolved per team AND per weekday, so a deck older than somebody else's is read exactly
+       as it stands rather than being hidden by their newer upload. */
+    const newestDeck = decks.length ? String(decks[0].date) : '';
+    const windowFrom = addDaysKey(today, -DECK_LOOKBACK_DAYS);
+    if (newestDeck && newestDeck < windowFrom) {
+      notes.push(`Deki yao ya mwisho ni ya ${newestDeck} \u2014 zaidi ya siku ${DECK_LOOKBACK_DAYS}.`
+        + ` / Their newest deck row is dated ${newestDeck}, more than ${DECK_LOOKBACK_DAYS} days `
+        + `old (the window starts at ${windowFrom}). That is the one date rule that still hides `
+        + "somebody: their weekday's deck has not been uploaded in over six weeks. Upload it.");
     }
     /* THE PHONE'S OWN ANSWER. HOPE Calls builds its Defaulters list from the register, not the
        deck, so somebody in one and not the other is on every portal screen and no handset --
@@ -519,12 +543,26 @@ async function findCustomer(db, user, args, nowMs) {
       notes.push('Yupo kwenye deki lakini HAYUPO kwenye rejista ya ufuatiliaji.'
         + ' / They are in the defaulter deck but NOT in the follow-up register. HOPE Calls builds '
         + 'its Defaulters list from the register, so no handset can show them even though every '
-        + 'portal screen can. Fix it with Settings \u2192 Rebuild follow-up register.');
+        + "portal screen can. The next upload of THEIR weekday's deck puts them in automatically "
+        + '\u2014 no button, nothing to press.');
     }
-    if (decks.some(d => d.onToday && d.dated)) {
-      notes.push('Yupo kwenye deki ya leo. / They are in today\'s deck for today\'s weekday, so '
-        + 'the defaulter screens should show them. If a particular screen does not, it is that '
-        + 'screen\'s own filter — status, count 1-6, or the team scope of the code you signed in with.');
+    /* BLANKED IS NOT THE SAME AS MISSING, and it is the shape that cost the most time. Retiring
+       sets status and arrears to null and keeps the row, and the phone skips exactly that. The
+       register search below would list such a row like any other, so it has to be called out by
+       name or this screen quietly says "she is in the register" and leaves it there. */
+    const blanked = follow.filter(f => f.blank);
+    if (decks.length && blanked.length && blanked.length === follow.length) {
+      notes.push('Yupo kwenye rejista lakini takwimu zake ni tupu (hali na deni).'
+        + ' / They ARE in the follow-up register, but BLANKED: status and arrears are both empty. '
+        + 'HOPE Calls skips exactly that shape, so they are on no handset while looking perfectly '
+        + "present here. The next upload of their weekday's deck restores the figures "
+        + 'automatically.');
+    }
+    if (decks.length && follow.length && !blanked.length) {
+      notes.push('Yupo kwenye deki na kwenye rejista. / They are in the defaulter deck and in the '
+        + 'follow-up register with live figures, so the portal screens and HOPE Calls should both '
+        + "show them. If one particular screen does not, it is that screen's own filter \u2014 "
+        + 'status, count 1-6, the role narrowing, or the team scope of the code you signed in with.');
     }
   }
 
