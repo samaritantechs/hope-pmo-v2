@@ -219,6 +219,120 @@ async function demandMessage(db, user, { ref, team }, nowMs) {
 }
 
 /* ------------------------------------------------------------------ defaulters */
+/* =====================================================================================
+   WHERE IS THIS CUSTOMER? -- and if she is nowhere, WHY.
+
+     "Some customers werent seen in credit users for defaulters, while troubleshooting they
+      aint seen anywhere even in my admin user yet they are in the uploaded file"
+
+   She was in the database the whole time. Defaulter decks are stored PER WEEKDAY -- that is
+   deliberate and must stay, because an initial MON deck compared against a current TUE deck
+   measures two different populations and reports the gap as recovery. But every screen reads
+   TODAY'S weekday, so a customer whose deck was uploaded under Tuesday is invisible on Monday.
+   To everyone. Including the admin. With nothing on any screen to say so.
+
+   That is the worst shape a fault can have: the data is right, the screens are right, and the
+   person looking has no way to find out which of the two is lying to them. Reproduced exactly
+   -- change the deck's weekday and she vanishes from Exp.Def, the Defaulters tab and the credit
+   book at once.
+
+   So this answers the question directly. Give it a reference, a name or a phone number and it
+   says every place that customer appears -- which date, which weekday, which deck, which upload
+   -- and then says, in words, whether today's screens can see her and what to do if not.
+
+   POSTGRES: three bounded reads. Each is team-scoped for a scoped user, capped, and searched
+   with an indexed prefix rather than a whole-table scan followed by JavaScript. */
+const FIND_LIMIT = 200;
+const FIND_COLS = 'ref, full_name, contact, team, status, ds, arrears, snapshot_type, weekday, snapshot_date, upload_batch, created_at';
+
+async function findCustomer(db, user, args, nowMs) {
+  const q = String((args && args.q) == null ? '' : args.q).trim();
+  if (q.length < 3) throw badRequest('Andika angalau herufi 3. / Type at least 3 characters — a reference, a name, or a phone number.');
+  const like = '%' + q.replace(/[%_\\]/g, m => '\\' + m) + '%';
+  /* PHONE NUMBERS ARE STORED NORMALISED -- normPhone strips the leading zero and any country
+     code, so 0746115063 is held as 746115063 and searching the typed string would find nothing.
+     The last nine digits are the part that is always the same however it was written, which is
+     exactly what normPhone leaves behind. Searched IN THE QUERY alongside the reference and the
+     name, because a number somebody reads off a handset is the commonest way this screen is
+     used and it must not be the one that quietly fails. */
+  const digits = q.replace(/\D/g, '');
+  const numLike = digits.length >= 7 ? '%' + digits.slice(-9) + '%' : null;
+  const orClause = cols => cols.map(c => `${c}.ilike.${c === 'contact' || c === 'guarantor_contact' ? numLike : like}`).join(',');
+  const searchCols = ['ref', 'full_name'].concat(numLike ? ['contact'] : []);
+
+  const [defRows, expRows, fuRows] = await Promise.all([
+    fetchAll(() => onTeams(db.from('defaulter_snapshots').select(FIND_COLS)
+      .or(orClause(searchCols)).limit(FIND_LIMIT), user.teams)),
+    fetchAll(() => onTeams(db.from('repayment_snapshots')
+      .select('ref, full_name, contact, team, todays_status, due_summary, payment_expected, arrears, snapshot_type, snapshot_date, upload_batch, created_at')
+      .or(orClause(searchCols)).limit(FIND_LIMIT), user.teams)),
+    fetchAll(() => onTeams(db.from('followup_status')
+      .select('ref, full_name, contact, team, status, ds, arrears, fu_status, updated_at')
+      .or(orClause(searchCols)).limit(FIND_LIMIT), user.teams)),
+  ]);
+
+  const today = todayKey(nowMs), wdToday = currentWeekday(nowMs);
+  const byNum = r => !!numLike && String(r.contact || '').includes(digits.slice(-9));
+  const matches = rows => rows.filter(r =>
+    K(r.ref).includes(K(q)) || K(r.full_name).includes(K(q)) || byNum(r));
+
+  const decks = matches(defRows).map(r => ({
+    where: 'Defaulter deck', ref: r.ref, name: r.full_name, team: r.team,
+    date: r.snapshot_date, weekday: r.weekday, type: r.snapshot_type,
+    batch: r.upload_batch || 'legacy', status: r.status, ds: r.ds, arrears: num(r.arrears),
+    /* THE WHOLE POINT. Today's screens read today's weekday and the latest date -- so a row
+       that is neither is present, correct, and unreachable. */
+    onToday: String(r.weekday || '') === wdToday,
+    dated: String(r.snapshot_date) === today,
+  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const expected = matches(expRows).map(r => ({
+    where: 'Expected deck', ref: r.ref, name: r.full_name, team: r.team,
+    date: r.snapshot_date, type: r.snapshot_type, batch: r.upload_batch || 'legacy',
+    status: r.todays_status, ds: r.due_summary, arrears: num(r.arrears),
+    dated: String(r.snapshot_date) === today,
+  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  const follow = matches(fuRows).map(r => ({
+    where: 'Follow-up register', ref: r.ref, name: r.full_name, team: r.team,
+    status: r.status, ds: r.ds, arrears: num(r.arrears), fu: r.fu_status, updated: r.updated_at,
+  }));
+
+  /* THE VERDICT, IN WORDS. A list of rows still leaves somebody to work out for themselves why
+     a screen is empty; this says it. */
+  const notes = [];
+  const total = decks.length + expected.length + follow.length;
+  if (!total) {
+    notes.push('Hakuna popote. / Not found anywhere — this customer is not in any deck or '
+      + 'register you can see. If they are in the file, the upload did not land: check the '
+      + 'upload page for the day, and that their TEAM exists in Teams & Staff.');
+  } else {
+    const wdays = [...new Set(decks.map(d => d.weekday).filter(Boolean))];
+    if (decks.length && !decks.some(d => d.onToday)) {
+      notes.push(`Yupo kwenye deki ya ${wdays.join(', ')} — leo ni ${wdToday}.`
+        + ` / They ARE in the defaulter deck, but under weekday ${wdays.join(', ')} while today `
+        + `is ${wdToday}. Every defaulter screen reads TODAY'S weekday, which is why they are `
+        + `nowhere — the deck is per weekday and pairing must match. Re-upload their team's deck `
+        + `under ${wdToday}, or look on the day their deck belongs to.`);
+    }
+    if (decks.length && !decks.some(d => d.dated)) {
+      notes.push(`Deki yao ni ya ${decks[0].date}, si ya leo (${today}).`
+        + ` / Their newest deck row is dated ${decks[0].date}, not today (${today}). Screens read `
+        + 'the latest date in the whole table, so if another team was uploaded with a later date '
+        + 'this customer falls out of view.');
+    }
+    if (decks.some(d => d.onToday && d.dated)) {
+      notes.push('Yupo kwenye deki ya leo. / They are in today\'s deck for today\'s weekday, so '
+        + 'the defaulter screens should show them. If a particular screen does not, it is that '
+        + 'screen\'s own filter — status, count 1-6, or the team scope of the code you signed in with.');
+    }
+  }
+
+  return { q, today, weekdayToday: wdToday, decks, expected, follow,
+    count: total, notes,
+    teams: [...new Set([...decks, ...expected, ...follow].map(r => r.team).filter(Boolean))] };
+}
+
 async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) {
   const wd = weekday || currentWeekday(nowMs);
   /* Team-scoped at the database, same reasoning as Expected above. Columns are deliberately
@@ -3538,7 +3652,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
-  demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received,
+  demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,

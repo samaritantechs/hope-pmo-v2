@@ -4803,3 +4803,80 @@ test('a team still cannot be merged into itself, compared as stored', async () =
       { team: 'TUNDURU', moveTo: 'TUNDURU' }, NOW),
     e => /itself/.test(e.message));
 });
+
+/* =====================================================================================
+   "Some customers werent seen in credit users for defaulters, while troubleshooting they aint
+    seen anywhere even in my admin user yet they are in the uploaded file"
+
+   She was in the database the whole time. Defaulter decks are stored PER WEEKDAY -- deliberate,
+   and it must stay, because an initial MON deck against a current TUE deck measures two
+   different populations and reports the gap as recovery. But every defaulter screen reads
+   TODAY'S weekday, so a customer whose deck went in under Tuesday is invisible on Monday. To
+   everyone, admin included, with nothing anywhere to say so.
+
+   The data is right and the screens are right, and the person looking has no way to tell which
+   of the two is lying to them. That is what this answers.
+   ===================================================================================== */
+function estherBook(weekday) {
+  const t = tables();
+  t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
+    credit: 'ANALYST A', expected: 'E', bike: 'B' });
+  const base = { ref: '2-209-72865', docket_no: '2209728651', full_name: 'ESTER PETER OMARY',
+    contact: '746115063', guarantor_name: 'PETER CHARLES OMARY', guarantor_contact: '783384221',
+    disb_date: '2026-07-09', status: 'Partial Defaulter', ds: '2-4', dc: 2, days_elapsed: 31,
+    arrears: 1766336, balance: 10833000, branch: 'GOBA-TEGETA', team: 'GOBA',
+    snapshot_date: TODAY, upload_batch: 'bg', created_at: TODAY + 'T04:00:00Z' };
+  t.defaulter_snapshots.push({ ...base, snapshot_type: 'current', weekday });
+  t.defaulter_snapshots.push({ ...base, snapshot_type: 'initial', weekday, arrears: 2000000 });
+  return t;
+}
+
+test('a customer in another weekday\'s deck IS invisible -- that is the fault, reproduced', async () => {
+  /* Pinned so nobody "fixes" the weekday rule by accident: this behaviour is correct and
+     deliberate. What was missing was any way to find out. */
+  const t = estherBook('TUE');                     // NOW is Friday
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  assert.ok(!d.rows.some(r => r.ref === '2-209-72865'),
+    'she is genuinely not on the screen, even for an admin');
+});
+
+test('and Find customer says exactly where she is and why she cannot be seen', async () => {
+  const d = await portalApi(dbWithRpc(estherBook('TUE')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.equal(d.count, 2, 'both deck rows found');
+  assert.ok(d.decks.every(x => x.weekday === 'TUE'));
+  assert.ok(d.decks.every(x => x.onToday === false));
+  assert.ok(d.notes.some(n => /weekday TUE/.test(n) && /today is FRI/.test(n)),
+    'and it says so in words rather than leaving somebody to work it out');
+});
+
+test('found by reference and by phone number too, not just by name', async () => {
+  const db = dbWithRpc(estherBook('TUE'));
+  assert.equal((await portalApi(db, ADMIN, 'findCustomer', { q: '2-209-72865' }, NOW)).count, 2);
+  assert.equal((await portalApi(dbWithRpc(estherBook('TUE')), ADMIN,
+    'findCustomer', { q: '0746115063' }, NOW)).count, 2);
+});
+
+test('when the deck IS today\'s weekday, it says so instead of crying wolf', async () => {
+  const d = await portalApi(dbWithRpc(estherBook('FRI')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.ok(d.decks.every(x => x.onToday === true));
+  assert.ok(d.notes.some(n => /should show them/.test(n)));
+});
+
+test('a customer who is genuinely nowhere is told apart from one who is hidden', async () => {
+  /* Two very different problems -- "the upload did not land" and "you are looking on the wrong
+     day" -- and the whole value here is not confusing them. */
+  const d = await portalApi(dbWithRpc(tables()), ADMIN, 'findCustomer', { q: 'NOBODY AT ALL' }, NOW);
+  assert.equal(d.count, 0);
+  assert.ok(d.notes.some(n => /Not found anywhere/.test(n) && /upload did not land/.test(n)));
+});
+
+test('an officer can only find their own teams', async () => {
+  const d = await portalApi(dbWithRpc(estherBook('FRI')), GMO, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.equal(d.count, 0, 'GOBA is not KONGOWE');
+});
+
+test('too short a search is refused rather than returning the whole book', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(tables()), ADMIN, 'findCustomer', { q: 'ab' }, NOW),
+    e => /at least 3/.test(e.message));
+});
