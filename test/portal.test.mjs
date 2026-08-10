@@ -4923,3 +4923,76 @@ test('too short a search is refused rather than returning the whole book', async
     () => portalApi(dbWithRpc(tables()), ADMIN, 'findCustomer', { q: 'ab' }, NOW),
     e => /at least 3/.test(e.message));
 });
+
+/* =====================================================================================
+   "I as admin not yet seeing her on the call app defaulters"
+
+   HOPE Calls builds its Defaulters list from followup_status -- the working register -- and
+   deliberately so: an officer's own statuses, promises and comments live there. Every deck
+   upload rebuilds it, so in normal running the two agree.
+
+   They can come apart. A customer retired for going a fortnight without their weekday's deck
+   coming round, or one loaded before the register was being written, sits in the deck and NOT
+   in the register: present on every portal screen, absent from every handset, with each half
+   individually correct and nothing anywhere to say so.
+   ===================================================================================== */
+test('a customer in the deck but not the register is invisible to the phone -- and named as such', async () => {
+  const t = estherBook('TUE');
+  t.followup_status = t.followup_status.filter(r => r.ref !== '2-209-72865');
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.equal(d.follow.length, 0, 'she is not in the register');
+  assert.ok(d.decks.length > 0, 'but she IS in the deck');
+  assert.ok(d.notes.some(n => /NOT in the follow-up register/.test(n) && /no handset/.test(n)),
+    'and the diagnostic says exactly that, rather than leaving it to be worked out');
+});
+
+test('rebuilding the register puts her back, so the phone can see her', async () => {
+  const t = estherBook('TUE');
+  t.followup_status = t.followup_status.filter(r => r.ref !== '2-209-72865');
+  const db = dbWithRpc(t);
+  const r = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.ok(r.added >= 1);
+  const reg = db._dump('followup_status').find(x => x.ref === '2-209-72865');
+  assert.ok(reg, 'she is in the register now');
+  assert.equal(reg.team, 'GOBA');
+  assert.equal(Number(reg.arrears), 1766336);
+  assert.equal(reg.ds, '2-4');
+});
+
+test('rebuilding NEVER touches a row that is already there', async () => {
+  /* An officer's follow-up status, promise and comments live on that row. Overwriting them
+     would be a far worse fault than the one being repaired. */
+  const t = estherBook('TUE');
+  // Somebody already on the register, with an officer's work on their row.
+  t.followup_status.push({ ref: 'WORKED', team: 'GOBA', full_name: 'HAS A PROMISE',
+    status: 'Defaulter', arrears: 1 });
+  const mine = t.followup_status.find(r => r.ref === 'WORKED');
+  mine.fu_status = 'AMETOA AHADI';
+  mine.promise_date = '2026-08-20';
+  mine.last_comment = 'atalipa Jumatatu';
+  mine.arrears = 12345;
+  const db = dbWithRpc(t);
+  await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  const after = db._dump('followup_status').find(x => x.ref === 'WORKED');
+  assert.equal(after.fu_status, 'AMETOA AHADI');
+  assert.equal(after.promise_date, '2026-08-20');
+  assert.equal(after.last_comment, 'atalipa Jumatatu');
+  assert.equal(Number(after.arrears), 12345, 'even the arrears they were working from');
+});
+
+test('rebuilding twice adds nothing the second time', async () => {
+  const t = estherBook('TUE');
+  t.followup_status = t.followup_status.filter(r => r.ref !== '2-209-72865');
+  const db = dbWithRpc(t);
+  const first = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.ok(first.added >= 1);
+  const second = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.equal(second.added, 0);
+  assert.ok(/already in the follow-up register/.test(second.note));
+});
+
+test('only an admin may rebuild the register', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(estherBook('TUE')), GMO, 'rebuildFollowup', {}, NOW),
+    e => e.status === 403);
+});

@@ -245,6 +245,79 @@ async function demandMessage(db, user, { ref, team }, nowMs) {
 const FIND_LIMIT = 200;
 const FIND_COLS = 'ref, full_name, contact, team, status, ds, arrears, snapshot_type, weekday, snapshot_date, upload_batch, created_at';
 
+/* =====================================================================================
+   THE PHONE READS THE REGISTER, NOT THE DECK.
+
+     "I as admin not yet seeing her on the call app defaulters"
+
+   HOPE Calls builds its Defaulters list from followup_status -- the working register -- and
+   deliberately so: an officer's own follow-up statuses, promises and comments live there, and
+   the list has to carry them. The register is rebuilt from every deck upload
+   (syncFollowupFromDeck), so in normal running the two agree.
+
+   They can come apart. A customer retired for going a fortnight without their weekday's deck
+   coming round, or one whose deck was loaded before the register was being written, sits in
+   the deck and not in the register -- present on every portal screen and absent from every
+   handset. Nothing said so, because each half was individually correct.
+
+   This puts them back. It reads the current book the same way every screen now does -- the
+   latest deck, EVERY weekday, one row per customer -- and writes in anyone the register is
+   missing, leaving every existing row completely alone.
+
+   IT NEVER TOUCHES AN OFFICER'S WORK. Only refs that are ABSENT are inserted; a row that is
+   already there keeps its follow-up status, its promise, its comments and its arrears exactly
+   as they are. The worst this can do is add somebody who is already a defaulter.
+
+   POSTGRES: one bounded deck read, one keys-only read of the register, and chunked inserts of
+   the difference. Admin only and on demand -- it is a repair, not something a screen runs. */
+const FU_REPAIR_CHUNK = 400;
+
+async function rebuildFollowup(db, user, _args, nowMs) {
+  requireAdmin(user);
+  const today = todayKey(nowMs);
+  const [deck, have] = await Promise.all([
+    latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' },
+      { notAfter: today, columns: 'ref, full_name, contact, guarantor_name, guarantor_contact, '
+        + 'disb_date, last_trans_date, status, ds, dc, days_elapsed, other_inst, arrears, team, weekday' }),
+    // Keys only -- the register is the largest current-state table and nothing else is needed.
+    fetchAll(() => db.from('followup_status').select('ref')),
+  ]);
+  const known = new Set((have || []).map(r => K(r.ref)));
+  const missing = deck.rows.filter(r => r.ref && !known.has(K(r.ref)));
+  if (!missing.length) {
+    return { deck: deck.rows.length, register: known.size, added: 0, date: deck.date,
+      weekdays: deck.weekdays,
+      note: 'Kila mteja wa deki yupo kwenye rejista. / Every customer in the current deck is '
+        + 'already in the follow-up register — the phone is seeing the same book as the portal.' };
+  }
+  const rows = missing.map(d => ({
+    ref: String(d.ref), team: d.team || null, full_name: d.full_name || null,
+    contact: d.contact || null,
+    guarantor_name: d.guarantor_name || null, guarantor_contact: d.guarantor_contact || null,
+    disb_date: d.disb_date || null, last_trans: d.last_trans_date || null,
+    status: d.status || null, ds: d.ds || null, dc: d.dc == null ? null : d.dc,
+    days_elapsed: d.days_elapsed == null ? null : d.days_elapsed,
+    rejesho: d.other_inst == null ? null : d.other_inst,
+    arrears: d.arrears == null ? null : d.arrears,
+    updated_at: new Date(nowMs).toISOString(),
+  }));
+  let added = 0;
+  for (let i = 0; i < rows.length; i += FU_REPAIR_CHUNK) {
+    const slice = rows.slice(i, i + FU_REPAIR_CHUNK);
+    /* ignoreDuplicates so a ref that arrived between the read and the write is skipped rather
+       than overwriting somebody's follow-up work -- the one thing this must never do. */
+    const { error } = await runQuery(() =>
+      db.from('followup_status').upsert(slice, { onConflict: 'ref', ignoreDuplicates: true }), 2);
+    if (error) throw new Error(error.message);
+    added += slice.length;
+  }
+  return { deck: deck.rows.length, register: known.size, added, date: deck.date,
+    weekdays: deck.weekdays,
+    note: `Wameongezwa ${added}. / ${added} customer(s) were in the current deck but missing from `
+      + 'the follow-up register, so HOPE Calls could not show them. They are in now. Nothing that '
+      + 'was already there was changed.' };
+}
+
 async function findCustomer(db, user, args, nowMs) {
   const q = String((args && args.q) == null ? '' : args.q).trim();
   if (q.length < 3) throw badRequest('Andika angalau herufi 3. / Type at least 3 characters — a reference, a name, or a phone number.');
@@ -320,6 +393,15 @@ async function findCustomer(db, user, args, nowMs) {
         + ` / Their newest deck row is dated ${decks[0].date}, not today (${today}). Screens read `
         + 'the latest date in the whole table, so if another team was uploaded with a later date '
         + 'this customer falls out of view.');
+    }
+    /* THE PHONE'S OWN ANSWER. HOPE Calls builds its Defaulters list from the register, not the
+       deck, so somebody in one and not the other is on every portal screen and no handset --
+       with each half individually correct and nothing to say so. */
+    if (decks.length && !follow.length) {
+      notes.push('Yupo kwenye deki lakini HAYUPO kwenye rejista ya ufuatiliaji.'
+        + ' / They are in the defaulter deck but NOT in the follow-up register. HOPE Calls builds '
+        + 'its Defaulters list from the register, so no handset can show them even though every '
+        + 'portal screen can. Fix it with Settings \u2192 Rebuild follow-up register.');
     }
     if (decks.some(d => d.onToday && d.dated)) {
       notes.push('Yupo kwenye deki ya leo. / They are in today\'s deck for today\'s weekday, so '
@@ -3662,7 +3744,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
-  demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer,
+  demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
