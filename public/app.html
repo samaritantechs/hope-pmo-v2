@@ -973,25 +973,72 @@ function exportXls(){
 /* JPG: draws the element to a canvas by rasterising a cloned copy through an SVG
    foreignObject -- no html2canvas, no CDN, so it works offline in the app. Falls back to a
    clear message rather than a silent nothing if the browser refuses to taint-free render. */
+/* WHY THE PICTURE WAS ONLY EVER THE PART YOU COULD SEE.
+
+     "downloading jpg reports in app is cutting the current screen size that has not been
+      scrolled instead of the whole current report"
+
+   The size was measured off the LIVE element, and the live element is clipped by design:
+   `.card` is `overflow:hidden` and the table inside it sits in a `.scroll` wrapper that is
+   `overflow-x:auto`. So scrollWidth and scrollHeight reported the size of the WINDOW onto the
+   report, not the report -- and the width was then capped at 1600 on top of that, cutting a
+   wide table a second time.
+
+   Worse, the whole stylesheet is copied into the picture, so those same clipping rules applied
+   again INSIDE the drawing. Even measured correctly, the content would still have been cut.
+
+   Both halves are fixed the same way: the CLONE is unclipped -- every overflow, max-height and
+   max-width neutralised -- then measured for real by attaching it off-screen, and an override
+   style is appended AFTER the copied CSS so the unclipping also wins inside the foreignObject.
+
+   Client-side only. Nothing here asks the database anything. */
+var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;'
+  + 'max-width:none !important;}'
+  + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}';
+
 function saveJpg(el){
   if (!el){ toast(t('nothing'), true); return; }
+  var probe = null;
   try {
-    var w = Math.min(el.scrollWidth, 1600), h = el.scrollHeight;
     var clone = el.cloneNode(true);
     Array.prototype.forEach.call(clone.querySelectorAll('button'), function(b){ b.remove(); });
+    clone.classList.add('jpgshot');
+
+    /* MEASURED FROM THE UNCLIPPED CLONE, not from the window onto it. Attached off-screen so
+       the browser lays it out for real -- a detached node has no size at all, and guessing
+       from the original is exactly what produced a cropped picture. */
+    probe = document.createElement('div');
+    probe.setAttribute('style', 'position:fixed;left:-99999px;top:0;visibility:hidden;'
+      + 'width:auto;height:auto;overflow:visible;pointer-events:none;z-index:-1');
+    probe.className = document.body.className;
+    var pstyle = document.createElement('style');
+    pstyle.textContent = JPG_UNCLIP;
+    probe.appendChild(pstyle);
+    probe.appendChild(clone);
+    document.body.appendChild(probe);
+    // Widest of the three, because a table can be wider than the card that holds it.
+    var w = Math.max(clone.scrollWidth, clone.offsetWidth, 320);
+    var h = Math.max(clone.scrollHeight, clone.offsetHeight, 120);
+    document.body.removeChild(probe); probe = null;
+    // A canvas beyond a few thousand pixels a side starts failing on phones; no real report
+    // reaches this, and clipping loudly at 8000 beats a blank file.
+    w = Math.min(w, 8000); h = Math.min(h, 20000);
+
     var css = '';
     Array.prototype.forEach.call(document.styleSheets, function(sh){
       try { Array.prototype.forEach.call(sh.cssRules, function(r){ css += r.cssText; }); } catch(e){}
     });
     var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="'+document.body.className+'">'
-      + '<style>'+css+'</style><div style="background:var(--bg);padding:10px;width:'+w+'px">'
+      // The override goes AFTER the copied stylesheet, so it wins inside the drawing too.
+      + '<style>'+css+'</style><style>'+JPG_UNCLIP+'</style>'
+      + '<div style="background:var(--bg);padding:10px;width:'+w+'px">'
       + clone.outerHTML + '</div></div>';
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+(h+24)+'">'
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+(w+20)+'" height="'+(h+24)+'">'
       + '<foreignObject width="100%" height="100%">'+html+'</foreignObject></svg>';
     var img = new Image();
     img.onload = function(){
       var cv = document.createElement('canvas');
-      cv.width = w; cv.height = h+24;
+      cv.width = w+20; cv.height = h+24;
       var ctx = cv.getContext('2d');
       ctx.fillStyle = document.body.classList.contains('dark') ? '#0B1120' : '#F6F8FC';
       ctx.fillRect(0,0,cv.width,cv.height);
@@ -1003,7 +1050,11 @@ function saveJpg(el){
     };
     img.onerror = function(){ toast(t('jpgfail'), true); };
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-  } catch(e){ toast(t('jpgfail'), true); }
+  } catch(e){
+    // The probe must never be left behind in the page if anything above threw.
+    if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+    toast(t('jpgfail'), true);
+  }
 }
 
 /* ---- language, theme, tips ---- */
@@ -2993,9 +3044,21 @@ VIEWS.abnormal = function(){
   return srv('abnormal').then(function(d){
     var amt = d.rows.reduce(function(s,r){ return s+(Number(r.paid)||0); }, 0);
     HEAD = '<div class="kpis">'
-      + kpi('Flagged payments', money(d.count), 'amounts not in multiples of TZS 500 / 1,000', d.count?'bad':'good')
+      + kpi('Flagged payments', money(d.count),
+            'si vizidishio vya TZS ' + money(d.step||500) + ' / not whole multiples of '
+              + money(d.step||500), d.count?'bad':'good')
       + kpi('Flagged amount', money(amt), 'verify with the field officers', d.count?'warnc':'good')
       + '</div>'
+      /* WHERE EACH ROW CAME FROM. The rule used to exist only as the sentence under this KPI --
+         nothing applied it, so uploading the payments themselves flagged nothing. Now it runs,
+         and the screen says how many it worked out for itself against how many were uploaded,
+         because "0 flagged" means something very different from "nothing was looked at". */
+      + '<div class="note">Imekaguliwa <b>' + money(d.scanned||0) + '</b> malipo ' + esc(d.from||'')
+        + ' → ' + esc(d.to||'') + ' · <b>' + money(d.derived||0) + '</b> yamebainika na mfumo · <b>'
+        + money(d.uploaded||0) + '</b> yamepakiwa.'
+        + ' / <b>' + money(d.scanned||0) + '</b> received payments checked over that window — '
+        + '<b>' + money(d.derived||0) + '</b> flagged by the rule, <b>' + money(d.uploaded||0)
+        + '</b> from an uploaded sheet. Change the step in Settings (<code>ABNORMAL_STEP</code>).</div>'
       + (d.pmoFilled
           ? '<div class="note"><b>' + money(d.pmoFilled) + '</b> hazikuwa na PMO — zimejazwa'
             + ' kutokana na hatua ya mteja (· = imejazwa na mfumo).'
@@ -3022,7 +3085,11 @@ VIEWS.abnormal = function(){
       col('ref_no','REF NO'), col('customer_name','CUSTOMER NAME'),
       col('transaction_id','TRANSACTION ID'),
       {key:'paid', label:'PAID', kind:'money', cls:function(){ return 'bad'; }},
-      col('ref_id','REF ID'), col('payment','PAYMENT'), col('sender_name','SENDER NAME')];
+      col('ref_id','REF ID'), col('payment','PAYMENT'), col('sender_name','SENDER NAME'),
+      /* Uploaded or worked out. Two different kinds of truth, and never worth confusing. */
+      {key:'source', label:'CHANZO / SOURCE', kind:'chip',
+       chip:function(r){ return r.source==='upload' ? 'ok' : 'warn'; },
+       get:function(r){ return r.source==='upload' ? 'Imepakiwa / uploaded' : 'Mfumo / rule'; }}];
     ONROW = null;
     S.foot = 'Total flagged: TZS ' + money(amt);
   });
