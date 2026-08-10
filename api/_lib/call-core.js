@@ -11,7 +11,7 @@ import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
    constant, because it is typed by a person. Asking the same question the PMO board asks is
    what stops the two screens disagreeing about who is a collection officer. */
-import { isPmoRole, PMO_ROLE_KEY, PMO_ROLE_DEFAULT } from './pmo.js';
+import { isPmoRole, hasCollectionWord, PMO_ROLE_KEY, PMO_ROLE_DEFAULT } from './pmo.js';
 
 /** The HOPE Calls backend, ported from the api_call* family in the live Code.gs -- same
     endpoints, same shapes, so call.html works against either system. Differences are all
@@ -488,7 +488,8 @@ async function calledTodaySet(db, nowMs) {
    before becomes narrowed now. */
 const CREDIT_WORDS = ['CREDIT'];
 const EXPECTED_WORDS = ['EXPECTED', 'EARLY'];
-const COLLECTION_WORDS = ['COLLECTION', 'COLLECTOR'];
+/* The collection word list lives in pmo.js now, so the phone and the commission screen cannot
+   end up with two different opinions about who is a collection officer. */
 const normRole = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 const hasWord = (role, words) => words.some(w => (' ' + role + ' ').includes(' ' + w + ' '));
 
@@ -512,7 +513,7 @@ export async function callRoleKind(db, user) {
   if (role) {
     if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
     if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
-    if (hasWord(role, COLLECTION_WORDS)) return 'COLLECTION';
+    if (hasCollectionWord(role)) return 'COLLECTION';
   }
   const n = K(user && user.name);
   if (!n) return null;
