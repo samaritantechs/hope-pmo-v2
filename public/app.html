@@ -536,12 +536,14 @@ var NAV = [
   /* WHO WAS BEST, AND WHEN. A read of what was RECORDED, never a recomputation -- the whole
      point is that these figures are not re-derived from a teams table that has since changed. */
   { id:'perf',        label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
-  { id:'audit',       label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' }
+  { id:'audit',       label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+  /* "they aint seen anywhere even in my admin user yet they are in the uploaded file" */
+  { id:'findcust',    label:'Tafuta mteja / Find customer', ic:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>' }
 ];
 /* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
    visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
    the gate that matters is upload/settings, which are checked on the server too. */
-var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf'];
+var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust'];
 
 function allowed(id){
   if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
@@ -1136,6 +1138,12 @@ function wireBar(){
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
   wireWeekBar();
+  var fcGo = document.getElementById('fcGo'), fcQ = document.getElementById('fcQ');
+  if (fcGo && fcQ) {
+    var run = function(){ S.args.q = fcQ.value.trim(); render(); };
+    fcGo.onclick = run;
+    fcQ.onkeydown = function(e){ if (e.key === 'Enter') run(); };
+  }
   // The two-level sort. Changing it re-sorts what is already on screen -- no trip to the
   // server, because sorting is not a question the server was ever asked.
   var sa = document.getElementById('sortA');
@@ -3567,6 +3575,63 @@ VIEWS.perf = function(){
       col('value','Value','money'), col('basis','Out of','money'), col('pct','%','pct'),
       col('recorded_at','Recorded','dt')];
     S.foot = 'Imehifadhiwa wakati ripoti ya wiki ilipofunguliwa. / Written when the weekly report is opened.';
+  });
+};
+
+/* WHERE IS THIS CUSTOMER, AND IF NOWHERE, WHY.
+
+   Defaulter decks are stored PER WEEKDAY -- deliberately, because an initial MON deck against a
+   current TUE deck measures two different populations. But every screen reads TODAY'S weekday,
+   so a customer whose deck went in under Tuesday is invisible on Monday to EVERYONE, admin
+   included, with nothing anywhere to say so. The data is right and the screens are right, and
+   the person looking has no way to tell which is lying to them.
+
+   This screen says it in words. */
+VIEWS.findcust = function(){
+  var q = S.args.q || '';
+  HEAD = bar('<label style="font-size:12px;color:var(--mut)">REF#, jina au namba / reference, name or phone</label>'
+      + '<input id="fcQ" value="' + esc(q) + '" placeholder="e.g. 2-209-72865  ·  ESTER  ·  0746115063" style="min-width:280px">'
+      + '<button class="btn sm" id="fcGo">\ud83d\udd0d Tafuta / Find</button>');
+  S.rows = []; S.cols = []; ONROW = null;
+  if (q.length < 3) {
+    HEAD += '<div class="note">Andika angalau herufi 3. / Type at least 3 characters and press Find.'
+      + ' This looks in the defaulter decks, the expected decks and the follow-up register, and'
+      + ' then tells you whether today\u2019s screens can see them.</div>';
+    return Promise.resolve();
+  }
+  return srv('findCustomer', { q: q }).then(function(d){
+    HEAD += '<div class="kpis">'
+      + kpi('Imepatikana / Found', money(d.count), 'places this customer appears', d.count?'good':'bad')
+      + kpi('Leo / Today', esc(d.weekdayToday), esc(d.today))
+      + kpi('Timu / Teams', esc((d.teams||[]).join(', ') || '\u2014'))
+      + '</div>'
+      + (d.notes||[]).map(function(n){
+          return '<div class="note' + (/ARE in the defaulter deck|Not found/.test(n) ? ' bad' : '') + '">'
+            + esc(n) + '</div>'; }).join('');
+    S.rows = (d.decks||[]).map(function(r){ return {
+      where: r.where, date: r.date, weekday: r.weekday, type: r.type, team: r.team,
+      ref: r.ref, name: r.name, status: r.status, ds: r.ds, arrears: r.arrears,
+      seen: r.onToday && r.dated ? 'Ndiyo / yes' : (r.onToday ? 'Si ya leo / not today\u2019s date' : 'Siku nyingine / other weekday'),
+      batch: r.batch };
+    }).concat((d.expected||[]).map(function(r){ return {
+      where: r.where, date: r.date, weekday: '\u2014', type: r.type, team: r.team,
+      ref: r.ref, name: r.name, status: r.status, ds: r.ds, arrears: r.arrears,
+      seen: r.dated ? 'Ndiyo / yes' : 'Si ya leo / not today\u2019s date', batch: r.batch };
+    })).concat((d.follow||[]).map(function(r){ return {
+      where: r.where, date: '\u2014', weekday: '\u2014', type: '\u2014', team: r.team,
+      ref: r.ref, name: r.name, status: r.status, ds: r.ds, arrears: r.arrears,
+      seen: 'Daima / always', batch: '\u2014' };
+    }));
+    S.cols = [col('where','Iko wapi / Where'), col('date','Date','date'),
+      {key:'weekday', label:'Weekday', kind:'chip', chip:function(r){
+        return r.weekday === S.fcToday ? 'ok' : 'warn'; }},
+      col('type','Deck'), col('team','Team'), col('ref','REF#'), col('name','Fullname'),
+      col('status','Status'), col('ds','D.S'), col('arrears','Arrears','money'),
+      {key:'seen', label:'Inaonekana leo? / Visible today?', kind:'chip', chip:function(r){
+        return /Ndiyo|Daima/.test(r.seen) ? 'ok' : 'bad'; }},
+      col('batch','Upload')];
+    S.fcToday = d.weekdayToday;
+    S.foot = 'Leo / today: ' + d.weekdayToday + ' \u00b7 ' + d.today;
   });
 };
 
