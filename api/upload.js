@@ -440,6 +440,19 @@ export default withApi(async (req, res) => {
     case 'received':
       table = 'received_payments';
       records = importReceivedPayments(rows);
+      /* REF ID arrives with db/migrations/2026-08-10-received-ref-id.sql, and migrations here
+         are run by hand. Sending a column the database has not got yet fails the WHOLE file,
+         so the payments upload would break on an admin who had not pasted that SQL -- with an
+         error naming a column they never asked about. Same guard the leaders sheet has. */
+      {
+        const probe = await supabase.from('received_payments').select('*').limit(1);
+        const known = probe.data && probe.data.length ? Object.keys(probe.data[0]) : null;
+        if (known) records = records.map(r => {
+          const out = {};
+          for (const k of Object.keys(r)) if (known.includes(k)) out[k] = r[k];
+          return out;
+        });
+      }
       break;
     case 'access-codes':
       table = 'access_codes';

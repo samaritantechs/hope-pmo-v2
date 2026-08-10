@@ -293,16 +293,50 @@ export function importTeams(csvRows) {
   })).filter(x => x.team);
 }
 
+/* =====================================================================================
+   RECEIVED PAYMENTS -- five columns that never matched, and the one that stopped the upload.
+
+     "This file has no readable dates in its 'paid at' column, so there is no day to replace."
+
+   col() matches a header by its exact normalised name. This importer asked for names the
+   report does not use, and every mismatch imported as NULL in silence:
+
+     the sheet says          this asked for       result
+     PAYMENT DATE            DATE                 no date at all -- and Replace REFUSES a file
+                                                  with no readable dates, which is the error
+     CONTACT NO              CUSTOMER NO          the customer's number, blank
+     CUSTOMER REF NO         REF NO               the loan reference, blank
+     PHONE NUMBER            PAYMENT NO           the paying number, blank
+
+   Four blank columns on a payments report, and a fifth failure that blocked the upload
+   outright. Only the date announced itself; the other three had been arriving empty every
+   time, because A HEADER THAT MATCHES NOTHING IS INDISTINGUISHABLE FROM A COLUMN OF EMPTY
+   CELLS. That is the same fault that had CUSTOMER NO and PAYMENT NO blank on Abnormal
+   Payments, and it is why every candidate list here now carries the real sheet's spelling
+   FIRST and the older ones after it -- both work, and nothing already uploaded stops working.
+
+   REF ID is now kept too. The report carries it, the abnormal-payments report carries it, and
+   it is the id that reconciles a payment against the carrier's own record.
+
+   THE DAY/MONTH ORDER IS INFERRED FROM THE WHOLE COLUMN, not assumed. "8/8/2026" is safe
+   either way; "9/8/2026" is the 9th of August or the 8th of September, and a payments report
+   read the wrong way round moves money between months. Every other date-bearing importer here
+   already did this -- this one did not, which was a real risk sitting quietly behind the
+   header bug. */
 export function importReceivedPayments(csvRows) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    paid_at: dateOrNull(col(r, h, 'DATE')),
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = inferDayFirst(objs.map(({ raw: r, h }) =>
+    col(r, h, 'PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE')));
+  return objs.map(({ raw: r, h }) => ({
+    paid_at: dateOrNull(col(r, h, 'PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE'), dayFirst),
     team: normTeam(col(r, h, 'TEAM')),
     customer_name: textOrNull(col(r, h, 'CUSTOMER NAME')),
-    customer_no: normPhone(col(r, h, 'CUSTOMER NO')),
+    customer_no: normPhone(col(r, h, 'CONTACT NO', 'CUSTOMER NO', 'CUSTOMER NUMBER', 'CONTACT NUMBER')),
     transaction_id: textOrNull(col(r, h, 'TRANSACTION ID')),
-    ref_no: textOrNull(col(r, h, 'REF NO')),
-    amount_paid: num(col(r, h, 'AMOUNT PAID')),
-    payment_no: textOrNull(col(r, h, 'PAYMENT NO')),
+    ref_no: textOrNull(col(r, h, 'CUSTOMER REF NO', 'REF NO', 'CUSTOMER REF', 'REF#')),
+    ref_id: textOrNull(col(r, h, 'REF ID')),
+    amount_paid: num(col(r, h, 'AMOUNT PAID', 'AMOUNT', 'PAID')),
+    payment_no: textOrNull(col(r, h, 'PHONE NUMBER', 'PAYMENT NO', 'PAYMENT NUMBER', 'PHONE NO')),
     sender_name: textOrNull(col(r, h, 'SENDER NAME')),
   }));
 }
