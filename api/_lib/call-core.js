@@ -1115,7 +1115,13 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   const [users0, teamRows, logs] = await Promise.all([
     fetchAll(() => db.from('call_users').select('*')),
     fetchAll(() => db.from('teams').select('*')),
-    fetchAll(() => db.from('call_logs').select('*').gte('call_date', fromKey).lte('call_date', toKey)),
+    /* Scoped at the database. A leader over one team read every call the whole company made
+       in the window and discarded the rest here -- on the table that grows fastest of all. */
+    fetchAll(() => {
+      let q = db.from('call_logs').select('*').gte('call_date', fromKey).lte('call_date', toKey);
+      if (scopeTeams && Object.keys(scope || {}).length) q = q.in('team', Object.keys(scope));
+      return q;
+    }),
   ]);
   // Report by each officer's CURRENT team/name, not the snapshot taken when the call synced --
   // a reassignment must not strand old calls under a team nobody is scoped to see anymore.

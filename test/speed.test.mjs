@@ -428,3 +428,84 @@ test('scoping abnormal payments at the database keeps EXACTLY the rows it kept b
   const asAdmin = await portalApi(fakeDb(t), ADMIN, 'abnormal', {}, NOW);
   assert.equal(asAdmin.rows.length, 2, 'but the admin still sees it -- nothing is lost from the table');
 });
+
+/* =====================================================================================
+   THE WHOLE-SYSTEM GUARD, AND THE REASON IT EXISTS.
+
+     "i expect to - fungua mfumo, did that ... and its my most fear"
+
+   Opening the system means every officer in the company can reach every screen they are
+   entitled to, at the same time, on a Monday morning. The individual budgets above bound the
+   screens somebody thought to measure. This bounds ALL OF THEM, and it bounds the one thing
+   that actually decides whether opening the door is safe:
+
+       HOW MUCH DOES ONE ORDINARY OFFICER READ?
+
+   An officer holds ONE team of forty. Every screen they open should therefore read roughly a
+   fortieth of the book. Where it reads the whole book instead, the cause is always the same
+   mistake -- fetch everything, filter in JavaScript -- and it is invisible in testing because
+   a fortieth and a whole are the same number when there is only one team in the fixture.
+
+   That mistake was found on FIVE endpoints at once by measuring exactly this, and the tell was
+   unmistakable: the officer read the identical number of rows as the admin.
+
+   THIS TEST SWEEPS EVERY READ-ONLY PORTAL FUNCTION. A new screen is covered the day it is
+   added, without anybody remembering to add it here. If it trips, the fix is virtually never
+   to raise the ceiling -- it is to put the team filter in the query.
+   ===================================================================================== */
+const ONE_TEAM = { code: 'O', name: 'REC TEAM01', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
+const OFFICER_ROW_CEILING = 4000;
+
+/* Functions that CHANGE something. A speed sweep must not fire them, and their cost is not a
+   read cost anyway. Everything not named here is swept. */
+const WRITERS = new Set(['addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint',
+  'deleteComplaint', 'addRestructure', 'decideRestructure', 'addDemandNotice', 'saveTeam',
+  'deleteTeam', 'saveRole', 'deleteRole', 'saveCallAgent', 'settingSet', 'settingDelete',
+  'systemOpenSet', 'saveAccessCode', 'deleteAccessCode', 'commissionSave', 'saveStaffTeams',
+  'purgeSnapshots', 'cleanFollowup', 'removeCallUser', 'changeMyCode', 'fuStatusesSave',
+  'stampWeek', 'teamsImport', 'purgeSuperseded', 'retireUploads', 'saveHint', 'deleteHint',
+  'rotateAccessCode', 'saveSettings', 'announcementSave', 'demandMessage']);
+
+test('speed: NO screen lets one officer read the whole company book', async () => {
+  const { PORTAL_FUNCTIONS } = await import('../api/_lib/portal-core.js');
+  const worst = [];
+  for (const fn of PORTAL_FUNCTIONS) {
+    if (WRITERS.has(fn)) continue;
+    const c = counting(bigBook(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } });
+    try { await portalApi(c.db, ONE_TEAM, fn, {}, NOW); }
+    catch (e) { continue; }                    // not permitted, or needs arguments -- not a read
+    worst.push({ fn, rows: c.stat().rows });
+  }
+  worst.sort((a, b) => b.rows - a.rows);
+  const over = worst.filter(w => w.rows > OFFICER_ROW_CEILING);
+  assert.deepEqual(over, [],
+    'These screens read more than ' + OFFICER_ROW_CEILING.toLocaleString() + ' rows for an officer '
+    + 'who holds ONE team of forty:\n  '
+    + over.map(w => w.fn + ' -- ' + w.rows.toLocaleString() + ' rows').join('\n  ')
+    + '\n\n  Almost certainly a read that fetches every team and filters in JavaScript.'
+    + '\n  The fix is `onTeams(q, user.teams)` in the QUERY, not a bigger number here.');
+});
+
+test('speed: an officer and an admin must NOT read the same amount', async () => {
+  /* The tell. When a one-team officer reads exactly what an all-teams admin reads, the team
+     filter is not in the query -- and that is true however small the test fixture is, which is
+     what makes it a better check than any absolute number. Only screens with a meaningfully
+     team-shaped book are compared; a settings list is the same for everybody by design. */
+  const { PORTAL_FUNCTIONS } = await import('../api/_lib/portal-core.js');
+  const ALL_TEAMS = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
+  const same = [];
+  for (const fn of PORTAL_FUNCTIONS) {
+    if (WRITERS.has(fn)) continue;
+    const run = async user => {
+      const c = counting(bigBook(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } });
+      try { await portalApi(c.db, user, fn, {}, NOW); } catch (e) { return null; }
+      return c.stat().rows;
+    };
+    const [o, a] = [await run(ONE_TEAM), await run(ALL_TEAMS)];
+    if (o == null || a == null) continue;
+    if (a >= 2000 && o === a) same.push(fn);    // only where there is a real book to narrow
+  }
+  assert.deepEqual(same, [],
+    'These screens read exactly as much for a ONE-TEAM officer as for an ALL-TEAMS admin, '
+    + 'which means the team filter is not in the query:\n  ' + same.join('\n  '));
+});

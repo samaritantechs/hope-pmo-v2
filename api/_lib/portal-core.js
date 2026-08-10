@@ -43,7 +43,9 @@ const STAGES = ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_app
     stage it had reached. */
 async function loans(db, user, { stage }) {
   const st = STAGES.includes(stage) ? stage : '';
-  const q = db.from('loans').select('*');
+  /* Scoped at the database. An officer holding one team read every loan the company has ever
+     written -- all forty teams, every column -- and kept a fortieth of it. */
+  const q = onTeams(db.from('loans').select('*'), user.teams);
   const rows = await fetchAll(() => (st ? q.eq('stage', st) : q).order('created_at', { ascending: false }));
   const mine = scoped(user, rows);
   return { stage: st, stages: STAGES, rows: mine, count: mine.length,
@@ -52,7 +54,8 @@ async function loans(db, user, { stage }) {
 
 /** Counts for every stage in one pass -- the applications tab's pipeline strip. */
 async function loanPipeline(db, user) {
-  const rows = scoped(user, await fetchAll(() => db.from('loans').select('team, stage, principal_amt, requested_amt, loan_amt')));
+  // Same read, same rule: narrowed in the query rather than after it has all arrived.
+  const rows = scoped(user, await fetchAll(() => onTeams(db.from('loans').select('team, stage, principal_amt, requested_amt, loan_amt'), user.teams)));
   const by = {};
   for (const st of STAGES) by[st] = { stage: st, count: 0, amount: 0 };
   for (const r of rows) {
@@ -595,7 +598,13 @@ const cxOpen = s => K(s) !== 'CLOSED' && K(s) !== 'RESOLVED';
 async function complaints(db, user, { from, to } = {}, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : addDaysKey(todayKey(nowMs), -30);
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : todayKey(nowMs);
-  const all = await fetchAll(() => db.from('complaints').select('*').order('created_at', { ascending: false }));
+  /* SCOPED AND WINDOWED AT THE DATABASE. This read every complaint ever logged and then threw
+     away everything outside a thirty-day window and everything outside the viewer's teams --
+     two filters the query could have applied, on a table that only ever grows. The JS filter
+     stays as the single definition of the window; it now just has far less to reject. */
+  const all = await fetchAll(() => onTeams(db.from('complaints').select('*')
+    .gte('created_at', fromKey).lte('created_at', toKey + 'T23:59:59.999Z')
+    .order('created_at', { ascending: false }), user.teams));
   const rows = scoped(user, all).filter(r => {
     const d = dayOf(r.created_at);
     return d >= fromKey && d <= toKey;
@@ -2063,7 +2072,7 @@ async function credit(db, user, _args, nowMs) {
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: today }),
-    fetchAll(() => db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').eq('stage', 'approved')),
+    fetchAll(() => onTeams(db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').eq('stage', 'approved'), user.teams)),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
