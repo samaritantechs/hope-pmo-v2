@@ -3421,15 +3421,42 @@ function teamForm(x){
       closeDrawer(); render();
     }).catch(function(e){ toast(String(e.message||e), true); });
   };
+  /* A MISSPELLED TEAM HOLDS REAL WORK.
+
+       "Team TUNDURU should be deleted because the correct one is Tunduru. it fails saying it
+        has expected snapshots"
+
+     Refusing the delete is right -- removing a team that still holds records would orphan
+     them. But the admin's intention was never "throw the snapshots away"; it was "these belong
+     to the other spelling". So when the server refuses, the screen offers the merge instead of
+     leaving them at a dead end with an error they cannot act on. */
   var del = document.getElementById('tDel');
   if (del) del.onclick = function(){
     if (!confirm('Futa timu '+x.team+'?\n\nDelete this team?')) return;
-    srv('deleteTeam', { team:x.team }).then(function(r){
-      toast(r && r.released
-        ? ('Imefutwa \u2014 simu ' + r.released + ' zimekatwa. / Deleted, ' + r.released + ' handset(s) released.')
-        : 'Imefutwa. / Deleted.');
+    var done = function(r){
+      toast(r && r.mergedInto
+        ? ('Imehamishwa kwenda ' + r.mergedInto + '. / Merged into ' + r.mergedInto + ' — '
+           + Object.keys(r.moved||{}).map(function(k){ return money(r.moved[k])+' '+k; }).join(', ')
+           + (Object.keys(r.moved||{}).length ? '' : 'nothing to move') + '.')
+        : (r && r.released
+            ? ('Imefutwa \u2014 simu ' + r.released + ' zimekatwa. / Deleted, ' + r.released + ' handset(s) released.')
+            : 'Imefutwa. / Deleted.'));
       closeDrawer(); render();
-    }).catch(function(e){ toast(String(e.message||e), true); });
+    };
+    srv('deleteTeam', { team:x.team }).then(done).catch(function(e){
+      var msg = String(e.message||e);
+      // Only the "still holds records" refusal has a merge as its answer.
+      if (!/still holds|bado ina kumbukumbu/i.test(msg)) { toast(msg, true); return; }
+      var into = prompt(msg + '\n\n— — —\nAndika jina la timu sahihi ya kuihamishia,'
+        + ' au bonyeza Cancel.\nType the CORRECT team to merge ' + x.team
+        + ' into, or press Cancel:', '');
+      if (!into || !into.trim()) return;
+      if (!confirm('Hamisha kumbukumbu zote za ' + x.team + ' kwenda ' + into.trim().toUpperCase()
+          + ', kisha futa ' + x.team + '?\n\nMove EVERY record from ' + x.team + ' to '
+          + into.trim().toUpperCase() + ', then remove ' + x.team + '? Nothing is deleted except the name.')) return;
+      srv('deleteTeam', { team:x.team, moveTo:into.trim() }).then(done)
+        .catch(function(e2){ toast(String(e2.message||e2), true); });
+    });
   };
 }
 
