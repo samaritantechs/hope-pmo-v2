@@ -2571,10 +2571,21 @@ VIEWS.commission = function(){
   return srv('commission').then(function(d){
     var noRates = !d.paidTzs && !d.overTzs;
     HEAD = '<div class="kpis">'
+      /* THE SPLIT, BESIDE THE TOTAL. Three schemes pay three different people here --
+         recovery on a percentage, early collection per PAID/OVERPAID, and PMO collection on a
+         band -- and the headline used to add up only the first two, leaving a whole board out.
+         Printing the three parts under the total is what makes a wrong figure findable
+         without scrolling to the boards and adding them up by hand. */
       + kpi(d.isAdmin?'Company total today':'My commission today', money(d.totals.day),
-            d.weekday+' · '+(d.date||''), d.totals.day?'good':'')
+            (d.totals.split
+              ? 'rec ' + money(d.totals.split.recDay) + ' · early ' + money(d.totals.split.colDay)
+                + ' · PMO ' + money(d.totals.split.pmoDay)
+              : d.weekday+' · '+(d.date||'')), d.totals.day?'good':'')
       + kpi(d.isAdmin?'Company total this week':'My commission this week', money(d.totals.week),
-            'Mon–Sun, summed day by day', d.totals.week?'good':'')
+            (d.totals.split
+              ? 'rec ' + money(d.totals.split.recWeek) + ' · early ' + money(d.totals.split.colWeek)
+                + ' · PMO ' + money(d.totals.split.pmoWeek) + ' · Mon–Sun'
+              : 'Mon–Sun, summed day by day'), d.totals.week?'good':'')
       + kpi('Recovery mode', d.mode==='status'?'By status':'By disb year',
             esc((d.mode==='status'?d.statusRates:d.yearRates) || 'rates not set yet'),
             (d.mode==='status'?d.statusRates:d.yearRates)?'':'warnc')

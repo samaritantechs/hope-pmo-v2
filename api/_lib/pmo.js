@@ -55,8 +55,40 @@ export const PMO_BONUS_KEY = 'PMO_WEEKLY_BONUS';
 
 const norm = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 
+/* THE ONE DEFINITION OF "IS THIS PERSON A COLLECTION OFFICER", and it has to be one, because
+   two screens ask it about the same person and must not disagree.
+
+     "change it to be the one reading at commissions since commissions are using
+      PMO COLLECTION instead of COLLECTION"
+
+   The call app was taught to recognise a collection officer however the role is spelled, so
+   that Catherine's list would narrow. Commissions was not: it compared the role to the
+   configured name by exact equality. So the moment the roles were renamed to COLLECTION, the
+   PMO board matched nobody, went empty, and the collection commission computed on it stopped
+   with it -- the app and the commission screen holding two different opinions about the same
+   person, which is precisely the state a single definition exists to prevent.
+
+   TWO WAYS TO MATCH, and both are needed:
+
+     the configured name   PMO_ROLE, compared with punctuation and case forgiven, so
+                           'PMO COLLECTION', 'pmo-collection' and 'Pmo  Collection' are one
+                           answer and a deployment can rename the role to anything at all
+     the WORD              a role CONTAINING 'COLLECTION' or 'COLLECTOR', so 'COLLECTION',
+                           'Collection Officer' and 'EARLY COLLECTION' are recognised without
+                           anybody having to edit a setting to match what was typed
+
+   Matching on a contained word cannot reach RECOVERY, GMO, MANAGER, BIKE, OPM, LEGAL, CREDIT
+   or ADMIN -- none of them carries either word -- so no role that was outside this before is
+   swept into it now. */
+export const COLLECTION_WORDS = ['COLLECTION', 'COLLECTOR'];
+export function hasCollectionWord(role) {
+  const r = norm(role);
+  return !!r && COLLECTION_WORDS.some(w => (' ' + r + ' ').includes(' ' + w + ' '));
+}
+
 export function isPmoRole(role, want) {
-  return norm(role) === norm(want || PMO_ROLE_DEFAULT);
+  if (!norm(role)) return false;
+  return norm(role) === norm(want || PMO_ROLE_DEFAULT) || hasCollectionWord(role);
 }
 
 /** One officer's collection over one set of already-resolved TEAM-DAY TOTALS -- the rows

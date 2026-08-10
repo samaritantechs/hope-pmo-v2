@@ -1925,6 +1925,9 @@ async function commission(db, user, _args, nowMs) {
     rolesSeen: [...new Set(codeRows.map(c => String(c.role || '').trim()).filter(Boolean))].sort(),
   };
 
+  const pmoDay = pmo.reduce((s, r) => s + num(r.commission), 0);
+  const pmoWeek = pmo.reduce((s, r) => s + num(r.weekCommission) + num(r.bonus), 0);
+
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
     pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
@@ -1938,8 +1941,38 @@ async function commission(db, user, _args, nowMs) {
     paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText, isAdmin, me: user.name,
     weekday: currentWeekday(nowMs), date: today, weekOf: mon,
     day, week,
-    totals: { day: day.reduce((s, r) => s + r.total, 0), week: week.reduce((s, r) => s + r.total, 0),
-      recovered: day.reduce((s, r) => s + r.recovered, 0) } };
+    /* THE COMPANY TOTAL HAD A WHOLE BOARD MISSING FROM IT.
+
+         "the total collected commissions aint computing for several roles"
+
+       Three schemes pay commission on this screen, and they pay three different people:
+
+         RECOVERY   the recovery officer, a percentage of what each customer's arrears fell by
+         EARLY      the early-collection officer, a flat amount per PAID and per OVERPAID
+         PMO        the PMO collection officer, a band percentage on the week, plus the bonus
+
+       The headline added up only the first two. The PMO board was computed, printed lower down
+       the same screen, and then left out of the number at the top -- so "company total" was
+       short by an entire category of officer, and the more the PMO side earned the more wrong
+       it got. Nobody could see it, because the figure it should have equalled was three boards
+       further down the page.
+
+       The three are DIFFERENT PEOPLE ON DIFFERENT SCHEMES, so adding them is a total, not a
+       double count. The split is sent beside it so a figure that looks wrong can be taken
+       apart on screen instead of in somebody's head. */
+    totals: {
+      day: day.reduce((s, r) => s + r.total, 0) + pmoDay,
+      week: week.reduce((s, r) => s + r.total, 0) + pmoWeek,
+      recovered: day.reduce((s, r) => s + r.recovered, 0),
+      split: {
+        recDay: day.reduce((s, r) => s + r.recComm, 0),
+        colDay: day.reduce((s, r) => s + r.colComm, 0),
+        pmoDay,
+        recWeek: week.reduce((s, r) => s + r.recComm, 0),
+        colWeek: week.reduce((s, r) => s + r.colComm, 0),
+        pmoWeek,
+      },
+    } };
 }
 /** The rate editor lives on the commission page itself, so cause and effect are one click
     apart -- typing a rate and seeing the numbers move is the whole point. */

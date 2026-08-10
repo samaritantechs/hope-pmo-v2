@@ -4289,3 +4289,65 @@ test('abnormal payments: REF ID survives the round trip -- it was never on scree
   assert.deepEqual(d.rows.map(r => r.ref_id).sort(),
     ['RID1', 'RID2', 'RID3', 'RID4', 'RID5']);
 });
+
+/* =====================================================================================
+   ONE DEFINITION OF "COLLECTION OFFICER", AND A COMPANY TOTAL WITH EVERY BOARD IN IT.
+
+     "change it to be the one reading at commissions since commissions are using
+      PMO COLLECTION instead of COLLECTION"
+     "and the total collected commissions aint computing for several roles"
+   ===================================================================================== */
+const { isPmoRole: isPmo, hasCollectionWord } = await import('../api/_lib/pmo.js');
+
+test('commissions recognise a collection officer however the role is spelled', () => {
+  /* The call app was taught this so Catherine's list would narrow; commissions was not, and
+     compared to the configured name by exact equality. The moment the roles were renamed to
+     COLLECTION the PMO board matched nobody and went empty -- two screens holding different
+     opinions about the same person. */
+  for (const spelling of ['PMO COLLECTION', 'pmo-collection', 'Pmo  Collection',
+                          'COLLECTION', 'Collection Officer', 'EARLY COLLECTION', 'COLLECTOR']) {
+    assert.equal(isPmo(spelling, 'PMO COLLECTION'), true, spelling);
+  }
+});
+
+test('and no other role is swept into it', () => {
+  for (const role of ['RECOVERY', 'GMO', 'MANAGER', 'BIKE', 'OPM', 'LEGAL', 'CREDIT',
+                      'CREDIT ANALYST', 'ADMIN', 'OFFICER', 'EXPECTED', '']) {
+    assert.equal(isPmo(role, 'PMO COLLECTION'), false, role);
+    assert.equal(hasCollectionWord(role), false, role);
+  }
+});
+
+test('a renamed PMO_ROLE is still matched exactly, whatever it says', () => {
+  // The setting exists so a deployment can call them something with no English in it at all.
+  assert.equal(isPmo('WAKUSANYAJI', 'WAKUSANYAJI'), true);
+  assert.equal(isPmo('WAKUSANYAJI', 'PMO COLLECTION'), false);
+});
+
+test('the company commission total includes the PMO board, not just two of the three', async () => {
+  /* Three schemes pay three different people on this screen: recovery on a percentage, early
+     collection per PAID/OVERPAID, and PMO collection on a band. The headline added up only the
+     first two, so "company total" was short by an entire category of officer -- and the more
+     the PMO side earned, the more wrong it got. */
+  const d = await portalApi(dbWithRpc(), ADMIN, 'commission', {}, NOW);
+  assert.ok(d.totals.split, 'the split is sent so a wrong figure can be taken apart on screen');
+  const { recDay, colDay, pmoDay, recWeek, colWeek, pmoWeek } = d.totals.split;
+  // The total is exactly its three parts -- no board left out, and nothing counted twice.
+  assert.equal(Math.round(d.totals.day), Math.round(recDay + colDay + pmoDay));
+  assert.equal(Math.round(d.totals.week), Math.round(recWeek + colWeek + pmoWeek));
+  // And the PMO part agrees with the board it was computed from.
+  assert.equal(Math.round(pmoDay), Math.round(d.pmoTotals.day));
+  assert.equal(Math.round(pmoWeek), Math.round(d.pmoTotals.week));
+});
+
+test('a collection officer whose code says COLLECTION now reaches the PMO board', async () => {
+  /* End to end, the way it actually broke: the role renamed, the board empty, and the
+     commission computed on it gone with it. */
+  const t = tables();
+  t.access_codes.push({ code: 'CAT', name: 'CATHERINE', role: 'COLLECTION',
+    teams: ['KONGOWE'], tabs: [] });
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.ok(d.pmoDiag.withRole >= 1, 'the code is recognised as carrying the collection role');
+  assert.ok(d.pmo.some(r => String(r.officer).toUpperCase() === 'CATHERINE'),
+    'and she appears on the PMO board that pays her');
+});
