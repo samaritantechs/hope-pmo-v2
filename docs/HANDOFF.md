@@ -2984,5 +2984,60 @@ percentage over the other's money would let the screen contradict itself.
 
 ---
 
+## Part 20 — Opening the door, and the four faults that would have met it
+
+> "i expect to - fungua mfumo, did that ... and its my most fear"
+
+Opening the system means every officer in the company can reach every screen they are entitled
+to, at the same time, on a Monday morning. That fear was correct, and this is what was behind
+it. Four faults, all the same shape, none of them a slow query anybody could have pointed at.
+
+**THE SHAPE, STATED ONCE: fetch everything, filter in JavaScript.**
+
+It is invisible in ordinary testing, and the reason is worth understanding, because it is why
+these survived for months. A fortieth of the book and the whole book are THE SAME NUMBER when
+the test fixture contains one team. Every individual request looked reasonable. Only two
+questions expose it — *what does the SECOND handset cost?* and *does an officer read the same
+as an admin?* — and neither had ever been asked.
+
+### The four
+
+| | What it did | Now |
+|---|---|---|
+| **The phone index** | the whole company book, per sync, per handset — roughly one full scan a second, all day, from the tables that also have to accept uploads | cached against `DATA_VERSION`, so it can never outlive an upload |
+| **The upload panel** | four whole tables with no date filter, to answer a question about one day, **on the page whose only job is to accept an upload** | one query, five rows |
+| **"Amepigiwa leo"** | every call log made today, on every list load — and it got worse every hour as the officers worked | read once per half-minute; a sync merges its own calls in |
+| **Five office screens** | an officer holding one team read all forty | narrowed in the query |
+
+### The numbers, measured not estimated
+
+Sync, 20 handsets against one warm instance: **80,040 rows → 4,040**.
+Three hundred handsets, a full cycle plus a hundred list loads:
+**1,513,700 rows → 28,700** — about **96 rows per handset**.
+The upload panel, against a 312,600-row book: **the whole book → 5 rows**.
+One officer, every screen, against a 288,000-row book: **all now under 1,200 rows**.
+
+### What was learned, and what now guards it
+
+The five unscoped office screens were found by laying the measurements out side by side and
+noticing that **the officer's row count equalled the admin's**. A one-team officer reading
+exactly what an all-teams admin reads can only mean one thing.
+
+So that is now a test — and it is the better of the two guards, because it holds however small
+the fixture is. A second test sweeps EVERY read-only function and bounds what one officer may
+read, so a screen added next month is covered without anybody remembering to add it.
+
+If either ever trips, the fix is essentially never a bigger number in the test. It is
+`onTeams(q, user.teams)` in the query.
+
+### And if it ever happens again
+
+**Close the system.** Settings, one switch. The officers keep working, because HOPE Calls is
+never gated, and the office load stops instantly — a refused request costs two or three tiny
+queries and never runs a dashboard. Upload what you need to (the admin is never gated), then
+re-open. See [OPERATIONS.md](../OPERATIONS.md#when-something-breaks).
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

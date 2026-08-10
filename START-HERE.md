@@ -11,7 +11,8 @@ This file is the map. Everything else is one click from here.
 
 | You want to | Read |
 |---|---|
-| Run the system on a normal day | **[OPERATIONS.md](OPERATIONS.md)** — the daily runbook |
+| **Everything, in one file** | **[HANDOFF-AIO.md](HANDOFF-AIO.md)** — start here if you read one thing |
+| Run the system on a normal day | [OPERATIONS.md](OPERATIONS.md) — the daily runbook |
 | Understand what it does, screen by screen | [docs/HANDOFF.md](docs/HANDOFF.md) Part 5 |
 | Know what a word means (deck, batch, D.S, count 1-6) | [docs/HANDOFF.md](docs/HANDOFF.md) Part 0 |
 | Set it up from nothing | [MIGRATION.md](MIGRATION.md) |
@@ -95,7 +96,7 @@ db/seed.sql            the first access code
 
 api/                   the server. api/_lib/ holds all the logic (see MANIFEST.md)
 public/                the screens. Plain HTML and JavaScript, no build step
-test/                  438 tests. `npm test` is the acceptance gate
+test/                  451 tests. `npm test` is the acceptance gate
 android/               the APK wrapper (call-log sync, file picker, downloads)
 ```
 
@@ -105,7 +106,7 @@ android/               the APK wrapper (call-log sync, file picker, downloads)
 
 ```bash
 npm install
-npm test          # 438 tests, must be green before anything ships
+npm test          # 451 tests, must be green before anything ships
 ```
 
 There is **no build step**. `public/*.html` are served exactly as they are written, so a change
