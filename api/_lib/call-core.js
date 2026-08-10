@@ -587,10 +587,60 @@ async function roleLimits(db) {
 const CALL_EXPECTED_COLS = 'ref, full_name, contact, guarantor_name, guarantor_contact, '
   + 'arrears, payment_expected, todays_status, due_summary, team';
 
+/* =====================================================================================
+   THE TEAMS SOMEBODY HOLDS, NOT THE ONE THEY REGISTERED FROM.
+
+     "just legal officers and credit analysists told me they dont see their customers"
+
+   Two roles, not everybody -- which is what made this findable. Both hold MANY teams and both
+   register the ordinary way, with their team's code.
+
+   pseudoUser scopes a non-leader to `[cu.team]`: the single team whose code they typed. That is
+   exactly right for a field officer, who works one team, and exactly wrong for a credit analyst,
+   who supervises every team where `teams.credit` carries their name. Their book is thirty teams
+   and the handset was showing them one -- and then narrowing THAT by paid <= 5 on top, so the
+   list came back nearly empty and correct-looking.
+
+   The system already knows the answer. callRoleKind identifies a credit analyst by looking their
+   name up in exactly these columns; it just used the answer to NARROW the list and never to
+   scope it. So the same map now widens the scope too.
+
+   THIS CANNOT BECOME A WAY ROUND TEAM SCOPING. It only ever ADDS teams the person holds a role
+   column on -- the same source the recycling rotation and the portal's leader filter have always
+   trusted -- and an ALL-teams user (teams null) is left exactly as they are. A plain officer
+   holding no column anywhere gets nothing added, which is nearly every handset, so nothing
+   changes for the people this must not disturb. */
+async function heldTeams(db, name) {
+  const n = K(name);
+  if (!n) return [];
+  /* `collection` is optional -- it arrived in a later migration and migrations here are run by
+     hand -- so asking for it must not take the other columns down with it. */
+  const rows = await fetchAll(() => db.from('teams').select('team, ' + POS_ORDER.join(', ') + ', collection'))
+    .catch(() => fetchAll(() => db.from('teams').select('team, ' + POS_ORDER.join(', '))));
+  const cols = POS_ORDER.concat(['collection']);
+  return rows.filter(r => r.team && cols.some(c => K(r[c]) === n)).map(r => r.team);
+}
+
+/** The scope a handset should actually read: their own team(s) PLUS every team they hold a role
+    column on. null stays null -- that is "everything", and widening everything is meaningless. */
+export async function scopeFor(db, user) {
+  if (!user.teams) return null;
+  const held = await heldTeams(db, user.name);
+  if (!held.length) return user.teams;
+  const seen = new Set(user.teams.map(K));
+  const out = user.teams.slice();
+  for (const t of held) if (!seen.has(K(t))) { seen.add(K(t)); out.push(t); }
+  return out;
+}
+
 async function list(db, [dev, which, which2], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const user = pseudoUser(cu);
+  const base = pseudoUser(cu);
+  /* Widened BEFORE anything is read, because the widening is what decides which rows to ask the
+     database for -- doing it afterwards would mean fetching one team's customers and then
+     filtering thirty teams' worth of nothing. */
+  const user = { ...base, teams: await scopeFor(db, base) };
   const called = await calledTodaySet(db, nowMs);
   const hit = (a, b) => !!(called[pnorm(a)] || called[pnorm(b)]);
   let rows;
