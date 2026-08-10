@@ -440,16 +440,41 @@ export const tPaidOver    = rows => rows.reduce((s, r) => s + num(r.paid_n) + nu
    null and the caller keeps the old single-date behaviour -- deliberately, because the honest
    fallback here would be reading a month of decks, and that is precisely the kind of read this
    whole system has spent days removing. */
+/* =====================================================================================
+   AND THE DATE IS PER TEAM *PER WEEKDAY*, WHICH IS THE UNIT A DECK ACTUALLY IS.
+
+     "Wamerudishwa 8086 ... (deki 8,783 · rejista 12,391 · 2026-08-10 · MON, TUE)"
+
+   Eight thousand restored and the phones still short, and that line says why: the rebuild had
+   read a deck of 8,783 against a register of 12,391, and it found only TWO WEEKDAYS in it.
+
+   Resolving one date per team looks right and is not. A team does not have "a deck" -- it has
+   one deck PER WEEKDAY, and each of those is uploaded on its own day. Monday's and Tuesday's
+   went up on the 10th; Wednesday's, Thursday's and Friday's went up earlier in the week. Taking
+   the team's newest date and reading only that day therefore keeps whichever weekdays happened
+   to be uploaded most recently and silently drops the rest of the week -- every customer on
+   them, on every screen and every handset.
+
+   It is the same fault as the two before it, one level further down, and it hid behind them:
+   fixing WHICH BATCH exposed WHICH DATE, and fixing WHICH DATE per team exposed that a team is
+   not the unit either. The key is team AND weekday, which is what a deck is.
+
+   The grouping is free -- the totals function already returns weekday on every summary row, so
+   this is the same single round trip reading one more column of what it was already sending. */
+export const deckKey = (team, weekday) =>
+  String(team == null ? '' : team).trim().toUpperCase() + '|'
+  + String(weekday == null ? '' : weekday).trim().toUpperCase();
+
 export async function deckDatesPerTeam(db, { type = null, weekday = null, from, to, teams = null } = {}) {
   const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
     { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
   if (!agg) return null;                       // migration not run -- caller falls back
-  const by = new Map();                        // TEAM -> its own newest snapshot_date
+  const by = new Map();                        // TEAM|WEEKDAY -> that deck's own newest date
   for (const r of agg) {
-    const t = String(r.team == null ? '' : r.team).trim().toUpperCase();
     const d = String(r.snapshot_date || '').slice(0, 10);
     if (!d) continue;
-    if (!by.has(t) || d > by.get(t)) by.set(t, d);
+    const k = deckKey(r.team, r.weekday);
+    if (!by.has(k) || d > by.get(k)) by.set(k, d);
   }
   return by;
 }

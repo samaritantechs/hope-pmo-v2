@@ -1281,3 +1281,76 @@ test('an early-collection officer with a leader role name is still narrowed to b
   assert.deepEqual(kept.map(r => r.ref), ['2-3'],
     'the two she reported seeing are exactly the two that go');
 });
+
+/* =====================================================================================
+   THE LEADER PICKER IN RIPOTI.
+   =====================================================================================
+     "Add leader drop down after team selection in Ripoti, so if I choose leader from a
+      dropdown of present system leaders eg Catherine then the below calls appear of
+      catherine's teams and leaders too"
+
+   The portal has had this since the same request was made about it. Ripoti was left with the
+   team dropdown alone, so "how is Catherine's book doing" meant picking her teams out of the
+   list one at a time and adding them up by hand.
+
+   The rule that matters most here is the one that is easy to get wrong: a leader filter NARROWS,
+   it never widens. Naming somebody whose teams you do not hold must show you nothing, not show
+   you their book.
+   ===================================================================================== */
+test('Ripoti: naming a leader reports their teams, and everybody working on them', async () => {
+  const t = makeTables();
+  // ASHA JUMA leads KONGOWE (recovery). BOB M leads it too (manager), and also MBAGALA.
+  t.teams[1].manager = 'BOB M';
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+
+  const all = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24'], NOW);
+  assert.equal(all.debugScope, 'ALL');
+  // The dropdown is built from the teams table's own leader columns, with how many teams each
+  // holds -- two people can share a name and the count is how you tell the books apart.
+  const names = all.leaderChoices.map(L => L.name).sort();
+  assert.deepEqual(names, ['ASHA JUMA', 'BOB M']);
+  assert.equal(all.leaderChoices.find(L => L.name === 'BOB M').teams, 2);
+
+  // Naming ASHA resolves to the one team she holds, and keeps the calls made on it.
+  const asha = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24', '', 'ASHA JUMA'], NOW);
+  assert.equal(asha.leader, 'ASHA JUMA');
+  assert.deepEqual(asha.debugScope, ['KONGOWE']);
+  assert.equal(asha.totals.calls, 1);
+  assert.ok(asha.users.some(u => u.name === 'JUMA ISSA'), 'and the officer working under her');
+});
+
+test('Ripoti: a leader filter narrows and can never widen what you may see', async () => {
+  const t = makeTables();
+  t.teams[1].manager = 'BOB M';                       // BOB holds MBAGALA; ASHA does not
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+
+  // ASHA is scoped to KONGOWE. Naming BOB, who also holds MBAGALA, gives her the OVERLAP only.
+  const overlap = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24', '', 'BOB M'], NOW);
+  assert.deepEqual(overlap.debugScope, ['KONGOWE'], 'MBAGALA is his, not hers');
+
+  // And she is only offered leaders whose teams overlap her own -- not the whole staff list.
+  assert.ok(overlap.leaderChoices.every(L => L.name === 'ASHA JUMA' || L.name === 'BOB M'));
+
+  // A name nobody leads is ignored rather than obeyed: the report stays exactly as it was.
+  const junk = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24', '', 'NOBODY AT ALL'], NOW);
+  assert.equal(junk.leader, '');
+  assert.deepEqual(junk.debugScope, ['KONGOWE']);
+});
+
+test('Ripoti: a team chosen outside the named leader\'s teams does not escape the leader', async () => {
+  const t = makeTables();
+  t.teams[1].manager = 'BOB M';
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);
+  /* An admin sees both teams, so MBAGALA is a legitimate choice on its own. Named alongside
+     ASHA -- who does not hold it -- it must not win: the pair would otherwise report MBAGALA
+     under her name, which is the one reading nobody could defend. */
+  const both = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24', 'MBAGALA', 'ASHA JUMA'], NOW);
+  assert.deepEqual(both.debugScope, ['KONGOWE'], 'the leader holds, the stray team is dropped');
+});

@@ -3807,37 +3807,6 @@ VIEWS.settings = function(){
               + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
               + ' server refuses those addresses even if somebody types them in directly.')
         + '</div></div></div>'
-      /* THE SAME CUSTOMER WITH TWO DIFFERENT D.S VALUES.
-         The follow-up list only refreshes for people named in an uploaded current-defaulter
-         deck for THEIR weekday. If a weekday's deck stops arriving, everybody on it keeps
-         figures that get older every week -- so somebody shows on Leo with D.S 9-10 and on Def
-         with D.S 8-9 at the same moment. The upload retires those rows, but only when something
-         is uploaded, and whoever is looking at the wrong number cannot make that happen.
-         Deliberately NOT next to the delete box below: this one takes nothing away. */
-      + '<div class="card"><div class="card-h">Orodha ya wadaiwa iliyopitwa na wakati / Stale defaulters'
-        + '<span class="sub">wateja ambao deki halijawathibitisha / customers no deck has confirmed</span></div>'
-        + '<div class="cleanbox">'
-        + '<div class="note" style="display:block">Hii <b>haifuti chochote</b>. Inaondoa tu takwimu za deki '
-        + '(hali na deni) kwa yeyote ambaye deki halijamtaja kwa muda mrefu, ili asionekane mdaiwa hai. '
-        + 'Maoni yote yanabaki, na deki lijalo likimtaja anarudi. / <i>Nothing is deleted. It clears the '
-        + 'deck figures for anyone no deck has named in a long time; every comment stays and the next '
-        + 'deck brings them back.</i></div>'
-        /* Asked directly, and it is the right question to ask before pressing anything: does
-           this rewrite the week? It does not, and saying so here is cheaper than anybody having
-           to find out. */
-        + '<div class="note" style="display:block"><b>Haiathiri ripoti ya wiki.</b> Muhtasari wa wiki '
-        + 'unahesabu wadaiwa kutoka <b>deki zilizopakiwa</b> (defaulter snapshots), si kutoka orodha hii. '
-        + 'Ahadi (Promise to Pay), migao na maoni pia hazibadiliki \u2014 hizo ni kazi ya afisa, si ya deki. '
-        + 'Kinachobadilika ni orodha hai ya Def kwenye simu, ripoti ya followup, na hesabu za maafisa. / '
-        + '<i>The weekly summary counts defaulters from the uploaded decks, not from this list, so it does '
-        + 'not move. Promises, assignments and comments are the officer\'s work and are untouched. What '
-        + 'changes is the live Def list on the phones, the follow-up report, and the officer boards.</i></div>'
-        + '<div class="fld"><label>Siku bila kuthibitishwa / Days unconfirmed</label>'
-        + '<input type="number" id="fcDays" value="14" min="1" style="max-width:120px"></div>'
-        + '<div class="clact"><button class="btn sm ghost" id="fcCheck">Angalia / Check first</button>'
-        + ' <button class="btn sm" id="fcRun">Safisha / Clean</button></div>'
-        + '<div id="fcOut" class="note" style="display:none"></div>'
-        + '</div></div>'
       /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
          Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
          no cell ceiling), but the plan's disk is finite, so this is where old dates get let go. */
@@ -3866,50 +3835,7 @@ VIEWS.settings = function(){
           sg.dates, [col('date','Date','date')].concat(CLEAN_TYPES.map(function(t){
             return col(t.key, t.label, 'num'); })).concat([col('total','Total','num')]),
           sumRow(sg.dates, CLEAN_TYPES.map(function(t){ return t.key; }).concat(['total'])))
-      /* NAKALA ZILIZOPITWA / SUPERSEDED COPIES.
-         Uploading the same day again does not double a figure -- every read already takes the
-         latest batch -- but it does leave the old copy in the table for ever. This removes
-         exactly the rows every read was already ignoring, which is why it cannot move a number.
-         Deliberately a SEPARATE card from "Clean old reports": that one throws away history by
-         date, this one throws away duplicates of history that is being kept. */
-      + '<div class="card"><div class="card-h">Nakala zilizopitwa / Superseded copies'
-        + '<span class="sub">weka upakiaji wa mwisho, ondoa nakala / keep the last upload, drop the copies</span></div>'
-        + '<div class="cleanbox">'
-        + '<div class="note" style="display:block">Ukipakia ripoti ya siku ile ile mara kadhaa, '
-        + 'takwimu hazijirudii &mdash; kila usomaji huchukua upakiaji wa mwisho. Lakini nakala za zamani '
-        + 'hubaki kwenye database. Hii huondoa hizo tu.'
-        + '<br><i>Re-uploading a day never doubled a figure: every read already takes the last upload. '
-        + 'The older copies simply stay in the database. This removes those, and nothing else &mdash; '
-        + 'so no figure on any screen can change. Two are kept by default: the one in use, and the '
-        + 'one it replaced, so a wrong file can still be undone by sending the right one again.</i></div>'
-        + '<div class="fld" style="max-width:220px"><label>Nakala za kubaki / Copies to keep</label>'
-          + '<select id="dupKeep">'
-          + '<option value="2">2 &mdash; ile inayotumika na iliyotangulia / the one in use and the one it replaced</option>'
-          + '<option value="1">1 &mdash; ile inayotumika tu / only the one in use</option>'
-          + '<option value="3">3</option></select></div>'
-        + '<div class="clact"><button class="btn sm ghost" id="dupCheck">Angalia / Check first</button>'
-        + ' <button class="btn sm danger" id="dupRun">Ondoa nakala / Remove copies</button></div>'
-        + '<div id="dupOut" class="note" style="display:none"></div>'
-        + '</div></div>'
 
-      /* THE PHONE READS THE REGISTER, NOT THE DECK.
-         HOPE Calls builds its Defaulters list from followup_status, because an officer's own
-         statuses, promises and comments live there. Normally every deck upload rebuilds it and
-         the two agree -- but a customer retired for going a fortnight without their weekday's
-         deck coming round, or one loaded before the register was being written, ends up in the
-         deck and not in the register: on every portal screen and no handset, with each half
-         individually correct and nothing to say so. */
-      + '<div class="card"><div class="card-h">Rejista ya ufuatiliaji / Follow-up register</div>'
-        + '<div class="cleanbox">'
-        + '<div class="note" style="display:block">HOPE Calls hutumia rejista hii, si deki.'
-        + ' Mteja aliyeko kwenye deki lakini si kwenye rejista hataonekana kwenye simu yoyote.'
-        + ' / HOPE Calls builds its Defaulters list from this register rather than from the deck.'
-        + ' A customer in the deck but not in the register is visible on every portal screen and'
-        + ' on no handset. This puts them back — it only ADDS what is missing and never touches a'
-        + ' row that is already there, so no follow-up status, promise or comment can be lost.</div>'
-        + '<div class="clact"><button class="btn sm" id="fuRebuild">\u21bb Rekebisha rejista / Rebuild register</button></div>'
-        + '<div id="fuRebuildOut" class="note" style="display:none"></div>'
-        + '</div></div>'
 
       /* THE FOLLOW-UP STATUS LIST. Editable, one per line. The BEHAVIOURS are not editable and
          the note says so: the built-in words are the ones other screens know by name -- the

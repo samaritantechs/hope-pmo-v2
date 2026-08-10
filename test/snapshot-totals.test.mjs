@@ -494,12 +494,76 @@ test('a week wide enough to be truncated still reports every team', async () => 
 
 test('the newest deck date is learned for every team, not just the first thousand rows', async () => {
   /* This is the one that hid ESTER PETER OMARY of team GOBA. `deckDatesPerTeam` builds the map
-     of "which date is this team's newest deck", and a team missing from the map has no deck --
-     so nobody on it is ever called. */
-  const { deckDatesPerTeam } = await import('../api/_lib/snapshot-totals.js');
+     of "which date is this deck's newest upload", and a deck missing from the map is a deck
+     nobody on it is ever called from.
+
+     The key is TEAM AND WEEKDAY, not team. A team does not have "a deck" -- it has one per
+     weekday, each uploaded on its own day. */
+  const { deckDatesPerTeam, deckKey } = await import('../api/_lib/snapshot-totals.js');
   const { teams, rows } = wideBook();
   const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
   const map = await deckDatesPerTeam(db, { type: 'current', from: DAYS[0], to: DAYS[4] });
   assert.ok(map, 'the function is there, so a map comes back');
-  for (const t of teams) assert.equal(map.get(t), DAYS[4], 'no deck date for ' + t);
+  for (const t of teams) {
+    for (const wd of WD) {
+      assert.equal(map.get(deckKey(t, wd)), DAYS[4], `no deck date for ${t} ${wd}`);
+    }
+  }
+});
+
+test('every weekday\'s deck is read at ITS OWN date -- a defaulter has no day', async () => {
+  /* Corrected in the owner's own words:
+       "defaulters have no day so as to read like the expected its just to know recovery of
+        monday having them on monday so not that i have to upload saturady report today to see
+        the defaulter"
+
+     The weekday on a deck exists to pair an initial against a current for recovery. It does NOT
+     say which day a customer belongs to -- a defaulter is a defaulter every day. So Saturday's
+     people must be on the list today without Saturday's file being uploaded again today.
+
+     This is the shape that produced "(deki 8,783 · rejista 12,391 · MON, TUE)": one date per
+     TEAM keeps whichever weekdays went up most recently and drops the rest of the week. */
+  const { portalApi } = await import('../api/_lib/portal-core.js');
+  const NOWF = Date.parse('2026-07-24T09:00:00Z');
+  const mk = (ref, wd, d) => ({ id: ref, ref, full_name: ref, team: 'GOBA', arrears: 1000,
+    status: 'Defaulter', snapshot_type: 'current', snapshot_date: d, weekday: wd,
+    upload_batch: 'b' + d, created_at: d + 'T06:00:00Z' });
+  const db = fakeDb({
+    teams: [{ team: 'GOBA' }],
+    // Monday's and Tuesday's decks went up today; the rest of the week went up earlier.
+    defaulter_snapshots: [
+      mk('MON-CUST', 'MON', '2026-07-24'), mk('TUE-CUST', 'TUE', '2026-07-24'),
+      mk('WED-CUST', 'WED', '2026-07-22'), mk('THU-CUST', 'THU', '2026-07-21'),
+      mk('SAT-CUST', 'SAT', '2026-07-18'),
+    ],
+  }, { rpc: SNAPSHOT_TOTALS_RPC });
+
+  const admin = { code: 'A', name: 'A', role: 'ADMIN', teams: null, tabs: ['settings'] };
+  const out = await portalApi(db, admin, 'defaulters', {}, NOWF);
+  const refs = out.rows.map(r => r.ref).sort();
+  assert.deepEqual(refs, ['MON-CUST', 'SAT-CUST', 'THU-CUST', 'TUE-CUST', 'WED-CUST'],
+    'every weekday\'s deck, each at its own date -- nobody waits on a re-upload');
+});
+
+test('a re-uploaded weekday wins for that weekday only, and disturbs no other', async () => {
+  /* The other half of the same rule: resolving per weekday must not turn into "read every
+     upload ever". Tuesday uploaded twice keeps only the newer Tuesday, and Monday is untouched. */
+  const { portalApi } = await import('../api/_lib/portal-core.js');
+  const NOWF = Date.parse('2026-07-24T09:00:00Z');
+  const mk = (ref, wd, d) => ({ id: ref + d, ref, full_name: ref, team: 'GOBA', arrears: 1000,
+    status: 'Defaulter', snapshot_type: 'current', snapshot_date: d, weekday: wd,
+    upload_batch: 'b' + d, created_at: d + 'T06:00:00Z' });
+  const db = fakeDb({
+    teams: [{ team: 'GOBA' }],
+    defaulter_snapshots: [
+      mk('MON-CUST', 'MON', '2026-07-20'),
+      mk('TUE-OLD', 'TUE', '2026-07-21'),       // superseded
+      mk('TUE-NEW', 'TUE', '2026-07-24'),       // Tuesday, uploaded again
+    ],
+  }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const admin = { code: 'A', name: 'A', role: 'ADMIN', teams: null, tabs: ['settings'] };
+  const out = await portalApi(db, admin, 'defaulters', {}, NOWF);
+  const refs = out.rows.map(r => r.ref).sort();
+  assert.deepEqual(refs, ['MON-CUST', 'TUE-NEW'],
+    'the older Tuesday is gone, and Monday is exactly where it was');
 });

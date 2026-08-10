@@ -754,7 +754,7 @@ export default withApi(async (req, res) => {
      never be reported as failed because the tidying after it did not. The file is already in
      and the batch rule already makes it the one that counts -- everything below is only
      cleaning up behind it. */
-  let autoSwept = null, autoRetired = null;
+  let autoSwept = null, autoRetired = null, autoRegister = null;
   /* WHO IS DOING THE TIDYING. Uploading requires the `upload` tab; the sweep and the retire
      rule require `settings`. Somebody granted upload-only would therefore have had the
      housekeeping refused with a 403 that the catch below swallows -- silently doing nothing,
@@ -804,10 +804,34 @@ export default withApi(async (req, res) => {
      so one upload can never empty the list. The correct rule was already there; this was a
      second, cruder one running last and winning. */
 
+  /* THE REGISTER REPAIRS ITSELF NOW, because nobody should have to know it needs repairing.
+
+       "I don't need manual works of ... Rejista ya ufuatiliaji / Follow-up register
+        (should be automated and remove them from fontend)"
+
+     Quite right. Three buttons in Settings existed because three things could silently drift,
+     and a button is only a fix for somebody who already knows to press it -- which is nobody,
+     until the phones are empty and the complaint has been going round for a week.
+
+     syncFollowupFromDeck, a few lines above, writes the deck that was just uploaded into the
+     register. This covers the rest of the book: every OTHER weekday's deck, each read at its own
+     date, put back if the register has it blanked or missing. That is what makes "I should not
+     have to upload Saturday's report today to see Saturday's defaulters" true, rather than true
+     only for whoever remembers the button.
+
+     It never overwrites an officer's work -- only deck columns are written -- and a failure here
+     leaves the upload standing, exactly like the sweep above. */
+  if (isLastPart && table === 'defaulter_snapshots') {
+    try {
+      const r = await portalApi(supabase, housekeeper, 'rebuildFollowup', {}, Date.now());
+      autoRegister = { added: r.added || 0, restored: r.restored || 0 };
+    } catch (e) { /* the upload stands */ }
+  }
+
 
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
-    autoSwept, autoRetired,
+    autoSwept, autoRetired, autoRegister,
     /* Which slice this was. The page adds them up and only shows a result when the last one
        lands, so "Done -- 2,000 rows" twelve times over never appears. `partial` is the flag it
        reads: true means the file is not all in yet and nothing has been rebuilt from it. */
