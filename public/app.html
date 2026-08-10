@@ -3085,7 +3085,11 @@ VIEWS.abnormal = function(){
       col('ref_no','REF NO'), col('customer_name','CUSTOMER NAME'),
       col('transaction_id','TRANSACTION ID'),
       {key:'paid', label:'PAID', kind:'money', cls:function(){ return 'bad'; }},
-      col('ref_id','REF ID'), col('payment','PAYMENT'), col('sender_name','SENDER NAME'),
+      /* REF ID and PAYMENT are NOT shown. Both are still imported and still stored -- REF ID
+         is what reconciles a payment against the carrier's own record -- but neither is read
+         on this screen, and a column nobody reads is a column in the way of the ones they do.
+         They remain in the Excel download, where a reconciliation actually happens. */
+      col('sender_name','SENDER NAME'),
       /* Uploaded or worked out. Two different kinds of truth, and never worth confusing. */
       {key:'source', label:'CHANZO / SOURCE', kind:'chip',
        chip:function(r){ return r.source==='upload' ? 'ok' : 'warn'; },
