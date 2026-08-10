@@ -4577,3 +4577,64 @@ test('only an admin may merge teams', async () => {
       { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW),
     e => e.status === 403);
 });
+
+/* =====================================================================================
+   "abnomal payments worked but not counting at dashboard"
+
+   The tab learned to work irregular payments out for itself; the dashboard tile did not, so it
+   went on counting only the rows somebody had uploaded. Two screens, one question, two answers
+   -- and the dashboard's was the SMALLER one, which is the direction nobody notices.
+
+   These assertions are deliberately written as "the two screens agree" rather than as two
+   separate expected numbers. A test that hard-codes both can pass while they drift apart; one
+   that compares them cannot.
+   ===================================================================================== */
+function abnDashBook() {
+  const t = tables();
+  t.abnormal_payments = [{ id: 'a1', team: 'KONGOWE', paid: 1234, transaction_id: 'UP1',
+    created_at: TODAY + 'T05:00:00Z' }];
+  t.received_payments = [
+    { id: 'p1', team: 'KONGOWE', amount_paid: 79543, paid_at: TODAY, transaction_id: 'TX1' },
+    { id: 'p2', team: 'KONGOWE', amount_paid: 12345, paid_at: TODAY, transaction_id: 'TX2' },
+    { id: 'p3', team: 'KONGOWE', amount_paid: 80000, paid_at: TODAY, transaction_id: 'TX3' },
+    // Already uploaded above -- must not be counted twice on either screen.
+    { id: 'p4', team: 'KONGOWE', amount_paid: 1234, paid_at: TODAY, transaction_id: 'UP1' },
+  ];
+  return t;
+}
+
+test('the dashboard counts irregular payments the rule found, not just uploaded ones', async () => {
+  const d = await portalApi(dbWithRpc(abnDashBook()), ADMIN, 'dashboardFull', {}, NOW);
+  // 1 uploaded + 2 found (79,543 and 12,345). 80,000 is clean; UP1 is already uploaded.
+  assert.equal(d.cards.abnormal, 3);
+  assert.equal(d.cards.abnormalAmount, 1234 + 79543 + 12345);
+});
+
+test('and it agrees EXACTLY with the Abnormal Payments tab', async () => {
+  /* The whole point. Written as an agreement rather than two numbers, because a test that
+     hard-codes both sides can pass while the screens drift apart. */
+  const t = abnDashBook();
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  const tab = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(dash.cards.abnormal, tab.count);
+  assert.equal(dash.cards.abnormalAmount,
+    tab.rows.reduce((s, r) => s + (Number(r.paid) || 0), 0));
+});
+
+test('a payment in both the sheet and the ledger is counted once, on both screens', async () => {
+  const t = abnDashBook();
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  const tab = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(tab.rows.filter(r => r.transaction_id === 'UP1').length, 1);
+  assert.equal(dash.cards.abnormal, tab.count, 'and the tile does not double it either');
+});
+
+test('an officer sees only their own team on the dashboard tile too', async () => {
+  const t = abnDashBook();
+  t.received_payments.push({ id: 'p9', team: 'MBAGALA', amount_paid: 55555, paid_at: TODAY,
+    transaction_id: 'TX9' });
+  const dash = await portalApi(dbWithRpc(t), GMO, 'dashboardFull', {}, NOW);
+  const tab = await portalApi(dbWithRpc(t), GMO, 'abnormal', {}, NOW);
+  assert.equal(dash.cards.abnormal, tab.count);
+  assert.ok(!tab.rows.some(r => r.transaction_id === 'TX9'), 'MBAGALA is not theirs');
+});
