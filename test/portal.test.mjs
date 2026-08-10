@@ -4737,3 +4737,69 @@ test('history is NOT rewritten by a merge', async () => {
   assert.equal(db._dump('performance_records')[0].name, 'TUNDURU',
     'the photograph stays what it was');
 });
+
+/* =====================================================================================
+   "On choosing team sahihi Tunduru is not appearing"
+
+   teams.team is the primary key and Postgres compares it EXACTLY, so TUNDURU and Tunduru are
+   two separate rows -- which is how the duplicate came to exist in the first place. Both ends
+   of the merge collapsed them: deleteTeam uppercased whatever it was given, and the picker
+   excluded the destination case-insensitively. So the one team somebody was trying to merge
+   INTO was the one team they could not choose.
+   ===================================================================================== */
+function caseDupBook() {
+  const t = tables();
+  t.teams.push({ team: 'TUNDURU', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  t.teams.push({ team: 'Tunduru', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  t.repayment_snapshots.push({ ref: 'CD1', team: 'TUNDURU', payment_expected: 100, arrears: 0,
+    todays_status: 'UNPAID', snapshot_type: 'today', snapshot_date: TODAY, upload_batch: 'bcd',
+    created_at: TODAY + 'T04:00:00Z' });
+  return t;
+}
+
+test('TUNDURU merges into Tunduru -- two rows that differ only in case are two teams', async () => {
+  const db = dbWithRpc(caseDupBook());
+  const r = await portalApi(db, ADMIN, 'deleteTeam',
+    { team: 'TUNDURU', moveTo: 'Tunduru' }, NOW);
+  assert.equal(r.mergedInto, 'Tunduru');
+  const teamsLeft = db._dump('teams').map(x => x.team);
+  assert.ok(!teamsLeft.includes('TUNDURU'), 'the wrong spelling is gone');
+  assert.ok(teamsLeft.includes('Tunduru'), 'and the right one remains');
+  assert.equal(db._dump('repayment_snapshots').find(x => x.ref === 'CD1').team, 'Tunduru');
+});
+
+test('and the same merge the other way round works too', async () => {
+  const db = dbWithRpc(caseDupBook());
+  const r = await portalApi(db, ADMIN, 'deleteTeam',
+    { team: 'Tunduru', moveTo: 'TUNDURU' }, NOW);
+  assert.equal(r.mergedInto, 'TUNDURU');
+  assert.ok(!db._dump('teams').map(x => x.team).includes('Tunduru'));
+});
+
+test('typing a name in any case still finds the one team that has it', async () => {
+  /* The reason this used to uppercase at all. Where there is only ONE spelling, the old
+     forgiving behaviour must survive -- every other use of delete depends on it. */
+  const t = tables();
+  t.teams.push({ team: 'SINGLETON', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  const db = dbWithRpc(t);
+  await portalApi(db, ADMIN, 'deleteTeam', { team: 'singleton' }, NOW);
+  assert.ok(!db._dump('teams').map(x => x.team).includes('SINGLETON'));
+});
+
+test('an ambiguous spelling is refused and both are named, never guessed', async () => {
+  /* Guessing which of two spellings somebody meant is exactly how the wrong one gets deleted. */
+  await assert.rejects(
+    () => portalApi(dbWithRpc(caseDupBook()), ADMIN, 'deleteTeam', { team: 'tunduru' }, NOW),
+    e => /More than one team is spelled/.test(e.message)
+      && /TUNDURU/.test(e.message) && /Tunduru/.test(e.message));
+});
+
+test('a team still cannot be merged into itself, compared as stored', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(caseDupBook()), ADMIN, 'deleteTeam',
+      { team: 'TUNDURU', moveTo: 'TUNDURU' }, NOW),
+    e => /itself/.test(e.message));
+});

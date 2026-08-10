@@ -4283,9 +4283,48 @@ const TEAM_HOLDS = [
   { table: 'loans', what: 'loans' },
 ];
 
+/* TWO TEAMS THAT DIFFER ONLY IN CASE ARE TWO TEAMS.
+
+     "On choosing team sahihi Tunduru is not appearing"
+
+   `teams.team` is the primary key and Postgres compares it exactly, so TUNDURU and Tunduru are
+   two separate rows -- which is how the duplicate came to exist in the first place. But this
+   function uppercased whatever it was given before doing anything with it, so both names
+   collapsed to one and the merge could not tell them apart: the destination looked like the
+   source, and "a team cannot be merged into itself" was the answer to a perfectly sensible
+   request. The picker had the mirror-image fault and simply hid the destination.
+
+   Names are now resolved against the teams table AS STORED:
+
+     an exact match          that row, whatever its case
+     one case-insensitive    that row -- so typing `tunduru` still finds TUNDURU, which is what
+       match                 makes every other use of this unchanged
+     several                 refused, LISTING them, because guessing which of two spellings
+                             somebody meant is exactly how the wrong one gets deleted */
+async function resolveTeamName(db, raw) {
+  const want = String(raw == null ? '' : raw).trim();
+  if (!want) return { name: null };
+  const rows = await fetchAll(() => db.from('teams').select('team'));
+  const exact = rows.find(t => String(t.team) === want);
+  if (exact) return { name: exact.team };
+  const ci = rows.filter(t => K(t.team) === K(want));
+  if (ci.length === 1) return { name: ci[0].team };
+  if (ci.length > 1) return { name: null, ambiguous: ci.map(t => t.team) };
+  return { name: null };
+}
+
 async function deleteTeam(db, user, p) {
   requireAdmin(user);
-  const team = normTeamName(p && p.team);
+  const src = await resolveTeamName(db, p && p.team);
+  if (src.ambiguous) {
+    throw badRequest(`Kuna timu zaidi ya moja yenye jina hilo: ${src.ambiguous.join(', ')}. `
+      + `Chagua ile hasa unayoitaka.`
+      + `\n\nMore than one team is spelled that way: ${src.ambiguous.join(', ')}. `
+      + `Pick the exact one — that is the whole reason this is refused rather than guessed.`);
+  }
+  // Falls back to the normalised name so a team that is not in the table at all still produces
+  // the old "nothing to delete" behaviour rather than a confusing "team is required".
+  const team = src.name || normTeamName(p && p.team);
   if (!team) throw badRequest('team is required');
 
   const blocking = [];
@@ -4322,14 +4361,25 @@ async function deleteTeam(db, user, p) {
 
      The counts come back per table, so the admin sees exactly what was carried rather than
      being told "done". And this goes through the same audited door as every other write. */
-  const moveTo = normTeamName(p && p.moveTo);
-  if (blocking.length && moveTo) {
-    if (moveTo === team) throw badRequest('A team cannot be merged into itself.');
-    const { data: dest } = await db.from('teams').select('team').eq('team', moveTo).maybeSingle();
-    if (!dest) {
-      throw badRequest(`Timu ${moveTo} haipo. / There is no team called ${moveTo} — `
+  /* A MERGE IS ASKED FOR, NOT INFERRED. This used to run only when something was blocking the
+     delete, so merging a team that happened to hold nothing quietly became a plain delete and
+     reported one. Pressing Merge should merge -- and report zero moved if there was nothing to
+     move -- because an admin who chose a destination is telling you what they meant. */
+  const wantMove = String((p && p.moveTo) == null ? '' : p.moveTo).trim();
+  if (wantMove) {
+    const dst = await resolveTeamName(db, wantMove);
+    if (dst.ambiguous) {
+      throw badRequest(`Kuna timu zaidi ya moja yenye jina hilo: ${dst.ambiguous.join(', ')}.`
+        + `\n\nMore than one team is spelled "${wantMove}": ${dst.ambiguous.join(', ')}. `
+        + 'Pick the exact one.');
+    }
+    if (!dst.name) {
+      throw badRequest(`Timu ${wantMove} haipo. / There is no team called ${wantMove} — `
         + 'create it first, or check the spelling.');
     }
+    const moveTo = dst.name;
+    // Compared AS STORED, so TUNDURU and Tunduru are correctly two different teams.
+    if (moveTo === team) throw badRequest('A team cannot be merged into itself.');
     /* EVERY PLACE A TEAM NAME IS STORED, not just the four that block the delete.
 
        The blocking check asks a narrow question -- "is anything important still filed here?" --

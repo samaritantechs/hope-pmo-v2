@@ -3414,7 +3414,12 @@ function teamForm(x){
     + (isNew ? '' :
         '<div class="fld" style="margin-top:14px"><label>Unganisha na timu nyingine / Merge into another team</label>'
         + '<select id="tMergeTo"><option value="">— chagua timu sahihi / choose the correct team —</option>'
-        + (S.teamNames || []).filter(function(n){ return String(n).toUpperCase() !== String(x.team).toUpperCase(); })
+        /* EXACT comparison, not upper-cased. `teams.team` is the primary key and Postgres
+           compares it exactly, so TUNDURU and Tunduru are two separate rows -- which is how a
+           duplicate comes to exist at all. Excluding case-insensitively hid the very team
+           somebody was trying to merge into, which was reported as "Tunduru is not appearing".
+           Only the row you are standing on is left out. */
+        + (S.teamNames || []).filter(function(n){ return String(n) !== String(x.team); })
             .map(function(n){ return '<option>' + esc(n) + '</option>'; }).join('')
         + '</select>'
         + '<div class="fldnote">Kumbukumbu zote za <b>' + esc(x.team) + '</b> zitahamia kwenye timu'
