@@ -4638,3 +4638,102 @@ test('an officer sees only their own team on the dashboard tile too', async () =
   assert.equal(dash.cards.abnormal, tab.count);
   assert.ok(!tab.rows.some(r => r.transaction_id === 'TX9'), 'MBAGALA is not theirs');
 });
+
+/* =====================================================================================
+   "it should workout in the entire system including lists of teams accessed in access codes"
+
+   The first version moved five tables. A team name is stored in FIFTEEN places, and two of
+   them are LISTS rather than columns -- a PMO collection officer holds thirty-odd teams as an
+   array on their access code, and a leader's scope is the same shape on their handset.
+
+   Moving five of fifteen would have left ten pointing at a team that no longer exists, which
+   is precisely the orphaning the delete guard was there to prevent -- and it would have looked
+   like it worked, which is worse than refusing outright.
+   ===================================================================================== */
+function fullMergeBook() {
+  const t = tables();
+  t.teams.push({ team: 'TUNDURU', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  t.teams.push({ team: 'TUNDURU SOUTH', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  const T = 'TUNDURU';
+  t.repayment_snapshots.push({ ref: 'M1', team: T, payment_expected: 100, arrears: 0,
+    todays_status: 'UNPAID', snapshot_type: 'today', snapshot_date: TODAY, upload_batch: 'bm',
+    created_at: TODAY + 'T04:00:00Z' });
+  t.defaulter_snapshots.push({ ref: 'M1', team: T, arrears: 100, status: 'Defaulter',
+    snapshot_type: 'current', weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'bm2',
+    created_at: TODAY + 'T04:00:00Z' });
+  t.followup_status.push({ ref: 'M1', team: T, full_name: 'C', arrears: 100, status: 'Defaulter' });
+  t.followup_comments.push({ id: 'cm1', ref: 'M1', team: T, comment: 'x', created_at: TODAY + 'T05:00:00Z' });
+  t.loans.push({ id: 'lm1', team: T, stage: 'approved', principal_amt: 1, approved_date: TODAY });
+  t.received_payments.push({ id: 'rp1', team: T, amount_paid: 500, paid_at: TODAY });
+  t.abnormal_payments.push({ id: 'ap1', team: T, paid: 1, created_at: TODAY + 'T05:00:00Z' });
+  t.complaints.push({ id: 'cp1', team: T, complainant: 'X', details: 'y', created_at: TODAY + 'T05:00:00Z' });
+  t.complaint_log = [{ id: 'cl1', team: T, action: 'opened', created_at: TODAY + 'T05:00:00Z' }];
+  t.restructures.push({ id: 'rs9', ref: 'M1', team: T, status: 'Pending', created_at: TODAY + 'T05:00:00Z' });
+  t.demand_notices.push({ id: 'dn9', ref: 'M1', team: T, created_at: TODAY + 'T05:00:00Z' });
+  t.call_logs = (t.call_logs || []).concat([{ id: 'clg1', user_id: 'U1', team: T, phone: '07', duration: 9, call_date: TODAY }]);
+  t.call_users.push({ user_id: 'UM', name: 'ON WRONG TEAM', team: T, role: 'OFFICER',
+    device_id: 'dM', active: true, leader_teams: ['TUNDURU', 'KONGOWE'] });
+  // The two LIST-shaped ones -- the part that was missed.
+  t.access_codes.push({ code: 'PMO1', name: 'CATHERINE', role: 'PMO COLLECTION',
+    teams: ['TUNDURU', 'KONGOWE'], tabs: [] });
+  t.access_codes.push({ code: 'PMO2', name: 'HOLDS BOTH', role: 'PMO COLLECTION',
+    teams: ['TUNDURU', 'TUNDURU SOUTH'], tabs: [] });
+  return t;
+}
+
+test('a merge moves EVERY table that stores a team name, not just the blocking four', async () => {
+  const db = dbWithRpc(fullMergeBook());
+  await portalApi(db, ADMIN, 'deleteTeam', { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW);
+  const stillWrong = [];
+  for (const tbl of ['repayment_snapshots', 'defaulter_snapshots', 'followup_status',
+    'followup_comments', 'loans', 'received_payments', 'abnormal_payments', 'complaints',
+    'complaint_log', 'restructures', 'demand_notices', 'call_logs', 'call_users']) {
+    if (db._dump(tbl).some(r => String(r.team || '').toUpperCase() === 'TUNDURU')) stillWrong.push(tbl);
+  }
+  assert.deepEqual(stillWrong, [],
+    'these tables still point at a team that no longer exists: ' + stillWrong.join(', '));
+});
+
+test('and the TEAM LISTS on access codes move with it', async () => {
+  /* The part that was missed. A PMO collection officer holds thirty-odd teams as a list on
+     their own code; a name left behind there is somebody scoped to a team that is gone. */
+  const db = dbWithRpc(fullMergeBook());
+  await portalApi(db, ADMIN, 'deleteTeam', { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW);
+  const codes = db._dump('access_codes');
+  const one = codes.find(c => c.code === 'PMO1');
+  assert.deepEqual(one.teams.slice().sort(), ['KONGOWE', 'TUNDURU SOUTH']);
+  // Somebody holding BOTH spellings ends up with one, not a duplicate.
+  const both = codes.find(c => c.code === 'PMO2');
+  assert.deepEqual(both.teams, ['TUNDURU SOUTH']);
+});
+
+test('and a leader\'s scope on their handset moves too', async () => {
+  const db = dbWithRpc(fullMergeBook());
+  await portalApi(db, ADMIN, 'deleteTeam', { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW);
+  const u = db._dump('call_users').find(x => x.user_id === 'UM');
+  assert.equal(u.team, 'TUNDURU SOUTH');
+  assert.deepEqual(u.leader_teams.slice().sort(), ['KONGOWE', 'TUNDURU SOUTH']);
+});
+
+test('the merge reports what it carried, table by table', async () => {
+  const db = dbWithRpc(fullMergeBook());
+  const r = await portalApi(db, ADMIN, 'deleteTeam', { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW);
+  assert.equal(r.mergedInto, 'TUNDURU SOUTH');
+  assert.ok(r.moved['access codes'] >= 2, 'including the list-shaped ones');
+  assert.ok(r.moved['leader scopes'] >= 1);
+  assert.ok(Object.keys(r.moved).length >= 10, 'and it is not quietly moving three of them');
+});
+
+test('history is NOT rewritten by a merge', async () => {
+  /* performance_records copies a name as text on purpose -- last March's best team stays
+     whatever it was called last March. A merge today must not reach back and change that. */
+  const t = fullMergeBook();
+  t.performance_records = [{ id: 'pr1', period: 'week', period_start: '2026-07-13',
+    metric: 'sales', scope: 'team', name: 'TUNDURU', value: 100, recorded_at: '2026-07-17T09:00:00Z' }];
+  const db = dbWithRpc(t);
+  await portalApi(db, ADMIN, 'deleteTeam', { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW);
+  assert.equal(db._dump('performance_records')[0].name, 'TUNDURU',
+    'the photograph stays what it was');
+});
