@@ -243,6 +243,33 @@ class FakeQuery {
   then(res, rej) { return Promise.resolve(this._exec()).then(res, rej); }
 }
 
+/* A DATABASE FUNCTION IS CAPPED LIKE A TABLE READ, so the fake caps it too.
+
+   The fake used to hand back every row a stand-in function produced. Real PostgREST does not:
+   a function that returns a set is truncated at the server's row limit with no error and no
+   warning, exactly as a table read is. Because the fake was more generous than the real thing,
+   the code that read a week of team-day totals passed every test while losing every team past
+   the cap in production -- "a team is in the file but nowhere on the screen".
+
+   So this stands in for the cap, and `.range()` stands in for paging past it. Awaiting the
+   builder directly still works, because that is what an un-paged caller does and it must keep
+   getting the truncated answer the real server would give it -- that is the fault, and hiding
+   it is how it survived this long. */
+const RPC_CAP = 1000;
+
+class FakeRpc {
+  constructor(run) { this.run = run; this.rng = null; }
+  range(a, b) { this.rng = [a, b]; return this; }
+  async _exec() {
+    const r = await this.run();
+    if (r.error || !Array.isArray(r.data)) return r;
+    let out = r.data;
+    if (this.rng) out = out.slice(this.rng[0], this.rng[1] + 1);
+    return { data: out.slice(0, RPC_CAP), error: null };
+  }
+  then(res, rej) { return Promise.resolve(this._exec()).then(res, rej); }
+}
+
 /** fakeDb(tables, opts)
     opts.rpc  – { name: fn|null }. A function stands in for a Postgres function; null stands in
                 for one that has NOT been created yet, which is the state of every live database
@@ -255,12 +282,14 @@ export function fakeDb(tables, opts = {}) {
   return {
     from(name) { if (!store[name]) store[name] = { rows: [] };
       return new FakeQuery(store[name], name, (opts.missingColumns || {})[name]); },
-    async rpc(name, args) {
-      if (!Object.prototype.hasOwnProperty.call(rpcs, name) || rpcs[name] == null) {
-        // What PostgREST actually says when the function is missing.
-        return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.' + name } };
-      }
-      return { data: await rpcs[name](store, args), error: null };
+    rpc(name, args) {
+      return new FakeRpc(async () => {
+        if (!Object.prototype.hasOwnProperty.call(rpcs, name) || rpcs[name] == null) {
+          // What PostgREST actually says when the function is missing.
+          return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.' + name } };
+        }
+        return { data: await rpcs[name](store, args), error: null };
+      });
     },
     _dump(name) { return store[name] ? store[name].rows : []; },
   };
