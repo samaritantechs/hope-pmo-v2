@@ -221,3 +221,101 @@ test('a database that is down is reported, not retried into a second failure', a
   await assert.rejects(() => fetchAll(build), e => /fetch failed/.test(String(e && e.message)));
   assert.equal(trips, 3, 'three attempts, not six: ' + trips);
 });
+
+/* =====================================================================================
+   A DATABASE FUNCTION IS CAPPED EXACTLY LIKE A TABLE READ.
+
+     "i wonder why use sampling in a list that needs them all .. i fear many defaulters havent
+      been reached in app followup by now"
+
+   fetchAll has paged past the 1000-row cap since the beginning. Every `db.rpc(...)` in the
+   system was a single bare request, and PostgREST truncates a function that returns a set at
+   the same limit -- no error, no warning, row 1001 onward simply absent. A week of team-day
+   totals is several thousand summary rows, so the weekly report and the dashboard were adding
+   up a quarter of the week and the per-team date map lost every team past the cap.
+   ===================================================================================== */
+
+/** Stands in for a PostgREST function that returns `n` rows and truncates at 1000, counting
+    how many requests it took to read the lot. */
+function cappedRpc(n, cap = 1000) {
+  const rows = Array.from({ length: n }, (_, i) => ({ i }));
+  const stat = { calls: 0 };
+  return { stat, db: { rpc() {
+    const q = { rng: null, range(a, b) { q.rng = [a, b]; return q; },
+      then(res, rej) {
+        stat.calls++;
+        const slice = q.rng ? rows.slice(q.rng[0], q.rng[1] + 1) : rows;
+        return Promise.resolve({ data: slice.slice(0, cap), error: null }).then(res, rej);
+      } };
+    return q;
+  } } };
+}
+
+test('a database function returning more than 1000 rows is read whole, not sampled', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  const { db, stat } = cappedRpc(4200);
+  const { data, error } = await rpcAll(db, 'snapshot_team_day_totals', { p_from: 'x' });
+  assert.equal(error, null);
+  assert.equal(data.length, 4200, 'every row arrives: ' + data.length);
+  assert.deepEqual(data[0], { i: 0 });
+  assert.deepEqual(data[4199], { i: 4199 }, 'including the last one, which used to be missing');
+  assert.equal(stat.calls, 5, 'four full pages and one short one: ' + stat.calls);
+});
+
+test('an exactly-full last page still costs one more request, or the end is a guess', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  const { db, stat } = cappedRpc(2000);
+  const { data } = await rpcAll(db, 'f');
+  assert.equal(data.length, 2000);
+  assert.equal(stat.calls, 3, 'two full pages then an empty one: ' + stat.calls);
+});
+
+test('a short answer costs exactly one request -- paging must not tax the ordinary case', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  const { db, stat } = cappedRpc(12);
+  const { data } = await rpcAll(db, 'f');
+  assert.equal(data.length, 12);
+  assert.equal(stat.calls, 1, 'one: ' + stat.calls);
+});
+
+test('a client that cannot page is answered rather than broken -- and costs nothing extra', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  /* The first version of rpcAll built a throwaway call purely to look for `.range` on it. On the
+     real client that is free, but it is still one more call than the work needs, and the speed
+     guards count calls. They were right to: the capability has to be read off the same builder
+     the page is sent on. */
+  let calls = 0;
+  const db = { rpc: async () => { calls++; return { data: [{ i: 1 }], error: null }; } };
+  const { data, error } = await rpcAll(db, 'f');
+  assert.equal(error, null);
+  assert.deepEqual(data, [{ i: 1 }]);
+  assert.equal(calls, 1, 'one call, no probe: ' + calls);
+});
+
+test('an error on a later page is reported, not silently returned as a part answer', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  /* Returning the pages that did arrive would be the same fault in a new coat: a plausible
+     total, quietly short. */
+  let calls = 0;
+  const db = { rpc() {
+    const q = { range: () => q, then(res, rej) {
+      calls++;
+      if (calls === 1) return Promise.resolve({ data: Array.from({ length: 1000 }, (_, i) => ({ i })), error: null }).then(res, rej);
+      return Promise.resolve({ data: null, error: { message: 'permission denied for function f' } }).then(res, rej);
+    } };
+    return q;
+  } };
+  const { data, error } = await rpcAll(db, 'f');
+  assert.equal(data, null, 'no half answer');
+  assert.match(String(error.message), /permission denied/);
+});
+
+test('a function that never returns a short page stops loudly instead of never ending', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  const db = { rpc() {
+    const q = { range: () => q, then: (res, rej) =>
+      Promise.resolve({ data: Array.from({ length: 1000 }, (_, i) => ({ i })), error: null }).then(res, rej) };
+    return q;
+  } };
+  await assert.rejects(() => rpcAll(db, 'runaway'), /more than 500,000 rows/);
+});

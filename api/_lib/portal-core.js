@@ -1,4 +1,4 @@
-import { fetchAll, runQuery } from './supabase.js';
+import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
@@ -2942,7 +2942,7 @@ async function deleteAccessCode(db, user, p) {
    that will not open, and it is the same bargain performanceHistory already makes. */
 async function callCountsByUser(db) {
   try {
-    const { data, error } = await db.rpc('call_counts_by_user');
+    const { data, error } = await rpcAll(db, 'call_counts_by_user');
     if (error) throw error;
     if (!Array.isArray(data)) return null;
     const out = {};
@@ -3164,7 +3164,8 @@ async function batchCensus(db, src, from, to) {
     const args = src.table === 'repayment_snapshots'
       ? { p_from: from, p_to: to, p_type: null, p_teams: null }
       : { p_from: from, p_to: to, p_type: null, p_teams: null, p_weekday: null };
-    const { data, error } = await runQuery(() => db.rpc(src.fn, args));
+    // Paged: an export function returns a row per record and is capped like any other read.
+    const { data, error } = await rpcAll(db, src.fn, args);
     if (!error && Array.isArray(data)) {
       return data.map(r => ({ ...r, n: num(r.customers) }));
     }
@@ -3399,7 +3400,8 @@ const dayOf = v => String(v == null ? '' : v).slice(0, 10);
 async function countsByDate(db) {
   let rows = [];
   try {
-    const { data, error } = await db.rpc('storage_usage_by_date');
+    // Paged: one row per source per day, which passes a thousand within a few months.
+    const { data, error } = await rpcAll(db, 'storage_usage_by_date');
     if (error) throw error;
     if (Array.isArray(data)) rows = data;
   } catch (e) { /* function not created yet -- everything falls back below */ }
@@ -3570,7 +3572,7 @@ async function uploadStatus(db, user, { date } = {}, nowMs) {
   /* ---- THE FAST PATH: one round trip, ~20 rows, no customer data at all. ---- */
   let sum = null;
   try {
-    const { data, error } = await db.rpc('upload_status_summary', { p_day: day });
+    const { data, error } = await rpcAll(db, 'upload_status_summary', { p_day: day });
     if (error) throw error;
     if (Array.isArray(data)) sum = data;
   } catch (e) { /* function not created yet -- bounded fallback below */ }

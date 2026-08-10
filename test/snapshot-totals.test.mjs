@@ -442,3 +442,64 @@ test('a year of history is still reachable', async () => {
   const r = await expectedTotalsLatest(db, { type: 'today', notAfter: '2026-07-24' });
   assert.equal(r.date, '2025-09-01', 'ten months back is inside the window');
 });
+
+/* =====================================================================================
+   A COMPANY BIG ENOUGH TO BE TRUNCATED.
+   =====================================================================================
+     "still not, she is a 2-4 arreas 1,700,000.00 i just want to find that kind of customer in
+      default automatic i wonder why use sampling in a list that needs them all .. i fear many
+      defaulters havent been reached in app followup by now"
+
+   The fear was right and this is where it came from. Moving the sums into the database made
+   them small -- one row per team, per day, per weekday, per batch -- but "small" is relative to
+   a hundred and sixty thousand customers, not to PostgREST's thousand-row ceiling. Forty teams
+   across a week of decks is several thousand summary rows, and a bare `db.rpc(...)` was handed
+   the first thousand with no error to say so.
+
+   The damage is not a total that is slightly low. It is a per-team map that is missing whole
+   TEAMS -- so the newest deck date for GOBA is never learned, GOBA's deck is never read, and
+   every defaulter on it is invisible on every phone. A customer in the uploaded file and
+   nowhere on any screen.
+
+   Every fixture in this file is four teams and fits in one page, which is exactly why this
+   never showed up here. So one fixture is deliberately too big.
+   ===================================================================================== */
+
+/** Fifty teams, five days, every weekday: more team-day rows than one page can carry. */
+function wideBook() {
+  const teams = Array.from({ length: 50 }, (_, i) => 'TEAM' + String(i + 1).padStart(2, '0'));
+  const rows = [];
+  let n = 0;
+  for (const d of DAYS) for (const wd of WD) for (const t of teams) {
+    rows.push({ id: 'd' + (++n), ref: 'R' + n, name: 'C' + n, team: t,
+      snapshot_type: 'current', snapshot_date: d, weekday: wd, arrears: 1000,
+      upload_batch: 'b1', created_at: d + 'T06:00:00Z' });
+  }
+  return { teams, rows };
+}
+
+test('a week wide enough to be truncated still reports every team', async () => {
+  const { teams, rows } = wideBook();
+  assert.ok(rows.length > 1000, 'the fixture has to be bigger than one page: ' + rows.length);
+  const { defaulterTotalsInRange } = await import('../api/_lib/snapshot-totals.js');
+  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const out = await defaulterTotalsInRange(db,
+    { type: 'current', from: DAYS[0], to: DAYS[4], teams: null });
+  const seen = new Set(out.map(r => String(r.team)));
+  assert.equal(seen.size, teams.length,
+    `${seen.size} of ${teams.length} teams came back -- the rest fell past the 1000-row cap`);
+  assert.ok(seen.has(teams[teams.length - 1]), 'including the last team in the alphabet');
+  assert.equal(tArrears(out), rows.length * 1000, 'and the arrears add up to the whole book');
+});
+
+test('the newest deck date is learned for every team, not just the first thousand rows', async () => {
+  /* This is the one that hid ESTER PETER OMARY of team GOBA. `deckDatesPerTeam` builds the map
+     of "which date is this team's newest deck", and a team missing from the map has no deck --
+     so nobody on it is ever called. */
+  const { deckDatesPerTeam } = await import('../api/_lib/snapshot-totals.js');
+  const { teams, rows } = wideBook();
+  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const map = await deckDatesPerTeam(db, { type: 'current', from: DAYS[0], to: DAYS[4] });
+  assert.ok(map, 'the function is there, so a map comes back');
+  for (const t of teams) assert.equal(map.get(t), DAYS[4], 'no deck date for ' + t);
+});

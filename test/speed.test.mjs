@@ -92,13 +92,12 @@ function counting(tables, opts) {
     const v = o[p];
     return typeof v === 'function' ? (...a) => { const out = v.apply(o, a); return out === o ? wrap(o) : out; } : v;
   } });
+  /* An RPC goes through the SAME wrapper a table read does, so `.range()` chains and each PAGE
+     is counted where it is answered rather than where it is asked for. Counting at the call
+     instead was what made a capability check -- one extra `db.rpc(...)` that was never sent --
+     show up as a round trip nobody paid for. */
   return { db: { from: n => wrap(db0.from(n)),
-                 rpc: async (n, a) => {
-                   trips++;
-                   const r = await db0.rpc(n, a);
-                   if (Array.isArray(r.data)) rows += r.data.length;
-                   return r;
-                 },
+                 rpc: (n, a) => wrap(db0.rpc(n, a)),
                  _dump: n => db0._dump(n) },
            stat: () => ({ trips, rows }) };
 }

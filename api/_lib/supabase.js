@@ -64,6 +64,63 @@ export function friendlyDbError(err) {
 }
 
 
+/* =====================================================================================
+   A DATABASE FUNCTION IS CAPPED EXACTLY LIKE A TABLE READ, AND NOTHING WAS PAGING IT.
+
+     "i wonder why use sampling in a list that needs them all .. i fear many defaulters havent
+      been reached in app followup by now"
+
+   That fear was right, and this is where it came from. fetchAll has always paged past
+   PostgREST's silent 1000-row cap for ordinary reads -- it is the first thing this file
+   explains. Every `db.rpc(...)` call in the system was a bare single request, and PostgREST
+   applies THE SAME CAP to a function that returns a set. No error, no warning: row 1001 onward
+   simply is not there.
+
+   The team-day totals function is the one that hurts. A week of defaulter decks is seven days
+   times forty teams times seven weekdays times two types -- getting on for four thousand
+   summary rows, of which a thousand came back. The weekly report and the dashboard have been
+   adding up a truncated set, and the per-team date map built on it silently lost every team
+   whose row fell past the cap, which is precisely "a team is in the file but nowhere on the
+   screen".
+
+   So RPC gets what table reads have always had. Same page size, same stop condition -- a short
+   page means the end -- and the same one-at-a-time discipline, because a wave of concurrent
+   pages is what exhausted the connection pool the last time somebody tried it.
+
+   A CLIENT THAT CANNOT PAGE IS STILL ANSWERED. `.range()` exists on the real PostgREST builder;
+   anything else gets one plain call rather than an exception.
+
+   THAT CHECK COSTS NOTHING, and it took a failing test to make it so. The first version built a
+   throwaway `db.rpc(...)` purely to look for `.range` on it. On the real client that is free --
+   nothing is sent until the builder is awaited -- but it is still one more call than the work
+   needs, and the speed guards count calls, not awaits. They were right to. So the capability is
+   read off the SAME builder the page is about to be sent on: if it cannot range, that builder is
+   returned as it stands and its one answer is the whole answer. */
+export async function rpcAll(db, fn, args) {
+  if (!db || typeof db.rpc !== 'function') return { data: null, error: new Error('no rpc') };
+
+  const out = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let paged = true;
+    const { data, error } = await runQuery(() => {
+      const q = db.rpc(fn, args);
+      if (q && typeof q.range === 'function') return q.range(from, from + PAGE_SIZE - 1);
+      paged = false;                       // a client that cannot page: this one call is it
+      return q;
+    });
+    if (!paged) return { data, error };
+    if (error) return { data: null, error };
+    const page = Array.isArray(data) ? data : [];
+    out.push(...page);
+    // A short page is the end. An exactly-full one is not, so it asks again.
+    if (page.length < PAGE_SIZE) break;
+    /* The same guard fetchAll has. A function that never returns a short page would otherwise
+       spin forever; stopping loudly beats a request that never ends. */
+    if (out.length > 500000) throw new Error(`${fn} returned more than 500,000 rows -- refusing to keep paging`);
+  }
+  return { data: out, error: null };
+}
+
 /** Supabase/PostgREST caps any single query at 1000 rows by default -- silently, no error, just
     a truncated result. This is exactly what made two different tables both report precisely
     1000 on the dashboard regardless of their real row counts. Fetches ALL matching rows by

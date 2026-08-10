@@ -37,7 +37,7 @@
  *  if any figure differs by so much as a shilling.
  */
 
-import { runQuery, fetchAll } from './supabase.js';
+import { runQuery, fetchAll , rpcAll } from './supabase.js';
 import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch } from './snapshots.js';
 import { todayKey, addDaysKey } from './time.js';
 import { collectedOf, num } from './recovery.js';
@@ -146,7 +146,10 @@ function knownMissing(db, fn) {
 async function callTotals(db, fn, args) {
   if (!db || typeof db.rpc !== 'function') return null;
   if (knownMissing(db, fn)) return null;
-  const { data, error } = await runQuery(() => db.rpc(fn, args));
+  /* PAGED. PostgREST caps a function that returns a set exactly as it caps a table read, and
+     a week of defaulter decks is nearly four thousand summary rows -- of which a thousand used
+     to come back, silently. */
+  const { data, error } = await rpcAll(db, fn, args);
   if (error) {
     // PGRST202 is PostgREST's "could not find the function". Anything else -- a permission,
     // a bad argument -- is worth not hammering either, and the fallback still answers.
