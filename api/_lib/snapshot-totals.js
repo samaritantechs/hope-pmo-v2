@@ -411,3 +411,42 @@ export const tCollected   = rows => rows.reduce((s, r) => s + num(r.collected_am
 export const tUncollected = rows => rows.reduce((s, r) => s + num(r.uncollected_amt), 0);
 export const tArrears     = rows => rows.reduce((s, r) => s + num(r.arrears_amt), 0);
 export const tPaidOver    = rows => rows.reduce((s, r) => s + num(r.paid_n) + num(r.over_n), 0);
+
+
+/* =====================================================================================
+   EVERY TEAM'S OWN LATEST DECK -- and why the date had to stop being one number.
+
+     "i rebuilt and also reuploaded still ester aint there .. means we missing customers to
+      make followups to"
+
+   The batch rule was fixed once already: it used to keep the newest upload of a DAY, which
+   threw away sixteen teams when a day arrived as seventeen files, and it now resolves per team.
+   THE DATE WAS NEVER GIVEN THE SAME TREATMENT. `latestSnapshotDate` asks the whole table for
+   its newest snapshot_date and every read then pins to that one day -- so the moment ANY team
+   is uploaded with a newer date, every team whose deck is older disappears completely.
+
+   Not a few rows. The entire team. Reproduced exactly: two teams, GOBA dated two days back and
+   MBEYA dated today, and GOBA is simply not in the answer.
+
+   That is why re-uploading did not help. Her team's deck was landing perfectly and being
+   filtered out by somebody else's more recent upload.
+
+   THE ANSWER IS A GROUP BY, SO IT BELONGS IN THE DATABASE. The team-day totals function already
+   returns one summary row per team per day per batch, which is exactly the map needed, and it
+   costs ONE round trip and sends no customer rows at all. Without the migration this returns
+   null and the caller keeps the old single-date behaviour -- deliberately, because the honest
+   fallback here would be reading a month of decks, and that is precisely the kind of read this
+   whole system has spent days removing. */
+export async function deckDatesPerTeam(db, { type = null, weekday = null, from, to, teams = null } = {}) {
+  const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
+    { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
+  if (!agg) return null;                       // migration not run -- caller falls back
+  const by = new Map();                        // TEAM -> its own newest snapshot_date
+  for (const r of agg) {
+    const t = String(r.team == null ? '' : r.team).trim().toUpperCase();
+    const d = String(r.snapshot_date || '').slice(0, 10);
+    if (!d) continue;
+    if (!by.has(t) || d > by.get(t)) by.set(t, d);
+  }
+  return by;
+}
