@@ -1359,6 +1359,18 @@ const ABN_STEP_KEY = 'ABNORMAL_STEP';
 const ABN_STEP_DEFAULT = 500;
 const ABN_WINDOW_DAYS = 60;
 
+/** The window both screens look through. Shared, because the Abnormal Payments tab and the
+    dashboard tile must never be able to disagree about how far back "flagged" reaches -- two
+    different answers to the same question on two screens is exactly the fault the commission
+    total had. */
+function abnormalWindow(nowMs, args) {
+  return {
+    from: /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.from))
+      ? args.from : addDaysKey(todayKey(nowMs), -ABN_WINDOW_DAYS),
+    to: /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.to)) ? args.to : todayKey(nowMs),
+  };
+}
+
 /** Not a whole multiple of `step`. Zero and blank are not flagged: an amount nobody recorded is
     a gap in the file, not an irregular payment. */
 export function isAbnormalAmount(amount, step) {
@@ -1369,9 +1381,7 @@ export function isAbnormalAmount(amount, step) {
 }
 
 async function abnormal(db, user, args, nowMs) {
-  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.from))
-    ? args.from : addDaysKey(todayKey(nowMs), -ABN_WINDOW_DAYS);
-  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.to)) ? args.to : todayKey(nowMs);
+  const { from, to } = abnormalWindow(nowMs, args);
 
   const [base, cfg, paid] = await Promise.all([
     listTable(db, user, 'abnormal_payments'),
@@ -3822,7 +3832,8 @@ async function dashboardFull(db, user, args, nowMs) {
      whose date falls outside its window anyway. */
   const monthStart0 = String(today).slice(0, 7) + '-01';
   const loanFloor = monthStart0 < mon ? monthStart0 : mon;
-  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows] = await Promise.all([
+  const abnWin = abnormalWindow(nowMs, args);
+  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
@@ -3834,16 +3845,41 @@ async function dashboardFull(db, user, args, nowMs) {
        for a figure that is then narrowed to the viewer's own teams anyway. The number on
        screen does not change; the amount of table that has to move to produce it does. */
     fetchAll(() => {
-      let q = db.from('abnormal_payments').select('team, paid');
+      let q = db.from('abnormal_payments').select('team, paid, transaction_id');
       if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
       return q;
     }),
     fetchAll(() => db.from('teams').select('*')),
+    /* THE SAME RULE THE ABNORMAL PAYMENTS TAB APPLIES.
+
+         "abnomal payments worked but not counting at dashboard"
+
+       The tab learned to work irregular payments out for itself; this tile did not, so it went
+       on counting only the rows somebody had uploaded. Two screens, one question, two answers
+       -- and the dashboard's was the smaller one, which is the direction nobody notices.
+
+       Three narrow columns, TEAM-SCOPED and WINDOWED in the query, over the same window the
+       tab uses. received_payments only grows, and the dashboard is the most-opened screen in
+       the system, so this is the least that can answer the question honestly. */
+    fetchAll(() => onTeams(db.from('received_payments')
+      .select('team, amount_paid, transaction_id')
+      .gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
-  const myLoans = scoped(user, loansAll), myAbn = scoped(user, abn);
+  const myLoans = scoped(user, loansAll);
+  /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
+     transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
+     the same thing because they apply the same rule to the same window. */
+  const abnStep = await settingNum(db, ABN_STEP_KEY, ABN_STEP_DEFAULT);
+  const abnUploaded = scoped(user, abn);
+  const abnSeen = new Set(abnUploaded.map(r => K(r.transaction_id)).filter(Boolean));
+  const abnFound = scoped(user, abnPaid)
+    .filter(r => isAbnormalAmount(r.amount_paid, abnStep))
+    .filter(r => !abnSeen.has(K(r.transaction_id)))
+    .map(r => ({ team: r.team, paid: num(r.amount_paid) }));
+  const myAbn = abnUploaded.concat(abnFound);
   const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
   const dayRows = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
 
