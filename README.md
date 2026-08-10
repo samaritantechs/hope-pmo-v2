@@ -1,5 +1,6 @@
 # HOPE PMO v2 — Supabase + Vercel foundation
 
+> **Everything in one file: [HANDOFF-AIO.md](HANDOFF-AIO.md).**
 > **New here? Read [START-HERE.md](START-HERE.md) first** — it is the map to everything else.
 > Running the system day to day: **[OPERATIONS.md](OPERATIONS.md)**.
 > Looking for the file that does something: **[MANIFEST.md](MANIFEST.md)**.

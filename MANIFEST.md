@@ -92,7 +92,7 @@ feature it adds says which file to run rather than breaking.
 
 ## The tests — `test/`
 
-`npm test`. **438 tests. This is the acceptance gate.**
+`npm test`. **451 tests. This is the acceptance gate.**
 
 | File | Covers |
 |---|---|
@@ -132,6 +132,7 @@ built-in fallback screen.
 
 | File | For |
 |---|---|
+| `HANDOFF-AIO.md` | **Everything in one file** — what it is, the runbook, the measured load, the failure modes, the data, the house rules. |
 | `START-HERE.md` | The map. Begin here. |
 | `OPERATIONS.md` | The daily runbook — mornings, uploads, the switch, what to do when it breaks. |
 | `MANIFEST.md` | This file. |
