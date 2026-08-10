@@ -760,3 +760,90 @@ test('received payments: the older header spellings still import', () => {
   assert.equal(x.customer_no, '686852827');
   assert.equal(x.payment_no, '0755000111');
 });
+
+/* =====================================================================================
+   THE DEFAULTER DECK IMPORTER, WHICH HAD NO TESTS AT ALL.
+   =====================================================================================
+   The most important file in the system -- the one every phone's Defaulters list is built from
+   -- went through `importDefaulters` untested. That is the gap this whole hunt fell into:
+
+     "am not yet seeing 2209728651  2-209-72865  ESTER PETER OMARY"
+
+   Five separate faults were found and fixed in how a deck is READ before anybody checked
+   whether the row survives being IMPORTED. These use her real row, exactly as the company's
+   file carries it.
+   ===================================================================================== */
+const DEF_HEADER = ['CUSTOMER NO', 'REF#', 'FULLNAME', 'CONTACT#', 'GUARANTOR NAME',
+  'GUARANTOR CONTACT', 'DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'DUE DATE', 'LAST TRANS DATE',
+  'STATUS', 'D.S', 'D.C', 'DAYS ELAPSED', 'INITIAL INST', 'OTHER INST', 'PAYMENT EXP.',
+  'T.PAYMENT', 'ARREAS', 'BALANCE', 'BRANCH', 'TEAM', 'ZONE'];
+const ESTER = ['2209728651', '2-209-72865', 'ESTER PETER OMARY', '0746115063',
+  'PETER CHARLES OMARY', '0783384221', '7/9/2026', '10/8/2026', '10/22/2026', '2026-09-03',
+  '7/31/2026', 'Partial Defaulter', '2-4', '2', '31', '1133337', '1133333', '13600000',
+  '2767000', '1766336', '10833000', 'GOBA-TEGETA', 'GOBA', 'SANYA'];
+const DEF_META = { snapshotType: 'current', weekday: 'THU', snapshotDate: '2026-08-10' };
+
+test('the defaulter deck: a real row survives the importer whole', async () => {
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  const [r] = importDefaulters([DEF_HEADER, ESTER], DEF_META);
+  assert.ok(r, 'the row was not dropped');
+  assert.equal(r.ref, '2-209-72865');
+  assert.equal(r.full_name, 'ESTER PETER OMARY');
+  assert.equal(r.team, 'GOBA');
+  assert.equal(r.status, 'Partial Defaulter');
+  assert.equal(r.arrears, 1766336, 'the figure the phone sorts the list by');
+  assert.equal(r.ds, '2-4', 'D.S stays TEXT -- as a number it becomes a date or a fraction');
+  assert.equal(r.dc, 2);
+  /* Nine digits, no leading zero and no country code: normPhone stores one canonical form so
+     0746115063, +255746115063 and 746115063 are the same handset to the phone index. */
+  assert.equal(r.contact, '746115063');
+  assert.equal(r.guarantor_contact, '783384221');
+  assert.equal(r.snapshot_type, 'current');
+  assert.equal(r.weekday, 'THU');
+  assert.equal(r.snapshot_date, '2026-08-10');
+});
+
+test('the defaulter deck: the reference column is read however it is spelled', async () => {
+  /* normalizeHeader only trims, uppercases and collapses whitespace, so `REF#`, `REF #` and
+     `REF NO` are three different keys. Only the first two were ever tried -- and a reference
+     that cannot be read does not blank a field, it DELETES THE CUSTOMER, because every importer
+     ends `.filter(x => x.ref)`. `REF NO` is the company's own wording: it is what their
+     received-payments columns say. */
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  for (const spelling of ['REF#', 'REF', 'REF NO', 'REF #', 'REFERENCE', 'REF NUMBER']) {
+    const head = DEF_HEADER.slice();
+    head[1] = spelling;
+    const out = importDefaulters([head, ESTER], DEF_META);
+    assert.equal(out.length, 1, `a file whose reference column says "${spelling}" loses every row`);
+    assert.equal(out[0].ref, '2-209-72865', spelling);
+  }
+});
+
+test('the defaulter deck: a row with no readable reference is dropped, and can be counted', async () => {
+  /* The filter itself is right -- a row with no reference joins to nothing. What was wrong is
+     that it was silent, and `inserted` reports the count AFTER it. The upload now compares the
+     file's own row count against what came out, which is only meaningful if this stays true. */
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  const noRef = ESTER.slice(); noRef[1] = '';
+  const out = importDefaulters([DEF_HEADER, ESTER, noRef], DEF_META);
+  assert.equal(out.length, 1, 'one of the two rows was used');
+});
+
+test('the defaulter deck: CUSTOMER NO is never mistaken for the reference', async () => {
+  /* They look alike -- 2209728651 against 2-209-72865 -- and they are not the same key. Reading
+     one as the other would join this customer to nothing and quietly split their history. */
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  const [r] = importDefaulters([DEF_HEADER, ESTER], DEF_META);
+  assert.notEqual(r.ref, '2209728651');
+  assert.equal(r.ref, '2-209-72865');
+});
+
+test('the defaulter deck: a file with no reference column at all yields nothing, loudly countable', async () => {
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  const head = DEF_HEADER.slice();
+  head[1] = 'SOMETHING ELSE ENTIRELY';
+  const out = importDefaulters([head, ESTER], DEF_META);
+  assert.equal(out.length, 0);
+  /* And this is exactly the case the upload must now shout about rather than report as a
+     successful upload of zero rows. */
+});

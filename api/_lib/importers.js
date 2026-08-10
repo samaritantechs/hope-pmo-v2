@@ -12,9 +12,25 @@ function rowsToObjects(csvRows) {
     .map(r => ({ raw: r, h: headerMap }));
 }
 
+/* WHAT A REFERENCE COLUMN IS CALLED, IN EVERY SPELLING THIS COMPANY USES.
+
+   normalizeHeader only trims, uppercases and collapses runs of whitespace -- so `REF#`, `REF #`
+   and `REF NO` are three different keys, and a file using the second or third matched NEITHER
+   candidate. The row then came out with ref null and was dropped by the filter below, silently,
+   because a header that matches nothing looks exactly like a column of empty cells.
+
+   That is the third time this shape has cost this system a week: the abnormal payments file's
+   CUSTOMER NO and PAYMENT NO, then five columns of the received payments file, now this. Here it
+   is worse than a blank column, because the reference is what the filter keeps the row on -- a
+   spelling nobody thought of does not empty a field, it deletes the customer.
+
+   `REF NO` is the company's own wording: it is what their received-payments columns say. */
+export const REF_HEADERS = ['REF#', 'REF', 'REF NO', 'REF #', 'REF NO.', 'REF NUMBER',
+  'REFERENCE', 'REFERENCE NO', 'LOAN REF', 'LOAN REF#'];
+
 export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate }) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, 'REF#', 'REF')),
+    ref: textOrNull(col(r, h, ...REF_HEADERS)),
     docket_no: textOrNull(col(r, h, 'DOCKET#', 'DOCKET #')),
     full_name: textOrNull(col(r, h, 'FULLNAME', 'FULL NAME')),
     contact: normPhone(col(r, h, 'CONTACT#', 'CONTACT #')),
@@ -47,7 +63,7 @@ export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate 
 
 export function importExpected(csvRows, { snapshotType, snapshotDate }) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, 'REF', 'REF#')),
+    ref: textOrNull(col(r, h, ...REF_HEADERS)),
     docket_no: textOrNull(col(r, h, 'DOCKET#')),
     full_name: textOrNull(col(r, h, 'FULLNAME')),
     contact: normPhone(col(r, h, 'CONTACT#')),
@@ -407,7 +423,7 @@ export function importAbnormal(csvRows) {
 
 export function importComplaints(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, 'REF#', 'REF')),
+    ref: textOrNull(col(r, h, ...REF_HEADERS)),
     team: normTeam(col(r, h, 'TEAM')),
     complainant: textOrNull(col(r, h, 'COMPLAINANT')),
     phone: normPhone(col(r, h, 'PHONE')),
@@ -425,7 +441,7 @@ export function importComplaints(csvRows) {
 
 export function importRestructures(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, 'REF#', 'REF')),
+    ref: textOrNull(col(r, h, ...REF_HEADERS)),
     team: normTeam(col(r, h, 'TEAM')),
     full_name: textOrNull(col(r, h, 'FULLNAME')),
     contact: normPhone(col(r, h, 'CONTACT#')),
@@ -453,7 +469,7 @@ export function importRestructures(csvRows) {
 
 export function importDemandNotices(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, 'REF#', 'REF')),
+    ref: textOrNull(col(r, h, ...REF_HEADERS)),
     team: normTeam(col(r, h, 'TEAM')),
     full_name: textOrNull(col(r, h, 'FULLNAME')),
     contact: normPhone(col(r, h, 'CONTACT#')),
@@ -513,7 +529,7 @@ export function importCallLogs(csvRows) {
     duration: num(col(r, h, 'DURATION')),
     portfolio: String(col(r, h, 'PORTFOLIO') || '').trim().toUpperCase() === 'YES',
     match_type: textOrNull(col(r, h, 'MATCH')),
-    ref: textOrNull(col(r, h, 'REF#', 'REF')),
+    ref: textOrNull(col(r, h, ...REF_HEADERS)),
     customer: textOrNull(col(r, h, 'CUSTOMER')),
     synced_at: dateOrNull(col(r, h, 'SYNCED AT')) || new Date().toISOString(),
     outcome: pick(col(r, h, 'OUTCOME'), ['CONNECTED', 'MISSED', 'REJECTED', 'BLOCKED']),
