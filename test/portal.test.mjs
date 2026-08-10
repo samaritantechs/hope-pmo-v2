@@ -4903,9 +4903,43 @@ test('found by reference and by phone number too, not just by name', async () =>
 });
 
 test('when the deck IS today\'s weekday, it says so instead of crying wolf', async () => {
+  /* The verdict no longer turns on the weekday matching today -- a defaulter has no day, and
+     saying "wrong weekday" was sending people to re-upload a deck that was already fine. What
+     it turns on now is whether the customer is actually REACHABLE: in the deck, and in the
+     register with live figures. This fixture has the deck and no register row, which is a real
+     and different problem, and the verdict must name that one instead. */
   const d = await portalApi(dbWithRpc(estherBook('FRI')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
   assert.ok(d.decks.every(x => x.onToday === true));
-  assert.ok(d.notes.some(n => /should show them/.test(n)));
+  assert.ok(d.notes.some(n => /NOT in the follow-up register/.test(n)),
+    'in the deck, on no handset -- and it says which');
+  assert.ok(!d.notes.some(n => /Do NOT re-upload/.test(n)),
+    'and it does not cry wolf about the weekday when the weekday is today');
+});
+
+test('a customer in the deck AND the register with live figures is reported as reachable', async () => {
+  const t = estherBook('THU');                       // deliberately NOT today's weekday
+  t.followup_status = [{ ref: '2-209-72865', team: 'GOBA', full_name: 'ESTER PETER OMARY',
+    status: 'Partial Defaulter', arrears: 1766336, ds: '2-4', updated_at: TODAY + 'T04:00:00Z' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.ok(d.notes.some(n => /should both\s*\n?\s*show them|should both/.test(n) || /HOPE Calls should both/.test(n)),
+    'both halves present, so the answer is "a screen filter", not "she is missing"');
+  assert.ok(d.notes.some(n => /THAT IS NORMAL/.test(n)),
+    'and the Thursday deck is explicitly called normal rather than a fault');
+});
+
+test('BLANKED is reported as its own thing -- present, and on no handset', async () => {
+  /* The shape that cost the most time. Retiring keeps the row and empties status and arrears,
+     and the phone skips exactly that -- so the register search lists her like anybody else and
+     the screen used to say nothing at all about it. */
+  const t = estherBook('THU');
+  t.followup_status = [{ ref: '2-209-72865', team: 'GOBA', full_name: 'ESTER PETER OMARY',
+    status: null, arrears: null, ds: '2-4', fu_status: 'AMETOA AHADI',
+    updated_at: '2026-07-01T04:00:00Z' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.ok(d.notes.some(n => /BLANKED/.test(n)), 'it has to say the word');
+  assert.ok(d.notes.some(n => /restores the figures/.test(n)), 'and what puts it right');
+  assert.ok(!d.notes.some(n => /NOT in the follow-up register/.test(n)),
+    'she IS in the register -- that is the whole trap, and it must not be mis-reported');
 });
 
 test('a customer who is genuinely nowhere is told apart from one who is hidden', async () => {
