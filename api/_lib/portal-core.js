@@ -338,18 +338,33 @@ async function rebuildFollowup(db, user, _args, nowMs) {
   const [deck, have] = await Promise.all([
     defaulterBook(db, user, { type: 'current', notAfter: today, columns: 'ref, full_name, contact, guarantor_name, guarantor_contact, '
         + 'disb_date, last_trans_date, status, ds, dc, days_elapsed, other_inst, arrears, team, weekday' }),
-    // Keys only -- the register is the largest current-state table and nothing else is needed.
-    fetchAll(() => db.from('followup_status').select('ref')),
+    /* THREE COLUMNS, NOT ONE, and the two extra are the whole repair.
+       Reading keys alone could only answer "is this customer in the register at all", so a
+       customer who was PRESENT BUT BLANKED looked like nothing to do -- which is why rebuilding
+       and re-uploading both reported success and changed nothing on the handsets. */
+    fetchAll(() => db.from('followup_status').select('ref, status, arrears')),
   ]);
   const known = new Set((have || []).map(r => K(r.ref)));
-  const missing = deck.rows.filter(r => r.ref && !known.has(K(r.ref)));
-  if (!missing.length) {
-    return { deck: deck.rows.length, register: known.size, added: 0, date: deck.date,
+  /* A BLANKED ROW IS A CUSTOMER THE PHONE CANNOT SEE.
+     Retiring sets status and arrears to null and keeps everything else, and the Defaulters list
+     skips exactly that shape. It is the right shape for somebody who has genuinely left the book
+     -- and the wrong one for somebody the current deck still names, which is what the days:1
+     housekeeping sweep produced by the thousand. */
+  const blank = new Set((have || []).filter(r => r.status == null && r.arrears == null).map(r => K(r.ref)));
+  const deckRows = deck.rows.filter(r => r.ref);
+  const missing = deckRows.filter(r => !known.has(K(r.ref)));
+  const blanked = deckRows.filter(r => known.has(K(r.ref)) && blank.has(K(r.ref)));
+  if (!missing.length && !blanked.length) {
+    return { deck: deck.rows.length, register: known.size, added: 0, restored: 0, date: deck.date,
       weekdays: deck.weekdays,
       note: 'Kila mteja wa deki yupo kwenye rejista. / Every customer in the current deck is '
         + 'already in the follow-up register — the phone is seeing the same book as the portal.' };
   }
-  const rows = missing.map(d => ({
+  /* Deck-derived fields ONLY. On a row that already exists this is an UPDATE of exactly these
+     columns, so fu_status, the promise, the comment trail and who wrote it are not in the
+     statement at all and cannot be touched. That is what makes restoring safe enough to be a
+     button rather than a migration. */
+  const shape = d => ({
     ref: String(d.ref), team: d.team || null, full_name: d.full_name || null,
     contact: d.contact || null,
     guarantor_name: d.guarantor_name || null, guarantor_contact: d.guarantor_contact || null,
@@ -359,22 +374,34 @@ async function rebuildFollowup(db, user, _args, nowMs) {
     rejesho: d.other_inst == null ? null : d.other_inst,
     arrears: d.arrears == null ? null : d.arrears,
     updated_at: new Date(nowMs).toISOString(),
-  }));
-  let added = 0;
-  for (let i = 0; i < rows.length; i += FU_REPAIR_CHUNK) {
-    const slice = rows.slice(i, i + FU_REPAIR_CHUNK);
-    /* ignoreDuplicates so a ref that arrived between the read and the write is skipped rather
-       than overwriting somebody's follow-up work -- the one thing this must never do. */
-    const { error } = await runQuery(() =>
-      db.from('followup_status').upsert(slice, { onConflict: 'ref', ignoreDuplicates: true }), 2);
-    if (error) throw new Error(error.message);
-    added += slice.length;
-  }
-  return { deck: deck.rows.length, register: known.size, added, date: deck.date,
+  });
+  const write = async (list, ignoreDuplicates) => {
+    let n = 0;
+    for (let i = 0; i < list.length; i += FU_REPAIR_CHUNK) {
+      const slice = list.slice(i, i + FU_REPAIR_CHUNK).map(shape);
+      const { error } = await runQuery(() =>
+        db.from('followup_status').upsert(slice, { onConflict: 'ref', ignoreDuplicates }), 2);
+      if (error) throw new Error(error.message);
+      n += slice.length;
+    }
+    return n;
+  };
+  /* ignoreDuplicates on the INSERTS so a ref that arrived between the read and the write is
+     skipped rather than overwriting somebody's follow-up work. The RESTORES are the opposite by
+     definition -- the row is known to be there and putting its figures back is the entire job --
+     so they are written as a real update of the deck columns. */
+  const added = await write(missing, true);
+  const restored = await write(blanked, false);
+  const parts = [];
+  if (added) parts.push(`${added} customer(s) were in the current deck but missing from the `
+    + 'follow-up register, so HOPE Calls could not show them at all.');
+  if (restored) parts.push(`${restored} were in the register but BLANKED — their status and arrears `
+    + 'had been cleared by a retirement sweep even though the current deck still names them, which '
+    + 'is why they were on no phone. Their figures are back.');
+  return { deck: deck.rows.length, register: known.size, added, restored, date: deck.date,
     weekdays: deck.weekdays,
-    note: `Wameongezwa ${added}. / ${added} customer(s) were in the current deck but missing from `
-      + 'the follow-up register, so HOPE Calls could not show them. They are in now. Nothing that '
-      + 'was already there was changed.' };
+    note: `Wamerudishwa ${added + restored}. / ` + parts.join(' ')
+      + ' No follow-up status, promise or comment was changed.' };
 }
 
 async function findCustomer(db, user, args, nowMs) {
@@ -3445,9 +3472,23 @@ async function countsByDate(db) {
  * as an ordinary button.
  */
 export const FU_RETIRE_DEFAULT_DAYS = 14;
+/* A CUTOFF SHORTER THAN THE DECK CYCLE RETIRES PEOPLE WHO ARE PERFECTLY CURRENT.
+   Decks are per weekday and each comes round once a week, so a customer confirmed by their own
+   Tuesday deck is not stale on Thursday -- their deck is simply not due yet. Asking for one day
+   therefore describes almost the whole register, which is exactly what emptied it (see the note
+   in api/upload.js). Seven days is the cycle; below it the question has no honest answer, so the
+   floor is applied and the caller is told it was. */
+export const FU_RETIRE_MIN_DAYS = 7;
+/* The most of the working list one sweep may retire, as a fraction -- the same brake
+   syncFollowupFromDeck has carried all along. Above it, nothing is retired and the number is
+   reported instead: a rule that can blank most of what two hundred people work from must not do
+   it quietly. The floor of 50 keeps a small register workable. */
+const FU_CLEAN_CAP = 0.35;
 async function followupClean(db, user, p, nowMs) {
   requireAdmin(user);
-  const days = Math.max(1, parseInt(String((p && p.days) || FU_RETIRE_DEFAULT_DAYS), 10) || FU_RETIRE_DEFAULT_DAYS);
+  const asked = Math.max(1, parseInt(String((p && p.days) || FU_RETIRE_DEFAULT_DAYS), 10) || FU_RETIRE_DEFAULT_DAYS);
+  const days = Math.max(asked, FU_RETIRE_MIN_DAYS);
+  const floored = days !== asked ? asked : null;
   const cutoff = addDaysKey(todayKey(nowMs), -days);
 
   /* deck_date first, updated_at behind it -- the same clock the upload uses, because two
@@ -3478,9 +3519,26 @@ async function followupClean(db, user, p, nowMs) {
     ref: r.ref, name: r.full_name || '', team: r.team || '', ds: r.ds || '',
     lastSeen: confirmedOn(r),
   }));
+  const capped = stale.length > Math.max(50, Math.floor(rows.length * FU_CLEAN_CAP))
+    ? stale.length : 0;
+  const note = capped
+    ? `Hawajaondolewa. / NOTHING was retired: ${capped} of ${rows.length} rows on the working list `
+      + 'look stale, which is more than a third of it. That is not a list needing a tidy — it means '
+      + 'some weekdays\' current-defaulter decks have stopped being uploaded. Upload those decks and '
+      + 'these rows correct themselves.'
+    : (floored
+      ? `Iliombwa siku ${floored}, imetumika ${days}. / You asked for ${floored} day(s); ${days} was used. `
+        + 'Each weekday\'s deck only comes round once a week, so anything shorter than a week retires '
+        + 'customers whose deck is simply not due yet.'
+      : undefined);
   // Asking is free and always allowed; acting is a second, explicit call.
   if (!p || !p.confirm) {
-    return { ok: true, checked: rows.length, stale: stale.length, cutoff, days, sample, applied: false };
+    return { ok: true, checked: rows.length, stale: stale.length, cutoff, days, asked, sample,
+      capped: capped || undefined, note, applied: false };
+  }
+  if (capped) {
+    return { ok: true, checked: rows.length, stale: stale.length, retired: 0, cutoff, days, asked,
+      sample, capped, note, applied: true };
   }
   let retired = 0;
   for (let i = 0; i < stale.length; i += 500) {
@@ -3493,7 +3551,8 @@ async function followupClean(db, user, p, nowMs) {
     if (error) throw new Error(error.message);
     retired += batch.length;
   }
-  return { ok: true, checked: rows.length, stale: stale.length, retired, cutoff, days, sample, applied: true };
+  return { ok: true, checked: rows.length, stale: stale.length, retired, cutoff, days, asked,
+    sample, note, applied: true };
 }
 
 async function storageUsage(db, user) {

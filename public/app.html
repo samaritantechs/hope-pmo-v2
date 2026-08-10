@@ -1415,8 +1415,14 @@ function wireFollowupClean(){
           return esc(x.name || x.ref) + ' <span style="color:var(--mut)">(' + esc(x.team) + ', D.S ' + esc(x.ds||'\u2014')
             + ', ' + esc(x.lastSeen) + ')</span>'; }).join('<br>');
         if (r.applied) {
+          /* THE BRAKE HAS TO SAY SO. Above a third of the list, nothing is retired -- and
+             reporting that as "0 taken off" reads like a sweep that found nothing to do, when
+             it is actually the system refusing to empty the officers' book and telling you
+             some weekday's decks have stopped arriving. */
+          if (r.capped) { say(esc(r.note), true); return; }
           say('<b>' + money(r.retired) + '</b> wameondolewa kwenye orodha hai. Maoni yao yote yapo pale pale. / '
-            + money(r.retired) + ' taken off the working list. Every comment is untouched.');
+            + money(r.retired) + ' taken off the working list. Every comment is untouched.'
+            + (r.note ? '<br><span style="color:var(--mut);font-size:11.5px">' + esc(r.note) + '</span>' : ''));
           render();
           return;
         }

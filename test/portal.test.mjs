@@ -5075,3 +5075,167 @@ test('an explicit weekday choice is still exactly that', async () => {
   const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { weekday: 'MON' }, NOW);
   assert.ok(!d.rows.some(r => r.ref === 'ESTHER'), 'she is in TUE\'s deck, not MON\'s');
 });
+
+/* =====================================================================================
+   THE SWEEP THAT EMPTIED THE OFFICERS' LIST.
+   =====================================================================================
+     "Just previewing defaulters arranged by arreas and not seeing ester at 1.7m ... the
+      complain is growing larger and words spreading that the app has no customers and not
+      trustworthy"
+
+   Four theories about ESTER PETER OMARY were wrong before this one, and each was wrong the same
+   way: they all looked at how a deck is READ. She was being read perfectly. She was being
+   ERASED afterwards.
+
+   Every current-defaulter upload ran followupClean with days:1. That function retires on AGE
+   ALONE and knows nothing about weekdays -- but decks ARE per weekday and each comes round once
+   a week, so "not confirmed within one day" describes almost the whole register almost all the
+   time. Uploading Friday's deck blanked the status and arrears of everybody whose own deck was
+   Monday, Tuesday or Wednesday, and the phone's Defaulters list skips exactly that shape.
+
+   It is the seventh-of-the-book fault this system already fixed once inside syncFollowupFromDeck,
+   re-introduced wholesale by a housekeeping call that ran immediately afterwards and overrode it.
+
+   These are the tests that were missing. Every earlier one called followupClean with its DEFAULT
+   fourteen days against a register two rows long -- which is a register with no weekdays in it,
+   and therefore a fixture that could not fail.
+   ===================================================================================== */
+
+/** A register the way a live one looks: five weekdays' decks, each confirming its own people,
+    each coming round once a week. Nothing here is stale -- every row was confirmed this week. */
+function weekRegister(perDay = 20) {
+  const WD = { MON: '2026-07-20', TUE: '2026-07-21', WED: '2026-07-22', THU: '2026-07-23', FRI: '2026-07-24' };
+  const out = [];
+  for (const [wd, d] of Object.entries(WD)) {
+    for (let i = 0; i < perDay; i++) {
+      out.push({ ref: wd + i, team: 'KONGOWE', full_name: 'C ' + wd + i, status: 'Partial Defaulter',
+        arrears: 1766336, ds: '2-4', deck_date: d, updated_at: d + 'T06:00:00Z' });
+    }
+  }
+  return out;
+}
+const stillLive = db => db._dump('followup_status').filter(r => !(r.status == null && r.arrears == null));
+
+test('a day-old cutoff cannot retire a customer whose own weekday deck is not due yet', async () => {
+  const db = fakeDb({ ...tables(), followup_status: weekRegister() });
+  /* Exactly what api/upload.js used to run after every current-defaulter upload. It retired
+     sixty of these hundred in one go, leaving only the last two days' decks standing. */
+  const r = await portalApi(db, ADMIN, 'followupClean', { days: 1, confirm: true }, NOW);
+  assert.equal(r.retired, 0, 'nobody here is stale -- every deck came round this week');
+  assert.equal(stillLive(db).length, 100, 'and every one of them is still visible on a phone');
+});
+
+test('a cutoff shorter than the deck cycle is raised to it, and the caller is told', async () => {
+  const db = fakeDb({ ...tables(), followup_status: weekRegister(1) });
+  const r = await portalApi(db, ADMIN, 'followupClean', { days: 1 }, NOW);
+  assert.equal(r.asked, 1, 'what was asked for is reported honestly');
+  assert.equal(r.days, 7, 'and what was used is a week -- the cycle a deck actually runs on');
+  assert.match(String(r.note), /once a week/);
+});
+
+test('a genuinely stale customer is still retired -- the floor is not a way out of the rule', async () => {
+  const db = fakeDb({ ...tables(), followup_status: [
+    ...weekRegister(2),
+    { ref: 'GONE', team: 'KONGOWE', full_name: 'LEFT THE BOOK', status: 'Defaulter', arrears: 9000,
+      deck_date: '2026-06-01', updated_at: '2026-06-01T04:00:00Z' },
+  ] });
+  const r = await portalApi(db, ADMIN, 'followupClean', { days: 1, confirm: true }, NOW);
+  assert.equal(r.retired, 1, 'seven weeks without a deck is stale on any reading');
+  const by = Object.fromEntries(db._dump('followup_status').map(x => [x.ref, x]));
+  assert.equal(by.GONE.arrears, null);
+  assert.equal(by.MON0.arrears, 1766336, 'and this week\'s people are untouched');
+});
+
+test('a sweep that would blank most of the working list blanks none of it, and says the number', async () => {
+  /* The brake syncFollowupFromDeck has carried all along, which this side never had. A third of
+     the register looking stale is not a list needing a tidy -- it means some weekdays' decks
+     have stopped arriving, and that is worth reading about rather than actioning silently. */
+  const old = [];
+  for (let i = 0; i < 200; i++) {
+    old.push({ ref: 'OLD' + i, team: 'KONGOWE', full_name: 'O' + i, status: 'Defaulter',
+      arrears: 5000, deck_date: '2026-05-01', updated_at: '2026-05-01T04:00:00Z' });
+  }
+  const db = fakeDb({ ...tables(), followup_status: [...old, ...weekRegister(2)] });
+  const r = await portalApi(db, ADMIN, 'followupClean', { confirm: true }, NOW);
+  assert.equal(r.retired, 0, 'nothing was retired');
+  assert.equal(r.capped, 200, 'and the number that looked stale is reported instead');
+  assert.match(String(r.note), /stopped being uploaded/);
+  assert.equal(stillLive(db).length, 210, 'the working list is exactly as it was');
+});
+
+/* =====================================================================================
+   PUTTING BACK WHAT THE SWEEP ERASED.
+
+     "i rebuilt and also reuploaded still ester aint there"
+
+   Both of those reported success and changed nothing, and this is why. Rebuild read the register
+   for its KEYS ALONE, so it could only answer "is this customer there at all". Ester was there.
+   She was there with her status and arrears set to null, which is the one shape the phone's
+   Defaulters list skips -- present, and invisible, and reported as nothing to do.
+   ===================================================================================== */
+test('rebuilding restores a customer the deck still names but the register has blanked', async () => {
+  const t = tables();
+  const db = fakeDb({
+    ...t,
+    defaulter_snapshots: [
+      { id: 'd1', ref: '2-209-72865', full_name: 'ESTER PETER OMARY', contact: '0746115063',
+        team: 'KONGOWE', status: 'Partial Defaulter', ds: '2-4', arrears: 1766336, other_inst: 1133333,
+        snapshot_type: 'current', weekday: 'THU', snapshot_date: TODAY,
+        upload_batch: 'b1', created_at: TODAY + 'T06:00:00Z' },
+    ],
+    followup_status: [
+      // Present, blanked, and carrying an officer's work that must survive the repair.
+      { ref: '2-209-72865', team: 'KONGOWE', full_name: 'ESTER PETER OMARY', status: null, arrears: null,
+        fu_status: 'AMETOA AHADI', promise_amt: 200000, last_comment: 'ataleta Ijumaa',
+        comment_by: 'JUMA G', deck_date: null, updated_at: '2026-07-01T04:00:00Z' },
+    ],
+  });
+
+  const r = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.equal(r.added, 0, 'she was never missing -- that is what made this so hard to see');
+  assert.equal(r.restored, 1, 'she was blanked, and that is what needed undoing');
+
+  const row = db._dump('followup_status').find(x => x.ref === '2-209-72865');
+  assert.equal(row.arrears, 1766336, 'the arrears the phone sorts by are back');
+  assert.equal(row.status, 'Partial Defaulter');
+  assert.equal(row.ds, '2-4');
+  assert.equal(row.fu_status, 'AMETOA AHADI', 'and not one thing the officer typed was touched');
+  assert.equal(row.promise_amt, 200000);
+  assert.equal(row.last_comment, 'ataleta Ijumaa');
+  assert.equal(row.comment_by, 'JUMA G');
+});
+
+test('a restored customer is on the phone\'s defaulters list, sorted by arrears', async () => {
+  /* The end of the chain, and the only test that proves the point the report was actually
+     about: after the repair she is ON THE HANDSET, and near the top, because that list is
+     sorted by arrears descending and hers are 1.7m. */
+  const { callApi } = await import('../api/_lib/call-core.js');
+  const t = tables();
+  const db = fakeDb({
+    ...t,
+    call_users: [{ user_id: 'u1', device_id: 'DEV1', name: 'ADMIN', role: 'ADMIN', teams: null }],
+    defaulter_snapshots: [
+      { id: 'd1', ref: '2-209-72865', full_name: 'ESTER PETER OMARY', contact: '0746115063',
+        team: 'KONGOWE', status: 'Partial Defaulter', ds: '2-4', arrears: 1766336,
+        snapshot_type: 'current', weekday: 'THU', snapshot_date: TODAY,
+        upload_batch: 'b1', created_at: TODAY + 'T06:00:00Z' },
+    ],
+    followup_status: [
+      { ref: '2-209-72865', team: 'KONGOWE', full_name: 'ESTER PETER OMARY', contact: '0746115063',
+        status: null, arrears: null, updated_at: '2026-07-01T04:00:00Z' },
+      { ref: 'OTHER', team: 'KONGOWE', full_name: 'SOMEBODY ELSE', status: 'Defaulter',
+        arrears: 400000, updated_at: TODAY + 'T04:00:00Z' },
+    ],
+  });
+
+  const before = await callApi(db, 'api_callList', ['DEV1', 'defaulters'], NOW);
+  assert.ok(!before.rows.some(r => r.ref === '2-209-72865'),
+    'this is the complaint, reproduced: she is in the deck and on no phone');
+
+  await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+
+  const after = await callApi(db, 'api_callList', ['DEV1', 'defaulters'], NOW);
+  assert.ok(after.rows.some(r => r.ref === '2-209-72865'), 'and now she is there');
+  assert.equal(after.rows[0].ref, '2-209-72865', 'at the top, because 1.7m is the largest arrears');
+  assert.equal(after.rows[0].amt, 1766336);
+});
