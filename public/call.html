@@ -195,6 +195,44 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     color:var(--mut);border-radius:8px;font-size:11px;font-weight:700}
   .expdfstrip .xrole button.on{background:var(--b600,#2563EB);border-color:var(--b600,#2563EB);color:#fff}
   .expdfstrip .xcyc span{font-size:10.5px;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
+
+/* =====================================================================================
+   GLASS EDGES -- the outline of every card, and nothing else.
+   =====================================================================================
+     "can the app outer widgets margins be like the nowdays iphone glassed-like ones,
+      not distrubing colors but only margins i think , am not sure"
+
+   Three properties: the corner radius, the hairline on cards whose line is the neutral grey,
+   and the shadow that puts a little air under a card. No background and no text colour is
+   touched, and neither is any border that MEANS something -- a green call button, an amber
+   banner, a status chip. Those are read at a glance in the field and their colour is the
+   information.
+
+   The see-through is deliberately NOT applied to the cards. What makes a panel look like a
+   pane on a phone is its edge -- a wider corner, a softer hairline, a faint catch of light
+   along the top and a wide low shadow. Translucency over a white customer card would tint
+   the arrears figure printed on it, and a figure that changes shade with whatever scrolled
+   behind it is worse than a flat card. The blur is used where something genuinely floats
+   over the page -- the sheet backdrop -- because there nothing readable sits behind it.
+
+   Last in the file on purpose, and no selector here is more specific than the rule it
+   softens, so anything carrying its own colour keeps it. */
+:root{
+  --gr:22px;                                            /* the panels that float */
+  --gr-sm:13px;                                         /* cards, tiles and controls */
+  --gline:rgba(15,23,42,.09);
+  --ghi:inset 0 1px 0 rgba(255,255,255,.85);            /* the light along the top edge */
+  --gsh:0 1px 1.5px rgba(8,28,74,.05), 0 8px 22px -14px rgba(8,28,74,.34);
+}
+.crow,.sheet-card,.kpi,.otable{border-color:var(--gline);border-radius:var(--gr-sm);box-shadow:var(--gsh),var(--ghi)}
+.reg-card{border-radius:var(--gr)}
+/* Shape only: the banner's amber edge and the strip's tint both say something. */
+.banner,.expdfstrip{border-radius:var(--gr-sm)}
+.fld input,.fld select,.regToggleBtn,.searchbar input,.btn{border-radius:13px}
+.rangebar input,.rangebar select{border-radius:11px}
+.toast{border-radius:14px}
+.sheet-panel{border-radius:24px 24px 0 0}
+.sheet-backdrop{-webkit-backdrop-filter:blur(14px) saturate(120%);backdrop-filter:blur(14px) saturate(120%)}
 </style>
 </head>
 <body>

@@ -308,6 +308,82 @@
     .top h1{font-size:15px}
     .top .q{min-width:0;flex:1}
   }
+
+  /* =====================================================================================
+     GLASS EDGES -- the outline of every panel, and nothing else.
+     =====================================================================================
+       "can the app outer widgets margins be like the nowdays iphone glassed-like ones,
+        not distrubing colors but only margins i think , am not sure"
+
+     So this block touches THREE properties: the corner radius, the hairline on panels whose
+     line is the neutral grey, and the shadow that puts a little air under a panel. Not one
+     background, not one text colour, and not one of the SEMANTIC borders -- a warning keeps
+     its amber edge, the total tile keeps its navy, the chosen pill keeps its blue -- because
+     those carry meaning and an edge does not.
+
+     WHY IT READS AS GLASS WITHOUT BEING SEE-THROUGH. On a phone, what makes a panel look like
+     a pane is not the transparency; it is the edge. A wider, rounder corner, a hairline
+     softer than a drawn line, a faint catch of light along the top, and a wide low shadow
+     that lifts the panel off the page. Actual translucency over a white card would tint every
+     figure printed on it, which is the one thing that was asked not to happen. Where something
+     genuinely floats OVER the page -- a drawer, the notice, the menu on a phone -- the blur is
+     real, because there the glass is doing what glass does and no figure sits behind it.
+
+     Interior lines are deliberately left alone. A table's row rules, a card's header divider
+     and a field's border are structure, not margin, and rounding them would only make the
+     content look loose.
+
+     It is last in the file on purpose, and every selector is at most as specific as the rule
+     it softens, so anything carrying its own colour keeps it. */
+  :root{
+    --gr:16px;                                            /* panels */
+    --gr-sm:12px;                                         /* tiles and controls */
+    --gline:rgba(15,23,42,.09);
+    --ghi:inset 0 1px 0 rgba(255,255,255,.85);            /* the light along the top edge */
+    --gsh:0 1px 1.5px rgba(8,28,74,.045), 0 10px 26px -16px rgba(8,28,74,.30);
+    --gsh-sm:0 1px 1px rgba(8,28,74,.04), 0 5px 14px -10px rgba(8,28,74,.26);
+  }
+  /* In the dark the light comes from inside the pane, not off it -- a white highlight at 85%
+     on a dark card is a scratch, not a sheen. */
+  body.dark{
+    --gline:rgba(255,255,255,.11);
+    --ghi:inset 0 1px 0 rgba(255,255,255,.05);
+    --gsh:0 1px 1.5px rgba(0,0,0,.30), 0 12px 30px -18px rgba(0,0,0,.85);
+    --gsh-sm:0 1px 1px rgba(0,0,0,.25), 0 6px 16px -11px rgba(0,0,0,.75);
+  }
+
+  /* Panels */
+  .card,.facts{border-color:var(--gline);border-radius:var(--gr);box-shadow:var(--gsh),var(--ghi)}
+  .kpi{border-color:var(--gline);border-radius:var(--gr-sm);box-shadow:var(--gsh-sm),var(--ghi)}
+  /* The tip keeps its blue left edge -- that stripe is how you know which kind of message it
+     is -- so it is given the shape and the lift and none of the hairline. */
+  #tip{border-radius:var(--gr);box-shadow:0 18px 40px -20px rgba(8,28,74,.55),var(--ghi)}
+  /* Shape only: every one of these carries a colour that means something. */
+  .tcell,.note,.passout{border-radius:var(--gr-sm)}
+
+  /* Controls -- rounder to match the panels they sit on, nothing else changed. */
+  .btn{border-radius:12px}
+  .btn.sm{border-radius:11px}
+  .menuBtn,.pills .pill,.pills select,.bar select,.bar input,.top .q{border-radius:11px}
+  .fld input,.fld select,.fld textarea{border-radius:12px}
+
+  /* THINGS THAT ACTUALLY FLOAT, where the blur is real glass rather than an impression of it.
+     Nothing readable sits behind these while they are open, so nothing is tinted. */
+  .drawer{border-radius:22px 22px 0 0;box-shadow:0 -18px 50px -24px rgba(8,28,74,.55)}
+  #annBox,#signin .box{border-radius:20px}
+  .drawer-bg,.scrim,#annBg{-webkit-backdrop-filter:blur(14px) saturate(120%);backdrop-filter:blur(14px) saturate(120%)}
+  @media (max-width:820px){
+    .side{border-radius:0 20px 20px 0}
+  }
+
+  /* TWO PANELS THAT NEVER LEARNED ABOUT THE DARK.
+     Not part of the edges above -- found while looking at them. Every other surface takes its
+     background from --card and flips with the theme; these two were painted #fff outright, so
+     in dark mode they came back as white slabs carrying pale grey text that cannot be read.
+     The chosen pill is excluded by name so it keeps its blue, which is how you know which day
+     you are looking at. */
+  body.dark .facts,
+  body.dark .pills .pill:not(.on){background:var(--card)}
 </style>
 </head>
 <body>
