@@ -3180,6 +3180,10 @@ VIEWS.teams = function(){
   return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; }),
                       srv('staffRoster').catch(function(){ return null; })]).then(function(rr){
     var d = rr[0]; S.csAgents = rr[1]; S.staff = rr[2];
+    // Every team name, for the merge picker in the drawer -- so the destination is CHOSEN from
+    // what exists rather than typed, which is how the wrong spelling got created in the first
+    // place. Kept on S because the drawer is opened from a row, not re-fetched.
+    S.teamNames = d.rows.map(function(r){ return r.team; }).filter(Boolean).sort();
     var staffed = {};
     d.rows.forEach(function(r){ TEAM_ROLES.forEach(function(c){ if (r[c]) staffed[r[c]] = 1; }); });
     S.roleMeta = d;
@@ -3398,6 +3402,28 @@ function teamForm(x){
         return '<div class="fld"><label>'+esc(e[1])+'</label><input id="t_'+e[0]+'" value="'+esc(x&&x[e[0]]?x[e[0]]:'')+'"></div>';
       }).join('')
     + '<button class="btn w" id="tSave">Hifadhi / Save</button>'
+    /* MERGE IS A FIRST-CLASS CHOICE, NOT A CONSOLATION AFTER A FAILED DELETE.
+
+         "Am not seeing the merge team option (provide opt to the new merged team name)"
+         "and of course its the better option"
+
+       It WAS only offered when a delete was refused, which meant it existed exactly where
+       nobody would look for it -- behind an error. And it is the better option for the case
+       that actually happens: a misspelling holding real work. So it sits above Delete, with
+       every other team to choose from by name, and it says plainly what will happen. */
+    + (isNew ? '' :
+        '<div class="fld" style="margin-top:14px"><label>Unganisha na timu nyingine / Merge into another team</label>'
+        + '<select id="tMergeTo"><option value="">— chagua timu sahihi / choose the correct team —</option>'
+        + (S.teamNames || []).filter(function(n){ return String(n).toUpperCase() !== String(x.team).toUpperCase(); })
+            .map(function(n){ return '<option>' + esc(n) + '</option>'; }).join('')
+        + '</select>'
+        + '<div class="fldnote">Kumbukumbu zote za <b>' + esc(x.team) + '</b> zitahamia kwenye timu'
+        + ' uliyochagua, kisha jina hili litaondolewa. Hakuna kinachofutwa isipokuwa jina.'
+        + ' / Every record filed under <b>' + esc(x.team) + '</b> moves to the team you pick —'
+        + ' snapshots, decks, follow-ups, loans, payments, complaints, call logs, handsets and'
+        + ' the team lists on access codes. Then this name is removed.'
+        + ' <b>Nothing is deleted except the name.</b></div></div>'
+        + '<button class="btn ghost w" id="tMerge">\u21c4 Unganisha / Merge this team</button>')
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="tDel">Futa timu / Delete team</button>'));
   // Generate fills the box so the code is visible BEFORE saving -- an admin has to be able to
   // write it down or read it out, and a code that only appears after the drawer closes gets
@@ -3430,6 +3456,21 @@ function teamForm(x){
      them. But the admin's intention was never "throw the snapshots away"; it was "these belong
      to the other spelling". So when the server refuses, the screen offers the merge instead of
      leaving them at a dead end with an error they cannot act on. */
+  var mrg = document.getElementById('tMerge');
+  if (mrg) mrg.onclick = function(){
+    var sel = document.getElementById('tMergeTo');
+    var into = sel ? sel.value.trim() : '';
+    if (!into){ toast('Chagua timu sahihi kwanza. / Choose the correct team first.', true); return; }
+    if (!confirm('Hamisha kumbukumbu ZOTE za ' + x.team + ' kwenda ' + into + ', kisha uondoe '
+        + x.team + '?\n\nMove EVERY record from ' + x.team + ' to ' + into
+        + ', then remove ' + x.team + '?\n\nNothing is deleted except the name. This cannot be undone.')) return;
+    srv('deleteTeam', { team:x.team, moveTo:into }).then(function(r){
+      var what = Object.keys(r.moved||{}).map(function(k){ return money(r.moved[k])+' '+k; });
+      toast('Imeunganishwa na ' + r.mergedInto + '. / Merged into ' + r.mergedInto
+        + (what.length ? ' — ' + what.join(', ') + '.' : ' — nothing needed moving.'));
+      closeDrawer(); render();
+    }).catch(function(e){ toast(String(e.message||e), true); });
+  };
   var del = document.getElementById('tDel');
   if (del) del.onclick = function(){
     if (!confirm('Futa timu '+x.team+'?\n\nDelete this team?')) return;

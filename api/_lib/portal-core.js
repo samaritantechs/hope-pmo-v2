@@ -4243,6 +4243,39 @@ async function saveTeam(db, user, p) {
    longer exists have to register again whatever happens, and saveTeam already releases them
    when a team code is rotated for exactly the same reason. They are released here and counted
    in the answer, so nothing happens silently. */
+/* WHAT A MERGE MOVES -- every table that stores a team NAME, which is a wider list than the
+   four that block a delete. Kept here, beside TEAM_HOLDS, so adding a table with a team column
+   puts the question "and what happens when a team is merged?" directly in front of whoever
+   adds it.
+
+   DELIBERATELY ABSENT: performance_records and audit_log. Both store a name as a PHOTOGRAPH of
+   what was true at the time -- that is the whole reason performance_records copies the name as
+   text instead of pointing at the teams table. Last March's best team stays whatever it was
+   called last March, and a merge today must not rewrite it. */
+const TEAM_MOVES = [
+  { table: 'repayment_snapshots', what: 'expected snapshots' },
+  { table: 'defaulter_snapshots', what: 'defaulter decks' },
+  { table: 'followup_status', what: 'follow-up records' },
+  { table: 'followup_comments', what: 'comments' },
+  { table: 'loans', what: 'loans' },
+  { table: 'received_payments', what: 'received payments' },
+  { table: 'abnormal_payments', what: 'abnormal payments' },
+  { table: 'complaints', what: 'complaints' },
+  { table: 'complaint_log', what: 'complaint log entries' },
+  { table: 'restructures', what: 'restructures' },
+  { table: 'demand_notices', what: 'demand notices' },
+  { table: 'call_logs', what: 'call logs' },
+  { table: 'call_users', what: 'registered handsets' },
+];
+
+/* The list-shaped ones. A PMO collection officer holds thirty-odd teams as an array on their
+   own access code, and a leader's scope is the same shape on their handset. A name left behind
+   in one of those lists is somebody scoped to a team that no longer exists. */
+const TEAM_ARRAY_MOVES = [
+  { table: 'access_codes', key: 'code', col: 'teams', what: 'access codes' },
+  { table: 'call_users', key: 'user_id', col: 'leader_teams', what: 'leader scopes' },
+];
+
 const TEAM_HOLDS = [
   { table: 'repayment_snapshots', what: 'expected snapshots' },
   { table: 'defaulter_snapshots', what: 'defaulter decks' },
@@ -4297,13 +4330,47 @@ async function deleteTeam(db, user, p) {
       throw badRequest(`Timu ${moveTo} haipo. / There is no team called ${moveTo} — `
         + 'create it first, or check the spelling.');
     }
+    /* EVERY PLACE A TEAM NAME IS STORED, not just the four that block the delete.
+
+       The blocking check asks a narrow question -- "is anything important still filed here?" --
+       and four tables answer it. A MERGE has to ask the opposite and much wider one: where does
+       this name appear AT ALL? Moving five of fifteen would leave ten pointing at a team that
+       no longer exists, which is precisely the orphaning the guard was there to prevent. Doing
+       it halfway would be worse than refusing outright, because it would look like it worked.
+
+       Two shapes, and both have to be handled:
+         a `team` column        thirteen tables, one update each
+         an ARRAY of teams      access_codes.teams and call_users.leader_teams -- a PMO officer
+                                holds thirty-odd teams as a list on their own record, and a
+                                leader's scope is the same shape. A name left in one of those
+                                lists is an officer scoped to a team that is gone. */
     const moved = {};
-    for (const h of TEAM_HOLDS.concat([{ table: 'call_users', what: 'registered handsets' }])) {
+    for (const h of TEAM_MOVES) {
       const { data, error } = await runQuery(() =>
         db.from(h.table).update({ team: moveTo }).eq('team', team).select('team'));
       if (error) throw new Error(error.message);
       if ((data || []).length) moved[h.what] = data.length;
     }
+
+    /* The two list-shaped ones. Both tables are small -- a few dozen codes, a few hundred
+       handsets -- so they are read whole and only the rows that actually change are written
+       back. The old name is swapped for the new one and duplicates collapse, because somebody
+       may already hold BOTH spellings. */
+    for (const arr of TEAM_ARRAY_MOVES) {
+      const rows = await fetchAll(() => db.from(arr.table).select(arr.key + ', ' + arr.col));
+      let n = 0;
+      for (const r of rows || []) {
+        const list = Array.isArray(r[arr.col]) ? r[arr.col] : [];
+        if (!list.some(x => K(x) === team)) continue;
+        const next = [...new Set(list.map(x => (K(x) === team ? moveTo : x)))];
+        const { error } = await runQuery(() =>
+          db.from(arr.table).update({ [arr.col]: next }).eq(arr.key, r[arr.key]));
+        if (error) throw new Error(error.message);
+        n++;
+      }
+      if (n) moved[arr.what] = n;
+    }
+
     const { error: delErr } = await db.from('teams').delete().eq('team', team);
     if (delErr) throw new Error(delErr.message);
     return { team, mergedInto: moveTo, moved, released: 0 };

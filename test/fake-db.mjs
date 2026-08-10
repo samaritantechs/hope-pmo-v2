@@ -200,9 +200,18 @@ class FakeQuery {
       return { data: this.wantRows ? gone : null, error: null, count: gone.length };
     }
     if (this.mode === 'update') {
-      let n = 0;
-      for (const r of rows) if (this.filters.every(f => f(r))) { Object.assign(r, this.payload); n++; }
-      return { data: this.wantRows ? rows.filter(r => this.filters.every(f => f(r))) : null, error: null, count: n };
+      /* THE ROWS ARE CHOSEN BEFORE THEY ARE CHANGED, and returned afterwards with their new
+         values -- which is what PostgREST does and what `.update(...).select()` means.
+
+         Re-applying the filter after the write, as this used to, is right only while the
+         update does not touch a filtered column. The moment it does -- `update({team: NEW})
+         .eq('team', OLD)`, which is exactly what merging a team is -- every row has just
+         stopped matching, so nothing came back and the caller was told it had moved NOTHING.
+         The rows really had moved; the report of it was empty, which is the worst combination
+         to debug because the data looks right and the answer looks wrong. */
+      const hit = rows.filter(r => this.filters.every(f => f(r)));
+      for (const r of hit) Object.assign(r, this.payload);
+      return { data: this.wantRows ? hit : null, error: null, count: hit.length };
     }
     let out = rows.filter(r => this.filters.every(f => f(r)));
     // The count is of everything that MATCHED, before any range or limit -- which is what
