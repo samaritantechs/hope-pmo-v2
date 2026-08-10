@@ -702,3 +702,61 @@ test('abnormal payments: the older header spellings still import', () => {
   assert.equal(x.contact_no, '712000111');
   assert.equal(x.phone_number, '755000222');
 });
+
+/* =====================================================================================
+   RECEIVED PAYMENTS -- the real sheet, header for header.
+
+     "Failed: This file has no readable dates in its 'paid at' column, so there is no day to
+      replace."
+
+   Five columns never matched. Only the date announced itself, because Replace refuses a file
+   with no readable dates; the other three had been importing as NULL in silence every time.
+   A header that matches nothing is indistinguishable from a column of empty cells.
+
+   This is the sheet as it actually arrives, so the next change to either side breaks a test
+   rather than a Monday morning.
+   ===================================================================================== */
+const { importReceivedPayments: importRcv } = await import('../api/_lib/importers.js');
+
+const RCV_HEADER = ['CUSTOMER NAME', 'TRANSACTION ID', 'CUSTOMER REF NO', 'AMOUNT PAID',
+  'REF ID', 'PAYMENT DATE', 'STATUS', 'STATUS CODE', 'PHONE NUMBER', 'CARRIER',
+  'SENDER NAME', 'BRANCH', 'TEAM', 'CONTACT NO'];
+
+test('received payments: the real sheet imports, every column of it', () => {
+  const [x] = importRcv([RCV_HEADER,
+    ['ASHA  MBWANA CHOMBINGA', '26552917454906', '2201403386', '79500', '226552917454906',
+     '8/8/2026', 'processed', 'error000', '255675218973', 'TIGO', 'ASHA CHOMBINGA',
+     'TEMEKE-GONGOLAMBOTO ', 'TEMEKE', '0686852827']]);
+  assert.equal(x.paid_at, '2026-08-08', 'PAYMENT DATE -- this is the one that failed the upload');
+  assert.equal(x.team, 'TEMEKE');
+  assert.equal(x.customer_name, 'ASHA  MBWANA CHOMBINGA');
+  assert.equal(x.transaction_id, '26552917454906');
+  assert.equal(x.ref_no, '2201403386', 'CUSTOMER REF NO -- was importing as null');
+  assert.equal(x.ref_id, '226552917454906', 'REF ID -- had nowhere to go at all');
+  assert.equal(x.amount_paid, 79500);
+  assert.equal(x.payment_no, '255675218973', 'PHONE NUMBER -- was importing as null');
+  assert.equal(x.customer_no, '686852827', 'CONTACT NO -- was importing as null');
+  assert.equal(x.sender_name, 'ASHA CHOMBINGA');
+});
+
+test('received payments: the day/month order is inferred, not assumed', () => {
+  /* "9/8/2026" is the 9th of August or the 8th of September. A payments report read the wrong
+     way round moves money between months. Every other date-bearing importer already inferred
+     this from the whole column; this one did not, which was a real risk sitting quietly behind
+     the header bug. The 25th proves the column is day-first, and the 9th then follows it. */
+  const rows = importRcv([RCV_HEADER,
+    ['A', 'T1', 'R1', '100', 'RID1', '25/8/2026', 'processed', 'e', '255700000001', 'TIGO', 'S', 'B', 'TEMEKE', '0700000001'],
+    ['B', 'T2', 'R2', '200', 'RID2', '9/8/2026', 'processed', 'e', '255700000002', 'TIGO', 'S', 'B', 'TEMEKE', '0700000002']]);
+  assert.equal(rows[0].paid_at, '2026-08-25');
+  assert.equal(rows[1].paid_at, '2026-08-09', 'the 9th of August, not the 8th of September');
+});
+
+test('received payments: the older header spellings still import', () => {
+  // Files already uploaded under the old names must not stop working.
+  const [x] = importRcv([['DATE', 'TEAM', 'CUSTOMER NO', 'REF NO', 'AMOUNT PAID', 'PAYMENT NO'],
+    ['2026-08-08', 'TEMEKE', '0686852827', 'R9', '500', '0755000111']]);
+  assert.equal(x.paid_at, '2026-08-08');
+  assert.equal(x.ref_no, 'R9');
+  assert.equal(x.customer_no, '686852827');
+  assert.equal(x.payment_no, '0755000111');
+});
