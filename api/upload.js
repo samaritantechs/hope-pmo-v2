@@ -776,15 +776,34 @@ export default withApi(async (req, res) => {
       autoSwept = { batches: r.deletedBatches, rows: r.totalRows };
     } catch (e) { /* the upload stands */ }
   }
-  if (isLastPart && table === 'defaulter_snapshots') {
-    try {
-      /* "1 day and above" -- a defaulter whose own weekday deck has come round without them is
-         off the working list the moment the next day's deck lands, not a fortnight later.
-         Nothing is deleted: every comment and promise stays exactly where it is. */
-      const r = await portalApi(supabase, housekeeper, 'followupClean', { days: 1, confirm: true }, Date.now());
-      autoRetired = r.retired || 0;
-    } catch (e) { /* the upload stands */ }
-  }
+  /* =====================================================================================
+     THE LINE THAT EMPTIED THE OFFICERS' LIST.
+
+       "Just previewing defaulters arranged by arreas and not seeing ester at 1.7m ... the
+        complain is growing larger and words spreading that the app has no customers"
+
+     This used to run `followupClean` with days:1 after every current-defaulter upload, on the
+     reasoning that somebody whose deck came round without them should drop off at once rather
+     than a fortnight later.
+
+     THE REASONING WAS RIGHT AND THE TOOL WAS WRONG. followupClean retires on AGE ALONE and
+     knows nothing about weekdays. Decks are per weekday and each one comes round ONCE A WEEK,
+     so "not confirmed within one day" describes almost everybody almost all the time. Uploading
+     Friday's deck blanked every customer whose own deck was Monday, Tuesday or Wednesday --
+     status and arrears set to null -- and the phone's Defaulters list skips exactly those rows.
+     Measured on a register of a hundred spread across five weekdays: sixty retired by ONE
+     upload, leaving only the last two days' decks standing.
+
+     Then Monday's upload blanked Friday's people back again. That is the seventh-of-the-book
+     fault this system already fixed once inside syncFollowupFromDeck, re-introduced wholesale by
+     a housekeeping call that ran immediately afterwards and overrode it.
+
+     NOTHING REPLACES IT, because nothing needs to. syncFollowupFromDeck has already run by this
+     point and it does this job properly: it retires the people who were on THIS WEEKDAY'S
+     previous deck and are not on this one, plus anyone unconfirmed for a fortnight, with a brake
+     so one upload can never empty the list. The correct rule was already there; this was a
+     second, cruder one running last and winning. */
+
 
   return {
     inserted: records.length, table, uploadBatch, uploadDate, replaced,
