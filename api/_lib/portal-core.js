@@ -1376,10 +1376,25 @@ async function abnormal(db, user, args, nowMs) {
   const [base, cfg, paid] = await Promise.all([
     listTable(db, user, 'abnormal_payments'),
     settingsMany(db, [ABN_STEP_KEY]),
-    // Scoped and windowed IN THE QUERY. This table only ever grows.
-    fetchAll(() => onTeams(db.from('received_payments')
-      .select('paid_at, team, customer_name, customer_no, transaction_id, ref_no, ref_id, amount_paid, payment_no, sender_name')
-      .gte('paid_at', from).lte('paid_at', to), user.teams)),
+    /* Scoped and windowed IN THE QUERY. This table only ever grows.
+
+       `ref_id` arrives with db/migrations/2026-08-10-received-ref-id.sql, and migrations here
+       are run by hand. PostgREST rejects the WHOLE read for one unknown column -- so asking for
+       it on a database that has not run that file took the entire Abnormal Payments screen down
+       with "column received_payments.ref_id does not exist". The write path was already guarded
+       against exactly this and the read path was not, which is the whole lesson: an optional
+       column is optional in BOTH directions. */
+    (async () => {
+      const cols = 'paid_at, team, customer_name, customer_no, transaction_id, ref_no, amount_paid, payment_no, sender_name';
+      const read = c => fetchAll(() => onTeams(db.from('received_payments').select(c)
+        .gte('paid_at', from).lte('paid_at', to), user.teams));
+      try { return await read(cols + ', ref_id'); }
+      catch (e) {
+        // Only an unknown ref_id falls back. A real failure stays a real failure.
+        if (!/ref_id/.test(String((e && e.message) || e))) throw e;
+        return read(cols);
+      }
+    })(),
   ]);
   const step = cfg.num(ABN_STEP_KEY, ABN_STEP_DEFAULT);
 

@@ -4443,3 +4443,48 @@ test('a collection officer whose code says COLLECTION now reaches the PMO board'
   assert.ok(d.pmo.some(r => String(r.officer).toUpperCase() === 'CATHERINE'),
     'and she appears on the PMO board that pays her');
 });
+
+/* =====================================================================================
+   "Imeshindikana / Could not load. column received_payments.ref_id does not exist"
+
+   Migrations here are run by hand, so EVERY deployment spends time in the state where an
+   optional column does not exist yet. PostgREST refuses the WHOLE query for one unknown
+   column -- so asking for ref_id on a database that has not run
+   db/migrations/2026-08-10-received-ref-id.sql took the entire Abnormal Payments screen down.
+
+   THE LESSON, AND IT IS THE WHOLE POINT OF THESE TESTS: an optional column is optional in BOTH
+   DIRECTIONS. The write path was already guarded (api/upload.js probes the table before
+   sending) and the read path was not. Guarding one and not the other is not a smaller version
+   of the same care -- it is a screen that loads until somebody uses the feature.
+   ===================================================================================== */
+test('abnormal payments loads on a database that has not run the ref_id migration', async () => {
+  const t = tables();
+  t.abnormal_payments = [];
+  t.received_payments = [{ id: 'p1', team: 'KONGOWE', amount_paid: 79543, paid_at: TODAY,
+    transaction_id: 'TX1', customer_name: 'ASHA' }];
+  // The database as it stands before that SQL is pasted in.
+  const db = fakeDb(t, { rpc: UPLOAD_STATUS_RPC, missingColumns: { received_payments: ['ref_id'] } });
+  const d = await portalApi(db, ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.derived, 1, 'the rule still runs');
+  assert.equal(d.rows[0].transaction_id, 'TX1');
+  assert.equal(d.rows[0].ref_id, undefined, 'just without the column that is not there yet');
+});
+
+test('and it still reads ref_id once the migration HAS been run', async () => {
+  const t = tables();
+  t.abnormal_payments = [];
+  t.received_payments = [{ id: 'p1', team: 'KONGOWE', amount_paid: 79543, paid_at: TODAY,
+    transaction_id: 'TX1', ref_id: 'RID1' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.rows[0].ref_id, 'RID1');
+});
+
+test('a real failure is still a real failure -- the fallback is not a blanket catch', async () => {
+  /* Falling back on ANY error would turn a database having a bad minute into a silent decision
+     to drop a column, which is how a fault becomes invisible instead of fixed. */
+  const t = tables();
+  t.abnormal_payments = [];
+  const db = fakeDb(t, { rpc: UPLOAD_STATUS_RPC,
+    missingColumns: { received_payments: ['team'] } });   // not ref_id -- something else broke
+  await assert.rejects(() => portalApi(db, ADMIN, 'abnormal', {}, NOW));
+});
