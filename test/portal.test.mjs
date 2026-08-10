@@ -4488,3 +4488,92 @@ test('a real failure is still a real failure -- the fallback is not a blanket ca
     missingColumns: { received_payments: ['team'] } });   // not ref_id -- something else broke
   await assert.rejects(() => portalApi(db, ADMIN, 'abnormal', {}, NOW));
 });
+
+/* =====================================================================================
+   A DUPLICATE TEAM IS MERGED, NOT DELETED.
+
+     "Team TUNDURU should be deleted because the correct one is Tunduru. it fails saying it has
+      expected snapshots"
+
+   The refusal is right: removing a team that still holds records would orphan them -- snapshots
+   pointing at a team that no longer exists, invisible on every screen. But it answered the
+   wrong question. A misspelled duplicate holds REAL WORK -- real customers, real arrears, real
+   recovery -- sitting under a name nobody meant to create. The admin never wanted it thrown
+   away; they wanted it filed under the right name.
+   ===================================================================================== */
+function dupBook() {
+  const t = tables();
+  t.teams.push({ team: 'TUNDURU', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  t.teams.push({ team: 'TUNDURU SOUTH', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  t.repayment_snapshots.push({ ref: 'T1', full_name: 'MISFILED', team: 'TUNDURU',
+    payment_expected: 900, arrears: 0, todays_status: 'UNPAID', snapshot_type: 'today',
+    snapshot_date: TODAY, upload_batch: 'bt', created_at: TODAY + 'T04:00:00Z' });
+  t.followup_status.push({ ref: 'T1', team: 'TUNDURU', full_name: 'MISFILED', arrears: 500,
+    status: 'Defaulter' });
+  t.loans.push({ id: 'lt1', team: 'TUNDURU', stage: 'approved', principal_amt: 100000,
+    approved_date: TODAY });
+  t.call_users.push({ user_id: 'UT', name: 'FIELD ONE', team: 'TUNDURU', role: 'OFFICER',
+    device_id: 'dT', active: true });
+  return t;
+}
+
+test('deleting a team that holds records is still refused, and says merging is the answer', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(dupBook()), ADMIN, 'deleteTeam', { team: 'TUNDURU' }, NOW),
+    e => /still holds/.test(e.message) && /MERGE/.test(e.message));
+});
+
+test('merging carries every record across, then removes only the name', async () => {
+  const db = dbWithRpc(dupBook());
+  const r = await portalApi(db, ADMIN, 'deleteTeam',
+    { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW);
+  assert.equal(r.mergedInto, 'TUNDURU SOUTH');
+
+  // Nothing is left behind under the wrong name...
+  const left = n => db._dump(n).filter(x => String(x.team).toUpperCase() === 'TUNDURU').length;
+  for (const tbl of ['repayment_snapshots', 'followup_status', 'loans', 'call_users']) {
+    assert.equal(left(tbl), 0, tbl + ' still has rows under the deleted name');
+  }
+  // ...and nothing was thrown away either.
+  const now = n => db._dump(n).filter(x => String(x.team).toUpperCase() === 'TUNDURU SOUTH').length;
+  assert.equal(now('repayment_snapshots'), 1);
+  assert.equal(now('followup_status'), 1);
+  assert.equal(now('loans'), 1);
+  assert.equal(now('call_users'), 1, 'the handset follows its team rather than being cut off');
+  // Only the name is gone.
+  assert.equal(db._dump('teams').some(x => x.team === 'TUNDURU'), false);
+  assert.equal(db._dump('teams').some(x => x.team === 'TUNDURU SOUTH'), true);
+});
+
+test('merging into a team that does not exist is refused, not silently invented', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(dupBook()), ADMIN, 'deleteTeam',
+      { team: 'TUNDURU', moveTo: 'NOWHERE' }, NOW),
+    e => /no team called NOWHERE/.test(e.message));
+});
+
+test('a team cannot be merged into itself', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(dupBook()), ADMIN, 'deleteTeam',
+      { team: 'TUNDURU', moveTo: 'tunduru' }, NOW),
+    e => /itself/.test(e.message));
+});
+
+test('an empty team still deletes outright -- merging is only for one holding records', async () => {
+  const t = tables();
+  t.teams.push({ team: 'EMPTYONE', opm: null, recovery: null, gmo: null, manager: null,
+    credit: null, expected: null, bike: null });
+  const db = dbWithRpc(t);
+  const r = await portalApi(db, ADMIN, 'deleteTeam', { team: 'EMPTYONE' }, NOW);
+  assert.equal(r.mergedInto, undefined);
+  assert.equal(db._dump('teams').some(x => x.team === 'EMPTYONE'), false);
+});
+
+test('only an admin may merge teams', async () => {
+  await assert.rejects(
+    () => portalApi(dbWithRpc(dupBook()), GMO, 'deleteTeam',
+      { team: 'TUNDURU', moveTo: 'TUNDURU SOUTH' }, NOW),
+    e => e.status === 403);
+});

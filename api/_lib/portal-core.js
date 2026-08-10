@@ -4229,12 +4229,59 @@ async function deleteTeam(db, user, p) {
     if (error) throw new Error(error.message);
     if (count) blocking.push(`${count} ${h.what}`);
   }
+  /* =====================================================================================
+     A DUPLICATE TEAM IS NOT DELETED. IT IS MERGED.
+
+       "Team TUNDURU should be deleted because the correct one is Tunduru. it fails saying it
+        has expected snapshots"
+
+     The guard above is right and stays: deleting a team that still holds records would orphan
+     them -- snapshots pointing at a team that no longer exists, invisible on every screen and
+     unrecoverable without a database console. That is exactly the outcome it exists to stop.
+
+     But it answered the wrong question. Told "this team has records", the admin's real
+     intention is almost never "throw the records away" -- it is "these records belong to the
+     OTHER spelling of this team". A misspelled duplicate holds real work: real customers, real
+     arrears, real recovery, sitting under a name nobody meant to create.
+
+     So `moveTo` names the team the records belong to, and every one of them is carried across
+     before the empty team is removed. Nothing is deleted except the name.
+
+     WHAT MOVES: the four holding tables above, and call_users besides -- a handset registered
+     to the wrong spelling must follow its team rather than be cut off, which is what plain
+     deletion does to it.
+
+     The counts come back per table, so the admin sees exactly what was carried rather than
+     being told "done". And this goes through the same audited door as every other write. */
+  const moveTo = normTeamName(p && p.moveTo);
+  if (blocking.length && moveTo) {
+    if (moveTo === team) throw badRequest('A team cannot be merged into itself.');
+    const { data: dest } = await db.from('teams').select('team').eq('team', moveTo).maybeSingle();
+    if (!dest) {
+      throw badRequest(`Timu ${moveTo} haipo. / There is no team called ${moveTo} — `
+        + 'create it first, or check the spelling.');
+    }
+    const moved = {};
+    for (const h of TEAM_HOLDS.concat([{ table: 'call_users', what: 'registered handsets' }])) {
+      const { data, error } = await runQuery(() =>
+        db.from(h.table).update({ team: moveTo }).eq('team', team).select('team'));
+      if (error) throw new Error(error.message);
+      if ((data || []).length) moved[h.what] = data.length;
+    }
+    const { error: delErr } = await db.from('teams').delete().eq('team', team);
+    if (delErr) throw new Error(delErr.message);
+    return { team, mergedInto: moveTo, moved, released: 0 };
+  }
+
   if (blocking.length) {
     throw badRequest(
-      `Timu ${team} bado ina kumbukumbu: ${blocking.join(', ')}. Futa kumbukumbu hizo kwanza `
-      + `(Settings → Clean reports), au ibadilishe jina badala ya kuifuta.`
-      + `\n\nTeam ${team} still holds ${blocking.join(', ')}. Clear those first `
-      + `(Settings → Clean reports), or rename the team rather than deleting it.`);
+      `Timu ${team} bado ina kumbukumbu: ${blocking.join(', ')}. `
+      + `Kama hii ni tahajia isiyo sahihi, ihamishe kwenye timu sahihi badala ya kuifuta.`
+      + `\n\nTeam ${team} still holds ${blocking.join(', ')}.`
+      + `\n\nIf this is a misspelling of another team, MERGE it instead: choose the correct `
+      + `team and every record moves across before this name is removed. Nothing is lost. `
+      + `Deleting a team that still holds records would orphan them, which is why it is refused.`
+      + `\n\nOtherwise clear the records first (Settings → Clean reports).`);
   }
 
   // Nothing is holding it. The handsets registered to it go with it -- they have nothing to
