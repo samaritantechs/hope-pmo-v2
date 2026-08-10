@@ -1354,3 +1354,77 @@ test('Ripoti: a team chosen outside the named leader\'s teams does not escape th
   const both = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24', 'MBAGALA', 'ASHA JUMA'], NOW);
   assert.deepEqual(both.debugScope, ['KONGOWE'], 'the leader holds, the stray team is dropped');
 });
+
+/* =====================================================================================
+   THE TEAMS SOMEBODY HOLDS, NOT THE ONE THEY REGISTERED FROM.
+   =====================================================================================
+     "just legal officers and credit analysists told me they dont see their customers"
+
+   Two roles and not everybody, which is what made it findable. Both hold MANY teams, and both
+   register the ordinary way -- with a team's code -- which makes them a non-leader, which
+   scopes them to the single team whose code they typed.
+
+   That is right for a field officer, who works one team, and wrong for a credit analyst, who
+   supervises every team carrying their name in `teams.credit`. Their book is thirty teams and
+   the handset showed them one, then narrowed THAT by paid <= 5 on top.
+   ===================================================================================== */
+test('a credit analyst sees every team they hold, not just the one whose code they typed', async () => {
+  const t = makeTables();
+  // ANALYST A holds both teams in the credit column. They register on KONGOWE's team code.
+  t.teams[0].credit = 'ANALYST A';
+  t.teams[1].credit = 'ANALYST A';
+  t.followup_status = [
+    { ref: 'K1', team: 'KONGOWE', full_name: 'KON CUSTOMER', status: 'Defaulter', arrears: 5000, ds: '2-4' },
+    { ref: 'M1', team: 'MBAGALA', full_name: 'MBA CUSTOMER', status: 'Defaulter', arrears: 9000, ds: '2-4' },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', 'ANALYST A', '', '', '0799000111', 'KON123'], NOW);
+
+  const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
+  const refs = d.rows.map(r => r.ref).sort();
+  assert.deepEqual(refs, ['K1', 'M1'],
+    'MBAGALA is theirs too -- they hold its credit column, they just did not register on it');
+});
+
+test('a plain officer is still scoped to their own team and nothing else', async () => {
+  /* The half that must not move. Nearly every handset is a field officer holding no role column
+     anywhere, and widening their book would be the worst possible outcome of this change. */
+  const t = makeTables();
+  t.followup_status = [
+    { ref: 'K1', team: 'KONGOWE', full_name: 'KON CUSTOMER', status: 'Defaulter', arrears: 5000 },
+    { ref: 'M1', team: 'MBAGALA', full_name: 'MBA CUSTOMER', status: 'Defaulter', arrears: 9000 },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.deepEqual(d.rows.map(r => r.ref), ['K1'], 'one team, exactly as before');
+});
+
+test('holding a role column widens scope but is never a way round it', async () => {
+  const { scopeFor } = await import('../api/_lib/call-core.js');
+  const t = makeTables();
+  t.teams[1].credit = 'ANALYST A';                 // holds MBAGALA only
+  const db = fakeDb(t);
+
+  // Their own team plus the one they hold -- and no more than that.
+  const widened = await scopeFor(db, { name: 'ANALYST A', teams: ['KONGOWE'] });
+  assert.deepEqual(widened.map(x => x.toUpperCase()).sort(), ['KONGOWE', 'MBAGALA']);
+
+  // Somebody holding nothing keeps exactly what they had.
+  assert.deepEqual(await scopeFor(db, { name: 'NOBODY', teams: ['KONGOWE'] }), ['KONGOWE']);
+
+  // An ALL-teams user stays ALL -- widening "everything" is meaningless.
+  assert.equal(await scopeFor(db, { name: 'THE ADMIN', teams: null }), null);
+});
+
+test('a recovery or expected officer is widened by the same rule', async () => {
+  /* The credit column is not special. Every role column on the teams table names somebody whose
+     book is those teams, and the rotation and the portal's leader filter have always read them
+     that way -- only the handset did not. */
+  const { scopeFor } = await import('../api/_lib/call-core.js');
+  const t = makeTables();
+  t.teams[1].expected = 'EXP PERSON';
+  const db = fakeDb(t);
+  const widened = await scopeFor(db, { name: 'EXP PERSON', teams: ['KONGOWE'] });
+  assert.deepEqual(widened.map(x => x.toUpperCase()).sort(), ['KONGOWE', 'MBAGALA']);
+});
