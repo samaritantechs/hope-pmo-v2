@@ -8,8 +8,11 @@ import { fakeDb } from './fake-db.mjs';
 /* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
    unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
    and a plain fakeDb(tables()) is one that does not -- both states are exercised. */
-import { UPLOAD_STATUS_RPC } from './snapshot-totals-rpc.mjs';
-const dbWithRpc = t => fakeDb(t || tables(), { rpc: UPLOAD_STATUS_RPC });
+import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
+/* A database that HAS the migrations -- which now includes the team-day totals function, because
+   the defaulter book asks it which date each team's own latest deck is on. A plain fakeDb() is
+   still the un-migrated world, and several tests use it deliberately. */
+const dbWithRpc = t => fakeDb(t || tables(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } });
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -4995,4 +4998,80 @@ test('only an admin may rebuild the register', async () => {
   await assert.rejects(
     () => portalApi(dbWithRpc(estherBook('TUE')), GMO, 'rebuildFollowup', {}, NOW),
     e => e.status === 403);
+});
+
+/* =====================================================================================
+   "i rebuilt and also reuploaded still ester aint there .. means we missing customers to make
+    followups to"
+
+   THE DATE WAS STILL ONE NUMBER FOR THE WHOLE COMPANY.
+
+   Three rules decide which deck rows a screen sees, and each had to become per-team before a
+   defaulter could reliably be found:
+
+     which BATCH    fixed long ago -- was per DAY, and threw away sixteen teams when a day
+                    arrived as seventeen files
+     which WEEKDAY  fixed -- a defaulter is a defaulter every day
+     which DATE     THIS ONE. latestSnapshotDate asks the WHOLE TABLE for its newest date, so
+                    the moment ANY team was uploaded with a newer date, every team with an
+                    older deck vanished ENTIRELY.
+
+   Not a few rows -- the whole team. And it is why re-uploading her team changed nothing: her
+   deck was landing perfectly and being filtered out by somebody else's more recent upload.
+   ===================================================================================== */
+function twoTeamBook(gobaDate) {
+  const t = tables();
+  t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
+    credit: 'ANALYST A', expected: 'E', bike: 'B' });
+  t.teams.push({ team: 'MBEYA', opm: null, recovery: 'R2', gmo: 'G2', manager: 'M2',
+    credit: 'ANALYST B', expected: 'E2', bike: 'B2' });
+  const mk = (ref, team, date, wd) => ({ ref, full_name: ref + ' NAME', team, arrears: 1000,
+    status: 'Partial Defaulter', ds: '2-4', dc: 2, disb_date: '2026-07-09',
+    snapshot_type: 'current', weekday: wd, snapshot_date: date,
+    upload_batch: 'b' + team + date, created_at: date + 'T04:00:00Z' });
+  t.defaulter_snapshots.push(mk('ESTHER', 'GOBA', gobaDate, 'TUE'));
+  t.defaulter_snapshots.push(mk('OTHER', 'MBEYA', TODAY, 'MON'));
+  return t;
+}
+
+test('a team whose deck is older than another team\'s is NOT wiped out', async () => {
+  /* The reported fault, exactly. MBEYA uploaded today, GOBA two days ago -- and GOBA used to
+     disappear completely because the date was resolved for the whole table at once. */
+  const t = twoTeamBook('2026-07-22');             // TODAY is 2026-07-24
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
+  assert.ok(d.rows.some(r => r.ref === 'ESTHER'), 'GOBA, on its own older deck');
+  assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'and MBEYA, on today\'s');
+});
+
+test('each team is read on ITS OWN latest date, not the newest in the table', async () => {
+  const t = twoTeamBook('2026-07-22');
+  // A third, older GOBA deck must lose to GOBA's own newer one -- not to MBEYA's.
+  t.defaulter_snapshots.push({ ...t.defaulter_snapshots.find(r => r.ref === 'ESTHER'),
+    snapshot_date: '2026-07-20', arrears: 999999, upload_batch: 'bold',
+    created_at: '2026-07-20T04:00:00Z' });
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
+  const hers = d.rows.filter(r => r.ref === 'ESTHER');
+  assert.equal(hers.length, 1, 'once');
+  assert.equal(Number(hers[0].arrears), 1000, 'from her team\'s own newest deck');
+});
+
+test('the credit analyst gets their customer back too', async () => {
+  const d = await portalApi(dbWithRpc(twoTeamBook('2026-07-22')), ADMIN, 'credit', {}, NOW);
+  const a = d.rows.find(r => r.analyst === 'ANALYST A');
+  assert.ok(a && a.cnt >= 1, 'GOBA\'s analyst can see their count 1-6 customer');
+});
+
+test('rebuilding the register now reaches a team on an older deck', async () => {
+  /* Which is why the rebuild appeared to do nothing: it read the same wiped-out book. */
+  const t = twoTeamBook('2026-07-22');
+  const db = dbWithRpc(t);
+  await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.ok(db._dump('followup_status').some(r => r.ref === 'ESTHER'),
+    'she is in the register, so HOPE Calls can show her');
+});
+
+test('an explicit weekday choice is still exactly that', async () => {
+  const t = twoTeamBook('2026-07-22');
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { weekday: 'MON' }, NOW);
+  assert.ok(!d.rows.some(r => r.ref === 'ESTHER'), 'she is in TUE\'s deck, not MON\'s');
 });
