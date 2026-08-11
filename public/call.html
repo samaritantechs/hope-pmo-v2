@@ -1433,7 +1433,7 @@ function drawList(){
   var banner = !nb ? (isIOS_()
       ? '<div class="banner">\uD83D\uDCF1 iPhone haiwezi kusoma kumbukumbu za simu moja kwa moja (kizuizi cha Apple, si tatizo la programu hii). Bofya "Piga" hapa chini kupiga \u2014 orodha na maoni yanafanya kazi kama kawaida, lakini muda wa simu hautarekodiwa kiotomatiki.</div>'
       : '<div class="banner">\uD83D\uDCF1 Sakinisha programu ya HOPE Calls (APK) ili simu zako zirekodiwe kiotomatiki. Bofya "Piga" hapa chini bado kinafanya kazi.</div>')
-    : (S.permOk === false ? '<div class="banner" style="background:var(--badbg);border-color:var(--badline);color:var(--bad)">\u26A0 Ruhusa ya kusoma kumbukumbu za simu haijawezeshwa \u2014 simu zako HAZIREKODIWI. Nenda Settings \u2192 Apps \u2192 HOPE Calls \u2192 Permissions kuiwasha.</div>'
+    : (S.permOk === false ? '<div class="banner" style="background:var(--badbg);border-color:var(--badline);color:var(--bad)">\u26A0 Taarifa zinachelewa kuupdate. Nenda Settings \u2192 Apps \u2192 HOPE Calls \u2192 Permissions kuwasha ruhusa ili ziupdate zenyewe.</div>'
        : batteryGuidanceHtml_());
   var searching = !!S.q.trim();
   body.innerHTML = banner

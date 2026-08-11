@@ -847,3 +847,63 @@ test('the defaulter deck: a file with no reference column at all yields nothing,
   /* And this is exactly the case the upload must now shout about rather than report as a
      successful upload of zero rows. */
 });
+
+/* =====================================================================================
+   THE APPROVED DATE DECIDES WHICH MONTH A SALE BELONGS TO.
+   =====================================================================================
+     "i uploaded approved and now getting 0 sales!"
+     "Replaced 7 days, 2026-03-08 to 2026-10-08"
+
+   Their APPROVED DATE is 8/6/2026 -- the sixth of August. Read day-first that is the eighth of
+   June, and a report covering the first week of August landed as the eighth of six different
+   months. Nothing was in August, so August's sales read zero. Every row was there; every one
+   was filed under the wrong month.
+
+   And the file could not be settled by evidence: an approved report for the first week of a
+   month is 8/3, 8/4 ... 8/10, where BOTH components are under thirteen on every single row.
+   ===================================================================================== */
+const LOAN_H = ['DOCKET #', 'LOAN ID', 'FULL NAME', 'CONTACT #', 'TEAM', 'TRACK',
+  'PRINCIPAL AMT', 'APPROVED DATE', 'APPROVED BY'];
+const loanRow = (d, n) => ['2-217-10968' + n, '2217109681' + n, 'MATUKA MASOUD ' + n,
+  '0650941063', 'SEGEREA', '1', '500000', d, '201'];
+
+test('a wholly ambiguous date column is read by which way round makes SENSE', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  /* Nobody exports the eighth of six different months. They export a week. Whichever reading
+     puts the file in the tighter span is the one the file meant -- seven days against seven
+     months is not a close call. */
+  const out = importLoans([LOAN_H, loanRow('8/3/2026', 1), loanRow('8/6/2026', 2),
+    loanRow('8/10/2026', 3)], 'approved');
+  assert.deepEqual(out.map(o => o.approved_date), ['2026-08-03', '2026-08-06', '2026-08-10']);
+});
+
+test('a genuine day/month file is still read day-first', async () => {
+  /* The evidence rule comes first and stays decisive: a 22 in the first component can only be
+     a day. This must not have been traded away for the span rule above. */
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const out = importLoans([LOAN_H, loanRow('22/7/2026', 1), loanRow('8/7/2026', 2)], 'approved');
+  assert.deepEqual(out.map(o => o.approved_date), ['2026-07-22', '2026-07-08']);
+});
+
+test('a genuine month/day file is read month-first', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const out = importLoans([LOAN_H, loanRow('7/22/2026', 1), loanRow('7/8/2026', 2)], 'approved');
+  assert.deepEqual(out.map(o => o.approved_date), ['2026-07-22', '2026-07-08']);
+});
+
+test('the whole column decides ONCE, so one row cannot be read differently from the next', async () => {
+  /* This is what a per-value reading gets wrong. 8/6 alone is ambiguous; 8/20 in the same file
+     proves the file is month-first, and that proof has to apply to 8/6 as well. */
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const out = importLoans([LOAN_H, loanRow('8/6/2026', 1), loanRow('8/20/2026', 2)], 'approved');
+  assert.deepEqual(out.map(o => o.approved_date), ['2026-08-06', '2026-08-20'],
+    'both in August -- not one in August and one in June');
+});
+
+test('the order the file was read in is reported, not silently chosen', async () => {
+  const { loansDateOrder } = await import('../api/_lib/importers.js');
+  assert.equal(loansDateOrder([LOAN_H, loanRow('8/3/2026', 1), loanRow('8/10/2026', 2)]), false,
+    'month/day');
+  assert.equal(loansDateOrder([LOAN_H, loanRow('22/7/2026', 1)]), true, 'day/month');
+  assert.equal(loansDateOrder([LOAN_H, loanRow('8/6/2026', 1)]), null, 'one date, undecidable');
+});
