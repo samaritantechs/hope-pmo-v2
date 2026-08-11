@@ -1164,7 +1164,12 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
      place. A heading wraps at a readable measure; the board beneath it is then exactly as wide
      as its own columns need, whatever number that turns out to be, and every report gets its
      own size. */
-  + '.jpgshot .card-h,.jpgshot .note,.jpgshot .msg,.jpgshot .hint{max-width:820px !important;}';
+  /* NO CAP AT ALL NOW. The heading only needed one while the picture was measured with
+     `width:auto`, where a sentence has no natural width and stretched to one enormous line.
+     Laid out at the report's real on-screen width it wraps exactly as it does on the page, so
+     the cap has nothing left to protect against -- and a cap is the thing that cut a board in
+     half two commits ago. */
+  + '';
 
 function saveJpg(el){
   if (!el){ toast(t('nothing'), true); return; }
@@ -1177,18 +1182,34 @@ function saveJpg(el){
     /* MEASURED FROM THE UNCLIPPED CLONE, not from the window onto it. Attached off-screen so
        the browser lays it out for real -- a detached node has no size at all, and guessing
        from the original is exactly what produced a cropped picture. */
+    /* LAID OUT AT THE WIDTH IT REALLY HAS ON THE SCREEN.
+
+         "i thout auto takes the font size and clip the report as viewed no matter which one"
+
+       That is the right model and it is not what this was doing. Measuring with `width:auto`
+       shrink-wraps the clone, which is a DIFFERENT layout from the one on screen: headings stop
+       wrapping and stretch to one enormous line, and everything under them follows. Every fight
+       I have had with this -- the 3,683px picture, the stretched columns, the capped card that
+       then cut a board in half -- came from measuring a layout nobody was looking at.
+
+       Given the report's real on-screen width, the browser wraps and sizes exactly as the
+       screen does, and there is nothing left to correct with CSS. */
     probe = document.createElement('div');
+    var onScreen = Math.max(Math.round(el.getBoundingClientRect().width), 320);
     probe.setAttribute('style', 'position:fixed;left:-99999px;top:0;visibility:hidden;'
-      + 'width:auto;height:auto;overflow:visible;pointer-events:none;z-index:-1');
+      + 'width:' + onScreen + 'px;height:auto;overflow:visible;pointer-events:none;z-index:-1');
     probe.className = document.body.className;
     var pstyle = document.createElement('style');
     pstyle.textContent = JPG_UNCLIP;
     probe.appendChild(pstyle);
     probe.appendChild(clone);
     document.body.appendChild(probe);
-    // Widest of the three, because a table can be wider than the card that holds it.
-    var w = Math.max(clone.scrollWidth, clone.offsetWidth, 320);
-    var h = Math.max(clone.scrollHeight, clone.offsetHeight, 120);
+    /* scrollWidth exceeds the on-screen width only where something genuinely overflows -- a
+       board with more columns than the card can hold, which on screen you scroll sideways to
+       read. The picture has no sideways, so it takes the larger of the two and shows the lot.
+       Four pixels of slack because a sub-pixel rounding here is a column shaved off the edge. */
+    var w = Math.max(clone.scrollWidth, clone.offsetWidth, onScreen, 320) + 4;
+    var h = Math.max(clone.scrollHeight, clone.offsetHeight, 120) + 4;
     document.body.removeChild(probe); probe = null;
     // A canvas beyond a few thousand pixels a side starts failing on phones; no real report
     // reaches this, and clipping loudly at 8000 beats a blank file.
@@ -1201,19 +1222,26 @@ function saveJpg(el){
     var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="'+document.body.className+'">'
       // The override goes AFTER the copied stylesheet, so it wins inside the drawing too.
       + '<style>'+css+'</style><style>'+JPG_UNCLIP+'</style>'
-      + '<div style="background:var(--bg);padding:10px;width:'+w+'px">'
+      /* box-sizing:content-box ON PURPOSE. The copied stylesheet sets `*{box-sizing:border-box}`,
+         so `width:w` here gave the content w MINUS the 20px of padding -- twenty pixels of the
+         report pushed outside the picture on every single export, which is "the current are
+         even cutting info" in one line of CSS. */
+      + '<div style="background:var(--bg);padding:10px;box-sizing:content-box;width:'+w+'px">'
       + clone.outerHTML + '</div></div>';
-    /* DRAWN AT TWICE THE SIZE. The layout is unchanged -- `zoom` scales the rendered result,
-       not the column arithmetic -- so the picture is the same shape with twice the pixels in
-       it, which is what survives being enlarged. Backed off to 1x if that would breach the
-       canvas ceiling, because a huge report is still better delivered than not delivered. */
-    var sc = ((w + 20) * JPG_SCALE <= 8000 && (h + 24) * JPG_SCALE <= 20000) ? JPG_SCALE : 1;
-    var sw = Math.round((w + 20) * sc), sh = Math.round((h + 24) * sc);
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+sw+'" height="'+sh+'">'
-      + '<foreignObject width="100%" height="100%">'
-      + html.replace('<div xmlns="http://www.w3.org/1999/xhtml" class="',
-                     '<div xmlns="http://www.w3.org/1999/xhtml" style="zoom:'+sc+'" class="')
-      + '</foreignObject></svg>';
+    /* SCALED BY THE viewBox, WHICH IS WHAT SVG IS FOR -- not by `zoom`.
+
+       `zoom` scales the LAYOUT: the box becomes (w+20) x sc and the picture is exactly that
+       size, so a single sub-pixel rounding puts the right-hand edge outside the canvas. A
+       viewBox leaves the layout alone at its natural size and scales the DRAWING of it, which
+       cannot round content out of frame and re-rasterises crisply because it is still vector at
+       that point. Same sharpness when enlarged, none of the risk. */
+    var W = w + 20, H = h + 20;
+    var sc = (W * JPG_SCALE <= 8000 && H * JPG_SCALE <= 20000) ? JPG_SCALE : 1;
+    var sw = Math.ceil(W * sc), sh = Math.ceil(H * sc);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+sw+'" height="'+sh+'"'
+      + ' viewBox="0 0 '+W+' '+H+'">'
+      + '<foreignObject width="'+W+'" height="'+H+'">'
+      + html + '</foreignObject></svg>';
     var img = new Image();
     img.onload = function(){
       var cv = document.createElement('canvas');
