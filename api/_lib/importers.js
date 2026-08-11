@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { buildHeaderMap, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst } from './parse.js';
+import { buildHeaderMap, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -263,12 +263,45 @@ export function loanId(o) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function importLoans(csvRows, stage) {
+/** Which way round this file writes its dates, decided over the WHOLE date column rather than
+    one value at a time. Exported so the upload can say what it decided -- reading a date column
+    the wrong way round moves history by months and looks entirely reasonable in the result. */
+export function loansDateOrder(csvRows) {
+  const objs = rowsToObjects(csvRows);
+  const vals = [];
+  for (const { raw: r, h } of objs) {
+    for (const field of DATE_LOAN_FIELDS) {
+      const v = col(r, h, ...(LOAN_STAGE_COLUMNS[field] || []));
+      if (v != null && v !== '') vals.push(v);
+    }
+  }
+  /* Evidence first -- a 22 in the first component can only be a day, and that settles it. Only
+     when a file offers no evidence at all does the shape of the result get a say. */
+  const byEvidence = inferDayFirst(vals);
+  return byEvidence === null ? tightestSpanIsDayFirst(vals) : byEvidence;
+}
+
+/* THE APPROVED DATE DECIDES WHICH MONTH A SALE BELONGS TO, and it was being read one value at
+   a time with no knowledge of the column it came from.
+
+     "i uploaded approved and now getting 0 sales!"
+     "Replaced 7 days, 2026-03-08 to 2026-10-08"
+
+   Their file's APPROVED DATE is 8/6/2026 -- the sixth of August. Read day-first that is the
+   eighth of June, and a report covering the first week of August landed as the eighth of six
+   different months. Nothing was in August, so August's sales were zero. The rows were all
+   there; every one of them was filed under the wrong month.
+
+   dateOrNull already takes the order as an argument -- the comments importer has passed it
+   since the v1 history import -- and this simply did not. Now the whole column decides once,
+   and every date in the file is read the same way. */
+export function importLoans(csvRows, stage, dayFirst) {
+  const order = dayFirst === undefined ? loansDateOrder(csvRows) : dayFirst;
   return rowsToObjects(csvRows).map(({ raw: r, h }) => {
     const obj = { stage };
     for (const [field, candidates] of Object.entries(LOAN_STAGE_COLUMNS)) {
       const v = col(r, h, ...candidates);
-      obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v) : textOrNull(v);
+      obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v, order) : textOrNull(v);
     }
     return obj;
   }).filter(x => x.full_name).map(o => ({ ...o, id: loanId(o), updated_at: new Date().toISOString() }));

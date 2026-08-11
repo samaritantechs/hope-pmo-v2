@@ -119,8 +119,52 @@ export function inferDayFirst(values) {
   /* A file carrying BOTH kinds of evidence is malformed -- somebody pasted two exports
      together. The larger pile of evidence wins, and an exact tie gives up rather than guessing
      from a coin flip. */
+  /* A file carrying BOTH kinds of evidence is malformed -- somebody pasted two exports
+     together. The larger pile of evidence wins, and an exact tie gives up rather than guessing
+     from a coin flip. Null means UNDECIDED, and it stays undecided here: a caller that has a
+     safe way to break the tie can use tightestSpanIsDayFirst below, and one that has not --
+     a comment log legitimately spans a year -- must not have a guess made on its behalf. */
   if (dayFirst === monthFirst) return null;
   return dayFirst > monthFirst;
+}
+
+/** WHICH READING PUTS THE FILE IN THE TIGHTER SPAN, for the files where nothing else can tell.
+
+    An approved-loans report for the first week of August is 8/3, 8/4 ... 8/10: every value has
+    both components under thirteen, so inferDayFirst counts nothing and gives up -- and giving
+    up means day-first, which read that week as THE EIGHTH OF SIX DIFFERENT MONTHS:
+
+      "Replaced 7 days, 2026-03-08 to 2026-10-08"     "i uploaded approved and now getting 0 sales!"
+
+    Eight months of history out of a one-week report, and August's sales then read zero because
+    nothing landed in August.
+
+    A REPORT covers a stretch of days. It does not cover the same day-of-month across most of a
+    year. So where the components cannot decide, the shape of the result can -- seven days
+    against seven months is not a close call.
+
+    Deliberately NOT part of inferDayFirst. This reasoning is only sound for a file that covers
+    one short period, which a day's or a week's report does and a year of imported comment
+    history does not. Null when it genuinely cannot tell. */
+export function tightestSpanIsDayFirst(values) {
+  const span = first => {
+    let lo = null, hi = null;
+    for (const v of (values || [])) {
+      const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+      if (!m) continue;
+      const d = first ? Number(m[1]) : Number(m[2]);
+      const mo = first ? Number(m[2]) : Number(m[1]);
+      let y = Number(m[3]); if (y < 100) y += 2000;
+      if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;      // not a real date this way round
+      const t = Date.UTC(y, mo - 1, d);
+      if (lo === null || t < lo) lo = t;
+      if (hi === null || t > hi) hi = t;
+    }
+    return lo === null ? null : (hi - lo);
+  };
+  const dSpan = span(true), mSpan = span(false);
+  if (dSpan === null || mSpan === null || dSpan === mSpan) return null;
+  return dSpan < mSpan;
 }
 
 /** A full moment -- date AND clock -- as an ISO timestamp, for a log whose ORDER matters.

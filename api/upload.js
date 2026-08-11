@@ -11,7 +11,7 @@ import { addDaysKey as addDays_ } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
   importFollowup, importComments, commentsDateOrder,
-  importLoans, importTeams, importReceivedPayments,
+  importLoans, loansDateOrder, importTeams, importReceivedPayments,
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices,
   importCallUsers, importCallLogs, importSettings, importHints,
@@ -371,7 +371,7 @@ export default withApi(async (req, res) => {
   if (!(await can(user, 'upload'))) { const e = new Error('Upload permission is required for your access code.'); e.status = 403; throw e; }
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
-  let table, records, commentsOrder = null;
+  let table, records, commentsOrder = null, loansOrder;
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -418,7 +418,11 @@ export default withApi(async (req, res) => {
     case 'loans':
       if (!meta.stage) { const e = new Error('stage is required for a loan-pipeline upload.'); e.status = 400; throw e; }
       table = 'loans';
-      records = importLoans(rows, meta.stage);
+      /* The whole APPROVED DATE column decides its own order, once, and the answer is reported
+         below -- reading a date column the wrong way round moves a report by months and looks
+         entirely reasonable in the result. */
+      loansOrder = loansDateOrder(rows);
+      records = importLoans(rows, meta.stage, loansOrder);
       break;
     case 'teams':
       table = 'teams';
@@ -936,12 +940,16 @@ export default withApi(async (req, res) => {
     collapsed: collapsed || undefined,
     /* Reading a date column the wrong way round moves history by up to eleven months and looks
        entirely reasonable in the result, so the file is told what was decided about it. */
+    loanDateOrder: loansOrder === undefined ? undefined
+      : (loansOrder === null ? 'assumed day/month -- the file gave no clue either way'
+        : loansOrder ? 'day/month' : 'month/day'),
     dateOrder: commentsOrder ? (commentsOrder.dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
       : commentsOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
     message: [
       /* NAMED, not counted. This is the line that would have ended a week of searching. */
       skipped ? `\u26a0\ufe0f ${skipped} row(s) of the ${dataRows} in this file were NOT uploaded, because their reference column could not be read. They are not in the system and no screen can show them. Check the header spelling of the reference column against the rest of the file. Skipped: ${skippedNames.join('; ')}${skipped > skippedNames.length ? `; and ${skipped - skippedNames.length} more` : ''}.` : '',
+      loansOrder !== undefined ? `Dates in this file were read as ${loansOrder === null ? 'DAY/MONTH (nothing in the file said which way round it writes them)' : loansOrder ? 'DAY/MONTH' : 'MONTH/DAY'}. Check one row against the report if a figure looks like it landed in the wrong month.` : '',
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',

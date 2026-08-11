@@ -1121,7 +1121,13 @@ function exportXls(){
     So it is asked rather than assumed. On an ordinary desktop that is 1 and nothing changes; on
     a phone it is 2 or 3 and the picture matches the handset it was made on. Capped at 3 and
     bounded by the canvas ceiling below, because the point is fidelity, not file size. */
-var JPG_SCALE = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
+/* BACK TO 1:1, ASKED FOR PLAINLY: "return the wide ones full data".
+
+   Scaling by the device ratio is defensible in theory and it costs the thing that matters: on a
+   handset at 2x or 3x the file is two or three times the report, and a viewer opening it at
+   actual size shows a corner of it. 1:1 is the only setting where every report, at every width,
+   opens whole -- and whole is worth more than sharp. */
+var JPG_SCALE = 1;
 var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;'
   + 'max-width:none !important;}'
   + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}'
