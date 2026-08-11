@@ -1484,8 +1484,39 @@ export async function reportCoreForPortal(db, user, { from, to, team, leader, us
      risking two answers about which team somebody is on. */
   const wantUser = String(user_ || '').trim();
   if (wantUser) {
-    const theirTeams = new Set((out.byDay || [])
-      .filter(r => K(r.officer) === K(wantUser)).map(r => K(r.team)).filter(Boolean));
+    /* =====================================================================================
+       A PERSON'S TEAMS ARE THE TEAMS THEY HOLD, NOT THE TEAMS THEIR CALLS LANDED ON.
+
+         "teams - loaded single team ... it loaded just dodoma for Betty instead of all her
+          assigned teams"
+
+       This built the set from the report's OWN rows -- the teams a call happened to be filed
+       under during the window asked for. A call is stamped with the officer's home team at the
+       moment it syncs, so somebody who leads eleven teams and whose own calls all landed on
+       Dodoma resolved to Dodoma, and the report about her book showed a eleventh of it.
+
+       Her book is what she HOLDS, and the system already knows it in two places: the teams
+       table's role columns (a leader named in gmo/manager/recovery/credit/... on a team holds
+       that team) and her own registration -- the home team, plus the teams her access code
+       carries if she signed in as a leader.
+
+       All three are taken together. The call-derived teams stay in the union rather than being
+       replaced by it: somebody who worked a team they do not formally hold still worked it, and
+       dropping that would be a different way of showing less than the truth. */
+    const held = new Set();
+    Object.keys(teamsOf[K(wantUser)] || {}).forEach(t => { const k = K(t); if (k) held.add(k); });
+    /* One small read, by name, for the registration. `ilike` because a name typed into a search
+       box is not going to match the stored capitalisation, and this is the same person either
+       way. */
+    const reg = await fetchAll(() => db.from('call_users')
+      .select('team, leader_teams').ilike('name', wantUser));
+    for (const r of (reg || [])) {
+      const k = K(r.team); if (k) held.add(k);
+      for (const t of (r.leader_teams || [])) { const x = K(t); if (x && x !== 'ALL') held.add(x); }
+    }
+    const theirTeams = new Set(held);
+    (out.byDay || []).filter(r => K(r.officer) === K(wantUser))
+      .forEach(r => { const k = K(r.team); if (k) theirTeams.add(k); });
     const mate = r => theirTeams.has(K(r.team));
     if (theirTeams.size) {
       out.users = (out.users || []).filter(mate);

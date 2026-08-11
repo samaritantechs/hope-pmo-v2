@@ -5517,3 +5517,62 @@ test('a switched-off account is not offered', async () => {
   const r = await portalApi(db, ADMIN, 'callOfficers', { q: 'SWITCHED' }, NOW);
   assert.equal(r.rows.length, 0, 'an account an admin turned off is not somebody to report on');
 });
+
+/* =====================================================================================
+   A PERSON'S TEAMS ARE THE TEAMS THEY HOLD, NOT THE TEAMS THEIR CALLS LANDED ON.
+   =====================================================================================
+     "teams - loaded single team ... it loaded just dodoma for Betty instead of all her
+      assigned teams"
+
+   A call is stamped with the officer's home team at the moment it syncs. Building the set from
+   the report's own rows therefore resolved a leader of eleven teams down to the one her own
+   calls happened to land on, and the report about her book showed an eleventh of it.
+   ===================================================================================== */
+test('picking a leader reports every team they hold, not the one their calls landed on', async () => {
+  const t = tables();
+  /* BETTY leads three teams on the teams table. Her own calls all land on DODOMA, because that
+     is the team her handset is registered to. */
+  t.teams = [
+    { team: 'DODOMA', manager: 'BETTY M', recovery: 'R1' },
+    { team: 'SINGIDA', manager: 'BETTY M', recovery: 'R2' },
+    { team: 'TABORA', gmo: 'BETTY M', recovery: 'R3' },
+    { team: 'MBEYA', manager: 'SOMEBODY ELSE', recovery: 'R4' },
+  ];
+  t.call_users = [
+    { user_id: 'b1', name: 'BETTY M', team: 'DODOMA', role: 'MANAGER', is_leader: true, leader_teams: null },
+    { user_id: 'o1', name: 'OFFICER SINGIDA', team: 'SINGIDA', role: 'OFFICER' },
+    { user_id: 'o2', name: 'OFFICER MBEYA', team: 'MBEYA', role: 'OFFICER' },
+  ];
+  t.call_logs = [
+    { id: 'c1', user_id: 'b1', officer: 'BETTY M', team: 'DODOMA', call_date: TODAY, duration: 60, portfolio: true, category: 'EXPECTED', outcome: 'CONNECTED' },
+    { id: 'c2', user_id: 'o1', officer: 'OFFICER SINGIDA', team: 'SINGIDA', call_date: TODAY, duration: 30, portfolio: true, category: 'EXPECTED', outcome: 'CONNECTED' },
+    { id: 'c3', user_id: 'o2', officer: 'OFFICER MBEYA', team: 'MBEYA', call_date: TODAY, duration: 30, portfolio: true, category: 'EXPECTED', outcome: 'CONNECTED' },
+  ];
+  const db = fakeDb(t);
+  const d = await portalApi(db, ADMIN, 'callReport',
+    { from: TODAY, to: TODAY, user: 'BETTY M' }, NOW);
+
+  const got = (d.userTeams || []).map(x => String(x).toUpperCase()).sort();
+  assert.deepEqual(got, ['DODOMA', 'SINGIDA', 'TABORA'],
+    'all three she holds -- not just the one her own calls landed on');
+  assert.ok(!got.includes('MBEYA'), 'and not a team that is somebody else\'s');
+
+  /* And the officers under her come with it: her patch, which is the question being asked. */
+  const names = (d.users || []).map(u => u.name).sort();
+  assert.ok(names.includes('OFFICER SINGIDA'), 'the officer on a team she holds is in her report');
+  assert.ok(!names.includes('OFFICER MBEYA'), 'the officer on somebody else\'s team is not');
+});
+
+test('a plain officer still resolves to their own team', async () => {
+  /* The half that must not move: somebody who holds no role column anywhere is their home team
+     plus wherever they actually worked, and nothing more. */
+  const t = tables();
+  t.teams = [{ team: 'DODOMA', manager: 'BETTY M' }, { team: 'SINGIDA', manager: 'BETTY M' }];
+  t.call_users = [{ user_id: 'o1', name: 'PLAIN OFFICER', team: 'DODOMA', role: 'OFFICER' }];
+  t.call_logs = [{ id: 'c1', user_id: 'o1', officer: 'PLAIN OFFICER', team: 'DODOMA',
+    call_date: TODAY, duration: 60, portfolio: true, category: 'EXPECTED', outcome: 'CONNECTED' }];
+  const db = fakeDb(t);
+  const d = await portalApi(db, ADMIN, 'callReport',
+    { from: TODAY, to: TODAY, user: 'PLAIN OFFICER' }, NOW);
+  assert.deepEqual((d.userTeams || []).map(x => String(x).toUpperCase()), ['DODOMA']);
+});

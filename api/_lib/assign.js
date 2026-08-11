@@ -1,4 +1,5 @@
 import { num } from './recovery.js';
+import { fetchAll } from './supabase.js';
 
 /** The rotation engine, in its own module because BOTH the portal and the calls app decide
     who owns a defaulter today, and routing that through portal-core closed an import cycle.
@@ -46,10 +47,26 @@ export function assignFor(rec, strat, nowMs) {
   return { phase: 'ACTIVE', role: strat.active[(b - 1) % strat.active.length], label: 'D' + d };
 }
 
+/* FIVE SETTINGS, ONE JOURNEY.
+
+   This asked for each key on its own -- five separate round trips to a table that holds a few
+   dozen rows -- and did it on EVERY Exp.Def report, every Exp.Def list and every assignments
+   screen. Measured on a forty-team book, `settings` was the most-read table on three screens,
+   five times each, and every one of those five carried a single value.
+
+   Parallel made it look free and it is not: five concurrent requests per screen, times the
+   screens, times the people on them, is exactly the multiplied concurrency that exhausted the
+   connection pool once before. One `in` query returns all five, and the codebase has had
+   settingsMany for this since the phone's boot was cut from ten trips to four.
+
+   ONE READ, and the same five defaults as before if the table has none of them. */
 export async function assignStrategy(db) {
-  const get = async k => { const { data } = await db.from('settings').select('value').eq('key', k).maybeSingle(); return data && data.value; };
-  const [a, c, e, g, b] = await Promise.all([get('ASSIGN_ACTIVE'), get('ASSIGN_CHRONIC'),
-    get('ASSIGN_EXPIRED'), get('ASSIGN_GRACE_WEEKS'), get('ASSIGN_BUCKET_DAYS')]);
+  const rows = await fetchAll(() => db.from('settings').select('key, value')
+    .in('key', ['ASSIGN_ACTIVE', 'ASSIGN_CHRONIC', 'ASSIGN_EXPIRED', 'ASSIGN_GRACE_WEEKS', 'ASSIGN_BUCKET_DAYS']));
+  const by = {};
+  for (const r of (rows || [])) by[String(r.key)] = r.value;
+  const a = by.ASSIGN_ACTIVE, c = by.ASSIGN_CHRONIC, e = by.ASSIGN_EXPIRED,
+        g = by.ASSIGN_GRACE_WEEKS, b = by.ASSIGN_BUCKET_DAYS;
   return {
     active: parseRoles(a, ['BIKE', 'MANAGER', 'GMO']),
     chronic: parseRoles(c, ['BIKE', 'GMO', 'MANAGER']),
