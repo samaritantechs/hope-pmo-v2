@@ -822,6 +822,16 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
   if (total === 1) return post({ code: code, type: type, meta: meta, rows: rows });
 
   var inserted = 0;
+  /* THE WORKING-LIST COUNT IS A TOTAL TOO, and reading it off the last slice is what made a
+     fixed upload still look broken:
+
+       "Done — 8888 row(s) ... Officers' working list rebuilt: 888 customer(s)"
+
+     Every slice now writes its own customers into the register -- that is the fix that stopped
+     eight thousand being retired every upload -- but each slice is its own HTTP request with
+     its own answer, and this took the LAST one's number as the file's. 888 is the size of the
+     final slice, not the size of the failure. Summed, like the row count beside it. */
+  var synced = 0;
   var step = function(i){
     if (onProgress) onProgress(i, total);
     var slice = [header].concat(data.slice(i * UPLOAD_SLICE_ROWS, (i + 1) * UPLOAD_SLICE_ROWS));
@@ -840,10 +850,12 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
           throw e;
         }
         inserted += (res.body.inserted || 0);
+        synced += (res.body.followupSynced || 0);
         if (i + 1 >= total) {
-          // The last slice's answer is the file's answer -- it is the one that rebuilt the
-          // working list and moved the phones' stamp -- but the row count is the whole file's.
+          // The last slice's answer is the file's answer -- it is the one that did the retiring
+          // and moved the phones' stamp -- but the COUNTS belong to the whole file.
           res.body.inserted = inserted;
+          if (synced) res.body.followupSynced = synced;
           if (onProgress) onProgress(total, total);
           return res;
         }
