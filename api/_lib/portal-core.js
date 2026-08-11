@@ -364,8 +364,23 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
     batch: rows.length ? (rows[0].upload_batch || 'legacy') : null, perTeam: true };
 }
 
-async function rebuildFollowup(db, user, _args, nowMs) {
+/* HOW MUCH ONE CALL MAY PUT RIGHT.
+
+   The repair used to run inside the upload's last slice and took it past the platform's sixty
+   seconds -- "uploading now fails at 4/5 ... HTTP 504". Taking it off the upload fixed that and
+   left a worse hole: the Settings button had already been removed, so the repair became
+   reachable from NOWHERE, and every weekday whose deck had not been re-uploaded since stayed
+   blanked with no way to correct it. Customers still invisible, and this time because of me.
+
+   So it is its own request, and BOUNDED. A call fixes at most this many customers and says how
+   many are left; the caller rings again until none are. Resumable beats fast here -- a repair
+   that half-finishes and can be continued is worth more than one that must fit in a single
+   window and fails whole when it does not. */
+const FU_REPAIR_MAX = 2000;
+
+async function rebuildFollowup(db, user, args, nowMs) {
   requireAdmin(user);
+  const cap = Math.max(1, Math.min(FU_REPAIR_MAX, parseInt(String((args && args.max) || FU_REPAIR_MAX), 10) || FU_REPAIR_MAX));
   const today = todayKey(nowMs);
   const [deck, have] = await Promise.all([
     defaulterBook(db, user, { type: 'current', notAfter: today, columns: 'ref, full_name, contact, guarantor_name, guarantor_contact, '
@@ -387,8 +402,8 @@ async function rebuildFollowup(db, user, _args, nowMs) {
   const missing = deckRows.filter(r => !known.has(K(r.ref)));
   const blanked = deckRows.filter(r => known.has(K(r.ref)) && blank.has(K(r.ref)));
   if (!missing.length && !blanked.length) {
-    return { deck: deck.rows.length, register: known.size, added: 0, restored: 0, date: deck.date,
-      weekdays: deck.weekdays,
+    return { deck: deck.rows.length, register: known.size, added: 0, restored: 0, remaining: 0,
+      done: true, date: deck.date, weekdays: deck.weekdays,
       note: 'Kila mteja wa deki yupo kwenye rejista. / Every customer in the current deck is '
         + 'already in the follow-up register — the phone is seeing the same book as the portal.' };
   }
@@ -422,16 +437,22 @@ async function rebuildFollowup(db, user, _args, nowMs) {
      skipped rather than overwriting somebody's follow-up work. The RESTORES are the opposite by
      definition -- the row is known to be there and putting its figures back is the entire job --
      so they are written as a real update of the deck columns. */
-  const added = await write(missing, true);
-  const restored = await write(blanked, false);
+  /* The cap is spent on what is MISSING first and what is BLANKED second, because a customer
+     with no row at all is invisible to more of the system than one whose figures were cleared. */
+  const doMissing = missing.slice(0, cap);
+  const doBlanked = blanked.slice(0, Math.max(0, cap - doMissing.length));
+  const remaining = (missing.length - doMissing.length) + (blanked.length - doBlanked.length);
+  const added = await write(doMissing, true);
+  const restored = await write(doBlanked, false);
   const parts = [];
   if (added) parts.push(`${added} customer(s) were in the current deck but missing from the `
     + 'follow-up register, so HOPE Calls could not show them at all.');
   if (restored) parts.push(`${restored} were in the register but BLANKED — their status and arrears `
     + 'had been cleared by a retirement sweep even though the current deck still names them, which '
     + 'is why they were on no phone. Their figures are back.');
-  return { deck: deck.rows.length, register: known.size, added, restored, date: deck.date,
-    weekdays: deck.weekdays,
+  if (remaining) parts.push(`${remaining} still to go — run again to continue.`);
+  return { deck: deck.rows.length, register: known.size, added, restored, remaining,
+    done: !remaining, date: deck.date, weekdays: deck.weekdays,
     note: `Wamerudishwa ${added + restored}. / ` + parts.join(' ')
       + ' No follow-up status, promise or comment was changed.' };
 }
