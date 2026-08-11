@@ -1135,8 +1135,24 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
        ceiling   1100px on the things that are prose, so a long note cannot do it again */
   + '.jpgshot .card-h{display:block !important;white-space:normal !important;}'
   + '.jpgshot .card-h .sub{display:block !important;margin-left:0 !important;}'
-  + '.jpgshot table{width:-moz-max-content !important;width:max-content !important;max-width:100% !important;}'
-  + '.jpgshot .card,.jpgshot .card-h,.jpgshot .note,.jpgshot .msg,.jpgshot .tblfoot{max-width:1100px !important;}';
+  + '.jpgshot table{width:-moz-max-content !important;width:max-content !important;}'
+
+  /* EVERY REPORT IS ITS OWN WIDTH, AND CAPPING THEM ALL AT ONE NUMBER CUTS THE WIDE ONES OFF.
+
+       "Every JPG have their own size, keeping them at one may result like this"
+
+     Exactly right, and it was mine: a flat 1,100px ceiling on the CARD, with the table held to
+     100% of it, drew a board whose eighth column was simply not in the picture. REQUESTED ended
+     mid-number. A report that is cut off is worse than one that is wide -- wide can be zoomed,
+     missing cannot be recovered.
+
+     So nothing that carries FIGURES is capped. The cap belongs only on the things made of
+     SENTENCES, because a sentence has no natural width -- it is one line as long as you let it
+     be, and that is what was setting a three-and-a-half-thousand pixel picture in the first
+     place. A heading wraps at a readable measure; the board beneath it is then exactly as wide
+     as its own columns need, whatever number that turns out to be, and every report gets its
+     own size. */
+  + '.jpgshot .card-h,.jpgshot .note,.jpgshot .msg,.jpgshot .hint{max-width:820px !important;}';
 
 function saveJpg(el){
   if (!el){ toast(t('nothing'), true); return; }
