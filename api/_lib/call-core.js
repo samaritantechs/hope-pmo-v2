@@ -1039,9 +1039,32 @@ async function phoneIndexCompute(db, nowMs, today) {
     if (!d || byNum[d]) return;               // first add wins -- customers are added before guarantors
     byNum[d] = { K: d, N: name || '', R: ref || '', T: team || '', C: role, S: src || '' };
   };
-  fu.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'DEF'));
+  /* =====================================================================================
+     A CUSTOMER ON TODAY'S COLLECTION LIST IS A COLLECTION CALL, EVEN IF THEY ALSO OWE.
+
+       "Simu zangu zinaenda upande wa defaulter"   -- CATHERINE, PMO COLLECTION, 34 teams
+       Ripoti: 258 calls, Expected 8, Defaulter 229
+
+     `add` is first-add-wins, and the follow-up REGISTER was added before today's expected
+     sheet. So any customer who appears in both -- and most do, because the register is the
+     standing book of everyone who has ever fallen behind -- was stamped DEF, and every call to
+     them counted as a defaulter call. A collection officer working Leo all morning therefore
+     read as somebody chasing defaulters.
+
+     It got worse the moment the register was repaired. While the upload was only writing one
+     slice of the deck, the register held a fraction of the book and most numbers fell through
+     to EXP by accident. Filling it properly -- which was the right fix -- moved almost
+     everybody to DEF. Her 229 is the size of that.
+
+     TODAY'S SHEET WINS, and the reason is what the two lists MEAN. The register is standing:
+     a customer sits in it for weeks. The expected sheet is TODAY -- this person has a payment
+     due now, which is why they are on a phone today. Being behind as well does not change what
+     the call was for.
+
+     Customers still go in before guarantors; that ordering is separate and unchanged. */
   eT.rows.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'EXP'));
   eM.rows.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'EXP'));
+  fu.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'DEF'));
   const refName = {}, refTeam = {}, refSrc = {};
   Object.values(byNum).forEach(o => { if (o.R) { refName[o.R] = o.N; refTeam[o.R] = o.T; refSrc[o.R] = o.S; } });
   cm.forEach(r => {
@@ -1050,9 +1073,9 @@ async function phoneIndexCompute(db, nowMs, today) {
     const ref = String(r.ref || '');
     add(nn, refName[ref] || r.full_name || '', ref, refTeam[ref] || r.team, 'C', refSrc[ref] || 'DEF');
   });
-  fu.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'DEF'));
   eT.rows.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'EXP'));
   eM.rows.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'EXP'));
+  fu.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'DEF'));
   return byNum;
 }
 const OUTCOMES = { CONNECTED: 1, MISSED: 1, REJECTED: 1, BLOCKED: 1 };

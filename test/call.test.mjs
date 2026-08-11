@@ -1455,3 +1455,73 @@ test('a deployment with nothing uploaded yet reports an empty version, not a wro
   const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
   assert.equal(d.dataVersion, '');
 });
+
+/* =====================================================================================
+   A CUSTOMER ON TODAY'S COLLECTION LIST IS A COLLECTION CALL, EVEN IF THEY ALSO OWE.
+   =====================================================================================
+     "Simu zangu zinaenda upande wa defaulter"  -- CATHERINE, PMO COLLECTION, 34 teams
+     Her Ripoti row: 258 calls, Expected 8, Defaulter 229.
+
+   The phone index is first-add-wins, and the follow-up REGISTER was added before today's
+   expected sheet. Most customers are in both -- the register is the standing book of everyone
+   who has ever fallen behind -- so they were stamped DEF, and a collection officer working Leo
+   all morning read as somebody chasing defaulters.
+
+   It got worse the moment the register was repaired: while the upload wrote only one slice of
+   the deck, most numbers fell through to EXP by accident. Filling it properly moved almost
+   everybody to DEF. Her 229 is the size of that.
+   ===================================================================================== */
+test('a customer on today\'s sheet AND in the register counts as a collection call', async () => {
+  /* Ref 111 is on today's expected sheet in the fixture. Put the same person in the register
+     too, which is the ordinary state of a customer who is behind AND has a payment due. */
+  const t = makeTables();
+  t.followup_status = [{ ref: '111', team: 'KONGOWE', full_name: 'AMINA H',
+    contact: '0712000001', status: 'Defaulter', arrears: 4000 }];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+
+  const log = db._dump('call_logs').find(r => r.phone === '712000001');
+  assert.ok(log, 'the call was recorded');
+  assert.equal(log.category, 'EXPECTED',
+    'she was called because a payment is due today, not because she is behind');
+});
+
+test('somebody ONLY in the register is still a defaulter call', async () => {
+  /* The other half, and the one that must not be traded away: a customer with nothing due
+     today, called because they owe, is a defaulter call. */
+  const t = makeTables();
+  t.followup_status = [{ ref: '999', team: 'KONGOWE', full_name: 'OWES ONLY',
+    contact: '0712555555', status: 'Defaulter', arrears: 9000 }];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 45, dir: 'out', num: '0712555555' }]], NOW);
+
+  const log = db._dump('call_logs').find(r => r.phone === '712555555');
+  assert.ok(log, 'the call was recorded');
+  assert.equal(log.category, 'DEFAULTER');
+});
+
+test('the Ripoti board splits a collection officer\'s calls the way they were worked', async () => {
+  /* Catherine's row read 258 calls, Expected 8, Defaulter 229. This is that board, in miniature:
+     two customers due today and one who merely owes, and the split has to follow the work. */
+  const t = makeTables();
+  t.followup_status = [
+    { ref: '111', team: 'KONGOWE', full_name: 'AMINA H', contact: '0712000001', status: 'Defaulter', arrears: 4000 },
+    { ref: '222', team: 'KONGOWE', full_name: 'PILI S', contact: '0712000002', status: 'Defaulter', arrears: 2000 },
+    { ref: '999', team: 'KONGOWE', full_name: 'OWES ONLY', contact: '0712555555', status: 'Defaulter', arrears: 9000 },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [
+    { ts: T1, dur: 60, dir: 'out', num: '0712000001' },
+    { ts: T1 + 60000, dur: 30, dir: 'out', num: '0712000002' },
+    { ts: T1 + 120000, dur: 45, dir: 'out', num: '0712555555' },
+  ]], NOW);
+
+  const d = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW);
+  const u = d.users.find(x => x.name === 'JUMA ISSA');
+  assert.equal(u.expected, 2, 'both customers due today are collection calls');
+  assert.equal(u.defaulter, 1, 'and the one who only owes is not');
+});
