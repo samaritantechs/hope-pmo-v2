@@ -748,10 +748,44 @@ export default withApi(async (req, res) => {
      Rebuilding it compares who is on the deck against who is on the list, and retires the ones
      the deck no longer names. Run against slice one of twelve, "the deck no longer names them"
      is true of eleven twelfths of the book. */
+  /* =====================================================================================
+     THE SYNC WAS ONLY EVER SEEING THE LAST SLICE OF THE FILE.
+
+       initial:  "Done — 8888 row(s) into defaulter_snapshots."
+       current:  "Done — 8888 row(s) ... Officers' working list rebuilt: 888 customer(s) ...
+                  7977 customer(s) no deck has confirmed were taken off the officers' list."
+
+     Eight thousand eight hundred and eighty-eight rows in, eight hundred and eighty-eight out.
+     That is not a coincidence and it is not a rounding: a file is uploaded a THOUSAND ROWS AT A
+     TIME, and this ran on `records` -- the variable holding the CURRENT SLICE. On the last part
+     that is whatever is left over, here 888.
+
+     So every current-defaulter upload wrote the whole deck to defaulter_snapshots correctly, put
+     one slice of it into the officers' register, and then -- because the other 8,000 were "not
+     in the deck" as far as this could see -- RETIRED THEM. Seven thousand nine hundred and
+     seventy-seven customers blanked, on every single upload, by the upload itself.
+
+     That is the whole complaint, in one line of arithmetic. Every read path I have been through
+     was working; the register they all depend on was being emptied on the way in.
+
+     THE WRITE NEEDS NO SLICE AND NO MERGE. It is split in two:
+
+       every part   writes ITS OWN rows, deck columns only. A PostgREST upsert updates exactly
+                    the columns in the payload, so leaving fu_status, the promise and the
+                    comment OUT of it preserves them by construction -- which also means the
+                    whole existing register no longer has to be read and merged in memory to
+                    protect them. Cheaper AND safer than what it replaced.
+       last part    does the retiring, against the refs of THIS WHOLE UPLOAD BATCH read back
+                    from the table -- one column, so the file's own size is no longer the thing
+                    that decides who gets retired.
+     ===================================================================================== */
   let followupSynced = 0, followupRetired = 0, followupStaleCapped = 0;
+  if (type === 'defaulters-current') {
+    followupSynced = await writeFollowupFromDeck(supabase, records, meta.date);
+  }
   if (type === 'defaulters-current' && isLastPart) {
-    const fu = await syncFollowupFromDeck(supabase, records, meta.weekday, uploadBatch, meta.date);
-    followupSynced = fu.synced; followupRetired = fu.retired; followupStaleCapped = fu.staleCapped;
+    const fu = await retireFollowupAfterDeck(supabase, meta.weekday, uploadBatch, meta.date);
+    followupRetired = fu.retired; followupStaleCapped = fu.staleCapped;
   }
 
   // "Inserted 412" says nothing about whether a second upload of the same file doubles the
@@ -964,6 +998,99 @@ const FU_STALE_DAYS = 14;
 /** The most of the working list one upload may retire on age alone, as a fraction. Above this
     it retires nobody and reports the number instead -- see the brake in syncFollowupFromDeck. */
 const FU_RETIRE_CAP = 0.35;
+
+/** WRITE ONE SLICE OF A DECK INTO THE REGISTER. No reads, no merge, no retiring.
+ *
+ *  The old version read the WHOLE register first so it could copy fu_status, the promise and
+ *  the comment back onto every row -- protecting the officers' work by rewriting it. That was
+ *  never necessary: PostgREST's upsert updates exactly the columns the payload carries, so
+ *  simply NOT MENTIONING those columns preserves them, on a row that already exists, without
+ *  reading anything. On a genuinely new customer they are absent, which is correct.
+ *
+ *  Dropping that read is what makes this safe to run on EVERY slice: the cost is proportional
+ *  to the slice, not to the register, so a nine-part upload no longer pays for nine full reads
+ *  of the largest current-state table in the system. */
+export async function writeFollowupFromDeck(db, records, deckDate) {
+  const rows = (records || []).filter(d => d && d.ref).map(d => ({
+    ref: String(d.ref), team: d.team || null, full_name: d.full_name || null,
+    contact: d.contact || null,
+    guarantor_name: d.guarantor_name || null, guarantor_contact: d.guarantor_contact || null,
+    disb_date: d.disb_date || null, last_trans: d.last_trans_date || null,
+    status: d.status || null, ds: d.ds || null, dc: d.dc == null ? null : d.dc,
+    days_elapsed: d.days_elapsed == null ? null : d.days_elapsed,
+    rejesho: d.other_inst == null ? null : d.other_inst,
+    arrears: d.arrears == null ? null : d.arrears,
+    deck_date: deckDate || null,
+    updated_at: new Date().toISOString(),
+  }));
+  if (!rows.length) return 0;
+  try {
+    return await writeInChunks(db, 'followup_status', rows, 'ref');
+  } catch (e) {
+    /* deck_date arrived in a migration that is run by hand. A database without it must still
+       get its register written -- the stamp is what the retirement clock reads, and losing the
+       stamp is a smaller failure than losing the customer. */
+    if (!/deck_date/.test(String((e && e.message) || e))) throw e;
+    for (const r of rows) delete r.deck_date;
+    return writeInChunks(db, 'followup_status', rows, 'ref');
+  }
+}
+
+/** THE RETIRING, ONCE, AGAINST THE WHOLE UPLOAD.
+ *
+ *  This is what was reading one slice and concluding that the other eight thousand customers
+ *  had left the book. The refs of the upload are read back from the table by batch -- ONE
+ *  column, so it costs a fraction of what re-sending the file would -- which makes "who is in
+ *  this deck" a fact about the DECK rather than about however the browser happened to slice it.
+ */
+export async function retireFollowupAfterDeck(db, weekday, uploadBatch, deckDate) {
+  const mine = await fetchAll(() => db.from('defaulter_snapshots').select('ref')
+    .eq('snapshot_type', 'current').eq('upload_batch', uploadBatch));
+  const inDeck = new Set((mine || []).map(r => String(r.ref).trim().toUpperCase()));
+  if (!inDeck.size) return { retired: 0, staleCapped: 0 };
+
+  let stamped = true, existing = null;
+  const cols = 'ref, updated_at';
+  try {
+    existing = await fetchAll(() => db.from('followup_status').select(cols + ', deck_date, status, arrears'));
+  } catch (e) {
+    if (!/deck_date/.test(String((e && e.message) || e))) throw e;
+    stamped = false;
+    existing = await fetchAll(() => db.from('followup_status').select(cols + ', status, arrears'));
+  }
+
+  /* Only the people who were on THIS WEEKDAY'S previous deck are candidates. Somebody whose
+     follow-up day is Thursday is not "gone" because Monday's file does not mention them. */
+  const wasHere = await prevWeekdayDeck(db, weekday, uploadBatch);
+  const leftThisWeekday = new Set(!wasHere ? [] : (existing || [])
+    .map(r => String(r.ref).trim().toUpperCase())
+    .filter(k => wasHere.has(k) && !inDeck.has(k)));
+
+  const confirmedOn = r => String((stamped && r.deck_date) || r.updated_at || '').slice(0, 10);
+  const cutoff = deckDate ? addDays_(deckDate, -FU_STALE_DAYS) : null;
+  let staleRefs = !cutoff ? [] : (existing || [])
+    .filter(r => { const d = confirmedOn(r); return d && d < cutoff; })
+    .map(r => String(r.ref).trim().toUpperCase())
+    .filter(k => !inDeck.has(k) && !leftThisWeekday.has(k));
+
+  /* THE BRAKE, and it should have caught this. It only ever guarded the STALE half, so the
+     eight thousand retired as "left this weekday" went through untouched. It now weighs the
+     whole retirement: nothing that can empty most of the officers' working list in one upload
+     may do it quietly, whichever rule produced it. */
+  const live = (existing || []).filter(r => !(r.status == null && r.arrears == null)).length;
+  let retireSet = new Set([...leftThisWeekday, ...staleRefs]);
+  const capAt = Math.max(50, Math.floor(live * FU_RETIRE_CAP));
+  let staleCapped = 0;
+  if (retireSet.size > capAt) { staleCapped = retireSet.size; retireSet = new Set(); }
+
+  const gone = (existing || [])
+    .filter(r => retireSet.has(String(r.ref).trim().toUpperCase()))
+    .map(r => ({ ref: r.ref, status: null, arrears: null,
+      ...(stamped ? { deck_date: null } : {}),
+      updated_at: new Date().toISOString() }));
+  if (gone.length) await writeInChunks(db, 'followup_status', gone, 'ref');
+  return { retired: gone.length, staleCapped };
+}
 
 export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, deckDate) {
   const refs = records.map(r => String(r.ref)).filter(Boolean);

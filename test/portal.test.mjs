@@ -5359,3 +5359,99 @@ test('a register needing nothing reports done, and writes nothing', async () => 
   assert.equal(r.added + r.restored, 0);
   assert.equal(db._dump('followup_status')[0].fu_status, 'AMETOA AHADI', 'and touched nobody');
 });
+
+/* =====================================================================================
+   8,888 IN, 888 OUT: THE UPLOAD WAS EMPTYING THE REGISTER ON THE WAY IN.
+   =====================================================================================
+   The owner's own upload result, and it is the whole diagnosis in three lines:
+
+     "Done — 8888 row(s) into defaulter_snapshots."
+     "Officers' working list rebuilt: 888 customer(s) now visible..."
+     "7977 customer(s) no deck has confirmed were taken off the officers' working list."
+
+   A file is uploaded A THOUSAND ROWS AT A TIME. The register sync ran on `records` -- the
+   CURRENT SLICE -- so on the last part it saw 888 customers, wrote those, and retired the other
+   eight thousand for not being in "the deck".
+
+   Every read path had been searched. The register they all depend on was being emptied by the
+   upload itself, once per upload, and reporting it as a tidy-up.
+   ===================================================================================== */
+test('a deck uploaded in slices puts EVERY customer on the working list, not the last slice', async () => {
+  const { writeFollowupFromDeck, retireFollowupAfterDeck } = await import('../api/upload.js');
+  const deck = [];
+  for (let i = 0; i < 2500; i++) {
+    deck.push({ ref: 'R' + i, full_name: 'C' + i, team: 'KONGOWE', status: 'Defaulter',
+      arrears: 1000 + i, ds: '2-4', other_inst: 500 });
+  }
+  const snaps = deck.map((d, i) => ({ id: 's' + i, ref: d.ref, team: 'KONGOWE',
+    snapshot_type: 'current', weekday: 'MON', snapshot_date: TODAY,
+    upload_batch: 'NEW', created_at: TODAY + 'T06:00:00Z' }));
+  const db = fakeDb({ ...tables(), defaulter_snapshots: snaps, followup_status: [] });
+
+  // Exactly how the page sends it: a thousand at a time, the last slice short.
+  let wrote = 0;
+  for (let i = 0; i < deck.length; i += 1000) {
+    wrote += await writeFollowupFromDeck(db, deck.slice(i, i + 1000), TODAY);
+  }
+  assert.equal(wrote, 2500, 'every slice writes its own rows');
+
+  const reg = db._dump('followup_status');
+  assert.equal(reg.length, 2500, `the whole deck is on the working list, not the last 500: ${reg.length}`);
+
+  // And the retiring, run once at the end, must not retire anybody in this upload.
+  const r = await retireFollowupAfterDeck(db, 'MON', 'NEW', TODAY);
+  assert.equal(r.retired, 0, 'nobody in the deck just uploaded is "no longer in the deck"');
+  const live = db._dump('followup_status').filter(x => !(x.status == null && x.arrears == null));
+  assert.equal(live.length, 2500, 'and all of them are visible to a handset');
+});
+
+test('an officer\'s own work survives the write without the register being read at all', async () => {
+  /* The old sync read the WHOLE register so it could copy fu_status, the promise and the
+     comment back onto every row -- protecting them by rewriting them. Leaving those columns out
+     of the payload preserves them by construction, which is both safer and what makes running
+     this on every slice affordable. */
+  const { writeFollowupFromDeck } = await import('../api/upload.js');
+  const db = fakeDb({ ...tables(), followup_status: [
+    { ref: 'R1', team: 'KONGOWE', full_name: 'OLD NAME', status: null, arrears: null,
+      fu_status: 'AMETOA AHADI', promise_date: TODAY, promise_amt: 5000,
+      last_comment: 'ataleta Ijumaa', comment_by: 'JUMA G', updated_at: '2026-07-01T00:00:00Z' },
+  ] });
+  await writeFollowupFromDeck(db, [{ ref: 'R1', full_name: 'ESTER PETER OMARY', team: 'KONGOWE',
+    status: 'Partial Defaulter', arrears: 1766336, ds: '2-4' }], TODAY);
+  const row = db._dump('followup_status')[0];
+  assert.equal(row.arrears, 1766336, 'the deck figures are refreshed');
+  assert.equal(row.status, 'Partial Defaulter');
+  assert.equal(row.full_name, 'ESTER PETER OMARY');
+  assert.equal(row.fu_status, 'AMETOA AHADI', 'and not one thing the officer typed was touched');
+  assert.equal(row.promise_amt, 5000);
+  assert.equal(row.last_comment, 'ataleta Ijumaa');
+  assert.equal(row.comment_by, 'JUMA G');
+});
+
+test('the brake now weighs the WHOLE retirement, not only the stale half', async () => {
+  /* It should have caught this and did not: it only ever guarded the stale rule, so eight
+     thousand retired as "left this weekday" went through untouched. Nothing that can empty most
+     of the officers' working list in one upload may do it quietly, whichever rule produced it. */
+  const { retireFollowupAfterDeck } = await import('../api/upload.js');
+  const reg = [], snaps = [];
+  for (let i = 0; i < 300; i++) {
+    reg.push({ ref: 'R' + i, team: 'KONGOWE', full_name: 'C' + i, status: 'Defaulter',
+      arrears: 500, deck_date: TODAY, updated_at: TODAY + 'T06:00:00Z' });
+  }
+  /* The previous MON deck for the SAME date, in an earlier batch -- which is what
+     prevWeekdayDeck compares against, and is exactly the shape a re-upload produces. */
+  for (let i = 0; i < 300; i++) {
+    snaps.push({ id: 'o' + i, ref: 'R' + i, team: 'KONGOWE', snapshot_type: 'current',
+      weekday: 'MON', snapshot_date: TODAY, upload_batch: 'OLD', created_at: TODAY + 'T05:00:00Z' });
+  }
+  for (let i = 0; i < 5; i++) {
+    snaps.push({ id: 'n' + i, ref: 'R' + i, team: 'KONGOWE', snapshot_type: 'current',
+      weekday: 'MON', snapshot_date: TODAY, upload_batch: 'NEW', created_at: TODAY + 'T06:00:00Z' });
+  }
+  const db = fakeDb({ ...tables(), defaulter_snapshots: snaps, followup_status: reg });
+  const r = await retireFollowupAfterDeck(db, 'MON', 'NEW', TODAY);
+  assert.equal(r.retired, 0, 'retiring 295 of 300 is not a tidy-up, it is a fault');
+  assert.equal(r.staleCapped, 295, 'and the number is reported instead');
+  const live = db._dump('followup_status').filter(x => !(x.status == null && x.arrears == null));
+  assert.equal(live.length, 300, 'the working list is exactly as it was');
+});
