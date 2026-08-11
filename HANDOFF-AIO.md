@@ -1,315 +1,195 @@
-# HOPE PMO v2 — All-in-one handoff
+# HOPE PMO — the whole system in one file
 
-**Everything about this system, in one file.** Written so the owner can read it without knowing
-any programming language, and so a developer hired in two years can pick it up from here alone.
+Written for the person who owns it, not for a programmer. If you read one file, read this one.
 
-Last updated: **10 August 2026** · **451 tests passing** · Live on Vercel + Supabase
-
-| If you want | Go to |
-|---|---|
-| To run it today | [§2 The daily runbook](#2--the-daily-runbook) |
-| To know it will survive 300 phones | [§4 Load, measured](#4--load-measured) |
-| Something is broken right now | [§5 When something breaks](#5--when-something-breaks) |
-| Tomorrow's meeting | [§3 Before a directors' meeting](#3--before-a-directors-meeting) |
-| The database | [§6 The data](#6--the-data) |
-| Every file | [MANIFEST.md](MANIFEST.md) |
-| The long history of every fix | [docs/HANDOFF.md](docs/HANDOFF.md) |
+Last rewritten: 11 August 2026, after the week that ended with every defaulter visible again.
 
 ---
 
-## 1 · What this is
+## 1. What this is
 
-Three products, one deployment.
+Two applications over one database.
 
-| | Where | Who | Can it be switched off? |
-|---|---|---|---|
-| **HOPE Calls** | `/call` | ~300 field officers | **Never.** An officer's day does not depend on the office. |
-| **The system portal** | `/app` | office, leaders, admin | **Yes** — the open/closed switch |
-| **HOPE Live** | `/live` | a wall display, no login | Yes, with the portal |
-
-Underneath: **Supabase** (PostgreSQL) and **Vercel** (runs the code). No server to maintain.
-
-### The one idea everything rests on
-
-**Uploads never overwrite. They stack.**
-
-Every upload stamps its rows with one `upload_batch` and a `snapshot_date`. Nothing is edited
-in place; nothing is deleted by an upload. So reading a figure means answering two questions:
-
-1. **Which day?** — the latest `snapshot_date`, never later than today.
-2. **Which upload of that day?** — the latest `upload_batch` **per team**.
-
-That second rule is per **team**, not per day, because a day can arrive as one company-wide
-file *or* as seventeen files, a region at a time. Resolving per day kept whichever file came
-last and silently discarded sixteen.
-
-*The honest cost:* a re-upload that **drops** a team no longer removes that team — its last
-file stands until something replaces it. A team lingering is a far smaller wrong than sixteen
-teams vanishing from a report that gives no sign they are missing.
-
----
-
-## 2 · The daily runbook
-
-1. **Upload the day's reports** (`/upload`) — Defaulters Current, Defaulters Initial, Expected
-   Today, Expected Tomorrow. Do this **before** opening the system, not after.
-2. **Check the dashboard.** The snapshot line under the KPIs names the date and batch every
-   figure came from. If it says yesterday, the upload did not land.
-3. **Open the system** if closed.
-4. **On a Monday**, press **Stamp report** on the Weekly Report once both ends of the week are in.
-
-Housekeeping runs **automatically on every upload** — same-date earlier reports retired,
-duplicates swept, **two copies kept**. Nothing to press.
-
-### The open/closed switch — your most useful lever
-
-**Settings → SYSTEM_OPEN.**
-
-| | Closed | Open |
+| | who uses it | what it is |
 |---|---|---|
-| HOPE Calls | **works, fully** | works |
-| The whole portal | refused, with a message | works |
-| **You, as admin** | **works, including upload** | works |
+| **HOPE Calls** (`/call`) | 300+ field officers, on Android | Leo, Kesho, Defaulters, Exp.Def, follow-ups, promises, the Ripoti tab |
+| **The portal** (`/portal`) | the office | dashboard, weekly report, PAR, commission, complaints, legal, teams & staff, presentations, uploads |
 
-Accepted as open: `YES` `ON` `TRUE` `1` `OPEN` (any case). **Anything else — blank, unset, a
-typo — reads as closed**, because a switch nobody set is a switch nobody meant to turn on.
-**The admin is checked before the setting is even read**, so a bad settings row can never lock
-out the one person who can fix it.
-
-**Closing sheds load instantly.** A refused request costs two or three tiny queries and stops —
-it never runs a dashboard. Takes up to 30 seconds; saving the setting clears that immediately.
-
-### Uploading
-
-- Excel and CSV, exported straight from the source system.
-- **Re-uploading a corrected file for the same day is safe and expected.**
-- **Summary uploads** (no customer list) are supported; the system keeps both the full list and
-  the summary and displays whichever is **latest**.
-- A failed upload leaves the previous one standing. Nothing is destroyed by a bad file.
-- Every upload stamps `DATA_VERSION`, which is how 300 handsets learn their figures are stale.
+No build step. `public/*.html` is served exactly as written, so a change is live the moment it
+deploys. Server logic lives in `api/_lib/`. **`npm test` is the gate — 553 tests.**
 
 ---
 
-## 3 · Before a directors' meeting
+## 2. The one thing to understand about the data
 
-- [ ] Upload **both ends of the week** — Monday's initial deck and the current one.
-- [ ] Weekly Report: Expected / Collected / **Recovered %** / **Sales %** all carry a figure.
-      Recovery reading 0% means the baseline deck is missing.
-- [ ] **Press Stamp report** — freezes the record so a later re-upload cannot rewrite what was
-      presented. Pressing again on the same week overwrites, which is the point if you corrected
-      an upload.
-- [ ] Scroll to the **leader boards** at the bottom — every named person in every role,
-      including those whose teams produced nothing.
-- [ ] Presentations: check the **week bar** shows the week you mean, then Play once.
-- [ ] Decide about the switch. Want the room on one screen rather than forty people opening the
-      portal? Close the system for the hour. Calls keeps running.
+Everything flows from **uploads**. Nothing is typed in by hand except an officer's own follow-up.
 
----
-
-## 4 · Load, measured
-
-Not estimated. Measured against a **288,000-row book**, 40 teams.
-
-### One ordinary officer, per screen
-
-**Every officer-reachable screen reads under 1,200 rows.** Heaviest is the weekly report at
-1,125. This is guarded by a test that sweeps *every* endpoint, so a screen added next month is
-covered without anybody remembering.
-
-### The phone
-
-| Request | Trips | Rows |
-|---|---|---|
-| Open the app | 5 | ~40 |
-| A list (Leo / Kesho / defaulters) | 6–7 | ~90 |
-| Exp.Def | 14 | ~70 |
-| **Sync — first handset after an upload** | 11 | ~4,000 |
-| **Sync — every handset after that** | **4** | **2** |
-| The bell | 5 | ~75 |
-
-**300 handsets, one sync cycle + 100 list loads, one warm instance:**
-**1,711 round trips · 28,700 rows · ~96 rows per handset.**
-
-### What each cache holds
-
-| What | For how long | Cleared early by |
-|---|---|---|
-| Phone number → customer index | until the next upload (5 min ceiling) | any upload (`DATA_VERSION`) |
-| "Amepigiwa leo" ticks | 30 seconds | the officer's own sync merges its calls in |
-| System open/closed | 30 seconds | saving the setting |
-| The six strip figures | 2 minutes per team scope | — |
-| Officer's lists, on the handset | 1 hour per device | pull to refresh |
-
-### The four faults that caused "postgres gets full red"
-
-| | What it did | Now |
-|---|---|---|
-| **Phone index** | whole company book, **per sync, per handset** — ~1 full scan/second all day | cached against `DATA_VERSION`; 1,513,700 rows → 28,700 |
-| **Upload panel** | four whole tables, no date filter, **on the upload page** | 1 trip, 5 rows |
-| **"Amepigiwa leo"** | every call log today, per list, **worse every hour** | one read per 30s, own calls merged |
-| **Five screens unscoped** | an officer read all forty teams | narrowed in the query |
-
-The common shape: **fetch everything, filter in JavaScript**. It is invisible in testing because
-a fortieth and a whole are the same number when the fixture has one team. That is why the guard
-now compares an officer against an admin — if they read the same, the filter is not in the query.
-
----
-
-## 5 · When something breaks
-
-### Postgres red / delay errors / uploads will not go through
-
-1. **Close the system.** Officers keep working; office load stops instantly.
-2. **Upload what you need** — you are admin, the gate does not apply to you.
-3. In Supabase → Reports, see which **table** the reads hit. Very large volumes on
-   `followup_status`, `repayment_snapshots` or `call_logs` means a cache was broken by a code
-   change — run `npm test`, the speed guards will name it.
-4. Re-open.
-
-### "The database is briefly unreachable"
-
-The honest message for a 502/503/504/522 from Supabase's edge. The code already retries
-transient failures twice. Wait a few seconds. If it lasts minutes, check Supabase for an incident.
-
-### A report shows nothing
-
-1. **The deck was never uploaded** — check the snapshot line under the KPIs.
-2. **The week picked has not started** — the week bar says so explicitly.
-3. **Weekday mismatch** — defaulter decks pair on date **and type and weekday**.
-
-### An officer sees the wrong customers
-
-Check their **role**, on their access code:
-
-| Role contains | Sees | Where |
-|---|---|---|
-| `CREDIT` | count 1–6 (paid 0–5) | all their lists |
-| `EXPECTED` or `EARLY` | behind ≤ 1 | Leo and Kesho only |
-| `COLLECTION` (or the `PMO_ROLE` setting) | behind ≤ 1 | Leo and Kesho only |
-
-Everyone else sees their whole book. Matching forgives case and punctuation. If somebody is
-**not** being narrowed, their role field is the first thing to look at.
-
-### Who changed what
-
-**Audit log** tab.
-
----
-
-## 6 · The data
-
-Full column-by-column detail: [docs/HANDOFF.md](docs/HANDOFF.md) Parts 2–4.
-
-### The tables that matter
-
-| Table | Shape | Grows |
-|---|---|---|
-| `repayment_snapshots` | append-only, one row per customer per day per type | fastest |
-| `defaulter_snapshots` | append-only, per day **per weekday** per type | fastest |
-| `followup_status` | **current state** — one row per customer | slowly |
-| `followup_comments` | append-only | steadily |
-| `call_logs` | append-only, ~15,000/day at 300 officers | fastest of all |
-| `teams` | ~40 rows, the leaders table | never |
-| `access_codes`, `roles`, `settings` | tiny | never |
-| `loans`, `received_payments`, `abnormal_payments`, `complaints`, `restructures`, `demand_notices` | append-only | steadily |
-| `audit_log`, `performance_records` | append-only | slowly |
-
-### Migrations
-
-`db/schema.sql` is a **complete fresh database** — new installs run only that.
-Existing databases run each file in `db/migrations/`, oldest first. **All safe to re-run.**
-
-Every migration is optional in the sense that the system keeps working without it — the feature
-says which file to run rather than breaking.
-
-**Currently outstanding:** `2026-08-10-upload-status.sql` — makes the upload panel one query
-instead of reading a day, and calls-per-officer a database count. **The system works without
-it**; the screen says so.
-
-> `2026-08-05b-snapshot-totals-indexes.sql` is **not** in the bundled RUN-ME file: it creates
-> indexes `CONCURRENTLY`, which cannot run inside a transaction block. Run it on its own.
-
-### Settings that change behaviour without a deploy
-
-| Setting | Default | Does |
-|---|---|---|
-| `SYSTEM_OPEN` | *closed* | The portal switch |
-| `PMO_ROLE` | `PMO COLLECTION` | The role name marking a collection officer |
-| `CALL_EARLY_MAX_BEHIND` | `1` | How far behind a customer may be on an early-collection Leo/Kesho list |
-| `CALL_CREDIT_MAX_PAID` | `5` | Highest "paid" a credit analyst supervises (0–5 = count 1–6) |
-| `CALL_MIN_SECS` | `5` | Seconds before a call counts as "Amepigiwa leo" |
-| `CALL_SYNC_SECONDS` | `300` | How often a handset syncs (60–3600). **The fastest way to cut load if you ever need to.** |
-| `COMMISSION_RATE` | `5` | Recovery commission % |
-| `FU_STATUSES` | built-ins | Follow-up statuses, and which need a date/comment/number |
-| `DATA_VERSION` | *stamped* | Set by the system on every upload. **Never edit by hand.** |
-
----
-
-## 7 · Credentials
-
-**None are in this repository, and none should ever be.** They live in:
-
-- **Vercel → Project Settings → Environment Variables** — `SUPABASE_URL`,
-  `SUPABASE_SERVICE_ROLE_KEY`, ticked for Production *and* Preview.
-- **A git-ignored local `.env`**, only if you run migrations from your own machine.
-
-The `service_role` key **bypasses Row Level Security** — full read and write over everything.
-Never paste it into a chat, an email, a ticket, a screenshot or a document.
-
-**If it is ever exposed, rotate it immediately:** Supabase → Settings → API Keys → roll the key
-→ update the Vercel variable → redeploy. Rotating costs one redeploy. Not rotating costs
-everything in the database.
-
----
-
-## 8 · Working on it
-
-```bash
-npm install
-npm test          # 451 tests. This is the acceptance gate.
+```
+  the company's Excel export
+        │
+        ▼  upload page, a thousand rows per request
+  defaulter_snapshots  ← history, append-only, never overwritten
+        │
+        ▼  syncFollowupFromDeck, on every slice
+  followup_status      ← the WORKING REGISTER. This is what the phones read.
+        │
+        ▼
+  every handset's Defaulters list
 ```
 
-**No build step.** `public/*.html` is served exactly as written.
+**A deck is a TEAM and a WEEKDAY.** GOBA's Monday deck and GOBA's Thursday deck are two different
+decks uploaded on two different days, and each is read at *its own* date. A defaulter has no day —
+the weekday exists only to pair an initial deck against a current one for Monday's recovery figure.
+You should never have to re-upload Saturday's file to see Saturday's defaulters.
 
-House rules, learned the hard way:
+**The register is not the deck.** The portal reads decks; the phones read the register. A customer
+in one and not the other is on every office screen and no handset, with each half individually
+correct and nothing to say so. That gap cost a week — see §5.
 
-1. **`npm test` is the gate.** Not "it looked fine".
-2. **Additive, whole files.** Do not remove a working column, tile or figure to make room.
-3. **Server logic in `api/_lib/`**, so it can be tested without a browser.
-4. **Team scoping happens in the query**, never by fetching everything and filtering after.
-5. **Counting and ordering belong in the database**, not in JavaScript.
-6. **Round trips are the unit of speed.** Raising a budget in `test/speed.test.mjs` is allowed;
-   raising it silently is not — do it in the same commit so the cost is visible in the diff.
+---
 
-### The tests that protect the thing you fear
+## 3. Every morning
 
-| Test | Catches |
+1. Upload **Expected — Today** (and Tomorrow if it exists).
+2. Upload **Defaulters — Current** for the weekday, and **Initial** on Monday.
+3. Read the result line. It now tells you:
+   - how many rows the file had and how many were used — **if any were skipped it names them**;
+   - how many customers went onto the officers' working list;
+   - which way round it read the dates;
+   - anything retired, and why.
+4. Open the app on one handset and check a customer you know.
+
+If something looks wrong, **paste the upload's result text to whoever maintains this**. Every
+serious fault in this system was found from that text, not from guessing.
+
+---
+
+## 4. The rules that took the longest to get right
+
+**The batch rule.** Latest date, then latest upload *per team*. A day arriving as seventeen files
+does not throw away sixteen teams.
+
+**The date rule.** Per team **and per weekday** — see §2.
+
+**Retirement.** A customer drops off the working list when their own weekday's deck comes round
+without them, or after a fortnight unconfirmed. Both rules have a **brake**: if a sweep would
+retire more than a third of the live list it retires nobody and reports the number instead. A
+third of the register looking stale means a weekday's decks stopped arriving, not that the list
+needs tidying.
+
+**Date columns.** A file's date order is decided **once, over the whole column** — never per value.
+Evidence first (a `22` can only be a day). Where a file offers no evidence at all — an approved
+report for the first week of a month is `8/3 … 8/10`, every value ambiguous — the reading that puts
+the file in the **tighter span** wins. Seven days beats seven months. The upload says which it chose.
+
+**Team scoping happens in the database**, never by filtering after the fact. An officer's request
+must not read the company's book. A handset is also widened to any teams its holder owns through a
+role column, so a credit analyst sees all thirty of their teams and not just the one whose code
+they typed.
+
+---
+
+## 5. The faults that hurt, and what they taught
+
+Each of these was live, each was found from something the owner sent, and each has a test that
+fails if it comes back.
+
+| what was seen | what it actually was |
 |---|---|
-| *no screen lets one officer read the whole company book* | any unscoped read, on **every** endpoint, automatically |
-| *an officer and an admin must not read the same amount* | the same fault, at **any** fixture size |
-| *the phone index is built once and shared* | the fault that redlined Postgres |
-| *"amepigiwa leo" is read once per half-minute* | the read that got worse as the day went on |
-| *the upload panel asks the database to count* | the read that blocked uploads |
-| *opening the app is one wait, not ten* | serial round trips on the busiest path |
+| "the app has no customers" | Every upload ran a retirement sweep with a **one-day** cutoff. Decks come round *weekly*, so that describes almost everybody: 60 of 100 customers blanked per upload. |
+| `8888 rows … 888 now visible … 7977 taken off` | A file uploads a thousand rows at a time and the register sync ran on **the current slice**. It wrote the last 888 and retired the other 8,000 for "not being in the deck". |
+| a customer in the file and on no screen | Database **functions** are capped at 1,000 rows exactly like table reads, and nothing was paging them. A week of team-day totals is several thousand summary rows. |
+| a team in the file and nowhere | The newest deck date was resolved **per team** when a deck is per team *per weekday*, so only the most recently uploaded weekdays survived. |
+| rebuild says success, nothing changes | The repair read the register for its **keys only**, so a customer present-but-blanked looked like nothing to do. |
+| "0 sales" after uploading approved | `8/6/2026` read day-first as 8 June. A week of August landed across eight months. |
+| reports downloading three times too wide | The card **header** is one unwrapped line; measured off-screen it took its full width and the table stretched to match. |
+
+**The recurring shape, three times over:** *a header that matches nothing looks exactly like a
+column of empty cells.* On a reference column it is worse — the row is dropped entirely. Ten
+spellings of `REF` are accepted now, and any row the importer could not use is **named** in the
+result rather than silently subtracted from the count.
 
 ---
 
-## 9 · Where things stand
+## 6. The Postgres discipline
 
-**Everything reported has been fixed and deployed.** The numbered account of every complaint and
-what was done about it is [docs/HANDOFF.md](docs/HANDOFF.md), Parts 14–19 — each named after the
-words that reported it.
+This system fell over under 300 handsets once. Everything below is why it does not now.
 
-**Waiting on you:**
+- **Every read pages** past PostgREST's silent 1,000-row cap — including database functions.
+- **Reads are sequential.** A wave of concurrent requests was tried and took the system down; it is
+  written in `api/_lib/supabase.js` so nobody tries it again.
+- **Fewer, bigger pages** — 10,000 rows a request, and the server's real ceiling is *learned*
+  rather than assumed.
+- **A paged read has a tiebreaker**, or its pages do not fit together and totals move on refresh.
+- **Ask the database, don't drag rows.** Team-day sums, upload status, calls per officer, and the
+  pipeline funnel are all GROUP BYs. Each has a fallback for a deployment that has not run the
+  migration by hand yet.
+- **What repeats is remembered**: the phone index, the team role map, the settings table. Each
+  keyed so a write or an upload drops it at once.
+- **Budgets are tests.** `test/speed.test.mjs` gives every screen a ceiling in round trips *and*
+  rows, and measures the **second** handset — the only way whole-book-per-request faults are ever
+  visible.
 
-- Run `db/migrations/2026-08-10-upload-status.sql` (optional; the system works without it).
-- **Re-upload the abnormal payments sheet.** `CUSTOMER NO` and `PAYMENT NO` never imported
-  before — the fix corrects the import, but it cannot recover values that were never stored.
-  Use **Replace** for the date, not Append.
-- **Rotate the Supabase keys** if they have ever left your machine.
-- Press **Ondoa nakala** if the duplicate sweep still reports stacked uploads.
+Measured on a forty-team book, warm (second request in the same minute):
+
+```
+  phone boot            4 trips        phone list (Def)      3 trips
+  phone sync            2 trips        phone strip           1 trip
+  dashboard             9 trips        weekly report         9 trips
+```
+
+The dashboard was **19** before this pass: the pipeline funnel was counting one stage at a time
+(eight journeys) and the settings table was read three times to build one screen.
 
 ---
 
-*This document describes the system as built. If a future change makes any statement here
-untrue, the change should update this file in the same breath.*
+## 7. Running it
+
+- **Hosting:** Vercel. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are environment variables
+  there. **They are never in this repository and must never be.**
+- **Database:** Supabase. Fresh install runs `db/schema.sql` only. An existing one runs the files
+  in `db/migrations/` in date order — **all are safe to re-run, and all are optional**: without one
+  the feature it adds says so instead of breaking.
+- **`db/migrations/2026-08-05b-snapshot-totals-indexes.sql`** creates indexes `CONCURRENTLY` and
+  cannot run inside a transaction. Run it on its own.
+- **The Android app** is a WebView wrapper with no business logic, built by GitHub Actions, always
+  at the release tag `hope-calls-apk`. Page changes need no new APK.
+- **The switch.** Settings → the system opens and closes. Default closed. **The admin is checked
+  before the setting is read**, so you can never lock yourself out. HOPE Calls is never switched
+  off — deliberately.
+
+### If the service_role key is ever exposed
+Rotate it in Supabase → Settings → API Keys, update it in Vercel, redeploy. It bypasses row-level
+security entirely: full read and write over everything.
+
+---
+
+## 8. Where things live
+
+| I want to change… | look in |
+|---|---|
+| what a screen shows | `public/app.html` (portal) or `public/call.html` (phone) |
+| what a screen is given | `api/_lib/portal-core.js`, `api/_lib/call-core.js` |
+| how a file is read | `api/_lib/importers.js`, `api/_lib/parse.js` |
+| the batch / date rules | `api/_lib/snapshots.js`, `api/_lib/snapshot-totals.js` |
+| what an upload does | `api/upload.js` |
+| paging, retries, errors | `api/_lib/supabase.js` |
+| who may see what | `api/_lib/auth.js`, `api/_lib/system-gate.js` |
+| the Recovery % rule | `api/_lib/recovery.js` — one place, deliberately |
+
+Every file explains itself. The comments carry **why**, including the mistakes — read them before
+changing the rule they describe.
+
+---
+
+## 9. Still open
+
+1. **Rotate the Supabase keys.** They were pasted into a chat transcript. Nothing of them is in the
+   repository; they were still exposed.
+2. **A phone-shaped JPG** — one block per team instead of a wide table. A fifteen-column board
+   cannot be made readable on a phone by scaling; only by changing the layout. Offered, not built.
+3. **Date order in the deck importers.** Only the loans importer decides its order from the whole
+   column. The defaulter and expected decks still read day-first per value. Their dates
+   self-resolve today, so nothing is at risk — but `8/6` in one of those files would land in June,
+   exactly as the sales figure did. Changing it moves the Exp.Def rotation, so it waits for a
+   deliberate decision rather than a quiet fix.

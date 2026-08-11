@@ -173,3 +173,22 @@ export const UPLOAD_STATUS_RPC = {
     return Object.entries(by).map(([user_id, calls]) => ({ user_id, calls }));
   },
 };
+
+/** loan_stage_counts(p_teams) -- the pipeline funnel's eight integers in one journey.
+    Transcribed from db/migrations/2026-08-11-loan-stage-counts.sql, clause for clause, so the
+    system can be exercised against a database that HAS the migration and one that has not. */
+export const LOAN_STAGE_RPC = {
+  loan_stage_counts(store, a = {}) {
+    const rows = store.loans ? store.loans.rows : [];
+    const teams = a.p_teams || null;
+    const up = v => String(v == null ? '' : v).trim().toUpperCase();
+    const want = teams ? teams.map(up) : null;
+    const n = new Map();
+    for (const r of rows) {
+      if (want && !want.includes(up(r.team))) continue;
+      const k = String(r.stage == null ? '' : r.stage);
+      n.set(k, (n.get(k) || 0) + 1);
+    }
+    return [...n.entries()].map(([stage, count]) => ({ stage, n: count }));
+  },
+};
