@@ -187,7 +187,7 @@ async function demandMessage(db, user, { ref, team }, nowMs) {
      -- otherwise anybody could pass another team's name and read its officer's phone number. */
   const [fuRows, teamRows, pmoNo] = await Promise.all([
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, team').eq('ref', wanted)),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     settingGet(db, 'PMO_RECOVERY_NO'),
   ]);
   const found = fuRows[0] || null;
@@ -377,6 +377,47 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
    that half-finishes and can be continued is worth more than one that must fit in a single
    window and fails whole when it does not. */
 const FU_REPAIR_MAX = 2000;
+
+/* =====================================================================================
+   FIND ONE OFFICER, RATHER THAN SHIPPING EVERY OFFICER.
+
+     "enable search officer by name/number while the live search shows name no and team so as
+      to produce person reports., having the whole list on font end is tooo long"
+
+   The Calls screen sent the whole roster to the browser twice over -- once as a dropdown of
+   every user who made a call, and once as a table of every officer in the report -- and then
+   asked somebody to find a name in it. On three hundred handsets that is a long page and a long
+   payload to answer a question about one person.
+
+   This answers it at the database instead: a prefix search on the name or the number, capped,
+   returning the three things you need to recognise somebody -- name, number, team.
+
+   SCOPED, and not as an afterthought. `onTeams` narrows to what the caller may already see, so
+   the search cannot become a way of reading a roster somebody has no business reading. An
+   ALL-teams user searches everybody, which is what ALL means.
+
+   THE NUMBER IS SEARCHED AS DIGITS. Phones are stored normalised -- normPhone strips the
+   leading zero and the country code -- so a person typing 0712... off a handset would find
+   nothing if the typed string were matched literally. The last nine digits are the part that is
+   always the same however it was written. */
+const OFFICER_FIND_LIMIT = 25;
+
+async function callOfficers(db, user, args) {
+  const q = String((args && args.q) == null ? '' : args.q).trim();
+  if (q.length < 2) return { q, rows: [], tooShort: true };
+  const like = '%' + q.replace(/[%_\\]/g, m => '\\' + m) + '%';
+  const digits = q.replace(/\D/g, '');
+  const clauses = ['name.ilike.' + like];
+  if (digits.length >= 3) clauses.push('phone.ilike.%' + digits.slice(-9) + '%');
+  const rows = await fetchAll(() => onTeams(
+    db.from('call_users').select('name, phone, team, role, active').or(clauses.join(',')),
+    user.teams).limit(OFFICER_FIND_LIMIT));
+  const out = scoped(user, rows)
+    .filter(r => r.active !== false)
+    .map(r => ({ name: r.name || '', phone: r.phone || '', team: r.team || '', role: r.role || '' }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return { q, rows: out, capped: out.length >= OFFICER_FIND_LIMIT };
+}
 
 async function rebuildFollowup(db, user, args, nowMs) {
   requireAdmin(user);
@@ -628,7 +669,7 @@ function rollSun(u) { return u === 7 ? 1 : u; }        // Sunday -> Monday
 async function expectedDefaulters(db, user, _args, nowMs) {
   const [def, teamRows, strat] = await Promise.all([
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs) }),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     assignStrategy(db),
   ]);
   const teamBy = {};
@@ -1833,7 +1874,7 @@ async function abnormal(db, user, args, nowMs) {
     }),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' },
       { notAfter: todayKey(nowMs), teams: user.teams, columns: 'ref, team' }),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
   ]);
 
   const stageOf = {};
@@ -2017,7 +2058,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
      week go"; these answer "which team". Ongezeko compares Monday's initial deck against the
      week-end current one, so a positive change means debt FELL. */
   const [teamRows, monIni, endCur] = await Promise.all([
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     /* THE ONE PART OF THIS REPORT THAT IS NOT A SUM. "Ongezeko la deni" and Count 1-6 compare
        each CUSTOMER's Monday arrears against their arrears at the end of the week, so these two
        have to stay customer rows -- a team total cannot say whether one person cleared. They
@@ -2151,7 +2192,7 @@ async function teamProgress(db, user, _args, nowMs) {
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: todayKey(nowMs) }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: todayKey(nowMs) }),
   ]);
-  const teamsRows = await fetchAll(() => db.from('teams').select('*'));
+  const teamsRows = await readTeamsAll(db);
   const paired = ini.rows.length && cur.rows.length && String(ini.date) === String(cur.date);
   const by = {};
   const bump = (team, field, v) => {
@@ -2184,7 +2225,7 @@ async function teamProgress(db, user, _args, nowMs) {
     an unstaffed role is exactly the thing a leader report should make visible. */
 async function leaderReports(db, user, _args, nowMs) {
   const tp = await teamProgress(db, user, {}, nowMs);
-  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const teamRows = await readTeamsAll(db);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
 
@@ -2293,7 +2334,7 @@ async function commission(db, user, _args, nowMs) {
   const prevMon = addDaysKey(mon, -7), prevFri = addDaysKey(prevMon, 4);
   const [cfg, teamRows, defWeek, expWeek, codeRows, pmoCfg, prevExp] = await Promise.all([
     cmsCfg(db),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     /* COMMISSION NEEDS ONE MORE COLUMN THAN THE OTHERS: ref.
        It works recovery out PER CUSTOMER -- what each one owed on the initial deck against what
        they still owe on the current one -- so it cannot sum a team and be done. Dropping ref
@@ -2520,7 +2561,7 @@ async function assignments(db, user, _args, nowMs) {
       if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
       return q;
     }),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     assignStrategy(db),
   ]);
   const byRef = {};
@@ -2588,7 +2629,7 @@ async function credit(db, user, _args, nowMs) {
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs);
   const wd = currentWeekday(nowMs);
   const [teamRows, curSnap, monSnap, todaySnap, loansAll] = await Promise.all([
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     /* EVERY DECK, ONE ROW PER CUSTOMER. The credit book pairs current against initial BY REF
        -- customer by customer -- so the weekday pin never protected the arithmetic here; it
        only hid analysts' customers whose deck happened to be filed under another day. */
@@ -2882,7 +2923,7 @@ async function saveStaffTeams(db, user, p) {
       + STAFF_TEAM_ROLES.concat([STAFF_COLLECTION_ROLE]).join(', '));
   }
 
-  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const teamRows = await readTeamsAll(db);
   const writes = [];
   let cleared = 0;
   for (const t of teamRows) {
@@ -2894,6 +2935,7 @@ async function saveStaffTeams(db, user, p) {
   }
   for (const batch of chunk_(writes, 200)) {
     const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+    noteTeamsWritten(db);
     if (error) throw new Error(error.message);
   }
   return { role, name, teams: [...want].sort(), changed: writes.length, cleared };
@@ -3972,6 +4014,7 @@ const FN = {
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
+  callOfficers,
 };
 
 /* THE LEADERS TABLE, OUT AND BACK IN.
@@ -4163,6 +4206,29 @@ async function settingStr(db, key, dflt) {
    AN ADMIN MUST SEE THEIR OWN CHANGE IMMEDIATELY, so every write drops the memo (noteSettingsWritten)
    rather than leaving somebody to wonder whether Save worked. The clock is only a backstop for a
    change made on ANOTHER instance of this function. */
+/* THE TEAMS TABLE IS READ SIXTEEN DIFFERENT PLACES, AND IT IS THE SAME FIFTY ROWS EVERY TIME.
+
+   Every screen that names a leader, scopes a figure or resolves a rotation reads it, and several
+   read it TWICE in one request -- the calls report does, measured. It is small, and small read
+   forty times a minute is still forty journeys.
+
+   Remembered for a few seconds, exactly like the settings table beside it and the role map on
+   the phone side. A team edit DROPS the memo (noteTeamsWritten) so an admin sees their own
+   change at once; the clock is only a backstop for a change made on another instance. */
+const TEAMS_TTL_MS = 15000;
+const teamsCache = new WeakMap();
+
+export function noteTeamsWritten(db) { teamsCache.delete(db); }
+
+async function readTeamsAll(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = teamsCache.get(db);
+  if (hit && (at - hit.at) < TEAMS_TTL_MS) return hit.rows;
+  const rows = await fetchAll(() => db.from('teams').select('*'));
+  teamsCache.set(db, { at, rows });
+  return rows;
+}
+
 const SETTINGS_TTL_MS = 20000;
 const settingsCache = new WeakMap();
 
@@ -4297,7 +4363,7 @@ async function dashboardFull(db, user, args, nowMs) {
       if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
       return q;
     }),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     /* THE SAME RULE THE ABNORMAL PAYMENTS TAB APPLIES.
 
          "abnomal payments worked but not counting at dashboard"
@@ -4644,7 +4710,7 @@ async function saveTeam(db, user, p) {
   for (const c of TEAM_ROLE_COLS.concat(['credit_id'], TEAM_OPTIONAL_COLS)) {
     if (p[c] !== undefined) row[c] = String(p[c] || '').trim() || null;
   }
-  const existing = (await fetchAll(() => db.from('teams').select('*'))) || [];
+  const existing = (await readTeamsAll(db)) || [];
   /* A DATABASE THAT HAS NOT HAD THE MIGRATION MUST STILL SAVE THE REST. Migrations here are run
      by hand, so a column no existing row has ever carried is dropped rather than sent --
      otherwise adding a field to the form would break saving a team for everybody until
@@ -4676,6 +4742,7 @@ async function saveTeam(db, user, p) {
   const rotated = row.team_code !== undefined && mine && codeKeyOf(mine.team_code) !== codeKeyOf(row.team_code);
   row.updated_at = new Date().toISOString();
   const { error } = await db.from('teams').upsert(row, { onConflict: 'team' });
+  noteTeamsWritten(db);
   if (error) throw new Error(error.message);
   let released = 0;
   if (rotated) {
@@ -4892,6 +4959,7 @@ async function deleteTeam(db, user, p) {
     }
 
     const { error: delErr } = await db.from('teams').delete().eq('team', team);
+  noteTeamsWritten(db);
     if (delErr) throw new Error(delErr.message);
     return { team, mergedInto: moveTo, moved, released: 0 };
   }
@@ -4913,6 +4981,7 @@ async function deleteTeam(db, user, p) {
   if (relErr) throw new Error(relErr.message);
 
   const { error } = await db.from('teams').delete().eq('team', team);
+  noteTeamsWritten(db);
   if (error) throw new Error(error.message);
   return { team, released: (released || []).length };
 }
@@ -4977,7 +5046,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      fails a test rather than quietly reporting zero. */
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
          codeRows, cfgS] = await Promise.all([
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     earlyList(db, { today, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
