@@ -553,3 +553,36 @@ test('speed: a week of decks on six different upload dates stays within 20 trips
   assert.ok(s.trips <= 20, `${s.trips} trips for six dates -- one per date, not one per team`);
   assert.ok(s.rows <= 40000, `${s.rows} rows -- the weekday narrowing has stopped working`);
 });
+
+/* =====================================================================================
+   THE ROLE MAP IS ONE READ FOR THE WHOLE COMPANY, NOT ONE PER SCREEN.
+   =====================================================================================
+   Widening a credit analyst to the teams they hold meant looking their name up in the teams
+   table's role columns -- on EVERY list load, from every handset. Two hundred phones opening
+   Leo, Kesho and Def through a morning is thousands of reads of a table whose answer is
+   identical for all of them and changes when somebody is reassigned, which is not often and
+   never in the middle of a Monday.
+
+   Worse, callRoleKind then read the very same columns AGAIN on the same request to decide the
+   narrowing -- two reads of one small table to answer two halves of one question.
+   ===================================================================================== */
+test('speed: the second handset does not re-read the teams role columns', async () => {
+  const t = bigBook();
+  t.teams = t.teams.map((x, i) => ({ ...x, credit: i === 0 ? 'ANALYST A' : null }));
+  t.call_users = [
+    { user_id: 'u1', device_id: 'DEV1', name: 'ANALYST A', team: TEAMS[0], role: 'OFFICER', is_leader: false },
+    { user_id: 'u2', device_id: 'DEV2', name: 'ANALYST A', team: TEAMS[0], role: 'OFFICER', is_leader: false },
+  ];
+  const c = counting(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } });
+
+  await callApi(c.db, 'api_callList', ['DEV1', 'defaulters'], NOW);
+  const first = c.stat().trips;
+  await callApi(c.db, 'api_callList', ['DEV2', 'defaulters'], NOW);
+  const second = c.stat().trips - first;
+
+  /* The SECOND handset is the one that shows it. The first pays for the map; every other
+     handset in the same minute rides on it, and the scope widening plus the role narrowing
+     between them cost nothing extra at all. */
+  assert.ok(second <= first, `the second handset cost more than the first: ${second} vs ${first}`);
+  assert.ok(second <= 6, `${second} trips for a warm handset -- the role map is being re-read`);
+});
