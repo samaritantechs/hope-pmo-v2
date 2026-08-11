@@ -513,7 +513,7 @@ function setSyncStatus(kind){
    book. It is the cheapest question in the system, and it is the only one that has to be asked
    often. Fire and forget -- a failure here must never change the sync light. */
 function versionPing_(){
-  srv('api_callSync', DEV, []).then(function(r){ if (r && r.ok) summaryVersionCheck_(r.dataVersion); })
+  srv('api_callSync', DEV, []).then(function(r){ if (r && r.ok) { summaryVersionCheck_(r.dataVersion); listVersionCheck_(r.dataVersion); } })
     .catch(function(){});
 }
 function doSync(){
@@ -532,6 +532,7 @@ function doSync(){
       if (nb.setWatermark) { try { nb.setWatermark(String(r.watermark)); } catch(e){} }
       setSyncStatus('ok');
       summaryVersionCheck_(r.dataVersion);   // an upload while the officer was working
+      listVersionCheck_(r.dataVersion);      // ...and the lists it changed, dropped at once
       // No forced list reload here on purpose. Freshness is a per-device rolling cooldown (see
       // sourceFresh_ / setView) -- a call just made by the officer syncing successfully isn't
       // reason enough to reload the list they're looking at, especially on unstable connections.
@@ -656,15 +657,47 @@ function loadCacheFromDevice_(){
     // The Exp.Def summary travels WITH its rows. Left out, a restart restored the rows from
     // the device and left the strip null -- so the tab had no totals and, when the list was
     // empty, could not say which of the four reasons it was empty for.
-    if (saved && typeof saved === 'object'){ S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {}; S.expdf = saved.expdf || null; }
+    if (saved && typeof saved === 'object'){ S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {}; S.expdf = saved.expdf || null; S.dataVersion = saved.dataVersion || ''; }
   } catch (e) { /* corrupt or unavailable storage -- start empty, not fatal */ }
 }
 function saveCacheToDevice_(){
-  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt, expdf: S.expdf })); }
+  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt, expdf: S.expdf, dataVersion: S.dataVersion || '' })); }
   catch (e) { /* quota or storage unavailable -- app still works, just without persistence this session */ }
 }
 function sourceFresh_(src){
   return !!(S.cache[src] && S.cacheAt[src] && (Date.now() - S.cacheAt[src] < CACHE_COOLDOWN_MS));
+}
+/* AN HOUR IS RIGHT FOR A BAD CONNECTION AND WRONG FOR A CORRECTED BOOK.
+
+   Every list is kept on the device for an hour, in storage that survives closing the app, and
+   shown instantly. That is what makes this usable where the signal is poor, and it is also why
+   an upload that fixes something reaches nobody until the hour is up: the handset never asks.
+
+   "Uploaded, still not there" therefore means two completely different things -- the fix did
+   not work, or the phone has not looked yet -- and telling those apart has cost days of this.
+
+   DATA_VERSION moves the moment anything is uploaded. When the version this device last saw is
+   not the version the server just reported, every cached list is thrown away at once, so the
+   next screen comes from the server. No timer, no pull-to-refresh, nothing for anybody to know:
+   an upload lands and the handsets are current. */
+/** Drop the device's lists when the book behind them has moved, and REDRAW what is on screen
+    -- an officer looking at Def while an upload lands should see it fill in, not be told to go
+    to another tab and come back. */
+function listVersionCheck_(version){
+  if (!dropCacheIfStale_(version)) return;
+  if (!S.entered) return;
+  var src = LIST_SOURCE[S.view];
+  if (src) fetchSource_(src, false);
+}
+function dropCacheIfStale_(version){
+  var v = String(version == null ? '' : version);
+  if (!v) return false;                       // nothing uploaded yet, or an older server
+  if (S.dataVersion === v) return false;
+  var had = Object.keys(S.cache || {}).length > 0;
+  S.dataVersion = v;
+  if (had) { S.cache = {}; S.cacheAt = {}; S.expdf = null; }
+  saveCacheToDevice_();
+  return had;
 }
 /** Puts a logo in both places. `instant` skips the load check, which is safe only for a logo
     this device has already displayed successfully. */
@@ -707,6 +740,10 @@ function boot(){
     }
     if (d.ok && !loggedOut){
       try { localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      /* BEFORE the app is entered, so a handset that was showing yesterday's list from storage
+         does not paint it first and correct itself afterwards. Opening the app IS the moment
+         somebody expects to see what was uploaded. */
+      dropCacheIfStale_(d.dataVersion);
       return enterApp(d);                     // fresh name, team and tabs land on the open app
     }
     // The server says this handset is no longer signed in -- it was de-registered, or the

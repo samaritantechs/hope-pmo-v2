@@ -1428,3 +1428,30 @@ test('a recovery or expected officer is widened by the same rule', async () => {
   const widened = await scopeFor(db, { name: 'EXP PERSON', teams: ['KONGOWE'] });
   assert.deepEqual(widened.map(x => x.toUpperCase()).sort(), ['KONGOWE', 'MBAGALA']);
 });
+
+test('boot tells the handset which upload its answer belongs to', async () => {
+  /* The device keeps every list for an hour, in storage that survives closing the app. That is
+     right on a bad connection and wrong the moment an upload corrects something: the handset
+     never asks, so a fix that landed at nine reaches nobody until ten -- and "uploaded, still
+     not there" means two completely different things, which has cost days of this.
+
+     DATA_VERSION moves whenever anything is uploaded. Handing it to the phone costs nothing --
+     it rides in the same settings query as the brand and the sync interval -- and lets the
+     device throw its cache away the instant the book behind it changes. */
+  const t = makeTables();
+  t.settings.push({ key: 'DATA_VERSION', value: '1754900000000' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
+  assert.equal(d.ok, true);
+  assert.equal(d.dataVersion, '1754900000000');
+});
+
+test('a deployment with nothing uploaded yet reports an empty version, not a wrong one', async () => {
+  /* An empty version must never look like a NEW version, or every handset would drop its cache
+     on every launch and the hour of offline resilience would be gone. */
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
+  assert.equal(d.dataVersion, '');
+});
