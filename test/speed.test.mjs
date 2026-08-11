@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -119,8 +119,8 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
 
    screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  40,  5000],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  40,   400],
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  22,  5000],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  22,   400],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
@@ -136,7 +136,7 @@ const BUDGETS = [
      two decks as customer rows -- it compares each PERSON's Monday arrears against their
      arrears at the end of the week, which no team total can answer -- so the row budget here
      stays above zero on purpose. Everything else on the report is a sum. */
-  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  20,  3500],
+  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  14,  3500],
   ['The bell',                'notifications', {}, ADMIN,    6,    200,   6,   200],
   ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200,   6,   200],
 ];
@@ -146,7 +146,10 @@ const BUDGETS = [
    and the code falls back to reading rows. */
 const WORLDS = [
   ['migration not run yet', undefined, 4, 5],
-  ['team-day totals', { rpc: SNAPSHOT_TOTALS_RPC }, 6, 7],
+  /* The migrated world means EVERY migration, not just the totals: the pipeline funnel's eight
+     counts collapse into one grouped call the same way the team-day sums do, and a budget that
+     leaves that out is measuring a deployment nobody is running. */
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {

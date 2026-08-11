@@ -2466,6 +2466,7 @@ async function commissionSave(db, user, p) {
   requireAdmin(user);
   const set = async (key, value) => {
     const { error } = await db.from('settings').upsert({ key, value: String(value == null ? '' : value) }, { onConflict: 'key' });
+    noteSettingsWritten(db);
     if (error) throw new Error(error.message);
   };
   const out = {};
@@ -2951,6 +2952,7 @@ async function settingSet(db, user, p) {
   requireAdmin(user);
   if (!p || !p.key) throw badRequest('key is required');
   const { error } = await db.from('settings').upsert({ key: p.key, value: String(p.value == null ? '' : p.value) }, { onConflict: 'key' });
+  noteSettingsWritten(db);
   if (error) throw new Error(error.message);
   /* The open/closed switch is read from a half-minute cache on every request. An admin who
      flips it and then goes to check must see the effect, not wonder for thirty seconds
@@ -4065,6 +4067,7 @@ async function fuStatusesSave(db, user, p) {
      by accident must not be able to stop the whole company logging a follow-up. */
   const value = list.join('\n');
   const { error } = await db.from('settings').upsert({ key: FU_STATUS_KEY, value }, { onConflict: 'key' });
+  noteSettingsWritten(db);
   if (error) throw new Error(error.message);
   return fuStatusShape(list);
 }
@@ -4147,10 +4150,37 @@ async function settingStr(db, key, dflt) {
  *
  *  Returns { get(key, dflt), num(key, dflt) }. A key that is absent or blank falls back, so a
  *  cleared setting behaves the same as one that was never typed. */
-async function settingsMany(db, keys) {
-  const rows = await fetchAll(() => db.from('settings').select('key, value').in('key', keys));
+/* THE SETTINGS TABLE IS CONFIG, AND IT WAS READ THREE TIMES TO BUILD ONE SCREEN.
+
+   Measured on a forty-team book: the dashboard read `settings` three times in a single request,
+   because three different pieces of it each asked for the keys they wanted. Every one of those
+   is a round trip to fetch a handful of rows from a table that holds a few dozen and changes
+   when somebody types in Settings -- which is rare, and never in the middle of a request.
+
+   So it is read ONCE, whole, and remembered for a few seconds. Whole because the table is
+   config-sized: filtering to four keys saves nothing on the wire and costs the sharing.
+
+   AN ADMIN MUST SEE THEIR OWN CHANGE IMMEDIATELY, so every write drops the memo (noteSettingsWritten)
+   rather than leaving somebody to wonder whether Save worked. The clock is only a backstop for a
+   change made on ANOTHER instance of this function. */
+const SETTINGS_TTL_MS = 20000;
+const settingsCache = new WeakMap();
+
+export function noteSettingsWritten(db) { settingsCache.delete(db); }
+
+async function readSettings(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = settingsCache.get(db);
+  if (hit && (at - hit.at) < SETTINGS_TTL_MS) return hit.by;
+  const rows = await fetchAll(() => db.from('settings').select('key, value'));
   const by = {};
   for (const r of rows) by[String(r.key)] = r.value;
+  settingsCache.set(db, { at, by });
+  return by;
+}
+
+async function settingsMany(db, keys) {
+  const by = await readSettings(db);
   const get = (k, dflt) => { const v = String(by[k] == null ? '' : by[k]).trim(); return v || dflt; };
   return { get, num: (k, dflt) => { const n = parseInt(String(get(k, '')).replace(/[^0-9]/g, ''), 10); return (!n || isNaN(n)) ? dflt : n; } };
 }
@@ -4159,13 +4189,12 @@ async function settingsMany(db, keys) {
     settings are words or phone numbers rather than amounts, and stripping them to digits the
     way settingNum does would turn a message template into nothing. */
 async function settingGet(db, key) {
-  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
-  return String((data && data.value) || '').trim();
+  const by = await readSettings(db);
+  return String(by[key] == null ? '' : by[key]).trim();
 }
 
 async function settingNum(db, key, dflt) {
-  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
-  const n = parseInt(String((data && data.value) || '').replace(/[^0-9]/g, ''), 10);
+  const n = parseInt(String(await settingGet(db, key)).replace(/[^0-9]/g, ''), 10);
   return (!n || isNaN(n)) ? dflt : n;
 }
 
@@ -4520,12 +4549,34 @@ async function dashboardFull(db, user, args, nowMs) {
  *
  *  Team scoping is applied to each count, so an officer's funnel counts their own teams -- the
  *  same rows scoped() would have kept. */
+/* ONE JOURNEY IF THE DATABASE CAN, EIGHT IF IT CANNOT.
+
+   Measured on a forty-team book: the dashboard made 19 round trips and NINE of them were this
+   table -- eight of those were this loop, counting one stage at a time. A count grouped by a
+   column is the oldest thing a database does, so db/migrations/2026-08-11-loan-stage-counts.sql
+   adds it and this asks for it first.
+
+   The fallback is not a courtesy. Migrations here are pasted into the SQL editor by hand, so
+   every deployment spends time in the state where the function does not exist yet, and the
+   screen has to keep working in it -- exactly as the team-day totals do. */
 async function stageCounts(db, teams) {
+  const t = upperTeams(teams);
+  const { data, error } = await rpcAll(db, 'loan_stage_counts', { p_teams: t.length ? t : null });
+  if (!error && Array.isArray(data)) {
+    const out = {};
+    for (const st of STAGES) out[st] = 0;
+    for (const r of data) {
+      const k = String(r.stage == null ? '' : r.stage);
+      if (Object.prototype.hasOwnProperty.call(out, k)) out[k] = num(r.n);
+    }
+    return out;
+  }
+  // The function is not there yet: the eight counts this has always made.
   const out = {};
   for (const st of STAGES) {
-    const { count, error } = await runQuery(() =>
+    const { count, error: e2 } = await runQuery(() =>
       onTeams(db.from('loans').select('id', { count: 'exact', head: true }).eq('stage', st), teams));
-    if (error) throw error;
+    if (e2) throw e2;
     out[st] = count || 0;
   }
   return out;
