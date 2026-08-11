@@ -5273,3 +5273,89 @@ test('a restored customer is on the phone\'s defaulters list, sorted by arrears'
   assert.equal(after.rows[0].ref, '2-209-72865', 'at the top, because 1.7m is the largest arrears');
   assert.equal(after.rows[0].amt, 1766336);
 });
+
+/* =====================================================================================
+   THE REPAIR HAS TO BE REACHABLE, AND IT HAS TO FIT IN ONE REQUEST.
+   =====================================================================================
+     "Customers Still invisible"
+
+   My own regression, and the worst kind: two changes that were each right on their own. #168
+   removed the Settings button because manual housekeeping was not wanted. #169 took the
+   automatic call off the upload because it pushed the request past sixty seconds and broke
+   uploading altogether. Between them the repair became reachable from NOWHERE, and every
+   weekday whose deck had not been re-uploaded since stayed blanked with nothing able to correct
+   it.
+
+   So it is bounded and resumable now: a call fixes at most FU_REPAIR_MAX and reports how many
+   are left, and the upload page rings it until there are none. It cannot run out of time,
+   because it no longer tries to finish in one go.
+   ===================================================================================== */
+test('the repair is bounded, and says how much is left', async () => {
+  const t = tables();
+  const deck = [], reg = [];
+  for (let i = 0; i < 30; i++) {
+    deck.push({ id: 'd' + i, ref: 'R' + i, full_name: 'C' + i, team: 'KONGOWE',
+      status: 'Defaulter', arrears: 1000 + i, ds: '2-4', snapshot_type: 'current',
+      weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'b1', created_at: TODAY + 'T04:00:00Z' });
+    reg.push({ ref: 'R' + i, team: 'KONGOWE', full_name: 'C' + i, status: null, arrears: null,
+      updated_at: '2026-07-01T04:00:00Z' });
+  }
+  const db = fakeDb({ ...t, defaulter_snapshots: deck, followup_status: reg });
+
+  const first = await portalApi(db, ADMIN, 'rebuildFollowup', { max: 10 }, NOW);
+  assert.equal(first.restored, 10, 'exactly the cap, not the lot');
+  assert.equal(first.remaining, 20);
+  assert.equal(first.done, false, 'and it says so, so the caller knows to ring again');
+
+  // Ring until it is finished, exactly as the upload page does.
+  let guard = 0, r = first;
+  while (!r.done && guard++ < 10) r = await portalApi(db, ADMIN, 'rebuildFollowup', { max: 10 }, NOW);
+  assert.equal(r.done, true);
+  assert.equal(r.remaining, 0);
+
+  const live = db._dump('followup_status').filter(x => !(x.status == null && x.arrears == null));
+  assert.equal(live.length, 30, 'every one of them is visible to a handset again');
+});
+
+test('the repair spends its budget on the MISSING before the merely blanked', async () => {
+  /* A customer with no row at all is invisible to more of the system than one whose figures
+     were cleared, so when there is not enough budget for both, they go first. */
+  const t = tables();
+  const db = fakeDb({
+    ...t,
+    defaulter_snapshots: [
+      { id: 'a', ref: 'GONE', full_name: 'NOT IN REGISTER', team: 'KONGOWE', status: 'Defaulter',
+        arrears: 500, snapshot_type: 'current', weekday: 'FRI', snapshot_date: TODAY,
+        upload_batch: 'b1', created_at: TODAY + 'T04:00:00Z' },
+      { id: 'b', ref: 'BLANK', full_name: 'BLANKED', team: 'KONGOWE', status: 'Defaulter',
+        arrears: 900, snapshot_type: 'current', weekday: 'FRI', snapshot_date: TODAY,
+        upload_batch: 'b1', created_at: TODAY + 'T04:00:00Z' },
+    ],
+    followup_status: [
+      { ref: 'BLANK', team: 'KONGOWE', full_name: 'BLANKED', status: null, arrears: null,
+        updated_at: '2026-07-01T04:00:00Z' },
+    ],
+  });
+  const r = await portalApi(db, ADMIN, 'rebuildFollowup', { max: 1 }, NOW);
+  assert.equal(r.added, 1, 'the one with no row at all');
+  assert.equal(r.restored, 0);
+  assert.equal(r.remaining, 1);
+  assert.equal(r.done, false);
+});
+
+test('a register needing nothing reports done, and writes nothing', async () => {
+  const t = tables();
+  const db = fakeDb({
+    ...t,
+    defaulter_snapshots: [{ id: 'a', ref: 'OK1', full_name: 'FINE', team: 'KONGOWE',
+      status: 'Defaulter', arrears: 500, snapshot_type: 'current', weekday: 'FRI',
+      snapshot_date: TODAY, upload_batch: 'b1', created_at: TODAY + 'T04:00:00Z' }],
+    followup_status: [{ ref: 'OK1', team: 'KONGOWE', full_name: 'FINE', status: 'Defaulter',
+      arrears: 500, fu_status: 'AMETOA AHADI', updated_at: TODAY + 'T04:00:00Z' }],
+  });
+  const r = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.equal(r.done, true);
+  assert.equal(r.remaining, 0);
+  assert.equal(r.added + r.restored, 0);
+  assert.equal(db._dump('followup_status')[0].fu_status, 'AMETOA AHADI', 'and touched nobody');
+});

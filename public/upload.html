@@ -717,6 +717,15 @@ $('go').addEventListener('click', function(){
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
           + (res.body.message ? '\n' + res.body.message : '');
         loadStatus();          // tick this report off the list without a reload
+        /* THE REGISTER REPAIR, AS ITS OWN REQUEST.
+           It used to run inside the upload's last slice and pushed it past the platform's sixty
+           seconds -- "uploading now fails at 4/5 ... HTTP 504". Taking it out fixed the upload
+           and left the repair reachable from nowhere, which is worse: every weekday whose deck
+           had not been re-uploaded stayed blanked with no way to correct it.
+           So it runs HERE, after the upload has already succeeded, in its own request with its
+           own clock, a bounded slice at a time until there is nothing left. The upload can no
+           longer be taken down by it, and nobody has to know it exists. */
+        if (type === 'defaulters-current') repairRegister_(apiBase, code, msg);
       } else if (res.status >= 200 && res.status < 300 && res.body.ok !== false && zeroRows){
         msg.className = 'msg bad';
         msg.innerHTML = 'Inserted 0 rows into ' + escHtml_(res.body.table) + '. Here is exactly what was found in the file, to see why:<br><br>'
@@ -769,6 +778,30 @@ function uuid_(){
     var r = Math.random() * 16 | 0;
     return (c === 'x' ? r : ((r & 0x3) | 0x8)).toString(16);
   });
+}
+
+/** Ring the repair until it says there is nothing left, showing progress on the same message
+    the upload just wrote. Bounded per call by the server, so this cannot time out -- it simply
+    takes as many calls as it takes. A failure here never touches the upload: the file is
+    already in, and the worst case is that the next upload picks the work up. */
+function repairRegister_(apiBase, code, msg){
+  var total = 0, base = msg.textContent, rounds = 0;
+  function round(){
+    if (++rounds > 40) return;                       // a stop, in case the count never falls
+    return fetch(apiBase + '/api/portal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: code, fn: 'rebuildFollowup', args: {} })
+    }).then(function(r){ return r.json(); }).then(function(b){
+      if (!b || b.ok === false) return;
+      total += (b.added || 0) + (b.restored || 0);
+      if (total) {
+        msg.textContent = base + '\nRegister repair: ' + total + ' customer(s) put back'
+          + (b.done ? '.' : ' so far, ' + b.remaining + ' to go\u2026');
+      }
+      if (!b.done) return round();
+    }).catch(function(){ /* the upload stands */ });
+  }
+  return round();
 }
 
 function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
