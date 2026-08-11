@@ -1088,7 +1088,23 @@ function exportXls(){
    Then it is drawn at TWICE the size. Same layout, twice the pixels, so the text stays sharp
    when it is enlarged instead of turning to mush -- which is the other half of "unreadable
    without too much zoom". */
-var JPG_SCALE = 2;
+/* ONE TO ONE. THE PICTURE IS THE SIZE OF THE REPORT.
+
+   I made this 2 for sharpness -- same layout, twice the pixels, crisp when you zoom in. The
+   reasoning was fine and the result was not:
+
+     "the current are even cutting info"
+
+   A viewer opens an image at its actual pixel size. At 2x a report 1,270 points wide becomes a
+   file 2,540 pixels wide, so a 1,170-pixel screen shows less than half of it and cuts the right
+   hand columns and the bottom rows -- which looks exactly like data missing, and is
+   indistinguishable from it unless you know to scroll a picture.
+
+   The owner said what it should be and was right: the picture is the report AS VIEWED. At 1:1 it
+   opens whole, it is the same size and the same sharpness as the screen it came from, and there
+   is nothing to scroll or pinch to be sure you have all of it. Sharpness when enlarged is worth
+   something; a report you cannot see the edge of is worth nothing. */
+var JPG_SCALE = 1;
 var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;'
   + 'max-width:none !important;}'
   + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}'
@@ -1204,12 +1220,30 @@ function saveJpg(el){
     probe.appendChild(pstyle);
     probe.appendChild(clone);
     document.body.appendChild(probe);
-    /* scrollWidth exceeds the on-screen width only where something genuinely overflows -- a
-       board with more columns than the card can hold, which on screen you scroll sideways to
-       read. The picture has no sideways, so it takes the larger of the two and shows the lot.
-       Four pixels of slack because a sub-pixel rounding here is a column shaved off the edge. */
-    var w = Math.max(clone.scrollWidth, clone.offsetWidth, onScreen, 320) + 4;
-    var h = Math.max(clone.scrollHeight, clone.offsetHeight, 120) + 4;
+    /* MEASURED FROM WHAT IS ACTUALLY PAINTED, because scrollWidth lies here.
+
+       scrollWidth reports the scrollable extent of a box. Unclipping sets every container to
+       `overflow:visible`, and a box that does not scroll has no scrollable extent -- so a table
+       hanging out past the edge of its card contributes NOTHING to the number, and the picture
+       was cut at the card's edge with the last columns simply outside it. Same for the height
+       and the last rows. That is "the current are even cutting info", and it is why every CSS
+       change I made moved the crop around without ever curing it.
+
+       The one measurement that cannot lie is where the ink lands: the furthest right and
+       furthest bottom edge of every element in the clone. It costs one walk of a report-sized
+       subtree, on a click, in a page that is doing nothing else. */
+    var origin = clone.getBoundingClientRect();
+    var maxR = origin.right, maxB = origin.bottom;
+    var kids = clone.querySelectorAll('*');
+    for (var ki = 0; ki < kids.length; ki++) {
+      var kr = kids[ki].getBoundingClientRect();
+      if (!kr.width && !kr.height) continue;          // nothing painted, nothing to include
+      if (kr.right > maxR) maxR = kr.right;
+      if (kr.bottom > maxB) maxB = kr.bottom;
+    }
+    /* Four pixels of slack because a sub-pixel rounding here is a column shaved off the edge. */
+    var w = Math.max(Math.ceil(maxR - origin.left), clone.offsetWidth, onScreen, 320) + 4;
+    var h = Math.max(Math.ceil(maxB - origin.top), clone.offsetHeight, 120) + 4;
     document.body.removeChild(probe); probe = null;
     // A canvas beyond a few thousand pixels a side starts failing on phones; no real report
     // reaches this, and clipping loudly at 8000 beats a blank file.
