@@ -210,7 +210,7 @@ async function teamList(db) {
    The officer's app opens in one wait instead of ten, and a Monday-morning rush costs the
    database a third of the connections it used to. */
 async function boot(db, [dev], nowMs) {
-  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY];
+  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION'];
   let cu = null, accountOff = false;
   const [teamRows, setting] = await Promise.all([
     fetchAll(() => db.from('teams').select('team, gmo, manager, bike')),
@@ -256,6 +256,20 @@ async function boot(db, [dev], nowMs) {
     // From the same settings query as everything else above, not a sixth journey.
     ...fuStatusShape(parseFuStatuses(setting(FU_STATUS_KEY))),
     brand, motto: APP.MOTTO, logo,
+    /* WHICH UPLOAD THIS ANSWER BELONGS TO.
+
+       The handset keeps every list on the device for an hour, which is right on a bad
+       connection and wrong the moment an upload corrects something: the phone goes on showing
+       the list it already had, so a fix that landed at nine o'clock reaches nobody until ten.
+       Uploading and then being told "still not there" is the same sentence whether the fix
+       failed or the phone simply has not asked again -- and telling those two apart has cost
+       days.
+
+       DATA_VERSION is stamped by the upload the moment anything lands, and is already carried
+       for the phone index. Handing it to the phone costs nothing -- it comes from the same
+       settings query as the brand and the sync interval -- and lets the device throw its cache
+       away the instant the book behind it changes, rather than an hour later. */
+    dataVersion: setting('DATA_VERSION') || '',
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
     today: {

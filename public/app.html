@@ -1070,9 +1070,36 @@ function exportXls(){
    style is appended AFTER the copied CSS so the unclipping also wins inside the foreignObject.
 
    Client-side only. Nothing here asks the database anything. */
+/* AUTO COLUMN WIDTH, AND A PICTURE YOU CAN READ WITHOUT PINCHING.
+
+     "The downloaded pictures in app are too wide not autocolumn width and unreadable without
+      too much zoom"
+
+   Two faults, and the first causes the second. `table{width:100%}` is right on a screen -- the
+   board should fill its card -- and wrong in a picture, because the picture's width is measured
+   from the UNCLIPPED content. A wide board therefore stretched to the widest thing on the page
+   and every column was padded out with empty space, so a report that needs 900 pixels of actual
+   text was drawn four thousand wide. Opened on a phone, that is a postage stamp.
+
+   `width:auto` with `table-layout:auto` is the browser's own column sizing: each column ends up
+   as wide as its widest cell and not one pixel more, which is exactly "auto column width". The
+   image gets narrower, and narrower is what makes it legible at the same zoom.
+
+   Then it is drawn at TWICE the size. Same layout, twice the pixels, so the text stays sharp
+   when it is enlarged instead of turning to mush -- which is the other half of "unreadable
+   without too much zoom". */
+var JPG_SCALE = 2;
 var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;'
   + 'max-width:none !important;}'
-  + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}';
+  + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}'
+  /* The tables size themselves to their content rather than to the page. */
+  + '.jpgshot table{width:auto !important;table-layout:auto !important;}'
+  /* A card no wider than the board it holds, so the picture is not padded out by its container. */
+  + '.jpgshot .card,.jpgshot .kpis,.jpgshot .pair{width:-moz-fit-content !important;width:fit-content !important;min-width:0 !important;}'
+  /* Cells keep their own width; only the long free-text ones are allowed to wrap, because one
+     comment three hundred characters long would otherwise set the width of the whole image. */
+  + '.jpgshot td,.jpgshot th{white-space:nowrap !important;}'
+  + '.jpgshot td.wrap,.jpgshot .cmt,.jpgshot .note{white-space:normal !important;max-width:420px !important;}';
 
 function saveJpg(el){
   if (!el){ toast(t('nothing'), true); return; }
@@ -1111,12 +1138,21 @@ function saveJpg(el){
       + '<style>'+css+'</style><style>'+JPG_UNCLIP+'</style>'
       + '<div style="background:var(--bg);padding:10px;width:'+w+'px">'
       + clone.outerHTML + '</div></div>';
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+(w+20)+'" height="'+(h+24)+'">'
-      + '<foreignObject width="100%" height="100%">'+html+'</foreignObject></svg>';
+    /* DRAWN AT TWICE THE SIZE. The layout is unchanged -- `zoom` scales the rendered result,
+       not the column arithmetic -- so the picture is the same shape with twice the pixels in
+       it, which is what survives being enlarged. Backed off to 1x if that would breach the
+       canvas ceiling, because a huge report is still better delivered than not delivered. */
+    var sc = ((w + 20) * JPG_SCALE <= 8000 && (h + 24) * JPG_SCALE <= 20000) ? JPG_SCALE : 1;
+    var sw = Math.round((w + 20) * sc), sh = Math.round((h + 24) * sc);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+sw+'" height="'+sh+'">'
+      + '<foreignObject width="100%" height="100%">'
+      + html.replace('<div xmlns="http://www.w3.org/1999/xhtml" class="',
+                     '<div xmlns="http://www.w3.org/1999/xhtml" style="zoom:'+sc+'" class="')
+      + '</foreignObject></svg>';
     var img = new Image();
     img.onload = function(){
       var cv = document.createElement('canvas');
-      cv.width = w+20; cv.height = h+24;
+      cv.width = sw; cv.height = sh;
       var ctx = cv.getContext('2d');
       ctx.fillStyle = document.body.classList.contains('dark') ? '#0B1120' : '#F6F8FC';
       ctx.fillRect(0,0,cv.width,cv.height);
