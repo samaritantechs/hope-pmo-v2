@@ -1098,8 +1098,20 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
      KPI row collapsed a six-tile grid into ONE 155px column stacked down the side of a 999px
      table, because `repeat(auto-fit, minmax(155px, 1fr))` has no width to fit against once the
      container shrink-wraps. The tiles flow as a wrapping row instead. */
-  + '.jpgshot .kpis{display:flex !important;flex-wrap:wrap !important;gap:8px !important;}'
+  /* EVERY auto-fit GRID IN THE SYSTEM, not just the one that was reported.
+     `repeat(auto-fit, minmax(N, 1fr))` has no width to fit against once the container
+     shrink-wraps, so it resolves to a SINGLE column and the tiles stack in a narrow ribbon down
+     the side of the report. Four of these exist -- the KPI row, the weekday trend grids on the
+     dashboard and the weekly report, the presentation's own KPI row, and the commission rate
+     form -- and only the first was covered. Measured: the weekday grid came out 148px holding
+     six cells stacked; as a wrapping row it is 788px with all six side by side.
+     `flex-direction:row` is stated because .cmsrates is a column flex before it is a grid, and
+     inheriting that turned the override into the same stack it was meant to undo. */
+  + '.jpgshot .kpis,.jpgshot .tgrid,.jpgshot .pkpis,.jpgshot .cmsrates{'
+  + 'display:flex !important;flex-direction:row !important;flex-wrap:wrap !important;gap:8px !important;}'
   + '.jpgshot .kpi{width:auto !important;min-width:140px !important;flex:0 0 auto !important;}'
+  + '.jpgshot .tcell,.jpgshot .pkpi{width:auto !important;min-width:120px !important;flex:0 0 auto !important;}'
+  + '.jpgshot .cmsrates>*{width:auto !important;min-width:200px !important;flex:0 0 auto !important;}'
   /* Two boards side by side is a screen idea. A picture is read top to bottom. */
   + '.jpgshot .pair{display:block !important;}'
   /* THE WIDTH THAT IS NOT TEXT. A ten-column board is wide because it has ten columns -- that
