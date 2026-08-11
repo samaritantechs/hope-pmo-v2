@@ -1379,8 +1379,61 @@ function paint(){
     + '</div>';
   wireTable(rows, ONROW);
   wireBar();
+  wireOfficerFind();
 }
 function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); }
+/* THE OFFICER SEARCH. Asks the database, not the browser's copy of everybody.
+
+   Typed at, it waits a moment and then asks -- a request per keystroke on a laptop is a request
+   per keystroke on the database, and this box is on the screen a supervisor leaves open. Two
+   characters minimum, because one letter matches half the staff and answers nothing.
+
+   Each hit shows NAME, NUMBER and TEAM, which is what tells two people with the same first name
+   apart. Choosing one sets the report's user filter and re-renders; the officer table then
+   appears, showing their patch. */
+var OF_TIMER = null;
+function wireOfficerFind(){
+  var box = document.getElementById('ofFind'), hits = document.getElementById('ofHits');
+  var clear = document.getElementById('ofClear');
+  if (clear) clear.onclick = function(){ S.args.user = ''; render(); };
+  if (!box || !hits) return;
+  var hide = function(){ hits.style.display = 'none'; };
+  var choose = function(name){ S.args.user = name; hide(); render(); };
+  box.oninput = function(){
+    var q = box.value.trim();
+    if (OF_TIMER) clearTimeout(OF_TIMER);
+    if (q.length < 2) { hide(); return; }
+    OF_TIMER = setTimeout(function(){
+      srv('callOfficers', { q: q }).then(function(r){
+        var rows = (r && r.rows) || [];
+        if (!rows.length) {
+          hits.innerHTML = '<div class="msg">Hakuna afisa anayelingana / no officer matches</div>';
+        } else {
+          hits.innerHTML = rows.map(function(x){
+            return '<div class="nrow ofhit" data-name="' + esc(x.name) + '" style="cursor:pointer;padding:9px 12px">'
+              + '<b>' + esc(x.name) + '</b>'
+              + '<div class="m">' + esc(x.phone || '\u2014') + ' \u00B7 ' + esc(x.team || '\u2014')
+              + (x.role ? ' \u00B7 ' + esc(x.role) : '') + '</div></div>';
+          }).join('');
+          Array.prototype.forEach.call(hits.querySelectorAll('.ofhit'), function(el){
+            el.onclick = function(){ choose(el.getAttribute('data-name')); };
+          });
+        }
+        hits.style.display = 'block';
+      }).catch(function(){ hide(); });
+    }, 250);
+  };
+  // Enter takes the first hit, which is what somebody who typed a full name expects.
+  box.onkeydown = function(e){
+    if (e.key !== 'Enter') return;
+    var first = hits.querySelector('.ofhit');
+    if (first) { e.preventDefault(); choose(first.getAttribute('data-name')); }
+  };
+  document.addEventListener('click', function(e){
+    if (e.target !== box && !hits.contains(e.target)) hide();
+  });
+}
+
 function wireBar(){
   // The bar's HTML is built once, when the tab is loaded, with whatever was chosen at that
   // moment written into it. Anything picked afterwards -- a team filter, or a choice carried
@@ -3072,11 +3125,18 @@ VIEWS.calls = function(){
             return '<option value="'+esc(x.team)+'"'+(S.args.team===x.team?' selected':'')+'>'+esc(x.team)+'</option>'; }).join('')
         + '</select>'
         /* BY USER: their teams, and everybody on them. Not that one person -- "how is Juma's
-           patch doing" is meaningless without the officers beside him. */
-        + '<select data-arg="user"><option value="">Watumiaji wote / Every user</option>'
-        + (d.users_||[]).map(function(x){
-            return '<option value="'+esc(x)+'"'+(S.args.user===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('')
-        + '</select>'
+           patch doing" is meaningless without the officers beside him.
+
+           A SEARCH, NOT A DROPDOWN OF EVERYBODY. A list of every user who made a call is a
+           long list on a big company, and it is sent whole to the browser to be scrolled. The
+           box below asks the database for the two or three people whose name or number matches
+           what is typed, and shows enough to tell them apart -- name, number, team. */
+        + '<span style="position:relative;display:inline-block">'
+        + '<input id="ofFind" placeholder="Tafuta afisa: jina au namba / officer name or number"'
+        + ' value="' + esc(S.args.user || '') + '" style="min-width:260px">'
+        + '<div id="ofHits" class="card" style="display:none;position:absolute;z-index:30;left:0;top:100%;'
+        + 'margin-top:4px;min-width:300px;max-height:280px;overflow:auto"></div></span>'
+        + (S.args.user ? ' <button class="btn sm ghost" id="ofClear">\u2715 Ondoa / Clear</button>' : '')
         + (d.leader ? '<span class="chip ok" style="margin-left:8px">' + esc(d.leader) + ' \u00B7 '
             + (d.scope === 'ALL' ? 'timu zote' : (d.scope||[]).length + ' timu') + '</span>' : '')
         + (d.user ? '<span class="chip ok" style="margin-left:8px">' + esc(d.user) + ' \u00B7 '
@@ -3101,13 +3161,25 @@ VIEWS.calls = function(){
            col('nonPortfolio','Non-portfolio','num'),
            {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }}],
           sumRow(d.teams||[], ['calls','duration','portfolio','nonPortfolio']))
-      + board('clDay','Kwa siku / By day and officer', 'the daily record behind the totals', d.byDay||[],
-          [col('day','Date','date'), col('officer','Officer'), col('team','Team'),
-           col('calls','Calls','num'), col('dur','Talk time','dur'),
-           {key:'pf', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
-           col('npf','Non-portfolio','num')],
-          sumRow(d.byDay||[], ['calls','dur','pf','npf']));
-    S.rows = d.users;
+      /* THE DAY-BY-OFFICER BOARD AND THE FULL OFFICER LIST ARE GONE FROM HERE.
+
+           "having the whole list on font end is tooo long"
+
+         Both were the same page answering a question nobody asked it: every officer times every
+         day, and then every officer again. On three hundred handsets that is thousands of rows
+         drawn so somebody can look for one person in them. The summaries above answer "how is
+         the company doing"; a NAME answers "how is this person doing", and searching for a name
+         is the thing the screen was missing.
+
+         The officer table still exists -- it appears the moment a person is chosen, showing
+         their patch. Empty until then, so the page opens short. */
+      + (d.user ? '' : '<div class="card"><div class="card-h">Tafuta afisa / Find an officer</div>'
+          + '<div class="cleanbox"><div class="note" style="display:block">Andika jina au namba ya afisa hapo juu '
+          + 'ili kuona ripoti yake. / Type an officer\u2019s name or number in the box above to see their report. '
+          + 'Muhtasari wa kampuni nzima upo hapo juu. / The company-wide summary is above.</div></div></div>');
+    /* The officer table is the person's own report, so it is drawn only when there is a person.
+       Before that the page is the summaries and the search, and nothing else. */
+    S.rows = d.user ? d.users : [];
     S.cols = [col('name','Officer'), col('team','Team'), col('position','Position'), col('calls','Calls','num'),
       col('duration','Talk time','dur'),
       {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},

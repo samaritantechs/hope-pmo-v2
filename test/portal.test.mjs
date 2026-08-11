@@ -5455,3 +5455,65 @@ test('the brake now weighs the WHOLE retirement, not only the stale half', async
   const live = db._dump('followup_status').filter(x => !(x.status == null && x.arrears == null));
   assert.equal(live.length, 300, 'the working list is exactly as it was');
 });
+
+/* =====================================================================================
+   FIND ONE OFFICER, RATHER THAN SHIPPING EVERY OFFICER.
+   =====================================================================================
+     "enable search officer by name/number while the live search shows name no and team so as
+      to produce person reports., having the whole list on font end is tooo long"
+
+   The Calls screen sent the roster to the browser twice -- a dropdown of every user who made a
+   call, and a table of every officer in the report -- and then asked somebody to find one name
+   in it. This answers the same question at the database.
+   ===================================================================================== */
+const OFFICERS = () => ({
+  ...tables(),
+  call_users: [
+    { user_id: 'u1', name: 'CATHERINE MWAKALINGA', phone: '788111222', team: 'KONGOWE', role: 'PMO COLLECTION' },
+    { user_id: 'u2', name: 'JUMA ISSA', phone: '712999999', team: 'KONGOWE', role: 'OFFICER' },
+    { user_id: 'u3', name: 'CATHERINE JOHN', phone: '755000111', team: 'MBAGALA', role: 'OFFICER' },
+    { user_id: 'u4', name: 'SWITCHED OFF', phone: '766000222', team: 'KONGOWE', role: 'OFFICER', active: false },
+  ],
+});
+
+test('an officer is found by name, and the hit says who they are', async () => {
+  const db = fakeDb(OFFICERS());
+  const r = await portalApi(db, ADMIN, 'callOfficers', { q: 'CATHERINE' }, NOW);
+  assert.equal(r.rows.length, 2, 'two people share that first name -- which is the point');
+  const [a, b] = r.rows;
+  assert.equal(a.name, 'CATHERINE JOHN');
+  /* Name, NUMBER and TEAM: without those two extra fields the list cannot tell them apart. */
+  assert.equal(a.phone, '755000111');
+  assert.equal(a.team, 'MBAGALA');
+  assert.equal(b.team, 'KONGOWE');
+});
+
+test('an officer is found by the number as it is typed off a handset', async () => {
+  /* Phones are stored normalised -- no leading zero, no country code -- so matching the typed
+     string literally would find nothing for anybody typing 0712... */
+  const db = fakeDb(OFFICERS());
+  for (const typed of ['0712999999', '712999999', '+255712999999', '999999']) {
+    const r = await portalApi(db, ADMIN, 'callOfficers', { q: typed }, NOW);
+    assert.ok(r.rows.some(x => x.name === 'JUMA ISSA'), 'not found for ' + typed);
+  }
+});
+
+test('the search is scoped to what the caller may already see', async () => {
+  /* It must not become a way of reading a roster somebody has no business reading. */
+  const db = fakeDb(OFFICERS());
+  const r = await portalApi(db, GMO, 'callOfficers', { q: 'CATHERINE' }, NOW);
+  assert.deepEqual(r.rows.map(x => x.team), ['KONGOWE'], 'MBAGALA is not theirs');
+});
+
+test('one letter is refused rather than answered with half the staff', async () => {
+  const db = fakeDb(OFFICERS());
+  const r = await portalApi(db, ADMIN, 'callOfficers', { q: 'C' }, NOW);
+  assert.equal(r.tooShort, true);
+  assert.equal(r.rows.length, 0);
+});
+
+test('a switched-off account is not offered', async () => {
+  const db = fakeDb(OFFICERS());
+  const r = await portalApi(db, ADMIN, 'callOfficers', { q: 'SWITCHED' }, NOW);
+  assert.equal(r.rows.length, 0, 'an account an admin turned off is not somebody to report on');
+});

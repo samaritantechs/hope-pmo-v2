@@ -189,7 +189,7 @@ async function isRecycleLeader(db, name) {
   return rows.some(t => K(t.gmo) === n || K(t.manager) === n || K(t.bike) === n);
 }
 async function teamList(db) {
-  const rows = await fetchAll(() => db.from('teams').select('*'));
+  const rows = await readTeamsAll(db);
   return rows.filter(r => r.team).map(r => r.team).sort();
 }
 
@@ -325,6 +325,11 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
     const pass = String(passcode == null ? '' : passcode).trim();
     if (!pass) throw new Error('Weka msimbo wa timu yako. / Enter your team code.');
     const codeKey = K(pass).replace(/[^0-9A-Z]/g, '');
+    /* NOT THE MEMO. Rotating a team code is how an admin CUTS the handsets that had the old
+       one, and a fifteen-second window in which the old code still registers is a fifteen-second
+       window in which somebody who was just cut walks back in. Registration is rare -- a handset
+       does it once -- so it pays for a live read, and the test that pins this is the one that
+       caught the memo the moment it was applied here. */
     const teamRows = await fetchAll(() => db.from('teams').select('*'));
     const match = teamRows.find(t => K(t.team_code || '').replace(/[^0-9A-Z]/g, '') === codeKey && codeKey);
     if (!match) throw new Error('Msimbo wa timu si sahihi. / That team code is not correct. Ask your PMO officer.');
@@ -640,6 +645,27 @@ const CALL_EXPECTED_COLS = 'ref, full_name, contact, guarantor_name, guarantor_c
 
    The map is name -> [teams], built once, so callers ask it a question rather than filtering the
    table themselves. */
+/* THE SAME FIFTY ROWS, ON THIS SIDE TOO.
+
+   The portal memoises the teams table; the phone side reads it separately and, in the calls
+   report, TWICE in one request -- measured. Its own memo rather than a shared one, because
+   call-core importing portal-core would close an import cycle this codebase has already had to
+   break once (see expdf.js). Two modules asking once every fifteen seconds is two reads a
+   minute for the whole company, which is not worth a cycle to avoid. */
+const TEAMS_ALL_TTL_MS = 15000;
+const teamsAllCache = new WeakMap();
+
+export function noteCallTeamsWritten(db) { teamsAllCache.delete(db); }
+
+async function readTeamsAll(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = teamsAllCache.get(db);
+  if (hit && (at - hit.at) < TEAMS_ALL_TTL_MS) return hit.rows;
+  const rows = await fetchAll(() => db.from('teams').select('*'));
+  teamsAllCache.set(db, { at, rows });
+  return rows;
+}
+
 const TEAM_ROLE_TTL_MS = 60000;
 const teamRoleCache = new WeakMap();
 
@@ -1246,7 +1272,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   }
   const [users0, teamRows, logs] = await Promise.all([
     fetchAll(() => db.from('call_users').select('*')),
-    fetchAll(() => db.from('teams').select('*')),
+    readTeamsAll(db),
     /* Scoped at the database. A leader over one team read every call the whole company made
        in the window and discarded the rest here -- on the table that grows fastest of all. */
     fetchAll(() => {
@@ -1334,7 +1360,7 @@ async function report(db, [dev, from, to, team, leader], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   if (!cu.is_leader) throw new Error('Leader access only.');
-  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const teamRows = await readTeamsAll(db);
   const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(cu.name)] || {});
   const lt = cu.leader_teams;
@@ -1413,7 +1439,7 @@ async function report(db, [dev, from, to, team, leader], nowMs) {
     role columns), optionally narrowed to one team the caller may already see. Port of
     api_callReportPortal -- one report implementation for both front ends. */
 export async function reportCoreForPortal(db, user, { from, to, team, leader, user: user_ } = {}, nowMs = Date.now()) {
-  const teamRows = await fetchAll(() => db.from('teams').select('*'));
+  const teamRows = await readTeamsAll(db);
   const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(user.name)] || {});
   let scope = live.length ? live : user.teams;                 // null stays null = ALL
