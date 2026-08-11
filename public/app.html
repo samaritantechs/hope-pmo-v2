@@ -1094,11 +1094,22 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
   + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}'
   /* The tables size themselves to their content rather than to the page. */
   + '.jpgshot table{width:auto !important;table-layout:auto !important;}'
-  /* A card no wider than the board it holds, so the picture is not padded out by its container. */
-  + '.jpgshot .card,.jpgshot .kpis,.jpgshot .pair{width:-moz-fit-content !important;width:fit-content !important;min-width:0 !important;}'
-  /* Cells keep their own width; only the long free-text ones are allowed to wrap, because one
-     comment three hundred characters long would otherwise set the width of the whole image. */
-  + '.jpgshot td,.jpgshot th{white-space:nowrap !important;}'
+  /* MEASURED, NOT ASSUMED -- and the first attempt at this made it worse. `fit-content` on the
+     KPI row collapsed a six-tile grid into ONE 155px column stacked down the side of a 999px
+     table, because `repeat(auto-fit, minmax(155px, 1fr))` has no width to fit against once the
+     container shrink-wraps. The tiles flow as a wrapping row instead. */
+  + '.jpgshot .kpis{display:flex !important;flex-wrap:wrap !important;gap:8px !important;}'
+  + '.jpgshot .kpi{width:auto !important;min-width:140px !important;flex:0 0 auto !important;}'
+  /* Two boards side by side is a screen idea. A picture is read top to bottom. */
+  + '.jpgshot .pair{display:block !important;}'
+  /* THE WIDTH THAT IS NOT TEXT. A ten-column board is wide because it has ten columns -- that
+     part is the report -- but 12px of padding either side of every cell is 240px of nothing,
+     and a header is very often the widest cell in its column purely because it will not wrap.
+     Both of those are pixels spent on no information, and on a phone every one of them is
+     taken out of the size of the writing. */
+  + '.jpgshot td,.jpgshot th{padding:5px 8px !important;white-space:nowrap !important;}'
+  + '.jpgshot th{white-space:normal !important;}'
+  /* One three-hundred-character comment must not set the width of the whole image. */
   + '.jpgshot td.wrap,.jpgshot .cmt,.jpgshot .note{white-space:normal !important;max-width:420px !important;}';
 
 function saveJpg(el){

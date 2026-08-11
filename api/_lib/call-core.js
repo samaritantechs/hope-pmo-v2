@@ -545,10 +545,12 @@ export async function callRoleKind(db, user) {
      every migration here, so asking for it on a database that has not run one must not take
      the other two columns down with it -- a thrown column error here would empty the
      officer's whole list rather than merely skip a rule. */
+  /* THE SAME MAP THE SCOPE WIDENING USES, so a list load asks the teams table once rather than
+     twice -- this used to issue its own read of the very columns heldTeams had just read on the
+     same request, and both of them run on every list load from every handset. */
   const [pmoName, rows] = await Promise.all([
     settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT),
-    fetchAll(() => db.from('teams').select('credit, expected, collection'))
-      .catch(() => fetchAll(() => db.from('teams').select('credit, expected'))),
+    teamRoleRows(db),
   ]);
   if (role && isPmoRole(role, pmoName)) return 'COLLECTION';
   // Failing the role, by NAME -- the credit analyst and the expected officer genuinely are
@@ -624,15 +626,57 @@ const CALL_EXPECTED_COLS = 'ref, full_name, contact, guarantor_name, guarantor_c
    trusted -- and an ALL-teams user (teams null) is left exactly as they are. A plain officer
    holding no column anywhere gets nothing added, which is nearly every handset, so nothing
    changes for the people this must not disturb. */
-async function heldTeams(db, name) {
-  const n = K(name);
-  if (!n) return [];
+/* THE ROLE MAP IS THE SAME ANSWER FOR EVERY HANDSET, SO IT IS READ ONCE A MINUTE.
+
+   This lookup arrived with the credit-analyst fix and it runs on EVERY list load. Two hundred
+   handsets opening Leo, Kesho and Def through a morning is thousands of reads of a table whose
+   answer is identical for all of them and changes when somebody is reassigned -- which is not
+   often, and never in the middle of a Monday.
+
+   Cached against DATA_VERSION exactly as the phone index is, so an upload or a reassignment
+   moves the key and the next caller rebuilds it; the sixty-second ceiling is the backstop for a
+   deployment where the version never moves. One read a minute for the whole company, instead of
+   one per screen per officer.
+
+   The map is name -> [teams], built once, so callers ask it a question rather than filtering the
+   table themselves. */
+const TEAM_ROLE_TTL_MS = 60000;
+const teamRoleCache = new WeakMap();
+
+async function teamRoleMap(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = teamRoleCache.get(db);
+  if (hit && (at - hit.at) < TEAM_ROLE_TTL_MS) return hit.map;
   /* `collection` is optional -- it arrived in a later migration and migrations here are run by
      hand -- so asking for it must not take the other columns down with it. */
   const rows = await fetchAll(() => db.from('teams').select('team, ' + POS_ORDER.join(', ') + ', collection'))
     .catch(() => fetchAll(() => db.from('teams').select('team, ' + POS_ORDER.join(', '))));
   const cols = POS_ORDER.concat(['collection']);
-  return rows.filter(r => r.team && cols.some(c => K(r[c]) === n)).map(r => r.team);
+  const map = new Map();
+  map._rows = rows;                            // the same read, for the callers that want it raw
+  for (const r of rows) {
+    if (!r.team) continue;
+    for (const c of cols) {
+      const n = K(r[c]);
+      if (!n) continue;
+      if (!map.has(n)) map.set(n, []);
+      map.get(n).push(r.team);
+    }
+  }
+  teamRoleCache.set(db, { at, map });
+  return map;
+}
+/** The teams table's role columns, off the same one-a-minute read. */
+async function teamRoleRows(db, nowMs) {
+  const map = await teamRoleMap(db, nowMs);
+  return map._rows || [];
+}
+
+async function heldTeams(db, name, nowMs) {
+  const n = K(name);
+  if (!n) return [];
+  const map = await teamRoleMap(db, nowMs);
+  return map.get(n) || [];
 }
 
 /** The scope a handset should actually read: their own team(s) PLUS every team they hold a role
