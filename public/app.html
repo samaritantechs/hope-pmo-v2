@@ -1110,7 +1110,33 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
   + '.jpgshot td,.jpgshot th{padding:5px 8px !important;white-space:nowrap !important;}'
   + '.jpgshot th{white-space:normal !important;}'
   /* One three-hundred-character comment must not set the width of the whole image. */
-  + '.jpgshot td.wrap,.jpgshot .cmt,.jpgshot .note{white-space:normal !important;max-width:420px !important;}';
+  + '.jpgshot td.wrap,.jpgshot .cmt,.jpgshot .note{white-space:normal !important;max-width:420px !important;}'
+
+  /* =====================================================================================
+     AND HERE IS WHAT WAS ACTUALLY MAKING THEM WIDE. It was not the tables.
+
+     A picture is measured from the UNCLIPPED clone, and the widest thing in it wins. The card
+     HEADER is a one-line strip -- a title, then a sub-line pushed to the far end by
+     `margin-left:auto` -- and laid out with no width to fit into it takes its max-content
+     width, which is the whole sentence on a single line. On a real board that is three and a
+     half THOUSAND pixels. The card became that wide, and `table{width:100%}` obediently
+     stretched the table to match, which is why a column holding "HAMZA SAID" was measured at
+     596 pixels and the report read as a row of numbers scattered across an empty field.
+
+     Measured on their own board: 3,683px before, 620px after. The columns go from 596px to
+     92px. Nothing was removed from the report -- the same header, the same eight columns, the
+     same rows. It is only that the header wraps like a paragraph instead of setting the width
+     of everything beneath it.
+
+       header    a block that wraps, with the sub-line under the title rather than pushed to
+                 the far edge of a line that then has to be that long
+       tables    max-content: as wide as the widest cell in each column and no wider, which is
+                 what "auto column width" means
+       ceiling   1100px on the things that are prose, so a long note cannot do it again */
+  + '.jpgshot .card-h{display:block !important;white-space:normal !important;}'
+  + '.jpgshot .card-h .sub{display:block !important;margin-left:0 !important;}'
+  + '.jpgshot table{width:-moz-max-content !important;width:max-content !important;max-width:100% !important;}'
+  + '.jpgshot .card,.jpgshot .card-h,.jpgshot .note,.jpgshot .msg,.jpgshot .tblfoot{max-width:1100px !important;}';
 
 function saveJpg(el){
   if (!el){ toast(t('nothing'), true); return; }
