@@ -972,3 +972,145 @@ test('a row with no team at all is dropped, as before', async () => {
   const { importTeams } = await import('../api/_lib/importers.js');
   assert.equal(importTeams([['TEAM', 'GMO'], ['', 'NOBODY'], ['KONGOWE', 'GEE MO']]).length, 1);
 });
+
+/* =====================================================================================
+   THE APPROVED-SALES FILE, AS THE COMPANY ACTUALLY EXPORTS IT.
+   =====================================================================================
+   "Replacing sales works but appending doesnt update"
+
+   The real header row writes 'CONTACT #' and 'TRACK' with a space before the hash -- and
+   normalizeHeader keeps a single space, so 'CONTACT #' is not 'CONTACT#'. The customer's
+   phone imported as null off every approved-sales file, silently.
+*/
+test('the spaced headers of the real approvals export are recognised', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const out = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'CONTACT #', 'TRACK', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['2-217-109681', '22171096811', 'MATUKA MASOUD', '0650941063', '1', '500000', '22/6/2026'],
+  ], 'approved');
+  assert.equal(out[0].contact, '0650941063', 'the phone was dropped by the spaced header');
+  assert.equal(out[0].docket_no, '2-217-109681');
+  assert.equal(out[0].loan_id, '22171096811');
+  assert.equal(out[0].track_no, '1');
+});
+
+test('a loan column the file does not have is not manufactured as null', async () => {
+  /* The approvals export has no DISB DATE and no CREATED BY. Building them as null meant the
+     upsert erased whatever an earlier stage's file had filled in -- the same "absent means
+     erase" fault as the teams sheet wiping the passcodes. */
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const out = importLoans([
+    ['FULL NAME', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['MATUKA MASOUD', 'SEGEREA', '500000', '22/6/2026'],
+  ], 'approved');
+  const o = out[0];
+  assert.equal('disb_date' in o, false, 'disb_date was sent as null and would erase the disbursement');
+  assert.equal('created_by' in o, false, 'created_by was sent as null and would erase the call agent');
+  assert.equal('contact' in o, false);
+  assert.equal(o.principal_amt, 500000);
+  assert.equal(o.stage, 'approved');
+  assert.ok(o.id, 'the key itself is always computed');
+});
+
+test('a loan column present but blank still clears', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const out = importLoans([
+    ['FULL NAME', 'CONTACT #', 'PRINCIPAL AMT'],
+    ['MATUKA MASOUD', '', '500000'],
+  ], 'approved');
+  assert.equal('contact' in out[0], true);
+  assert.equal(out[0].contact, null);
+});
+
+/* =====================================================================================
+   ONE LOAN, ONE ROW -- EVEN WHEN ITS PAPERWORK GROWS UP BETWEEN UPLOADS.
+   =====================================================================================
+   The application-stage export has no LOAN ID column (the ID is assigned at approval), so
+   the loan went in under its docket or name. The approvals export then computes a DIFFERENT
+   key from the new LOAN ID, and an upsert can only match keys -- so appending Approved
+   INSERTED A TWIN instead of moving the row. "Replacing sales works but appending doesnt
+   update", in one mechanism.
+*/
+const { fakeDb } = await import('./fake-db.mjs');
+
+test('an approved append updates the loan the applications file created', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const { reconcileLoanIds } = await import('../api/upload.js');
+  // Day 1: the applications file -- no LOAN ID column exists yet at this stage.
+  const applied = importLoans([
+    ['DOCKET #', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'REQUESTED AMT'],
+    ['2-217-109681', 'MATUKA MASOUD', '0650941063', '1', 'SEGEREA', '500000'],
+  ], 'unassigned');
+  const db = fakeDb({ loans: applied });
+  // Day 5: the approvals file for the same loan, now carrying its LOAN ID.
+  const approved = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['2-217-109681', '22171096811', 'MATUKA MASOUD', '0650941063', '1', 'SEGEREA', '500000', '22/6/2026'],
+  ], 'approved');
+  assert.notEqual(approved[0].id, applied[0].id, 'the identities genuinely differ -- that is the fault');
+  const rec = await reconcileLoanIds(db, approved);
+  assert.equal(rec.relinked, 1);
+  assert.equal(rec.records[0].id, applied[0].id, 'the approval must land on the applications row');
+});
+
+test('the twins earlier appends already made are merged, and counted', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const { reconcileLoanIds } = await import('../api/upload.js');
+  const applied = importLoans([
+    ['DOCKET #', 'FULL NAME', 'TRACK', 'TEAM', 'REQUESTED AMT'],
+    ['2-217-109681', 'MATUKA MASOUD', '1', 'SEGEREA', '500000'],
+  ], 'unassigned');
+  const approvedOld = importLoans([
+    ['LOAN ID', 'FULL NAME', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['22171096811', 'MATUKA MASOUD', '1', 'SEGEREA', '500000', '22/6/2026'],
+  ], 'approved');
+  // Both rows are already in the table -- the twin an earlier append created.
+  const db = fakeDb({ loans: applied.concat(approvedOld) });
+  // The re-pulled approvals file carries BOTH identities, which is what proves the twins.
+  const again = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['2-217-109681', '22171096811', 'MATUKA MASOUD', '1', 'SEGEREA', '500000', '22/6/2026'],
+  ], 'approved');
+  const rec = await reconcileLoanIds(db, again);
+  assert.equal(rec.merged, 1, 'one of the two rows is provably the same loan filed twice');
+  assert.equal(db._dump('loans').length, 1, 'the twin is gone');
+  assert.equal(rec.records[0].id, approvedOld[0].id, 'the LOAN ID row is the keeper');
+});
+
+test('two different loans for the same customer are never confused', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const { reconcileLoanIds } = await import('../api/upload.js');
+  // Track 1 exists; track 2 (the repeat loan) arrives. Same name, same phone.
+  const first = importLoans([
+    ['DOCKET #', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'REQUESTED AMT'],
+    ['2-217-109681', 'MATUKA MASOUD', '0650941063', '1', 'SEGEREA', '500000'],
+  ], 'unassigned');
+  const db = fakeDb({ loans: first });
+  const repeat = importLoans([
+    ['DOCKET #', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'REQUESTED AMT'],
+    ['2-300-200200', 'MATUKA MASOUD', '0650941063', '2', 'SEGEREA', '700000'],
+  ], 'unassigned');
+  const rec = await reconcileLoanIds(db, repeat);
+  assert.equal(rec.relinked, 0, 'a repeat loan is a NEW loan, not an update of the first');
+  assert.equal(rec.merged, 0);
+});
+
+test('the lenient phone match redirects but never deletes', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const { reconcileLoanIds } = await import('../api/upload.js');
+  /* The stored twin has no phone -- the header mismatch dropped it for months -- and no
+     docket or loan id in common. Track+name still finds it; nothing is deleted. */
+  const stored = importLoans([
+    ['FULL NAME', 'TRACK', 'TEAM', 'REQUESTED AMT'],
+    ['MATUKA MASOUD', '1', 'SEGEREA', '500000'],
+  ], 'unassigned');
+  const db = fakeDb({ loans: stored });
+  const incoming = importLoans([
+    ['FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['MATUKA MASOUD', '0650941063', '1', 'SEGEREA', '500000', '22/6/2026'],
+  ], 'approved');
+  const rec = await reconcileLoanIds(db, incoming);
+  assert.equal(rec.relinked, 1, 'track+name with a missing phone is still the same loan');
+  assert.equal(rec.merged, 0, 'the lenient form must never delete');
+  assert.equal(rec.records[0].id, stored[0].id);
+});

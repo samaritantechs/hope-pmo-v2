@@ -188,10 +188,13 @@ export function commentsDateOrder(csvRows) {
   return { dayFirst, unreadable };
 }
 
+/* The spaced variants ('CONTACT #', 'TRACK #') are how the company's own approvals export
+   actually writes them -- normalizeHeader keeps a single space, so 'CONTACT #' is NOT
+   'CONTACT#', and the customer's phone imported as null off every approved-sales file. */
 const LOAN_STAGE_COLUMNS = {
   full_name: ['FULLNAME', 'FULL NAME'],
-  contact: ['CONTACT#', 'CONTACT'],
-  momo: ['MOMO', 'MOMO#'],
+  contact: ['CONTACT#', 'CONTACT #', 'CONTACT'],
+  momo: ['MOMO', 'MOMO#', 'MOMO #'],
   recipient_full_name: ['RECIPIENT FULL NAME'],
   recipient_momo: ['RECIPIENT MOMO'],
   guarantor_name: ['GUARANTOR NAME', 'GUARANTOR'],
@@ -215,8 +218,8 @@ const LOAN_STAGE_COLUMNS = {
   bank_name: ['BANK', 'BANK NAME'],
   account_no: ['ACCOUNT NO'],
   docket_no: ['DOCKET#', 'DOCKET #'],
-  loan_id: ['LOAN ID'],
-  track_no: ['TRACK#', 'TRK#', 'TRACK'],
+  loan_id: ['LOAN ID', 'LOAN_ID', 'LOANID'],
+  track_no: ['TRACK#', 'TRACK #', 'TRK#', 'TRACK'],
   // The CALL AGENT who took the application. It was in the schema but never imported, so the
   // dashboard's call-agent board had nothing to group by and fell back to the calls app.
   created_by: ['CREATED BY', 'CREATEDBY', 'AGENT', 'AGENT ID'],
@@ -299,7 +302,16 @@ export function importLoans(csvRows, stage, dayFirst) {
   const order = dayFirst === undefined ? loansDateOrder(csvRows) : dayFirst;
   return rowsToObjects(csvRows).map(({ raw: r, h }) => {
     const obj = { stage };
+    /* ONLY THE COLUMNS THIS FILE ACTUALLY HAS. Each stage's export carries its own subset --
+       the approvals report has no DISB DATE, the applications report has no APPROVED DATE --
+       and building every field regardless manufactured a null for each absent one. One loan is
+       ONE row whose stage moves, written to by upsert, and an upsert writes exactly the columns
+       in the payload: so appending Approved for a loan the pipeline already knew erased the
+       call agent, the disbursement facts, whatever the earlier stage had filled in. Same rule
+       as the leaders sheet: absent means "not talking about this", a present-but-blank cell
+       still clears. */
     for (const [field, candidates] of Object.entries(LOAN_STAGE_COLUMNS)) {
+      if (!candidates.some(n => h[normalizeHeader(n)] !== undefined)) continue;
       const v = col(r, h, ...candidates);
       obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v, order) : textOrNull(v);
     }

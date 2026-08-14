@@ -190,6 +190,97 @@ export function datesInFile(records, col) {
    stops, and it says why. */
 export const MAX_REPLACE_DATES = 62;
 
+/* =====================================================================================
+   ONE LOAN, ONE ROW -- EVEN WHEN ITS PAPERWORK GROWS UP BETWEEN UPLOADS.
+
+     "Replacing sales works but appending doesnt update"
+
+   A loan's row is keyed on its own identity: LOAN ID, else DOCKET#, else track + name +
+   phone (loanId in importers.js). That key is computed FROM THE FILE -- and the same loan
+   does not carry the same identity papers all its life. An application-stage export has no
+   LOAN ID column (the ID is assigned at approval), so the loan went in under its docket or
+   its name; the approvals export then arrives with a LOAN ID, computes a DIFFERENT key, and
+   the upsert -- which can only match keys -- INSERTS A TWIN instead of moving the row it was
+   meant to update. Append after append, the pipeline filled with loans that were both
+   "awaiting approval" and "approved", and corrections landed on neither. Replace looked like
+   it worked because it deletes the day wholesale before writing, twins and all.
+
+   So before the write, each incoming loan is checked against what the pipeline already
+   holds, by every identity it has:
+
+     LOAN ID        exact, when both sides have one
+     DOCKET#        exact, when both sides have one
+     track+name     with the phone lenient -- equal, or missing on either side, because the
+                    phone itself was being dropped by a header mismatch until today, so the
+                    stored twin often has no phone through no fault of the file
+
+   A match means "this row IS that loan": the incoming record takes the existing row's id, and
+   the upsert becomes the update it was always meant to be. When one incoming loan matches
+   SEVERAL existing rows under its strong identities (the twins earlier appends already made),
+   the extras are provably the same loan filed twice -- they are removed, and the count is
+   reported. The lenient triple never deletes anything; it only redirects the update.
+
+   POSTGRES: three chunked keyed reads per slice (400 keys a request), only over the values
+   this file actually carries, plus one delete only when twins exist. Upload-time cost only --
+   no read path changes. */
+export async function reconcileLoanIds(db, records) {
+  if (!records.length) return { records, relinked: 0, merged: 0 };
+  const T = v => String(v == null ? '' : v).trim().toUpperCase();
+  const cols = 'id, loan_id, docket_no, track_no, full_name, contact';
+  const existing = []; const seenIds = new Set();
+  const pull = async (col, vals) => {
+    const list = [...new Set(vals.filter(Boolean))];
+    for (let i = 0; i < list.length; i += 400) {
+      const { data, error } = await runQuery(() =>
+        db.from('loans').select(cols).in(col, list.slice(i, i + 400)));
+      if (error) throw new Error('Could not check for already-known loans: ' + error.message);
+      for (const r of (data || [])) if (!seenIds.has(r.id)) { seenIds.add(r.id); existing.push(r); }
+    }
+  };
+  await pull('loan_id', records.map(r => r.loan_id));
+  await pull('docket_no', records.map(r => r.docket_no));
+  await pull('full_name', records.map(r => r.full_name));
+
+  const byLoanId = new Map(), byDocket = new Map(), byName = new Map();
+  for (const e of existing) {
+    if (T(e.loan_id)) byLoanId.set(T(e.loan_id), e);
+    if (T(e.docket_no)) byDocket.set(T(e.docket_no), e);
+    if (T(e.full_name)) {
+      const k = T(e.full_name);
+      if (!byName.has(k)) byName.set(k, []);
+      byName.get(k).push(e);
+    }
+  }
+
+  let relinked = 0; const twinIds = new Set();
+  const out = records.map(r => {
+    // Strong identities first, in the same order loanId itself prefers them.
+    const strong = [];
+    if (T(r.loan_id) && byLoanId.has(T(r.loan_id))) strong.push(byLoanId.get(T(r.loan_id)));
+    if (T(r.docket_no) && byDocket.has(T(r.docket_no))) strong.push(byDocket.get(T(r.docket_no)));
+    let keeper = strong[0] || null;
+    if (!keeper && T(r.full_name) && T(r.track_no)) {
+      keeper = (byName.get(T(r.full_name)) || []).find(e => T(e.track_no) === T(r.track_no)
+        && (!T(e.contact) || !T(r.contact) || T(e.contact) === T(r.contact))) || null;
+    }
+    if (!keeper) return r;
+    // Two DIFFERENT existing rows both carrying this loan's papers are the same loan twice.
+    for (const s of strong) if (s.id !== keeper.id) twinIds.add(s.id);
+    if (keeper.id === r.id) return r;
+    relinked++;
+    return { ...r, id: keeper.id };
+  });
+
+  if (twinIds.size) {
+    const gone = [...twinIds];
+    for (let i = 0; i < gone.length; i += 400) {
+      const { error } = await runQuery(() => db.from('loans').delete().in('id', gone.slice(i, i + 400)));
+      if (error) throw new Error('Could not merge duplicate loan rows: ' + error.message);
+    }
+  }
+  return { records: out, relinked, merged: twinIds.size };
+}
+
 /** REPLACE ALL FOR THIS DAY. This is the only code in the system that deletes anybody's
     figures, so every path out of it is deliberate:
       - Not replacing? Touch nothing.
@@ -372,6 +463,7 @@ export default withApi(async (req, res) => {
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
   let table, records, commentsOrder = null, loansOrder, teamsDroppedCols = null;
+  let loansRelinked = 0, loansMerged = 0;
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -423,6 +515,12 @@ export default withApi(async (req, res) => {
          entirely reasonable in the result. */
       loansOrder = loansDateOrder(rows);
       records = importLoans(rows, meta.stage, loansOrder);
+      /* A loan whose paperwork grew a LOAN ID since its last upload must UPDATE its row, not
+         sit beside it as a twin -- see reconcileLoanIds above. */
+      {
+        const rec = await reconcileLoanIds(supabase, records);
+        records = rec.records; loansRelinked = rec.relinked; loansMerged = rec.merged;
+      }
       break;
     case 'teams':
       table = 'teams';
@@ -996,6 +1094,11 @@ export default withApi(async (req, res) => {
       /* NAMED, not counted. This is the line that would have ended a week of searching. */
       skipped ? `\u26a0\ufe0f ${skipped} row(s) of the ${dataRows} in this file were NOT uploaded, because their reference column could not be read. They are not in the system and no screen can show them. Check the header spelling of the reference column against the rest of the file. Skipped: ${skippedNames.join('; ')}${skipped > skippedNames.length ? `; and ${skipped - skippedNames.length} more` : ''}.` : '',
       loansOrder !== undefined ? `Dates in this file were read as ${loansOrder === null ? 'DAY/MONTH (nothing in the file said which way round it writes them)' : loansOrder ? 'DAY/MONTH' : 'MONTH/DAY'}. Check one row against the report if a figure looks like it landed in the wrong month.` : '',
+      /* The whole reason "appending didn't update": the same loan under a new identity. Both
+         figures are worth a sentence -- an update that happened invisibly is indistinguishable
+         from one that did not happen. */
+      loansRelinked ? `${loansRelinked} loan(s) were recognised as already in the pipeline under an older identity (a docket or name from before their LOAN ID existed) and their existing rows were UPDATED rather than duplicated.` : '',
+      loansMerged ? `${loansMerged} duplicate row(s) -- the same loan filed twice by earlier uploads under two identities -- were merged into one. Sales and pipeline counts no longer double-count them.` : '',
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
       /* A COLUMN THROWN AWAY IN SILENCE IS THE WORST KIND OF SUCCESS. The file was read right,
          the database has no such column yet, and without this line the upload says "done" while
