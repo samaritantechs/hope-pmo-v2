@@ -1740,10 +1740,11 @@ function drawReports(){
     /* The two columns asked for by name: non-portfolio AFTER defaulter, and the share of
        portfolio calls among ALL calls -- the number the whole categorisation exists to
        produce, and the server has computed per officer all along (u.ratio). */
-    /* COL and DEF, as asked -- the calls made to the collection (expected) list and to the
-       defaulter book. And after % pf, the officer themselves is one tap away: the number is
-       the one they REGISTERED with, so the supervisor reading a zero can ring it right here. */
-    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">COL</th><th class="r">DEF</th><th class="r">Nje ya pf</th><th class="r">% pf</th><th></th></tr></thead><tbody>'
+    /* COL and REC, as asked -- the calls made to the collection (expected) list and to the
+       recovery (defaulter) book. And after % pf, the officer themselves is one tap away: the
+       number is the one they REGISTERED with, so the supervisor reading a zero can ring it
+       right here. */
+    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">COL</th><th class="r">REC</th><th class="r">Nje ya pf</th><th class="r">% pf</th><th></th></tr></thead><tbody>'
     + (d.users||[]).map(function(u){
         var oHref = telHref(u.phone);
         return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
