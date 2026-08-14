@@ -1547,6 +1547,7 @@ function wireBar(){
   wireFollowupClean();
   wireStampWeek();
   wireTeamsDownload();
+  wireStaffExcel();
 }
 
 /* SEPARATE FROM wireClean ON PURPOSE. wireClean returns early when the Settings cards are not
@@ -1569,6 +1570,39 @@ function wireTeamsDownload(){
       toast(money(d.count) + ' timu zimepakuliwa. / ' + d.count + ' teams downloaded.');
       b.disabled = false;
     }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
+  };
+}
+
+/* THE PHONE LIST: role, team, name, number -- one press, a real Excel file. Same
+   SpreadsheetML trick as exportXls (no library, works inside the WebView), but fed by the
+   server's staffExport rather than the on-screen table, because the on-screen staff list is
+   BY PERSON and the file wanted is BY ROLE AND TEAM, with the app's fresh numbers. */
+function wireStaffExcel(){
+  var b = document.getElementById('staffXl');
+  if (!b) return;
+  b.onclick = function(e){
+    e.stopPropagation();
+    b.disabled = true;
+    srv('staffExport').then(function(d){
+      var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+        + '<xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>'
+        + '<x:Name>Namba</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>1</x:SplitHorizontal>'
+        + '<x:TopRowBottomPane>1</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet>'
+        + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
+        + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+        + '</head><body><table><thead><tr><th>S/N</th>'
+        + d.headers.map(function(h){ return '<th>'+esc(h)+'</th>'; }).join('')
+        + '</tr></thead><tbody>'
+        + (d.rows||[]).map(function(r, i){
+            // Numbers stay TEXT on purpose: Excel eats a leading zero off a phone number.
+            return '<tr><td x:num>'+(i+1)+'</td>'+r.map(function(v){ return '<td x:str>'+esc(v==null?'':v)+'</td>'; }).join('')+'</tr>';
+          }).join('')
+        + '</tbody></table></body></html>';
+      download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}),
+        'namba-viongozi-maafisa-' + today() + '.xls');
+      toast(money(d.count) + ' namba zimepakuliwa. / ' + d.count + ' numbers downloaded.');
+      b.disabled = false;
+    }).catch(function(err){ b.disabled = false; toast(String(err.message||err), true); });
   };
 }
 
@@ -3535,16 +3569,20 @@ VIEWS.teams = function(){
          than on the teams table -- so they were not on this screen at all. */
       + (S.me.can.admin && S.staff
           ? '<div class="card" id="staffCard"><div class="card-h">Wafanyakazi / Staff &mdash; by person'
-            + '<span class="sub"><button class="btn sm" id="newStaff">+ Mpya / New</button></span></div>'
+            + '<span class="sub"><button class="btn sm ghost" id="staffXl">\u2b07 Excel &mdash; namba zote / all numbers</button>'
+            + ' <button class="btn sm" id="newStaff">+ Mpya / New</button></span></div>'
             + '<div class="note" style="margin:10px 14px">Bofya mtu kubadili timu zake zote kwa mara moja.'
             + ' / Tap a person to set <b>all</b> their teams at once. Timu usiyoichagua inaondolewa kwake.'
-            + ' / A team you leave unticked is taken off them.</div>'
+            + ' / A team you leave unticked is taken off them.'
+            + ' Namba zenye \ud83d\udcf1 zinatoka kwenye app ya simu &mdash; ndipo watu wanajisajili wenyewe.'
+            + ' / Numbers marked \ud83d\udcf1 come from the call app registration, the freshest source.</div>'
             + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Jina / Name</th><th>Wadhifa / Role</th>'
-            + '<th class="r">Timu</th><th>Teams</th><th></th></tr></thead><tbody>'
+            + '<th>Namba / Phone</th><th class="r">Timu</th><th>Teams</th><th></th></tr></thead><tbody>'
             + (S.staff.staff||[]).map(function(x, i){
                 var key = x.role + '\u0001' + x.name;
                 return '<tr class="clickrow" data-staff="'+esc(key)+'"><td class="sn">'+(i+1)+'</td>'
                   + '<td><b>'+esc(x.name)+'</b></td><td>'+esc(x.roleLabel)+'</td>'
+                  + '<td>'+(x.phone ? esc(x.phone)+(x.phoneFrom==='app'?' \ud83d\udcf1':'') : '\u2014')+'</td>'
                   + '<td class="r">'+money((x.teams||[]).length)+'</td>'
                   + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
                   + esc((x.teams||[]).join(', ') || '—')+'</td>'

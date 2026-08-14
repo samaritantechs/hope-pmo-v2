@@ -2925,14 +2925,25 @@ const STAFF_COLLECTION_ROLE = 'collection';
 /** Everybody, with the teams they hold -- merged from the teams table's role columns and from
     the access codes that carry the collection role. */
 async function staffRoster(db, user) {
-  const [teamRows, codeRows, cfg] = await Promise.all([
+  const [teamRows, codeRows, cfg, book] = await Promise.all([
     fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
     fetchAll(() => db.from('access_codes').select('code, name, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY]),
+    appPhoneBook(db),
   ]);
   const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const mine = teamRows.filter(t => teamAllowed(user, t.team));
   const allTeams = mine.map(t => t.team);
+
+  /* The person's number rides along: the app's registration first (that is where these people
+     actually update themselves -- see appPhoneBook), the sheet's own number column as the
+     fallback, and `phoneFrom` says which one answered so the screen can say so. */
+  const withPhone = (row, sheetNo) => {
+    const hit = book.get(K(row.name));
+    row.phone = hit ? hit.phone : (String(sheetNo || '').trim() || null);
+    row.phoneFrom = hit ? 'app' : (row.phone ? 'sheet' : null);
+    return row;
+  };
 
   const out = [];
   for (const roleCol of STAFF_TEAM_ROLES) {
@@ -2940,24 +2951,33 @@ async function staffRoster(db, user) {
     for (const t of mine) {
       const who = String(t[roleCol] || '').trim();
       if (!who) continue;
-      if (!by.has(K(who))) by.set(K(who), { name: who, teams: [] });
-      by.get(K(who)).teams.push(t.team);
+      if (!by.has(K(who))) by.set(K(who), { name: who, teams: [], no: null });
+      const v = by.get(K(who));
+      v.teams.push(t.team);
+      if (!v.no && t[roleCol + '_no']) v.no = t[roleCol + '_no'];
     }
     for (const v of by.values()) {
-      out.push({ name: v.name, role: roleCol, roleLabel: roleCol.toUpperCase(),
-        teams: v.teams.sort(), source: 'teams' });
+      out.push(withPhone({ name: v.name, role: roleCol, roleLabel: roleCol.toUpperCase(),
+        teams: v.teams.sort(), source: 'teams' }, v.no));
     }
   }
   /* The collection officers, from their access codes. A code with NO teams means "every team"
      everywhere else in this system, and such a person is not a collection officer with a
      distributed portfolio -- they are left off the board for the same reason, and showing them
      here with an empty team list would invite somebody to "fix" it by ticking all forty. */
+  const collNo = new Map();
+  for (const t of mine) {
+    if (t.collection && t.collection_no && !collNo.has(K(t.collection))) {
+      collNo.set(K(t.collection), t.collection_no);
+    }
+  }
   for (const c of codeRows) {
     if (!isPmoRole(c.role, pmoRoleName)) continue;
     if (!c.teams || !c.teams.length) continue;
     const held = upperTeams(c.teams).filter(t => teamAllowed(user, t));
-    out.push({ name: c.name || c.code, role: STAFF_COLLECTION_ROLE, roleLabel: pmoRoleName,
-      code: c.code, teams: held.sort(), source: 'access_code' });
+    out.push(withPhone({ name: c.name || c.code, role: STAFF_COLLECTION_ROLE,
+      roleLabel: pmoRoleName, code: c.code, teams: held.sort(), source: 'access_code' },
+      collNo.get(K(c.name || c.code))));
   }
 
   return {
@@ -3037,15 +3057,67 @@ function chunk_(arr, n) {
 }
 
 /* ------------------------------------------------------------------ reference / admin */
+/* =======================================================================================
+   WHERE A LEADER'S PHONE NUMBER ACTUALLY LIVES.
+
+     "read phone numbers in leaders table directly from call app users b/se thats where i
+      mostly update leaders data and their teams"
+
+   The leaders sheet is uploaded now and then; the call app is where the same people sign in
+   EVERY DAY, with the number they actually carry. So the sheet's number columns go stale the
+   moment somebody changes a SIM, while call_users has the fresh one -- registration writes it.
+
+   The rule: A NUMBER FROM THE APP BEATS A NUMBER FROM THE SHEET, matched by the person's
+   name. No match, or a registration without a number, and the sheet's column stands -- the
+   overlay only ever replaces a number with a fresher one, never with a blank.
+
+   Where two registrations share a name, the leader's row wins over an officer's, and the
+   most recent registration wins within that -- the newest SIM is the one to ring.
+   ======================================================================================= */
+async function appPhoneBook(db) {
+  const rows = await fetchAll(() =>
+    db.from('call_users').select('name, phone, is_leader, registered_at, active'));
+  const book = new Map();
+  for (const r of rows) {
+    const k = K(r.name);
+    const phone = String(r.phone || '').trim();
+    if (!k || !phone || r.active === false) continue;
+    const prev = book.get(k);
+    const better = !prev
+      || (!!r.is_leader && !prev.leader)
+      || (!!r.is_leader === prev.leader && String(r.registered_at || '') > prev.at);
+    if (better) book.set(k, { phone, leader: !!r.is_leader, at: String(r.registered_at || '') });
+  }
+  return book;
+}
+
+/** The role-name columns that have a number column beside them, sheet-side. */
+const PHONE_ROLE_COLS = ['opm', 'recovery', 'gmo', 'manager', 'credit', 'expected', 'bike',
+  'legal', 'collection'];
+
+/** One team row, its numbers refreshed from the app where the named person is registered. */
+function overlayPhones(t, book) {
+  let out = t;
+  for (const c of PHONE_ROLE_COLS) {
+    const hit = t[c] ? book.get(K(t[c])) : null;
+    if (hit && hit.phone !== t[c + '_no']) {
+      if (out === t) out = { ...t };
+      out[c + '_no'] = hit.phone;
+    }
+  }
+  return out;
+}
+
 async function teams(db, user) {
-  const [rows, roleRows] = await Promise.all([
+  const [rows, roleRows, book] = await Promise.all([
     fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
     fetchAll(() => db.from('roles').select('*').order('role', { ascending: true })),
+    appPhoneBook(db),
   ]);
   // Roles live beside the teams because they answer the same question -- who does what -- and
   // a role's tab list was previously readable but not editable from anywhere in the UI, so
   // onboarding a new kind of officer meant a trip to the SQL editor.
-  let mine = rows.filter(r => teamAllowed(user, r.team));
+  let mine = rows.filter(r => teamAllowed(user, r.team)).map(r => overlayPhones(r, book));
   // The team code is what field officers sign in with. Same rule as access codes: a read-only
   // supervisor sees that a team HAS a code, never what it is.
   if (user.readOnly) mine = mine.map(r => (r.team_code ? { ...r, team_code: '••••' } : r));
@@ -4239,7 +4311,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
@@ -4277,14 +4349,109 @@ async function teamsExport(db, user) {
   // never walk away with. The screens already mask it; a file would be the way around them.
   if (user.readOnly) throw forbidden('Msimbo huu ni wa kuangalia tu — faili hili linabeba misimbo ya timu. '
     + '/ This is a view-only code, and this file carries the team sign-in codes.');
-  const rows = await fetchAll(() => db.from('teams').select('*').order('team', { ascending: true }));
+  const [rows, book] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
+    appPhoneBook(db),
+  ]);
+  /* The numbers come out refreshed from the app (see appPhoneBook), so the download-edit-upload
+     round trip WRITES the fresh number into the sheet instead of quietly reviving a stale one. */
+  const fresh = rows.map(t => overlayPhones(t, book));
   return {
     headers: TEAM_EXPORT_COLS.map(c => c[1]),
     /* Every column the export names, even where the migration that adds it has not been run --
        a blank column in the file is something an admin can fill in, whereas a MISSING column is
        a file that quietly cannot carry that field back. */
-    rows: rows.map(t => TEAM_EXPORT_COLS.map(c => (t[c[0]] == null ? '' : String(t[c[0]])))),
+    rows: fresh.map(t => TEAM_EXPORT_COLS.map(c => (t[c[0]] == null ? '' : String(t[c[0]])))),
     count: rows.length,
+  };
+}
+
+/* =======================================================================================
+   THE PHONE LIST -- every leader and officer, with the number that actually rings.
+
+     "I need my leaders and officers no.s so export excel of role, team, officername and
+      phoneno"
+
+   Four columns, one row per person per team, in three layers:
+
+     the sheet's supervisors   every named role on every team (OPM ... COLLECTION), the
+                               app's number where they are registered, the sheet's otherwise
+     collection officers       from their access codes -- their teams live THERE, one row
+                               per team they hold, skipped where the sheet already names
+                               them on that team
+     the app's field officers  everyone registered in HOPE Calls, the people no sheet
+                               carries at all -- their number IS their registration
+
+   Open to a read-only supervisor on purpose: it is a contact list, and unlike the leaders
+   sheet it carries no sign-in codes.
+   ======================================================================================= */
+async function staffExport(db, user) {
+  requireAdmin(user);
+  const [teamRows, codeRows, callRows, cfg, book] = await Promise.all([
+    fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
+    fetchAll(() => db.from('access_codes').select('code, name, role, teams')),
+    fetchAll(() => db.from('call_users').select('name, phone, team, is_leader, leader_teams, active')),
+    settingsMany(db, [PMO_ROLE_KEY]),
+    appPhoneBook(db),
+  ]);
+  const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const mine = teamRows.filter(t => teamAllowed(user, t.team));
+
+  const lines = [];
+  const seen = new Set();
+  const push = (role, team, name, phone) => {
+    const key = K(role) + '' + K(team) + '' + K(name);
+    if (seen.has(key)) return;
+    seen.add(key);
+    lines.push([role, team, name, String(phone || '').trim()]);
+  };
+
+  const ROLE_LABELS = { opm: 'OPM', recovery: 'RECOVERY', gmo: 'GMO', manager: 'MANAGER',
+    credit: 'C. ANALYST', expected: 'EXPECTED', bike: 'BIKE', legal: 'LEGAL',
+    collection: K(pmoRoleName) || 'COLLECTION' };
+
+  // Layer one: the sheet's supervisors, team by team, app number first.
+  for (const c of PHONE_ROLE_COLS) {
+    for (const t of mine) {
+      const who = String(t[c] || '').trim();
+      if (!who) continue;
+      const hit = book.get(K(who));
+      push(ROLE_LABELS[c], t.team, who, hit ? hit.phone : t[c + '_no']);
+    }
+  }
+
+  // Layer two: collection officers, whose teams live on their code, not on the sheet.
+  for (const cd of codeRows) {
+    if (!isPmoRole(cd.role, pmoRoleName)) continue;
+    if (!cd.teams || !cd.teams.length) continue;
+    const name = String(cd.name || cd.code).trim();
+    const hit = book.get(K(name));
+    for (const tm of upperTeams(cd.teams)) {
+      if (!teamAllowed(user, tm)) continue;
+      push(ROLE_LABELS.collection, tm, name, hit ? hit.phone : '');
+    }
+  }
+
+  // Layer three: the app's own register -- leaders on the teams they lead, officers on
+  // their team. A switched-off account is not on a call list.
+  for (const u of callRows) {
+    if (u.active === false) continue;
+    const name = String(u.name || '').trim();
+    const phone = String(u.phone || '').trim();
+    if (!name || !phone) continue;
+    if (u.is_leader) {
+      const held = (u.leader_teams && u.leader_teams.length) ? upperTeams(u.leader_teams)
+        : (u.team ? [K(u.team)] : []);
+      for (const tm of held) if (teamAllowed(user, tm)) push('LEADER (APP)', tm, name, phone);
+    } else if (u.team && teamAllowed(user, u.team)) {
+      push('OFFICER', K(u.team), name, phone);
+    }
+  }
+
+  return {
+    headers: ['WADHIFA / ROLE', 'TIMU / TEAM', 'JINA / NAME', 'NAMBA / PHONE NO'],
+    rows: lines,
+    count: lines.length,
   };
 }
 
