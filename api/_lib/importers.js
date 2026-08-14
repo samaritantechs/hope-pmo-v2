@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { buildHeaderMap, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst } from './parse.js';
+import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -314,32 +314,64 @@ export function importLoans(csvRows, stage, dayFirst) {
 
    Columns added by a migration are read the same as any other. api/upload.js drops the ones a
    database has not got yet rather than failing the whole file, exactly as saveTeam does. */
+/* =====================================================================================
+   A COLUMN THE FILE DOES NOT HAVE MUST BE LEFT ALONE, NOT SET TO NOTHING.
+
+     "i uploaded teams and leaders sheet to update credit ID and i can see lost all team codes"
+
+   This built EVERY column on every row, and `col()` returns null when the header is not there.
+   The upsert then wrote those nulls. So a sheet without a TEAM CODE column did not leave the
+   codes alone -- it ERASED them, on all seventy-eight teams, in one upload, and reported
+   success. The same was true of every other column the file happened not to carry: the phone
+   numbers, the region, the zone.
+
+   That is the same lesson the officers' register taught two weeks ago, on a table where it cost
+   a week: a PostgREST upsert updates exactly the columns in the payload, so the way to preserve
+   a value is NOT TO MENTION IT. Here the fix is to look at the file's own header row and send
+   only what it actually carries.
+
+   A BLANK CELL IN A COLUMN THE FILE HAS still clears the value -- that is how somebody removes
+   a leader, and it is a different act from not having the column at all. The distinction is
+   the whole point: absent means "I am not talking about this", empty means "make it empty". */
+function teamCell(r, h, mapper, ...names) {
+  for (const n of names) {
+    if (h[normalizeHeader(n)] !== undefined) return { has: true, value: mapper(col(r, h, ...names)) };
+  }
+  return { has: false };
+}
+
 export function importTeams(csvRows) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    team: normTeam(col(r, h, 'TEAM')),
-    team_code: textOrNull(col(r, h, 'TEAM CODE', 'TEAM_CODE')),
-    region: textOrNull(col(r, h, 'REGION')),
-    zone: textOrNull(col(r, h, 'ZONE')),
-    opm: textOrNull(col(r, h, 'OPM')),
-    opm_no: normPhone(col(r, h, 'OPM NO', 'OPM_NO')),
-    recovery: textOrNull(col(r, h, 'RECOVERY')),
-    recovery_no: normPhone(col(r, h, 'RECOVERY NO', 'RECOVERY_NO')),
-    gmo: textOrNull(col(r, h, 'GMO')),
-    gmo_no: normPhone(col(r, h, 'GMO NO', 'GMO_NO')),
-    manager: textOrNull(col(r, h, 'MANAGER')),
-    manager_no: normPhone(col(r, h, 'MANAGER NO', 'MANAGER_NO')),
-    credit: textOrNull(col(r, h, 'C. ANALYST', 'CREDIT')),
-    credit_id: textOrNull(col(r, h, 'CREDIT ID', 'CREDIT_ID')),
-    credit_no: normPhone(col(r, h, 'CREDIT NO', 'C. ANALYST NO')),
-    expected: textOrNull(col(r, h, 'EXPECTED')),
-    expected_no: normPhone(col(r, h, 'EXPECTED NO', 'EXPECTED_NO')),
-    bike: textOrNull(col(r, h, 'BIKE')),
-    bike_no: normPhone(col(r, h, 'BIKE NO', 'BIKE_NO')),
-    legal: textOrNull(col(r, h, 'LEGAL')),
-    legal_no: normPhone(col(r, h, 'LEGAL NO', 'LEGAL_NO')),
-    collection: textOrNull(col(r, h, 'COLLECTION')),
-    collection_no: normPhone(col(r, h, 'COL NO', 'COLLECTION NO')),
-  })).filter(x => x.team);
+  return rowsToObjects(csvRows).map(({ raw: r, h }) => {
+    const out = { team: normTeam(col(r, h, 'TEAM')) };
+    const put = (key, mapper, ...names) => {
+      const got = teamCell(r, h, mapper, ...names);
+      if (got.has) out[key] = got.value;
+    };
+    put('team_code', textOrNull, 'TEAM CODE', 'TEAM_CODE', 'MSIMBO', 'MSIMBO / CODE', 'CODE');
+    put('region', textOrNull, 'REGION');
+    put('zone', textOrNull, 'ZONE');
+    put('opm', textOrNull, 'OPM');
+    put('opm_no', normPhone, 'OPM NO', 'OPM_NO');
+    put('recovery', textOrNull, 'RECOVERY');
+    put('recovery_no', normPhone, 'RECOVERY NO', 'RECOVERY_NO');
+    put('gmo', textOrNull, 'GMO');
+    put('gmo_no', normPhone, 'GMO NO', 'GMO_NO');
+    put('manager', textOrNull, 'MANAGER');
+    put('manager_no', normPhone, 'MANAGER NO', 'MANAGER_NO');
+    put('credit', textOrNull, 'C. ANALYST', 'CREDIT');
+    put('credit_id', textOrNull, 'CREDIT ID', 'CREDIT_ID', 'CREDIT ANALYST ID',
+      'C. ANALYST ID', 'ANALYST ID', 'CA ID', 'CREDIT NO ID', 'NAMBA YA MKOPO');
+    put('credit_no', normPhone, 'CREDIT NO', 'C. ANALYST NO');
+    put('expected', textOrNull, 'EXPECTED');
+    put('expected_no', normPhone, 'EXPECTED NO', 'EXPECTED_NO');
+    put('bike', textOrNull, 'BIKE');
+    put('bike_no', normPhone, 'BIKE NO', 'BIKE_NO');
+    put('legal', textOrNull, 'LEGAL');
+    put('legal_no', normPhone, 'LEGAL NO', 'LEGAL_NO');
+    put('collection', textOrNull, 'COLLECTION');
+    put('collection_no', normPhone, 'COL NO', 'COLLECTION NO');
+    return out;
+  }).filter(x => x.team);
 }
 
 /* =====================================================================================

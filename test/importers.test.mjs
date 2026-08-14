@@ -907,3 +907,68 @@ test('the order the file was read in is reported, not silently chosen', async ()
   assert.equal(loansDateOrder([LOAN_H, loanRow('22/7/2026', 1)]), true, 'day/month');
   assert.equal(loansDateOrder([LOAN_H, loanRow('8/6/2026', 1)]), null, 'one date, undecidable');
 });
+
+/* =====================================================================================
+   THE LEADERS SHEET MUST NOT ERASE WHAT IT DOES NOT MENTION.
+   =====================================================================================
+     "i uploaded teams and leaders sheet to update credit ID and i can see lost all team codes"
+
+   Seventy-eight teams lost their passcode in one upload. The sheet did not have a TEAM CODE
+   column at all -- and the importer built every column on every row regardless, so the absent
+   one imported as null, and a PostgREST upsert writes exactly the columns in the payload.
+   Nobody typed a blank. The blank was manufactured here.
+
+   The rule, and the reason both halves of it matter:
+     ABSENT column  -> the key is not in the payload at all -> the stored value survives
+     PRESENT but blank -> the key IS in the payload as null -> the stored value is cleared,
+                          which is how somebody removes a leader who has left.
+*/
+test('a column the leaders sheet does not have is left alone, not blanked', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  // The real shape of the sheet that caused it: no TEAM CODE column anywhere.
+  const out = importTeams([
+    ['TEAM', 'REGION', 'CREDIT ID'],
+    ['KONGOWE', 'DAR', 'CA9'],
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal('team_code' in out[0], false, 'team_code must not be in the payload at all');
+  assert.equal(out[0].credit_id, 'CA9');
+  assert.equal(out[0].region, 'DAR');
+  // Nor may any other unmentioned role column ride along as a null.
+  for (const k of ['gmo', 'gmo_no', 'manager', 'legal', 'collection', 'expected_no']) {
+    assert.equal(k in out[0], false, k + ' was sent as a null and would have erased the stored one');
+  }
+});
+
+test('a column that IS on the sheet but left blank still clears the value', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  const out = importTeams([
+    ['TEAM', 'TEAM CODE', 'GMO'],
+    ['KONGOWE', '', 'GEE MO'],
+  ]);
+  assert.equal('team_code' in out[0], true, 'the sheet HAS the column, so it speaks about it');
+  assert.equal(out[0].team_code, null, 'and an empty cell means "make it empty"');
+  assert.equal(out[0].gmo, 'GEE MO');
+});
+
+test('the team code is recognised by the name the screen shows it under', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  // The teams screen labels it MSIMBO / CODE, so an admin editing what they see writes that.
+  for (const header of ['TEAM CODE', 'TEAM_CODE', 'MSIMBO', 'MSIMBO / CODE', 'CODE']) {
+    const out = importTeams([['TEAM', header], ['KONGOWE', 'KON123']]);
+    assert.equal(out[0].team_code, 'KON123', header + ' was not recognised');
+  }
+});
+
+test('the credit analyst ID is recognised under the names the reports write it', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  for (const header of ['CREDIT ID', 'CREDIT_ID', 'CREDIT ANALYST ID', 'C. ANALYST ID', 'ANALYST ID', 'CA ID']) {
+    const out = importTeams([['TEAM', header], ['KONGOWE', 'CA9']]);
+    assert.equal(out[0].credit_id, 'CA9', header + ' was not recognised');
+  }
+});
+
+test('a row with no team at all is dropped, as before', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  assert.equal(importTeams([['TEAM', 'GMO'], ['', 'NOBODY'], ['KONGOWE', 'GEE MO']]).length, 1);
+});

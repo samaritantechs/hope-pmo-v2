@@ -371,7 +371,7 @@ export default withApi(async (req, res) => {
   if (!(await can(user, 'upload'))) { const e = new Error('Upload permission is required for your access code.'); e.status = 403; throw e; }
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
-  let table, records, commentsOrder = null, loansOrder;
+  let table, records, commentsOrder = null, loansOrder, teamsDroppedCols = null;
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -427,18 +427,53 @@ export default withApi(async (req, res) => {
     case 'teams':
       table = 'teams';
       records = importTeams(rows);
-      /* COLUMNS A DATABASE HAS NOT GOT YET ARE DROPPED, NOT SENT. The leaders sheet carries
-         region, zone and a phone per role, all added by 2026-08-09-team-contacts.sql -- and
-         migrations here are run by hand. Sending a column that does not exist fails the WHOLE
-         file, so an admin who had not yet pasted that SQL would find the leaders upload broken
-         with an error naming a column they never asked about. Same guard saveTeam has. */
+      /* ONE READ OF THE TEAMS TABLE DOES TWO JOBS. It used to be a `limit(1)` probe for the
+         column list; the table is under a hundred rows, so reading it whole costs the same one
+         trip and also answers the second question below -- which spelling of each team already
+         exists. Two answers, one journey. */
       {
-        const probe = await supabase.from('teams').select('*').limit(1);
-        const known = probe.data && probe.data.length ? Object.keys(probe.data[0]) : null;
-        if (known) records = records.map(r => {
-          const out = {};
-          for (const k of Object.keys(r)) if (known.includes(k)) out[k] = r[k];
-          return out;
+        const existing = await fetchAll(() => supabase.from('teams').select('*'));
+
+        /* COLUMNS A DATABASE HAS NOT GOT YET ARE DROPPED, NOT SENT. The leaders sheet carries
+           region, zone and a phone per role, all added by 2026-08-09-team-contacts.sql, and
+           credit_id by 2026-08-04-credit-analyst-id.sql -- and migrations here are run by hand.
+           Sending a column that does not exist fails the WHOLE file, so an admin who had not yet
+           pasted that SQL would find the leaders upload broken with an error naming a column
+           they never asked about. Same guard saveTeam has.
+
+           BUT IT USED TO DROP THEM IN SILENCE, and that is how "why didnt even the ids update"
+           happens: the CREDIT ID column is read correctly out of the sheet, thrown away here
+           because the database has no such column, and the upload reports a cheerful success.
+           The names of what was dropped are now carried back and said out loud. */
+        const known = existing.length ? Object.keys(existing[0]) : null;
+        if (known) {
+          const dropped = new Set();
+          records = records.map(r => {
+            const out = {};
+            for (const k of Object.keys(r)) {
+              if (known.includes(k)) out[k] = r[k];
+              else dropped.add(k);
+            }
+            return out;
+          });
+          teamsDroppedCols = [...dropped];
+        }
+
+        /* A TEAM IS NOT CREATED TWICE BECAUSE OF ITS CAPITAL LETTERS.
+
+             "i deleted / merged TUNDURU into Tunduru but i still see it"
+
+           importTeams upper-cases every name (normTeam), and `teams.team` is the primary key,
+           which Postgres compares exactly. So a sheet saying "Tunduru" upserts a SECOND row
+           called "TUNDURU" beside the one that is already there -- and the merge the admin had
+           just done is undone by the next upload of the same sheet.
+
+           Matched case-insensitively against what is already stored, and filed under the
+           spelling the database already uses. A genuinely new team still arrives as written. */
+        const bySpelling = new Map(existing.map(t => [String(t.team || '').toUpperCase(), t.team]));
+        records = records.map(r => {
+          const kept = bySpelling.get(String(r.team || '').toUpperCase());
+          return kept && kept !== r.team ? { ...r, team: kept } : r;
         });
       }
       break;
@@ -605,10 +640,21 @@ export default withApi(async (req, res) => {
   if (TEAM_REF_TABLES.has(table)) {
     const incomingTeams = [...new Set(records.map(r => r.team).filter(Boolean))];
     if (incomingTeams.length) {
-      const { data: existingTeams, error: teamErr } = await supabase.from('teams').select('team').in('team', incomingTeams);
+      /* THE WHOLE TEAM LIST, NOT THE NAMES THIS FILE HAPPENS TO SPELL. Under a hundred rows and
+         still one round trip, and it is the only way to see that "TUNDURU" in this file is the
+         "Tunduru" that already exists -- `.in()` compares exactly, so the old query answered
+         "no such team" and auto-created the twin. Every record is then re-filed under the
+         spelling the database already uses, so the rows land on the real team's book. */
+      const { data: existingTeams, error: teamErr } = await supabase.from('teams').select('team');
       if (teamErr) throw new Error('Could not verify team names: ' + teamErr.message);
-      const known = new Set((existingTeams || []).map(t => t.team));
-      newTeams = incomingTeams.filter(t => !known.has(t));
+      const bySpelling = new Map((existingTeams || []).map(t => [String(t.team || '').toUpperCase(), t.team]));
+      for (const r of records) {
+        if (!r.team) continue;
+        const kept = bySpelling.get(String(r.team).toUpperCase());
+        if (kept && kept !== r.team) r.team = kept;
+      }
+      const known = new Set(bySpelling.values());
+      newTeams = [...new Set(records.map(r => r.team).filter(Boolean))].filter(t => !known.has(t));
       if (newTeams.length) {
         const { error: createErr } = await supabase.from('teams').insert(newTeams.map(team => ({ team })));
         if (createErr) throw new Error('Could not auto-create new team(s) (' + newTeams.join(', ') + '): ' + createErr.message);
@@ -951,6 +997,10 @@ export default withApi(async (req, res) => {
       skipped ? `\u26a0\ufe0f ${skipped} row(s) of the ${dataRows} in this file were NOT uploaded, because their reference column could not be read. They are not in the system and no screen can show them. Check the header spelling of the reference column against the rest of the file. Skipped: ${skippedNames.join('; ')}${skipped > skippedNames.length ? `; and ${skipped - skippedNames.length} more` : ''}.` : '',
       loansOrder !== undefined ? `Dates in this file were read as ${loansOrder === null ? 'DAY/MONTH (nothing in the file said which way round it writes them)' : loansOrder ? 'DAY/MONTH' : 'MONTH/DAY'}. Check one row against the report if a figure looks like it landed in the wrong month.` : '',
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
+      /* A COLUMN THROWN AWAY IN SILENCE IS THE WORST KIND OF SUCCESS. The file was read right,
+         the database has no such column yet, and without this line the upload says "done" while
+         the very field the admin uploaded the sheet to change is left exactly as it was. */
+      teamsDroppedCols && teamsDroppedCols.length ? `⚠️ Your file also carried ${teamsDroppedCols.join(', ')} — this database has no such column yet, so ${teamsDroppedCols.length === 1 ? 'it was' : 'they were'} NOT saved and the rest of the file went in as normal. Run the outstanding migration in db/migrations (credit_id comes from 2026-08-04-credit-analyst-id.sql; region, zone and the per-role phone numbers from 2026-08-09-team-contacts.sql), then upload this same sheet again.` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
