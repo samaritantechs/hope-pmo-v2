@@ -3077,18 +3077,52 @@ function chunk_(arr, n) {
 async function appPhoneBook(db) {
   const rows = await fetchAll(() =>
     db.from('call_users').select('name, phone, is_leader, registered_at, active'));
-  const book = new Map();
+  const exact = new Map();
   for (const r of rows) {
-    const k = K(r.name);
+    const k = K(r.name).replace(/\s+/g, ' ');
     const phone = String(r.phone || '').trim();
     if (!k || !phone || r.active === false) continue;
-    const prev = book.get(k);
+    const prev = exact.get(k);
     const better = !prev
       || (!!r.is_leader && !prev.leader)
       || (!!r.is_leader === prev.leader && String(r.registered_at || '') > prev.at);
-    if (better) book.set(k, { phone, leader: !!r.is_leader, at: String(r.registered_at || '') });
+    if (better) exact.set(k, { phone, leader: !!r.is_leader, at: String(r.registered_at || '') });
   }
-  return book;
+  /* THE SAME PERSON UNDER TWO LENGTHS OF NAME.
+
+       registered in the app:  CAREEN            677123160
+       named on the sheet:     CAREEN GODFREY    -- and the roster showed no number at all
+
+     People register with the name they answer to; the sheet carries the full one. An
+     exact-match lookup calls those two different people, so the freshest number in the
+     system went unused for exactly the people it was fetched for.
+
+     So when the exact name finds nothing, a CONTAINED name is accepted: every word of the
+     shorter name must appear in the longer one, with a single letter matching as an
+     initial -- JUMA GEORGE answers for JUMA G. And only when exactly ONE registration
+     fits: two Careens is not a match, it is a question, and a phone number is the wrong
+     place to guess. */
+  const wordFits = (a, b) => a === b
+    || (a.length === 1 && b.startsWith(a)) || (b.length === 1 && a.startsWith(b));
+  const entries = [...exact.entries()].map(([k, v]) => [k.split(' '), v]);
+  return {
+    get(name) {
+      const k = String(name == null ? '' : name).replace(/\s+/g, ' ').trim();
+      const hit = exact.get(k);
+      if (hit) return hit;
+      const words = k.split(' ').filter(Boolean);
+      if (!words.length) return undefined;
+      let found, n = 0;
+      for (const [bw, v] of entries) {
+        const [shorter, longer] = words.length <= bw.length ? [words, bw] : [bw, words];
+        if (shorter.every(w => longer.some(x => wordFits(w, x)))) {
+          found = v;
+          if (++n > 1) return undefined;
+        }
+      }
+      return n === 1 ? found : undefined;
+    },
+  };
 }
 
 /** The role-name columns that have a number column beside them, sheet-side. */

@@ -5934,3 +5934,63 @@ test('the downloaded leaders sheet also carries the fresh app numbers', async ()
   const kong = d.rows.find(r => r[0] === 'KONGOWE' || r.includes('KONGOWE'));
   assert.equal(kong[i], '0788999888');
 });
+
+/* =====================================================================================
+   THE SAME PERSON UNDER TWO LENGTHS OF NAME.
+   =====================================================================================
+     registered in the app:  CAREEN            677123160
+     named on the sheet:     CAREEN GODFREY    -- roster showed no number at all
+
+   People register with the name they answer to; the sheet carries the full one. The match
+   must bridge that -- but only when exactly one registration fits. Two Careens is not a
+   match, it is a question, and a phone number is the wrong place to guess.
+*/
+test('CAREEN in the app answers for CAREEN GODFREY on the sheet', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').recovery = 'CAREEN GODFREY';
+  book.call_users = [{ user_id: 'UC', name: 'CAREEN', team: 'IRINGA B', is_leader: true,
+    phone: '677123160', registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').recovery_no, '677123160');
+  const r = await portalApi(fakeDb(book), ADMIN, 'staffRoster', {}, NOW);
+  const her = r.staff.find(s => s.name === 'CAREEN GODFREY' && s.role === 'recovery');
+  assert.equal(her.phone, '677123160', 'the number she registered with, found by her short name');
+  assert.equal(her.phoneFrom, 'app');
+});
+
+test('a single letter on the sheet is an initial: JUMA GEORGE answers for JUMA G', async () => {
+  const book = tables();   // KONGOWE's recovery is 'JUMA G'
+  book.call_users = [{ user_id: 'UJ', name: 'JUMA GEORGE', team: 'KONGOWE', is_leader: false,
+    phone: '0713555666', registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').recovery_no, '0713555666');
+});
+
+test('two registrations that both fit a name is a question, not a match', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').gmo = 'ASHA';
+  book.teams.find(x => x.team === 'KONGOWE').gmo_no = '0700000009';
+  book.call_users = [
+    { user_id: 'A1', name: 'ASHA JUMA', team: 'KONGOWE', is_leader: false, phone: '0711111111',
+      registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'A2', name: 'ASHA PETER', team: 'MBAGALA', is_leader: false, phone: '0722222222',
+      registered_at: '2026-08-02T00:00:00Z' },
+  ];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').gmo_no, '0700000009',
+    'ambiguous, so the sheet number stands rather than a guessed one');
+});
+
+test('an exact name still beats a contained one', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').gmo = 'ASHA JUMA';
+  book.call_users = [
+    { user_id: 'A1', name: 'ASHA JUMA', team: 'KONGOWE', is_leader: false, phone: '0711111111',
+      registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'A2', name: 'ASHA', team: 'MBAGALA', is_leader: true, phone: '0722222222',
+      registered_at: '2026-08-02T00:00:00Z' },
+  ];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').gmo_no, '0711111111',
+    'her own exact registration, not the leader short-name one');
+});
