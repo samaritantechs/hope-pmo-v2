@@ -417,8 +417,42 @@ var EXPORTABLE = {
     shape: function(d){ return { headers: ['CODE', 'NAME', 'ROLE', 'TEAMS', 'TABS'],
       rows: (d.rows || []).map(function(r){ return [r.code, r.name, r.role,
         (r.teams && r.teams.length ? r.teams.join('; ') : 'ALL'),
-        (r.tabs || []).join('; ')]; }) }; } },
+        (r.tabs || []).join('; ')]; }) }; },
+  },
+  /* "I need to be able to download present report on final expected or defaults report at the
+     download page." The PRESENT report -- the latest deck the system holds, each team-and-
+     weekday deck at its own date -- comes back as a file in the same vocabulary the upload
+     sheets use, so what goes out is directly comparable with what came in. */
+  'expected-initial': { fn: 'expected', args: { type: 'initial' }, file: 'expected-initial',
+    label: 'Pakua Expected (Initial) iliyopo sasa / Download the PRESENT final Expected',
+    shape: expShape_ },
+  'expected-today': { fn: 'expected', args: { type: 'today' }, file: 'expected-today',
+    label: 'Pakua Expected ya siku iliyopo sasa / Download the PRESENT day\'s Expected',
+    shape: expShape_ },
+  'defaulters-current': { fn: 'defaulters', args: { type: 'current' }, file: 'defaulters-current',
+    label: 'Pakua Defaulters (Current) iliyopo sasa / Download the PRESENT Defaulters report',
+    shape: defShape_ },
+  'defaulters-initial': { fn: 'defaulters', args: { type: 'initial' }, file: 'defaulters-initial',
+    label: 'Pakua Defaulters (Initial) iliyopo sasa / Download the PRESENT Initial Defaulters',
+    shape: defShape_ },
 };
+function expShape_(d){
+  return { date: d.date,
+    headers: ['REF#', 'FULLNAME', 'CONTACT#', 'TEAM', 'ZONE', 'DUE SUMMARY', 'INITIAL INST',
+      'PAYMENT EXPECTED', 'TODAYS PAYMENT', 'TODAYS STATUS', 'ARREARS', 'BALANCE',
+      'GUARANTOR NAME', 'GUARANTOR CONTACT'],
+    rows: (d.rows || []).map(function(r){ return [r.ref, r.full_name, r.contact, r.team, r.zone,
+      r.due_summary, r.initial_inst, r.payment_expected, r.todays_payment, r.todays_status,
+      r.arrears, r.balance, r.guarantor_name, r.guarantor_contact]; }) };
+}
+function defShape_(d){
+  return { date: d.date,
+    headers: ['REF#', 'FULLNAME', 'CONTACT#', 'TEAM', 'BRANCH', 'ZONE', 'DISB DATE',
+      'STATUS', 'D.S', 'D.C', 'ARREARS', 'BALANCE', 'GUARANTOR NAME', 'GUARANTOR CONTACT', 'WEEKDAY'],
+    rows: (d.rows || []).map(function(r){ return [r.ref, r.full_name, r.contact, r.team, r.branch,
+      r.zone, r.disb_date, r.status, r.ds, r.dc, r.arrears, r.balance,
+      r.guarantor_name, r.guarantor_contact, r.weekday]; }) };
+}
 $('exportBtn').onclick = function(){
   var ex = EXPORTABLE[$('type').value];
   var code = $('code').value.trim();
@@ -426,7 +460,7 @@ $('exportBtn').onclick = function(){
   if (!code){ alert('Weka msimbo wako kwanza. / Enter your access code first.'); return; }
   var btn = $('exportBtn'); btn.disabled = true;
   fetch(api() + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: code, fn: ex.fn, args: {} }) })
+    body: JSON.stringify({ code: code, fn: ex.fn, args: ex.args || {} }) })
     .then(readJson_).then(function(x){
       if (x.status < 200 || x.status >= 300 || x.body.ok === false) throw new Error(x.body.error || 'HTTP ' + x.status);
       var d = ex.shape ? ex.shape(x.body) : x.body;
@@ -436,7 +470,8 @@ $('exportBtn').onclick = function(){
       var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
       var a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = ex.file + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      // Named by the report's OWN date where it has one -- the deck's date, not today's.
+      a.download = ex.file + '-' + (d.date || new Date().toISOString().slice(0, 10)) + '.csv';
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
       btn.disabled = false;

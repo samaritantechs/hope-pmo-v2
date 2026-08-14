@@ -2068,10 +2068,14 @@ VIEWS.dashboard = function(){
                     ['teams','uncollected'])
         // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
         // a customer does not fall into default between breakfast and lunch.
-        + board('bRecT','Recovery — today','initial · current · recovered · Rec % ÷ this week’s uncollected', b.recToday,
+        /* Yesterday's uncollected stands BEFORE today's recovered -- what the officer was
+           chasing, then what they brought in -- and the % divides by the week's uncollected,
+           which is what this caption has always claimed. */
+        + board('bRecT','Recovery — today','initial · current · jana uncollected · recovered · Rec % ÷ this week’s uncollected', b.recToday,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+                     col('yUncollected','Uncol jana','money'),
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     col('pct','Rec %','pct')], sumRow(b.recToday, ['initial','current','recovered']))
+                     col('pct','Rec %','pct')], sumRow(b.recToday, ['initial','current','yUncollected','recovered']))
         + board('bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
@@ -4701,10 +4705,20 @@ function openFollowup(r){
   })();
   srv('comments', {ref:r.ref}).then(function(d){
     var h = $('#hist'); if (!h) return;
-    h.innerHTML = (d.rows||[]).length ? d.rows.map(function(c){
+    /* Registered complaints first, marked apart -- an open complaint changes how the next
+       call should go, so it cannot sit below three screens of history. */
+    var cx = (d.complaints||[]).map(function(c){
+      var open = String(c.status||'').toUpperCase() !== 'RESOLVED';
+      return '<div class="hist" style="border-left:3px solid '+(open?'var(--bad)':'var(--soft)')+';padding-left:8px">'
+        + '<div class="t"><span>⚠ Malalamiko / Complaint'+(c.status?' · '+esc(c.status):'')+'</span>'
+        + '<span>'+esc(String(c.created_at||'').replace('T',' ').slice(0,16))+'</span></div>'
+        + (c.complainant?'<b style="font-size:12px">'+esc(c.complainant)+'</b> ':'')
+        + esc(c.details||c.category||'') + (c.resolution?'<div style="color:var(--mut);font-size:12px">↳ '+esc(c.resolution)+'</div>':'') + '</div>';
+    }).join('');
+    h.innerHTML = cx + ((d.rows||[]).length ? d.rows.map(function(c){
       return '<div class="hist"><div class="t"><span>'+esc(c.created_by||'')+'</span><span>'+esc(String(c.created_at||'').replace('T',' ').slice(0,16))+'</span></div>'
         + (c.fu_status?'<span class="chip '+chipFor(c.fu_status)+'">'+esc(c.fu_status)+'</span> ':'') + esc(c.comment||'') + '</div>';
-    }).join('') : '<div style="color:var(--soft);font-size:12.5px;padding:8px 0">Hakuna historia bado.</div>';
+    }).join('') : (cx ? '' : '<div style="color:var(--soft);font-size:12.5px;padding:8px 0">Hakuna historia bado.</div>'));
   }).catch(function(){});
   $('#fuStatus').onchange = function(){
     var v=this.value;
