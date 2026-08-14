@@ -70,6 +70,24 @@ comment on column teams.credit_id is
   'rather than guessing.';
 
 
+-- ==================== THE SLOW QUERY IN YOUR SUPABASE LOGS ===========================
+--
+-- "I had some errors like: WITH pgrst_source AS (SELECT ... defaulter_snapshot_totals ..."
+--
+-- That is not a fault. It is the dashboard's team-day totals function appearing in the
+-- SLOW QUERY log -- the function exists and answers, but it is scanning the snapshot
+-- tables without the two indexes that were written for it. When it runs too slowly the
+-- screens quietly fall back to the old raw-row reads, which is why nothing looks broken
+-- and why Postgres works harder than it should on every dashboard open.
+--
+-- The cure is db/migrations/2026-08-05b-snapshot-totals-indexes.sql. It is NOT pasted
+-- into this file on purpose: CREATE INDEX CONCURRENTLY refuses to run inside a
+-- transaction, and this editor wraps a whole paste into one. Open that file and run its
+-- two `create index` lines ONE AT A TIME, each on its own, waiting for each to finish.
+-- The file explains the two failure shapes to expect and how to check the result.
+-- After both are valid, that SQL disappears from the slow-query log.
+
+
 -- ================================== DID IT LAND? =====================================
 -- Every row should say YES. A NO means that statement did not run -- paste this file again.
 

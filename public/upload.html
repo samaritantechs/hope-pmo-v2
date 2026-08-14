@@ -194,6 +194,16 @@
 
     <div id="behaviour" class="hint" style="margin-top:-6px"></div>
 
+    <!-- DOWNLOAD BEFORE YOU UPLOAD. The registers that UPDATE in place (teams, access codes)
+         are edited by round trip: download what is stored, change the few cells, send the
+         same file back. Guessing the current contents from memory is how a column gets left
+         out -- and an absent column is preserved now, but a wrongly-typed one still lands. -->
+    <div id="exportWrap" class="hide" style="margin:2px 0 10px">
+      <button type="button" id="exportBtn" class="modebtn" style="width:100%"></button>
+      <div class="hint">Pakua iliyo ndani sasa, hariri visanduku vichache, pakia faili ileile.
+        / Download what is stored now, edit the few cells, upload the same file back.</div>
+    </div>
+
     <label>File</label>
     <label class="file-drop" id="drop">Click to choose an Excel or CSV file<input type="file" id="file" accept=".xlsx,.xls,.csv"></label>
 
@@ -367,11 +377,57 @@ function syncFields(){
     : 'Ikiwa tarehe hii tayari ina ripoti / If this date already has a report';
   var b = $('behaviour');
   if (b) b.textContent = BEHAVIOUR[TYPE_BEHAVIOUR[$('type').value]] || '';
+  // The two registers that are edited by round trip get their download door right here.
+  var ex = EXPORTABLE[$('type').value];
+  $('exportWrap').classList.toggle('hide', !ex);
+  if (ex) $('exportBtn').textContent = ex.label;
   if (stamp) setMode_(uploadMode);
   if (!$('drop').classList.contains('has'))
     $('drop').firstChild.nodeValue = logo ? 'Click to choose the logo image (PNG or JPG)'
                                           : 'Click to choose an Excel or CSV file';
 }
+/* WHAT CAN BE DOWNLOADED BEFORE IT IS UPLOADED.
+
+     "concerining uploading teams and staff should be able to export current before upload so
+      that i edit exported doc from upload page and upload acceptable updated"
+
+   Each entry names the portal call that answers with { headers, rows } already in the shape
+   its own importer reads back -- the round trip is the point, so the export and the importer
+   are the same vocabulary by construction. */
+var EXPORTABLE = {
+  'teams': { fn: 'teamsExport', file: 'leaders',
+    label: 'Pakua Timu na Viongozi vya sasa / Download current Teams & Leaders first' },
+  'access-codes': { fn: 'accessCodes', file: 'access-codes',
+    label: 'Pakua Misimbo iliyopo / Download current Access Codes first',
+    shape: function(d){ return { headers: ['CODE', 'NAME', 'ROLE', 'TEAMS', 'TABS'],
+      rows: (d.rows || []).map(function(r){ return [r.code, r.name, r.role,
+        (r.teams && r.teams.length ? r.teams.join('; ') : 'ALL'),
+        (r.tabs || []).join('; ')]; }) }; } },
+};
+$('exportBtn').onclick = function(){
+  var ex = EXPORTABLE[$('type').value];
+  var code = $('code').value.trim();
+  if (!ex) return;
+  if (!code){ alert('Weka msimbo wako kwanza. / Enter your access code first.'); return; }
+  var btn = $('exportBtn'); btn.disabled = true;
+  fetch(api() + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: code, fn: ex.fn, args: {} }) })
+    .then(readJson_).then(function(x){
+      if (x.status < 200 || x.status >= 300 || x.body.ok === false) throw new Error(x.body.error || 'HTTP ' + x.status);
+      var d = ex.shape ? ex.shape(x.body) : x.body;
+      var q = function(v){ return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+      var lines = [d.headers.map(q).join(',')];
+      (d.rows || []).forEach(function(r){ lines.push(r.map(q).join(',')); });
+      var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = ex.file + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+      btn.disabled = false;
+    })
+    .catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
+};
 $('type').addEventListener('change', syncFields);
 // The stage matters as much as the type here: Approved and Disbursed go by the dates in the
 // file, the other six stages go by the stamp. Changing the stage has to redraw that.
