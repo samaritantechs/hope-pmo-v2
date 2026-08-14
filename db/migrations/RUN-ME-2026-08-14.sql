@@ -80,11 +80,11 @@ comment on column teams.credit_id is
 -- screens quietly fall back to the old raw-row reads, which is why nothing looks broken
 -- and why Postgres works harder than it should on every dashboard open.
 --
--- The cure is db/migrations/2026-08-05b-snapshot-totals-indexes.sql. It is NOT pasted
--- into this file on purpose: CREATE INDEX CONCURRENTLY refuses to run inside a
--- transaction, and this editor wraps a whole paste into one. Open that file and run its
--- two `create index` lines ONE AT A TIME, each on its own, waiting for each to finish.
--- The file explains the two failure shapes to expect and how to check the result.
+-- The cure is db/migrations/RUN-ME-2026-08-14b-indexes.sql -- one paste, run when nobody
+-- is uploading. (The older 2026-08-05b file used CREATE INDEX CONCURRENTLY, which this
+-- editor cannot run at all: it wraps every paste in a transaction and CONCURRENTLY
+-- refuses to run inside one. The 14b file builds the same two indexes the plain way --
+-- a few seconds' pause on writes at this database's size -- and checks itself.)
 -- After both are valid, that SQL disappears from the slow-query log.
 
 

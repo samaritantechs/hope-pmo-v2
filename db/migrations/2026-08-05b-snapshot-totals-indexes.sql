@@ -1,4 +1,18 @@
 -- =====================================================================================
+-- SUPERSEDED FOR THE SUPABASE SQL EDITOR -- use RUN-ME-2026-08-14b-indexes.sql instead.
+--
+-- This editor wraps EVERY paste in a transaction, single lines included, so the
+-- CONCURRENTLY statements below answer 25001 ("cannot run inside a transaction block")
+-- no matter how carefully they are run. That was learned the hard way on 14 Aug 2026.
+-- The 14b file builds the same two indexes the plain way -- a brief pause on writes,
+-- seconds at this database's size, run when nobody is uploading -- in one paste that
+-- also clears invalid leftovers and checks itself.
+--
+-- This file remains correct for anyone running psql directly, where CONCURRENTLY works
+-- as written and is the gentler choice on a live table.
+-- =====================================================================================
+
+-- =====================================================================================
 -- THE INDEXES FOR THE TEAM-DAY TOTALS -- THE HALF THAT TAKES TIME.
 --
 -- RUN THE OTHER FILE FIRST: 2026-08-05-snapshot-totals.sql. That one creates the two
