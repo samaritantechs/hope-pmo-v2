@@ -1543,3 +1543,27 @@ test('the offline pack switch is off until the admin says otherwise, and readabl
   const on = await callApi(db2, 'api_callBoot', ['dvC'], NOW);
   assert.equal(on.offlinePack, true);
 });
+
+/* =====================================================================================
+   THE RIPOTI ROW CAN RING ITS OFFICER.
+   =====================================================================================
+   "at the end after %PF add a call icon where we can call that registered user too"
+
+   The number on the row is the one the officer REGISTERED with -- and it must ride on the
+   zero rows especially, because the officer who made no calls is the one the supervisor
+   reading this board most needs to ring.
+*/
+test('every Ripoti row carries the officer\'s own registered number', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callSync', ['d1', [
+    { ts: T1, dur: 60, dir: 'out', num: '0712000001' },
+  ]], NOW);
+  const d = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW);
+  const juma = d.users.find(x => x.name === 'JUMA ISSA');
+  // Stored as the registration normalised it: bare digits, leading zero stripped --
+  // exactly the shape telHref() turns into +255...
+  assert.equal(juma.phone, '712999999', 'the number he registered with, on a row with calls');
+  const asha = d.users.find(x => x.name === 'ASHA JUMA');
+  assert.ok(asha, 'the leader is on the board at zero');
+  assert.equal(asha.phone, '788111222', 'and her number rides on the zero row too');
+});

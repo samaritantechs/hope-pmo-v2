@@ -1309,8 +1309,8 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   ]);
   // Report by each officer's CURRENT team/name, not the snapshot taken when the call synced --
   // a reassignment must not strand old calls under a team nobody is scoped to see anymore.
-  const curTeam = {}, curName = {}, curRole = {};
-  users0.forEach(r => { curTeam[r.user_id] = r.team || ''; curName[r.user_id] = r.name || ''; curRole[r.user_id] = r.role || ''; });
+  const curTeam = {}, curName = {}, curRole = {}, curPhone = {};
+  users0.forEach(r => { curTeam[r.user_id] = r.team || ''; curName[r.user_id] = r.name || ''; curRole[r.user_id] = r.role || ''; curPhone[r.user_id] = r.phone || ''; });
   const { posOf } = buildLeaderMaps(teamRows);
 
   const rows = [];
@@ -1328,7 +1328,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     const cat = categoryOf(r), outc = outcomeOf(r), dur = num(r.duration);
     if (!byDayUser[dk]) byDayUser[dk] = { day, officer, team, calls: 0, dur: 0, pf: 0, npf: 0 };
     byDayUser[dk].calls++; byDayUser[dk].dur += dur; isPf ? byDayUser[dk].pf++ : byDayUser[dk].npf++;
-    if (!users[uid]) users[uid] = { name: officer, team, role: curRole[uid] || '', calls: 0, dur: 0, pf: 0, npf: 0, days: {}, uniq: {}, expected: 0, defaulter: 0, connected: 0 };
+    if (!users[uid]) users[uid] = { name: officer, team, role: curRole[uid] || '', phone: curPhone[uid] || '', calls: 0, dur: 0, pf: 0, npf: 0, days: {}, uniq: {}, expected: 0, defaulter: 0, connected: 0 };
     const u = users[uid];
     u.calls++; u.dur += dur; u.days[day] = 1;
     if (isPf) { u.pf++; u.uniq[String(r.ref || r.phone)] = 1; } else u.npf++;
@@ -1357,7 +1357,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     const team = u.team || '';
     if (scope && !scope[K(team)] && uid !== alwaysUid) continue;
     if (!String(u.name || '').trim()) continue;
-    users[uid] = { name: u.name, team, role: u.role || '', calls: 0, dur: 0, pf: 0, npf: 0,
+    users[uid] = { name: u.name, team, role: u.role || '', phone: u.phone || '', calls: 0, dur: 0, pf: 0, npf: 0,
       days: {}, uniq: {}, expected: 0, defaulter: 0, connected: 0 };
   }
 
@@ -1371,7 +1371,9 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     byDay: Object.keys(byDayUser).sort().map(k => byDayUser[k]),
     users: Object.keys(users).sort((a, b) => users[a].name < users[b].name ? -1 : users[a].name > users[b].name ? 1 : 0).map(k => {
       const u = users[k];
-      return { name: u.name, team: u.team, position: positionOf(posOf, u.name, u.role), calls: u.calls, duration: u.dur,
+      /* The phone each officer REGISTERED with rides along, so the board that shows a name
+         at zero can also ring that name -- the whole reason a supervisor is looking at it. */
+      return { name: u.name, team: u.team, position: positionOf(posOf, u.name, u.role), phone: u.phone || '', calls: u.calls, duration: u.dur,
         portfolio: u.pf, nonPortfolio: u.npf, ratio: u.calls ? u.pf / u.calls : 0,
         uniqCustomers: Object.keys(u.uniq).length, days: Object.keys(u.days).length,
         expected: u.expected, defaulter: u.defaulter, connected: u.connected, connectRatio: u.calls ? u.connected / u.calls : 0 };
