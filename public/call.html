@@ -313,6 +313,11 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <button data-v="expdf" id="tabExpdf" class="hide">Exp.Def</button>
       <button data-v="reports" id="tabReports" class="hide">Ripoti</button>
     </div>
+    <!-- The crisis switch. Hidden until the admin's OFFLINE_PACK setting allows it -- a
+         response plan for the days the internet is shut off, not a feature for every day. -->
+    <div class="hide" id="crisisRow" style="margin:8px 0 0">
+      <button type="button" id="crisisBtn" class="pill" style="width:100%;text-align:left"></button>
+    </div>
     <div class="expdfstrip hide" id="expdfStrip"></div>
     <div class="daystrip hide" id="dayStrip">
       <span class="ds-tag" id="dsTag">Leo</span>
@@ -854,6 +859,79 @@ $('#regBtn').onclick = function(){
     working immediately, and again when the server answers. The second time must only correct
     the name, team and tabs -- re-running the rest would re-wire every button, restart the sync
     loop and throw away whatever list they had already started reading. */
+/* =====================================================================================
+   CRISIS PREPAREDNESS -- the offline pack.
+
+     "national challenges of oct 29th 2025 when internet was shut down. Here we should have
+      a hidden switch to download offline data that when I allow it and one presses it then
+      the app saves all the customer columns to be accessed offline: and the app itself,
+      until one switches that off or I switch off for all in system"
+
+   Three parties hold a switch, in strict order:
+
+     the ADMIN         Settings -> OFFLINE_PACK = YES. Until then no handset shows anything.
+     the OFFICER       presses the row that appears; the app fetches EVERY list they hold and
+                       pins it, and a service worker keeps the PAGE itself, so a shutdown
+                       finds both the data and the app to read it with.
+     either of them    the officer presses again, or the admin sets it off -- the next
+                       successful boot tears the pack down on every handset at once.
+
+   The lists were already surviving restarts (localStorage) and boot already enters from the
+   warm copy when the network is dead; what a shutdown could still take away was the page.
+   The worker (sw.js) closes exactly that gap and never touches /api/. */
+var CRISIS_LS = 'hcCrisis';
+function crisisOn_(){ try { return localStorage.getItem(CRISIS_LS) === '1'; } catch(e){ return false; } }
+function crisisDraw_(){
+  var b = $('#crisisBtn'); if (!b) return;
+  b.innerHTML = crisisOn_()
+    ? '✅ Nakala ya dharura IPO kwenye simu hii — gusa kuiondoa. / Crisis copy SAVED on this phone — tap to remove.'
+    : '⬇ Hifadhi nakala ya dharura — orodha zote + app, bila mtandao. / Save a crisis copy — every list + the app, for offline.';
+  b.onclick = function(){
+    if (crisisOn_()) { crisisOff_(); toast('Nakala ya dharura imeondolewa. / Crisis copy removed.'); }
+    else crisisSave_();
+  };
+}
+function crisisSync_(d){
+  var row = $('#crisisRow'); if (!row) return;
+  var allowed = d && d.offlinePack === true;
+  row.classList.toggle('hide', !allowed);
+  if (!allowed && crisisOn_()) crisisOff_();          // the admin switched it off for all
+  if (allowed) crisisDraw_();
+}
+function crisisOff_(){
+  try { localStorage.removeItem(CRISIS_LS); } catch(e){}
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistration('/').then(function(reg){
+      if (!reg) return;
+      if (reg.active) reg.active.postMessage('hope-crisis-off');
+      // Belt and braces: unregister even if the message never lands.
+      setTimeout(function(){ reg.unregister(); }, 2000);
+    }).catch(function(){});
+  }
+  crisisDraw_();
+}
+function crisisSave_(){
+  var b = $('#crisisBtn'); b.disabled = true; b.textContent = 'Inahifadhi… / Saving…';
+  // Every list this officer holds, fetched fresh and pinned to the device store the app
+  // already reads first. The Exp.Def strip travels with its rows, as always.
+  var jobs = ['today', 'tomorrow', 'defaulters'].map(function(s){
+    return srv('api_callList', DEV, s).then(function(x){ S.cache[s] = x.rows || []; S.cacheAt[s] = Date.now(); });
+  });
+  jobs.push(srv('api_callList', DEV, 'expdf', S.expdfScope || 'auto').then(function(x){
+    S.cache.expdf = x.rows || []; S.cacheAt.expdf = Date.now(); if (x.expdf) S.expdf = x.expdf;
+  }).catch(function(){ /* not every account has a rotation list */ }));
+  Promise.all(jobs).then(function(){
+    saveCacheToDevice_();
+    try { localStorage.setItem(CRISIS_LS, '1'); } catch(e){}
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function(){});
+    b.disabled = false; crisisDraw_();
+    toast('Imehifadhiwa — simu hii itafanya kazi bila mtandao. / Saved — this phone now works offline.');
+  }).catch(function(e){
+    b.disabled = false; crisisDraw_();
+    alert('Imeshindikana kupakua — jaribu tena ukiwa na mtandao. / Could not download — try again with a connection.\n' + String((e && e.message) || e));
+  });
+}
+
 function enterApp(d){
   S.boot = d; S.syncEverySec = d.syncEverySec || 300;
   $('#scrBoot').classList.add('hide'); $('#scrRegister').classList.add('hide');
@@ -873,6 +951,7 @@ function enterApp(d){
      round: a system closed at lunchtime has to take the button away, not merely stop adding
      it. */
   $('#swapBtn').classList.toggle('hide', d.systemOpen !== true);
+  crisisSync_(d);
   if (S.entered) {
     // Tabs can appear or disappear here, and the one they are standing on may have just gone.
     if (S.view === 'reports' && !d.leader) setView('today');
