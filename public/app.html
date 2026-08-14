@@ -5105,7 +5105,10 @@ function codeForm(x){
     + '<div class="fld"><label>Jina / Name</label><input id="kName" value="'+esc(x?x.name:'')+'"></div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="kRole" list="roleList" value="'+esc(x?x.role:'')+'">'
       + '<datalist id="roleList">'+roles.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist></div>'
-    + '<div class="fld"><label>Timu / Teams (ALL au orodha)</label><input id="kTeams" value="'+esc(x&&x.teams?x.teams.join(', '):'ALL')+'"></div>'
+    + '<div class="fld"><label>Timu / Teams (ALL au orodha)</label><input id="kTeams" value="'+esc(x&&x.teams?x.teams.join(', '):'ALL')+'">'
+      + '<div class="fldnote">Kwa wadhifa wenye safu kwenye jedwali la timu (OPM, RECOVERY, GMO, MANAGER, CREDIT, EXPECTED, BIKE), orodha hii pia inamweka mtu huyu kwenye Timu na Wafanyakazi. ALL haimpi mtu timu zote — inafungua tu kuona.'
+      + '<br>For a role that has a column in the teams table, this list also files the person into Teams &amp; Staff. ALL only opens the view; it never makes somebody the officer of every team.</div>'
+      + '</div>'
     + '<div class="fld"><label>Tabs za ziada / Extra tabs (upload, settings)</label><input id="kTabs" value="'+esc(x&&x.tabs?x.tabs.join(', '):'')+'"></div>'
     + '<button class="btn w" id="kSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="kDel">Futa msimbo / Delete code</button>'));
@@ -5113,7 +5116,20 @@ function codeForm(x){
     srv('saveAccessCode', { code:document.getElementById('kCode').value.trim(), oldCode:(x?x.code:''), name:document.getElementById('kName').value.trim(),
       role:document.getElementById('kRole').value.trim(), teams:document.getElementById('kTeams').value.trim(),
       tabs:document.getElementById('kTabs').value.trim() })
-      .then(function(){ toast('Imehifadhiwa.'); closeDrawer(); render(); })
+      /* THE ROSTER FOLLOWED, SO SAY SO. Saving a code now also re-files that person in the
+         teams table, and a change to a screen the admin is not looking at has to be reported
+         or it is indistinguishable from nothing happening. */
+      .then(function(r){
+        var s = r && r.staff, msg = 'Imehifadhiwa.';
+        if (s) {
+          var bits = [];
+          if (s.renamedOn) bits.push('jina limebadilishwa kwenye timu ' + s.renamedOn + ' / renamed on ' + s.renamedOn);
+          if (s.added) bits.push('ameongezwa kwenye timu ' + s.added + ' / added to ' + s.added);
+          if (s.cleared) bits.push('ameondolewa kwenye timu ' + s.cleared + ' / removed from ' + s.cleared);
+          if (bits.length) msg += ' Timu na Wafanyakazi: ' + bits.join('; ') + ' (' + s.role.toUpperCase() + ').';
+        }
+        toast(msg); closeDrawer(); render();
+      })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
   var del = document.getElementById('kDel');

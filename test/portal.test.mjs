@@ -5576,3 +5576,89 @@ test('a plain officer still resolves to their own team', async () => {
     { from: TODAY, to: TODAY, user: 'PLAIN OFFICER' }, NOW);
   assert.deepEqual((d.userTeams || []).map(x => String(x).toUpperCase()), ['DODOMA']);
 });
+
+/* =====================================================================================
+   AN ACCESS CODE AND THE TEAMS TABLE ARE ONE FACT KEPT IN TWO PLACES.
+   =====================================================================================
+   "Updating User accesscode for a role should auto update the names and teams accessed in
+    the teams and staff"
+
+   The damage this prevents is quiet: the teams table is what the weekly boards, the officer
+   boards and the recycling rotation all read, so a name that drifts between the two registers
+   is an officer whose work simply stops being counted. Nothing says so -- it reads zero.
+*/
+test('saving a code with a team list files that person into Teams & Staff', async () => {
+  const book = tables();
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'N1', name: 'NEW GMO', role: 'GMO', teams: 'KONGOWE, MBAGALA' }, NOW);
+  const t = db._dump('teams');
+  assert.equal(t.find(x => x.team === 'KONGOWE').gmo, 'NEW GMO');
+  assert.equal(t.find(x => x.team === 'MBAGALA').gmo, 'NEW GMO');
+});
+
+test('renaming the person on a code renames them across the teams they hold', async () => {
+  const book = tables();
+  book.access_codes.push({ code: 'R1', name: 'JUMA G', role: 'RECOVERY', teams: ['KONGOWE'], tabs: [] });
+  const db = fakeDb(book);
+  const r = await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'R1', oldCode: 'R1', name: 'JUMA GEORGE', role: 'RECOVERY', teams: 'KONGOWE' }, NOW);
+  assert.equal(db._dump('teams').find(x => x.team === 'KONGOWE').recovery, 'JUMA GEORGE',
+    'the teams table still credited the old spelling, so his work would read zero');
+  assert.equal(r.staff.renamedOn, 1, 'and the admin is told, not left to notice');
+});
+
+test('taking a team off a code takes the person off that team', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'MBAGALA').recovery = 'JUMA G';
+  book.access_codes.push({ code: 'R1', name: 'JUMA G', role: 'RECOVERY', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'R1', oldCode: 'R1', name: 'JUMA G', role: 'RECOVERY', teams: 'KONGOWE' }, NOW);
+  const t = db._dump('teams');
+  assert.equal(t.find(x => x.team === 'KONGOWE').recovery, 'JUMA G');
+  assert.equal(t.find(x => x.team === 'MBAGALA').recovery, null, 'MBAGALA was dropped from the code');
+});
+
+test('ALL teams never makes one person the officer of every team', async () => {
+  /* Blank means unscoped -- "may see everything" -- not "is in charge of everything". Writing
+     it through would put one name in all seventy-eight rows of a live teams table. */
+  const book = tables();
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'N2', name: 'BIG BOSS', role: 'GMO', teams: 'ALL' }, NOW);
+  for (const t of db._dump('teams')) assert.equal(t.gmo, null, t.team + ' was quietly assigned');
+});
+
+test('a role with no column in the teams table writes nothing', async () => {
+  const book = tables();
+  const db = fakeDb(book);
+  const before = JSON.stringify(db._dump('teams'));
+  const r = await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'N3', name: 'CATHERINE', role: 'PMO', teams: 'KONGOWE' }, NOW);
+  assert.equal(r.staff, null, 'a collection officer keeps their teams on the code itself');
+  assert.equal(JSON.stringify(db._dump('teams')), before);
+});
+
+test('another officer holding the team is never blanked by somebody else\'s save', async () => {
+  /* Asha's teams are edited; the person who took KONGOWE over from her must survive it. */
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').gmo = 'THE SUCCESSOR';
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'N4', name: 'ASHA', role: 'GMO', teams: 'MBAGALA' }, NOW);
+  const t = db._dump('teams');
+  assert.equal(t.find(x => x.team === 'KONGOWE').gmo, 'THE SUCCESSOR');
+  assert.equal(t.find(x => x.team === 'MBAGALA').gmo, 'ASHA');
+});
+
+test('the roster shows the change straight away', async () => {
+  const book = tables();
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveAccessCode',
+    { code: 'N5', name: 'NEW GMO', role: 'GMO', teams: 'KONGOWE' }, NOW);
+  const r = await portalApi(db, ADMIN, 'staffRoster', {}, NOW);
+  const row = r.staff.find(s => s.name === 'NEW GMO' && s.role === 'gmo');
+  assert.ok(row, 'Teams & Staff never heard about the code that was just saved');
+  assert.deepEqual(row.teams, ['KONGOWE']);
+});

@@ -3066,9 +3066,22 @@ async function saveAccessCode(db, user, p) {
     const items = s.split(/[;,]/).map(x => x.trim()).filter(Boolean);
     return items.length ? items : null;
   };
+  /* WHO THIS CODE USED TO BE, read before it is overwritten -- a rename is only visible as the
+     difference between the two, and after the upsert the old name is gone. Looked up by primary
+     key on a table of a few dozen rows, and only when there is something for it to feed. */
+  const nextName = String(p.name).trim();
+  const nextRole = String(p.role).trim();
+  const nextTeams = list(p.teams);
+  let prevName = null;
+  if (roleColumnOf(nextRole)) {
+    const { data: was } = await db.from('access_codes').select('name')
+      .eq('code', oldCode || code).maybeSingle();
+    prevName = was ? was.name : null;
+  }
+
   const { error } = await db.from('access_codes').upsert({
-    code, name: String(p.name).trim(), role: String(p.role).trim(),
-    teams: list(p.teams), tabs: list(p.tabs) || [],
+    code, name: nextName, role: nextRole,
+    teams: nextTeams, tabs: list(p.tabs) || [],
   }, { onConflict: 'code' });
   if (error) throw new Error(error.message);
   if (oldCode && oldCode !== code) {
@@ -3077,8 +3090,102 @@ async function saveAccessCode(db, user, p) {
     const { error: dErr } = await db.from('access_codes').delete().eq('code', oldCode);
     if (dErr) throw new Error(dErr.message);
   }
-  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null };
+  /* AND NOW THE OTHER HALF OF THE SAME FACT. After the code is safely saved, never before: if
+     this throws, the admin has still got the code change they asked for and a message saying
+     the roster did not follow, rather than a lost save. */
+  const staff = await syncStaffFromCode(db, user,
+    { name: nextName, prevName, role: nextRole, teams: nextTeams });
+
+  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff };
 }
+/* =======================================================================================
+   AN ACCESS CODE AND THE TEAMS TABLE ARE ONE FACT KEPT IN TWO PLACES.
+
+     "Updating User accesscode for a role should auto update the names and teams accessed
+      in the teams and staff"
+
+   Who somebody is, and which teams they hold, is written down twice: on their access code
+   (name, role, teams -- what they may SEE) and in the teams table's role columns (who the
+   GMO of KONGOWE is -- who they ARE on every report). Nothing kept the two in step, so an
+   admin who edited a code was editing half of the truth:
+
+     rename a person on their code   -> Teams & Staff still shows the old name, and every
+                                        report still credits the work to it
+     change which teams the code has -> Teams & Staff never hears about it at all
+
+   The second half is why this is worth doing rather than just noting. The teams table is
+   what the weekly boards, the officer boards and the recycling rotation all read. A name
+   that drifts between the two registers is an officer whose work stops being counted, and
+   nothing anywhere says so -- it just quietly reads zero.
+
+   THREE RULES, and each one exists to stop a specific accident:
+
+   1. A ROLE THAT IS NOT A COLUMN IS LEFT ALONE. ADMIN, PMO and any custom role have no
+      teams-table column to write, so nothing is written. A PMO collection officer already
+      keeps their teams on the code itself -- that IS the register for them.
+
+   2. "ALL TEAMS" NEVER ASSIGNS. A code with no team list means every team, and writing that
+      through would make one person the GMO of all seventy-eight. Blank means unscoped, not
+      "in charge of everything", so the team list is only followed when it is explicit.
+
+   3. NOBODY ELSE'S NAME IS TOUCHED. A team is cleared only where it still holds THIS
+      person's name -- the same rule saveStaffTeams uses. Removing a team from Asha's code
+      must never blank the officer who took it over from her.
+   ======================================================================================= */
+
+/** The teams-table column a code's role writes to, or null if that role has no column. */
+function roleColumnOf(role) {
+  const r = String(role == null ? '' : role).trim().toUpperCase();
+  if (!r) return null;
+  const alias = {
+    'C. ANALYST': 'credit', 'CREDIT ANALYST': 'credit', 'ANALYST': 'credit',
+    'EXPECTED OFFICER': 'expected', 'BIKE OFFICER': 'bike', 'RECOVERY OFFICER': 'recovery',
+    'BRANCH MANAGER': 'manager', 'OPERATIONS MANAGER': 'opm',
+  };
+  if (alias[r]) return alias[r];
+  const col = r.toLowerCase();
+  return TEAM_ROLE_COLS.includes(col) ? col : null;
+}
+
+/** Carry a code's name and team list across to the teams table. Returns what changed, so the
+    admin is told rather than left to notice. */
+async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
+  const roleCol = roleColumnOf(role);
+  if (!roleCol) return null;                              // rule 1
+  const now = String(name || '').trim();
+  if (!now) return null;
+  const before = String(prevName || '').trim();
+  const renamed = before && K(before) !== K(now);
+  const explicit = Array.isArray(teams) && teams.length;  // rule 2
+  if (!renamed && !explicit) return null;
+
+  const want = explicit ? new Set(upperTeams(teams)) : null;
+  const teamRows = await readTeamsAll(db);
+  const writes = [];
+  let renamedOn = 0, added = 0, cleared = 0;
+  for (const t of teamRows) {
+    if (!teamAllowed(user, t.team)) continue;
+    const holder = String(t[roleCol] || '').trim();
+    // Held by this person under EITHER spelling of their name -- the old one is exactly what a
+    // rename is trying to catch up with.
+    const held = holder && (K(holder) === K(now) || (renamed && K(holder) === K(before)));
+    const shouldHold = want ? want.has(K(t.team)) : held;
+    if (shouldHold && (!held || holder !== now)) {
+      writes.push({ team: t.team, [roleCol]: now });
+      if (held) renamedOn++; else added++;
+    } else if (!shouldHold && held) {
+      writes.push({ team: t.team, [roleCol]: null });
+      cleared++;
+    }
+  }
+  for (const batch of chunk_(writes, 200)) {
+    const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+    noteTeamsWritten(db);
+    if (error) throw new Error(error.message);
+  }
+  return writes.length ? { role: roleCol, name: now, renamedOn, added, cleared } : null;
+}
+
 async function deleteAccessCode(db, user, p) {
   requireAdmin(user);
   const code = String((p && p.code) || '').trim();
