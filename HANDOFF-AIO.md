@@ -113,6 +113,15 @@ result rather than silently subtracted from the count.
 
 ## 6. The Postgres discipline
 
+> **A standing instruction, given once so it never has to be given again:**
+> *"from now on on whatever we implement, we go into postgress war… it's a forever instruction"*
+> — the owner, 14 August 2026
+>
+> Every change from here on states what it costs the database before it ships. The full rule,
+> with the five questions each change has to answer and the list of heavy reads that are
+> **proportionate and must not be "optimised"**, is in
+> [ARCHITECTURE.md § the Postgres budget](ARCHITECTURE.md#the-standing-rule-for-every-change-the-postgres-budget).
+
 This system fell over under 300 handsets once. Everything below is why it does not now.
 
 - **Every read pages** past PostgREST's silent 1,000-row cap — including database functions.
