@@ -170,6 +170,28 @@ function tryTeamCode(code, no){
 }
 
 function renderHome(me){
+  /* =====================================================================================
+     EVERYBODY LANDS ON CALLS.
+
+       "App is default land to call app when code Is inserted, unless one uses the switch
+        button, I want users to focus on calling so do this"
+
+     A valid code -- any code, the admin's included -- goes straight to HOPE Calls. The rest
+     of the system is one press away, not gone: the switch button inside Calls (shown while
+     the system is open) leads to the dashboard, and every screen keeps its own address for
+     anyone who needs it directly. The code is carried across so an unregistered handset
+     finds its sign-in box already filled, the same courtesy the team-code path has always
+     had.
+
+     `/?menu=1` still shows this launcher's tile menu -- the office TV pointing at HOPE Live,
+     or an admin who wants the upload door without a detour, should not need to remember five
+     addresses. */
+  if (!/[?&]menu=1/.test(window.location.search)) {
+    store('hcTeamCode', load('hopeCode'));
+    $('view').innerHTML = '<div class="card" style="text-align:center;color:var(--mut)">Inafungua HOPE Calls…</div>';
+    window.location.replace('/call');
+    return;
+  }
   var scope = me.teams ? (me.teamCount + (me.teamCount === 1 ? ' team' : ' teams')) : 'Timu zote / All teams';
   var initials = String(me.name || '?').trim().split(/\s+/).slice(0, 2).map(function(w){ return w.charAt(0); }).join('').toUpperCase();
   /* When the admin has closed the system, the portal is not merely refused -- it is not
