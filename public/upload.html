@@ -89,10 +89,13 @@
         <option value="teams">Leaders / Teams</option>
         <option value="received">Received Payments</option>
       </optgroup>
+      <!-- The register that is still UPLOADED. The others left this list on request:
+           abnormal payments are worked out from the received-payments file itself (the
+           screen and the dashboard both apply the multiples rule to what was received),
+           and complaints and restructures are typed inside the app. Their API paths
+           remain, so nothing already stored is touched -- only the temptation to upload
+           a sheet that the system now derives or collects for itself. -->
       <optgroup label="Registers">
-        <option value="abnormal">Abnormal Payments</option>
-        <option value="complaints">Complaints</option>
-        <option value="restructures">Loan Restructuring</option>
         <option value="demand-notices">Demand Notices</option>
       </optgroup>
       <optgroup label="Admin (settings permission required)">

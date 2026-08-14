@@ -6,7 +6,7 @@ import { pickLatestBatch } from './_lib/snapshots.js';
    of the sweep and the retire rule. Two implementations of "which uploads are superseded" is
    two answers that can disagree, and the disagreement would only ever show up as a figure
    nobody can account for. */
-import { portalApi } from './_lib/portal-core.js';
+import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
 import { addDaysKey as addDays_ } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
@@ -463,7 +463,7 @@ export default withApi(async (req, res) => {
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
   let table, records, commentsOrder = null, loansOrder, teamsDroppedCols = null;
-  let loansRelinked = 0, loansMerged = 0;
+  let loansRelinked = 0, loansMerged = 0, receivedAbnormal = 0, receivedStep = 0;
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -590,6 +590,22 @@ export default withApi(async (req, res) => {
           for (const k of Object.keys(r)) if (known.includes(k)) out[k] = r[k];
           return out;
         });
+      }
+      /* SAY WHAT THE RULE WILL FLAG, AT THE MOMENT OF UPLOAD.
+
+           "I don't think uploading by appending or replacing received payments updates
+            abnormal ones"
+
+         It does -- the Abnormal screen and the dashboard tile both work irregular payments out
+         from this very table -- but nothing ever SAID so, and an update that happens invisibly
+         is indistinguishable from one that does not happen. The abnormal sheet is not uploaded
+         any more, so this line is the only receipt. One keyed settings read; the count is
+         arithmetic over rows already in hand. */
+      {
+        const { data: st } = await supabase.from('settings').select('value').eq('key', 'ABNORMAL_STEP').maybeSingle();
+        const step = st && Number(st.value) > 0 ? Number(st.value) : 500;
+        receivedAbnormal = records.filter(r => isAbnormalAmount(r.amount_paid, step)).length;
+        receivedStep = step;
       }
       break;
     case 'access-codes':
@@ -1099,6 +1115,9 @@ export default withApi(async (req, res) => {
          from one that did not happen. */
       loansRelinked ? `${loansRelinked} loan(s) were recognised as already in the pipeline under an older identity (a docket or name from before their LOAN ID existed) and their existing rows were UPDATED rather than duplicated.` : '',
       loansMerged ? `${loansMerged} duplicate row(s) -- the same loan filed twice by earlier uploads under two identities -- were merged into one. Sales and pipeline counts no longer double-count them.` : '',
+      table === 'received_payments' ? (receivedAbnormal
+        ? `${receivedAbnormal} of these payments are irregular (not a multiple of TZS ${receivedStep.toLocaleString('en-US')}) and are now flagged on the Abnormal Payments screen and the dashboard. No separate abnormal sheet is needed.`
+        : 'None of these payments are irregular by the multiples rule. The Abnormal Payments screen works itself out from this table, so there is nothing else to upload.') : '',
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
       /* A COLUMN THROWN AWAY IN SILENCE IS THE WORST KIND OF SUCCESS. The file was read right,
          the database has no such column yet, and without this line the upload says "done" while
