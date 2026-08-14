@@ -70,8 +70,39 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit']);
    without inventing its own list. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit'];
 
+/* =======================================================================================
+   THE READ-ONLY ADMIN -- SUPERVISION THAT CANNOT LEAVE FINGERPRINTS.
+
+     "I need to create an admin with [read only] user characteristics to view and try
+      everything without changing nothing for the purpose of internal and external company
+      supervision of the system -- their team that do so could also use ai to login and
+      check whats what -- but read only"
+
+   Give an access code the role AUDITOR (READONLY / READ ONLY / READ-ONLY are accepted
+   spellings) and it sees what an admin sees -- every tab, the settings screens, the audit
+   log -- while every function that CHANGES anything is refused at the one door all writes
+   pass through (portalApi). Enforced at the server, not the screen: an AI, a curl, or a
+   person poking buttons all hit the same wall.
+
+   Three deliberate narrowings, each of which is the point rather than a limitation:
+
+     upload      not granted at all -- the upload page is a pure write tool, and showing a
+                 door that only ever says no is worse than not showing it
+     secrets     the access-code and team-code VALUES are masked on every screen and export
+                 a read-only viewer sees; a supervisor checks the system, they do not
+                 collect its keys
+     calls app   a view-only code does not register a handset -- the portal is the
+                 supervision surface, and a phone session exists to write follow-ups
+   ======================================================================================= */
+const READONLY_ROLES = new Set(['AUDITOR', 'READONLY', 'READ ONLY', 'READ-ONLY']);
+export function isReadOnly(user) {
+  return READONLY_ROLES.has(String((user && user.role) || '').trim().toUpperCase());
+}
+
 export function resolveTabs(user, roleTabs) {
   if (String(user.role || '').trim().toUpperCase() === 'ADMIN') return ADMIN_TABS.slice();
+  // Everything an admin can SEE, none of what an admin can DO -- upload is a write tool.
+  if (isReadOnly(user)) return USER_TABS.concat(['settings', 'audit']);
   const merged = [...new Set([...(user.tabs || []), ...(roleTabs || [])])];
   return merged.length ? merged : USER_TABS.slice();
 }
@@ -83,6 +114,8 @@ export async function can(user, tab) {
   // for your access code") even though the portal UI showed the tab -- the UI and the
   // enforcement have to read the SAME rule, and this is the third caller of it.
   if (String(user.role || '').trim().toUpperCase() === 'ADMIN') return true;
+  // A read-only code never holds upload, whatever its row or role says -- see resolveTabs.
+  if (isReadOnly(user) && tab === 'upload') return false;
   if (user.tabs && user.tabs.includes(tab)) return true;
   const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
   return !!(data && data.tabs && data.tabs.includes(tab));
@@ -96,6 +129,8 @@ export async function authCodeResolved(code) {
   const user = await authCode(code);
   const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
   user.tabs = resolveTabs(user, data && data.tabs);
+  // Carried on the user object so every enforcement point reads ONE fact, resolved once.
+  user.readOnly = isReadOnly(user);
   return user;
 }
 
