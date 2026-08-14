@@ -18,6 +18,7 @@ This file is the map. Everything else is one click from here.
 | Set it up from nothing | [MIGRATION.md](MIGRATION.md) |
 | Find the file that does X | **[MANIFEST.md](MANIFEST.md)** |
 | Change the code | [ARCHITECTURE.md](ARCHITECTURE.md), then `npm test` |
+| **Before you change anything** | **[ARCHITECTURE.md § the Postgres budget](ARCHITECTURE.md#the-standing-rule-for-every-change-the-postgres-budget)** — a standing rule, not advice |
 
 **If something is wrong right now**, go straight to
 [OPERATIONS.md § When something breaks](OPERATIONS.md#when-something-breaks).
