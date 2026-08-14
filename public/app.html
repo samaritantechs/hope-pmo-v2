@@ -5051,6 +5051,12 @@ function officerForm(x){
       + '</select></div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="oRole" value="'+esc(x&&x.role?x.role:'OFFICER')+'"></div>'
     + '<label class="chk"><input id="oLeader" type="checkbox"'+(x&&x.is_leader?' checked':'')+'> Kiongozi / Leader (sees reports)</label>'
+    /* The scope a leader reads reports over. This existed in the database and NOT on the form,
+       so the form could never send it -- and a save that does not mention it used to erase it,
+       which is how a multi-team leader kept collapsing to a single team. */
+    + '<div class="fld" id="oLtWrap" style="'+(x&&x.is_leader?'':'display:none')+'"><label>Timu anazoziona kiongozi / Leader\'s teams (orodha, au ALL)</label>'
+      + '<input id="oLeaderTeams" value="'+esc(x&&x.leader_teams?x.leader_teams.join(', '):'')+'" placeholder="ALL">'
+      + '<div class="fldnote">Tupu au ALL = timu zote. / Blank or ALL = every team.</div></div>'
     + '<label class="chk"><input id="oActive" type="checkbox"'+(!x||x.active?' checked':'')+'> Inatumika / Active</label>'
     + '<div class="fldnote">Ukiizima, simu yake inakatwa mara moja. / Switching this off cuts their handset immediately.</div>'
     + '<label class="chk"><input id="oIssue" type="checkbox"'+(isNew?' checked disabled':'')+'> '
@@ -5058,11 +5064,24 @@ function officerForm(x){
     + (isNew ? '' : '<div class="fldnote">Nenosiri jipya linakata simu iliyokuwa na la zamani. / A new passcode releases the handset that had the old one.</div>')
     + '<div id="oOut"></div>'
     + '<button class="btn w" id="oSave">Hifadhi / Save</button>'
+    /* The middle action between "save" and "delete": release the handset, keep everything
+       else. This existed once, in a form nothing could reach any more -- an admin whose
+       officer registered with the wrong name or team had no button for the commonest fix. */
+    + (x && x.signedIn ? '<button class="btn ghost w" style="margin-top:8px" id="oFree">Ondoa kwenye simu / Sign the phone out</button>'
+        + '<div class="fldnote">Historia na akaunti vinabaki; ataingia tena kwa nenosiri lake. / Keeps the account and its history — they simply sign in again.</div>' : '')
     // Switching off keeps their call history and is right for someone who left. Deleting is
     // for accounts that should never have existed -- a test, a typo, a duplicate -- so it is
     // separate, and it says plainly that the call history goes with it.
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="oDel">Futa kabisa / Delete account</button>'
         + '<div class="fldnote">Kufuta kunaondoa na historia ya simu zake. Kuzima tu kunaihifadhi. / Deleting also removes their call history; switching off keeps it.</div>'));
+  var lch = $('#oLeader');
+  if (lch) lch.onchange = function(){ var w = $('#oLtWrap'); if (w) w.style.display = lch.checked ? '' : 'none'; };
+  var fr = document.getElementById('oFree');
+  if (fr) fr.onclick = function(){
+    srv('removeCallUser', { userId: x.user_id, mode: 'unregister' })
+      .then(function(){ toast('Simu imeondolewa. / The phone is signed out.'); closeDrawer(); render(); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
   if (!isNew) $('#oDel').onclick = function(){
     if (!confirm('Futa akaunti ya "' + (x.name||'') + '" na historia yake yote ya simu?\n\n'
       + 'Kwa mtu aliyeondoka, ni bora kuizima badala yake. / Delete this account AND all of its call history? '
@@ -5074,7 +5093,8 @@ function officerForm(x){
   $('#oSave').onclick = function(){
     srv('saveOfficerAccount', { name:$('#oName').value.trim(), phone:$('#oPhone').value.trim(),
       team:$('#oTeam').value, role:$('#oRole').value.trim(),
-      isLeader:$('#oLeader').checked, active:$('#oActive').checked,
+      isLeader:$('#oLeader').checked, leaderTeams:$('#oLeaderTeams').value.trim(),
+      active:$('#oActive').checked,
       issuePasscode: isNew || $('#oIssue').checked })
       .then(function(r){
         if (r.passcode){
@@ -5141,34 +5161,6 @@ function codeForm(x){
   };
 }
 
-/** Manage a phone registration. The two actions are genuinely different, so they are
-    presented as such rather than one ambiguous "remove". */
-function userForm(u){
-  if (!u) return;
-  drawer('<h3>'+esc(u.name||u.user_id)+'</h3><div class="sub">'+esc(u.team||'—')+' · '+esc(u.phone||'')+'</div>'
-    + '<div class="facts">'
-    + '<div class="frow"><span>Wadhifa / Role</span><span>'+esc(u.role||'')+(u.is_leader?' (leader)':'')+'</span></div>'
-    + '<div class="frow"><span>Simu zilizorekodiwa / Calls</span><b>'+money(u.calls)+'</b></div>'
-    + '<div class="frow"><span>Alijisajili / Registered</span><span>'+esc(String(u.registered_at||'').replace('T',' ').slice(0,16))+'</span></div>'
-    + '<div class="frow"><span>Sync ya mwisho</span><span>'+esc(String(u.last_sync||'—').replace('T',' ').slice(0,16))+'</span></div>'
-    + '<div class="frow"><span>Kifaa / Device</span><span>'+(u.device_id?'imeunganishwa / signed in':'huru / free')+'</span></div>'
-    + '</div>'
-    + '<button class="btn w" id="uFree">Ondoa kwenye simu / Sign the phone out</button>'
-    + '<div style="font-size:11.5px;color:var(--mut);margin:6px 0 14px">Historia inabaki; mtumiaji atajisajili upya kwa jina/timu sahihi.<br>Keeps their call history &mdash; they simply register again with the right name and team.</div>'
-    + '<button class="btn ghost w" style="color:var(--bad);border-color:var(--badline)" id="uDel">Futa kabisa / Delete this registration</button>'
-    + '<div style="font-size:11.5px;color:var(--mut);margin-top:6px">Huondoa usajili NA simu zote zilizorekodiwa &mdash; kwa akaunti za majaribio.<br>Removes the registration AND its call logs &mdash; for test accounts.</div>');
-  document.getElementById('uFree').onclick = function(){
-    srv('removeCallUser', { userId:u.user_id, mode:'unregister' })
-      .then(function(){ toast('Simu imeondolewa.'); closeDrawer(); render(); })
-      .catch(function(e){ toast(String(e.message||e), true); });
-  };
-  document.getElementById('uDel').onclick = function(){
-    if (!confirm('Futa usajili wa '+(u.name||u.user_id)+' na simu '+u.calls+' zilizorekodiwa?\n\nDelete this registration and its '+u.calls+' call log(s)? This cannot be undone.')) return;
-    srv('removeCallUser', { userId:u.user_id, mode:'delete' })
-      .then(function(){ toast('Imefutwa.'); closeDrawer(); render(); })
-      .catch(function(e){ toast(String(e.message||e), true); });
-  };
-}
 function settingForm(key, value){
   /* Any setting that holds a picture -- the app logo above all -- used to need a URL hosted
      somewhere else, which is a deploy and a hosting decision for what is really just "here is

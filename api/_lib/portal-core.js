@@ -3295,11 +3295,20 @@ async function saveOfficerAccount(db, user, p, nowMs) {
   const uid = existing ? existing.user_id : officerId(phone);
   const active = p.active === undefined ? (existing ? existing.active !== false : true) : !!p.active;
 
+  /* NOT MENTIONED MEANS NOT CHANGED. The form did not always send leaderTeams, and this line
+     used to write null whenever it was absent -- so merely opening a multi-team leader and
+     pressing Save silently collapsed their scope to nothing. Same class of loss as the teams
+     upload wiping every passcode: an absent field is "I am not talking about this", never
+     "erase it". A demoted leader still loses the list, because a scope without the rank it
+     belongs to is a door left unlocked. */
+  const leaderTeams = !leader ? null
+    : p.leaderTeams !== undefined
+      ? (String(p.leaderTeams).split(/[;,]/).map(x => x.trim()).filter(Boolean) || null)
+      : (existing ? existing.leader_teams : null);
   const vals = { user_id: uid, name, team, phone,
     role: String((p && p.role) || (leader ? 'LEADER' : 'OFFICER')).trim(),
     is_leader: leader,
-    leader_teams: leader && p.leaderTeams
-      ? String(p.leaderTeams).split(/[;,]/).map(x => x.trim()).filter(Boolean) : null,
+    leader_teams: leaderTeams && leaderTeams.length ? leaderTeams : null,
     active,
     created_by: existing ? existing.created_by : user.name,
     registered_at: existing ? existing.registered_at : new Date(nowMs).toISOString() };
@@ -3318,7 +3327,24 @@ async function saveOfficerAccount(db, user, p, nowMs) {
   if (!active) vals.device_id = null;
 
   const { error } = await db.from('call_users').upsert(vals, { onConflict: 'user_id' });
-  if (error) throw new Error(error.message);
+  if (error) {
+    /* THE ERROR THAT MADE THE WHOLE SCREEN "NOT WORK". The columns this writes -- active,
+       passcode_hash, created_by -- arrive with db/migrations/2026-07-26-officer-accounts.sql,
+       and migrations here are run by hand. On a database without it, PostgREST answers with
+       "could not find the 'active' column ... in the schema cache", which reads like the
+       system is broken rather than like a file is waiting to be pasted. Unlike the leaders
+       sheet, these columns cannot be quietly dropped -- switching an officer OFF is the whole
+       feature -- so the save refuses in plain words instead. Costs nothing when it works. */
+    if (/schema cache|column/i.test(error.message)
+        && /(active|passcode_hash|passcode_salt|passcode_set_at|created_by)/.test(error.message)) {
+      throw badRequest('Hifadhi imeshindikana kwa sababu database bado haina safu za akaunti za maafisa. '
+        + 'Mwendeshaji apitishe db/migrations/2026-07-26-officer-accounts.sql kwenye SQL editor, kisha jaribu tena.'
+        + '\n\nThe database has not got the officer-account columns yet, so nothing here can save. '
+        + 'Run db/migrations/2026-07-26-officer-accounts.sql (it is also inside RUN-ME-2026-08-14.sql) '
+        + 'in the Supabase SQL editor, then try again. Until then this screen can only read.');
+    }
+    throw new Error(error.message);
+  }
   return { userId: uid, name, team, active, passcode: issued };
 }
 

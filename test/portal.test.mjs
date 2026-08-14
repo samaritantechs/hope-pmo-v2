@@ -5662,3 +5662,64 @@ test('the roster shows the change straight away', async () => {
   assert.ok(row, 'Teams & Staff never heard about the code that was just saved');
   assert.deepEqual(row.teams, ['KONGOWE']);
 });
+
+/* =====================================================================================
+   MANAGE CALL APP USERS -- the three faults behind "simamisha doesnt work".
+   =====================================================================================
+   1. On a database without 2026-07-26-officer-accounts.sql, every save failed with
+      "schema cache", which reads like the system is broken rather than like a file is
+      waiting to be pasted.
+   2. The form never sent leaderTeams, and an absent field wrote null -- so merely opening
+      a multi-team leader and pressing Save collapsed their scope to nothing.
+   3. The sign-the-phone-out form existed but nothing could reach it (UI-side, covered by
+      the officerForm rewiring).
+*/
+test('an un-migrated database refuses the officer save in plain words, naming the file', async () => {
+  const db = fakeDb(tables(), { missingColumns: { call_users: ['active', 'passcode_hash', 'passcode_salt', 'passcode_set_at', 'created_by'] } });
+  await assert.rejects(
+    () => portalApi(db, ADMIN, 'saveOfficerAccount',
+      { name: 'ASHA O', phone: '0713111222', team: 'KONGOWE' }, NOW),
+    e => e.status === 400 && /2026-07-26-officer-accounts\.sql/.test(e.message)
+      && !/schema cache/.test(e.message.split('\n')[0]),
+    'the first line an admin reads must name the file, not the schema cache');
+});
+
+test('editing a leader without mentioning their teams leaves the teams alone', async () => {
+  const book = tables();
+  book.call_users = [{ user_id: 'UB', name: 'BETTY', team: null, phone: '713000111',
+    is_leader: true, leader_teams: ['KONGOWE', 'MBAGALA'], active: true, role: 'LEADER' }];
+  const db = fakeDb(book);
+  // The rename an admin actually performs: name changes, leaderTeams not sent at all.
+  await portalApi(db, ADMIN, 'saveOfficerAccount',
+    { name: 'BETTY M', phone: '713000111', isLeader: true }, NOW);
+  const u = db._dump('call_users').find(x => x.user_id === 'UB');
+  assert.equal(u.name, 'BETTY M');
+  assert.deepEqual(u.leader_teams, ['KONGOWE', 'MBAGALA'],
+    'her multi-team scope was erased by a save that never mentioned it');
+});
+
+test('sending leaderTeams still changes them, and demotion still clears them', async () => {
+  const book = tables();
+  book.call_users = [{ user_id: 'UB', name: 'BETTY', team: null, phone: '713000111',
+    is_leader: true, leader_teams: ['KONGOWE'], active: true, role: 'LEADER' }];
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveOfficerAccount',
+    { name: 'BETTY', phone: '713000111', isLeader: true, leaderTeams: 'KONGOWE, MBAGALA' }, NOW);
+  assert.deepEqual(db._dump('call_users')[0].leader_teams, ['KONGOWE', 'MBAGALA']);
+  // Demoted: the scope goes with the rank -- a list without the rank is a door left unlocked.
+  await portalApi(db, ADMIN, 'saveOfficerAccount',
+    { name: 'BETTY', phone: '713000111', isLeader: false, team: 'KONGOWE' }, NOW);
+  assert.equal(db._dump('call_users')[0].leader_teams, null);
+});
+
+test('switching an officer off cuts the handset in the same save', async () => {
+  const book = tables();
+  book.call_users = [{ user_id: 'UO', name: 'ASHA O', team: 'KONGOWE', phone: '713000222',
+    device_id: 'DEV1', active: true, role: 'OFFICER', is_leader: false }];
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveOfficerAccount',
+    { name: 'ASHA O', phone: '713000222', team: 'KONGOWE', active: false }, NOW);
+  const u = db._dump('call_users')[0];
+  assert.equal(u.active, false);
+  assert.equal(u.device_id, null, 'off must mean off NOW, not at their next sign-out');
+});
