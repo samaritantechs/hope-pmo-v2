@@ -156,6 +156,17 @@ class FakeQuery {
   _exec() {
     // A column the schema lacks refuses the whole query, exactly as PostgREST does.
     if (this.rejectWith) return { data: null, error: this.rejectWith };
+    /* AND A WRITE CARRYING ONE IS REFUSED TOO, with PostgREST's own words. Only the select
+       side was modelled, so a test could prove a screen READS correctly against an un-migrated
+       database while its save -- the half that actually fails there -- passed silently. */
+    if (this.missingCols.length && (this.mode === 'insert' || this.mode === 'upsert' || this.mode === 'update')) {
+      const sent = this.mode === 'update' ? [this.payload] : this.payload;
+      for (const r of sent) {
+        const hit = this.missingCols.find(c => r && r[c] !== undefined);
+        if (hit) return { data: null, error: { code: 'PGRST204',
+          message: "Could not find the '" + hit + "' column of '" + this.tableName + "' in the schema cache" } };
+      }
+    }
     const rows = this.table.rows;
     if (this.mode === 'insert') {
       // Postgres fills `id` from `default gen_random_uuid()`, and code that inserts a parent
