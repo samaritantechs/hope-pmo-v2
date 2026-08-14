@@ -1,4 +1,4 @@
-import { fetchAll } from './supabase.js';
+import { fetchAll, runQuery } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
@@ -1200,15 +1200,27 @@ async function comments(db, [dev, ref]) {
      imported history has hundreds of notes and nobody scrolls past the last few dozen -- and
      select('*') carried the promise dates, docket numbers and phone numbers the screen never
      shows, on a mobile connection, for every one of them. */
-  const { data, error } = await db.from('followup_comments')
-    .select('comment, fu_status, created_by, created_at')
-    .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT);
+  /* The customer's registered complaints come back with their history -- the officer about to
+     ring somebody must know there is an open complaint BEFORE the call. One keyed read,
+     allowed to fail quietly so the history never stops loading over its side-dish. */
+  const [{ data, error }, compRes] = await Promise.all([
+    db.from('followup_comments')
+      .select('comment, fu_status, created_by, created_at')
+      .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT),
+    runQuery(() => db.from('complaints')
+      .select('complainant, category, details, status, created_at')
+      .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(10)),
+  ]);
   if (error) throw new Error(error.message);
   const items = (data || []).map(c => ({
     by: c.created_by || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
     fu: c.fu_status || '', comment: c.comment || '',
   }));
-  return { ok: true, items, capped: items.length >= COMMENT_LIMIT };
+  const complaints = ((compRes && !compRes.error && compRes.data) ? compRes.data : []).map(c => ({
+    who: c.complainant || '', what: String(c.details || c.category || '').slice(0, 200),
+    status: c.status || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
+  }));
+  return { ok: true, items, complaints, capped: items.length >= COMMENT_LIMIT };
 }
 async function addComment(db, [dev, p], nowMs) {
   const cu = await userByDeviceSoft(db, dev);

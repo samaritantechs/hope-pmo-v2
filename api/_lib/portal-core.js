@@ -806,12 +806,24 @@ async function comments(db, user, { ref }) {
   const { data: st } = await db.from('followup_status').select('team').eq('ref', String(ref)).maybeSingle();
   if (st && !teamAllowed(user, st.team)) throw forbidden(`You do not have access to team ${st.team}.`);
   /* The columns this drawer draws, newest first, capped -- the same reasoning as the phone's
-     copy in call-core.js. A customer with an imported history has hundreds of notes. */
-  const { data, error } = await db.from('followup_comments')
-    .select('comment, fu_status, promise_date, promise_amt, new_number, created_by, created_at')
-    .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(200);
+     copy in call-core.js. A customer with an imported history has hundreds of notes.
+
+     THEIR COMPLAINTS RIDE ALONG. "Show registered complaints on ... customer followup
+     statuses list" -- an officer about to ring somebody needs to know the customer has an
+     open complaint BEFORE the call, not after filing another one. One keyed read on a
+     drawer that is already two reads deep; allowed to fail quietly, because a history that
+     stops loading over its side-dish is a worse history. */
+  const [{ data, error }, compRes] = await Promise.all([
+    db.from('followup_comments')
+      .select('comment, fu_status, promise_date, promise_amt, new_number, created_by, created_at')
+      .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(200),
+    runQuery(() => db.from('complaints')
+      .select('complainant, category, details, status, resolution, created_at')
+      .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(20)),
+  ]);
   if (error) throw new Error(error.message);
-  return { rows: data || [] };
+  return { rows: data || [],
+    complaints: (compRes && !compRes.error && compRes.data) ? compRes.data : [] };
 }
 
 const FU_NEED_DATE = ['AMETOA AHADI'];
@@ -5390,27 +5402,26 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     for (const k of Object.keys(from)) into[k] = (into[k] || 0) + from[k].amt;
     return into;
   };
-  // Per officer, for each of the three bases the rule can ask for.
-  const uncolToday = addUncol({}, uncolOnDate(today));
+  // Per officer: yesterday feeds its own column, the week feeds the denominator. The PMO
+  // board keeps its own day-dependent basis (recoveryBasis) -- that is a different scheme
+  // paying a different person, and only its LABEL is read from here.
+  const basis = recoveryBasis(isoWeekday(nowMs));
   const uncolYesterday = addUncol({}, uncolOnDate(addDaysKey(today, -1)));
   const uncolWeekBy = WD5.reduce((acc, _w, i) => addUncol(acc, uncolOnDate(addDaysKey(mon, i))), {});
   const weekUncol = Object.values(uncolWeekBy).reduce((s, v) => s + v, 0);
 
-  const basis = recoveryBasis(isoWeekday(nowMs));
-  const basisUncol = basis.kind === 'today' ? uncolToday
-    : basis.kind === 'week' ? uncolWeekBy
-    : uncolYesterday;
-
-  function recBoard(iniRows, curRows, dailyRecovered, uncolBy) {
+  function recBoard(iniRows, curRows, dailyRecovered, uncolBy, yesterdayBy) {
     const m = {};
-    const blank = { initial: 0, current: 0, recovered: 0, uncollected: 0 };
+    const blank = { initial: 0, current: 0, recovered: 0, uncollected: 0, yUncollected: 0 };
     for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).initial += num(r.arrears_amt);
     for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).current += num(r.arrears_amt);
     for (const k of Object.keys(uncolBy)) bucket(m, k, blank).uncollected += uncolBy[k];
+    if (yesterdayBy) for (const k of Object.keys(yesterdayBy)) bucket(m, k, blank).yUncollected += yesterdayBy[k];
     if (dailyRecovered) for (const k of Object.keys(dailyRecovered)) bucket(m, k, blank).recovered += dailyRecovered[k];
     return Object.values(m).map(b => {
       const rec = dailyRecovered ? b.recovered : (b.initial - b.current);
       return { officer: b.key, initial: b.initial, current: b.current, uncollected: b.uncollected,
+        yUncollected: yesterdayBy ? b.yUncollected : null,
         // Debt crisis only means something across a WEEK: a customer cannot fall into default
         // between breakfast and lunch, so on the daily board this is noise dressed as news.
         debtCrisis: dailyRecovered ? Math.min(0, b.initial - b.current) : null,
@@ -5418,7 +5429,15 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     }).sort((a, b) => b.recovered - a.recovered);
   }
   const iniToday = onDate(myDef, today, 'initial', wd), curToday = onDate(myDef, today, 'current', wd);
-  const recToday = recBoard(iniToday, curToday, null, basisUncol);
+  /* THE DENOMINATOR THE SUBTITLE HAS ALWAYS PROMISED.
+       "At dashboard Recovery — today initial · current · recovered · Rec % ÷ this week's
+        uncollected [show yesterday uncollected before today recovered]"
+     The board's own caption said "÷ this week's uncollected" while the figure divided by a
+     day-dependent basis -- so the label and the arithmetic disagreed, which is the exact kind
+     of drift the weekly report was cured of. Now it divides by the week, as written, and
+     yesterday's uncollected stands as its own column before today's recovered: what the
+     officer was chasing, then what they brought in. */
+  const recToday = recBoard(iniToday, curToday, null, uncolWeekBy, uncolYesterday);
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
   for (let i = 0; i < 7; i++) {

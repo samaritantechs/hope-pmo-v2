@@ -2071,9 +2071,15 @@ test('recovery divides by yesterday\'s uncollected on a Tuesday-to-Friday', asyn
     'the WEEKLY board always divides by the whole week: 7000 Mon + 1000 Thu + 9000 Fri');
 
   const jumaToday = b.recToday.find(r => r.officer === 'JUMA G');
-  assert.equal(jumaToday.uncollected, 1000,
-    'but the DAILY board divides by yesterday alone — not the week, and not today');
-  assert.equal(b.pmoBasis, 'yesterday');
+  /* CHANGED 14 Aug on the owner's instruction: "Recovery — today ... Rec % ÷ this week's
+     uncollected [show yesterday uncollected before today recovered]". The daily board's own
+     caption had always SAID "÷ this week's uncollected" while dividing by a day-dependent
+     basis; the caption's rule now runs, and yesterday stands as its own column instead. */
+  assert.equal(jumaToday.uncollected, 17000,
+    'the DAILY board divides by the week, exactly as its caption has always claimed');
+  assert.equal(jumaToday.yUncollected, 1000,
+    'and yesterday\'s uncollected stands as its own column before recovered');
+  assert.equal(b.pmoBasis, 'yesterday', 'the PMO board keeps its own day-dependent basis');
 });
 
 test('a report uploaded twice no longer halves the recovery percentage', async () => {
@@ -2098,9 +2104,10 @@ test('on a Monday recovery divides by Monday, and on the weekend by the week', a
   ];
   // Monday 2026-07-20, noon EAT.
   const monday = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, Date.parse('2026-07-20T09:00:00Z'));
-  assert.equal(monday.pmoBasis, 'today');
-  assert.equal(monday.recToday.find(r => r.officer === 'JUMA G').uncollected, 1000,
-    'Monday has no yesterday inside a HOPE week, so it divides by itself');
+  assert.equal(monday.pmoBasis, 'today', 'the PMO board keeps its own day-dependent basis');
+  // Since 14 Aug the recovery board divides by the week on every day -- see the test above.
+  assert.equal(monday.recToday.find(r => r.officer === 'JUMA G').uncollected, 2000,
+    'the week as uploaded: 1000 Mon + 400 Tue + 600 Wed');
 
   // Saturday 2026-07-25.
   const sat = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, Date.parse('2026-07-25T09:00:00Z'));

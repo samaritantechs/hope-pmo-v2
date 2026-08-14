@@ -1528,6 +1528,18 @@ function openSheet(ref){
   srv('api_callComments', DEV, r.ref).then(function(d){
     S.comments = (d && d.items) || [];
     var h = $('#histBox'); if (h) h.innerHTML = historyHtml(S.comments);
+    /* The customer's registered complaints, ABOVE the history -- the officer must see an
+       open complaint before dialling, not discover it mid-call. */
+    var cx = (d && d.complaints) || [];
+    if (cx.length && h) {
+      h.innerHTML = cx.map(function(c){
+        var open = String(c.status || '').toUpperCase() !== 'RESOLVED';
+        return '<div class="hist" style="border-left:3px solid ' + (open ? 'var(--bad)' : 'var(--soft)') + ';padding-left:8px">'
+          + '<div class="t"><span>⚠ Malalamiko / Complaint' + (c.status ? ' · ' + esc(c.status) : '') + '</span>'
+          + '<span>' + esc(c.at || '') + '</span></div>'
+          + (c.who ? '<b style="font-size:12px">' + esc(c.who) + '</b> ' : '') + esc(c.what || '') + '</div>';
+      }).join('') + h.innerHTML;
+    }
   }).catch(function(){});
 }
 function sheetSkeleton(r){
@@ -1641,15 +1653,21 @@ function drawReports(){
     + '<div class="kpi"><div class="k-l">Muda / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Portfolio</div><div class="k-v" style="color:var(--ok)">' + money(t.portfolio) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Nje ya portfolio</div><div class="k-v">' + money(t.nonPortfolio) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">% ya portfolio</div><div class="k-v">' + (t.calls ? pct(t.ratio) : '—') + '</div></div>'
     + '</div>'
     + (cats.length ? '<div style="display:flex;gap:8px;margin:2px 0 12px;flex-wrap:wrap">' + cats.map(function(c){
         return '<span class="chip" style="font-size:11.5px">' + esc(CALL_CAT_LABEL_[c.category] || c.category) + ': ' + money(c.calls) + ' \u00B7 ' + pct(c.connectRatio) + ' walipatikana</span>';
       }).join('') + '</div>' : '')
-    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">Expected</th><th class="r">Defaulter</th></tr></thead><tbody>'
+    /* The two columns asked for by name: non-portfolio AFTER defaulter, and the share of
+       portfolio calls among ALL calls -- the number the whole categorisation exists to
+       produce, and the server has computed per officer all along (u.ratio). */
+    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">Expected</th><th class="r">Defaulter</th><th class="r">Nje ya pf</th><th class="r">% pf</th></tr></thead><tbody>'
     + (d.users||[]).map(function(u){
         return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
           + '<td class="r">' + money(u.calls) + '</td><td class="r">' + fmtDur(u.duration) + '</td>'
-          + '<td class="r" style="color:var(--ok)">' + money(u.expected) + '</td><td class="r">' + money(u.defaulter) + '</td></tr>';
+          + '<td class="r" style="color:var(--ok)">' + money(u.expected) + '</td><td class="r">' + money(u.defaulter) + '</td>'
+          + '<td class="r" style="color:var(--soft)">' + money(u.nonPortfolio) + '</td>'
+          + '<td class="r"' + (u.calls && u.ratio < 0.5 ? ' style="color:var(--bad)"' : '') + '>' + (u.calls ? pct(u.ratio) : '—') + '</td></tr>';
       }).join('') + '</tbody></table>';
   $('#repFrom').onchange = function(){ S.repFrom = this.value; renderReports(); };
   $('#repTo').onchange = function(){ S.repTo = this.value; renderReports(); };
