@@ -5805,3 +5805,132 @@ test('the read-only role is recognised in all its spellings, and only those', as
   assert.ok(tabs.includes('settings') && tabs.includes('audit'), 'sees the admin screens');
   assert.equal(tabs.includes('upload'), false, 'the upload door is not even drawn');
 });
+
+/* =====================================================================================
+   A LEADER'S NUMBER COMES FROM WHERE THE LEADER ACTUALLY KEEPS IT.
+   =====================================================================================
+   "read phone numbers in leaders table directly from call app users b/se thats where i
+    mostly update leaders data and their teams"
+
+   The sheet is uploaded now and then; the app is where the same person signs in every day
+   with the number they actually carry. So the app's number beats the sheet's, matched by
+   name -- and where nobody is registered, the sheet's column still stands, because the
+   overlay must never replace a number with a blank.
+*/
+test('the teams screen shows the app number over the sheet number', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').recovery_no = '0700000001';   // the sheet's stale one
+  book.call_users = [{ user_id: 'UR', name: 'JUMA G', team: 'KONGOWE', role: 'OFFICER',
+    is_leader: false, phone: '0788999888', registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  const kongowe = d.rows.find(r => r.team === 'KONGOWE');
+  assert.equal(kongowe.recovery_no, '0788999888', 'the app number is the one that rings');
+  assert.equal(kongowe.manager, 'BOSS', 'nothing else on the row moved');
+});
+
+test('a supervisor nobody registered keeps the sheet number', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').manager_no = '0711222333';
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').manager_no, '0711222333');
+});
+
+test('a switched-off registration cannot supply a number', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').recovery_no = '0700000001';
+  book.call_users = [{ user_id: 'UR', name: 'JUMA G', team: 'KONGOWE', role: 'OFFICER',
+    is_leader: false, phone: '0788999888', active: false, registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').recovery_no, '0700000001',
+    'an account the admin switched off is not a source of anything');
+});
+
+test('two registrations under one name: the leader\'s, then the newest', async () => {
+  const book = tables();
+  book.call_users = [
+    { user_id: 'U1', name: 'JUMA G', team: 'KONGOWE', is_leader: false, phone: '0700000111',
+      registered_at: '2026-08-10T00:00:00Z' },
+    { user_id: 'U2', name: 'JUMA G', team: 'KONGOWE', is_leader: true, phone: '0700000222',
+      registered_at: '2026-08-01T00:00:00Z' },
+  ];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').recovery_no, '0700000222',
+    'the leader registration wins even though the officer one is newer');
+});
+
+test('the staff roster carries each person\'s number and says where it came from', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').credit_no = '0755000111';
+  book.call_users = [{ user_id: 'UJ', name: 'JUMA G', team: 'KONGOWE', is_leader: false,
+    phone: '0788999888', registered_at: '2026-08-01T00:00:00Z' }];
+  const r = await portalApi(fakeDb(book), ADMIN, 'staffRoster', {}, NOW);
+  const juma = r.staff.find(s => s.name === 'JUMA G' && s.role === 'recovery');
+  assert.equal(juma.phone, '0788999888');
+  assert.equal(juma.phoneFrom, 'app');
+  const analyst = r.staff.find(s => s.name === 'ANALYST A' && s.role === 'credit');
+  assert.equal(analyst.phone, '0755000111', 'no registration, so the sheet answers');
+  assert.equal(analyst.phoneFrom, 'sheet');
+  const boss = r.staff.find(s => s.name === 'BOSS' && s.role === 'manager');
+  assert.equal(boss.phone, null, 'no number anywhere is shown as no number, not invented');
+});
+
+/* =====================================================================================
+   THE PHONE LIST -- role, team, name, number, as an export.
+   =====================================================================================
+   "I need my leaders and officers no.s so export excel of role, team, officername and
+    phoneno"
+*/
+test('staffExport lists every named supervisor per team with the freshest number', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').recovery_no = '0700000001';
+  book.call_users = [{ user_id: 'UJ', name: 'JUMA G', team: 'KONGOWE', is_leader: false,
+    phone: '0788999888', registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'staffExport', {}, NOW);
+  assert.deepEqual(d.headers, ['WADHIFA / ROLE', 'TIMU / TEAM', 'JINA / NAME', 'NAMBA / PHONE NO']);
+  const rec = d.rows.find(r => r[0] === 'RECOVERY' && r[1] === 'KONGOWE');
+  assert.deepEqual(rec, ['RECOVERY', 'KONGOWE', 'JUMA G', '0788999888'],
+    'the app number, not the sheet\'s stale one');
+  const mgr = d.rows.find(r => r[0] === 'MANAGER' && r[1] === 'KONGOWE');
+  assert.equal(mgr[2], 'BOSS');
+});
+
+test('staffExport carries the collection officers, one row per team on their code', async () => {
+  const book = tables();
+  book.access_codes.push({ code: 'C9', name: 'CATHERINE', role: 'PMO', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });
+  book.settings.push({ key: 'PMO_ROLE', value: 'PMO' });
+  book.call_users = [{ user_id: 'UC', name: 'CATHERINE', team: 'KONGOWE', is_leader: true,
+    phone: '0766000555', registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'staffExport', {}, NOW);
+  const hers = d.rows.filter(r => r[2] === 'CATHERINE' && r[0] !== 'LEADER (APP)');
+  assert.equal(hers.length, 2, 'one row per team she holds');
+  assert.ok(hers.every(r => r[3] === '0766000555'));
+});
+
+test('staffExport includes the app\'s field officers -- the people no sheet carries', async () => {
+  const book = tables();
+  book.call_users = [
+    { user_id: 'UF', name: 'FIELD ONE', team: 'KONGOWE', is_leader: false, phone: '0712000001',
+      registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UX', name: 'GONE PERSON', team: 'KONGOWE', is_leader: false, phone: '0712000002',
+      active: false, registered_at: '2026-08-01T00:00:00Z' },
+  ];
+  const d = await portalApi(fakeDb(book), ADMIN, 'staffExport', {}, NOW);
+  const off = d.rows.find(r => r[0] === 'OFFICER' && r[2] === 'FIELD ONE');
+  assert.deepEqual(off, ['OFFICER', 'KONGOWE', 'FIELD ONE', '0712000001']);
+  assert.equal(d.rows.some(r => r[2] === 'GONE PERSON'), false,
+    'a switched-off account is not on a call list');
+});
+
+test('the downloaded leaders sheet also carries the fresh app numbers', async () => {
+  /* So the download-edit-upload round trip WRITES the fresh number into the sheet,
+     rather than quietly reviving the stale one on the next upload. */
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').recovery_no = '0700000001';
+  book.call_users = [{ user_id: 'UJ', name: 'JUMA G', team: 'KONGOWE', is_leader: false,
+    phone: '0788999888', registered_at: '2026-08-01T00:00:00Z' }];
+  const d = await portalApi(fakeDb(book), ADMIN, 'teamsExport', {}, NOW);
+  const i = d.headers.indexOf('RECOVERY NO');
+  assert.ok(i > 0, 'the export has a RECOVERY NO column');
+  const kong = d.rows.find(r => r[0] === 'KONGOWE' || r.includes('KONGOWE'));
+  assert.equal(kong[i], '0788999888');
+});
