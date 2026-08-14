@@ -210,7 +210,7 @@ async function teamList(db) {
    The officer's app opens in one wait instead of ten, and a Monday-morning rush costs the
    database a third of the connections it used to. */
 async function boot(db, [dev], nowMs) {
-  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION'];
+  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION', 'OFFLINE_PACK'];
   let cu = null, accountOff = false;
   const [teamRows, setting] = await Promise.all([
     fetchAll(() => db.from('teams').select('team, gmo, manager, bike')),
@@ -270,6 +270,12 @@ async function boot(db, [dev], nowMs) {
        settings query as the brand and the sync interval -- and lets the device throw its cache
        away the instant the book behind it changes, rather than an hour later. */
     dataVersion: setting('DATA_VERSION') || '',
+    /* CRISIS PREPAREDNESS -- the admin's switch for the offline pack. "national challenges of
+       oct 29th 2025 when internet was shut down". OFF by default; when the setting says YES
+       the handset shows its own download switch, and when the admin turns it off again every
+       handset drops the pack on its next successful boot. Same settings read as everything
+       else here -- no extra journey. */
+    offlinePack: ['YES', 'TRUE', '1', 'ON'].includes(K(setting('OFFLINE_PACK'))),
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
     today: {

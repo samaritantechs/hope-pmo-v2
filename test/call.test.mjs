@@ -1525,3 +1525,21 @@ test('the Ripoti board splits a collection officer\'s calls the way they were wo
   assert.equal(u.expected, 2, 'both customers due today are collection calls');
   assert.equal(u.defaulter, 1, 'and the one who only owes is not');
 });
+
+/* =====================================================================================
+   CRISIS PREPAREDNESS -- the admin's switch reaches every handset through boot.
+   ===================================================================================== */
+test('the offline pack switch is off until the admin says otherwise, and readable when set', async () => {
+  const { fakeDb } = await import('./fake-db.mjs');
+  const t = { teams: [{ team: 'KONGOWE', team_code: 'KON123' }], settings: [], call_users: [], call_logs: [] };
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dvC', 'JUMA', '', '', '0712999111', 'KON123'], NOW);
+  const off = await callApi(db, 'api_callBoot', ['dvC'], NOW);
+  assert.equal(off.offlinePack, false, 'OFF by default -- a crisis plan, not an everyday feature');
+
+  const t2 = { ...t, settings: [{ key: 'OFFLINE_PACK', value: 'YES' }], call_users: [], call_logs: [] };
+  const db2 = fakeDb(t2);
+  await callApi(db2, 'api_callRegister', ['dvC', 'JUMA', '', '', '0712999111', 'KON123'], NOW);
+  const on = await callApi(db2, 'api_callBoot', ['dvC'], NOW);
+  assert.equal(on.offlinePack, true);
+});
