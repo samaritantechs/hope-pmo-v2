@@ -2332,19 +2332,50 @@ function cmsRateFor(cfg, row) {
 async function commission(db, user, _args, nowMs) {
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6), fri = addDaysKey(mon, 4);
   const prevMon = addDaysKey(mon, -7), prevFri = addDaysKey(prevMon, 4);
-  const [cfg, teamRows, defWeek, expWeek, codeRows, pmoCfg, prevExp] = await Promise.all([
+  /* =====================================================================================
+     RECOVERY COMMISSION, ON THE DECK RULE AT LAST.
+
+       "Recovery commissions aint adding up though I set values already"
+
+     Two faults, and either one alone kept the figure at zero:
+
+     1. THE PAIRING. This asked for an initial deck and a current deck ON THE SAME
+        snapshot_date, inside this week. But that is not how decks arrive: the initial deck
+        is uploaded once, when the week's book is drawn up, and the current deck is refreshed
+        through the week -- each at its own date. "A deck is a team AND a weekday, each read
+        at its own date" is the rule every other screen already follows; this one demanded a
+        coincidence and paid nothing when it did not happen.
+
+     2. THE RATE. cmsRateFor rates a row by its STATUS (status mode) or its DISB DATE year
+        (year mode) -- and the week read carried NEITHER column, so year mode rated every
+        customer at the '*' fallback or zero, whatever the owner had typed into the rates
+        box. The values were set; nothing ever read the row fields they apply to.
+
+     Now: the baseline is the initial book (each deck at its own date, rate columns aboard),
+     brought forward to the week's start by the last current deck BEFORE Monday -- so
+     recovery already banked last week is not paid twice. Then the week's current decks are
+     walked date by date: each deck observed is compared against the running state of ITS OWN
+     team-and-weekday book, and every positive drop is that day's recovery, at that
+     customer's own rate. A customer gone from their deck entirely is fully recovered; a team
+     that uploaded nothing that day is simply unobserved, never "all recovered". A customer
+     who slips back keeps the commission of the day they recovered, exactly as promised.
+     ===================================================================================== */
+  const [cfg, teamRows, defWeek, iniBook, preBook, expWeek, codeRows, pmoCfg, prevExp] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
-    /* COMMISSION NEEDS ONE MORE COLUMN THAN THE OTHERS: ref.
-       It works recovery out PER CUSTOMER -- what each one owed on the initial deck against what
-       they still owe on the current one -- so it cannot sum a team and be done. Dropping ref
-       here made every officer's board come back undefined, which is what the test caught before
-       this ever left the machine. */
-    snapshotsInRange(db, 'defaulter_snapshots', {}, mon, sun, user.teams, WEEK_DEF_COLS + ', ref'),
+    /* The week's current decks, per customer -- ref to pair, weekday to know which book,
+       status and disb_date so a NEW customer first seen mid-week can still be rated. */
+    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, mon, sun, user.teams,
+      WEEK_DEF_COLS + ', ref, status, disb_date'),
+    /* The initial book: every team-and-weekday deck at its own date, however old. */
+    defaulterBook(db, user, { type: 'initial', notAfter: today,
+      columns: 'ref, team, weekday, arrears, status, disb_date, snapshot_date, upload_batch, created_at' }),
+    /* Where each book already stood when this week began. */
+    defaulterBook(db, user, { type: 'current', notAfter: addDaysKey(mon, -1),
+      columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
-       board. The recovery side above cannot: it works out what each CUSTOMER owed on the
-       initial deck against what they still owe on the current one, and a team total cannot
-       answer that. Two different questions, two different reads. */
+       board. The recovery side above cannot: it works out what each CUSTOMER owed against
+       what they still owe, and a team total cannot answer that. */
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
@@ -2360,21 +2391,63 @@ async function commission(db, user, _args, nowMs) {
     String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
 
   const blank = { recovered: 0, recComm: 0, paid: 0, over: 0, colComm: 0 };
-  function recDay(dateKey, acc) {
-    const ini = onDate(myDef, dateKey, 'initial'), cur = onDate(myDef, dateKey, 'current');
-    if (!ini.length) return;
-    const left = {};
-    for (const r of cur) left[K(r.ref)] = (left[K(r.ref)] || 0) + num(r.arrears);
-    for (const r of ini) {
-      const k = K(r.ref);
-      // Gone from the current deck entirely = fully recovered, not "missing data".
-      const recA = num(r.arrears) - (left[k] == null ? 0 : left[k]);
-      if (recA <= 0) continue;
-      const b = bucket(acc, officerOf(teamBy, r.team, 'recovery'), blank);
-      b.recovered += recA;
-      b.recComm += recA * cmsRateFor(cfg, r) / 100;
+
+  /* The running state of every book: weekday|ref -> what they owed at the last observation,
+     plus the row that carries their rate and team. */
+  /* Rows with NO TEAM are excluded from the recovery walk on purpose: commission is a payroll
+     figure, paid to a team's recovery officer, and a customer filed under no team can pay
+     nobody. (The '(unassigned)' bucket still exists -- it is for teams whose recovery ROLE is
+     unstaffed, which is a different and fixable fact.) It also keeps the two storage paths --
+     database-resolved decks and the in-memory fallback -- answering identically, because a
+     deck is a TEAM and a weekday, and a row with no team is in no deck. */
+  const running = new Map();
+  const bkey = r => K(r.weekday) + '|' + K(r.ref);
+  for (const r of scoped(user, iniBook.rows || [])) {
+    if (r.ref && r.team) running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
+  }
+  for (const r of scoped(user, preBook.rows || [])) {
+    if (!r.ref || !r.team) continue;
+    const got = running.get(bkey(r));
+    if (got) got.arr = num(r.arrears);
+    else running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
+  }
+
+  /* Walk the week's current decks in date order. Drops land on the date of the deck that
+     showed them, which is what makes "today" a real figure rather than a week share. */
+  const recByDay = new Map();                              // date -> officer -> {recovered, recComm}
+  for (let i = 0; i < 7; i++) {
+    const d = addDaysKey(mon, i);
+    if (d > today) break;
+    /* Resolved per WEEKDAY then per team (inside pickLatestBatch) -- two different weekday
+       decks of the same team can land on the same date in two batches, and picking across
+       them would throw one whole deck away. Same order every deck reader uses. */
+    const atD = myDef.filter(r => String(r.snapshot_date) === d);
+    if (!atD.length) continue;
+    const rowsD = [...new Set(atD.map(r => K(r.weekday)))]
+      .flatMap(wd => pickLatestBatchRows(atD.filter(r => K(r.weekday) === wd)));
+    if (!rowsD.length) continue;
+    // A deck is a team AND a weekday: only the books actually uploaded today are observed.
+    const decksHere = new Set(rowsD.map(r => K(r.weekday) + '|' + K(r.team)));
+    const nowArr = new Map();
+    for (const r of rowsD) if (r.ref) nowArr.set(bkey(r), num(r.arrears));
+    const acc = recByDay.get(d) || recByDay.set(d, {}).get(d);
+    for (const [k, st] of running) {
+      const wd = k.slice(0, k.indexOf('|'));
+      if (!decksHere.has(wd + '|' + K(st.team))) continue;      // this book was not observed today
+      const cur = nowArr.has(k) ? nowArr.get(k) : 0;            // gone from the deck = recovered
+      const drop = st.arr - cur;
+      st.arr = cur;
+      if (drop <= 0) continue;
+      const b = bucket(acc, officerOf(teamBy, st.team, 'recovery'), blank);
+      b.recovered += drop;
+      b.recComm += drop * cmsRateFor(cfg, st.rate) / 100;
+    }
+    // First seen mid-week (no initial ever uploaded): enters the book, nothing attributed yet.
+    for (const r of rowsD) {
+      if (r.ref && r.team && !running.has(bkey(r))) running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
     }
   }
+
   function colDay(dateKey, acc) {
     for (const r of onDate(myExp, dateKey)) {
       const paid = num(r.paid_n), over = num(r.over_n);
@@ -2385,8 +2458,12 @@ async function commission(db, user, _args, nowMs) {
     }
   }
   const dayAcc = {}, weekAcc = {};
-  recDay(today, dayAcc); colDay(today, dayAcc);
-  for (let i = 0; i < 7; i++) recDay(addDaysKey(mon, i), weekAcc);
+  const foldRec = (acc, src) => { for (const [name, v] of Object.entries(src || {})) {
+    const b = bucket(acc, name, blank); b.recovered += v.recovered; b.recComm += v.recComm;
+  } };
+  foldRec(dayAcc, recByDay.get(today));
+  for (const [, src] of recByDay) foldRec(weekAcc, src);
+  colDay(today, dayAcc);
   for (let i = 0; i < 5; i++) colDay(addDaysKey(mon, i), weekAcc);
 
   const isAdmin = (user.tabs || []).includes('upload') || (user.tabs || []).includes('settings');
