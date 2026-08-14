@@ -51,7 +51,15 @@
 
   <div class="card">
     <label>Access code</label>
-    <input id="code" placeholder="Your HOPE PMO access code" autocomplete="off">
+    <!-- THE CODE IS THE PASSWORD, and this page is used at a desk with people around. It was
+         the one sign-in in the system shown in clear with no way to cover it. Hidden by
+         default, the eye shows it while you type it wrong twice, same as every other app. -->
+    <div style="position:relative">
+      <input id="code" type="password" placeholder="Your HOPE PMO access code" autocomplete="off"
+             style="padding-right:44px">
+      <button type="button" id="codeEye" title="Onyesha / Show"
+              style="position:absolute;right:6px;top:5px;width:34px;padding:6px 0;background:transparent;border:0;color:var(--mut);font-size:16px;cursor:pointer">&#128065;</button>
+    </div>
 
     <label>What are you uploading?</label>
     <select id="type">
@@ -248,6 +256,13 @@ $('apiBase').value = localStorage.getItem('hopeApiBase') || '';
 $('code').value = localStorage.getItem('hopeCode') || '';
 $('apiBase').addEventListener('change', function(){ localStorage.setItem('hopeApiBase', this.value.trim().replace(/\/$/, '')); });
 $('code').addEventListener('change', function(){ localStorage.setItem('hopeCode', this.value.trim()); });
+// The eye: press to show, press again to hide. Hidden is the resting state on purpose.
+$('codeEye').addEventListener('click', function(){
+  var el = $('code'), show = el.type === 'password';
+  el.type = show ? 'text' : 'password';
+  this.title = show ? 'Ficha / Hide' : 'Onyesha / Show';
+  this.style.color = show ? 'var(--b500)' : 'var(--mut)';
+});
 
 var TYPE_META = {
   'defaulters-current': ['weekdayWrap', 'dateWrap'],

@@ -413,7 +413,9 @@
     <div class="top">
       <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
-      <input class="q" id="q" placeholder="Tafuta… / Search">
+      <!-- The writing bar that used to sit here (the table filter) was removed on request:
+           "The search icon on top should do tafuta mteja work and remove the sidenav and the
+           writing bar before language switch". One search, one place: the magnifier. -->
       <button class="btn sm ghost" id="langBtn" title="Lugha / Language">SW</button>
       <button class="btn sm ghost" id="tipBtn" title="Vidokezo / Tips">&#128276;</button>
       <button class="btn sm ghost" id="themeBtn" title="Dark mode">&#9789;</button>
@@ -613,8 +615,12 @@ var NAV = [
      point is that these figures are not re-derived from a teams table that has since changed. */
   { id:'perf',        label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
   { id:'audit',       label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
-  /* "they aint seen anywhere even in my admin user yet they are in the uploaded file" */
-  { id:'findcust',    label:'Tafuta mteja / Find customer', ic:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>' }
+  /* "they aint seen anywhere even in my admin user yet they are in the uploaded file"
+     The findcust VIEW lives on -- reached by the magnifier in the top bar -- but its sidenav
+     entry was removed on request. `hidden` keeps it out of the drawn nav while go() and the
+     title lookup still know it. */
+  { id:'findcust',    label:'Tafuta mteja / Find customer', hidden: true,
+    ic:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>' }
 ];
 /* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
    visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
@@ -628,7 +634,7 @@ function allowed(id){
 function buildNav(){
   var el = $('#nav'); el.innerHTML='';
   NAV.forEach(function(n){
-    if (!allowed(n.id)) return;
+    if (!allowed(n.id) || n.hidden) return;
     var b = document.createElement('button');
     // The icon is how people find a tab in a list of 23 -- they recognise the shape before
     // they read the word, which is the whole reason v1 had them.
@@ -642,7 +648,7 @@ function buildNav(){
   });
 }
 function go(view){
-  S.view = view; S.q=''; $('#q').value=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
+  S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   S.args={}; S.filters={}; S.foot='';
   /* THE TABLE BELONGS TO THE TAB, AND IT WAS BEING INHERITED.
      Reported from the field: "downloading most reports excel brings team performance report
@@ -670,7 +676,6 @@ function go(view){
   if (view==='upload'){ location.href='/upload'; return; }
   render();
 }
-$('#q').addEventListener('input', function(){ S.q=this.value; paint(); });
 // The reload button means RELOAD. It is the one place that must always go to the server.
 $('#refBtn').onclick = function(){ render({ force:true }); };
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
@@ -739,52 +744,6 @@ function bellOpen(){
   };
 }
 
-/* WHERE IS THIS CUSTOMER? -- one reference number, every book at once.
-
-   It is not a tab, because it does not belong to any one of them: an officer opens it while a
-   customer is on the phone, reads what they need, and closes it again. */
-function findOpen(prefill){
-  drawer('<h3 style="margin:0 0 2px">Tafuta mteja / Find a customer</h3>'
-    + '<div class="hint" style="margin-bottom:8px">Namba ya kumbukumbu, jina, au namba ya simu.'
-    + '<br>Reference number, name, or phone number — searches every book at once.</div>'
-    + '<input id="findQ" placeholder="mf. 12345" autocomplete="off" value="' + esc(prefill||'') + '">'
-    + '<button class="btn w" id="findGo" style="margin-top:8px">Tafuta / Search</button>'
-    + '<div id="findOut" style="margin-top:12px"></div>');
-  var out = function(html){ $('#findOut').innerHTML = html; };
-  var run = function(){
-    var q = $('#findQ').value.trim();
-    if (q.length < 3){ out('<div class="hint">Andika angalau herufi tatu. / Type at least three characters.</div>'); return; }
-    out('<div class="sk"></div>');
-    srv('customerSearch', { q: q }).then(function(d){
-      if (d.tooShort){ out('<div class="hint">Andika angalau herufi tatu. / Type at least three characters.</div>'); return; }
-      if (!d.total){ out('<div class="hint">Hakuna aliyepatikana kwa "' + esc(d.q) + '".'
-        + '<br>Nobody found. Check the reference, or they may belong to another team.</div>'); return; }
-      out(d.books.map(function(b){
-        if (b.failed) return '<div class="note bad">' + esc(b.label)
-          + ' — imeshindikana kusoma / could not be read</div>';
-        return '<div style="margin-bottom:12px"><b>' + esc(b.label) + '</b> ('+b.rows.length+')'
-          + b.rows.map(function(r){
-              // Show what each book actually knows, rather than a fixed shape that would be
-              // half empty in most of them.
-              var bits = [];
-              Object.keys(r).forEach(function(k){
-                if (r[k] == null || r[k] === '' || k === 'team') return;
-                bits.push('<span style="color:var(--mut)">'+esc(k.replace(/_/g,' '))+':</span> '+esc(String(r[k])));
-              });
-              return '<div class="nrow"><b>' + esc(r.full_name || r.customer_name || r.complainant || r.ref || '')
-                + '</b> <span class="chip mut">' + esc(r.team||'') + '</span>'
-                + '<div class="m">' + bits.join(' · ') + '</div></div>';
-            }).join('') + '</div>';
-      }).join('')
-      + (d.capped ? '<div class="hint">Kuna wengi zaidi — fanya utafutaji uwe mahususi zaidi.'
-          + ' / There are more matches than shown; narrow the search.</div>' : ''));
-    }).catch(function(e){ out('<div class="note bad">' + esc(String(e.message||e)) + '</div>'); });
-  };
-  $('#findGo').onclick = run;
-  $('#findQ').onkeydown = function(e){ if (e.key === 'Enter') run(); };
-  $('#findQ').focus();
-  if (prefill) run();
-}
 
 function start(me){
   S.me = me;
@@ -816,7 +775,11 @@ function start(me){
   annCheck();
   bellRefresh();
   $('#bellBtn').onclick = bellOpen;
-  $('#findBtn').onclick = function(){ findOpen(''); };
+  /* THE MAGNIFIER IS TAFUTA MTEJA. It used to open a lighter search drawer while the full
+     find-a-customer screen -- the one that says in words whether today's screens can see the
+     person -- hid behind a sidenav entry. One search, one door: the icon opens the full
+     screen, and the duplicate sidenav entry is gone. */
+  $('#findBtn').onclick = function(){ go('findcust'); };
   // Checked again when somebody comes back to the tab, so a notice posted mid-morning reaches
   // a screen that has been sitting open since eight.
   document.addEventListener('visibilitychange', function(){
