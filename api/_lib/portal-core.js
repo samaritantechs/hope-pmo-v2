@@ -8,7 +8,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
-import { audited, auditList } from './audit.js';
+import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 
@@ -3033,7 +3033,11 @@ async function teams(db, user) {
   // Roles live beside the teams because they answer the same question -- who does what -- and
   // a role's tab list was previously readable but not editable from anywhere in the UI, so
   // onboarding a new kind of officer meant a trip to the SQL editor.
-  return { rows: rows.filter(r => teamAllowed(user, r.team)), count: rows.length,
+  let mine = rows.filter(r => teamAllowed(user, r.team));
+  // The team code is what field officers sign in with. Same rule as access codes: a read-only
+  // supervisor sees that a team HAS a code, never what it is.
+  if (user.readOnly) mine = mine.map(r => (r.team_code ? { ...r, team_code: '••••' } : r));
+  return { rows: mine, count: rows.length,
     roles: roleRows, allTabs: ADMIN_TABS.slice() };
 }
 async function saveRole(db, user, p) {
@@ -3119,7 +3123,11 @@ async function accessCodes(db, user) {
     fetchAll(() => db.from('access_codes').select('code, name, role, teams, tabs').order('name', { ascending: true })),
     fetchAll(() => db.from('roles').select('*').order('role', { ascending: true })),
   ]);
-  return { rows, count: rows.length, roles: roleRows };
+  /* A code IS a password. A read-only supervisor sees who holds access and with what role and
+     scope -- never the secrets themselves. Checking the system and collecting its keys are
+     different jobs, and this screen only serves the first to them. */
+  const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••' })) : rows;
+  return { rows: out, count: rows.length, roles: roleRows };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
@@ -4253,6 +4261,10 @@ const TEAM_EXPORT_COLS = [
 
 async function teamsExport(db, user) {
   requireAdmin(user);
+  // The export carries every team's sign-in code, which is exactly what a view-only code must
+  // never walk away with. The screens already mask it; a file would be the way around them.
+  if (user.readOnly) throw forbidden('Msimbo huu ni wa kuangalia tu — faili hili linabeba misimbo ya timu. '
+    + '/ This is a view-only code, and this file carries the team sign-in codes.');
   const rows = await fetchAll(() => db.from('teams').select('*').order('team', { ascending: true }));
   return {
     headers: TEAM_EXPORT_COLS.map(c => c[1]),
@@ -4337,9 +4349,23 @@ async function auditLog(db, user, args) {
   return auditList(db, args || {});
 }
 
+/* Everything that changes state: the audited writes, plus the two maintenance writes that are
+   deliberately not in the audit log. Kept beside the gate that uses it so a new write function
+   gets added to BOTH lists in one glance -- and the test that walks FN checks the naming. */
+const WRITE_FNS = new Set([...AUDITED, 'stampWeek', 'rebuildFollowup']);
+
 export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
   const h = FN[fn];
   if (!h) throw badRequest('Unknown portal function: ' + fn);
+  /* THE READ-ONLY WALL. One check at the one door every portal call passes through, so a
+     supervisor's code -- or an AI signed in with it -- can try every screen and change
+     nothing. Refused loudly rather than silently ignored: a button that appears to work but
+     does not is the worst kind of supervision. */
+  if (user && user.readOnly && WRITE_FNS.has(fn)) {
+    throw forbidden('Msimbo huu ni wa kuangalia tu — hakuna kinachobadilishwa nao. '
+      + '/ This is a view-only code: it can open every screen but never change anything. '
+      + '(' + fn + ' was refused.)');
+  }
   /* THE ONE DOOR, so the audit log has one place to be written from. A log that has to be
      remembered at each of a hundred call sites is a log with holes in it, and a log with holes
      invites the conclusion that what is missing did not happen. Reads pass straight through --

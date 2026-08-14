@@ -5723,3 +5723,78 @@ test('switching an officer off cuts the handset in the same save', async () => {
   assert.equal(u.active, false);
   assert.equal(u.device_id, null, 'off must mean off NOW, not at their next sign-out');
 });
+
+/* =====================================================================================
+   THE READ-ONLY ADMIN -- SUPERVISION THAT CANNOT LEAVE FINGERPRINTS.
+   =====================================================================================
+   "I need to create an admin with [read only] user characteristics to view and try
+    everything without changing nothing ... their team that do so could also use ai to
+    login and check whats what -- but read only"
+*/
+const AUDITOR = { code: 'V', name: 'SUPERVISOR', role: 'AUDITOR', teams: null,
+  tabs: ['dashboard', 'teams', 'settings', 'audit'], readOnly: true };
+
+test('a view-only code opens the admin screens', async () => {
+  const db = fakeDb(tables());
+  const d = await portalApi(db, AUDITOR, 'dashboard', {}, NOW);
+  assert.ok(d);
+  const s = await portalApi(db, AUDITOR, 'settings', {}, NOW);
+  assert.ok(s.rows.length, 'the settings screen itself is visible');
+});
+
+test('every write is refused at the one door, loudly', async () => {
+  const db = fakeDb(tables());
+  for (const [fn, args] of [
+    ['saveTeam', { team: 'KONGOWE', gmo: 'INTRUDER' }],
+    ['settingSet', { key: 'CMS_PAID_TZS', value: '9' }],
+    ['saveAccessCode', { code: 'X1', name: 'X', role: 'GMO' }],
+    ['deleteTeam', { team: 'MBAGALA' }],
+    ['saveOfficerAccount', { name: 'X', phone: '0713000999', team: 'KONGOWE' }],
+    ['stampWeek', {}],                    // a maintenance write, deliberately unaudited
+    ['rebuildFollowup', {}],
+  ]) {
+    await assert.rejects(() => portalApi(fakeDb(tables()), AUDITOR, fn, args, NOW),
+      e => e.status === 403 && /view-only/.test(e.message), fn + ' was not refused');
+  }
+  // And nothing moved: the team above is exactly as the fixture made it.
+  assert.equal(db._dump('teams').find(t => t.team === 'KONGOWE').gmo, null);
+});
+
+test('the secrets are masked, never sent to a view-only screen', async () => {
+  const book = tables();
+  book.teams.find(t => t.team === 'KONGOWE').team_code = 'KON123';
+  book.access_codes.push({ code: 'SECRET9', name: 'HOLDER', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  const db = fakeDb(book);
+  const t = await portalApi(db, AUDITOR, 'teams', {}, NOW);
+  assert.equal(t.rows.find(r => r.team === 'KONGOWE').team_code, '••••');
+  const c = await portalApi(db, AUDITOR, 'accessCodes', {}, NOW);
+  assert.ok(c.rows.length >= 2);
+  for (const r of c.rows) assert.equal(r.code, '••••', 'a code IS a password');
+  // And the file that would carry them out is refused outright.
+  await assert.rejects(() => portalApi(db, AUDITOR, 'teamsExport', {}, NOW),
+    e => e.status === 403);
+  // The admin still sees everything exactly as before.
+  const ta = await portalApi(db, ADMIN, 'teams', {}, NOW);
+  assert.equal(ta.rows.find(r => r.team === 'KONGOWE').team_code, 'KON123');
+});
+
+test('a view-only code does not register a handset', async () => {
+  const { callApi } = await import('../api/_lib/call-core.js');
+  const book = tables();
+  book.access_codes.push({ code: 'VIEW1', name: 'SUPERVISOR', role: 'READONLY', teams: null, tabs: [] });
+  const db = fakeDb(book);
+  await assert.rejects(
+    () => callApi(db, 'api_callRegister', ['dev-v', '', '', 'VIEW1', '0788999888'], NOW),
+    e => /view-only|kuangalia tu/.test(String(e && e.message || e)));
+});
+
+test('the read-only role is recognised in all its spellings, and only those', async () => {
+  const { isReadOnly, resolveTabs } = await import('../api/_lib/auth.js');
+  for (const r of ['AUDITOR', 'auditor', 'READONLY', 'READ ONLY', 'READ-ONLY']) {
+    assert.equal(isReadOnly({ role: r }), true, r);
+  }
+  for (const r of ['ADMIN', 'GMO', 'READER', '']) assert.equal(isReadOnly({ role: r }), false, r);
+  const tabs = resolveTabs({ role: 'AUDITOR', tabs: [] }, null);
+  assert.ok(tabs.includes('settings') && tabs.includes('audit'), 'sees the admin screens');
+  assert.equal(tabs.includes('upload'), false, 'the upload door is not even drawn');
+});

@@ -297,6 +297,14 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
   if (code) {
     const { data: u } = await db.from('access_codes').select('*').eq('code', code).maybeSingle();
     if (!u) throw new Error('Invalid access code.');
+    /* A VIEW-ONLY CODE DOES NOT REGISTER A HANDSET. A phone session exists to write --
+       follow-ups, promises, call logs -- and the read-only supervisor's surface is the
+       portal, where the same books are visible and every write is refused at the door.
+       Refused here with directions rather than half-working there. */
+    if (['AUDITOR', 'READONLY', 'READ ONLY', 'READ-ONLY'].includes(K(u.role || ''))) {
+      throw new Error('Msimbo huu ni wa kuangalia tu — tumia mfumo (portal) badala ya app ya simu. '
+        + '/ This is a view-only code: use the system portal, where every screen is open and nothing can be changed.');
+    }
     leader = true;
     role = u.role || 'LEADER';
     leaderTeams = (u.teams && u.teams.length) ? u.teams : null;   // null = ALL, same convention as auth.js
