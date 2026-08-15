@@ -370,7 +370,23 @@ export function stampPlan(table, meta = {}, nowMs = Date.now()) {
   // the file has been read). Everything else is matched on the stamp the uploader chose.
   const dateCol = dataDateColumn(table, meta.stage);
   if (!dateCol) scope.upload_date = uploadDate;
-  return { stamped: true, uploadDate, replace, scope, dateCol,
+  /* AN APPLICATION-STAGE FILE IS THE WHOLE LIST FOR ITS DAY, so two uploads of the same
+     stage under the same date cannot both be true -- the second IS the day, corrected.
+
+       "when i reupload unassigned and assessed apps by append but same date, i need that
+        action not to merge with existing but replace that single date data"
+
+     Append used to merge here: a loan in both files updated in place (they share an
+     identity-derived id), but a loan REMOVED from the corrected file lingered under that
+     date, invisible to the person who had just uploaded what they believed was the whole
+     truth. So for the un-dated pipeline stages (unassigned, unassessed, assessed, assigned
+     -- everything without its own date column), re-uploading a date REDOES that date, in
+     either mode. The delete is scoped to this stage AND this upload date: other days, and
+     the same day's other stages, are untouched. The dated stages (approved, disbursed)
+     keep the append/replace choice, because appending genuinely means "add more days"
+     there. */
+  const sameDayRedo = table === 'loans' && !dateCol && !replace;
+  return { stamped: true, uploadDate, replace: replace || sameDayRedo, sameDayRedo, scope, dateCol,
            uploadedOnly: APP_WRITABLE_TABLES.has(table) };
 }
 
@@ -965,7 +981,11 @@ export default withApi(async (req, res) => {
        : `${replacedDates.length} days, ${replacedDates[0]} to ${replacedDates[replacedDates.length - 1]}`)
     : uploadDate;
   const behaviour = stamped
-    ? (replaced || String(meta.mode || '').toLowerCase() === 'replace'
+    ? (plan.sameDayRedo
+        ? { mode: 'replace-date', text: `This is the ${meta.stage ? String(meta.stage).toUpperCase() + ' ' : ''}list for ${dayPhrase} now: `
+            + (replaced ? `the earlier upload of this date (${replaced} row(s)) was replaced, ` : '')
+            + `${records.length} row(s) written. A same-date re-upload REDOES the date rather than merging with it — rows you removed from the file are gone too. Other days and other stages were not touched.` }
+        : replaced || String(meta.mode || '').toLowerCase() === 'replace'
         ? { mode: 'replace-date', text: `Replaced ${dayPhrase}: ${replaced} earlier row(s) removed, ${records.length} written. No other day was touched.`
             + (plan.dateCol ? ` The days come from the "${plan.dateCol.replace(/_/g, ' ')}" column in your file, not from the upload date.` : '')
             + (plan.uploadedOnly ? ' Anything staff entered in the app was left alone — only uploaded rows were replaced.' : '') }
