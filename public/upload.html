@@ -131,6 +131,7 @@
     <div id="dateWrap" class="hide">
       <label>Snapshot date</label>
       <input type="date" id="snapDate">
+      <div class="hint" id="snapDateWd" style="margin-top:4px"></div>
       <div class="hint">The date this file's numbers are as-of — usually today.
         <br><b>Kesho / tomorrow:</b> there is no separate "tomorrow" report. If you have the sheet
         for tomorrow, upload it as <b>Expected — Today</b> with <b>tomorrow's date</b> here, and the
@@ -192,6 +193,12 @@
       <div id="stampDateWrap">
         <label>Tarehe ya ripoti / Report date <span style="font-weight:400">(the upload stamp, not the dates inside the file)</span></label>
         <input type="date" id="uploadDate">
+        <!-- THE WEEKDAY, SAID OUT LOUD. "14/08" and "15/08" look alike at one in the morning;
+             "Ijumaa" and "Jumamosi" do not. The night this exists for: unassigned apps uploaded
+             during the small hours of Saturday, meant as Friday's report -- the box had quietly
+             rolled to the new day and every confirmation named the wrong date without the
+             wrongness being visible. -->
+        <div class="hint" id="uploadDateWd" style="margin-top:4px"></div>
       </div>
       <label id="modeLabel">Ikiwa tarehe hii tayari ina ripoti / If this date already has a report</label>
       <div class="row" style="margin-bottom:14px">
@@ -383,7 +390,8 @@ function syncFields(){
   $('logoPrev').classList.toggle('hide', !logo);
   var stamp = isStamped_();
   $('stampWrap').classList.toggle('hide', !stamp);
-  if (stamp && !$('uploadDate').value) $('uploadDate').valueAsDate = new Date();
+  if (stamp && !$('uploadDate').value) $('uploadDate').value = eatToday_();
+  paintWd_();
   // The two reports with their own dates do not ask for one: the file already answered.
   var dl = dataDateLabel_();
   $('stampDateWrap').classList.toggle('hide', !!dl);
@@ -488,10 +496,41 @@ $('modeReplace').onclick = function(){ setMode_('replace'); };
 // sheet that tile promised rather than making an admin hunt for it in the dropdown.
 if (/[?&]admin=1\b/.test(window.location.search)) $('type').value = 'access-codes';
 syncFields();
-$('snapDate').valueAsDate = new Date();
+$('snapDate').value = eatToday_();
+paintWd_();
 
 function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g, function(c){
   return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
+
+/* Today on the EAT clock -- the same answer the server would stamp if the box were left
+   empty. valueAsDate used the UTC day, which disagrees with the server between midnight and
+   3am EAT; the box and the stamp must never name two different days. */
+function eatToday_(){ return new Date(Date.now() + 3*3600*1000).toISOString().slice(0, 10); }
+
+/* The chosen date's weekday, under both date boxes -- and a warning for the person still
+   doing yesterday's work after midnight, because to them it is not tomorrow yet. */
+function paintWd_(){
+  // Local, not module-level: paintWd_ is hoisted and runs during page init, before any
+  // top-level var assignment further down the file would have executed.
+  var WD_SW_ = ['Jumapili / Sunday','Jumatatu / Monday','Jumanne / Tuesday','Jumatano / Wednesday',
+    'Alhamisi / Thursday','Ijumaa / Friday','Jumamosi / Saturday'];
+  var eatNow = new Date(Date.now() + 3*3600*1000);
+  var night = eatNow.getUTCHours() < 6;   // midnight to 6am EAT: "today" is doubtful
+  [['uploadDate','uploadDateWd'], ['snapDate','snapDateWd']].forEach(function(pair){
+    var inp = $(pair[0]), out = $(pair[1]);
+    if (!inp || !out) return;
+    var v = inp.value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)){ out.textContent = ''; return; }
+    var wd = WD_SW_[new Date(v + 'T00:00:00Z').getUTCDay()];
+    var isToday = v === eatToday_();
+    out.innerHTML = '<b>' + wd + '</b> \u00b7 ' + v.slice(8,10) + '/' + v.slice(5,7)
+      + (night && isToday
+          ? ' \u2014 <span style="color:#b45309;font-weight:600">Ni usiku \u2014 kama hii ni ripoti ya jana, chagua tarehe ya JANA. / Past midnight \u2014 if this is yesterday\u2019s report, set YESTERDAY\u2019s date.</span>'
+          : '');
+  });
+}
+$('uploadDate').addEventListener('change', paintWd_);
+$('snapDate').addEventListener('change', paintWd_);
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
    A function that runs out of time or memory is answered by the HOST with an HTML page, so
    reading the answer as JSON throws  Unexpected token 'A', "An error o"...  -- which looks
