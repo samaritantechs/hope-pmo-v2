@@ -1114,3 +1114,46 @@ test('the lenient phone match redirects but never deletes', async () => {
   assert.equal(rec.merged, 0, 'the lenient form must never delete');
   assert.equal(rec.records[0].id, stored[0].id);
 });
+
+/* =====================================================================================
+   AN APPLICATION-STAGE FILE IS THE WHOLE LIST FOR ITS DAY.
+   =====================================================================================
+   "when i reupload unassigned and assessed apps by append but same date, i need that
+    action not to merge with existing but replace that single date data"
+
+   Two uploads of the same stage under the same date cannot both be true -- the second IS
+   the day, corrected. Append used to merge: matching loans updated, but a loan REMOVED
+   from the corrected file lingered under that date. Now a same-date re-upload REDOES the
+   date for the un-dated pipeline stages, whichever mode is chosen.
+*/
+test('re-uploading an application stage on the same date replaces that date, even on append', async () => {
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');
+  for (const stage of ['unassigned', 'unassessed', 'assessed', 'assigned']) {
+    const p = stampPlan('loans', { uploadDate: '2026-08-14', mode: 'append', stage }, NOON_EAT);
+    assert.equal(p.replace, true, stage + ': append must still redo the date');
+    assert.equal(p.sameDayRedo, true);
+    // Scoped to THIS stage and THIS date -- other days and the same day's other stages survive.
+    assert.deepEqual(p.scope, { stage, upload_date: '2026-08-14' });
+  }
+});
+
+test('the dated stages keep the append/replace choice', async () => {
+  /* Approved and disbursed replace by the dates IN the file; appending there genuinely
+     means "add more days" and must not quietly become a delete. */
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');
+  for (const stage of ['approved', 'disbursed']) {
+    const p = stampPlan('loans', { uploadDate: '2026-08-14', mode: 'append', stage }, NOON_EAT);
+    assert.equal(p.replace, false, stage + ': append stays append');
+    assert.equal(p.sameDayRedo, false);
+  }
+});
+
+test('other stamped reports are untouched by the redo rule', async () => {
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');
+  const p = stampPlan('complaints', { uploadDate: '2026-08-14', mode: 'append' }, NOON_EAT);
+  assert.equal(p.replace, false);
+  assert.equal(p.sameDayRedo, false);
+});
