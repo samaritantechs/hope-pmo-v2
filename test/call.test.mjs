@@ -1015,13 +1015,13 @@ test('expected and collection officers see only the one-behind, on Leo and Kesho
     assert.deepEqual(narrowForRole(rows, role, 'tomorrow', lim).map(r => r.ref), ['0-1', '2-3'],
       role + ' on Kesho');
   }
-  /* The two roles part ways on the defaulter lists, deliberately ("Catherine is still
-     seeing 2-12 samples"): the whole book is the EXPECTED officer's follow-up work, while
-     the COLLECTION officer is chased on single counts on every tab. */
-  assert.equal(narrowForRole(rows, 'EXPECTED', 'defaulters', lim).length, 5,
-    'EXPECTED keeps the whole defaulter list');
-  assert.deepEqual(narrowForRole(rows, 'COLLECTION', 'defaulters', lim).map(r => r.ref),
-    ['0-1', '2-3'], 'COLLECTION sees the single counts everywhere');
+  /* Both collection classes are chased on single counts ON EVERY TAB -- said twice by the
+     owner ("Catherine is still seeing 2-12 samples", then "still multi defaulter beeing seen
+     in both pmo early collection and today collection users"). */
+  for (const role of ['EXPECTED', 'COLLECTION']) {
+    assert.deepEqual(narrowForRole(rows, role, 'defaulters', lim).map(r => r.ref),
+      ['0-1', '2-3'], role + ' sees the single counts everywhere');
+  }
 });
 
 test('the threshold is a setting, so it can be widened without a deploy', () => {
@@ -1624,9 +1624,10 @@ test('the Def tab itself is untouched by the near-win rule', async () => {
   const db = fakeDb(t);
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
-  // The whole KONGOWE book, near-wins and far-aways alike, exactly as before.
+  // The near-win is on the book in its own right -- NARROWED there, never APPENDED: no row
+  // on the Def tab is an sc extra. (555 sits at 3-6, so the single-count rule removes it.)
   assert.ok(d.rows.some(r => r.ref === 'S1'));
-  assert.ok(d.rows.some(r => r.ref === '555'));
+  assert.equal(d.rows.some(r => r.ref === '555'), false);
   assert.equal(d.rows.some(r => r.sc), false, 'nothing on the Def tab is an appended extra');
 });
 
@@ -1662,7 +1663,7 @@ test('a collection officer\'s defaulter book is narrowed to the single counts', 
   assert.ok(d.narrowed && d.narrowed.role === 'COLLECTION', 'and the phone is told it was narrowed');
 });
 
-test('an expected officer\'s defaulter book stays whole', async () => {
+test('an early-collection officer\'s defaulter book is narrowed the same way', async () => {
   const t = makeTables();
   t.teams[0].expected = 'JUMA ISSA';
   t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
@@ -1672,5 +1673,21 @@ test('an expected officer\'s defaulter book stays whole', async () => {
   const db = fakeDb(t);
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
-  assert.ok(d.rows.some(r => r.ref === 'F1'), 'the whole book is their follow-up work');
+  assert.equal(d.rows.some(r => r.ref === 'F1'), false, '2-12 is not early-collection work either');
+});
+
+test('a short registered name still resolves the role -- CAREEN answers for CAREEN GODFREY', async () => {
+  /* The exact-name fallback resolved NOBODY for people registered under a short form, so the
+     very officers the narrowing exists for got no narrowing at all -- "please check well". */
+  const t = makeTables();
+  t.teams[0].collection = 'CAREEN GODFREY';
+  t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
+    contact: '0712000778', arrears: 5000, rejesho: 100, status: 'Defaulter', ds: '2-12' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', 'CAREEN', '', '', '0766000555', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
+  assert.equal(d.rows.some(r => r.ref === 'F1'), false, 'her book is the single counts only');
+  assert.ok(d.narrowed && d.narrowed.role === 'COLLECTION', 'the short name resolved her role');
 });
