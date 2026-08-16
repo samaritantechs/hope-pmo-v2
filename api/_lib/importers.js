@@ -237,6 +237,20 @@ const NUMERIC_LOAN_FIELDS = new Set([
 ]);
 const DATE_LOAN_FIELDS = new Set(['disb_date', 'approved_date']);
 
+/* AN APPLICATION-STAGE UPLOAD ANSWERS TO THE CHOSEN DATE, AND ONLY TO IT.
+
+     "uploading unassigned and assigned apps should adhere to the chosen date at uploads
+      not the date inside sheet data"
+
+   The company's exports come off one register that carries EVERY column for every row, so
+   an applications sheet can arrive with an APPROVED DATE column on loans nobody has
+   approved. Importing it stamped an approval date onto stage-'assigned' rows -- and every
+   board that windows on approved_date then counted the app under the sheet's date rather
+   than the day the admin chose at upload. For the stages BEFORE approval, the file's date
+   columns are noise and are not imported; approved and disbursed keep them, because there
+   the date inside the file is the very thing the report is about. */
+const PRE_APPROVAL_STAGES = new Set(['unassigned', 'unassessed', 'assessed', 'assigned', 'pending_approval']);
+
 /** One importer for all 8 loan-pipeline stages -- pass the stage name matching the
     loan_stage enum ('unassigned', 'assigned', ... 'disbursed') and it maps whatever
     columns that particular sheet export actually has; every stage's CSV has a
@@ -312,6 +326,8 @@ export function importLoans(csvRows, stage, dayFirst) {
        still clears. */
     for (const [field, candidates] of Object.entries(LOAN_STAGE_COLUMNS)) {
       if (!candidates.some(n => h[normalizeHeader(n)] !== undefined)) continue;
+      // The chosen upload date rules the application stages -- see PRE_APPROVAL_STAGES.
+      if (DATE_LOAN_FIELDS.has(field) && PRE_APPROVAL_STAGES.has(String(stage))) continue;
       const v = col(r, h, ...candidates);
       obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v, order) : textOrNull(v);
     }

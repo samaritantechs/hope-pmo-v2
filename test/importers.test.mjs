@@ -1157,3 +1157,32 @@ test('other stamped reports are untouched by the redo rule', async () => {
   assert.equal(p.replace, false);
   assert.equal(p.sameDayRedo, false);
 });
+
+/* =====================================================================================
+   AN APPLICATION-STAGE UPLOAD ANSWERS TO THE CHOSEN DATE, AND ONLY TO IT.
+   =====================================================================================
+   "uploading unassigned and assigned apps should adhere to the chosen date at uploads not
+    the date inside sheet data"
+
+   The register exports every column for every row, so an applications sheet can carry an
+   APPROVED DATE on loans nobody has approved -- and a stamped approval date on an
+   'assigned' row makes every approved_date-windowed board count the app under the sheet's
+   date instead of the chosen one.
+*/
+test('a pre-approval stage never imports the sheet\'s date columns', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const H = ['FULL NAME', 'TEAM', 'REQUESTED AMT', 'APPROVED DATE', 'DISB DATE'];
+  for (const stage of ['unassigned', 'unassessed', 'assessed', 'assigned', 'pending_approval']) {
+    const out = importLoans([H, ['APP PERSON', 'KONGOWE', '50000', '8/6/2026', '9/6/2026']], stage);
+    assert.equal('approved_date' in out[0], false, stage + ' must not carry an approval date');
+    assert.equal('disb_date' in out[0], false, stage + ' must not carry a disbursement date');
+    assert.equal(out[0].requested_amt, 50000, 'the rest of the row still lands');
+  }
+});
+
+test('approved and disbursed keep the dates in the file -- that is the report', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const H = ['FULL NAME', 'TEAM', 'APPROVED DATE'];
+  const out = importLoans([H, ['SOLD PERSON', 'KONGOWE', '22/7/2026']], 'approved');
+  assert.equal(out[0].approved_date, '2026-07-22');
+});
