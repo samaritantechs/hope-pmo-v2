@@ -5137,6 +5137,17 @@ function codeForm(x){
     + '<div class="fld"><label>Msimbo / Code</label><input id="kCode" value="'+esc(x?x.code:'')+'">'
       + (isNew ? '' : '<div class="fldnote">Unaweza kuubadilisha — mtumiaji ataingia na mpya. / You can change this; the holder signs in with the new one from that moment.</div>')
       + '</div>'
+    /* THE NAME COMES FROM TEAMS & STAFF, NOT FROM TYPING.
+       "the access code of any leader should be created without inputing another name but by
+        setting only the code for that role and they find their names roles and codes ready
+        so that we solve name mismatches too"
+       Every screen that matches this person later -- roles, phones, reports -- matches the
+       SPELLING stored in the teams table, so a code created with a retyped variant of the
+       same human is a mismatch built in on day one. Picking fills name, role and teams from
+       the roster; all three stay editable for the rare code that is not a roster person. */
+    + '<div class="fld"><label>Chagua kutoka Timu na Wafanyakazi / Pick from Teams &amp; Staff</label>'
+      + '<select id="kPick"><option value="">\u2014 chagua mtu / pick a person \u2014</option></select>'
+      + '<div class="fldnote">Jina, wadhifa na timu vinajazwa kutoka jedwali \u2014 hakuna kuandika jina mara ya pili. / Fills the fields below from the staff table, so the spelling can never drift.</div></div>'
     + '<div class="fld"><label>Jina / Name</label><input id="kName" value="'+esc(x?x.name:'')+'"></div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="kRole" list="roleList" value="'+esc(x?x.role:'')+'">'
       + '<datalist id="roleList">'+roles.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist></div>'
