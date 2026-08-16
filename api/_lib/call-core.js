@@ -850,13 +850,57 @@ async function list(db, [dev, which, which2], nowMs) {
      `narrowed` is reported so the phone can say so rather than leaving somebody wondering
      where half the book went. */
   const kind = await callRoleKind(db, user);
-  let narrowed = null;
+  let narrowed = null, singles = 0;
   if (kind) {
+    const limits = await roleLimits(db);
     const before = rows.length;
-    rows = narrowForRole(rows, kind, which, await roleLimits(db));
+    rows = narrowForRole(rows, kind, which, limits);
     if (rows.length !== before) narrowed = { role: kind, shown: rows.length, of: before };
+
+    /* THE NEAR-WINS RIDE ON THE COLLECTION OFFICER'S OWN LIST.
+
+         "for early collection and today collection, not just leo and kesho but they should
+          also see defaults of single count since thats were they repair their performance --
+          if a customer of 3-7 pays to 6-7 by their effort then they got nothing"
+
+       An early/today-collection officer is judged on collection, and a defaulter only turns
+       into collection on the day they COMPLETE. Pushing somebody from 3-7 to 6-7 is real
+       work that shows up nowhere; pushing 6-7 over the line does. So the defaulters ONE
+       COUNT from done -- the same distance the Leo narrowing itself uses, so the two rules
+       cannot drift -- are appended to Leo and Kesho, where this officer actually works.
+       Not the whole book (that is the Def tab, untouched); just the wins waiting to happen.
+
+       Deduped by ref against the day's own list, FK stubs skipped, sorted by arrears so the
+       biggest near-win is on top of the section. Each row is marked `sc` and keeps its
+       Defaulter chip, so it cannot be mistaken for a customer due today. */
+    if ((kind === 'EXPECTED' || kind === 'COLLECTION') && (which === 'today' || which === 'tomorrow')) {
+      const fu = await fetchAll(() => {
+        let q = db.from('followup_status').select(
+          'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team');
+        if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+        return q;
+      });
+      const have = new Set(rows.map(r => String(r.ref)));
+      const behindMax = Math.max(1, limits.earlyMaxBehind);
+      const add = fu.filter(r => {
+        if (r.status == null && r.arrears == null) return false;   // FK stubs, not defaulters
+        if (!teamAllowed(user, r.team) || have.has(String(r.ref))) return false;
+        const d = dsParts(r.ds);
+        const behind = d ? d.target - d.paid : 0;
+        return behind >= 1 && behind <= behindMax;
+      }).map(r => ({
+        ref: r.ref, name: r.full_name, contact: r.contact,
+        gName: r.guarantor_name, gContact: r.guarantor_contact,
+        amt: num(r.arrears), installment: num(r.rejesho),
+        custStatus: r.status || 'Defaulter', fuStatus: r.fu_status || '',
+        ds: dsFmt(r.ds), days: r.days_elapsed == null ? '' : r.days_elapsed, team: r.team,
+        called: hit(r.contact, r.guarantor_contact), sc: true,
+      })).sort((a, b) => b.amt - a.amt);
+      singles = add.length;
+      rows = rows.concat(add);
+    }
   }
-  return { ok: true, rows, asOf, stale, narrowed };
+  return { ok: true, rows, asOf, stale, narrowed, singles: singles || undefined };
 }
 
 /* ---------- daily summary strip ---------- */

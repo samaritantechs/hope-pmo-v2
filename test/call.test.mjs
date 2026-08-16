@@ -1567,3 +1567,61 @@ test('every Ripoti row carries the officer\'s own registered number', async () =
   assert.ok(asha, 'the leader is on the board at zero');
   assert.equal(asha.phone, '788111222', 'and her number rides on the zero row too');
 });
+
+/* =====================================================================================
+   THE NEAR-WINS RIDE ON THE COLLECTION OFFICER'S OWN LIST.
+   =====================================================================================
+   "for early collection and today collection, not just leo and kesho but they should also
+    see defaults of single count since thats were they repair their performance -- if a
+    customer of 3-7 pays to 6-7 by their effort then they got nothing"
+
+   A defaulter only turns into collection on the day they COMPLETE, so the defaulters one
+   count from done are appended to Leo and Kesho for the early/today-collection roles --
+   the wins waiting to happen, not the whole book.
+*/
+test('an expected officer\'s Leo carries the single-count defaulters at the end', async () => {
+  const t = makeTables();
+  t.teams[0].expected = 'JUMA ISSA';                 // makes d1's officer an EXPECTED role
+  t.followup_status.push(
+    { ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN', contact: '0712000777', arrears: 900,
+      rejesho: 100, status: 'Defaulter', ds: '5-6' },      // one count from done
+    { ref: 'S2', team: 'KONGOWE', full_name: 'FAR AWAY', contact: '0712000778', arrears: 5000,
+      rejesho: 100, status: 'Defaulter', ds: '2-6' },      // four behind -- not a near-win
+    { ref: 'S3', team: 'MBAGALA', full_name: 'OTHER TEAM SINGLE', contact: '0712000779',
+      arrears: 700, rejesho: 100, status: 'Defaulter', ds: '5-6' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  const near = d.rows.find(r => r.ref === 'S1');
+  assert.ok(near, 'the one-count defaulter is on Leo');
+  assert.equal(near.sc, true, 'and marked as an added near-win, not a customer due today');
+  assert.equal(d.singles, 1);
+  assert.equal(d.rows.some(r => r.ref === 'S2'), false, 'four counts behind is Def-tab work');
+  assert.equal(d.rows.some(r => r.ref === 'S3'), false, 'another team\'s book stays theirs');
+});
+
+test('a plain officer\'s Leo is exactly what it was -- no singles appended', async () => {
+  const db = await registeredDb();
+  // registeredDb's d1 has no special role; fixture followup rows (555 at 3-6, 999) stay off Leo.
+  const t = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(t.singles, undefined);
+  assert.equal(t.rows.some(r => r.sc), false);
+});
+
+test('the Def tab itself is untouched by the near-win rule', async () => {
+  const t = makeTables();
+  t.teams[0].expected = 'JUMA ISSA';
+  t.followup_status.push({ ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN',
+    contact: '0712000777', arrears: 900, rejesho: 100, status: 'Defaulter', ds: '5-6' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  // The whole KONGOWE book, near-wins and far-aways alike, exactly as before.
+  assert.ok(d.rows.some(r => r.ref === 'S1'));
+  assert.ok(d.rows.some(r => r.ref === '555'));
+  assert.equal(d.rows.some(r => r.sc), false, 'nothing on the Def tab is an appended extra');
+});
