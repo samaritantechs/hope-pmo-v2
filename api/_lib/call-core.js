@@ -6,7 +6,6 @@ import { expectedTotalsInRange, expectedTotalsLatest, tCustomers, tExpected, tCo
 import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
-import { namesMatch } from './parse.js';
 import { isSystemOpen } from './system-gate.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
@@ -540,49 +539,29 @@ export function dsParts(v) {
     recycling rotation uses), while a collection officer's teams live on their access code and
     the role is written there. Either is enough. */
 export async function callRoleKind(db, user) {
-  /* THE FREE CHECKS FIRST, AND THEY COST NOTHING. This runs on EVERY list load from every
-     handset, so the three special roles resolve on the string alone -- no query at all, where
-     the old code always went on to read the teams table. */
+  /* BY ROLE, AND ONLY BY ROLE.
+
+       "We should read them by roles not names" ... "careen is in recovery"
+
+     There used to be a fallback that matched the registered NAME against the teams table's
+     credit/expected/collection columns -- and CAREEN is exactly why it had to go. She is a
+     RECOVERY leader whose whole job is the full defaulter book; a name floating between a
+     short form on the phone and a full form on a sheet is one wrong match away from
+     narrowing the book of somebody who needs all of it. A role is WRITTEN DOWN, on the
+     access code or by the registration itself, and it says what the person is chased on.
+     Somebody whose role says none of these is a plain officer with the whole book -- if
+     they should be narrowed, the fix is their role, not a guess from their name.
+
+     The word checks cost nothing and resolve almost everyone; the one query -- the PMO role
+     name, memoised with every other setting -- runs only for a role that matched no word,
+     because a deployment is free to rename the collection role into any language at all. */
   const role = normRole(user && user.role);
-  if (role) {
-    if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
-    if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
-    if (hasCollectionWord(role)) return 'COLLECTION';
-  }
-  const n = K(user && user.name);
-  if (!n) return null;
-  /* Everyone else -- which on two hundred handsets means nearly everyone, all of them plain
-     OFFICERs -- reaches here, so the two remaining questions are asked SIDE BY SIDE rather
-     than one after the other. The teams read was already on this path before; the setting is
-     new, and in parallel it costs no extra waiting.
-
-     PMO_ROLE is the same question isPmoRole answers for the PMO board, asked the same way, so
-     the two screens can never disagree about who is a collection officer. It is consulted
-     even when the role carries none of the three words, because a deployment is free to
-     rename the role to something with no English in it at all.
-
-     `collection` on the teams table arrived with the contacts migration and is optional like
-     every migration here, so asking for it on a database that has not run one must not take
-     the other two columns down with it -- a thrown column error here would empty the
-     officer's whole list rather than merely skip a rule. */
-  /* THE SAME MAP THE SCOPE WIDENING USES, so a list load asks the teams table once rather than
-     twice -- this used to issue its own read of the very columns heldTeams had just read on the
-     same request, and both of them run on every list load from every handset. */
-  const [pmoName, rows] = await Promise.all([
-    settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT),
-    teamRoleRows(db),
-  ]);
-  if (role && isPmoRole(role, pmoName)) return 'COLLECTION';
-  /* Failing the role, by NAME -- the credit analyst and the expected officer genuinely are
-     columns on the teams table, and `collection` is a name column just like them.
-
-     MATCHED THE WAY THIS DEPLOYMENT'S PEOPLE ACTUALLY WRITE NAMES. The exact comparison
-     quietly resolved NOBODY for anyone registered under a short form -- CAREEN on the phone,
-     CAREEN GODFREY on the sheet -- so the very officers these narrowings exist for got no
-     narrowing at all and "still see 2-12". Same bridge the phone-number lookup uses. */
-  if (rows.some(t => namesMatch(t.credit, n))) return 'CREDIT';
-  if (rows.some(t => namesMatch(t.expected, n))) return 'EXPECTED';
-  if (rows.some(t => namesMatch(t.collection, n))) return 'COLLECTION';
+  if (!role) return null;
+  if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
+  if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
+  if (hasCollectionWord(role)) return 'COLLECTION';
+  const pmoName = await settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT);
+  if (isPmoRole(role, pmoName)) return 'COLLECTION';
   return null;
 }
 

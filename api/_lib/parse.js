@@ -253,24 +253,6 @@ export function textOrNull(v) {
     constraint. Normalizing every team value through this, everywhere a team gets read (Teams
     upload AND every table that references it), means that mismatch can't happen again -- not
     guarded against case by case, structurally not possible. */
-/* THE SAME PERSON UNDER TWO LENGTHS OF NAME. People register with the name they answer to
-   (CAREEN); the sheets carry the full one (CAREEN GODFREY). Any place that decides something
-   by matching a person against a sheet has to bridge that, or the decision quietly fails for
-   exactly the people it was built for -- first the phone numbers, then the role detection.
-   Every word of the shorter name must appear in the longer one, a single letter matching as
-   an initial: JUMA GEORGE answers for JUMA G. */
-export function namesMatch(a, b) {
-  const norm = v => String(v == null ? '' : v).trim().toUpperCase().replace(/\s+/g, ' ');
-  const A = norm(a), B = norm(b);
-  if (!A || !B) return false;
-  if (A === B) return true;
-  const wordFits = (x, y) => x === y
-    || (x.length === 1 && y.startsWith(x)) || (y.length === 1 && x.startsWith(y));
-  const aw = A.split(' '), bw = B.split(' ');
-  const [shorter, longer] = aw.length <= bw.length ? [aw, bw] : [bw, aw];
-  return shorter.every(w => longer.some(x => wordFits(w, x)));
-}
-
 export function normTeam(v) {
   const s = textOrNull(v);
   return s ? s.toUpperCase().replace(/\s+/g, ' ') : null;

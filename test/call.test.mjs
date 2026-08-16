@@ -1050,9 +1050,8 @@ test('a customer with no readable due summary is never hidden', () => {
 
 test('the narrowing runs end to end, and the phone is told it happened', async () => {
   const t = makeTables();
-  // The signed-in leader holds the `credit` column, which is what makes them a credit analyst
-  // here -- the same rule the recycling rotation uses for its three.
-  t.teams[0] = { ...t.teams[0], credit: 'ASHA JUMA' };
+  // The ROLE is what makes them a credit analyst -- "We should read them by roles not names".
+  t.access_codes.push({ code: 'CRED1', name: 'ASHA JUMA', role: 'CREDIT ANALYST', teams: ['KONGOWE'], tabs: [] });
   t.repayment_snapshots = [
     { ref: 'P1', full_name: 'EARLY', contact: '0712000011', team: 'KONGOWE', payment_expected: 1000,
       arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today',
@@ -1064,7 +1063,7 @@ test('the narrowing runs end to end, and the phone is told it happened', async (
   const db = fakeDb(t);
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
-  await callApi(db, 'api_callRegister', ['d9', '', '', 'LEAD1', '0788111333'], NOW);
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'CRED1', '0788111333'], NOW);
 
   const d = await callApi(db, 'api_callList', ['d9', 'today'], NOW);
   assert.deepEqual(d.rows.map(r => r.ref), ['P1'], 'only the one short of the fifth instalment');
@@ -1269,12 +1268,19 @@ test('no other role is narrowed -- everybody else keeps the whole book', async (
   }
 });
 
-test('failing the role, the teams table still recognises somebody by name', async () => {
-  // The credit analyst and the expected officer genuinely are columns there.
+test('a name on the teams table decides NOTHING -- only the role does', async () => {
+  /* "We should read them by roles not names" ... "careen is in recovery". The old name
+     fallback was one wrong match away from narrowing the book of somebody who needs all of
+     it. A plain OFFICER stays plain, whatever the sheets call somebody with their name. */
   const t = makeTables();
   t.teams[0].credit = 'CATHERINE';
   const db = fakeDb(t);
-  assert.equal(await callRoleKind(db, { name: 'CATHERINE', role: 'OFFICER' }), 'CREDIT');
+  assert.equal(await callRoleKind(db, { name: 'CATHERINE', role: 'OFFICER' }), null);
+  // And the role alone is enough, with no teams row saying anything.
+  assert.equal(await callRoleKind(db, { name: 'ANYONE', role: 'EARLY COLLECTION' }), 'EXPECTED');
+  assert.equal(await callRoleKind(db, { name: 'ANYONE', role: 'TODAY COLLECTION' }), 'COLLECTION');
+  assert.equal(await callRoleKind(db, { name: 'ANYONE', role: 'PMO RECOVERY' }), null,
+    'recovery keeps the whole book -- that is their job');
 });
 
 test('an early-collection officer with a leader role name is still narrowed to behind = 1', async () => {
@@ -1585,7 +1591,8 @@ test('every Ripoti row carries the officer\'s own registered number', async () =
 */
 test('an expected officer\'s Leo carries the single-count defaulters at the end', async () => {
   const t = makeTables();
-  t.teams[0].expected = 'JUMA ISSA';                 // makes d1's officer an EXPECTED role
+  // Their ROLE is what makes them early collection -- "We should read them by roles not names".
+  t.access_codes.push({ code: 'EARLY1', name: 'JUMA ISSA', role: 'EARLY COLLECTION', teams: ['KONGOWE'], tabs: [] });
   t.followup_status.push(
     { ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN', contact: '0712000777', arrears: 900,
       rejesho: 100, status: 'Defaulter', ds: '5-6' },      // one count from done
@@ -1596,7 +1603,7 @@ test('an expected officer\'s Leo carries the single-count defaulters at the end'
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
   const db = fakeDb(t);
-  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d1', '', '', 'EARLY1', '0712999999'], NOW);
   const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
   const near = d.rows.find(r => r.ref === 'S1');
   assert.ok(near, 'the one-count defaulter is on Leo');
@@ -1616,13 +1623,13 @@ test('a plain officer\'s Leo is exactly what it was -- no singles appended', asy
 
 test('the Def tab itself is untouched by the near-win rule', async () => {
   const t = makeTables();
-  t.teams[0].expected = 'JUMA ISSA';
+  t.access_codes.push({ code: 'EARLY1', name: 'JUMA ISSA', role: 'EARLY COLLECTION', teams: ['KONGOWE'], tabs: [] });
   t.followup_status.push({ ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN',
     contact: '0712000777', arrears: 900, rejesho: 100, status: 'Defaulter', ds: '5-6' });
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
   const db = fakeDb(t);
-  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d1', '', '', 'EARLY1', '0712999999'], NOW);
   const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
   // The near-win is on the book in its own right -- NARROWED there, never APPENDED: no row
   // on the Def tab is an sc extra. (555 sits at 3-6, so the single-count rule removes it.)
@@ -1641,7 +1648,7 @@ test('the Def tab itself is untouched by the near-win rule', async () => {
 */
 test('a collection officer\'s defaulter book is narrowed to the single counts', async () => {
   const t = makeTables();
-  t.teams[0].collection = 'CATHERINE C';
+  t.access_codes.push({ code: 'COLL1', name: 'CATHERINE C', role: 'COLLECTION', teams: ['KONGOWE'], tabs: [] });
   t.followup_status.push(
     { ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN', contact: '0712000777', arrears: 900,
       rejesho: 100, status: 'Defaulter', ds: '5-6' },       // one behind: her work
@@ -1652,7 +1659,7 @@ test('a collection officer\'s defaulter book is narrowed to the single counts', 
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
   const db = fakeDb(t);
-  await callApi(db, 'api_callRegister', ['d9', 'CATHERINE C', '', '', '0766000555', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'COLL1', '0766000555'], NOW);
   const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
   assert.equal(d.rows.some(r => r.ref === 'F1'), false, '2-12 is not her book');
   assert.ok(d.rows.some(r => r.ref === 'S1'), 'the single count is');
@@ -1665,29 +1672,31 @@ test('a collection officer\'s defaulter book is narrowed to the single counts', 
 
 test('an early-collection officer\'s defaulter book is narrowed the same way', async () => {
   const t = makeTables();
-  t.teams[0].expected = 'JUMA ISSA';
+  t.access_codes.push({ code: 'EARLY1', name: 'JUMA ISSA', role: 'EARLY COLLECTION', teams: ['KONGOWE'], tabs: [] });
   t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
     contact: '0712000778', arrears: 5000, rejesho: 100, status: 'Defaulter', ds: '2-12' });
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
   const db = fakeDb(t);
-  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d1', '', '', 'EARLY1', '0712999999'], NOW);
   const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
   assert.equal(d.rows.some(r => r.ref === 'F1'), false, '2-12 is not early-collection work either');
 });
 
-test('a short registered name still resolves the role -- CAREEN answers for CAREEN GODFREY', async () => {
-  /* The exact-name fallback resolved NOBODY for people registered under a short form, so the
-     very officers the narrowing exists for got no narrowing at all -- "please check well". */
+test('CAREEN is in recovery -- her whole book stays, whatever the sheets call her', async () => {
+  /* "careen is in recovery". The old name fallback could have matched her against a
+     collection column and narrowed the book of somebody whose job is all of it. Under
+     role-only reading, a RECOVERY role is a plain book, full stop. */
   const t = makeTables();
-  t.teams[0].collection = 'CAREEN GODFREY';
+  t.teams[0].collection = 'CAREEN GODFREY';   // the sheet may say anything -- it decides nothing
+  t.access_codes.push({ code: 'REC1', name: 'CAREEN', role: 'PMO RECOVERY', teams: ['KONGOWE'], tabs: [] });
   t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
     contact: '0712000778', arrears: 5000, rejesho: 100, status: 'Defaulter', ds: '2-12' });
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
   const db = fakeDb(t);
-  await callApi(db, 'api_callRegister', ['d9', 'CAREEN', '', '', '0766000555', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'REC1', '0766000555'], NOW);
   const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
-  assert.equal(d.rows.some(r => r.ref === 'F1'), false, 'her book is the single counts only');
-  assert.ok(d.narrowed && d.narrowed.role === 'COLLECTION', 'the short name resolved her role');
+  assert.ok(d.rows.some(r => r.ref === 'F1'), 'the 2-12 defaulter is exactly her work');
+  assert.equal(d.narrowed, null, 'nothing was narrowed for a recovery role');
 });
