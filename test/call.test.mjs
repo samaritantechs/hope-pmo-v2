@@ -1014,10 +1014,14 @@ test('expected and collection officers see only the one-behind, on Leo and Kesho
       role + ' on Leo');
     assert.deepEqual(narrowForRole(rows, role, 'tomorrow', lim).map(r => r.ref), ['0-1', '2-3'],
       role + ' on Kesho');
-    // "in Leo and Kesho lists ONLY" -- the defaulter lists are the follow-up work itself.
-    assert.equal(narrowForRole(rows, role, 'defaulters', lim).length, 5,
-      role + ' must keep the whole defaulter list');
   }
+  /* The two roles part ways on the defaulter lists, deliberately ("Catherine is still
+     seeing 2-12 samples"): the whole book is the EXPECTED officer's follow-up work, while
+     the COLLECTION officer is chased on single counts on every tab. */
+  assert.equal(narrowForRole(rows, 'EXPECTED', 'defaulters', lim).length, 5,
+    'EXPECTED keeps the whole defaulter list');
+  assert.deepEqual(narrowForRole(rows, 'COLLECTION', 'defaulters', lim).map(r => r.ref),
+    ['0-1', '2-3'], 'COLLECTION sees the single counts everywhere');
 });
 
 test('the threshold is a setting, so it can be widened without a deploy', () => {
@@ -1624,4 +1628,49 @@ test('the Def tab itself is untouched by the near-win rule', async () => {
   assert.ok(d.rows.some(r => r.ref === 'S1'));
   assert.ok(d.rows.some(r => r.ref === '555'));
   assert.equal(d.rows.some(r => r.sc), false, 'nothing on the Def tab is an appended extra');
+});
+
+/* =====================================================================================
+   A COLLECTION OFFICER'S WHOLE JOB IS THE SINGLE COUNTS -- ON EVERY TAB.
+   =====================================================================================
+   "Catherine is still seeing 2-12 samples"
+
+   The Leo/Kesho-only narrowing left her Def/Exp/Chr tabs carrying the entire book,
+   ten-counts-behind and all. For the COLLECTION role the rule now follows onto every list.
+*/
+test('a collection officer\'s defaulter book is narrowed to the single counts', async () => {
+  const t = makeTables();
+  t.teams[0].collection = 'CATHERINE C';
+  t.followup_status.push(
+    { ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN', contact: '0712000777', arrears: 900,
+      rejesho: 100, status: 'Defaulter', ds: '5-6' },       // one behind: her work
+    { ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND', contact: '0712000778', arrears: 5000,
+      rejesho: 100, status: 'Defaulter', ds: '2-12' },      // the "2-12 samples"
+    { ref: 'N1', team: 'KONGOWE', full_name: 'NO DS', contact: '0712000780', arrears: 400,
+      rejesho: 100, status: 'Defaulter' });                 // no readable D.S at all
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', 'CATHERINE C', '', '', '0766000555', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
+  assert.equal(d.rows.some(r => r.ref === 'F1'), false, '2-12 is not her book');
+  assert.ok(d.rows.some(r => r.ref === 'S1'), 'the single count is');
+  // 555 sits at 3-6 in the fixture -- three behind, also gone from her view.
+  assert.equal(d.rows.some(r => r.ref === '555'), false);
+  // A row with no readable D.S stays: unknown is not "far behind".
+  assert.ok(d.rows.some(r => r.ref === 'N1'));
+  assert.ok(d.narrowed && d.narrowed.role === 'COLLECTION', 'and the phone is told it was narrowed');
+});
+
+test('an expected officer\'s defaulter book stays whole', async () => {
+  const t = makeTables();
+  t.teams[0].expected = 'JUMA ISSA';
+  t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
+    contact: '0712000778', arrears: 5000, rejesho: 100, status: 'Defaulter', ds: '2-12' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.ok(d.rows.some(r => r.ref === 'F1'), 'the whole book is their follow-up work');
 });
