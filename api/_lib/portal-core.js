@@ -4801,8 +4801,11 @@ async function dashboardFull(db, user, args, nowMs) {
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
-      .select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')
-      .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor}`), user.teams)),
+      /* upload_date rides along because it is the day the admin CHOSE for the report, and a
+         re-uploaded loan keeps its original created_at -- windowing on created_at alone would
+         drop a row whose stamp is this week but whose first insert was last month. */
+      .select('id, stage, team, created_at, upload_date, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')
+      .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor},upload_date.gte.${loanFloor}`), user.teams)),
     /* Team-scoped at the database. The dashboard is the most-opened screen in the system and
        this read had no filter at all -- every abnormal payment ever recorded, on every load,
        for a figure that is then narrowed to the viewer's own teams anyway. The number on
@@ -4846,10 +4849,22 @@ async function dashboardFull(db, user, args, nowMs) {
   const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
   const dayRows = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
 
-  /* ---- loan applications per weekday: unassigned + assigned, by their own DATE column ---- */
+  /* ---- loan applications per weekday: unassigned + assigned, by the day the admin CHOSE ----
+
+       "still didnt update: the thing worked to thursday.. the day i started uploading friday
+        started taking them"
+
+     This grouped by created_at -- the moment the row was INSERTED -- so the board agreed with
+     the admin only while each day's file was uploaded on its own day. Friday's file uploaded
+     on Sunday filed its 79 apps under Sunday, whatever the date box said; and created_at is a
+     UTC timestamp besides, so even a same-day evening upload drifted a day. The upload stamp
+     is the day the admin chose, said in the confirmation, replace-scoped, and stable across
+     re-uploads: the SAME loan re-uploaded under a corrected date simply moves (one row, one
+     id -- no duplicate to make), while created_at keeps its first-insert moment forever.
+     Rows from before the stamp existed fall back to created_at, as before. */
   const appsTrend = WD7.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const on = myLoans.filter(l => String(l.created_at || '').slice(0, 10) === d);
+    const on = myLoans.filter(l => String(l.upload_date || l.created_at || '').slice(0, 10) === d);
     const u = on.filter(l => l.stage === 'unassigned').length;
     const a = on.filter(l => l.stage === 'assigned').length;
     return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
