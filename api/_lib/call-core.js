@@ -589,8 +589,24 @@ export function narrowForRole(rows, kind, which, limits) {
       return !d || d.paid <= limits.creditMaxPaid;
     });
   }
-  // Leo and Kesho ONLY. The defaulter lists are the whole point of an early-collection
-  // officer's follow-up work and must not be touched.
+  /* A COLLECTION officer's whole job is the single counts.
+
+       "she is called todays collection single counts e.g 3-4 ds=1" ... and then:
+       "Catherine is still seeing 2-12 samples"
+
+     The Leo/Kesho-only rule below was right for the EXPECTED officer, whose defaulter book
+     is genuinely their follow-up work -- but it left the collection officer's Def/Exp/Chr
+     tabs carrying the entire book, ten-counts-behind and all, when the only customers she is
+     chased on are the ones a single push completes. For her, the same narrowing follows onto
+     EVERY list. A row with no readable D.S stays, as everywhere: unknown is not "far behind". */
+  if (kind === 'COLLECTION') {
+    return rows.filter(r => {
+      const d = dsParts(r.ds);
+      return !d || (d.target - d.paid) <= limits.earlyMaxBehind;
+    });
+  }
+  // EXPECTED: Leo and Kesho ONLY. The defaulter lists are the whole point of an
+  // early-collection officer's follow-up work and must not be touched.
   if (which !== 'today' && which !== 'tomorrow') return rows;
   return rows.filter(r => {
     const d = dsParts(r.ds);
