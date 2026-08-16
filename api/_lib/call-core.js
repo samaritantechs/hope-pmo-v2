@@ -6,6 +6,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, tCustomers, tExpected, tCo
 import { buildDashboard } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
+import { namesMatch } from './parse.js';
 import { isSystemOpen } from './system-gate.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
@@ -572,11 +573,16 @@ export async function callRoleKind(db, user) {
     teamRoleRows(db),
   ]);
   if (role && isPmoRole(role, pmoName)) return 'COLLECTION';
-  // Failing the role, by NAME -- the credit analyst and the expected officer genuinely are
-  // columns on the teams table, and `collection` is a name column just like them.
-  if (rows.some(t => K(t.credit) === n)) return 'CREDIT';
-  if (rows.some(t => K(t.expected) === n)) return 'EXPECTED';
-  if (rows.some(t => K(t.collection) === n)) return 'COLLECTION';
+  /* Failing the role, by NAME -- the credit analyst and the expected officer genuinely are
+     columns on the teams table, and `collection` is a name column just like them.
+
+     MATCHED THE WAY THIS DEPLOYMENT'S PEOPLE ACTUALLY WRITE NAMES. The exact comparison
+     quietly resolved NOBODY for anyone registered under a short form -- CAREEN on the phone,
+     CAREEN GODFREY on the sheet -- so the very officers these narrowings exist for got no
+     narrowing at all and "still see 2-12". Same bridge the phone-number lookup uses. */
+  if (rows.some(t => namesMatch(t.credit, n))) return 'CREDIT';
+  if (rows.some(t => namesMatch(t.expected, n))) return 'EXPECTED';
+  if (rows.some(t => namesMatch(t.collection, n))) return 'COLLECTION';
   return null;
 }
 
@@ -589,25 +595,20 @@ export function narrowForRole(rows, kind, which, limits) {
       return !d || d.paid <= limits.creditMaxPaid;
     });
   }
-  /* A COLLECTION officer's whole job is the single counts.
+  /* A COLLECTION officer's whole job is the single counts -- and so is an EARLY-collection
+     (EXPECTED) officer's.
 
-       "she is called todays collection single counts e.g 3-4 ds=1" ... and then:
+       "she is called todays collection single counts e.g 3-4 ds=1"
        "Catherine is still seeing 2-12 samples"
+       "still multi defaulter beeing seen in both pmo early collection and today collection
+        users. please check well"
 
-     The Leo/Kesho-only rule below was right for the EXPECTED officer, whose defaulter book
-     is genuinely their follow-up work -- but it left the collection officer's Def/Exp/Chr
-     tabs carrying the entire book, ten-counts-behind and all, when the only customers she is
-     chased on are the ones a single push completes. For her, the same narrowing follows onto
-     EVERY list. A row with no readable D.S stays, as everywhere: unknown is not "far behind". */
-  if (kind === 'COLLECTION') {
-    return rows.filter(r => {
-      const d = dsParts(r.ds);
-      return !d || (d.target - d.paid) <= limits.earlyMaxBehind;
-    });
-  }
-  // EXPECTED: Leo and Kesho ONLY. The defaulter lists are the whole point of an
-  // early-collection officer's follow-up work and must not be touched.
-  if (which !== 'today' && which !== 'tomorrow') return rows;
+     The first fix narrowed only COLLECTION's defaulter tabs, keeping an old assumption that
+     the EXPECTED officer's book must stay whole. The owner has now said plainly that BOTH
+     collection classes are chased on single counts on every tab, so the same rule follows
+     both of them onto EVERY list. A row with no readable D.S stays, as everywhere: unknown
+     is not "far behind". The plain OFFICERs' book -- nearly all 300 handsets -- is untouched;
+     `kind` is null for them and this function returned before reaching here. */
   return rows.filter(r => {
     const d = dsParts(r.ds);
     return !d || (d.target - d.paid) <= limits.earlyMaxBehind;
