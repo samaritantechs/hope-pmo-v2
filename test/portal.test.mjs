@@ -5994,3 +5994,36 @@ test('an exact name still beats a contained one', async () => {
   assert.equal(d.rows.find(r => r.team === 'KONGOWE').gmo_no, '0711111111',
     'her own exact registration, not the leader short-name one');
 });
+
+/* =====================================================================================
+   THE APPS-PER-WEEKDAY BOARD FILES BY THE DAY THE ADMIN CHOSE.
+   =====================================================================================
+   "still didnt update: the thing worked to thursday.. the day i started uploading friday
+    started taking them"
+
+   It grouped by created_at -- the insert moment -- so it agreed with the admin only while
+   each day's file was uploaded on its own day. Friday's file uploaded on Sunday filed its
+   apps under Sunday, whatever the date box said.
+*/
+test('an app counts under its upload stamp, not the moment it was inserted', async () => {
+  const book = tables();
+  // Uploaded TODAY (Friday the 24th) but stamped for Wednesday -- the date box was obeyed.
+  book.loans.push({ id: 'w1', team: 'KONGOWE', stage: 'assigned', requested_amt: 70000,
+    full_name: 'WEDNESDAY APP', created_at: TODAY + 'T09:00:00Z', upload_date: '2026-07-22' });
+  const db = dbWithRpc(book);
+  const d = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  const wed = d.appsTrend.find(x => x.date === '2026-07-22');
+  const fri = d.appsTrend.find(x => x.date === TODAY);
+  assert.equal(wed.assigned, 1, 'the chosen Wednesday is where it shows');
+  assert.equal(fri.assigned, 0, 'and not doubled under the day the button was pressed');
+});
+
+test('a row from before the stamp existed still counts, by its created day', async () => {
+  const book = tables();
+  book.loans.push({ id: 'w2', team: 'KONGOWE', stage: 'unassigned', requested_amt: 30000,
+    full_name: 'OLD ROW', created_at: YEST + 'T09:00:00Z' });   // no upload_date at all
+  const db = dbWithRpc(book);
+  const d = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  const thu = d.appsTrend.find(x => x.date === YEST);
+  assert.equal(thu.unassigned, 1, 'nothing already there is lost');
+});
