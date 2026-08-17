@@ -377,6 +377,12 @@ function $(s,r){ return (r||document).querySelector(s); }
 function $all(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return n.toLocaleString('en-US', {maximumFractionDigits:0}); }
+/* Stored UTC, shown EAT (+3h) -- the bell's timestamps come raw from the server. */
+function eatDt_(v){
+  var t = Date.parse(v);
+  if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
+  return String(v).replace('T',' ').slice(0,16);
+}
 /* Team names are typed by hand in several places, so 'Kariakoo' and ' KARIAKOO ' are the same
    team. Compare the tidied-up form, the way the server does, or the dropdown loses its tick. */
 function K_(s){ return String(s==null?'':s).trim().toUpperCase(); }
@@ -1504,7 +1510,7 @@ function bellDraw(){
               + esc(x.who || x.ref || '') + '</div>'
             + '<div class="nwhat">' + esc(x.what) + '</div>'
             + '<div class="nmeta">' + esc(x.by || '') + (x.team ? ' \u00B7 ' + esc(x.team) : '')
-              + ' \u00B7 ' + esc(String(x.at).slice(0, 16).replace('T', ' ')) + '</div></div>'; }).join(''))
+              + ' \u00B7 ' + esc(eatDt_(x.at)) + '</div></div>'; }).join(''))
     + (d && d.unseen ? '<button class="btn btn-pri" id="notifSeen" style="width:100%;margin-top:12px">'
         + 'Nimesoma zote / Mark all read</button>' : '');
   var b = $('#notifSeen');
