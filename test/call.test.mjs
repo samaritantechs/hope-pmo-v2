@@ -1700,3 +1700,27 @@ test('CAREEN is in recovery -- her whole book stays, whatever the sheets call he
   assert.ok(d.rows.some(r => r.ref === 'F1'), 'the 2-12 defaulter is exactly her work');
   assert.equal(d.narrowed, null, 'nothing was narrowed for a recovery role');
 });
+
+/* =====================================================================================
+   A DEFAULTER WHO HAS PAID SAYS SO.
+   =====================================================================================
+   "some customers in defaulters have 0 or negative balance and officers rapidly call them
+    without seeing they have no status at all"
+*/
+test('zero or negative arrears wears a PAID chip on the defaulter book', async () => {
+  const t = makeTables();
+  t.followup_status.push(
+    { ref: 'Z1', team: 'KONGOWE', full_name: 'CLEARED', contact: '0712000801', arrears: 0,
+      rejesho: 100, status: '' },
+    { ref: 'Z2', team: 'KONGOWE', full_name: 'OVERPAID', contact: '0712000802', arrears: -500,
+      rejesho: 100, status: 'Defaulter' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.equal(d.rows.find(r => r.ref === 'Z1').custStatus, 'PAID');
+  assert.equal(d.rows.find(r => r.ref === 'Z2').custStatus, 'PAID', 'overpaid is paid, not more work');
+  // A real debt keeps its real status; unknown arrears never reads as paid.
+  assert.equal(d.rows.find(r => r.ref === '555').custStatus, 'Defaulter');
+});

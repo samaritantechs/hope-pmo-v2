@@ -6027,3 +6027,12 @@ test('a row from before the stamp existed still counts, by its created day', asy
   const thu = d.appsTrend.find(x => x.date === YEST);
   assert.equal(thu.unassigned, 1, 'nothing already there is lost');
 });
+
+test('the portal follow-up list wears PAID on a cleared balance too', async () => {
+  const book = tables();
+  book.followup_status.push({ ref: 'Z1', team: 'KONGOWE', full_name: 'CLEARED',
+    contact: '0714000801', arrears: 0, rejesho: 100, status: '' });
+  const d = await portalApi(dbWithRpc(book), ADMIN, 'followup', {}, NOW);
+  assert.equal(d.rows.find(r => r.ref === 'Z1').status, 'PAID');
+  assert.equal(d.rows.find(r => r.ref === '555').status, 'Defaulter', 'a real debt is untouched');
+});

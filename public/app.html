@@ -799,7 +799,15 @@ function cellText(r, c){
   if (c.kind==='pct') return pct(v);
   if (c.kind==='dur') return fmtDur(v);
   if (c.kind==='date') return String(v).slice(0,10);
-  if (c.kind==='dt') return String(v).replace('T',' ').slice(0,16);
+  if (c.kind==='dt'){
+    /* Stored UTC, read in East Africa: the raw ISO string showed every comment three hours
+       early ("The time of comments in app is not reading EAT, +3hrs please"). Timestamps
+       arrive from PostgREST with an offset, so parse and shift; anything unparseable is
+       shown as written rather than blanked. */
+    var t = Date.parse(v);
+    if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
+    return String(v).replace('T',' ').slice(0,16);
+  }
   return String(v);
 }
 function cellHtml(r, c){

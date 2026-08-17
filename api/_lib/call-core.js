@@ -780,9 +780,15 @@ async function list(db, [dev, which, which2], nowMs) {
     });
     // Skip pure FK stubs (created so an EXPECTED customer's comment can reference
     // followup_status) -- a real defaulter row always carries status/arrears from its upload.
+    /* A DEFAULTER WHO HAS PAID SAYS SO. Some rows arrive with zero or negative arrears and
+       NO status at all -- and officers were ringing them at speed with nothing on the row to
+       say the debt is gone ("officers rapidly call them without seeing they have no status
+       at all"). The Expected lists already wear PAID; the defaulter book now does too, and
+       only where the balance itself proves it: a null arrears is unknown, never "paid". */
+    const paidChip = r => (r.arrears != null && num(r.arrears) <= 0) ? 'PAID' : (r.status || '');
     rows = fu.filter(r => teamAllowed(user, r.team) && !(r.status == null && r.arrears == null)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
-      amt: num(r.arrears), installment: num(r.rejesho), custStatus: r.status || '', fuStatus: r.fu_status || '',
+      amt: num(r.arrears), installment: num(r.rejesho), custStatus: paidChip(r), fuStatus: r.fu_status || '',
       ds: dsFmt(r.ds), days: r.days_elapsed == null ? '' : r.days_elapsed, team: r.team,
       called: hit(r.contact, r.guarantor_contact),
     }));
@@ -888,7 +894,9 @@ async function list(db, [dev, which, which2], nowMs) {
         ref: r.ref, name: r.full_name, contact: r.contact,
         gName: r.guarantor_name, gContact: r.guarantor_contact,
         amt: num(r.arrears), installment: num(r.rejesho),
-        custStatus: r.status || 'Defaulter', fuStatus: r.fu_status || '',
+        // The same paid-says-so rule as the Def tab: a cleared balance must not read as work.
+        custStatus: (r.arrears != null && num(r.arrears) <= 0) ? 'PAID' : (r.status || 'Defaulter'),
+        fuStatus: r.fu_status || '',
         ds: dsFmt(r.ds), days: r.days_elapsed == null ? '' : r.days_elapsed, team: r.team,
         called: hit(r.contact, r.guarantor_contact), sc: true,
       })).sort((a, b) => b.amt - a.amt);
