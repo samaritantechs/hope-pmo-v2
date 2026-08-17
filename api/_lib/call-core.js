@@ -1259,7 +1259,7 @@ async function comments(db, [dev, ref]) {
      allowed to fail quietly so the history never stops loading over its side-dish. */
   const [{ data, error }, compRes] = await Promise.all([
     db.from('followup_comments')
-      .select('comment, fu_status, created_by, created_at')
+      .select('comment, fu_status, created_by, created_at, new_number, promise_date, promise_amt')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT),
     runQuery(() => db.from('complaints')
       .select('complainant, category, details, status, created_at')
@@ -1269,6 +1269,13 @@ async function comments(db, [dev, ref]) {
   const items = (data || []).map(c => ({
     by: c.created_by || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
     fu: c.fu_status || '', comment: c.comment || '',
+    /* The number an "Ana namba nyingine" recorded. It was written into the log and never
+       shown anywhere on the phone -- the one fact that changes which number to dial next. */
+    newNo: String(c.new_number == null ? '' : c.new_number).trim(),
+    /* And the promise itself: an AHADI comment showed only the day it was WRITTEN, not the
+       day the customer promised FOR -- the date the whole status exists to record. */
+    promiseDate: c.promise_date ? String(c.promise_date).slice(0, 10) : '',
+    promiseAmt: c.promise_amt == null ? null : num(c.promise_amt),
   }));
   const complaints = ((compRes && !compRes.error && compRes.data) ? compRes.data : []).map(c => ({
     who: c.complainant || '', what: String(c.details || c.category || '').slice(0, 200),

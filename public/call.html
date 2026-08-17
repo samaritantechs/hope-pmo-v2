@@ -1674,9 +1674,37 @@ function sheetSkeleton(r){
 }
 function historyHtml(items){
   if (!items.length) return '<div class="hint" style="color:var(--soft);font-size:12.5px">Hakuna historia bado.</div>';
-  return items.map(function(c){
+  /* "Ana namba nyingine comments should show the other number - dialable on customer panel."
+     Each comment that recorded one shows it as a call button, and the NEWEST replacement is
+     pinned above the history -- that is the number to try when the main one goes unanswered. */
+  var newest = null;
+  for (var i = 0; i < items.length; i++){ if (items[i].newNo){ newest = items[i]; break; } }
+  var pin = '';
+  if (newest){
+    var ph = telHref(newest.newNo);
+    pin = '<div class="hist-item" style="border-left:3px solid var(--ok);padding-left:8px">'
+      + '<div class="h-top"><span>\uD83D\uDCF1 Namba nyingine / Other number</span><span>' + esc(newest.at||'') + '</span></div>'
+      + (ph !== '#'
+          ? '<a class="btn btn-pri" style="margin-top:4px" href="tel:' + ph + '" data-ref="' + esc(S.curRef||'') + '">\uD83D\uDCDE ' + esc(newest.newNo) + '</a>'
+          : esc(newest.newNo))
+      + '</div>';
+  }
+  return pin + items.map(function(c){
+    var nn = '';
+    if (c.newNo){
+      var h = telHref(c.newNo);
+      nn = h !== '#'
+        ? ' <a class="callbtn" style="display:inline" href="tel:' + h + '" data-ref="' + esc(S.curRef||'') + '">\uD83D\uDCDE ' + esc(c.newNo) + '</a>'
+        : ' \u00B7 ' + esc(c.newNo);
+    }
+    /* The promise FOR when, not just written when -- "the promises show entry date without
+       promise date in pannel". Bold, because it is the date the officer will act on. */
+    var pr = c.promiseDate
+      ? '<div style="font-size:12px;margin-top:2px"><b>Ahadi / Promised: ' + esc(c.promiseDate) + '</b>'
+        + (c.promiseAmt ? ' \u00B7 TZS ' + money(c.promiseAmt) : '') + '</div>'
+      : '';
     return '<div class="hist-item"><div class="h-top"><span>' + esc(c.by||'') + '</span><span>' + esc(c.at||'') + '</span></div>'
-      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + '</div>';
+      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + nn + pr + '</div>';
   }).join('');
 }
 /** Updates fuStatus on the matching row wherever it's cached (a customer can appear in more than
