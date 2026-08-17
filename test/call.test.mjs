@@ -1724,3 +1724,23 @@ test('zero or negative arrears wears a PAID chip on the defaulter book', async (
   // A real debt keeps its real status; unknown arrears never reads as paid.
   assert.equal(d.rows.find(r => r.ref === '555').custStatus, 'Defaulter');
 });
+
+/* =====================================================================================
+   THE "ANA NAMBA NYINGINE" NUMBER IS ON THE CUSTOMER PANEL.
+   =====================================================================================
+   "Ana namba nyingine comments should show the other number - dialable on customer panel"
+
+   The number was written into the comment log and never shown anywhere on the phone -- the
+   one fact that changes which number to dial next.
+*/
+test('the history items carry the recorded replacement number', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callAddComment',
+    ['d1', { ref: '555', fu: 'ANA NAMBA NYINGINE', comment: 'namba mpya', newNo: '0788123456' }], NOW);
+  const d = await callApi(db, 'api_callComments', ['d1', '555'], NOW);
+  const withNo = d.items.find(i => i.newNo);
+  assert.ok(withNo, 'the comment that recorded a number says so');
+  assert.equal(withNo.newNo, '788123456', 'normalised like every phone in the system');
+  // Comments without one stay clean -- no empty field noise.
+  assert.ok(d.items.every(i => typeof i.newNo === 'string'));
+});
