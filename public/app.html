@@ -715,6 +715,12 @@ function srv2(fn, args){
 }
 
 /* THE BELL. How a supervisor learns a complaint was logged without opening the tab. */
+/* Stored UTC, shown EAT -- one helper so the bell and the tables cannot disagree. */
+function eatDt_(v){
+  var t = Date.parse(v);
+  if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
+  return String(v).replace('T',' ').slice(0,16);
+}
 function bellRefresh(){
   return srv('notifications').then(function(d){
     S.notif = d;
@@ -733,7 +739,8 @@ function bellOpen(){
           + esc(i.who || i.ref || '')
           + '<div>' + esc(i.what) + '</div>'
           + '<div class="m">' + esc(i.team || '') + ' · ' + esc(i.by || '')
-            + ' · ' + esc(String(i.at).replace('T', ' ').slice(0, 16)) + '</div></div>';
+            /* Same rule as every When column: stored UTC, read in East Africa. */
+            + ' · ' + esc(eatDt_(i.at)) + '</div></div>';
       }).join('') : '<div class="hint">Hakuna kipya. / Nothing new.</div>') + '</div>'
     + (d.unseen ? '<button class="btn w" id="notifSeen" style="margin-top:10px">'
         + 'Nimesoma zote / Mark all read</button>' : ''));
