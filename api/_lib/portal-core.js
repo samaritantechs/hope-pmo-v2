@@ -784,6 +784,10 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
     const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
     return {
       ...r,
+      /* A defaulter who has paid says so, here as on the phone: zero or negative arrears
+         with no status left officers ringing people whose debt is gone. Only the balance
+         itself proves it -- a null arrears is unknown, never "paid". */
+      status: (r.arrears != null && arrears <= 0) ? 'PAID' : r.status,
       new_no: (newNo[String(r.ref)] || {}).n || null,
       initial,
       recovered: Math.max(0, initial - arrears),
