@@ -1697,8 +1697,14 @@ function historyHtml(items){
         ? ' <a class="callbtn" style="display:inline" href="tel:' + h + '" data-ref="' + esc(S.curRef||'') + '">\uD83D\uDCDE ' + esc(c.newNo) + '</a>'
         : ' \u00B7 ' + esc(c.newNo);
     }
+    /* The promise FOR when, not just written when -- "the promises show entry date without
+       promise date in pannel". Bold, because it is the date the officer will act on. */
+    var pr = c.promiseDate
+      ? '<div style="font-size:12px;margin-top:2px"><b>Ahadi / Promised: ' + esc(c.promiseDate) + '</b>'
+        + (c.promiseAmt ? ' \u00B7 TZS ' + money(c.promiseAmt) : '') + '</div>'
+      : '';
     return '<div class="hist-item"><div class="h-top"><span>' + esc(c.by||'') + '</span><span>' + esc(c.at||'') + '</span></div>'
-      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + nn + '</div>';
+      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + nn + pr + '</div>';
   }).join('');
 }
 /** Updates fuStatus on the matching row wherever it's cached (a customer can appear in more than
