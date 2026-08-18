@@ -378,6 +378,12 @@ function $(s,r){ return (r||document).querySelector(s); }
 function $all(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); }
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return n.toLocaleString('en-US', {maximumFractionDigits:0}); }
+/* Stored UTC, shown EAT (+3h) -- the bell's timestamps come raw from the server. */
+function eatDt_(v){
+  var t = Date.parse(v);
+  if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
+  return String(v).replace('T',' ').slice(0,16);
+}
 /* Team names are typed by hand in several places, so 'Kariakoo' and ' KARIAKOO ' are the same
    team. Compare the tidied-up form, the way the server does, or the dropdown loses its tick. */
 function K_(s){ return String(s==null?'':s).trim().toUpperCase(); }
@@ -1317,11 +1323,23 @@ function drawExpdfStrip_(){
     see rather than a discrepancy they have to explain. */
 function narrowNote_(){
   var src = LIST_SOURCE[S.view], n = S.narrowed && S.narrowed[src];
-  if (!n || !n.of) return '';
-  var label = n.role === 'CREDIT' ? 'hawajavuka awamu ya 5 / not past the 5th instalment'
-    : 'wako nyuma kidogo tu / only slightly behind';
-  return '<div class="hint" style="color:var(--mut);font-size:11.5px;margin-bottom:8px">'
-    + 'Orodha yako imechujwa: ' + n.shown + ' kati ya ' + n.of + ' \u00B7 ' + esc(label) + '</div>';
+  var sc = (S.singles && S.singles[src]) || 0;
+  var out = '';
+  if (n && n.of) {
+    var label = n.role === 'CREDIT' ? 'hawajavuka awamu ya 5 / not past the 5th instalment'
+      : 'wako nyuma kidogo tu / only slightly behind';
+    out += '<div class="hint" style="color:var(--mut);font-size:11.5px;margin-bottom:8px">'
+      + 'Orodha yako imechujwa: ' + n.shown + ' kati ya ' + n.of + ' \u00B7 ' + esc(label) + '</div>';
+  }
+  /* The near-wins appended at the bottom: defaulters one count from done. The whole reason
+     they are here is to be FINISHED -- a customer pushed from 3-7 to 6-7 shows nothing, the
+     last push shows everything -- so the note sells them as exactly that. */
+  if (sc && (S.view === 'today' || S.view === 'tomorrow')) {
+    out += '<div class="hint" style="color:var(--mut);font-size:11.5px;margin-bottom:8px">'
+      + '+ ' + sc + ' wadaiwa hatua MOJA kumaliza wameongezwa mwisho wa orodha \u2014 wamalize, ndipo ukusanyaji wako unapanda.'
+      + ' / ' + sc + ' defaulter(s) ONE count from done are added at the end \u2014 finishing them is what lifts your collection.</div>';
+  }
+  return out;
 }
 
 /** Says so, loudly, when the list on screen is not the day it claims to be. */
@@ -1402,6 +1420,8 @@ function fetchSource_(src, showSpinner){
     S.asOf[src] = { date: d.asOf || null, stale: !!d.stale };
     S.narrowed = S.narrowed || {};
     S.narrowed[src] = d.narrowed || null;
+    S.singles = S.singles || {};
+    S.singles[src] = d.singles || 0;
     if (src === 'expdf') S.expdf = d.expdf || null;
     S.cacheAt[src] = Date.now();
     saveCacheToDevice_();
@@ -1491,7 +1511,7 @@ function bellDraw(){
               + esc(x.who || x.ref || '') + '</div>'
             + '<div class="nwhat">' + esc(x.what) + '</div>'
             + '<div class="nmeta">' + esc(x.by || '') + (x.team ? ' \u00B7 ' + esc(x.team) : '')
-              + ' \u00B7 ' + esc(String(x.at).slice(0, 16).replace('T', ' ')) + '</div></div>'; }).join(''))
+              + ' \u00B7 ' + esc(eatDt_(x.at)) + '</div></div>'; }).join(''))
     + (d && d.unseen ? '<button class="btn btn-pri" id="notifSeen" style="width:100%;margin-top:12px">'
         + 'Nimesoma zote / Mark all read</button>' : '');
   var b = $('#notifSeen');
@@ -1700,9 +1720,37 @@ function sheetSkeleton(r){
 }
 function historyHtml(items){
   if (!items.length) return '<div class="hint" style="color:var(--soft);font-size:12.5px">Hakuna historia bado.</div>';
-  return items.map(function(c){
+  /* "Ana namba nyingine comments should show the other number - dialable on customer panel."
+     Each comment that recorded one shows it as a call button, and the NEWEST replacement is
+     pinned above the history -- that is the number to try when the main one goes unanswered. */
+  var newest = null;
+  for (var i = 0; i < items.length; i++){ if (items[i].newNo){ newest = items[i]; break; } }
+  var pin = '';
+  if (newest){
+    var ph = telHref(newest.newNo);
+    pin = '<div class="hist-item" style="border-left:3px solid var(--ok);padding-left:8px">'
+      + '<div class="h-top"><span>\uD83D\uDCF1 Namba nyingine / Other number</span><span>' + esc(newest.at||'') + '</span></div>'
+      + (ph !== '#'
+          ? '<a class="btn btn-pri" style="margin-top:4px" href="tel:' + ph + '" data-ref="' + esc(S.curRef||'') + '">\uD83D\uDCDE ' + esc(newest.newNo) + '</a>'
+          : esc(newest.newNo))
+      + '</div>';
+  }
+  return pin + items.map(function(c){
+    var nn = '';
+    if (c.newNo){
+      var h = telHref(c.newNo);
+      nn = h !== '#'
+        ? ' <a class="callbtn" style="display:inline" href="tel:' + h + '" data-ref="' + esc(S.curRef||'') + '">\uD83D\uDCDE ' + esc(c.newNo) + '</a>'
+        : ' \u00B7 ' + esc(c.newNo);
+    }
+    /* The promise FOR when, not just written when -- "the promises show entry date without
+       promise date in pannel". Bold, because it is the date the officer will act on. */
+    var pr = c.promiseDate
+      ? '<div style="font-size:12px;margin-top:2px"><b>Ahadi / Promised: ' + esc(c.promiseDate) + '</b>'
+        + (c.promiseAmt ? ' \u00B7 TZS ' + money(c.promiseAmt) : '') + '</div>'
+      : '';
     return '<div class="hist-item"><div class="h-top"><span>' + esc(c.by||'') + '</span><span>' + esc(c.at||'') + '</span></div>'
-      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + '</div>';
+      + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + nn + pr + '</div>';
   }).join('');
 }
 /** Updates fuStatus on the matching row wherever it's cached (a customer can appear in more than

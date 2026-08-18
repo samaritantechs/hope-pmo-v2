@@ -25,6 +25,7 @@
   .msg{margin-top:14px;padding:12px 14px;border-radius:8px;font-size:13.5px;white-space:pre-wrap}
   .msg.ok{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:var(--ok)}
   .msg.bad{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--bad)}
+  .msg.warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35);color:#b45309}
   .hint{color:var(--mut);font-size:12px;margin-top:-8px;margin-bottom:14px}
   .file-drop{border:1.5px dashed var(--line);border-radius:8px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;font-size:13.5px;color:var(--mut)}
   .file-drop.has{border-color:var(--ok);color:var(--ok)}
@@ -85,8 +86,8 @@
            mornings the full export was missed. The customer lists already uploaded are left
            exactly where they are; the later of the two is simply what the reports read. -->
       <optgroup label="Muhtasari / Summary (no customer list)">
-        <option value="expected-summary">Expected — Summary (Data sheet: TEAMS, EXPECTED, PAID, ILIYONASIA, EXP TOMMR, UNCOLLECTED)</option>
-        <option value="defaulters-summary">Defaulters — Summary (Data sheet: team_id, team_name, amount_defaulted)</option>
+        <option value="expected-summary">Expected — Summary (Expected_Summary file, or the workbook tab)</option>
+        <option value="defaulters-summary">Defaulters — Summary (one summed file, or the 3 segment files together)</option>
       </optgroup>
       <optgroup label="Loan pipeline">
         <option value="loans">Loan pipeline (pick stage below)</option>
@@ -131,6 +132,7 @@
     <div id="dateWrap" class="hide">
       <label>Snapshot date</label>
       <input type="date" id="snapDate">
+      <div class="hint" id="snapDateWd" style="margin-top:4px"></div>
       <div class="hint">The date this file's numbers are as-of — usually today.
         <br><b>Kesho / tomorrow:</b> there is no separate "tomorrow" report. If you have the sheet
         for tomorrow, upload it as <b>Expected — Today</b> with <b>tomorrow's date</b> here, and the
@@ -146,10 +148,11 @@
         <option value="today">Today</option>
         <option value="initial">Initial</option>
       </select>
-      <div class="hint">Karatasi ya <b>Data</b>, safu wima: TEAMS, EXPECTED, PAID, ILIYONASIA, EXP TOMMR, UNCOLLECTED.
-        <br>Collected = PAID + ILIYONASIA + EXP TOMMR. Asilimia inahesabiwa upya kutoka kwa hizo mbili.
-        <br><i>Sheet named <b>Data</b>, headers on row 1. The % column is recomputed from the two amounts
-        rather than stored, so it can never disagree with its own parts.</i></div>
+      <div class="hint"><b>Faili la Expected_Summary</b>: Team, Expected, Collected, Outstanding, Date.
+        Tarehe ya faili inajaza kisanduku tu &mdash; TAREHE UNAYOCHAGUA ndiyo inayohifadhiwa.
+        <br><i>The Expected_Summary export uploads as it comes. Its Date column only pre-fills the box
+        &mdash; THE DATE YOU CHOOSE is what is stored, same rule as everywhere else. The old workbook tab
+        (TEAMS, EXPECTED, PAID, ILIYONASIA, EXP TOMMR) works exactly as before.</i></div>
     </div>
 
     <!-- INITIAL OR CURRENT, and the weekday above. Recovery is initial minus current PAIRED ON
@@ -158,13 +161,21 @@
     <div id="defTypeWrap" class="hide">
       <label>Initial or Current?</label>
       <select id="defType">
-        <option value="initial">Initial</option>
-        <option value="current">Current</option>
+        <!-- Current first: the end-of-day FINAL report is the one this door mostly closes a
+             missed day with, and the default is what a hurried hand gets. -->
+        <option value="current">Current (ripoti ya mwisho wa siku / end-of-day final)</option>
+        <option value="initial">Initial (ya asubuhi / the morning book)</option>
       </select>
-      <div class="hint">Karatasi ya <b>Data</b>: team_id, team_name, amount_defaulted.
-        <br>Mfano: initial 108,781,206 kisha current 108,771,206 &rarr; marejesho 10,000.
-        <br><i>Upload the Initial summary and the Current summary for the same date and weekday;
-        recovered is the difference, exactly as it is for the customer lists.</i></div>
+      <div class="hint"><b>Njia bora / best practice:</b> faili MOJA la jumla (defaulterSummary yenye
+        Options: all) &mdash; pakia hilo tu. AU chagua faili ZOTE 3 (default + expired + chronic) kwa
+        pamoja kwenye kisanduku cha faili: kila faili linajitambulisha lenyewe, hakuna cha kuchagua,
+        na zinajumlishwa kuwa ripoti moja. Tarehe ya faili inajaza kisanduku tu &mdash; unayochagua ndiyo inayohifadhiwa.
+        <br><i>One summed file (Options: all) is the best practice &mdash; upload just that. Or highlight
+        all 3 segment files together: each names its own segment inside, nothing to pick, and they are
+        summed into one report. Date and weekday are read from the files. Never upload the segments one
+        at a time &mdash; each upload replaces the previous batch for that date.
+        <br>Recovery pairs Initial against Current of the same date and weekday: initial 108,781,206 then
+        current 108,771,206 &rarr; recovered 10,000.</i></div>
     </div>
 
     <div id="stageWrap" class="hide">
@@ -192,6 +203,12 @@
       <div id="stampDateWrap">
         <label>Tarehe ya ripoti / Report date <span style="font-weight:400">(the upload stamp, not the dates inside the file)</span></label>
         <input type="date" id="uploadDate">
+        <!-- THE WEEKDAY, SAID OUT LOUD. "14/08" and "15/08" look alike at one in the morning;
+             "Ijumaa" and "Jumamosi" do not. The night this exists for: unassigned apps uploaded
+             during the small hours of Saturday, meant as Friday's report -- the box had quietly
+             rolled to the new day and every confirmation named the wrong date without the
+             wrongness being visible. -->
+        <div class="hint" id="uploadDateWd" style="margin-top:4px"></div>
       </div>
       <label id="modeLabel">Ikiwa tarehe hii tayari ina ripoti / If this date already has a report</label>
       <div class="row" style="margin-bottom:14px">
@@ -373,7 +390,13 @@ var TYPE_BEHAVIOUR = {
 };
 function syncFields(){
   var show = TYPE_META[$('type').value] || [];
-  ['weekdayWrap', 'dateWrap', 'stageWrap'].forEach(function(id){
+  /* The defaulter summary comes as THREE exports (default, expired, chronic) and the day's
+     book is their sum -- so this one type accepts all three files highlighted together. */
+  $('file').multiple = ($('type').value === 'defaulters-summary');
+  /* expTypeWrap and defTypeWrap were MISSING from this list, so the Today/Initial and
+     Initial/Current selectors could never appear -- and their hidden defaults were silently
+     sent with every summary upload. "i cant see choosing initial or current" was exact. */
+  ['weekdayWrap', 'dateWrap', 'stageWrap', 'expTypeWrap', 'defTypeWrap'].forEach(function(id){
     $(id).classList.toggle('hide', show.indexOf(id) < 0);
   });
   // A picture is not a workbook: take images, drop any sheet picker, and say so on the button.
@@ -383,7 +406,8 @@ function syncFields(){
   $('logoPrev').classList.toggle('hide', !logo);
   var stamp = isStamped_();
   $('stampWrap').classList.toggle('hide', !stamp);
-  if (stamp && !$('uploadDate').value) $('uploadDate').valueAsDate = new Date();
+  if (stamp && !$('uploadDate').value) $('uploadDate').value = eatToday_();
+  paintWd_();
   // The two reports with their own dates do not ask for one: the file already answered.
   var dl = dataDateLabel_();
   $('stampDateWrap').classList.toggle('hide', !!dl);
@@ -488,10 +512,41 @@ $('modeReplace').onclick = function(){ setMode_('replace'); };
 // sheet that tile promised rather than making an admin hunt for it in the dropdown.
 if (/[?&]admin=1\b/.test(window.location.search)) $('type').value = 'access-codes';
 syncFields();
-$('snapDate').valueAsDate = new Date();
+$('snapDate').value = eatToday_();
+paintWd_();
 
 function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g, function(c){
   return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
+
+/* Today on the EAT clock -- the same answer the server would stamp if the box were left
+   empty. valueAsDate used the UTC day, which disagrees with the server between midnight and
+   3am EAT; the box and the stamp must never name two different days. */
+function eatToday_(){ return new Date(Date.now() + 3*3600*1000).toISOString().slice(0, 10); }
+
+/* The chosen date's weekday, under both date boxes -- and a warning for the person still
+   doing yesterday's work after midnight, because to them it is not tomorrow yet. */
+function paintWd_(){
+  // Local, not module-level: paintWd_ is hoisted and runs during page init, before any
+  // top-level var assignment further down the file would have executed.
+  var WD_SW_ = ['Jumapili / Sunday','Jumatatu / Monday','Jumanne / Tuesday','Jumatano / Wednesday',
+    'Alhamisi / Thursday','Ijumaa / Friday','Jumamosi / Saturday'];
+  var eatNow = new Date(Date.now() + 3*3600*1000);
+  var night = eatNow.getUTCHours() < 6;   // midnight to 6am EAT: "today" is doubtful
+  [['uploadDate','uploadDateWd'], ['snapDate','snapDateWd']].forEach(function(pair){
+    var inp = $(pair[0]), out = $(pair[1]);
+    if (!inp || !out) return;
+    var v = inp.value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)){ out.textContent = ''; return; }
+    var wd = WD_SW_[new Date(v + 'T00:00:00Z').getUTCDay()];
+    var isToday = v === eatToday_();
+    out.innerHTML = '<b>' + wd + '</b> \u00b7 ' + v.slice(8,10) + '/' + v.slice(5,7)
+      + (night && isToday
+          ? ' \u2014 <span style="color:#b45309;font-weight:600">Ni usiku \u2014 kama hii ni ripoti ya jana, chagua tarehe ya JANA. / Past midnight \u2014 if this is yesterday\u2019s report, set YESTERDAY\u2019s date.</span>'
+          : '');
+  });
+}
+$('uploadDate').addEventListener('change', paintWd_);
+$('snapDate').addEventListener('change', paintWd_);
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
    A function that runs out of time or memory is answered by the HOST with an HTML page, so
    reading the answer as JSON throws  Unexpected token 'A', "An error o"...  -- which looks
@@ -576,8 +631,77 @@ function shrinkImage_(file, n){
     rd.readAsDataURL(file);
   });
 }
+/* THE THREE-SEGMENT SUMMARY, HIGHLIGHTED TOGETHER.
+   Each file names its own segment (Filters -> Options: default/expired/chronic) and its own
+   report date (Filters -> End Date), so nothing is retyped and nothing can be mislabelled.
+   They are combined into ONE upload because the batch rule keeps only the latest batch per
+   date -- three separate uploads would each replace the one before, and the day would end up
+   counting a single segment while looking complete. */
+var wbMulti = null;   // [{name, wb, dataSheet, seg, endDate}] when several files were chosen
+function filtersOf_(wb){
+  var out = { seg: '', endDate: '' };
+  if (wb.SheetNames.indexOf('Filters') < 0) return out;
+  var aoa = XLSX.utils.sheet_to_json(wb.Sheets['Filters'], { header: 1, raw: true, defval: '' });
+  aoa.forEach(function(r){
+    var k = String(r[0] || '').trim().toLowerCase(), v = String(r[1] || '').trim();
+    if (k === 'options') out.seg = v.toLowerCase();
+    if (k === 'end date' && /^\d{4}-\d{2}-\d{2}$/.test(v)) out.endDate = v;
+  });
+  return out;
+}
+function dataSheetOf_(wb){ return wb.SheetNames.indexOf('Data') >= 0 ? 'Data' : pickDataSheet_(wb); }
+function setSnapFromFile_(d){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d || ''))) return;
+  $('snapDate').value = d;
+  // The recovery pairing keys on the weekday of the report's own day.
+  var wd = ['SUN','MON','TUE','WED','THU','FRI','SAT'][new Date(d + 'T00:00:00Z').getUTCDay()];
+  if ($('weekday')) $('weekday').value = wd;
+  paintWd_();
+}
+function handleSummaryFiles_(files){
+  wbMulti = null; wbCache = null;
+  $('sheetWrap').classList.add('hide');
+  $('drop').firstChild.nodeValue = 'Reading ' + files.length + ' files\u2026';
+  Promise.all(files.map(function(f){ return readWorkbook(f).then(function(wb){ return { name: f.name, wb: wb }; }); }))
+    .then(function(list){
+      list.forEach(function(x){
+        var flt = filtersOf_(x.wb);
+        x.seg = flt.seg; x.endDate = flt.endDate; x.dataSheet = dataSheetOf_(x.wb);
+      });
+      wbMulti = list;
+      var segs = list.map(function(x){ return x.seg || '?'; });
+      var missing = ['default', 'expired', 'chronic'].filter(function(w){ return segs.indexOf(w) < 0; });
+      var dates = list.map(function(x){ return x.endDate; }).filter(Boolean);
+      var oneDate = dates.length && dates.every(function(d){ return d === dates[0]; }) ? dates[0] : '';
+      if (oneDate) setSnapFromFile_(oneDate);
+      $('drop').firstChild.nodeValue = list.length + ' files: ' + segs.join(' + ')
+        + (oneDate ? ' \u00b7 ' + oneDate : '');
+      /* Fewer than the three segments is allowed but SAID -- the day's total will be only
+         what was uploaded, and the person pressing the button decides with open eyes. */
+      var m = $('msg');
+      m.className = missing.length || !oneDate ? 'msg warn' : 'msg ok';
+      m.textContent = (missing.length
+          ? '\u26a0 Sehemu hazijakamilika / segments missing: ' + missing.join(', ')
+            + '. Jumla ya siku itakuwa ya sehemu zilizopo tu. / The day\u2019s total will cover only what is here.'
+          : '\u2713 Sehemu zote tatu zipo (default + expired + chronic) \u2014 zitajumlishwa kuwa ripoti moja. / All three segments present \u2014 they will be summed into one report.')
+        + (dates.length && !oneDate ? ' \u26a0 Faili zina tarehe tofauti / the files carry DIFFERENT dates \u2014 angalia. ' : '')
+        + (oneDate ? ' Tarehe imesomwa kutoka faili: ' + oneDate + '. / Date read from the files.' : '');
+    })
+    .catch(function(err){
+      wbMulti = null; chosenFile = null;
+      $('drop').classList.remove('has');
+      $('drop').firstChild.nodeValue = 'Could not read those files \u2014 ' + err;
+    });
+}
 $('file').addEventListener('change', function(e){
-  chosenFile = e.target.files[0] || null;
+  var all = Array.prototype.slice.call(e.target.files || []);
+  wbMulti = null;
+  chosenFile = all[0] || null;
+  if (all.length > 1 && $('type').value === 'defaulters-summary'){
+    $('drop').classList.add('has');
+    handleSummaryFiles_(all);
+    return;
+  }
   wbCache = null;
   $('sheetWrap').classList.add('hide');
   $('drop').classList.toggle('has', !!chosenFile);
@@ -607,6 +731,24 @@ $('file').addEventListener('change', function(e){
     if (f !== chosenFile) return;                    // another file was picked while this one parsed
     wbCache = wb;
     $('drop').firstChild.nodeValue = f.name;
+    /* The summary exports carry their own report date -- the Expected_Summary as a DATE
+       column, the defaulter segments in their Filters sheet. Read it into the box so
+       "yesterday's final report" can never be filed under the wrong day by a tired hand. */
+    if ($('type').value === 'expected-summary' || $('type').value === 'defaulters-summary'){
+      var own = filtersOf_(wb).endDate;
+      if (!own){
+        try {
+          var aoa0 = XLSX.utils.sheet_to_json(wb.Sheets[dataSheetOf_(wb)], { header: 1, raw: false, defval: '' });
+          var di = (aoa0[0] || []).findIndex(function(hh){ return String(hh).trim().toUpperCase() === 'DATE'; });
+          if (di >= 0 && aoa0[1]) own = String(aoa0[1][di] || '').slice(0, 10);
+        } catch (e) {}
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(own || '')){
+        setSnapFromFile_(own);
+        var m0 = $('msg'); m0.className = 'msg ok';
+        m0.textContent = '\u2713 Tarehe imesomwa kutoka faili: ' + own + '. / Date read from the file itself.';
+      }
+    }
     // A whole portfolio workbook has dozens of sheets and MANY of them contain a REF#
     // column, so auto-detection alone would happily upload the wrong one (e.g. Call Logs
     // as Defaulters). With more than one sheet the user always sees and confirms the pick.
@@ -798,12 +940,33 @@ $('go').addEventListener('click', function(){
 
   $('go').disabled = true; $('go').textContent = 'Reading file\u2026';
   var lastDiag = null;
-  (wbCache ? Promise.resolve(wbCache) : readWorkbook(chosenFile)).then(function(wb){
-    var sn = (!$('sheetWrap').classList.contains('hide') && $('sheet').value) ? $('sheet').value : pickDataSheet_(wb);
-    var parsed = sheetToRows(wb, sn);
-    lastDiag = parsed.diag;
+  var rowsP;
+  if (wbMulti && wbMulti.length){
+    /* The highlighted segment files, concatenated under the FIRST file's header row. Same
+       export, same three columns -- but said out loud if one ever is not, because a column
+       order mismatch summed silently would be money under the wrong heading. */
+    rowsP = Promise.resolve().then(function(){
+      var all = null, head = null;
+      wbMulti.forEach(function(x){
+        var parsed = sheetToRows(x.wb, x.dataSheet);
+        var hh = (parsed.rows[0] || []).map(function(c){ return String(c).trim().toLowerCase(); }).join('|');
+        if (!all){ all = parsed.rows.slice(); head = hh; return; }
+        if (hh !== head) throw new Error(x.name + ' has different columns from the first file \u2014 wrong file?');
+        all = all.concat(parsed.rows.slice(1));
+      });
+      return all;
+    });
+  } else {
+    rowsP = (wbCache ? Promise.resolve(wbCache) : readWorkbook(chosenFile)).then(function(wb){
+      var sn = (!$('sheetWrap').classList.contains('hide') && $('sheet').value) ? $('sheet').value : pickDataSheet_(wb);
+      var parsed = sheetToRows(wb, sn);
+      lastDiag = parsed.diag;
+      return parsed.rows;
+    });
+  }
+  rowsP.then(function(rows){
     $('go').textContent = 'Uploading\u2026';
-    return sendInSlices_(apiBase, code, type, meta, parsed.rows, function(done, total){
+    return sendInSlices_(apiBase, code, type, meta, rows, function(done, total){
       $('go').textContent = 'Uploading ' + done + '/' + total + '\u2026';
     });
   }).then(function(res){

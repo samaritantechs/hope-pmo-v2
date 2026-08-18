@@ -422,6 +422,11 @@
       <button class="btn sm ghost" id="findBtn" title="Tafuta mteja / Find a customer">&#128269;</button>
       <button class="btn sm ghost bell" id="bellBtn" title="Taarifa / Notifications">&#128276;</button>
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
+      <!-- WHICH BUILD IS ON THIS SCREEN. Three separate "no change!" reports have cost a round
+           trip each because neither the person looking nor anyone helping them could tell
+           whether the page in front of them was the new one. Tapping it forces a genuinely
+           fresh copy, past any cache. -->
+      <button class="btn sm ghost" id="buildBtn" title="Toleo / Build — bonyeza kupata toleo jipya / tap to force the newest version"></button>
     </div>
     <div class="busy" id="busy"></div>
     <div class="body" id="view"></div>
@@ -491,6 +496,10 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
 // the key you would work out from the state afterwards -- keep the real one, or later touches
 // like a team filter get written to a slot nobody reads.
 var VC = { store:{}, watch:null, key:'' };
+/* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
+   this system (public/*.html is served exactly as written), so this string IS the version.
+   Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
+var BUILD = '2026-08-18-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -679,6 +688,19 @@ function go(view){
 }
 // The reload button means RELOAD. It is the one place that must always go to the server.
 $('#refBtn').onclick = function(){ render({ force:true }); };
+/* The build stamp, shown and made useful: reading it answers "is the fix on my screen yet",
+   and tapping it fetches the page itself again with a cache-busting query so the answer can
+   be made yes in one tap -- without anyone being told to clear a browser cache. */
+(function(){
+  var b = $('#buildBtn');
+  if (!b) return;
+  b.textContent = BUILD;
+  b.style.fontSize = '10.5px';
+  b.style.opacity = '.65';
+  b.onclick = function(){
+    location.replace(location.pathname + '?v=' + Date.now());
+  };
+})();
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
 $('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
 $('#tipBtn').onclick = function(){ tipShow(); };
@@ -716,6 +738,12 @@ function srv2(fn, args){
 }
 
 /* THE BELL. How a supervisor learns a complaint was logged without opening the tab. */
+/* Stored UTC, shown EAT -- one helper so the bell and the tables cannot disagree. */
+function eatDt_(v){
+  var t = Date.parse(v);
+  if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
+  return String(v).replace('T',' ').slice(0,16);
+}
 function bellRefresh(){
   return srv('notifications').then(function(d){
     S.notif = d;
@@ -734,7 +762,8 @@ function bellOpen(){
           + esc(i.who || i.ref || '')
           + '<div>' + esc(i.what) + '</div>'
           + '<div class="m">' + esc(i.team || '') + ' · ' + esc(i.by || '')
-            + ' · ' + esc(String(i.at).replace('T', ' ').slice(0, 16)) + '</div></div>';
+            /* Same rule as every When column: stored UTC, read in East Africa. */
+            + ' · ' + esc(eatDt_(i.at)) + '</div></div>';
       }).join('') : '<div class="hint">Hakuna kipya. / Nothing new.</div>') + '</div>'
     + (d.unseen ? '<button class="btn w" id="notifSeen" style="margin-top:10px">'
         + 'Nimesoma zote / Mark all read</button>' : ''));
@@ -800,7 +829,15 @@ function cellText(r, c){
   if (c.kind==='pct') return pct(v);
   if (c.kind==='dur') return fmtDur(v);
   if (c.kind==='date') return String(v).slice(0,10);
-  if (c.kind==='dt') return String(v).replace('T',' ').slice(0,16);
+  if (c.kind==='dt'){
+    /* Stored UTC, read in East Africa: the raw ISO string showed every comment three hours
+       early ("The time of comments in app is not reading EAT, +3hrs please"). Timestamps
+       arrive from PostgREST with an offset, so parse and shift; anything unparseable is
+       shown as written rather than blanked. */
+    var t = Date.parse(v);
+    if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
+    return String(v).replace('T',' ').slice(0,16);
+  }
   return String(v);
 }
 function cellHtml(r, c){
@@ -2049,12 +2086,20 @@ VIEWS.dashboard = function(){
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'))
-      + trendGrid('Weekly collection trend (Mon–Fri)', 'collected + expected per weekday', 'gCol',
+      /* THE HEADLINE IS THE DAY'S EXPECTED, not what came in.
+           "i wanted them to show expected, uncollected and % -- replace collection with
+            total expected"
+         Expected is the day's target -- the fixed number the whole day is judged against --
+         so it leads; what is still out and how much of the target was met sit under it.
+         Nothing about the arithmetic changed: Col % is still collected over expected, and
+         collected remains verifiable per customer (paid in full, or paid-minus-shortfall
+         where underpaid, zero where unpaid). */
+      + trendGrid('Weekly expected trend (Mon–Fri)', 'expected · uncollected · collection % per weekday', 'gCol',
           d.colTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
-            ['TZS '+money(x.collected)], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
-          tcell('TOTAL', [['TZS '+money(d.colTrend.reduce(function(s,x){return s+x.collected;},0))],
+            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
             ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
       + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % of that day’s uncollected', 'gRec',
@@ -5239,6 +5284,17 @@ function codeForm(x){
     + '<div class="fld"><label>Msimbo / Code</label><input id="kCode" value="'+esc(x?x.code:'')+'">'
       + (isNew ? '' : '<div class="fldnote">Unaweza kuubadilisha — mtumiaji ataingia na mpya. / You can change this; the holder signs in with the new one from that moment.</div>')
       + '</div>'
+    /* THE NAME COMES FROM TEAMS & STAFF, NOT FROM TYPING.
+       "the access code of any leader should be created without inputing another name but by
+        setting only the code for that role and they find their names roles and codes ready
+        so that we solve name mismatches too"
+       Every screen that matches this person later -- roles, phones, reports -- matches the
+       SPELLING stored in the teams table, so a code created with a retyped variant of the
+       same human is a mismatch built in on day one. Picking fills name, role and teams from
+       the roster; all three stay editable for the rare code that is not a roster person. */
+    + '<div class="fld"><label>Chagua kutoka Timu na Wafanyakazi / Pick from Teams &amp; Staff</label>'
+      + '<select id="kPick"><option value="">\u2014 chagua mtu / pick a person \u2014</option></select>'
+      + '<div class="fldnote">Jina, wadhifa na timu vinajazwa kutoka jedwali \u2014 hakuna kuandika jina mara ya pili. / Fills the fields below from the staff table, so the spelling can never drift.</div></div>'
     + '<div class="fld"><label>Jina / Name</label><input id="kName" value="'+esc(x?x.name:'')+'"></div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="kRole" list="roleList" value="'+esc(x?x.role:'')+'">'
       + '<datalist id="roleList">'+roles.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist></div>'

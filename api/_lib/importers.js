@@ -237,6 +237,20 @@ const NUMERIC_LOAN_FIELDS = new Set([
 ]);
 const DATE_LOAN_FIELDS = new Set(['disb_date', 'approved_date']);
 
+/* AN APPLICATION-STAGE UPLOAD ANSWERS TO THE CHOSEN DATE, AND ONLY TO IT.
+
+     "uploading unassigned and assigned apps should adhere to the chosen date at uploads
+      not the date inside sheet data"
+
+   The company's exports come off one register that carries EVERY column for every row, so
+   an applications sheet can arrive with an APPROVED DATE column on loans nobody has
+   approved. Importing it stamped an approval date onto stage-'assigned' rows -- and every
+   board that windows on approved_date then counted the app under the sheet's date rather
+   than the day the admin chose at upload. For the stages BEFORE approval, the file's date
+   columns are noise and are not imported; approved and disbursed keep them, because there
+   the date inside the file is the very thing the report is about. */
+const PRE_APPROVAL_STAGES = new Set(['unassigned', 'unassessed', 'assessed', 'assigned', 'pending_approval']);
+
 /** One importer for all 8 loan-pipeline stages -- pass the stage name matching the
     loan_stage enum ('unassigned', 'assigned', ... 'disbursed') and it maps whatever
     columns that particular sheet export actually has; every stage's CSV has a
@@ -312,6 +326,8 @@ export function importLoans(csvRows, stage, dayFirst) {
        still clears. */
     for (const [field, candidates] of Object.entries(LOAN_STAGE_COLUMNS)) {
       if (!candidates.some(n => h[normalizeHeader(n)] !== undefined)) continue;
+      // The chosen upload date rules the application stages -- see PRE_APPROVAL_STAGES.
+      if (DATE_LOAN_FIELDS.has(field) && PRE_APPROVAL_STAGES.has(String(stage))) continue;
       const v = col(r, h, ...candidates);
       obj[field] = field === 'team' ? normTeam(v) : NUMERIC_LOAN_FIELDS.has(field) ? num(v) : DATE_LOAN_FIELDS.has(field) ? dateOrNull(v, order) : textOrNull(v);
     }
@@ -659,17 +675,29 @@ export function importHints(csvRows) {
 export function importExpectedSummary(csvRows, { snapshotType, snapshotDate }) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => {
     const expected = num(col(r, h, 'EXPECTED'));
+    /* TWO SHAPES OF THE SAME REPORT. The workbook tab spells collection out in parts
+       (PAID + ILIYONASIA + EXP TOMMR); the system's own Expected_Summary export says
+       COLLECTED in one column. Where the file says COLLECTED, that is the figure --
+       summing parts it does not have would read three blanks as zero. */
+    const collectedStated = col(r, h, 'COLLECTED');
+    const hasCollected = String(collectedStated == null ? '' : collectedStated).replace(/[\s,-]/g, '') !== '';
     const paid = num(col(r, h, 'PAID'));
     const nasia = num(col(r, h, 'ILIYONASIA'));
     const tommr = num(col(r, h, 'EXP TOMMR', 'EXP TOMORROW', 'EXP TOMM'));
-    const collected = paid + nasia + tommr;
+    const collected = hasCollected ? num(collectedStated) : paid + nasia + tommr;
     /* UNCOLLECTED is taken from the file when it is there, because that is the company's own
-       figure and the sheet is the record. Where the column is blank -- and in these exports it
-       often is, shown as a dash -- it is expected minus collected, clamped at zero exactly as
-       the customer-level rule clamps it per row. Never negative: a team that overpaid has
+       figure and the sheet is the record -- OUTSTANDING is the same figure under the name
+       the Expected_Summary export writes. Where the column is blank -- and in these exports
+       it often is, shown as a dash -- it is expected minus collected, clamped at zero exactly
+       as the customer-level rule clamps it per row. Never negative: a team that overpaid has
        collected everything, not less than nothing. */
-    const stated = col(r, h, 'UNCOLLECTED');
+    const stated = col(r, h, 'UNCOLLECTED', 'OUTSTANDING');
     const hasStated = String(stated == null ? '' : stated).replace(/[\s,-]/g, '') !== '';
+    /* THE CHOSEN DATE RULES -- the owner's standing rule, same as the application stages:
+       "we are not using the sheets data but the date i choose." The file's own DATE column
+       is not ignored, but its job is on the UPLOAD PAGE: it pre-fills the date box so the
+       right day is one glance away -- and the human's box, not the sheet, is what is
+       stored. */
     return {
       kind: 'expected',
       snapshot_type: snapshotType,
@@ -701,16 +729,34 @@ export function importExpectedSummary(csvRows, { snapshotType, snapshotDate }) {
     this system, and introducing a second key here would be a second way for a team to be
     identified and therefore a second way for one to go missing. */
 export function importDefaulterSummary(csvRows, { snapshotType, snapshotDate, weekday }) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+  /* ONE ROW PER TEAM, HOWEVER MANY FILES WERE HIGHLIGHTED.
+
+     The system's defaulter summary comes as THREE exports -- default, expired and chronic --
+     and the day's whole book is their SUM per team. The upload page concatenates the three
+     Data sheets into one upload precisely because the batch rule keeps only the LATEST batch
+     per date: three separate uploads would each replace the one before, and the day would
+     end up counting a single segment while looking complete.
+
+     So a team appearing in more than one segment is summed here, into the one row the
+     summary table and the recovery pairing expect. A single-segment or single-file upload
+     behaves exactly as before -- there is simply nothing to add up. */
+  const byTeam = new Map();
+  for (const { raw: r, h } of rowsToObjects(csvRows)) {
+    const team = normTeam(col(r, h, 'team_name', 'TEAM_NAME', 'TEAM', 'TEAMS'));
+    if (!team) continue;
+    const amt = num(col(r, h, 'amount_defaulted', 'AMOUNT_DEFAULTED', 'AMOUNT DEFAULTED', 'ARREARS', 'ARREAS'));
+    byTeam.set(team, (byTeam.get(team) || 0) + amt);
+  }
+  return [...byTeam.entries()].map(([team, arrears]) => ({
     kind: 'defaulter',
     snapshot_type: snapshotType,
     snapshot_date: snapshotDate,
     weekday,
-    team: normTeam(col(r, h, 'team_name', 'TEAM_NAME', 'TEAM', 'TEAMS')),
+    team,
     customers: null,
     expected_amt: null,
     collected_amt: null,
     uncollected_amt: null,
-    arrears_amt: num(col(r, h, 'amount_defaulted', 'AMOUNT_DEFAULTED', 'AMOUNT DEFAULTED', 'ARREARS', 'ARREAS')),
-  })).filter(x => x.team);
+    arrears_amt: arrears,
+  }));
 }

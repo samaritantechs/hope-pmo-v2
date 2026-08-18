@@ -1014,9 +1014,13 @@ test('expected and collection officers see only the one-behind, on Leo and Kesho
       role + ' on Leo');
     assert.deepEqual(narrowForRole(rows, role, 'tomorrow', lim).map(r => r.ref), ['0-1', '2-3'],
       role + ' on Kesho');
-    // "in Leo and Kesho lists ONLY" -- the defaulter lists are the follow-up work itself.
-    assert.equal(narrowForRole(rows, role, 'defaulters', lim).length, 5,
-      role + ' must keep the whole defaulter list');
+  }
+  /* Both collection classes are chased on single counts ON EVERY TAB -- said twice by the
+     owner ("Catherine is still seeing 2-12 samples", then "still multi defaulter beeing seen
+     in both pmo early collection and today collection users"). */
+  for (const role of ['EXPECTED', 'COLLECTION']) {
+    assert.deepEqual(narrowForRole(rows, role, 'defaulters', lim).map(r => r.ref),
+      ['0-1', '2-3'], role + ' sees the single counts everywhere');
   }
 });
 
@@ -1046,9 +1050,8 @@ test('a customer with no readable due summary is never hidden', () => {
 
 test('the narrowing runs end to end, and the phone is told it happened', async () => {
   const t = makeTables();
-  // The signed-in leader holds the `credit` column, which is what makes them a credit analyst
-  // here -- the same rule the recycling rotation uses for its three.
-  t.teams[0] = { ...t.teams[0], credit: 'ASHA JUMA' };
+  // The ROLE is what makes them a credit analyst -- "We should read them by roles not names".
+  t.access_codes.push({ code: 'CRED1', name: 'ASHA JUMA', role: 'CREDIT ANALYST', teams: ['KONGOWE'], tabs: [] });
   t.repayment_snapshots = [
     { ref: 'P1', full_name: 'EARLY', contact: '0712000011', team: 'KONGOWE', payment_expected: 1000,
       arrears: 0, todays_status: 'UNPAID', due_summary: '2/6', snapshot_type: 'today',
@@ -1060,7 +1063,7 @@ test('the narrowing runs end to end, and the phone is told it happened', async (
   const db = fakeDb(t);
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
-  await callApi(db, 'api_callRegister', ['d9', '', '', 'LEAD1', '0788111333'], NOW);
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'CRED1', '0788111333'], NOW);
 
   const d = await callApi(db, 'api_callList', ['d9', 'today'], NOW);
   assert.deepEqual(d.rows.map(r => r.ref), ['P1'], 'only the one short of the fifth instalment');
@@ -1265,12 +1268,19 @@ test('no other role is narrowed -- everybody else keeps the whole book', async (
   }
 });
 
-test('failing the role, the teams table still recognises somebody by name', async () => {
-  // The credit analyst and the expected officer genuinely are columns there.
+test('a name on the teams table decides NOTHING -- only the role does', async () => {
+  /* "We should read them by roles not names" ... "careen is in recovery". The old name
+     fallback was one wrong match away from narrowing the book of somebody who needs all of
+     it. A plain OFFICER stays plain, whatever the sheets call somebody with their name. */
   const t = makeTables();
   t.teams[0].credit = 'CATHERINE';
   const db = fakeDb(t);
-  assert.equal(await callRoleKind(db, { name: 'CATHERINE', role: 'OFFICER' }), 'CREDIT');
+  assert.equal(await callRoleKind(db, { name: 'CATHERINE', role: 'OFFICER' }), null);
+  // And the role alone is enough, with no teams row saying anything.
+  assert.equal(await callRoleKind(db, { name: 'ANYONE', role: 'EARLY COLLECTION' }), 'EXPECTED');
+  assert.equal(await callRoleKind(db, { name: 'ANYONE', role: 'TODAY COLLECTION' }), 'COLLECTION');
+  assert.equal(await callRoleKind(db, { name: 'ANYONE', role: 'PMO RECOVERY' }), null,
+    'recovery keeps the whole book -- that is their job');
 });
 
 test('an early-collection officer with a leader role name is still narrowed to behind = 1', async () => {
@@ -1566,4 +1576,171 @@ test('every Ripoti row carries the officer\'s own registered number', async () =
   const asha = d.users.find(x => x.name === 'ASHA JUMA');
   assert.ok(asha, 'the leader is on the board at zero');
   assert.equal(asha.phone, '788111222', 'and her number rides on the zero row too');
+});
+
+/* =====================================================================================
+   THE NEAR-WINS RIDE ON THE COLLECTION OFFICER'S OWN LIST.
+   =====================================================================================
+   "for early collection and today collection, not just leo and kesho but they should also
+    see defaults of single count since thats were they repair their performance -- if a
+    customer of 3-7 pays to 6-7 by their effort then they got nothing"
+
+   A defaulter only turns into collection on the day they COMPLETE, so the defaulters one
+   count from done are appended to Leo and Kesho for the early/today-collection roles --
+   the wins waiting to happen, not the whole book.
+*/
+test('an expected officer\'s Leo carries the single-count defaulters at the end', async () => {
+  const t = makeTables();
+  // Their ROLE is what makes them early collection -- "We should read them by roles not names".
+  t.access_codes.push({ code: 'EARLY1', name: 'JUMA ISSA', role: 'EARLY COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  t.followup_status.push(
+    { ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN', contact: '0712000777', arrears: 900,
+      rejesho: 100, status: 'Defaulter', ds: '5-6' },      // one count from done
+    { ref: 'S2', team: 'KONGOWE', full_name: 'FAR AWAY', contact: '0712000778', arrears: 5000,
+      rejesho: 100, status: 'Defaulter', ds: '2-6' },      // four behind -- not a near-win
+    { ref: 'S3', team: 'MBAGALA', full_name: 'OTHER TEAM SINGLE', contact: '0712000779',
+      arrears: 700, rejesho: 100, status: 'Defaulter', ds: '5-6' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', '', '', 'EARLY1', '0712999999'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  const near = d.rows.find(r => r.ref === 'S1');
+  assert.ok(near, 'the one-count defaulter is on Leo');
+  assert.equal(near.sc, true, 'and marked as an added near-win, not a customer due today');
+  assert.equal(d.singles, 1);
+  assert.equal(d.rows.some(r => r.ref === 'S2'), false, 'four counts behind is Def-tab work');
+  assert.equal(d.rows.some(r => r.ref === 'S3'), false, 'another team\'s book stays theirs');
+});
+
+test('a plain officer\'s Leo is exactly what it was -- no singles appended', async () => {
+  const db = await registeredDb();
+  // registeredDb's d1 has no special role; fixture followup rows (555 at 3-6, 999) stay off Leo.
+  const t = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(t.singles, undefined);
+  assert.equal(t.rows.some(r => r.sc), false);
+});
+
+test('the Def tab itself is untouched by the near-win rule', async () => {
+  const t = makeTables();
+  t.access_codes.push({ code: 'EARLY1', name: 'JUMA ISSA', role: 'EARLY COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  t.followup_status.push({ ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN',
+    contact: '0712000777', arrears: 900, rejesho: 100, status: 'Defaulter', ds: '5-6' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', '', '', 'EARLY1', '0712999999'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  // The near-win is on the book in its own right -- NARROWED there, never APPENDED: no row
+  // on the Def tab is an sc extra. (555 sits at 3-6, so the single-count rule removes it.)
+  assert.ok(d.rows.some(r => r.ref === 'S1'));
+  assert.equal(d.rows.some(r => r.ref === '555'), false);
+  assert.equal(d.rows.some(r => r.sc), false, 'nothing on the Def tab is an appended extra');
+});
+
+/* =====================================================================================
+   A COLLECTION OFFICER'S WHOLE JOB IS THE SINGLE COUNTS -- ON EVERY TAB.
+   =====================================================================================
+   "Catherine is still seeing 2-12 samples"
+
+   The Leo/Kesho-only narrowing left her Def/Exp/Chr tabs carrying the entire book,
+   ten-counts-behind and all. For the COLLECTION role the rule now follows onto every list.
+*/
+test('a collection officer\'s defaulter book is narrowed to the single counts', async () => {
+  const t = makeTables();
+  t.access_codes.push({ code: 'COLL1', name: 'CATHERINE C', role: 'COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  t.followup_status.push(
+    { ref: 'S1', team: 'KONGOWE', full_name: 'NEAR WIN', contact: '0712000777', arrears: 900,
+      rejesho: 100, status: 'Defaulter', ds: '5-6' },       // one behind: her work
+    { ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND', contact: '0712000778', arrears: 5000,
+      rejesho: 100, status: 'Defaulter', ds: '2-12' },      // the "2-12 samples"
+    { ref: 'N1', team: 'KONGOWE', full_name: 'NO DS', contact: '0712000780', arrears: 400,
+      rejesho: 100, status: 'Defaulter' });                 // no readable D.S at all
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'COLL1', '0766000555'], NOW);
+  const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
+  assert.equal(d.rows.some(r => r.ref === 'F1'), false, '2-12 is not her book');
+  assert.ok(d.rows.some(r => r.ref === 'S1'), 'the single count is');
+  // 555 sits at 3-6 in the fixture -- three behind, also gone from her view.
+  assert.equal(d.rows.some(r => r.ref === '555'), false);
+  // A row with no readable D.S stays: unknown is not "far behind".
+  assert.ok(d.rows.some(r => r.ref === 'N1'));
+  assert.ok(d.narrowed && d.narrowed.role === 'COLLECTION', 'and the phone is told it was narrowed');
+});
+
+test('an early-collection officer\'s defaulter book is narrowed the same way', async () => {
+  const t = makeTables();
+  t.access_codes.push({ code: 'EARLY1', name: 'JUMA ISSA', role: 'EARLY COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
+    contact: '0712000778', arrears: 5000, rejesho: 100, status: 'Defaulter', ds: '2-12' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', '', '', 'EARLY1', '0712999999'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.equal(d.rows.some(r => r.ref === 'F1'), false, '2-12 is not early-collection work either');
+});
+
+test('CAREEN is in recovery -- her whole book stays, whatever the sheets call her', async () => {
+  /* "careen is in recovery". The old name fallback could have matched her against a
+     collection column and narrowed the book of somebody whose job is all of it. Under
+     role-only reading, a RECOVERY role is a plain book, full stop. */
+  const t = makeTables();
+  t.teams[0].collection = 'CAREEN GODFREY';   // the sheet may say anything -- it decides nothing
+  t.access_codes.push({ code: 'REC1', name: 'CAREEN', role: 'PMO RECOVERY', teams: ['KONGOWE'], tabs: [] });
+  t.followup_status.push({ ref: 'F1', team: 'KONGOWE', full_name: 'TEN BEHIND',
+    contact: '0712000778', arrears: 5000, rejesho: 100, status: 'Defaulter', ds: '2-12' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'REC1', '0766000555'], NOW);
+  const d = await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW);
+  assert.ok(d.rows.some(r => r.ref === 'F1'), 'the 2-12 defaulter is exactly her work');
+  assert.equal(d.narrowed, null, 'nothing was narrowed for a recovery role');
+});
+
+/* =====================================================================================
+   A DEFAULTER WHO HAS PAID SAYS SO.
+   =====================================================================================
+   "some customers in defaulters have 0 or negative balance and officers rapidly call them
+    without seeing they have no status at all"
+*/
+test('zero or negative arrears wears a PAID chip on the defaulter book', async () => {
+  const t = makeTables();
+  t.followup_status.push(
+    { ref: 'Z1', team: 'KONGOWE', full_name: 'CLEARED', contact: '0712000801', arrears: 0,
+      rejesho: 100, status: '' },
+    { ref: 'Z2', team: 'KONGOWE', full_name: 'OVERPAID', contact: '0712000802', arrears: -500,
+      rejesho: 100, status: 'Defaulter' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.equal(d.rows.find(r => r.ref === 'Z1').custStatus, 'PAID');
+  assert.equal(d.rows.find(r => r.ref === 'Z2').custStatus, 'PAID', 'overpaid is paid, not more work');
+  // A real debt keeps its real status; unknown arrears never reads as paid.
+  assert.equal(d.rows.find(r => r.ref === '555').custStatus, 'Defaulter');
+});
+
+/* =====================================================================================
+   THE "ANA NAMBA NYINGINE" NUMBER IS ON THE CUSTOMER PANEL.
+   =====================================================================================
+   "Ana namba nyingine comments should show the other number - dialable on customer panel"
+
+   The number was written into the comment log and never shown anywhere on the phone -- the
+   one fact that changes which number to dial next.
+*/
+test('the history items carry the recorded replacement number', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callAddComment',
+    ['d1', { ref: '555', fu: 'ANA NAMBA NYINGINE', comment: 'namba mpya', newNo: '0788123456' }], NOW);
+  const d = await callApi(db, 'api_callComments', ['d1', '555'], NOW);
+  const withNo = d.items.find(i => i.newNo);
+  assert.ok(withNo, 'the comment that recorded a number says so');
+  assert.equal(withNo.newNo, '788123456', 'normalised like every phone in the system');
+  // Comments without one stay clean -- no empty field noise.
+  assert.ok(d.items.every(i => typeof i.newNo === 'string'));
 });

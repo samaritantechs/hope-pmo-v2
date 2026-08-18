@@ -545,44 +545,35 @@ export function dsParts(v) {
     recycling rotation uses), while a collection officer's teams live on their access code and
     the role is written there. Either is enough. */
 export async function callRoleKind(db, user) {
-  /* THE FREE CHECKS FIRST, AND THEY COST NOTHING. This runs on EVERY list load from every
-     handset, so the three special roles resolve on the string alone -- no query at all, where
-     the old code always went on to read the teams table. */
+  /* BY ROLE, AND ONLY BY ROLE.
+
+       "We should read them by roles not names" ... "careen is in recovery"
+
+     There used to be a fallback that matched the registered NAME against the teams table's
+     credit/expected/collection columns -- and CAREEN is exactly why it had to go. She is a
+     RECOVERY leader whose whole job is the full defaulter book; a name floating between a
+     short form on the phone and a full form on a sheet is one wrong match away from
+     narrowing the book of somebody who needs all of it. A role is WRITTEN DOWN, on the
+     access code or by the registration itself, and it says what the person is chased on.
+     Somebody whose role says none of these is a plain officer with the whole book -- if
+     they should be narrowed, the fix is their role, not a guess from their name.
+
+     The word checks cost nothing and resolve almost everyone; the one query -- the PMO role
+     name, memoised with every other setting -- runs only for a role that matched no word,
+     because a deployment is free to rename the collection role into any language at all. */
   const role = normRole(user && user.role);
-  if (role) {
-    if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
-    if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
-    if (hasCollectionWord(role)) return 'COLLECTION';
-  }
-  const n = K(user && user.name);
-  if (!n) return null;
-  /* Everyone else -- which on two hundred handsets means nearly everyone, all of them plain
-     OFFICERs -- reaches here, so the two remaining questions are asked SIDE BY SIDE rather
-     than one after the other. The teams read was already on this path before; the setting is
-     new, and in parallel it costs no extra waiting.
-
-     PMO_ROLE is the same question isPmoRole answers for the PMO board, asked the same way, so
-     the two screens can never disagree about who is a collection officer. It is consulted
-     even when the role carries none of the three words, because a deployment is free to
-     rename the role to something with no English in it at all.
-
-     `collection` on the teams table arrived with the contacts migration and is optional like
-     every migration here, so asking for it on a database that has not run one must not take
-     the other two columns down with it -- a thrown column error here would empty the
-     officer's whole list rather than merely skip a rule. */
-  /* THE SAME MAP THE SCOPE WIDENING USES, so a list load asks the teams table once rather than
-     twice -- this used to issue its own read of the very columns heldTeams had just read on the
-     same request, and both of them run on every list load from every handset. */
-  const [pmoName, rows] = await Promise.all([
-    settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT),
-    teamRoleRows(db),
-  ]);
-  if (role && isPmoRole(role, pmoName)) return 'COLLECTION';
-  // Failing the role, by NAME -- the credit analyst and the expected officer genuinely are
-  // columns on the teams table, and `collection` is a name column just like them.
-  if (rows.some(t => K(t.credit) === n)) return 'CREDIT';
-  if (rows.some(t => K(t.expected) === n)) return 'EXPECTED';
-  if (rows.some(t => K(t.collection) === n)) return 'COLLECTION';
+  if (!role) return null;
+  if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
+  if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
+  if (hasCollectionWord(role)) return 'COLLECTION';
+  /* THE 300 PLAIN HANDSETS STOP HERE, FOR FREE. Registration itself writes 'OFFICER' and
+     'LEADER' -- they are this system's own constants, never a renamed collection role -- and
+     without this line every one of those handsets paid a settings round trip on EVERY list
+     load to be told what it already was. The read below is only for a role somebody TYPED on
+     an access code that matched no keyword, which is the one case a renamed PMO role can be. */
+  if (role === 'OFFICER' || role === 'LEADER') return null;
+  const pmoName = await settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT);
+  if (isPmoRole(role, pmoName)) return 'COLLECTION';
   return null;
 }
 
@@ -595,9 +586,20 @@ export function narrowForRole(rows, kind, which, limits) {
       return !d || d.paid <= limits.creditMaxPaid;
     });
   }
-  // Leo and Kesho ONLY. The defaulter lists are the whole point of an early-collection
-  // officer's follow-up work and must not be touched.
-  if (which !== 'today' && which !== 'tomorrow') return rows;
+  /* A COLLECTION officer's whole job is the single counts -- and so is an EARLY-collection
+     (EXPECTED) officer's.
+
+       "she is called todays collection single counts e.g 3-4 ds=1"
+       "Catherine is still seeing 2-12 samples"
+       "still multi defaulter beeing seen in both pmo early collection and today collection
+        users. please check well"
+
+     The first fix narrowed only COLLECTION's defaulter tabs, keeping an old assumption that
+     the EXPECTED officer's book must stay whole. The owner has now said plainly that BOTH
+     collection classes are chased on single counts on every tab, so the same rule follows
+     both of them onto EVERY list. A row with no readable D.S stays, as everywhere: unknown
+     is not "far behind". The plain OFFICERs' book -- nearly all 300 handsets -- is untouched;
+     `kind` is null for them and this function returned before reaching here. */
   return rows.filter(r => {
     const d = dsParts(r.ds);
     return !d || (d.target - d.paid) <= limits.earlyMaxBehind;
@@ -790,9 +792,15 @@ async function list(db, [dev, which, which2], nowMs) {
     });
     // Skip pure FK stubs (created so an EXPECTED customer's comment can reference
     // followup_status) -- a real defaulter row always carries status/arrears from its upload.
+    /* A DEFAULTER WHO HAS PAID SAYS SO. Some rows arrive with zero or negative arrears and
+       NO status at all -- and officers were ringing them at speed with nothing on the row to
+       say the debt is gone ("officers rapidly call them without seeing they have no status
+       at all"). The Expected lists already wear PAID; the defaulter book now does too, and
+       only where the balance itself proves it: a null arrears is unknown, never "paid". */
+    const paidChip = r => (r.arrears != null && num(r.arrears) <= 0) ? 'PAID' : (r.status || '');
     rows = fu.filter(r => teamAllowed(user, r.team) && !(r.status == null && r.arrears == null)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
-      amt: num(r.arrears), installment: num(r.rejesho), custStatus: r.status || '', fuStatus: r.fu_status || '',
+      amt: num(r.arrears), installment: num(r.rejesho), custStatus: paidChip(r), fuStatus: r.fu_status || '',
       ds: dsFmt(r.ds), days: r.days_elapsed == null ? '' : r.days_elapsed, team: r.team,
       called: hit(r.contact, r.guarantor_contact),
     }));
@@ -856,13 +864,59 @@ async function list(db, [dev, which, which2], nowMs) {
      `narrowed` is reported so the phone can say so rather than leaving somebody wondering
      where half the book went. */
   const kind = await callRoleKind(db, user);
-  let narrowed = null;
+  let narrowed = null, singles = 0;
   if (kind) {
+    const limits = await roleLimits(db);
     const before = rows.length;
-    rows = narrowForRole(rows, kind, which, await roleLimits(db));
+    rows = narrowForRole(rows, kind, which, limits);
     if (rows.length !== before) narrowed = { role: kind, shown: rows.length, of: before };
+
+    /* THE NEAR-WINS RIDE ON THE COLLECTION OFFICER'S OWN LIST.
+
+         "for early collection and today collection, not just leo and kesho but they should
+          also see defaults of single count since thats were they repair their performance --
+          if a customer of 3-7 pays to 6-7 by their effort then they got nothing"
+
+       An early/today-collection officer is judged on collection, and a defaulter only turns
+       into collection on the day they COMPLETE. Pushing somebody from 3-7 to 6-7 is real
+       work that shows up nowhere; pushing 6-7 over the line does. So the defaulters ONE
+       COUNT from done -- the same distance the Leo narrowing itself uses, so the two rules
+       cannot drift -- are appended to Leo and Kesho, where this officer actually works.
+       Not the whole book (that is the Def tab, untouched); just the wins waiting to happen.
+
+       Deduped by ref against the day's own list, FK stubs skipped, sorted by arrears so the
+       biggest near-win is on top of the section. Each row is marked `sc` and keeps its
+       Defaulter chip, so it cannot be mistaken for a customer due today. */
+    if ((kind === 'EXPECTED' || kind === 'COLLECTION') && (which === 'today' || which === 'tomorrow')) {
+      const fu = await fetchAll(() => {
+        let q = db.from('followup_status').select(
+          'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team');
+        if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+        return q;
+      });
+      const have = new Set(rows.map(r => String(r.ref)));
+      const behindMax = Math.max(1, limits.earlyMaxBehind);
+      const add = fu.filter(r => {
+        if (r.status == null && r.arrears == null) return false;   // FK stubs, not defaulters
+        if (!teamAllowed(user, r.team) || have.has(String(r.ref))) return false;
+        const d = dsParts(r.ds);
+        const behind = d ? d.target - d.paid : 0;
+        return behind >= 1 && behind <= behindMax;
+      }).map(r => ({
+        ref: r.ref, name: r.full_name, contact: r.contact,
+        gName: r.guarantor_name, gContact: r.guarantor_contact,
+        amt: num(r.arrears), installment: num(r.rejesho),
+        // The same paid-says-so rule as the Def tab: a cleared balance must not read as work.
+        custStatus: (r.arrears != null && num(r.arrears) <= 0) ? 'PAID' : (r.status || 'Defaulter'),
+        fuStatus: r.fu_status || '',
+        ds: dsFmt(r.ds), days: r.days_elapsed == null ? '' : r.days_elapsed, team: r.team,
+        called: hit(r.contact, r.guarantor_contact), sc: true,
+      })).sort((a, b) => b.amt - a.amt);
+      singles = add.length;
+      rows = rows.concat(add);
+    }
   }
-  return { ok: true, rows, asOf, stale, narrowed };
+  return { ok: true, rows, asOf, stale, narrowed, singles: singles || undefined };
 }
 
 /* ---------- daily summary strip ---------- */
@@ -1217,7 +1271,7 @@ async function comments(db, [dev, ref]) {
      allowed to fail quietly so the history never stops loading over its side-dish. */
   const [{ data, error }, compRes] = await Promise.all([
     db.from('followup_comments')
-      .select('comment, fu_status, created_by, created_at')
+      .select('comment, fu_status, created_by, created_at, new_number, promise_date, promise_amt')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT),
     runQuery(() => db.from('complaints')
       .select('complainant, category, details, status, created_at')
@@ -1227,6 +1281,13 @@ async function comments(db, [dev, ref]) {
   const items = (data || []).map(c => ({
     by: c.created_by || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
     fu: c.fu_status || '', comment: c.comment || '',
+    /* The number an "Ana namba nyingine" recorded. It was written into the log and never
+       shown anywhere on the phone -- the one fact that changes which number to dial next. */
+    newNo: String(c.new_number == null ? '' : c.new_number).trim(),
+    /* And the promise itself: an AHADI comment showed only the day it was WRITTEN, not the
+       day the customer promised FOR -- the date the whole status exists to record. */
+    promiseDate: c.promise_date ? String(c.promise_date).slice(0, 10) : '',
+    promiseAmt: c.promise_amt == null ? null : num(c.promise_amt),
   }));
   const complaints = ((compRes && !compRes.error && compRes.data) ? compRes.data : []).map(c => ({
     who: c.complainant || '', what: String(c.details || c.category || '').slice(0, 200),

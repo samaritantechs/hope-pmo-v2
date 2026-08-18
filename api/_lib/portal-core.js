@@ -784,6 +784,10 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
     const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
     return {
       ...r,
+      /* A defaulter who has paid says so, here as on the phone: zero or negative arrears
+         with no status left officers ringing people whose debt is gone. Only the balance
+         itself proves it -- a null arrears is unknown, never "paid". */
+      status: (r.arrears != null && arrears <= 0) ? 'PAID' : r.status,
       new_no: (newNo[String(r.ref)] || {}).n || null,
       initial,
       recovered: Math.max(0, initial - arrears),
@@ -4924,8 +4928,11 @@ async function dashboardFull(db, user, args, nowMs) {
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
-      .select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')
-      .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor}`), user.teams)),
+      /* upload_date rides along because it is the day the admin CHOSE for the report, and a
+         re-uploaded loan keeps its original created_at -- windowing on created_at alone would
+         drop a row whose stamp is this week but whose first insert was last month. */
+      .select('id, stage, team, created_at, upload_date, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt')
+      .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor},upload_date.gte.${loanFloor}`), user.teams)),
     /* Team-scoped at the database. The dashboard is the most-opened screen in the system and
        this read had no filter at all -- every abnormal payment ever recorded, on every load,
        for a figure that is then narrowed to the viewer's own teams anyway. The number on
@@ -4969,10 +4976,22 @@ async function dashboardFull(db, user, args, nowMs) {
   const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
   const dayRows = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
 
-  /* ---- loan applications per weekday: unassigned + assigned, by their own DATE column ---- */
+  /* ---- loan applications per weekday: unassigned + assigned, by the day the admin CHOSE ----
+
+       "still didnt update: the thing worked to thursday.. the day i started uploading friday
+        started taking them"
+
+     This grouped by created_at -- the moment the row was INSERTED -- so the board agreed with
+     the admin only while each day's file was uploaded on its own day. Friday's file uploaded
+     on Sunday filed its 79 apps under Sunday, whatever the date box said; and created_at is a
+     UTC timestamp besides, so even a same-day evening upload drifted a day. The upload stamp
+     is the day the admin chose, said in the confirmation, replace-scoped, and stable across
+     re-uploads: the SAME loan re-uploaded under a corrected date simply moves (one row, one
+     id -- no duplicate to make), while created_at keeps its first-insert moment forever.
+     Rows from before the stamp existed fall back to created_at, as before. */
   const appsTrend = WD7.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const on = myLoans.filter(l => String(l.created_at || '').slice(0, 10) === d);
+    const on = myLoans.filter(l => String(l.upload_date || l.created_at || '').slice(0, 10) === d);
     const u = on.filter(l => l.stage === 'unassigned').length;
     const a = on.filter(l => l.stage === 'assigned').length;
     return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
@@ -5375,6 +5394,13 @@ const TEAM_MOVES = [
   { table: 'demand_notices', what: 'demand notices' },
   { table: 'call_logs', what: 'call logs' },
   { table: 'call_users', what: 'registered handsets' },
+  /* The three tables that arrived AFTER this list was written -- a merge that misses one
+     leaves the old spelling alive there, and the next screen that reads it resurrects the
+     "deleted" team ("i want if merged find nothing like TUNDURU nowhere else"). A table a
+     migration has not created yet is skipped by the loop below, so these are safe everywhere. */
+  { table: 'snapshot_summaries', what: 'summary rows' },
+  { table: 'audit_log', what: 'audit entries' },
+  { table: 'performance_records', what: 'performance records' },
 ];
 
 /* The list-shaped ones. A PMO collection officer holds thirty-odd teams as an array on their
@@ -5507,7 +5533,13 @@ async function deleteTeam(db, user, p) {
     for (const h of TEAM_MOVES) {
       const { data, error } = await runQuery(() =>
         db.from(h.table).update({ team: moveTo }).eq('team', team).select('team'));
-      if (error) throw new Error(error.message);
+      /* A table a migration has not created yet is SKIPPED, not fatal -- audit_log and
+         performance_records are optional like every migration here, and a merge that dies
+         half-way on a missing side-table is worse than one that says what it moved. */
+      if (error) {
+        if (/does not exist|42P01|PGRST20/i.test(String(error.message || error.code || ''))) continue;
+        throw new Error(error.message);
+      }
       if ((data || []).length) moved[h.what] = data.length;
     }
 

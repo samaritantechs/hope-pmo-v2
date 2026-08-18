@@ -1114,3 +1114,128 @@ test('the lenient phone match redirects but never deletes', async () => {
   assert.equal(rec.merged, 0, 'the lenient form must never delete');
   assert.equal(rec.records[0].id, stored[0].id);
 });
+
+/* =====================================================================================
+   AN APPLICATION-STAGE FILE IS THE WHOLE LIST FOR ITS DAY.
+   =====================================================================================
+   "when i reupload unassigned and assessed apps by append but same date, i need that
+    action not to merge with existing but replace that single date data"
+
+   Two uploads of the same stage under the same date cannot both be true -- the second IS
+   the day, corrected. Append used to merge: matching loans updated, but a loan REMOVED
+   from the corrected file lingered under that date. Now a same-date re-upload REDOES the
+   date for the un-dated pipeline stages, whichever mode is chosen.
+*/
+test('re-uploading an application stage on the same date replaces that date, even on append', async () => {
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');
+  for (const stage of ['unassigned', 'unassessed', 'assessed', 'assigned']) {
+    const p = stampPlan('loans', { uploadDate: '2026-08-14', mode: 'append', stage }, NOON_EAT);
+    assert.equal(p.replace, true, stage + ': append must still redo the date');
+    assert.equal(p.sameDayRedo, true);
+    // Scoped to THIS stage and THIS date -- other days and the same day's other stages survive.
+    assert.deepEqual(p.scope, { stage, upload_date: '2026-08-14' });
+  }
+});
+
+test('the dated stages keep the append/replace choice', async () => {
+  /* Approved and disbursed replace by the dates IN the file; appending there genuinely
+     means "add more days" and must not quietly become a delete. */
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');
+  for (const stage of ['approved', 'disbursed']) {
+    const p = stampPlan('loans', { uploadDate: '2026-08-14', mode: 'append', stage }, NOON_EAT);
+    assert.equal(p.replace, false, stage + ': append stays append');
+    assert.equal(p.sameDayRedo, false);
+  }
+});
+
+test('other stamped reports are untouched by the redo rule', async () => {
+  const { stampPlan } = await import('../api/upload.js');
+  const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');
+  const p = stampPlan('complaints', { uploadDate: '2026-08-14', mode: 'append' }, NOON_EAT);
+  assert.equal(p.replace, false);
+  assert.equal(p.sameDayRedo, false);
+});
+
+/* =====================================================================================
+   AN APPLICATION-STAGE UPLOAD ANSWERS TO THE CHOSEN DATE, AND ONLY TO IT.
+   =====================================================================================
+   "uploading unassigned and assigned apps should adhere to the chosen date at uploads not
+    the date inside sheet data"
+
+   The register exports every column for every row, so an applications sheet can carry an
+   APPROVED DATE on loans nobody has approved -- and a stamped approval date on an
+   'assigned' row makes every approved_date-windowed board count the app under the sheet's
+   date instead of the chosen one.
+*/
+test('a pre-approval stage never imports the sheet\'s date columns', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const H = ['FULL NAME', 'TEAM', 'REQUESTED AMT', 'APPROVED DATE', 'DISB DATE'];
+  for (const stage of ['unassigned', 'unassessed', 'assessed', 'assigned', 'pending_approval']) {
+    const out = importLoans([H, ['APP PERSON', 'KONGOWE', '50000', '8/6/2026', '9/6/2026']], stage);
+    assert.equal('approved_date' in out[0], false, stage + ' must not carry an approval date');
+    assert.equal('disb_date' in out[0], false, stage + ' must not carry a disbursement date');
+    assert.equal(out[0].requested_amt, 50000, 'the rest of the row still lands');
+  }
+});
+
+test('approved and disbursed keep the dates in the file -- that is the report', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const H = ['FULL NAME', 'TEAM', 'APPROVED DATE'];
+  const out = importLoans([H, ['SOLD PERSON', 'KONGOWE', '22/7/2026']], 'approved');
+  assert.equal(out[0].approved_date, '2026-07-22');
+});
+
+/* =====================================================================================
+   THE MANUAL SUMMARY REPORTS -- "when i miss the customers file time".
+   =====================================================================================
+   The Expected_Summary export: Team | Expected | Collected | Outstanding | ...% | Date.
+   The defaulter summary: THREE exports (default, expired, chronic), each team_id |
+   team_name | amount_defaulted -- highlighted together and summed into one report,
+   because the batch rule keeps only the latest batch per date and three separate uploads
+   would each replace the one before.
+*/
+test('the Expected_Summary shape: COLLECTED and OUTSTANDING read; the chosen date rules', async () => {
+  const { importExpectedSummary } = await import('../api/_lib/importers.js');
+  const rows = [
+    ['Team', 'Expected', 'Collected', 'Outstanding', 'Collection %', 'Outstanding %', 'Date'],
+    ['BABATI', '5530693', '5236027', '294666', '94.67%', '5.33%', '2026-08-17'],
+    ['BUKOBA B', '2040043', '2040043', '0', '100.0%', '0.0%', '2026-08-17'],
+  ];
+  // The CHOSEN date rules -- the owner's standing rule, same as the application stages.
+  // The file's Date column only pre-fills the box on the upload page.
+  const out = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-17' });
+  assert.equal(out.length, 2);
+  assert.equal(out[0].snapshot_date, '2026-08-17', 'the box decides, exactly as chosen');
+  assert.equal(out[0].collected_amt, 5236027, 'COLLECTED is the figure, not a sum of blanks');
+  assert.equal(out[0].uncollected_amt, 294666, 'OUTSTANDING is the company\'s own uncollected');
+  assert.equal(out[1].uncollected_amt, 0, 'a stated zero stays zero');
+});
+
+test('the workbook-tab shape still works exactly as before', async () => {
+  const { importExpectedSummary } = await import('../api/_lib/importers.js');
+  const out = importExpectedSummary([
+    ['TEAMS', 'EXPECTED', 'PAID', 'ILIYONASIA', 'EXP TOMMR'],
+    ['KONGOWE', '1000', '600', '100', '50'],
+  ], { snapshotType: 'today', snapshotDate: '2026-08-18' });
+  assert.equal(out[0].collected_amt, 750, 'the parts still sum where COLLECTED is absent');
+  assert.equal(out[0].snapshot_date, '2026-08-18', 'no DATE column, so the chosen date holds');
+});
+
+test('the three defaulter segments sum into one row per team', async () => {
+  const { importDefaulterSummary } = await import('../api/_lib/importers.js');
+  // Concatenated the way the page sends the highlighted files: one header, all data rows.
+  const rows = [
+    ['team_id', 'team_name', 'amount_defaulted'],
+    ['225-2069', 'MAFINGA', '8682526'],       // default segment
+    ['208-2040', 'GONGOLAMBOTO ', '1418672'], // trailing space, as the real export writes it
+    ['225-2069', 'MAFINGA', '41570555'],      // chronic segment, same team
+    ['207-2039', 'KONGOWE', '3740000'],       // expired segment
+  ];
+  const out = importDefaulterSummary(rows, { snapshotType: 'current', snapshotDate: '2026-08-17', weekday: 'MON' });
+  assert.equal(out.length, 3, 'one row per team, not per segment');
+  assert.equal(out.find(r => r.team === 'MAFINGA').arrears_amt, 50253081, 'segments summed');
+  assert.ok(out.find(r => r.team === 'GONGOLAMBOTO'), 'the trailing space is normalised away');
+  assert.equal(out.find(r => r.team === 'KONGOWE').arrears_amt, 3740000);
+});
