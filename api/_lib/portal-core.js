@@ -5271,6 +5271,13 @@ const TEAM_MOVES = [
   { table: 'demand_notices', what: 'demand notices' },
   { table: 'call_logs', what: 'call logs' },
   { table: 'call_users', what: 'registered handsets' },
+  /* The three tables that arrived AFTER this list was written -- a merge that misses one
+     leaves the old spelling alive there, and the next screen that reads it resurrects the
+     "deleted" team ("i want if merged find nothing like TUNDURU nowhere else"). A table a
+     migration has not created yet is skipped by the loop below, so these are safe everywhere. */
+  { table: 'snapshot_summaries', what: 'summary rows' },
+  { table: 'audit_log', what: 'audit entries' },
+  { table: 'performance_records', what: 'performance records' },
 ];
 
 /* The list-shaped ones. A PMO collection officer holds thirty-odd teams as an array on their
@@ -5403,7 +5410,13 @@ async function deleteTeam(db, user, p) {
     for (const h of TEAM_MOVES) {
       const { data, error } = await runQuery(() =>
         db.from(h.table).update({ team: moveTo }).eq('team', team).select('team'));
-      if (error) throw new Error(error.message);
+      /* A table a migration has not created yet is SKIPPED, not fatal -- audit_log and
+         performance_records are optional like every migration here, and a merge that dies
+         half-way on a missing side-table is worse than one that says what it moved. */
+      if (error) {
+        if (/does not exist|42P01|PGRST20/i.test(String(error.message || error.code || ''))) continue;
+        throw new Error(error.message);
+      }
       if ((data || []).length) moved[h.what] = data.length;
     }
 
