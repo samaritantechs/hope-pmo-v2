@@ -560,6 +560,12 @@ export async function callRoleKind(db, user) {
   if (hasWord(role, CREDIT_WORDS)) return 'CREDIT';
   if (hasWord(role, EXPECTED_WORDS)) return 'EXPECTED';
   if (hasCollectionWord(role)) return 'COLLECTION';
+  /* THE 300 PLAIN HANDSETS STOP HERE, FOR FREE. Registration itself writes 'OFFICER' and
+     'LEADER' -- they are this system's own constants, never a renamed collection role -- and
+     without this line every one of those handsets paid a settings round trip on EVERY list
+     load to be told what it already was. The read below is only for a role somebody TYPED on
+     an access code that matched no keyword, which is the one case a renamed PMO role can be. */
+  if (role === 'OFFICER' || role === 'LEADER') return null;
   const pmoName = await settingGet(db, PMO_ROLE_KEY).then(v => v || PMO_ROLE_DEFAULT, () => PMO_ROLE_DEFAULT);
   if (isPmoRole(role, pmoName)) return 'COLLECTION';
   return null;

@@ -176,8 +176,11 @@ for (const B of BUDGETS) {
    of these is a field officer standing in the sun on mobile data. */
 const PHONE = [
   ['Calls: boot',        'api_callBoot',          ['DEV1'], 12,  5000],
-  ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 10, 6000],
-  ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 10, 6000],
+  /* One trip tighter since the OFFICER/LEADER short-circuit: a plain handset no longer pays
+     a settings read per list load to ask what the PMO role is called. Moved DOWN on purpose --
+     a budget that quietly grows back is the failure this file exists to stop. */
+  ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 9, 6000],
+  ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 9, 6000],
   ['Calls: one customer\'s comments', 'api_callComments', ['DEV1', 'R1'], 6, 200],
   /* The phone's search index. It used to read EVERY comment ever written to find the few
      hundred carrying a replacement phone number -- the portal's copy of this was fixed weeks
