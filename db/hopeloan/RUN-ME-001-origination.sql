@@ -7,39 +7,36 @@
    remember harder. It is to stop the file needing anyone to remember at all. */
 set search_path = hopeloan, public;
 
-/* AND THIS REFUSES TO RUN IF THE STEP BEFORE IT WENT TO THE WRONG PLACE.
+/* AND THIS REFUSES TO RUN IF THE STEP BEFORE IT DID NOT HAPPEN.
 
-   db/schema.sql cannot carry a `set search_path` of its own -- it is the same file that
-   installs PRODUCTION, and hard-wiring it to `hopeloan` would send the live book into the
-   sandbox, which is the same accident pointing the other way and far worse.
-
-   So the check lives here instead. If `hopeloan.teams` is missing, then schema.sql was run
-   without the search_path line and its tables are sitting in `public`. Better to stop with a
-   sentence naming the fix than to add nine more tables to the wrong schema on top of it. */
+   Adding nine origination tables to a half-built schema produces a sandbox that looks
+   installed and is not, which is a worse place to debug from than an outright stop. If
+   `hopeloan.teams` is missing then RUN-ME-000b has not run -- one line away, named here. */
 do $$
 begin
   if to_regclass('hopeloan.teams') is null then
     raise exception
-      'STOP: db/schema.sql has not been run into the hopeloan schema. Its tables went to '
-      '`public` instead, because the line `set search_path = hopeloan, public;` was not pasted '
-      'above it in the SAME query. Fix: run db/hopeloan/RUN-ME-002-undo-into-public.sql to '
-      'tidy public, then re-run db/schema.sql with that line pasted first, then this file.';
+      'STOP: the hopeloan schema has no tables yet. Run '
+      'db/hopeloan/RUN-ME-000b-clone-schema.sql first -- it clones the live schema into '
+      'hopeloan -- then run this file again.';
   end if;
 end $$;
 
 /* =====================================================================================
-   HOPE LOAN -- ORIGINATION. Run AFTER RUN-ME-000-create-schema.sql and db/schema.sql.
+   HOPE LOAN -- ORIGINATION. Run LAST, after RUN-ME-000 and RUN-ME-000b.
    =====================================================================================
 
    HOW TO RUN IT
      1. RUN-ME-000-create-schema.sql first -- it makes the `hopeloan` schema and opens
         PostgREST's door to it, once, however this ends up hosted.
-     2. Paste `set search_path = hopeloan, public;` then the whole of db/schema.sql, in one
-        editor run. HOPE Loan's database is the WHOLE HOPE PMO schema plus what is below, so a
-        sandbox loan can flow all the way through expected, defaulters, decks and recovery
-        exactly as a real one does. That is what makes the end-to-end demonstration possible,
-        and what makes the eventual merge into HOPE PMO a no-op rather than a migration.
-     3. Paste `set search_path = hopeloan, public;` then the whole of THIS file, in one run.
+     2. RUN-ME-000b-clone-schema.sql -- builds the sandbox by CLONING the live schema, so it
+        cannot land in the wrong place and cannot drift out of step with production. HOPE
+        Loan's database is the WHOLE HOPE PMO schema plus what is below, so a sandbox loan can
+        flow all the way through expected, defaulters, decks and recovery exactly as a real one
+        does. That is what makes the end-to-end demonstration possible, and what makes the
+        eventual merge into HOPE PMO a no-op rather than a migration.
+     3. This file. It carries its own search_path line and checks step 2 actually happened.
+
    THAT IS ALL. There is NO environment variable to set for the free path: running these files
    IS the configuration. The application asks the database whether this schema is here and
    exposed, and draws the admin switch only once the answer is yes -- so the button appears
