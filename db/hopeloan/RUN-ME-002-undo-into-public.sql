@@ -26,6 +26,11 @@
    HOPE Loan will eventually need in `public` anyway on the day the two systems merge -- they
    are simply arriving early and empty. Nothing breaks either way.
 
+   FIRST, CHECK WHETHER THIS FILE IS NEEDED AT ALL. If the VERIFY block reports "not in public"
+   for every table, nothing ever landed there and there is nothing to undo -- close this file
+   and go straight to RUN-ME-000b. That was the actual state the first time this was diagnosed,
+   and reading one error instead of checking both schemas sent the diagnosis the wrong way.
+
    ORDER OF WORK
      1. Run the VERIFY block below and read it. Do not skip this.
      2. Only if it says every table is empty, run the CLEANUP block.
@@ -43,16 +48,32 @@
    Every count MUST be 0. If any row shows a count above zero, STOP and do not run the
    cleanup: that table is holding something, and this file is not for it.
    ------------------------------------------------------------------------------------- */
-select 'customers'            as table_name, count(*) as rows_must_be_zero from public.customers
-union all select 'assessments',           count(*) from public.assessments
-union all select 'guarantors',            count(*) from public.guarantors
-union all select 'loan_events',           count(*) from public.loan_events
-union all select 'reversals',             count(*) from public.reversals
-union all select 'disbursement_windows',  count(*) from public.disbursement_windows
-union all select 'carriers',              count(*) from public.carriers
-union all select 'payment_imports',       count(*) from public.payment_imports
-union all select 'manual_adjustments',    count(*) from public.manual_adjustments
+select t.name as table_name,
+       case when to_regclass('public.' || t.name) is null
+            then 'not in public -- nothing to undo'
+            else 'PRESENT: check rows_must_be_zero below' end as status
+from (values ('customers'),('assessments'),('guarantors'),('loan_events'),('reversals'),
+             ('disbursement_windows'),('carriers'),('payment_imports'),('manual_adjustments')) as t(name)
 order by 1;
+
+/* And the row counts, but ONLY for tables that actually exist -- a hard-coded
+   `select count(*) from public.customers` fails the whole query on a database where the table
+   was never created, which is exactly what happened: it made "nothing to undo" look like an
+   error and sent the diagnosis the wrong way for an hour. A verify block must survive the case
+   it is verifying against. */
+do $$
+declare t text; n bigint;
+begin
+  foreach t in array array['customers','assessments','guarantors','loan_events','reversals',
+                           'disbursement_windows','carriers','payment_imports','manual_adjustments']
+  loop
+    if to_regclass('public.' || t) is not null then
+      execute format('select count(*) from public.%I', t) into n;
+      raise notice 'public.% holds % row(s)%', t, n,
+        case when n > 0 then '  <-- STOP: do not run the cleanup' else '' end;
+    end if;
+  end loop;
+end $$;
 
 
 /* -------------------------------------------------------------------------------------
