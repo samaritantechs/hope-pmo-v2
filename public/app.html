@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>HOPE PMO — Portal</title>
 <style>
   :root{--b950:#081C4A;--b900:#0B2A6B;--b800:#10357F;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
@@ -469,6 +469,7 @@ function today(){ var d=new Date(Date.now()+3*3600*1000); return d.toISOString()
 function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
 
 var WDFULL = { MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday' };
+var WD7 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];   // calendar order, Monday first
 /* THE DAYS AS THE OFFICERS SAY THEM. Swahili weekday names carry their own number -- Jumamosi
    (mosi, 1st), Jumapili (pili, 2nd), Jumatatu (tatu, 3rd), Jumanne (nne, 4th), Jumatano (tano,
    5th) -- then Alhamisi and Ijumaa. So the working week reads J3 J4 J5 AL IJ, which is what is
@@ -2129,9 +2130,12 @@ VIEWS.dashboard = function(){
         }).join('') + '</div></div>';
     // The officer boards load after the headline numbers so the page paints immediately --
     // one execution never waits on all of it, which is what made v1's dashboard time out.
-    Promise.all([srv('officerBoards'), srv('callAgents').catch(function(){ return null; })]).then(function(r){
+    Promise.all([srv('officerBoards'), srv('callAgents').catch(function(){ return null; }),
+                 srv('recoveryByCredit', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; })])
+      .then(function(r){
       var b = r[0];
       S.csAgents = r[1];
+      var creditRec = r[2];
       var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
       var extra =
           (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
@@ -2160,6 +2164,7 @@ VIEWS.dashboard = function(){
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
                      col('pct','Rec %','pct')], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
+        + creditRecoveryBoard(creditRec && creditRec.metrics)
         + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
                     'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
                     [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
@@ -2747,6 +2752,52 @@ function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields
     + board(idA, titleA, subA, a, cols, totalFields ? sumRow(a, totalFields) : undefined)
     + board(idB, titleB, subB, b, cols, totalFields ? sumRow(b, totalFields) : undefined)
     + '</div>';
+}
+
+/* CREDITS — 7+ DAY RECOVERY, MONDAY THROUGH SUNDAY.
+   "we need a widget and recognition of OFF JANA column for 7+ counting to know howmany of OFF
+    JANA 7+ days customers were there and recovered/not there today ... at dashboard add
+    credits dashboard showing no of recovered customers daily in week for each like Monday
+    someone recovered 4 of 15 Tuesday 5 of 10 -- to sunday"
+
+   recoveryByCredit returns one flat row per (credit officer, weekday) that HAD an OFF JANA
+   pool -- {weekday, date, creditUser, team, assigned, recovered}. This pivots that into the
+   shape the meeting actually reads: one row per credit officer, one column per weekday, each
+   cell "recovered / assigned" exactly as asked for. A day nobody was dealt any OFF JANA
+   customers reads as an em dash rather than 0/0, which would look like a bad day rather than
+   an empty one. */
+function creditRecoveryBoard(metrics){
+  if (!metrics || !metrics.length) return '';
+  var byUser = {};
+  metrics.forEach(function(m){
+    var row = byUser[m.creditUser] || (byUser[m.creditUser] = { creditUser: m.creditUser, team: m.team, days: {} });
+    row.days[m.weekday] = { assigned: m.assigned, recovered: m.recovered };
+  });
+  var cellOf = function(c){ return c ? (c.recovered + ' / ' + c.assigned) : '—'; };
+  var rows = Object.keys(byUser).sort().map(function(k){
+    var src = byUser[k], out = { creditUser: src.creditUser, team: src.team };
+    var totA = 0, totR = 0;
+    WD7.forEach(function(wd){ out[wd] = cellOf(src.days[wd]);
+      if (src.days[wd]){ totA += src.days[wd].assigned; totR += src.days[wd].recovered; } });
+    out.week = totA ? (totR + ' / ' + totA) : '—';
+    return out;
+  });
+  // A TOTAL row a meeting can read out as "company-wide, Monday recovered X of Y" without
+  // adding it up themselves off the officer rows above it.
+  var totalRow = { creditUser: '', team: '' }, wkA = 0, wkR = 0;
+  WD7.forEach(function(wd){
+    var a = 0, r = 0;
+    Object.keys(byUser).forEach(function(k){ var c = byUser[k].days[wd]; if (c){ a += c.assigned; r += c.recovered; } });
+    totalRow[wd] = a ? (r + ' / ' + a) : '—';
+    wkA += a; wkR += r;
+  });
+  totalRow.week = wkA ? (wkR + ' / ' + wkA) : '—';
+  var cols = [col('creditUser', 'Credit officer'), col('team', 'Team')]
+    .concat(WD7.map(function(wd){ return col(wd, WDFULL[wd]); }))
+    .concat([col('week', 'Week')]);
+  return board('bCredRec', 'Credits — 7+ day recovery (Mon–Sun)',
+    'OFF JANA = 7+ days offline the day before · each cell reads recovered / assigned',
+    rows, cols, totalRow);
 }
 
 /* PAR reads two ways and the meeting uses both: how OLD the arrears are, and how BIG the
@@ -4734,9 +4785,60 @@ function drawOrderPanel(){
 function drawer(html){
   $('#drawer').innerHTML = html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
   $('#drawerBg').style.display = 'flex';
+  fitPanelToKeyboard_('drawerBg');
 }
-function closeDrawer(){ $('#drawerBg').style.display='none'; }
+function closeDrawer(){
+  $('#drawerBg').style.display='none';
+  $('#drawerBg').style.height = ''; $('#drawerBg').style.top = '';
+}
 $('#drawerBg').onclick = function(e){ if (e.target===$('#drawerBg')) closeDrawer(); };
+/* THE DRAWER DID NOT RISE ABOVE THE KEYBOARD.
+   "when someone wants to comment in app, the customer board doesnt rise, so they type without
+    preview of whats being written"
+
+   #drawerBg is `position:fixed;inset:0` with `align-items:flex-end` -- the comment box sits
+   flush with the bottom of the PAGE. Opening the on-screen keyboard on a phone does not shrink
+   that page (the layout viewport) unless the browser is told to; the keyboard just draws on
+   top of it. So the drawer stayed pinned behind the keyboard, and whatever was typed into
+   Maoni / Comment landed under it, invisible until Save.
+
+   Two fixes, because no single one covers every handset in the field:
+     1. `interactive-widget=resizes-content` on the viewport meta -- on a browser that honours
+        it, the layout viewport itself shrinks and this function never has to do anything.
+     2. This one, for the Android WebView builds and older Chrome that do not: `visualViewport`
+        reports the REAL visible height once the keyboard is up, so the drawer is pinned to
+        that instead of the full page -- it rises, because the space behind the keyboard has
+        been taken out of its own height. */
+function fitPanelToKeyboard_(bgId){
+  var vv = window.visualViewport;
+  if (!vv) return;
+  var bg = document.getElementById(bgId);
+  if (!bg) return;
+  bg.style.height = vv.height + 'px';
+  bg.style.top = vv.offsetTop + 'px';
+}
+(function(){
+  var vv = window.visualViewport;
+  if (!vv) return;
+  var ids = ['drawerBg'];
+  function refit(){
+    ids.forEach(function(id){
+      var bg = document.getElementById(id);
+      if (bg && bg.style.display !== 'none') fitPanelToKeyboard_(id);
+    });
+  }
+  vv.addEventListener('resize', refit);
+  vv.addEventListener('scroll', refit);
+})();
+/* Belt-and-suspenders for a WebView slow to fire visualViewport's resize: once the keyboard's
+   own open animation has had time to run, bring the field the officer is actually typing into
+   back into the drawer's own visible area -- so even a late resize event still ends with the
+   words on screen. */
+$('#drawerBg').addEventListener('focusin', function(e){
+  var t = e.target;
+  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+  setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+});
 
 var FU_STATUSES = ['AMENASIA / WRONG REF','HAJAPATA MKOPO','HAPATIKANI YEYE & MDHAMINI','YEYE / MDHAMINI HANA USHIRIKIANO',
   'AMETOA AHADI','ANALIPA LEO','AMETUMA KWA AFISA','REJESHO LIMELIWA','ANA NAMBA NYINGINE','OTHERS'];
