@@ -4142,15 +4142,19 @@ test('only an admin may stamp', async () => {
 */
 test('the leaders export carries every column, in the importer\'s own shape', async () => {
   const book = tables();
+  /* PHONES ARE SEEDED THE WAY THE DATABASE ACTUALLY HOLDS THEM -- nine digits, no leading zero,
+     which is what normPhone leaves behind on the way in through either door. Seeding "0713..."
+     here would make the round trip look lossy when all that changed was the leading zero. */
   book.teams = [{ team: 'KONGOWE', team_code: 'KON123', region: 'DAR', zone: 'A',
-    recovery: 'JUMA G', recovery_no: '0713000001', gmo: 'GEE MO', gmo_no: '0714000002',
-    manager: 'BOSS', manager_no: '0715000003', credit: 'ANALYST A', credit_id: 'CA9',
-    credit_no: '0716000004', expected: 'EXP A', expected_no: '0717000005',
-    bike: 'BIKE B', bike_no: '0718000006', legal: 'LEGAL L', legal_no: '0719000007',
-    collection: 'CATHERINE', collection_no: '0720000008', opm: 'OPM O', opm_no: '0721000009' }];
+    recovery: 'JUMA G', recovery_no: '713000001', gmo: 'GEE MO', gmo_no: '714000002',
+    manager: 'BOSS', manager_no: '715000003', credit: 'ANALYST A', credit_id: 'CA9',
+    credit_no: '716000004', expected: 'EXP A', expected_no: '717000005',
+    bike: 'BIKE B', bike_no: '718000006', legal: 'LEGAL L', legal_no: '719000007',
+    collection: 'CATHERINE', collection_no: '720000008', opm: 'OPM O', opm_no: '721000009' }];
   const d = await portalApi(fakeDb(book), ADMIN, 'teamsExport', {}, NOW);
   assert.equal(d.count, 1);
   assert.ok(d.headers.includes('COL NO'));
+  assert.equal(d.headers.includes('CREDIT ID'), false, 'the export no longer offers the ID column');
   assert.ok(d.headers.includes('REGION'));
   assert.equal(d.headers.length, d.rows[0].length, 'every header has a cell under it');
 
@@ -4161,10 +4165,46 @@ test('the leaders export carries every column, in the importer\'s own shape', as
   assert.equal(back.region, 'DAR');
   assert.equal(back.collection, 'CATHERINE');
   assert.equal(back.legal, 'LEGAL L');
-  assert.equal(back.credit_id, 'CA9');
+  assert.equal('credit_id' in back, false, 'CREDIT ID is gone from the sheet entirely');
+  assert.equal(back.credit, 'ANALYST A', 'the analyst is carried by NAME');
   for (const k of ['recovery_no', 'gmo_no', 'manager_no', 'expected_no', 'bike_no', 'legal_no', 'collection_no']) {
     assert.ok(back[k], k + ' was lost on the way back');
   }
+
+  /* EVERY CELL, NOT A CHOSEN FEW. The list above names the columns that have been lost before;
+     this walks the whole exported row instead, so the next column added to the sheet is covered
+     by this test on the day it is added rather than the day someone notices it going missing. */
+  d.headers.forEach((h, i) => {
+    const cell = d.rows[0][i];
+    if (!cell) return;                       // an empty cell has nothing to carry back
+    assert.ok(Object.values(back).some(v => String(v) === cell),
+      'the exported column ' + h + ' (' + cell + ') did not survive the round trip');
+  });
+});
+
+/* The bug the round-trip test above uncovered: the form only trimmed, so the same officer's
+   number was one string when typed and another when uploaded, and the phone search -- which
+   matches the normalised nine digits -- could not find the typed one. */
+test('a phone typed into the leaders form is stored the same shape as an uploaded one', async () => {
+  const book = tables();
+  // A database that HAS run 2026-08-09-team-contacts.sql -- otherwise saveTeam's migration
+  // guard rightly drops the phone columns rather than failing the whole save.
+  book.teams = [{ team: 'KONGOWE', team_code: 'KON123', recovery: null, recovery_no: null,
+    manager: null, manager_no: null }];
+  const db = fakeDb(book);
+  await portalApi(db, ADMIN, 'saveTeam', {
+    team: 'KONGOWE', recovery: 'JUMA G', recovery_no: '0713 000 001',
+    manager: 'BOSS', manager_no: '+255 715 000 003',
+  }, NOW);
+  // Read back through the API: fakeDb keeps its own copy of the book, so the write landed there.
+  const saved = (await portalApi(db, ADMIN, 'teams', {}, NOW)).rows.find(t => t.team === 'KONGOWE');
+  assert.equal(saved.recovery_no, '713000001', 'the leading zero is dropped, as on upload');
+  assert.equal(saved.manager_no, '715000003', 'the country code is dropped, as on upload');
+  assert.equal(saved.recovery, 'JUMA G', 'a name is still a name -- only phones are normalised');
+
+  const { importTeams } = await import('../api/_lib/importers.js');
+  const viaSheet = importTeams([['TEAM', 'RECOVERY NO'], ['KONGOWE', '0713 000 001']])[0];
+  assert.equal(viaSheet.recovery_no, saved.recovery_no, 'both doors must agree, exactly');
 });
 
 test('only an admin may download the leaders sheet', async () => {
@@ -6177,34 +6217,38 @@ test('the portal follow-up list wears PAID on a cleared balance too', async () =
 */
 test('the credit board names the APPROVER, never the customer-care agent', async () => {
   const book = tables();
-  book.teams[0] = { ...book.teams[0], credit: 'ANALYST A', credit_id: 'CA9' };
+  book.teams[0] = { ...book.teams[0], credit: 'ANALYST A' };
   book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000,
     approved_date: TODAY, approved_by: 'CA9', created_by: 'NEEMA CS' }];
   const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
   const names = d.creditToday.map(r => r.analyst);
-  assert.ok(names.includes('ANALYST A'), 'the CREDIT ID resolves the approver to their name');
+  assert.ok(names.includes('ANALYST A'), 'named from the credit column in Teams & Staff');
   assert.equal(names.includes('NEEMA CS'), false,
     'the customer-care agent must not appear on the analysts\' board');
 });
 
-test('an approver with no CREDIT ID falls back to the team\'s credit officer', async () => {
+test('an approvals file that names the analyst in words is honoured', async () => {
   const book = tables();
-  book.teams[0] = { ...book.teams[0], credit: 'ANALYST A', credit_id: null };
+  book.teams[0] = { ...book.teams[0], credit: 'ANALYST A' };
   book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000,
     approved_date: TODAY, approved_by: 'UNKNOWN-ID', created_by: 'NEEMA CS' }];
   const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
   assert.deepEqual(d.creditToday.map(r => r.analyst), ['ANALYST A']);
 });
 
-test('with no analyst known at all, the raw approver ID is kept rather than the CS agent', async () => {
-  /* Dropping the row would hide a real sale; naming the customer-care agent would be the
-     original bug. The ID is the honest answer -- and it is the string to go and map. */
+test('an unknown approver ID is NEVER printed -- no IDs anywhere', async () => {
+  /* "dont use IDs in the approved report". With no analyst nameable, the row still appears
+     (a real sale must not vanish) but reads (unassigned) -- which is the prompt to fill the
+     credit officer in on Teams & Staff, not a number nobody can use. */
   const book = tables();
-  book.teams[0] = { ...book.teams[0], credit: null, credit_id: null };
+  book.teams[0] = { ...book.teams[0], credit: null };
   book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000,
     approved_date: TODAY, approved_by: 'CA-777', created_by: 'NEEMA CS' }];
   const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
-  assert.deepEqual(d.creditToday.map(r => r.analyst), ['CA-777']);
+  const names = d.creditToday.map(r => r.analyst);
+  assert.deepEqual(names, ['(unassigned)']);
+  assert.equal(names.includes('CA-777'), false, 'no ID reaches the screen');
+  assert.equal(names.includes('NEEMA CS'), false, 'and never the customer-care agent');
 });
 
 test('the customer-care board still names the agent who RECEIVED the application', async () => {

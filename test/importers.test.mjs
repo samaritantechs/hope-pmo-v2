@@ -927,12 +927,12 @@ test('a column the leaders sheet does not have is left alone, not blanked', asyn
   const { importTeams } = await import('../api/_lib/importers.js');
   // The real shape of the sheet that caused it: no TEAM CODE column anywhere.
   const out = importTeams([
-    ['TEAM', 'REGION', 'CREDIT ID'],
-    ['KONGOWE', 'DAR', 'CA9'],
+    ['TEAM', 'REGION', 'CREDIT'],
+    ['KONGOWE', 'DAR', 'ANALYST A'],
   ]);
   assert.equal(out.length, 1);
   assert.equal('team_code' in out[0], false, 'team_code must not be in the payload at all');
-  assert.equal(out[0].credit_id, 'CA9');
+  assert.equal(out[0].credit, 'ANALYST A');
   assert.equal(out[0].region, 'DAR');
   // Nor may any other unmentioned role column ride along as a null.
   for (const k of ['gmo', 'gmo_no', 'manager', 'legal', 'collection', 'expected_no']) {
@@ -960,11 +960,16 @@ test('the team code is recognised by the name the screen shows it under', async 
   }
 });
 
-test('the credit analyst ID is recognised under the names the reports write it', async () => {
+test('a CREDIT ID column is ignored, and never erases a stored value', async () => {
+  /* "so even remove the credit id column in teams and staff - not using it". A sheet that
+     still carries the column must neither store it nor -- more importantly -- send a null
+     that would wipe whatever a deployment already has. Not mentioning a column is how this
+     importer leaves it alone; that is the same rule that saved the team codes. */
   const { importTeams } = await import('../api/_lib/importers.js');
   for (const header of ['CREDIT ID', 'CREDIT_ID', 'CREDIT ANALYST ID', 'C. ANALYST ID', 'ANALYST ID', 'CA ID']) {
-    const out = importTeams([['TEAM', header], ['KONGOWE', 'CA9']]);
-    assert.equal(out[0].credit_id, 'CA9', header + ' was not recognised');
+    const out = importTeams([['TEAM', header, 'CREDIT'], ['KONGOWE', 'CA9', 'ANALYST A']]);
+    assert.equal('credit_id' in out[0], false, header + ' must not reach the payload');
+    assert.equal(out[0].credit, 'ANALYST A', 'the analyst NAME is what is kept');
   }
 });
 

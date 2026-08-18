@@ -387,8 +387,10 @@ export function importTeams(csvRows) {
     put('manager', textOrNull, 'MANAGER');
     put('manager_no', normPhone, 'MANAGER NO', 'MANAGER_NO');
     put('credit', textOrNull, 'C. ANALYST', 'CREDIT');
-    put('credit_id', textOrNull, 'CREDIT ID', 'CREDIT_ID', 'CREDIT ANALYST ID',
-      'C. ANALYST ID', 'ANALYST ID', 'CA ID', 'CREDIT NO ID', 'NAMBA YA MKOPO');
+    /* NO CREDIT ID. Analysts are named from the CREDIT column, never numbered, so a sheet
+       still carrying an ID column is simply ignored rather than stored -- and an existing
+       stored value is left untouched, because a column this importer does not mention is a
+       column it does not write. */
     put('credit_no', normPhone, 'CREDIT NO', 'C. ANALYST NO');
     put('expected', textOrNull, 'EXPECTED');
     put('expected_no', normPhone, 'EXPECTED NO', 'EXPECTED_NO');
