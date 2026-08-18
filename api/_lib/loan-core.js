@@ -110,10 +110,18 @@ export function docketFromRef(ref) {
 }
 
 async function nextSerial(db) {
-  // Small table, small scan -- the customer count is the counter. Fine at demo scale; a
-  // dedicated sequence is the obvious upgrade once real volume makes this worth avoiding.
-  const rows = await allPaged(db, 'customers', q => q.select('id'));
-  return rows.length + 1;
+  /* THE CHEAPEST READ THERE IS: PostgREST answers a head-only exact count in a HEADER, with no
+     body at all. This used to page the whole customers table just to length it -- one request
+     per thousand rows, every single registration, to learn a number Postgres already knows.
+     At sandbox scale that was invisible; on a real book it is the exact shape of read this
+     project has been burned by before.
+
+     STILL NOT A SEQUENCE, and deliberately: count+1 is only safe because registration is one
+     person at a time on a demo. Before this carries real volume it wants a Postgres sequence,
+     which is the one thing that cannot hand two customers the same docket under concurrency. */
+  const { count, error } = await runQuery(() => db.from('customers').select('id', { count: 'exact', head: true }));
+  if (error) throw new Error(error.message);
+  return (count || 0) + 1;
 }
 
 /* =====================================================================================
@@ -124,11 +132,26 @@ async function nextSerial(db) {
     is minted, or the same person becomes two people. */
 async function csSearch(db, user, { q }) {
   requireTab(user, 'customer_service');
-  const query = K(q);
-  if (!query) return { rows: [] };
-  const rows = await allPaged(db, 'customers', b => b.select('id, docket, full_name, mobile, team, branch'));
-  const hits = rows.filter(c => K(c.full_name).includes(query) || String(c.mobile || '').includes(query.replace(/\D/g, '')));
-  return { rows: hits.slice(0, 25) };
+  const query = String(q == null ? '' : q).trim();
+  if (query.length < 3) return { rows: [], note: 'Andika angalau herufi 3. / Type at least 3 characters.' };
+
+  /* FILTERED IN THE QUERY, NOT AFTERWARDS. This used to read the WHOLE customers table and
+     filter it in JavaScript -- fine against a handful of sandbox rows, and a full-table read
+     per search the moment this holds a real book. Same idiom findCustomer already uses:
+     one `.or()` across the columns a person actually types, capped, so the database returns
+     the twenty-five that matched instead of the ninety thousand that did not.
+
+     PHONES ARE STORED NORMALISED -- normPhone strips the leading zero and the country code --
+     so a typed 0763357860 must be searched as its last nine digits or it silently finds
+     nothing, which is the failure most likely to be blamed on the data rather than the query. */
+  const like = '%' + query.replace(/[%_\\]/g, m => '\\' + m) + '%';
+  const digits = query.replace(/\D/g, '');
+  const numLike = digits.length >= 7 ? '%' + digits.slice(-9) + '%' : null;
+  const cols = ['full_name.ilike.' + like, 'docket.ilike.' + like]
+    .concat(numLike ? ['mobile.ilike.' + numLike] : []);
+  const rows = await allPaged(db, 'customers', b =>
+    b.select('id, docket, full_name, mobile, team, branch').or(cols.join(',')).limit(25));
+  return { rows };
 }
 
 /** A new application. Registers the customer (or reuses one found by csSearch) and opens a
@@ -181,6 +204,20 @@ async function nextTrackFor(db, customerId) {
   const rows = await allPaged(db, 'loans', b => b.select('track_no').eq('customer_id', customerId));
   const max = rows.reduce((m, r) => Math.max(m, Number(r.track_no) || 0), 0);
   return max + 1;
+}
+
+/** The register itself. csComplaint could WRITE a complaint and nothing could read one back,
+    which makes a register a drawer nobody opens -- and "Can assign other system users to
+    follow-up over registered complaint(s)" needs the list before it can mean anything. */
+async function complaintsList(db, user) {
+  requireTab(user, 'customer_service');
+  const rows = await allPaged(db, 'complaints', b => b.select('*'));
+  const sorted = rows.slice().sort((x, y) => String(y.created_at || '').localeCompare(String(x.created_at || '')));
+  return {
+    rows: sorted,
+    open: sorted.filter(r => K(r.status) !== 'RESOLVED').length,
+    resolved: sorted.filter(r => K(r.status) === 'RESOLVED').length,
+  };
 }
 
 /** Complaint register, per the customer-service description: type, details, assign onward. */
@@ -477,10 +514,17 @@ async function financeCloseWindow(db, user) {
   return { ok: true };
 }
 
+/** THE WINDOW STATE RIDES ALONG WITH THE QUEUE. The screen needs both and used to ask for them
+    as two separate calls from the browser -- two HTTPS round trips from Vercel for one screen,
+    when the second answer is one small read the first request could carry back for free.
+    "Can two questions share one journey?" is the standing rule; this is the answer. */
 async function disburseQueue(db, user) {
   requireTab(user, 'manager');
-  const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'approved').order('approved_date'));
-  return { rows };
+  const [rows, win] = await Promise.all([
+    allPaged(db, 'loans', b => b.select('*').eq('stage', 'approved').order('approved_date')),
+    disburseWindowStatus(db),
+  ]);
+  return { rows, windowOpen: win.open, window: win.window };
 }
 
 async function managerDisburse(db, user, { loan_id }) {
@@ -525,13 +569,24 @@ async function managerReturnToCredit(db, user, { loan_id, reason }) {
 
 async function financeBankReport(db, user) {
   requireTab(user, 'finance');
-  const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'disbursed'));
+  /* Same one-journey rule as disburseQueue: the finance screen shows the window state above
+     the report, so the report brings it back rather than the browser asking twice.
+     NARROWED SELECT: this only ever prints eight fields, and `select('*')` on a loans row
+     carries fifty -- most of them amounts and dates this screen never shows. Asking for fewer
+     columns is the cheapest optimisation there is and the one the standing rule names first. */
+  const [rows, win] = await Promise.all([
+    allPaged(db, 'loans', b => b.select(
+      'id, docket_no, full_name, contact, disbursement_type, bank_name, account_no, net_disbursed'
+    ).eq('stage', 'disbursed')),
+    disburseWindowStatus(db),
+  ]);
   return {
     rows: rows.map(r => ({
       loan_id: r.id, docket: r.docket_no, full_name: r.full_name, contact: r.contact,
       carrier: r.disbursement_type, bank_name: r.bank_name, account_no: r.account_no,
       amount: r.net_disbursed,
     })),
+    windowOpen: win.open, window: win.window,
   };
 }
 
@@ -565,6 +620,30 @@ async function financeImportPayments(db, user, { rows, batch }) {
   const { error } = await db.from('payment_imports').insert(clean);
   if (error) throw new Error(error.message);
   return { imported: clean.length, batch: batchName };
+}
+
+/** THE PAYMENTS FINANCE HAS BROUGHT IN, so that shifting one is reachable at all. Without
+    this, financeShiftPayment could only be called by an id nobody had any way to look up --
+    a working function with no door to it. Newest first, because a misapplied payment is
+    almost always one that has just arrived. */
+async function paymentsList(db, user, { batch, ref } = {}) {
+  requireTab(user, 'finance');
+  let b = db.from('payment_imports').select('*');
+  if (batch) b = b.eq('batch', batch);
+  if (ref) b = b.eq('ref', String(ref));
+  /* ORDERED AND CAPPED IN THE QUERY, not sorted in JavaScript after dragging the lot back.
+     A payments table only grows, so "read it all and sort it here" is a read with no ceiling --
+     the exact shape this project has been burned by. Newest first because a misapplied payment
+     is almost always one that has just arrived, and 500 is far more than anyone scrolls. */
+  const rows = await allPaged(db, 'payment_imports', () =>
+    b.order('imported_at', { ascending: false }).limit(500));
+  return {
+    rows,
+    /* The batches on THIS page, so the screen can offer them rather than making somebody
+       remember what an import was called. Deliberately not a second query for the full
+       distinct list: one more round trip to name a few older batches nobody is looking for. */
+    batches: [...new Set(rows.map(r => r.batch).filter(Boolean))].sort().reverse(),
+  };
 }
 
 /** "yes teams that get transactions removed from them may find themselves having negative
@@ -773,7 +852,8 @@ const FN = {
   creditQueue, creditApprove, creditReject,
   disburseWindowStatus, disburseQueue, managerDisburse, managerDisburseReject, managerReturnToCredit,
   financeOpenWindow, financeCloseWindow, financeBankReport, financeMarkFunded,
-  financeImportPayments, financeShiftPayment,
+  financeImportPayments, financeShiftPayment, paymentsList,
+  complaintsList,
   reversalsList, reversalRequest, reversalFinanceDecide, reversalGmDecide,
   carriersList, carrierSave,
   adjustmentSave, adjustmentsList,

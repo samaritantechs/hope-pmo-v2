@@ -1,6 +1,7 @@
 import { supabase } from './_lib/supabase.js';
-import { withApi } from './_lib/auth.js';
+import { withApi, authCodeResolved } from './_lib/auth.js';
 import { callApi } from './_lib/call-core.js';
+import { workspaceFor, HOPELOAN } from './_lib/workspace.js';
 
 // POST /api/call   { fn: 'api_callBoot' | 'api_callRegister' | ..., args: [...] }
 // One route for the whole HOPE Calls app (public/call.html) -- fn names match the old
@@ -10,6 +11,25 @@ import { callApi } from './_lib/call-core.js';
 // entire pipeline runs under npm test against a fake PostgREST client.
 export default withApi(async (req, res) => {
   if (req.method !== 'POST') { const e = new Error('Method not allowed'); e.status = 405; throw e; }
-  const { fn, args } = req.body || {};
-  return callApi(supabase, fn, args);
+  const { fn, args, workspace, code } = req.body || {};
+
+  /* THE HOPE LOAN SWITCH, ON THE PHONE.
+     Calls signs in with a DEVICE ID, not an access code -- a device resolves to a call_users
+     row whose `role` is an officer role, never ADMIN. So a device alone can never be the
+     authority for leaving production, and this deliberately does NOT invent a second, weaker
+     rule for the phone: reaching the sandbox here costs the same ADMIN ACCESS CODE the portal
+     asks for, resolved the same way /api/me resolves it.
+
+     Anything short of that -- no code, a wrong code, an officer's code, a code that is valid
+     but not an admin -- falls through to production untouched, and silently: an error would
+     itself be a way to discover that a sandbox exists. An officer's handset never carries the
+     switch and could not use it if it did. */
+  let db = supabase;
+  if (String(workspace || '').trim().toLowerCase() === HOPELOAN && code) {
+    try {
+      const user = await authCodeResolved(code);
+      db = workspaceFor(user, HOPELOAN).db;
+    } catch { /* an unreadable code is simply not an admin -- stay on the real book */ }
+  }
+  return callApi(db, fn, args);
 });

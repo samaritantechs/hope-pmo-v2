@@ -353,6 +353,32 @@ test('financeImportPayments is the receiver for the ISP feed finance already run
   assert.equal(rows[0].source, 'manual');
 });
 
+/* Both of these existed as writes with no way to read them back -- a register nobody can open
+   and a shift-by-id nobody could look an id up for. */
+test('paymentsList makes a misapplied payment findable, so shifting one is reachable', async () => {
+  const db = fakeDb({});
+  await loanApi(db, FINANCE, 'financeImportPayments', {
+    batch: 'PAY-A', rows: [{ ref: '919000001', amount: 34000 }, { ref: '919000002', amount: 51000 }],
+  });
+  const d = await loanApi(db, FINANCE, 'paymentsList', {});
+  assert.equal(d.rows.length, 2);
+  assert.deepEqual(d.batches, ['PAY-A']);
+  assert.ok(d.rows[0].id, 'a row must carry the id financeShiftPayment needs');
+
+  const filtered = await loanApi(db, FINANCE, 'paymentsList', { ref: '919000001' });
+  assert.equal(filtered.rows.length, 1);
+});
+
+test('complaintsList reads back what csComplaint writes, with an open/resolved split', async () => {
+  const db = fakeDb({});
+  await loanApi(db, CS, 'csComplaint', { ref: '919000001', team: 'MABIBO', type: 'Misallocation', details: 'wrong team' });
+  const d = await loanApi(db, CS, 'complaintsList', {});
+  assert.equal(d.rows.length, 1);
+  assert.equal(d.open, 1);
+  assert.equal(d.resolved, 0);
+  assert.equal(d.rows[0].category, 'Misallocation');
+});
+
 test('shifting a payment keeps the original, marked, rather than deleting it', async () => {
   const db = fakeDb({ payment_imports: [{ id: 'p1', ref: 'REF-A', amount: 34000 }] });
   await assert.rejects(() => loanApi(db, FINANCE, 'financeShiftPayment', { payment_id: 'p1', to_ref: 'REF-B' }),
