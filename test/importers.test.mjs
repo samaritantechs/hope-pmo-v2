@@ -1186,3 +1186,55 @@ test('approved and disbursed keep the dates in the file -- that is the report', 
   const out = importLoans([H, ['SOLD PERSON', 'KONGOWE', '22/7/2026']], 'approved');
   assert.equal(out[0].approved_date, '2026-07-22');
 });
+
+/* =====================================================================================
+   THE MANUAL SUMMARY REPORTS -- "when i miss the customers file time".
+   =====================================================================================
+   The Expected_Summary export: Team | Expected | Collected | Outstanding | ...% | Date.
+   The defaulter summary: THREE exports (default, expired, chronic), each team_id |
+   team_name | amount_defaulted -- highlighted together and summed into one report,
+   because the batch rule keeps only the latest batch per date and three separate uploads
+   would each replace the one before.
+*/
+test('the Expected_Summary shape: COLLECTED, OUTSTANDING, and the file\'s own DATE win', async () => {
+  const { importExpectedSummary } = await import('../api/_lib/importers.js');
+  const rows = [
+    ['Team', 'Expected', 'Collected', 'Outstanding', 'Collection %', 'Outstanding %', 'Date'],
+    ['BABATI', '5530693', '5236027', '294666', '94.67%', '5.33%', '2026-08-17'],
+    ['BUKOBA B', '2040043', '2040043', '0', '100.0%', '0.0%', '2026-08-17'],
+  ];
+  // The box date is deliberately wrong -- the file's own date must rule.
+  const out = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-18' });
+  assert.equal(out.length, 2);
+  assert.equal(out[0].snapshot_date, '2026-08-17', 'the file says which day it reports');
+  assert.equal(out[0].collected_amt, 5236027, 'COLLECTED is the figure, not a sum of blanks');
+  assert.equal(out[0].uncollected_amt, 294666, 'OUTSTANDING is the company\'s own uncollected');
+  assert.equal(out[1].uncollected_amt, 0, 'a stated zero stays zero');
+});
+
+test('the workbook-tab shape still works exactly as before', async () => {
+  const { importExpectedSummary } = await import('../api/_lib/importers.js');
+  const out = importExpectedSummary([
+    ['TEAMS', 'EXPECTED', 'PAID', 'ILIYONASIA', 'EXP TOMMR'],
+    ['KONGOWE', '1000', '600', '100', '50'],
+  ], { snapshotType: 'today', snapshotDate: '2026-08-18' });
+  assert.equal(out[0].collected_amt, 750, 'the parts still sum where COLLECTED is absent');
+  assert.equal(out[0].snapshot_date, '2026-08-18', 'no DATE column, so the chosen date holds');
+});
+
+test('the three defaulter segments sum into one row per team', async () => {
+  const { importDefaulterSummary } = await import('../api/_lib/importers.js');
+  // Concatenated the way the page sends the highlighted files: one header, all data rows.
+  const rows = [
+    ['team_id', 'team_name', 'amount_defaulted'],
+    ['225-2069', 'MAFINGA', '8682526'],       // default segment
+    ['208-2040', 'GONGOLAMBOTO ', '1418672'], // trailing space, as the real export writes it
+    ['225-2069', 'MAFINGA', '41570555'],      // chronic segment, same team
+    ['207-2039', 'KONGOWE', '3740000'],       // expired segment
+  ];
+  const out = importDefaulterSummary(rows, { snapshotType: 'current', snapshotDate: '2026-08-17', weekday: 'MON' });
+  assert.equal(out.length, 3, 'one row per team, not per segment');
+  assert.equal(out.find(r => r.team === 'MAFINGA').arrears_amt, 50253081, 'segments summed');
+  assert.ok(out.find(r => r.team === 'GONGOLAMBOTO'), 'the trailing space is normalised away');
+  assert.equal(out.find(r => r.team === 'KONGOWE').arrears_amt, 3740000);
+});

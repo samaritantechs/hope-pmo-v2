@@ -25,6 +25,7 @@
   .msg{margin-top:14px;padding:12px 14px;border-radius:8px;font-size:13.5px;white-space:pre-wrap}
   .msg.ok{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);color:var(--ok)}
   .msg.bad{background:rgba(248,113,113,.1);border:1px solid rgba(248,113,113,.3);color:var(--bad)}
+  .msg.warn{background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.35);color:#b45309}
   .hint{color:var(--mut);font-size:12px;margin-top:-8px;margin-bottom:14px}
   .file-drop{border:1.5px dashed var(--line);border-radius:8px;padding:20px;text-align:center;cursor:pointer;margin-bottom:6px;font-size:13.5px;color:var(--mut)}
   .file-drop.has{border-color:var(--ok);color:var(--ok)}
@@ -380,6 +381,9 @@ var TYPE_BEHAVIOUR = {
 };
 function syncFields(){
   var show = TYPE_META[$('type').value] || [];
+  /* The defaulter summary comes as THREE exports (default, expired, chronic) and the day's
+     book is their sum -- so this one type accepts all three files highlighted together. */
+  $('file').multiple = ($('type').value === 'defaulters-summary');
   ['weekdayWrap', 'dateWrap', 'stageWrap'].forEach(function(id){
     $(id).classList.toggle('hide', show.indexOf(id) < 0);
   });
@@ -615,8 +619,77 @@ function shrinkImage_(file, n){
     rd.readAsDataURL(file);
   });
 }
+/* THE THREE-SEGMENT SUMMARY, HIGHLIGHTED TOGETHER.
+   Each file names its own segment (Filters -> Options: default/expired/chronic) and its own
+   report date (Filters -> End Date), so nothing is retyped and nothing can be mislabelled.
+   They are combined into ONE upload because the batch rule keeps only the latest batch per
+   date -- three separate uploads would each replace the one before, and the day would end up
+   counting a single segment while looking complete. */
+var wbMulti = null;   // [{name, wb, dataSheet, seg, endDate}] when several files were chosen
+function filtersOf_(wb){
+  var out = { seg: '', endDate: '' };
+  if (wb.SheetNames.indexOf('Filters') < 0) return out;
+  var aoa = XLSX.utils.sheet_to_json(wb.Sheets['Filters'], { header: 1, raw: true, defval: '' });
+  aoa.forEach(function(r){
+    var k = String(r[0] || '').trim().toLowerCase(), v = String(r[1] || '').trim();
+    if (k === 'options') out.seg = v.toLowerCase();
+    if (k === 'end date' && /^\d{4}-\d{2}-\d{2}$/.test(v)) out.endDate = v;
+  });
+  return out;
+}
+function dataSheetOf_(wb){ return wb.SheetNames.indexOf('Data') >= 0 ? 'Data' : pickDataSheet_(wb); }
+function setSnapFromFile_(d){
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d || ''))) return;
+  $('snapDate').value = d;
+  // The recovery pairing keys on the weekday of the report's own day.
+  var wd = ['SUN','MON','TUE','WED','THU','FRI','SAT'][new Date(d + 'T00:00:00Z').getUTCDay()];
+  if ($('weekday')) $('weekday').value = wd;
+  paintWd_();
+}
+function handleSummaryFiles_(files){
+  wbMulti = null; wbCache = null;
+  $('sheetWrap').classList.add('hide');
+  $('drop').firstChild.nodeValue = 'Reading ' + files.length + ' files\u2026';
+  Promise.all(files.map(function(f){ return readWorkbook(f).then(function(wb){ return { name: f.name, wb: wb }; }); }))
+    .then(function(list){
+      list.forEach(function(x){
+        var flt = filtersOf_(x.wb);
+        x.seg = flt.seg; x.endDate = flt.endDate; x.dataSheet = dataSheetOf_(x.wb);
+      });
+      wbMulti = list;
+      var segs = list.map(function(x){ return x.seg || '?'; });
+      var missing = ['default', 'expired', 'chronic'].filter(function(w){ return segs.indexOf(w) < 0; });
+      var dates = list.map(function(x){ return x.endDate; }).filter(Boolean);
+      var oneDate = dates.length && dates.every(function(d){ return d === dates[0]; }) ? dates[0] : '';
+      if (oneDate) setSnapFromFile_(oneDate);
+      $('drop').firstChild.nodeValue = list.length + ' files: ' + segs.join(' + ')
+        + (oneDate ? ' \u00b7 ' + oneDate : '');
+      /* Fewer than the three segments is allowed but SAID -- the day's total will be only
+         what was uploaded, and the person pressing the button decides with open eyes. */
+      var m = $('msg');
+      m.className = missing.length || !oneDate ? 'msg warn' : 'msg ok';
+      m.textContent = (missing.length
+          ? '\u26a0 Sehemu hazijakamilika / segments missing: ' + missing.join(', ')
+            + '. Jumla ya siku itakuwa ya sehemu zilizopo tu. / The day\u2019s total will cover only what is here.'
+          : '\u2713 Sehemu zote tatu zipo (default + expired + chronic) \u2014 zitajumlishwa kuwa ripoti moja. / All three segments present \u2014 they will be summed into one report.')
+        + (dates.length && !oneDate ? ' \u26a0 Faili zina tarehe tofauti / the files carry DIFFERENT dates \u2014 angalia. ' : '')
+        + (oneDate ? ' Tarehe imesomwa kutoka faili: ' + oneDate + '. / Date read from the files.' : '');
+    })
+    .catch(function(err){
+      wbMulti = null; chosenFile = null;
+      $('drop').classList.remove('has');
+      $('drop').firstChild.nodeValue = 'Could not read those files \u2014 ' + err;
+    });
+}
 $('file').addEventListener('change', function(e){
-  chosenFile = e.target.files[0] || null;
+  var all = Array.prototype.slice.call(e.target.files || []);
+  wbMulti = null;
+  chosenFile = all[0] || null;
+  if (all.length > 1 && $('type').value === 'defaulters-summary'){
+    $('drop').classList.add('has');
+    handleSummaryFiles_(all);
+    return;
+  }
   wbCache = null;
   $('sheetWrap').classList.add('hide');
   $('drop').classList.toggle('has', !!chosenFile);
@@ -646,6 +719,24 @@ $('file').addEventListener('change', function(e){
     if (f !== chosenFile) return;                    // another file was picked while this one parsed
     wbCache = wb;
     $('drop').firstChild.nodeValue = f.name;
+    /* The summary exports carry their own report date -- the Expected_Summary as a DATE
+       column, the defaulter segments in their Filters sheet. Read it into the box so
+       "yesterday's final report" can never be filed under the wrong day by a tired hand. */
+    if ($('type').value === 'expected-summary' || $('type').value === 'defaulters-summary'){
+      var own = filtersOf_(wb).endDate;
+      if (!own){
+        try {
+          var aoa0 = XLSX.utils.sheet_to_json(wb.Sheets[dataSheetOf_(wb)], { header: 1, raw: false, defval: '' });
+          var di = (aoa0[0] || []).findIndex(function(hh){ return String(hh).trim().toUpperCase() === 'DATE'; });
+          if (di >= 0 && aoa0[1]) own = String(aoa0[1][di] || '').slice(0, 10);
+        } catch (e) {}
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(own || '')){
+        setSnapFromFile_(own);
+        var m0 = $('msg'); m0.className = 'msg ok';
+        m0.textContent = '\u2713 Tarehe imesomwa kutoka faili: ' + own + '. / Date read from the file itself.';
+      }
+    }
     // A whole portfolio workbook has dozens of sheets and MANY of them contain a REF#
     // column, so auto-detection alone would happily upload the wrong one (e.g. Call Logs
     // as Defaulters). With more than one sheet the user always sees and confirms the pick.
@@ -837,12 +928,33 @@ $('go').addEventListener('click', function(){
 
   $('go').disabled = true; $('go').textContent = 'Reading file\u2026';
   var lastDiag = null;
-  (wbCache ? Promise.resolve(wbCache) : readWorkbook(chosenFile)).then(function(wb){
-    var sn = (!$('sheetWrap').classList.contains('hide') && $('sheet').value) ? $('sheet').value : pickDataSheet_(wb);
-    var parsed = sheetToRows(wb, sn);
-    lastDiag = parsed.diag;
+  var rowsP;
+  if (wbMulti && wbMulti.length){
+    /* The highlighted segment files, concatenated under the FIRST file's header row. Same
+       export, same three columns -- but said out loud if one ever is not, because a column
+       order mismatch summed silently would be money under the wrong heading. */
+    rowsP = Promise.resolve().then(function(){
+      var all = null, head = null;
+      wbMulti.forEach(function(x){
+        var parsed = sheetToRows(x.wb, x.dataSheet);
+        var hh = (parsed.rows[0] || []).map(function(c){ return String(c).trim().toLowerCase(); }).join('|');
+        if (!all){ all = parsed.rows.slice(); head = hh; return; }
+        if (hh !== head) throw new Error(x.name + ' has different columns from the first file \u2014 wrong file?');
+        all = all.concat(parsed.rows.slice(1));
+      });
+      return all;
+    });
+  } else {
+    rowsP = (wbCache ? Promise.resolve(wbCache) : readWorkbook(chosenFile)).then(function(wb){
+      var sn = (!$('sheetWrap').classList.contains('hide') && $('sheet').value) ? $('sheet').value : pickDataSheet_(wb);
+      var parsed = sheetToRows(wb, sn);
+      lastDiag = parsed.diag;
+      return parsed.rows;
+    });
+  }
+  rowsP.then(function(rows){
     $('go').textContent = 'Uploading\u2026';
-    return sendInSlices_(apiBase, code, type, meta, parsed.rows, function(done, total){
+    return sendInSlices_(apiBase, code, type, meta, rows, function(done, total){
       $('go').textContent = 'Uploading ' + done + '/' + total + '\u2026';
     });
   }).then(function(res){
