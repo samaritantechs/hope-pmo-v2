@@ -112,20 +112,31 @@ export async function hopeLoanReady() {
   if (now - probe.at < ttl) return probe.ok;
 
   const db = hopeLoanDb();
-  if (!db) { probe = { at: now, ok: false }; return false; }
+  if (!db) { probe = { at: now, ok: false, why: 'no client could be built' }; return false; }
   try {
     /* The cheapest possible question: one row, one column, from the settings row
        RUN-ME-001-origination.sql writes. If the schema is missing, or exists but PostgREST was
        never told to expose it, this errors -- and BOTH of those mean "not ready", which is
        exactly the distinction the switch needs to make. */
     const { error } = await db.from('settings').select('key').eq('key', 'WORKSPACE').limit(1);
-    probe = { at: now, ok: !error };
-  } catch { probe = { at: now, ok: false }; }
+    /* THE REASON IS KEPT, NOT THROWN AWAY. Swallowing it made the failure unreadable: the
+       schema was installed and correct, the switch still would not appear, and there was no way
+       from outside to tell whether PostgREST had not been told about the schema, had not
+       reloaded its config, or was refusing for some third reason. Hours went into guessing at
+       what one error string would have said outright. */
+    probe = { at: now, ok: !error, why: error ? (error.message || String(error)) : null };
+  } catch (e) {
+    probe = { at: now, ok: false, why: (e && e.message) || String(e) };
+  }
   return probe.ok;
 }
 
+/** Why the last probe failed, for the message shown to whoever asked. Null when it succeeded
+    or has not run. Never shown to a non-admin -- see the callers. */
+export function hopeLoanNotReadyReason() { return probe.ok ? null : probe.why; }
+
 /** Forget the probe -- for tests, and for anything that has just run a migration. */
-export function clearHopeLoanProbe() { probe = { at: 0, ok: false }; }
+export function clearHopeLoanProbe() { probe = { at: 0, ok: false, why: null }; }
 
 /** True for a value that plainly says yes, same reading as the system-open switch: anything
     else -- unset, blank, 'no', junk -- is off, because a sandbox nobody turned on is a sandbox
@@ -245,6 +256,14 @@ export const HOPELOAN_NOT_READY =
   'HOPE Loan haipo bado / HOPE Loan is not ready on this deployment. '
   + 'Run db/hopeloan/RUN-ME-000-create-schema.sql and RUN-ME-001-origination.sql, and make sure '
   + '`hopeloan` is listed under Project Settings -> API -> Exposed schemas.';
+
+/** The same message WITH the database's own words appended. The generic sentence lists three
+    possible causes; this says which one actually happened, which is the difference between
+    fixing it and guessing at it. Only ever reached by an admin who asked for the sandbox. */
+export function hopeLoanNotReadyMessage() {
+  const why = hopeLoanNotReadyReason();
+  return why ? HOPELOAN_NOT_READY + ' -- the database said: ' + why : HOPELOAN_NOT_READY;
+}
 
 /** Whether to offer the switch at all, for /api/me. An officer is never told it exists.
 
