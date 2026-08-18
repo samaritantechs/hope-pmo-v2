@@ -2063,12 +2063,20 @@ VIEWS.dashboard = function(){
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'))
-      + trendGrid('Weekly collection trend (Mon–Fri)', 'collected + expected per weekday', 'gCol',
+      /* THE HEADLINE IS THE DAY'S EXPECTED, not what came in.
+           "i wanted them to show expected, uncollected and % -- replace collection with
+            total expected"
+         Expected is the day's target -- the fixed number the whole day is judged against --
+         so it leads; what is still out and how much of the target was met sit under it.
+         Nothing about the arithmetic changed: Col % is still collected over expected, and
+         collected remains verifiable per customer (paid in full, or paid-minus-shortfall
+         where underpaid, zero where unpaid). */
+      + trendGrid('Weekly expected trend (Mon–Fri)', 'expected · uncollected · collection % per weekday', 'gCol',
           d.colTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
-            ['TZS '+money(x.collected)], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
-          tcell('TOTAL', [['TZS '+money(d.colTrend.reduce(function(s,x){return s+x.collected;},0))],
+            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
             ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
       + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % of that day’s uncollected', 'gRec',
