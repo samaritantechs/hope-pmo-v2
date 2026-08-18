@@ -90,33 +90,41 @@ test('a tab cannot be mistaken for a role -- admin is the role string, nothing e
   });
 });
 
-test('with nothing configured there is no sandbox at all, even for an admin', () => {
+/* HOPELOAN_ENABLED=false is the explicit OFF, and it must beat everything -- it is the only
+   thing an environment variable is still genuinely for here now that running the SQL is the
+   configuration. */
+test('an explicit HOPELOAN_ENABLED=false turns the sandbox off outright', async () => {
   withoutLoanConfigured(() => {
+    process.env.HOPELOAN_ENABLED = 'false';
     assert.equal(hopeLoanConfigured(), false);
     assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPEPMO);
     assert.equal(workspaceFor(ADMIN, 'hopeloan').db, supabase);
-    assert.equal(canSwitchWorkspace(ADMIN), false, 'the switch is not offered');
+    delete process.env.HOPELOAN_ENABLED;
   });
+  assert.equal(await canSwitchWorkspace({ role: 'ADMIN' }), false);
 });
 
-test('half-configured is not configured -- one variable without the other stays production', () => {
+test('half-configured PROJECT mode falls back to schema mode rather than half-working', () => {
   withoutLoanConfigured(() => {
+    // A URL with no key is not a second project -- but the production credentials are still
+    // there, so schema mode remains available. What it must NOT do is build a broken client
+    // out of half a configuration.
     process.env.HOPELOAN_SUPABASE_URL = 'https://hopeloan.test.invalid';
-    assert.equal(hopeLoanConfigured(), false, 'a URL with no key is not a database');
-    assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPEPMO);
+    assert.equal(hopeLoanMode_forDisplay(), 'schema', 'a URL with no key is not project mode');
     delete process.env.HOPELOAN_SUPABASE_URL;
 
     process.env.HOPELOAN_SERVICE_ROLE_KEY = 'hopeloan-test-key';
-    assert.equal(hopeLoanConfigured(), false, 'a key with no URL is not a database');
-    assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPEPMO);
+    assert.equal(hopeLoanMode_forDisplay(), 'schema', 'a key with no URL is not project mode');
     delete process.env.HOPELOAN_SERVICE_ROLE_KEY;
   });
 });
 
-test('the switch is offered to an admin only, and only once configured', () => {
-  withLoanConfigured(() => {
-    assert.equal(canSwitchWorkspace(ADMIN), true);
-    for (const u of [GMO, OFFICER, {}]) assert.equal(canSwitchWorkspace(u), false);
+test('the switch is offered to an admin only', async () => {
+  await withLoanConfigured(async () => {
+    assert.equal(await canSwitchWorkspace(ADMIN), true);
+    for (const u of [GMO, OFFICER, {}]) {
+      assert.equal(await canSwitchWorkspace(u), false, JSON.stringify(u.role));
+    }
   });
 });
 
@@ -173,28 +181,76 @@ function withSchemaModeEnabled(fn) {
   }
 }
 
-test('HOPELOAN_ENABLED alone turns on the free schema-mode sandbox', () => {
+/* RUNNING THE SQL IS THE CONFIGURATION. The switch used to need HOPELOAN_ENABLED on top of
+   the migration -- a second switch saying the same thing, and the one somebody could not find
+   ("i cant find HOPELOAN_ENABLED"). Schema mode is available whenever the production
+   credentials exist; whether it is READY is answered by asking the database. */
+test('schema mode needs no environment variable at all', () => {
   withoutLoanConfigured(() => {
-    assert.equal(hopeLoanConfigured(), false);
-    withSchemaModeEnabled(() => {
-      assert.equal(hopeLoanConfigured(), true);
-      assert.equal(hopeLoanMode_forDisplay(), 'schema');
-      assert.equal(canSwitchWorkspace(ADMIN), true);
-      assert.notEqual(dbFor(HOPELOAN), supabase, 'schema mode must still be a distinct client');
-      assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPELOAN);
-      assert.equal(resolveWorkspace(GMO, 'hopeloan'), HOPEPMO, 'role check applies in schema mode too');
-    });
+    assert.equal(hopeLoanMode_forDisplay(), 'schema', 'production credentials are enough');
+    assert.equal(hopeLoanConfigured(), true);
+    assert.notEqual(dbFor(HOPELOAN), supabase, 'schema mode is still a distinct client');
+    assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPELOAN);
+    assert.equal(resolveWorkspace(GMO, 'hopeloan'), HOPEPMO, 'the role check applies regardless');
   });
 });
 
-test('junk in HOPELOAN_ENABLED reads as off, same rule as the system-open switch', () => {
+test('HOPELOAN_ENABLED still works as an explicit override, both ways', () => {
   withoutLoanConfigured(() => {
+    withSchemaModeEnabled(() => {
+      assert.equal(hopeLoanMode_forDisplay(), 'schema', 'explicit yes');
+    });
     for (const v of ['0', 'false', 'no', '', 'nah', 'disabled']) {
       process.env.HOPELOAN_ENABLED = v;
-      assert.equal(hopeLoanConfigured(), false, JSON.stringify(v) + ' must not enable the sandbox');
+      assert.equal(hopeLoanConfigured(), false, JSON.stringify(v) + ' must turn the sandbox off');
     }
     delete process.env.HOPELOAN_ENABLED;
   });
+});
+
+/* THE PROBE IS WHAT DECIDES WHETHER THE SWITCH IS DRAWN. It asks the sandbox schema for the
+   settings row RUN-ME-001-origination.sql writes -- so the button appears exactly when it will
+   work, and never before. Both failure shapes matter: no schema at all, and a schema that
+   exists but was never exposed to PostgREST, which is the step easiest to miss. */
+test('the switch appears only once the SQL has actually been run', async () => {
+  const { hopeLoanReady, clearHopeLoanProbe } = await import('../api/_lib/workspace.js');
+  const real = globalThis.fetch;
+  try {
+    // A database that refuses the sandbox schema -- the un-migrated state every deployment
+    // starts in. PostgREST answers 404 for a schema it was never told about.
+    globalThis.fetch = async () => new Response('{"message":"schema must be one of the following: public"}',
+      { status: 404, headers: { 'Content-Type': 'application/json' } });
+    clearHopeLoanProbe();
+    assert.equal(await hopeLoanReady(), false, 'no schema yet -- no switch');
+    assert.equal(await canSwitchWorkspace(ADMIN), false, 'and the admin is not offered it');
+
+    // Now the migration has been run and the schema answers.
+    globalThis.fetch = async () => new Response('[{"key":"WORKSPACE"}]',
+      { status: 200, headers: { 'Content-Type': 'application/json' } });
+    clearHopeLoanProbe();
+    assert.equal(await hopeLoanReady(), true, 'the SQL is in -- the switch appears');
+    assert.equal(await canSwitchWorkspace(ADMIN), true);
+    assert.equal(await canSwitchWorkspace(GMO), false, 'still admin-only, however ready it is');
+  } finally {
+    globalThis.fetch = real;
+    clearHopeLoanProbe();
+  }
+});
+
+test('a successful probe is cached, so sign-in does not pay for it every time', async () => {
+  const { hopeLoanReady, clearHopeLoanProbe } = await import('../api/_lib/workspace.js');
+  const real = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => { calls++; return new Response('[{"key":"WORKSPACE"}]',
+      { status: 200, headers: { 'Content-Type': 'application/json' } }); };
+    clearHopeLoanProbe();
+    await hopeLoanReady(); await hopeLoanReady(); await hopeLoanReady();
+    assert.equal(calls, 1, 'three sign-ins, one probe');
+  } finally {
+    globalThis.fetch = real;
+    clearHopeLoanProbe();
+  }
 });
 
 test('a separate project, once configured, wins over schema mode', () => {

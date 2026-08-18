@@ -76,9 +76,56 @@ export const WORKSPACES = [HOPEPMO, HOPELOAN];
     shared one just because that variable was never removed. */
 function hopeLoanMode() {
   if (process.env.HOPELOAN_SUPABASE_URL && process.env.HOPELOAN_SERVICE_ROLE_KEY) return 'project';
-  if (readsAsEnabled(process.env.HOPELOAN_ENABLED)) return 'schema';
+  /* SCHEMA MODE NEEDS NO VARIABLE. Running the SQL IS the configuration -- an environment flag
+     on top of it was a second switch saying the same thing, and a second switch is a second
+     thing to be missing when somebody cannot find why the door will not open ("i cant find
+     HOPELOAN_ENABLED"). The client is buildable from the production credentials whenever they
+     exist; whether the schema is actually THERE is answered by asking it, in hopeLoanReady().
+
+     HOPELOAN_ENABLED still works if it is set -- it just short-circuits the probe rather than
+     being required. Setting it to an explicit "no" turns the sandbox off outright, which is
+     the one thing an environment variable is still genuinely useful for here. */
+  if (process.env.HOPELOAN_ENABLED !== undefined && !readsAsEnabled(process.env.HOPELOAN_ENABLED)) return null;
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) return 'schema';
   return null;
 }
+
+/* HAS THE SQL BEEN RUN? Cached, because the answer changes once in the life of a deployment
+   and this is asked on every sign-in. A failed probe is cached for a SHORTER time than a
+   successful one: the failing case is the one somebody is actively fixing by running the
+   migration, and making them wait a full minute to see it work is its own small cruelty. */
+let probe = { at: 0, ok: false };
+const PROBE_OK_TTL = 300000;    // 5 minutes -- a schema that exists does not stop existing
+const PROBE_FAIL_TTL = 15000;   // 15 seconds -- somebody may be running the SQL right now
+
+/** True once HOPE Loan is actually reachable: project mode trusts its own configuration, and
+    schema mode ASKS the database whether `hopeloan` is there and exposed to PostgREST. That is
+    the honest test -- the switch should appear exactly when it will work, and not before. */
+export async function hopeLoanReady() {
+  const mode = hopeLoanMode();
+  if (!mode) return false;
+  if (mode === 'project') return true;
+  if (readsAsEnabled(process.env.HOPELOAN_ENABLED)) return true;   // explicitly on: skip the probe
+
+  const now = Date.now();
+  const ttl = probe.ok ? PROBE_OK_TTL : PROBE_FAIL_TTL;
+  if (now - probe.at < ttl) return probe.ok;
+
+  const db = hopeLoanDb();
+  if (!db) { probe = { at: now, ok: false }; return false; }
+  try {
+    /* The cheapest possible question: one row, one column, from the settings row
+       RUN-ME-001-origination.sql writes. If the schema is missing, or exists but PostgREST was
+       never told to expose it, this errors -- and BOTH of those mean "not ready", which is
+       exactly the distinction the switch needs to make. */
+    const { error } = await db.from('settings').select('key').eq('key', 'WORKSPACE').limit(1);
+    probe = { at: now, ok: !error };
+  } catch { probe = { at: now, ok: false }; }
+  return probe.ok;
+}
+
+/** Forget the probe -- for tests, and for anything that has just run a migration. */
+export function clearHopeLoanProbe() { probe = { at: 0, ok: false }; }
 
 /** True for a value that plainly says yes, same reading as the system-open switch: anything
     else -- unset, blank, 'no', junk -- is off, because a sandbox nobody turned on is a sandbox
@@ -169,7 +216,12 @@ export function workspaceFor(user, asked) {
   return { workspace, db: dbFor(workspace), sandbox: workspace === HOPELOAN };
 }
 
-/** Whether to offer the switch at all, for /api/me. An officer is never told it exists. */
-export function canSwitchWorkspace(user) {
-  return mayUseHopeLoan(user) && hopeLoanConfigured();
+/** Whether to offer the switch at all, for /api/me. An officer is never told it exists.
+
+    ASYNC NOW, because "is it configured" became "is it actually there" -- see hopeLoanReady().
+    The probe is cached, so this costs a round trip roughly once every five minutes across the
+    whole deployment rather than once per sign-in. */
+export async function canSwitchWorkspace(user) {
+  if (!mayUseHopeLoan(user)) return false;
+  return hopeLoanReady();
 }
