@@ -1,7 +1,7 @@
 import { gatedUser, withApi } from './_lib/auth.js';
 import { portalApi } from './_lib/portal-core.js';
 import { loanApi } from './_lib/loan-core.js';
-import { workspaceFor, HOPELOAN, HOPELOAN_NOT_READY } from './_lib/workspace.js';
+import { workspaceFor, HOPELOAN, hopeLoanNotReadyMessage } from './_lib/workspace.js';
 
 // POST /api/portal   { code, fn, args }
 // Every read and write behind the portal (public/app.html) -- one route, one auth check, all
@@ -24,7 +24,7 @@ export default withApi(async (req, res) => {
      production, because an admin who has just run the migration and sees the real book come
      back has no way to tell whether it worked. Only reachable by someone entitled to ask. */
   if (String(workspace || '').trim().toLowerCase() === HOPELOAN && ws.ready === false) {
-    const e = new Error(HOPELOAN_NOT_READY); e.status = 503; throw e;
+    const e = new Error(hopeLoanNotReadyMessage()); e.status = 503; throw e;
   }
   /* TWO SEPARATE FUNCTION REGISTRIES, so a HOPE Loan screen and a HOPE PMO tab can never be
      called by naming the wrong `fn` from the wrong workspace -- loanApi only knows the

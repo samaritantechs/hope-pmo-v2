@@ -1,7 +1,7 @@
 import { supabase } from './_lib/supabase.js';
 import { withApi, authCodeResolved } from './_lib/auth.js';
 import { callApi } from './_lib/call-core.js';
-import { workspaceFor, HOPELOAN, HOPELOAN_NOT_READY } from './_lib/workspace.js';
+import { workspaceFor, HOPELOAN, hopeLoanNotReadyMessage } from './_lib/workspace.js';
 
 // POST /api/call   { fn: 'api_callBoot' | 'api_callRegister' | ..., args: [...] }
 // One route for the whole HOPE Calls app (public/call.html) -- fn names match the old
@@ -35,7 +35,7 @@ export default withApi(async (req, res) => {
          answer, so the phone sat on "trying…" under a red SANDBOX banner while every request
          failed -- looking like a broken app rather than an un-run migration. An admin who asked
          for the sandbox and cannot have it is told why, in words naming the fix. */
-      if (ws.ready === false) { const e = new Error(HOPELOAN_NOT_READY); e.status = 503; throw e; }
+      if (ws.ready === false) { const e = new Error(hopeLoanNotReadyMessage()); e.status = 503; throw e; }
       db = ws.db;
     }
   }
