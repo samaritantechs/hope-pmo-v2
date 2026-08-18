@@ -4323,6 +4323,134 @@ async function emailWeeklyExpdf(db, user, _args, nowMs) {
     customers: d.totals.customers, recovered: d.totals.recovered };
 }
 
+/* ================================================================
+   RECOVERY METRICS: daily recovery tracking per credit user
+
+   OFF JANA = customers 7+ days offline on previous upload
+   RECOVERY = those customers who dropped below 7 days offline today
+
+   Goal: Track which customers recovered from being locked out, and
+   who was assigned to chase them (for credit user performance).
+   ================================================================ */
+
+/** Helper: get customers with 7+ days offline on a given date.
+    Bounds: one date + team scope. Filters to 'current' snapshot type. */
+async function lockedCustomers(db, teams, onDate) {
+  const rows = await fetchAll(() => onTeams(
+    db.from('defaulter_snapshots')
+      .select('ref, full_name, contact, days_elapsed, team')
+      .eq('snapshot_type', 'current')
+      .eq('snapshot_date', onDate)
+      .gte('days_elapsed', 7),
+    teams));
+  return rows;
+}
+
+/** Helper: count recovered customers between two days.
+    Off Jana customers (locked 7+ on day N-1) who dropped below 7 on day N.
+
+    Postgres budget: 2 reads (day N-1 and day N defaulters), 1 read for credit users.
+    Rows bounded by team + date on each read. */
+async function countRecovered(db, teams, prevDate, currDate) {
+  const [prevLocked, currDefaults, creditUsers] = await Promise.all([
+    lockedCustomers(db, teams, prevDate),           // 1 trip: day N-1 locked
+    fetchAll(() => onTeams(
+      db.from('defaulter_snapshots')
+        .select('ref, days_elapsed')
+        .eq('snapshot_type', 'current')
+        .eq('snapshot_date', currDate),
+      teams)),                                       // 1 trip: day N defaults
+    fetchAll(() => onTeams(
+      db.from('call_users')                         // 1 trip: credit users
+        .select('user_id, name, team'),
+      teams)),
+  ]);
+
+  // Build a map of current defaults: ref -> days_elapsed
+  const current = new Map(currDefaults.map(r => [r.ref, num(r.days_elapsed)]));
+
+  // Find recovered: were locked 7+ yesterday, now below 7
+  const recovered = prevLocked.filter(r => {
+    const curr = current.get(r.ref);
+    return curr !== undefined && curr < 7;
+  });
+
+  return { recovered, creditUsers };
+}
+
+/** Helper: Assign customers to credit users using round-robin by IMEI/ref.
+    This ensures fair distribution even if customer counts differ.
+    Returns map of { creditUser -> [ref, ref, ...] } */
+function assignToCredits(customers, creditUsers) {
+  if (!creditUsers.length) return new Map();
+
+  const sorted = customers.slice()
+    .sort((a, b) => String(a.ref || '').localeCompare(String(b.ref || '')));
+
+  const assigned = new Map();
+  for (let i = 0; i < sorted.length; i++) {
+    const creditUser = creditUsers[i % creditUsers.length];
+    const key = creditUser.user_id || creditUser.name;
+    if (!assigned.has(key)) assigned.set(key, []);
+    assigned.get(key).push(sorted[i]);
+  }
+  return assigned;
+}
+
+/** Recovery metrics per credit user per day of the week.
+    Shows which customers recovered from 7+ day lockout and who was assigned to chase them.
+
+    Output: Array of { weekday, date, creditUser, assigned: count, recovered: count }
+    where assigned = OFF JANA customers on previous day (to chase), recovered = those who improved by today
+
+    Postgres budget: 3 reads per day (previous + current defaults + credit users) × 7 days = ~21 reads max.
+    All bounded by team + date at database. */
+async function recoveryByCredit(db, user, args = {}, nowMs) {
+  const mon = args.from ? String(args.from) : weekMondayKey(nowMs);
+  const sun = args.to ? String(args.to) : addDaysKey(mon, 6);
+  const teams = user.teams;
+
+  const result = [];
+
+  // Walk each day Monday-Sunday, calculating recovery from previous day
+  for (let i = 0; i < 7; i++) {
+    const currDate = addDaysKey(mon, i);
+    const prevDate = addDaysKey(mon, i - 1);
+
+    // Get recovery data: OFF JANA customers and who recovered
+    const { recovered, creditUsers } = await countRecovered(db, teams, prevDate, currDate);
+
+    if (!recovered.length || !creditUsers.length) continue;
+
+    // Randomly assign recovered customers to credit users using round-robin
+    const assignedByCredit = assignToCredits(recovered, creditUsers);
+
+    // Also count all OFF JANA customers from previous day (the full pool to chase)
+    const allOffJana = await lockedCustomers(db, teams, prevDate);
+    const allOffJanaByCredit = assignToCredits(allOffJana, creditUsers);
+
+    // Build output rows per credit user
+    for (const cu of creditUsers) {
+      const creditKey = cu.user_id || cu.name;
+      const recoveredCount = (assignedByCredit.get(creditKey) || []).length;
+      const assignedCount = (allOffJanaByCredit.get(creditKey) || []).length;
+
+      if (assignedCount > 0) {  // Only show if there were OFF JANA customers
+        result.push({
+          weekday: WD7[i],
+          date: currDate,
+          creditUser: cu.name || creditKey,
+          team: cu.team,
+          assigned: assignedCount,
+          recovered: recoveredCount,
+        });
+      }
+    }
+  }
+
+  return { week: { from: mon, to: sun }, metrics: result };
+}
+
 /* ------------------------------------------------------------------ dispatch */
 function badRequest(m) { const e = new Error(m); e.status = 400; return e; }
 function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
@@ -4350,7 +4478,7 @@ const FN = {
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
-  callOfficers,
+  callOfficers, recoveryByCredit,
 };
 
 /* THE LEADERS TABLE, OUT AND BACK IN.
