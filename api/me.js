@@ -1,6 +1,7 @@
 import { supabase } from './_lib/supabase.js';
 import { authCodeResolved, withApi } from './_lib/auth.js';
 import { isSystemOpen, isAdminUser } from './_lib/system-gate.js';
+import { canSwitchWorkspace } from './_lib/workspace.js';
 
 // GET /api/me?code=XXX
 // Who is this code, and what may they open? The launcher (public/home.html) calls this to
@@ -27,6 +28,10 @@ export default withApi(async (req, res) => {
        for them it is -- they are the ones who close it, and they have to be able to get back
        in and turn it on again. */
     systemOpen: open,
+    /* Whether to draw the HOPE Loan switch. False for everybody but an admin, and false for an
+       admin too until the second database is configured -- so an officer is never told the
+       sandbox exists, and a half-set-up deployment offers no door that leads nowhere. */
+    canSwitchWorkspace: canSwitchWorkspace(user),
     can: {
       // Closed, there is no portal to offer. The server refuses these routes too; this is only
       // so the launcher does not draw a door that will not open.

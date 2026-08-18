@@ -302,6 +302,10 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <!-- Swap into the portal. Sits right after the sync pill so the two "mode" controls are
            together, and before logout so it is never mistaken for one. -->
       <a class="swapBtn hide" id="swapBtn" href="/dashboard" title="Nenda kwenye mfumo / Switch to the system">&#128260;</a>
+      <!-- THE HOPE LOAN SWITCH. Shown only to a handset whose signed-in user is a leader AND
+           only once an ADMIN access code has been given -- see api/call.js, which re-checks
+           that code on the server for every single request. An officer's phone never draws it. -->
+      <button type="button" class="swapBtn hide" id="wsBtn" title="HOPE Loan / HOPE PMO">&#129518;</button>
       <button type="button" class="logoutBtn hide" id="logoutBtn" title="Toka / Log out"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></button>
     </div>
     <div class="searchbar" style="margin:10px 0 0"><input id="listQ" placeholder="Tafuta jina / namba&#x2026; (kwenye orodha zote)"></div>
@@ -332,6 +336,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <span class="ds-dot">&middot;</span>
       <span>Rec <b id="dsRec">&mdash;</b></span>
     </div>
+    <!-- SANDBOX BANNER. A figure read off a sandbox screen must never be quotable as the book,
+         and on a phone the header icon alone is too easy to miss. -->
+    <div class="hide" id="wsBar" style="background:#a11;color:#fff;font-size:11px;font-weight:700;text-align:center;padding:3px 6px;letter-spacing:.03em">HOPE LOAN &mdash; MAENDELEO / SANDBOX</div>
   </header>
   <main class="body" id="body"></main>
 </div>
@@ -418,6 +425,44 @@ function readJson_(r){
     }
   });
 }
+/* =====================================================================================
+   THE HOPE LOAN SWITCH, ON THE PHONE.
+   =====================================================================================
+   Calls signs in with a device id. A device is never authority to leave the real book, so
+   entering the sandbox here costs an ADMIN ACCESS CODE -- the same one the portal asks for,
+   re-checked on the server for every request (api/call.js). The code is held in memory only
+   and dropped on the way back out: a shared handset must not keep an admin's code after it
+   has been handed back, and localStorage would. */
+function paintCallWorkspace_(){
+  var b = $('#wsBtn');
+  if (!b) return;
+  var sandbox = S.workspace === 'hopeloan';
+  b.style.background = sandbox ? '#a11' : '';
+  b.title = sandbox ? 'HOPE LOAN (sandbox) — gusa kurudi / tap to return' : 'HOPE Loan / HOPE PMO';
+  var bar = $('#wsBar');
+  if (bar) bar.classList.toggle('hide', !sandbox);
+}
+function toggleCallWorkspace_(){
+  if (S.workspace === 'hopeloan') {
+    S.workspace = 'hopepmo'; S.wsCode = '';
+    S.cache = {}; S.cacheAt = {};          // sandbox rows must never survive the way back
+    paintCallWorkspace_();
+    toast("HOPE PMO");
+    boot();
+    return;
+  }
+  var code = prompt('Msimbo wa ADMIN / ADMIN access code:');
+  if (!code || !code.trim()) return;
+  S.wsCode = code.trim();
+  S.workspace = 'hopeloan';
+  S.cache = {}; S.cacheAt = {};            // and live rows must never be shown as sandbox ones
+  paintCallWorkspace_();
+  /* The server decides, not this button. If the code is not an admin's, api/call.js quietly
+     serves production -- so the honest thing is to say what came back rather than announce a
+     sandbox we may not be in. boot() re-reads everything under the new routing. */
+  toast("Inajaribu HOPE Loan / trying HOPE Loan\u2026");
+  boot();
+}
 function srv(fn){
   var args = Array.prototype.slice.call(arguments, 1);
   // v2 transport: same fn names the GAS google.script.run bridge used, POSTed to this
@@ -433,7 +478,11 @@ function srv(fn){
       fetch((window.HC_API_BASE || '') + '/api/call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fn: fn, args: args }),
+        /* THE HOPE LOAN SWITCH RIDES ON EVERY CALL, and carries the admin ACCESS CODE with it
+           -- a device id alone is never authority to leave the real book (see api/call.js).
+           Both are ignored by the server unless the code really is an admin's, so a stray
+           value here can at worst be dropped, never grant anything. */
+        body: JSON.stringify({ fn: fn, args: args, workspace: S.workspace, code: S.wsCode }),
         signal: ctl ? ctl.signal : undefined
       }).then(function(r){ clearTimeout(timer); return readJson_(r); })
         .then(function(x){
@@ -482,6 +531,11 @@ function deviceId(){
 /* ================= state ================= */
 var DEV = deviceId();
 var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', repLeader:'', syncEverySec:300, permOk:null,
+          /* ALWAYS BOOTS TO THE REAL BOOK. Never remembered across a page load: the sandbox has
+             to be chosen deliberately, on this visit, and the code that authorises it is held
+             in memory only -- never in localStorage, where a shared handset would keep an
+             admin's access code long after they handed the phone back. */
+          workspace:'hopepmo', wsCode:'',
   /* Which of the three recycling roles the Exp.Def list is narrowed to, remembered across
      restarts the same way the scope and the open/shut summary are. Somebody who works the
      bike officers' book works it every day. */
@@ -958,6 +1012,12 @@ function enterApp(d){
      round: a system closed at lunchtime has to take the button away, not merely stop adding
      it. */
   $('#swapBtn').classList.toggle('hide', d.systemOpen !== true);
+  /* THE HOPE LOAN SWITCH ON THE PHONE. Offered only to a LEADER handset -- an ordinary
+     officer never sees it exists -- and even then it is only an invitation to prove an ADMIN
+     access code, which api/call.js re-checks on every request. Being able to press it is not
+     authority; the code is. */
+  $('#wsBtn').classList.toggle('hide', !d.leader);
+  paintCallWorkspace_();
   crisisSync_(d);
   if (S.entered) {
     // Tabs can appear or disappear here, and the one they are standing on may have just gone.
@@ -969,6 +1029,7 @@ function enterApp(d){
   $('#logoutBtn').onclick = function(){
     showConfirm_('Toka kwenye akaunti hii? / Log out of this account?', doLogout);
   };
+  $('#wsBtn').onclick = toggleCallWorkspace_;
   $('#bellBtn').onclick = bellOpen;
   bellRefresh();
 
@@ -1792,10 +1853,47 @@ function renderReports(){
   body.innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
   srv('api_callReport', DEV, S.repFrom, S.repTo, S.repTeam, S.repLeader).then(function(d){
     S.repData = d;
+    // A new range, team or leader is a new question -- last question's sort order carried
+    // over would be an accident, not a choice, so it resets here rather than in drawReports,
+    // which also runs on a plain re-sort click and must NOT clear itself.
+    S.repSort = null;
     drawReports();
   }).catch(function(e){ body.innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>'; });
 }
 var CALL_CAT_LABEL_ = { EXPECTED:'Expected', DEFAULTER:'Defaulter', UNCATEGORIZED:'Uncategorized', OTHER:'Nje ya portfolio' };
+/* CLICK A HEADER, SORT BY IT. "Sometime i want to know bussiest through there" -- finding who
+   made the most calls, or who has the worst % pf, used to mean reading every row by eye. This
+   is a pure client-side re-sort of the ONE page of officers already on screen: zero extra
+   requests, zero extra rows read, so it costs nothing under the Postgres budget -- it is not
+   a query, it is Array.sort() on data already in hand. Clicking the same header again reverses
+   direction, the arrow shows which column and which way, and the sort survives a redraw of the
+   same data (changing the date range or team re-fetches, which resets it -- a new question
+   deserves a fresh default, not last question's sort order carried over by accident). */
+var REP_SORT_KEYS_ = { name:1, calls:0, duration:0, expected:0, defaulter:0, nonPortfolio:0, ratio:0 };
+function sortReportRows_(rows){
+  var s = S.repSort; if (!s || !rows) return rows;
+  var out = rows.slice();
+  out.sort(function(a, b){
+    var av = a[s.key], bv = b[s.key];
+    var cmp = REP_SORT_KEYS_[s.key] ? String(av||'').localeCompare(String(bv||'')) : (Number(av)||0) - (Number(bv)||0);
+    return s.dir === 'desc' ? -cmp : cmp;
+  });
+  return out;
+}
+function toggleReportSort_(key){
+  var s = S.repSort;
+  S.repSort = (s && s.key === key) ? { key: key, dir: s.dir === 'desc' ? 'asc' : 'desc' }
+                                    : { key: key, dir: key === 'name' ? 'asc' : 'desc' };  // numbers default busiest-first
+  drawReports();
+}
+function repSortArrow_(key){
+  var s = S.repSort; if (!s || s.key !== key) return '';
+  return ' ' + (s.dir === 'desc' ? '▼' : '▲');
+}
+function repTh_(key, label, cls){
+  return '<th' + (cls ? ' class="' + cls + '"' : '') + ' data-sort-key="' + key + '" style="cursor:pointer;user-select:none" title="Bofya kupanga / Click to sort">'
+    + esc(label) + repSortArrow_(key) + '</th>';
+}
 function drawReports(){
   var d = S.repData, t = d.totals || {calls:0,duration:0,portfolio:0,nonPortfolio:0,ratio:0};
   var body = $('#body');
@@ -1838,8 +1936,12 @@ function drawReports(){
        recovery (defaulter) book. And after % pf, the officer themselves is one tap away: the
        number is the one they REGISTERED with, so the supervisor reading a zero can ring it
        right here. */
-    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">COL</th><th class="r">REC</th><th class="r">Nje ya pf</th><th class="r">% pf</th><th></th></tr></thead><tbody>'
-    + (d.users||[]).map(function(u){
+    + '<table class="otable"><thead><tr>'
+    + repTh_('name', 'Afisa') + repTh_('calls', 'Simu', 'r') + repTh_('duration', 'Muda', 'r')
+    + repTh_('expected', 'COL', 'r') + repTh_('defaulter', 'REC', 'r')
+    + repTh_('nonPortfolio', 'Nje ya pf', 'r') + repTh_('ratio', '% pf', 'r') + '<th></th>'
+    + '</tr></thead><tbody>'
+    + sortReportRows_(d.users).map(function(u){
         var oHref = telHref(u.phone);
         return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
           + '<td class="r">' + money(u.calls) + '</td><td class="r">' + fmtDur(u.duration) + '</td>'
@@ -1855,6 +1957,9 @@ function drawReports(){
      already inside the new one -- in which case nothing is lost -- or outside it, where keeping
      it would silently answer for a team the chosen leader does not hold. */
   $('#repLeader').onchange = function(){ S.repLeader = this.value; S.repTeam = ''; renderReports(); };
+  Array.prototype.forEach.call(body.querySelectorAll('th[data-sort-key]'), function(th){
+    th.onclick = function(){ toggleReportSort_(th.getAttribute('data-sort-key')); };
+  });
 }
 
 $('#bootRetry').onclick = function(){

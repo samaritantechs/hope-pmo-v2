@@ -27,6 +27,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi } = await import('../api/_lib/portal-core.js');
 const { callApi } = await import('../api/_lib/call-core.js');
+const { loanApi } = await import('../api/_lib/loan-core.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TEAMS = Array.from({ length: 40 }, (_, i) => 'TEAM' + String(i + 1).padStart(2, '0'));
@@ -591,4 +592,84 @@ test('speed: the second handset does not re-read the teams role columns', async 
      between them cost nothing extra at all. */
   assert.ok(second <= first, `the second handset cost more than the first: ${second} vs ${first}`);
   assert.ok(second <= 6, `${second} trips for a warm handset -- the role map is being re-read`);
+});
+
+/* =====================================================================================
+   HOPE LOAN'S OWN BUDGETS.
+   =====================================================================================
+   A second system on the same deployment is a second system on the same connection pool, so
+   it gets the same discipline rather than a pass for being new. These are the screens an
+   admin opens while HOPE PMO is carrying three hundred officers, and every one of them is a
+   filtered read on its own schema with a stated ceiling.
+
+   The budgets are deliberately tight -- most of these screens are ONE query -- because that is
+   what they cost today and the point of writing it down is to notice the day one of them
+   stops being one query. */
+const LOAN_ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
+
+/** A sandbox with enough in it that a careless read shows up: 400 customers, 400 loans spread
+    across every stage, 400 payments. Small next to the real book on purpose -- a read whose
+    SHAPE is wrong is wrong at any size, and these tables are meant to stay modest. */
+function loanBook() {
+  const stages = ['unassigned', 'assigned', 'unassessed', 'pending_approval', 'approved', 'disbursed', 'funded'];
+  return {
+    customers: Array.from({ length: 400 }, (_, i) => ({
+      id: 'c' + i, docket: '9-190-' + String(i).padStart(6, '0'),
+      full_name: 'CUSTOMER ' + i, mobile: '7' + String(10000000 + i), team: TEAMS[i % 40],
+    })),
+    loans: Array.from({ length: 400 }, (_, i) => ({
+      id: 'l' + i, customer_id: 'c' + i, loan_id: '9190' + String(i).padStart(6, '0') + '1',
+      docket_no: '9-190-' + String(i).padStart(6, '0'), full_name: 'CUSTOMER ' + i,
+      team: TEAMS[i % 40], stage: stages[i % stages.length], track_no: '1',
+      requested_amt: 300000, team_recomm: 300000, principal_amt: 300000, net_disbursed: 300000,
+    })),
+    payment_imports: Array.from({ length: 400 }, (_, i) => ({
+      id: 'p' + i, batch: 'PAY-1', ref: '9190' + String(i).padStart(6, '0') + '1',
+      amount: 34000, imported_at: '2026-08-18T09:00:00Z',
+    })),
+    complaints: [], reversals: [], disbursement_windows: [], carriers: [],
+    manual_adjustments: [], assessments: [], guarantors: [], loan_events: [],
+  };
+}
+
+/* [label, fn, args, trips, rows] -- rows counts what came BACK, so a filtered read that still
+   drags the whole table is caught even though it is only one trip. */
+const LOAN_BUDGETS = [
+  ['pipelineSummary', 'pipelineSummary', {}, 3, 900],
+  ['managerQueue', 'managerQueue', {}, 2, 400],
+  ['teamQueue', 'teamQueue', {}, 2, 400],
+  ['creditQueue', 'creditQueue', {}, 2, 400],
+  ['seniorQueue', 'seniorQueue', { tier: 'gmo' }, 2, 400],
+  ['disburseQueue (+window)', 'disburseQueue', {}, 3, 400],
+  ['financeBankReport (+window)', 'financeBankReport', {}, 3, 400],
+  ['reversalsList', 'reversalsList', {}, 3, 400],
+  ['paymentsList', 'paymentsList', {}, 2, 500],  // capped in the query, never the whole table
+  ['complaintsList', 'complaintsList', {}, 2, 100],
+  ['carriersList', 'carriersList', {}, 2, 100],
+  /* THE SEARCH IS THE ONE THAT MATTERS. It used to read the WHOLE customers table and filter
+     in JavaScript; the row budget here is what makes that impossible to reintroduce quietly --
+     400 customers exist and a search may bring back at most a capped handful. */
+  ['csSearch', 'csSearch', { q: 'CUSTOMER 7' }, 2, 30],
+];
+
+for (const [label, fn, args, tripBudget, rowBudget] of LOAN_BUDGETS) {
+  test(`speed [hopeloan]: ${label} stays within ${tripBudget} trips and ${rowBudget} rows`, async () => {
+    const c = counting(loanBook());
+    await loanApi(c.db, LOAN_ADMIN, fn, args);
+    const { trips, rows } = c.stat();
+    assert.ok(trips <= tripBudget, `${label} took ${trips} round trips (budget ${tripBudget}).`);
+    assert.ok(rows <= rowBudget, `${label} read ${rows} rows (budget ${rowBudget}).`
+      + '\n  A filtered read is ONE trip and can still drag a whole table.');
+  });
+}
+
+/* REGISTRATION MUST NOT COST A TABLE SCAN. nextSerial used to page the whole customers table
+   simply to length it -- one request per thousand rows, on every single registration, to learn
+   a number Postgres already knows. It is a head-only count now, and this is what keeps it one. */
+test('speed [hopeloan]: registering a customer does not scan the customers table', async () => {
+  const c = counting(loanBook());
+  await loanApi(c.db, LOAN_ADMIN, 'csRegister',
+    { full_name: 'NEW PERSON', mobile: '0715000123', team: TEAMS[0], amount: 300000 });
+  const { rows } = c.stat();
+  assert.ok(rows <= 20, `registration read ${rows} rows -- the serial is scanning the table again`);
 });
