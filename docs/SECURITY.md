@@ -4,6 +4,31 @@
 
 ---
 
+## Verification on record — 18 August 2026
+
+The repository was scanned end to end on this date. **No key has ever been exposed through
+the code:**
+
+| check | result |
+|---|---|
+| a key value in any tracked file | none |
+| a key anywhere in the git history (all commits, all branches) | none |
+| `.env` ever committed | never — only `.env.example`, carrying the placeholder `eyJ...` |
+| `.env` listed in `.gitignore` | yes |
+| how the code obtains the key | `process.env` only, never a literal |
+
+So the repository is not, and has never been, a leak path. Rotation was reviewed against
+this evidence and **deliberately deferred by the owner** — the correct call while the key
+lives only in Vercel. The rest of this file is the procedure for the day it IS needed:
+a key pasted into a chat or screenshot, a lost laptop, or someone with dashboard access
+leaving. Re-run the scan any time with:
+
+```
+git log --all -p | grep -c "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"     # must print 0
+```
+
+---
+
 ## 0. What this is about (and what it is NOT about)
 
 This is **not** about officers, sign-ins, Google accounts, or adding any step to anyone's
