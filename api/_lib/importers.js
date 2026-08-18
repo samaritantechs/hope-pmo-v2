@@ -675,21 +675,33 @@ export function importHints(csvRows) {
 export function importExpectedSummary(csvRows, { snapshotType, snapshotDate }) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => {
     const expected = num(col(r, h, 'EXPECTED'));
+    /* TWO SHAPES OF THE SAME REPORT. The workbook tab spells collection out in parts
+       (PAID + ILIYONASIA + EXP TOMMR); the system's own Expected_Summary export says
+       COLLECTED in one column. Where the file says COLLECTED, that is the figure --
+       summing parts it does not have would read three blanks as zero. */
+    const collectedStated = col(r, h, 'COLLECTED');
+    const hasCollected = String(collectedStated == null ? '' : collectedStated).replace(/[\s,-]/g, '') !== '';
     const paid = num(col(r, h, 'PAID'));
     const nasia = num(col(r, h, 'ILIYONASIA'));
     const tommr = num(col(r, h, 'EXP TOMMR', 'EXP TOMORROW', 'EXP TOMM'));
-    const collected = paid + nasia + tommr;
+    const collected = hasCollected ? num(collectedStated) : paid + nasia + tommr;
     /* UNCOLLECTED is taken from the file when it is there, because that is the company's own
-       figure and the sheet is the record. Where the column is blank -- and in these exports it
-       often is, shown as a dash -- it is expected minus collected, clamped at zero exactly as
-       the customer-level rule clamps it per row. Never negative: a team that overpaid has
+       figure and the sheet is the record -- OUTSTANDING is the same figure under the name
+       the Expected_Summary export writes. Where the column is blank -- and in these exports
+       it often is, shown as a dash -- it is expected minus collected, clamped at zero exactly
+       as the customer-level rule clamps it per row. Never negative: a team that overpaid has
        collected everything, not less than nothing. */
-    const stated = col(r, h, 'UNCOLLECTED');
+    const stated = col(r, h, 'UNCOLLECTED', 'OUTSTANDING');
     const hasStated = String(stated == null ? '' : stated).replace(/[\s,-]/g, '') !== '';
+    /* THE FILE'S OWN DATE WINS. The Expected_Summary export stamps every row with the day it
+       reports -- "these are yesterdays final reports, so please make no mistake" -- and a
+       date the file itself carries cannot be mis-picked in a box at one in the morning.
+       Files without the column keep the chosen date exactly as before. */
+    const own = dateOrNull(col(r, h, 'DATE'));
     return {
       kind: 'expected',
       snapshot_type: snapshotType,
-      snapshot_date: snapshotDate,
+      snapshot_date: own || snapshotDate,
       weekday: null,
       team: normTeam(col(r, h, 'TEAMS', 'TEAM')),
       customers: null,                       // a summary is money, not a list of people
@@ -717,16 +729,34 @@ export function importExpectedSummary(csvRows, { snapshotType, snapshotDate }) {
     this system, and introducing a second key here would be a second way for a team to be
     identified and therefore a second way for one to go missing. */
 export function importDefaulterSummary(csvRows, { snapshotType, snapshotDate, weekday }) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+  /* ONE ROW PER TEAM, HOWEVER MANY FILES WERE HIGHLIGHTED.
+
+     The system's defaulter summary comes as THREE exports -- default, expired and chronic --
+     and the day's whole book is their SUM per team. The upload page concatenates the three
+     Data sheets into one upload precisely because the batch rule keeps only the LATEST batch
+     per date: three separate uploads would each replace the one before, and the day would
+     end up counting a single segment while looking complete.
+
+     So a team appearing in more than one segment is summed here, into the one row the
+     summary table and the recovery pairing expect. A single-segment or single-file upload
+     behaves exactly as before -- there is simply nothing to add up. */
+  const byTeam = new Map();
+  for (const { raw: r, h } of rowsToObjects(csvRows)) {
+    const team = normTeam(col(r, h, 'team_name', 'TEAM_NAME', 'TEAM', 'TEAMS'));
+    if (!team) continue;
+    const amt = num(col(r, h, 'amount_defaulted', 'AMOUNT_DEFAULTED', 'AMOUNT DEFAULTED', 'ARREARS', 'ARREAS'));
+    byTeam.set(team, (byTeam.get(team) || 0) + amt);
+  }
+  return [...byTeam.entries()].map(([team, arrears]) => ({
     kind: 'defaulter',
     snapshot_type: snapshotType,
     snapshot_date: snapshotDate,
     weekday,
-    team: normTeam(col(r, h, 'team_name', 'TEAM_NAME', 'TEAM', 'TEAMS')),
+    team,
     customers: null,
     expected_amt: null,
     collected_amt: null,
     uncollected_amt: null,
-    arrears_amt: num(col(r, h, 'amount_defaulted', 'AMOUNT_DEFAULTED', 'AMOUNT DEFAULTED', 'ARREARS', 'ARREAS')),
-  })).filter(x => x.team);
+    arrears_amt: arrears,
+  }));
 }
