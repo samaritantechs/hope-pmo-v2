@@ -1196,17 +1196,18 @@ test('approved and disbursed keep the dates in the file -- that is the report', 
    because the batch rule keeps only the latest batch per date and three separate uploads
    would each replace the one before.
 */
-test('the Expected_Summary shape: COLLECTED, OUTSTANDING, and the file\'s own DATE win', async () => {
+test('the Expected_Summary shape: COLLECTED and OUTSTANDING read; the chosen date rules', async () => {
   const { importExpectedSummary } = await import('../api/_lib/importers.js');
   const rows = [
     ['Team', 'Expected', 'Collected', 'Outstanding', 'Collection %', 'Outstanding %', 'Date'],
     ['BABATI', '5530693', '5236027', '294666', '94.67%', '5.33%', '2026-08-17'],
     ['BUKOBA B', '2040043', '2040043', '0', '100.0%', '0.0%', '2026-08-17'],
   ];
-  // The box date is deliberately wrong -- the file's own date must rule.
-  const out = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-18' });
+  // The CHOSEN date rules -- the owner's standing rule, same as the application stages.
+  // The file's Date column only pre-fills the box on the upload page.
+  const out = importExpectedSummary(rows, { snapshotType: 'today', snapshotDate: '2026-08-17' });
   assert.equal(out.length, 2);
-  assert.equal(out[0].snapshot_date, '2026-08-17', 'the file says which day it reports');
+  assert.equal(out[0].snapshot_date, '2026-08-17', 'the box decides, exactly as chosen');
   assert.equal(out[0].collected_amt, 5236027, 'COLLECTED is the figure, not a sum of blanks');
   assert.equal(out[0].uncollected_amt, 294666, 'OUTSTANDING is the company\'s own uncollected');
   assert.equal(out[1].uncollected_amt, 0, 'a stated zero stays zero');
