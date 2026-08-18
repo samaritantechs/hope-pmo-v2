@@ -422,6 +422,11 @@
       <button class="btn sm ghost" id="findBtn" title="Tafuta mteja / Find a customer">&#128269;</button>
       <button class="btn sm ghost bell" id="bellBtn" title="Taarifa / Notifications">&#128276;</button>
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
+      <!-- WHICH BUILD IS ON THIS SCREEN. Three separate "no change!" reports have cost a round
+           trip each because neither the person looking nor anyone helping them could tell
+           whether the page in front of them was the new one. Tapping it forces a genuinely
+           fresh copy, past any cache. -->
+      <button class="btn sm ghost" id="buildBtn" title="Toleo / Build — bonyeza kupata toleo jipya / tap to force the newest version"></button>
     </div>
     <div class="busy" id="busy"></div>
     <div class="body" id="view"></div>
@@ -490,6 +495,10 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
 // the key you would work out from the state afterwards -- keep the real one, or later touches
 // like a team filter get written to a slot nobody reads.
 var VC = { store:{}, watch:null, key:'' };
+/* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
+   this system (public/*.html is served exactly as written), so this string IS the version.
+   Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
+var BUILD = '2026-08-18-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -678,6 +687,19 @@ function go(view){
 }
 // The reload button means RELOAD. It is the one place that must always go to the server.
 $('#refBtn').onclick = function(){ render({ force:true }); };
+/* The build stamp, shown and made useful: reading it answers "is the fix on my screen yet",
+   and tapping it fetches the page itself again with a cache-busting query so the answer can
+   be made yes in one tap -- without anyone being told to clear a browser cache. */
+(function(){
+  var b = $('#buildBtn');
+  if (!b) return;
+  b.textContent = BUILD;
+  b.style.fontSize = '10.5px';
+  b.style.opacity = '.65';
+  b.onclick = function(){
+    location.replace(location.pathname + '?v=' + Date.now());
+  };
+})();
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
 $('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
 $('#tipBtn').onclick = function(){ tipShow(); };
