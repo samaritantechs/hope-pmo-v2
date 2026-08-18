@@ -5833,12 +5833,40 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
 
   /* ---- CREDIT ANALYSTS: applications they processed, against the sales target ---- */
   const weeklyTarget = cfgS.num('SALES_TARGET_WEEKLY', cfgS.num('SALES_TARGET', 100000000));
+  /* TWO DIFFERENT DEPARTMENTS, AND THEY WERE BEING ADDED TOGETHER.
+
+       "you mixed callagent customer service department who receive loan requests with
+        credit analysts who approve loan sales at dashboard"
+
+     `created_by` is the CUSTOMER CARE agent who RECEIVED the application -- it is the very
+     column the CS board below groups by, and it has no business naming an analyst. This
+     board is about who APPROVED the sale, so it reads the approval: the analyst ID the
+     approvals file carries, resolved to a person through the CREDIT ID written beside them
+     in the Teams panel, then the team's own credit officer, then the raw ID rather than
+     dropping the row. That is the exact chain the Credit tab uses -- the two screens now
+     answer "who is this analyst" the same way, so they cannot disagree. */
+  const analystIdName = {};
+  for (const t of teamRows || []) {
+    const cid = K(t.credit_id || '');
+    if (cid && t.credit) analystIdName[cid] = t.credit;
+  }
+  /* Written out rather than chained with `||`: officerOf answers the STRING '(unassigned)'
+     when a team has no credit officer, which is truthy, so a chain would stop there and the
+     raw-ID fallback could never fire. */
+  const analystFor = l => {
+    const byId = analystIdName[K(l.approved_by || '')];
+    if (byId) return byId;
+    const t = teamBy[K(l.team)];
+    if (t && t.credit) return String(t.credit).trim();
+    return String(l.approved_by || '').trim() || '(unassigned)';
+  };
+
   function creditBoard(from, to) {
     const m = {};
     for (const l of myLoans) {
       const d = String(l.approved_date || '').slice(0, 10);
       if (!d || d < from || d > to) continue;
-      const b = bucket(m, String(l.created_by || l.approved_by || '(unassigned)').trim() || '(unassigned)',
+      const b = bucket(m, analystFor(l),
         { apps: 0, amount: 0, teams: {} });
       b.apps++; b.amount += num(l.principal_amt) || num(l.loan_amt);
       if (l.team) b.teams[K(l.team)] = 1;

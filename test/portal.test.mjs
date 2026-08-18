@@ -6164,3 +6164,57 @@ test('the portal follow-up list wears PAID on a cleared balance too', async () =
   assert.equal(d.rows.find(r => r.ref === 'Z1').status, 'PAID');
   assert.equal(d.rows.find(r => r.ref === '555').status, 'Defaulter', 'a real debt is untouched');
 });
+
+/* =====================================================================================
+   TWO DIFFERENT DEPARTMENTS, NEVER ADDED TOGETHER.
+   =====================================================================================
+   "you mixed callagent customer service department who receive loan requests with credit
+    analysts who approve loan sales at dashboard"
+
+   `created_by` names the CUSTOMER CARE agent who RECEIVED the application. `approved_by`
+   names the CREDIT ANALYST who APPROVED the sale. The credit board was grouping approved
+   loans by created_by, so the customer-care room appeared on the analysts' board.
+*/
+test('the credit board names the APPROVER, never the customer-care agent', async () => {
+  const book = tables();
+  book.teams[0] = { ...book.teams[0], credit: 'ANALYST A', credit_id: 'CA9' };
+  book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000,
+    approved_date: TODAY, approved_by: 'CA9', created_by: 'NEEMA CS' }];
+  const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
+  const names = d.creditToday.map(r => r.analyst);
+  assert.ok(names.includes('ANALYST A'), 'the CREDIT ID resolves the approver to their name');
+  assert.equal(names.includes('NEEMA CS'), false,
+    'the customer-care agent must not appear on the analysts\' board');
+});
+
+test('an approver with no CREDIT ID falls back to the team\'s credit officer', async () => {
+  const book = tables();
+  book.teams[0] = { ...book.teams[0], credit: 'ANALYST A', credit_id: null };
+  book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000,
+    approved_date: TODAY, approved_by: 'UNKNOWN-ID', created_by: 'NEEMA CS' }];
+  const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
+  assert.deepEqual(d.creditToday.map(r => r.analyst), ['ANALYST A']);
+});
+
+test('with no analyst known at all, the raw approver ID is kept rather than the CS agent', async () => {
+  /* Dropping the row would hide a real sale; naming the customer-care agent would be the
+     original bug. The ID is the honest answer -- and it is the string to go and map. */
+  const book = tables();
+  book.teams[0] = { ...book.teams[0], credit: null, credit_id: null };
+  book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000,
+    approved_date: TODAY, approved_by: 'CA-777', created_by: 'NEEMA CS' }];
+  const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
+  assert.deepEqual(d.creditToday.map(r => r.analyst), ['CA-777']);
+});
+
+test('the customer-care board still names the agent who RECEIVED the application', async () => {
+  /* The other half of the separation: created_by belongs here, and only here. */
+  const book = tables();
+  book.call_agents = [{ user_id: 'NEEMA CS', names: 'NEEMA THE AGENT' }];
+  book.loans = [{ id: 'a1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 50000,
+    created_by: 'NEEMA CS', track_no: '1', upload_date: TODAY, full_name: 'APPLICANT' }];
+  const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
+  const row = d.csToday.find(r => r.id === 'NEEMA CS');
+  assert.ok(row, 'the customer-care agent belongs on the customer-care board');
+  assert.equal(row.brought, 1);
+});
