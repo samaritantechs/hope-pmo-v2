@@ -22,6 +22,21 @@ const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 /** 'MON'..'SUN' on the EAT clock -- getUTCDay on the shifted clock = the local weekday. */
 export function currentWeekday(nowMs) { return DAYS[localNow(nowMs).getUTCDay()]; }
 
+/** 'MON'..'SUN' for a yyyy-mm-dd KEY -- the weekday a chosen date actually falls on.
+
+    The date and its weekday are ONE fact, and letting a person state them separately means
+    letting them disagree: a Tuesday deck stamped MON files itself under Monday, breaks
+    Monday's recovery pairing and hides itself from Tuesday. So the date decides, and this is
+    where it decides. Read at noon UTC so no offset can tip the answer onto a neighbouring
+    day. Returns null for anything that is not a real date key. */
+export function weekdayOfKey(key) {
+  const k = String(key == null ? '' : key).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(k)) return null;
+  const t = Date.parse(k + 'T12:00:00Z');
+  if (!Number.isFinite(t)) return null;
+  return DAYS[new Date(t).getUTCDay()];
+}
+
 /** ISO weekday on the EAT clock: Mon=1 .. Sun=7. This is what the recovery-basis rule keys
     off, same convention as isoWeekdayToday in the live system's app.html. */
 export function isoWeekday(nowMs) {

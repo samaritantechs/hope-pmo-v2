@@ -282,8 +282,13 @@ $('codeEye').addEventListener('click', function(){
 });
 
 var TYPE_META = {
-  'defaulters-current': ['weekdayWrap', 'dateWrap'],
-  'defaulters-initial': ['weekdayWrap', 'dateWrap'],
+  /* NO WEEKDAY BOX. The date picker already says which day it is -- the weekday is read from
+     it on the server, so the two can never disagree ("remove the day thing since am choosing
+     calender already ... I might disturb Mondays data while I always find todays date").
+     The chosen date's weekday is printed under the picker in both languages, so it is still
+     visible -- just no longer a second thing to get wrong. */
+  'defaulters-current': ['dateWrap'],
+  'defaulters-initial': ['dateWrap'],
   'expected-today': ['dateWrap'], 'expected-tomorrow': ['dateWrap'],
   'expected-yesterday': ['dateWrap'], 'expected-initial': ['dateWrap'],
   /* The Expected summary needs a date and which Expected it is. The Defaulters summary needs
@@ -291,7 +296,7 @@ var TYPE_META = {
      ON THE SAME WEEKDAY -- a summary that could not be paired that way would compare two
      different populations, which is the fault that once produced minus 194 million. */
   'expected-summary': ['dateWrap', 'expTypeWrap'],
-  'defaulters-summary': ['weekdayWrap', 'dateWrap', 'defTypeWrap'],
+  'defaulters-summary': ['dateWrap', 'defTypeWrap'],
   'loans': ['stageWrap'],
   'followup': [], 'comments': [], 'teams': [], 'received': [],
   'access-codes': [], 'user-roles': [],
@@ -789,8 +794,10 @@ function suggestSheet(names){
     }
     return null;
   }
-  var wd = type.indexOf('defaulters') === 0 ? WD_NAME[$('weekday').value]
-         : type.indexOf('expected') === 0 ? dateWeekday_() : null;
+  /* The sheet suggestion follows the DATE now, for defaulters exactly as for expected --
+     it used to read the weekday dropdown, which no longer exists on these types. */
+  var wd = (type.indexOf('defaulters') === 0 || type.indexOf('expected') === 0)
+    ? dateWeekday_() : null;
   if (type === 'defaulters-current') return find(wd && new RegExp('^def.*current.*' + wd), /^def.*current/);
   if (type === 'defaulters-initial') return find(wd && new RegExp('^def.*initial.*' + wd), /^def.*initial/);
   if (type === 'expected-initial')   return find(wd && new RegExp('^expected initial.*' + wd), /^expected initial/);

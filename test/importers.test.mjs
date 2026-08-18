@@ -1239,3 +1239,46 @@ test('the three defaulter segments sum into one row per team', async () => {
   assert.ok(out.find(r => r.team === 'GONGOLAMBOTO'), 'the trailing space is normalised away');
   assert.equal(out.find(r => r.team === 'KONGOWE').arrears_amt, 3740000);
 });
+
+/* =====================================================================================
+   THE DATE DECIDES THE WEEKDAY. ALWAYS.
+   =====================================================================================
+   "remove the day thing since am choosing calender already -- its mixing me, am finding
+    Monday always. I might disturb Mondays data while I always find todays date."
+
+   Two boxes saying the same thing is two boxes that can disagree, and the disagreement is
+   silent: a Tuesday deck stamped MON overwrites Monday's recovery pairing and hides itself
+   from Tuesday. The date the person picked is the one fact, so the weekday is read from it.
+*/
+test('weekdayOfKey reads the real weekday of a chosen date', async () => {
+  const { weekdayOfKey } = await import('../api/_lib/time.js');
+  // The owner's own working days, checked against the calendar.
+  assert.equal(weekdayOfKey('2026-08-17'), 'MON');
+  assert.equal(weekdayOfKey('2026-08-18'), 'TUE');   // the day this was reported
+  assert.equal(weekdayOfKey('2026-08-14'), 'FRI');   // the night-shift upload
+  assert.equal(weekdayOfKey('2026-08-15'), 'SAT');
+  assert.equal(weekdayOfKey('2026-08-16'), 'SUN');
+  // A full week, so no off-by-one can hide in the middle of it.
+  assert.deepEqual(
+    ['2026-08-17','2026-08-18','2026-08-19','2026-08-20','2026-08-21','2026-08-22','2026-08-23']
+      .map(weekdayOfKey),
+    ['MON','TUE','WED','THU','FRI','SAT','SUN']);
+});
+
+test('weekdayOfKey refuses anything that is not a real date key', async () => {
+  const { weekdayOfKey } = await import('../api/_lib/time.js');
+  for (const bad of ['', null, undefined, 'yesterday', '17/08/2026', '2026-8-1', 'not-a-date']) {
+    assert.equal(weekdayOfKey(bad), null, String(bad) + ' must not produce a weekday');
+  }
+  // A full timestamp still answers for its own day rather than being refused.
+  assert.equal(weekdayOfKey('2026-08-18T09:30:00Z'), 'TUE');
+});
+
+test('midnight and end-of-day both land on the same weekday', async () => {
+  /* Read at noon UTC on purpose: a date key parsed at 00:00 can be tipped onto the previous
+     day by any negative offset, which is exactly how a Tuesday becomes a Monday. */
+  const { weekdayOfKey } = await import('../api/_lib/time.js');
+  assert.equal(weekdayOfKey('2026-08-18'), 'TUE');
+  assert.equal(weekdayOfKey('2026-08-18T00:00:00Z'), 'TUE');
+  assert.equal(weekdayOfKey('2026-08-18T23:59:59Z'), 'TUE');
+});

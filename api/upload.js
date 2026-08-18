@@ -7,7 +7,7 @@ import { pickLatestBatch } from './_lib/snapshots.js';
    two answers that can disagree, and the disagreement would only ever show up as a figure
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
-import { addDaysKey as addDays_ } from './_lib/time.js';
+import { addDaysKey as addDays_, weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
   importFollowup, importComments, commentsDateOrder,
@@ -469,7 +469,24 @@ export default withApi(async (req, res) => {
    * upload is simply incomplete. Sending the file again writes a NEW batch, and the batch rule
    * supersedes the incomplete one whole. That is the same protection a re-upload has always
    * had, working for a case it was not designed for. */
-  const { code, type, meta = {}, rows, part = null } = req.body || {};
+  const { code, type, meta: metaIn = {}, rows, part = null } = req.body || {};
+  /* THE DATE DECIDES THE WEEKDAY. ALWAYS.
+
+       "remove the day thing since am choosing calender already -- its mixing me, am finding
+        Monday always. I might disturb Mondays data while I always find todays date."
+
+     The weekday used to be its own dropdown beside the date, defaulting to Monday. Two ways
+     of saying the same thing, and the moment they disagreed the deck was filed under the
+     wrong day: Tuesday's book stamped MON would overwrite Monday's recovery pairing and be
+     invisible under Tuesday. It could not be caught by eye, because both boxes looked
+     deliberate.
+
+     So a defaulter upload's weekday is now DERIVED from the date the person chose, on the
+     server, whatever any client sends -- one fact, one place, no way to disagree. A file
+     dated 18/08 is a Tuesday deck because the 18th of August IS a Tuesday. */
+  const DEFAULTER_TYPES = new Set(['defaulters-current', 'defaulters-initial', 'defaulters-summary']);
+  const derivedWd = DEFAULTER_TYPES.has(type) ? weekdayOfKey(metaIn && metaIn.date) : null;
+  const meta = derivedWd ? { ...metaIn, weekday: derivedWd } : metaIn;
   const { index: partIndex, total: partTotal, isFirst: isFirstPart, isLast: isLastPart,
           batch: partBatch } = partPlan(part);
   // Uploading is a system-side act, so it closes with the rest of the system. An admin
@@ -483,7 +500,7 @@ export default withApi(async (req, res) => {
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
-      if (!meta.weekday || !meta.date) { const e = new Error('weekday and date are required for a Defaulters upload.'); e.status = 400; throw e; }
+      if (!meta.date) { const e = new Error('A date is required for a Defaulters upload — the weekday is read from it.'); e.status = 400; throw e; }
       table = 'defaulter_snapshots';
       records = importDefaulters(rows, { snapshotType: type === 'defaulters-initial' ? 'initial' : 'current', weekday: meta.weekday, snapshotDate: meta.date });
       break;
@@ -508,7 +525,7 @@ export default withApi(async (req, res) => {
         snapshotType: String(meta.expectedType || 'today').toLowerCase(), snapshotDate: meta.date });
       break;
     case 'defaulters-summary':
-      if (!meta.weekday || !meta.date) { const e = new Error('weekday and date are required for a Defaulters summary — recovery is only honest when an initial deck is compared against the current deck of the SAME weekday.'); e.status = 400; throw e; }
+      if (!meta.date) { const e = new Error('A date is required for a Defaulters summary — the weekday is read from it, and recovery is only honest when an initial deck is compared against the current deck of the SAME weekday.'); e.status = 400; throw e; }
       if (meta.defType !== 'initial' && meta.defType !== 'current') { const e = new Error('Choose Initial or Current for a Defaulters summary.'); e.status = 400; throw e; }
       table = 'snapshot_summaries';
       records = importDefaulterSummary(rows, {
