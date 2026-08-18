@@ -59,8 +59,8 @@ test('an admin who asks for HOPE Loan gets it, in any capitalisation', () => {
 
 /* THE ONE THAT MATTERS. An officer's phone can send whatever it likes -- a copied URL, an old
    cached page, a deliberately edited request. None of it moves them off the real book. */
-test('no role but ADMIN can reach HOPE Loan, however they ask', () => {
-  withLoanConfigured(() => {
+test('no role but ADMIN can reach HOPE Loan, however they ask', async () => {
+  await withLoanConfigured(async () => {
     const roles = [GMO, OFFICER,
       { role: 'PMO', teams: null, tabs: [] },
       { role: 'MANAGER', teams: ['KONGOWE'], tabs: [] },
@@ -75,9 +75,12 @@ test('no role but ADMIN can reach HOPE Loan, however they ask', () => {
     for (const user of roles) {
       assert.equal(resolveWorkspace(user, 'hopeloan'), HOPEPMO,
         'role ' + JSON.stringify(user.role) + ' must never leave production');
-      assert.equal(workspaceFor(user, 'hopeloan').db, supabase,
-        'role ' + JSON.stringify(user.role) + ' must hold the production client');
-      assert.equal(workspaceFor(user, 'hopeloan').sandbox, false);
+      const ws = await workspaceFor(user, 'hopeloan');
+      assert.equal(ws.db, supabase, 'role ' + JSON.stringify(user.role) + ' must hold the production client');
+      assert.equal(ws.sandbox, false);
+      /* And they are never told WHY -- a non-admin gets `ready: true` on production, not a
+         "not ready" that would confirm a sandbox exists somewhere to be asked about. */
+      assert.equal(ws.ready, true, 'a refusal must not leak that a sandbox exists');
     }
   });
 });
@@ -94,11 +97,11 @@ test('a tab cannot be mistaken for a role -- admin is the role string, nothing e
    thing an environment variable is still genuinely for here now that running the SQL is the
    configuration. */
 test('an explicit HOPELOAN_ENABLED=false turns the sandbox off outright', async () => {
-  withoutLoanConfigured(() => {
+  await withoutLoanConfigured(async () => {
     process.env.HOPELOAN_ENABLED = 'false';
     assert.equal(hopeLoanConfigured(), false);
     assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPEPMO);
-    assert.equal(workspaceFor(ADMIN, 'hopeloan').db, supabase);
+    assert.equal((await workspaceFor(ADMIN, 'hopeloan')).db, supabase);
     delete process.env.HOPELOAN_ENABLED;
   });
   assert.equal(await canSwitchWorkspace({ role: 'ADMIN' }), false);
@@ -139,18 +142,37 @@ test('dbFor hands back production for anything it does not recognise', () => {
   });
 });
 
-test('an admin in HOPE Loan holds a different client from the production one', () => {
-  withLoanConfigured(() => {
-    const a = workspaceFor(ADMIN, 'hopeloan');
+test('an admin in HOPE Loan holds a different client from the production one', async () => {
+  await withLoanConfigured(async () => {
+    const a = await workspaceFor(ADMIN, 'hopeloan');
     assert.equal(a.workspace, HOPELOAN);
     assert.equal(a.sandbox, true);
     assert.notEqual(a.db, supabase, 'the sandbox must not be the production client');
 
-    const b = workspaceFor(ADMIN, undefined);
+    const b = await workspaceFor(ADMIN, undefined);
     assert.equal(b.workspace, HOPEPMO);
     assert.equal(b.sandbox, false);
     assert.equal(b.db, supabase);
   });
+});
+
+/* THE BUG THAT PRODUCED "its in app but ends at trying": the switch was gated on a real probe
+   while ROUTING was gated only on credentials existing, so a deployment whose schema was
+   missing or unexposed hid the button in the portal AND still routed the call app into a
+   sandbox that could not answer -- leaving the phone on "trying…" under a red SANDBOX banner
+   forever. One question, one place, and an unready sandbox is refused in words. */
+test('an unready sandbox routes to production and says so, instead of hanging', async () => {
+  const { clearHopeLoanProbe } = await import('../api/_lib/workspace.js');
+  const real = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response('{"message":"schema must be one of the following: public"}',
+      { status: 404, headers: { 'Content-Type': 'application/json' } });
+    clearHopeLoanProbe();
+    const ws = await workspaceFor(ADMIN, 'hopeloan');
+    assert.equal(ws.ready, false, 'the caller must be able to tell it did not happen');
+    assert.equal(ws.db, supabase, 'and must be given production, never a client that cannot answer');
+    assert.equal(ws.sandbox, false, 'so no screen paints a SANDBOX banner over live data');
+  } finally { globalThis.fetch = real; clearHopeLoanProbe(); }
 });
 
 test('the sandbox client is built once and reused, not per request', () => {
@@ -185,7 +207,7 @@ function withSchemaModeEnabled(fn) {
    the migration -- a second switch saying the same thing, and the one somebody could not find
    ("i cant find HOPELOAN_ENABLED"). Schema mode is available whenever the production
    credentials exist; whether it is READY is answered by asking the database. */
-test('schema mode needs no environment variable at all', () => {
+test('schema mode needs no environment variable at all', async () => {
   withoutLoanConfigured(() => {
     assert.equal(hopeLoanMode_forDisplay(), 'schema', 'production credentials are enough');
     assert.equal(hopeLoanConfigured(), true);

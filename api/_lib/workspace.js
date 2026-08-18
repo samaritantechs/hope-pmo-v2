@@ -210,11 +210,41 @@ export function dbFor(workspace) {
 /** Resolve and connect in one step -- what a route actually wants. Returns the name alongside
     the client so the answer can be echoed back to the screen: a person working in a sandbox
     must be able to see at a glance that they are, or they will eventually report a sandbox
-    figure as if it were the book. */
-export function workspaceFor(user, asked) {
+    figure as if it were the book.
+
+    IT ASKS THE PROBE, and that is the whole point of it being async.
+
+    TWO GATES DISAGREEING IS WHAT PRODUCED "its in app but ends at trying". The switch shown at
+    sign-in was gated on hopeLoanReady() -- a real question to the database -- while routing a
+    request was gated on hopeLoanConfigured(), which only asks whether credentials exist. So a
+    deployment whose schema was missing or not exposed to PostgREST hid the button in the
+    portal (correct) and still ROUTED the call app into the sandbox (wrong), where every query
+    failed against a schema that could not answer, leaving the phone sitting on "trying…"
+    forever with a red SANDBOX banner it had painted optimistically.
+
+    One question, asked in one place, and a request for a sandbox that is not ready now returns
+    `ready: false` so the caller can say so in words instead of hanging. */
+export async function workspaceFor(user, asked) {
   const workspace = resolveWorkspace(user, asked);
-  return { workspace, db: dbFor(workspace), sandbox: workspace === HOPELOAN };
+  if (workspace !== HOPELOAN) {
+    return { workspace: HOPEPMO, db: supabase, sandbox: false, ready: true };
+  }
+  const ready = await hopeLoanReady();
+  if (!ready) {
+    /* NOT READY MEANS PRODUCTION, never a broken sandbox. The caller is told plainly rather
+       than being handed a client whose every query will fail -- silence here is what made this
+       look like a hang instead of a missing migration. */
+    return { workspace: HOPEPMO, db: supabase, sandbox: false, ready: false };
+  }
+  return { workspace: HOPELOAN, db: dbFor(HOPELOAN), sandbox: true, ready: true };
 }
+
+/** The reason a sandbox request could not be honoured, in words a person can act on. Only ever
+    shown to somebody who was entitled to ask -- an officer never gets here. */
+export const HOPELOAN_NOT_READY =
+  'HOPE Loan haipo bado / HOPE Loan is not ready on this deployment. '
+  + 'Run db/hopeloan/RUN-ME-000-create-schema.sql and RUN-ME-001-origination.sql, and make sure '
+  + '`hopeloan` is listed under Project Settings -> API -> Exposed schemas.';
 
 /** Whether to offer the switch at all, for /api/me. An officer is never told it exists.
 

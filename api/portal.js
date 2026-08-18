@@ -1,7 +1,7 @@
 import { gatedUser, withApi } from './_lib/auth.js';
 import { portalApi } from './_lib/portal-core.js';
 import { loanApi } from './_lib/loan-core.js';
-import { workspaceFor, HOPELOAN } from './_lib/workspace.js';
+import { workspaceFor, HOPELOAN, HOPELOAN_NOT_READY } from './_lib/workspace.js';
 
 // POST /api/portal   { code, fn, args }
 // Every read and write behind the portal (public/app.html) -- one route, one auth check, all
@@ -19,7 +19,13 @@ export default withApi(async (req, res) => {
      what that identity then reads and writes. Anyone who is not an admin, and every request
      that does not name HOPE Loan outright, resolves to production; see _lib/workspace.js.
      The resolved name is echoed back so the screen can say plainly which book is on it. */
-  const ws = workspaceFor(user, workspace);
+  const ws = await workspaceFor(user, workspace);
+  /* ASKED FOR THE SANDBOX AND IT IS NOT THERE. Said out loud rather than silently serving
+     production, because an admin who has just run the migration and sees the real book come
+     back has no way to tell whether it worked. Only reachable by someone entitled to ask. */
+  if (String(workspace || '').trim().toLowerCase() === HOPELOAN && ws.ready === false) {
+    const e = new Error(HOPELOAN_NOT_READY); e.status = 503; throw e;
+  }
   /* TWO SEPARATE FUNCTION REGISTRIES, so a HOPE Loan screen and a HOPE PMO tab can never be
      called by naming the wrong `fn` from the wrong workspace -- loanApi only knows the
      origination pipeline's own names, and portalApi never runs against the sandbox client. */
