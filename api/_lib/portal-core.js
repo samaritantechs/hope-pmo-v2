@@ -2733,18 +2733,25 @@ async function credit(db, user, _args, nowMs) {
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
-  /* THE ID IN THE FILE, THE NAME IN THE ROOM.
-     Approvals name the analyst by an ID. If somebody has written that ID beside an analyst in
-     the Teams panel, use their name; otherwise fall back to the team's credit column, and
-     failing that the raw ID -- which is what it did before, and is better than dropping the
-     row. Built once here rather than looked up per loan. */
-  const byAnalystId = {};
+  /* ANALYSTS ARE NAMED, NEVER NUMBERED.
+
+       "I also wanted to display credit analysts by their names everywhere since they are in
+        the teams and staff table, dont use IDs in the approved report"
+       "so even remove the credit id column in teams and staff - not using it"
+
+     The names live in ONE place -- the credit column of Teams & Staff -- and that is the only
+     place any screen reads them from. An approvals file that happens to name the analyst in
+     words is honoured when those words match somebody on that list; anything else (a bare ID,
+     a code nobody recognises) falls to the team's own credit officer. No screen in this
+     system prints an analyst ID at any point. */
+  const analystNames = {};
   for (const t of teamRows || []) {
-    const id = K(t.credit_id || '');
-    if (id && t.credit) byAnalystId[id] = t.credit;
+    if (t.credit) analystNames[K(t.credit)] = String(t.credit).trim();
   }
-  const nameForId = id => byAnalystId[K(id || '')] || null;
   const analystOf = team => officerOf(teamBy, team, 'credit');
+  /** The analyst a loan belongs to: the file's own words when they name a known analyst,
+      otherwise the team's credit officer. Never an ID, never the customer-care agent. */
+  const analystForLoan = l => analystNames[K(l.approved_by || '')] || analystOf(l.team);
 
   const defCur = scoped(user, curSnap.rows);
   // Until Monday's baseline is uploaded, fall back to today's initial rather than showing nothing.
@@ -2770,8 +2777,28 @@ async function credit(db, user, _args, nowMs) {
     if (st === 'Cleared') a.cleared++; else if (st === 'Reduced') a.reduced++; else if (st === 'Bad') a.bad++; else a.stat++;
     a.recovered += Math.max(0, initA - cur);
   }
+  /* A SALE BELONGS TO THE ANALYST WHO APPROVED IT.
+
+       "I also wanted to display credit analysts by their names everywhere since they are in
+        the teams and staff table, dont use IDs in the approved report"
+
+     nameForId above was written for exactly this and then never called -- the comment
+     described the rule while the code below credited every sale to whoever happens to hold
+     the team's credit column today. So an analyst who approved a loan on another team's book
+     saw it counted against a colleague, and a reassignment silently moved history.
+
+     The approval itself decides now, and it is shown BY NAME: the ID in the file resolved
+     through the CREDIT ID beside that analyst in Teams & Staff, then the team's own credit
+     officer, then the raw ID rather than dropping a real sale. The same chain the dashboard
+     board uses, so the two screens cannot disagree.
+
+     The defaulter loop above is deliberately left on the team: a customer in the count 1-6
+     book belongs to the team that carries them, not to whoever approved them long ago. */
+  /* A SALE BELONGS TO THE ANALYST WHO APPROVED IT, named from Teams & Staff. The defaulter
+     loop above stays on the TEAM: a customer in the count 1-6 book belongs to the team that
+     carries them now, not to whoever approved them long ago. */
   for (const l of scoped(user, loansAll)) {
-    const a = ga(analystOf(l.team));
+    const a = ga(analystForLoan(l));
     a.sales += num(l.principal_amt) || num(l.loan_amt); a.salesCnt++;
   }
 
@@ -4497,7 +4524,7 @@ const TEAM_EXPORT_COLS = [
   ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'],
   ['gmo', 'GMO'], ['gmo_no', 'GMO NO'],
   ['manager', 'MANAGER'], ['manager_no', 'MANAGER NO'],
-  ['credit', 'CREDIT'], ['credit_id', 'CREDIT ID'], ['credit_no', 'CREDIT NO'],
+  ['credit', 'CREDIT'], ['credit_no', 'CREDIT NO'],
   ['expected', 'EXPECTED'], ['expected_no', 'EXPECTED NO'],
   ['bike', 'BIKE'], ['bike_no', 'BIKE NO'],
   ['legal', 'LEGAL'], ['legal_no', 'LEGAL NO'],
@@ -5295,11 +5322,22 @@ async function saveTeam(db, user, p) {
   const team = normTeamName(p && p.team);
   if (!team) throw badRequest('team is required');
   const row = { team };
-  /* credit_id is the analyst's ID in the sale-approvals report -- the one fact about them that
-     no report carries in words. Saved like any other column here; a database without the
-     migration simply refuses it, which is why it is filtered out below rather than assumed. */
-  for (const c of TEAM_ROLE_COLS.concat(['credit_id'], TEAM_OPTIONAL_COLS)) {
-    if (p[c] !== undefined) row[c] = String(p[c] || '').trim() || null;
+  /* CREDIT ID IS GONE. Analysts are named, never numbered ("dont use IDs in the approved
+     report ... so even remove the credit id column in teams and staff - not using it"), so
+     nothing here writes it any more. The database column may still exist on deployments that
+     ran the 2026-08-04 migration; not mentioning it leaves whatever is there untouched,
+     which is the same absent-means-untouched rule the leaders sheet lives by. */
+  /* A NUMBER TYPED IN THIS FORM AND THE SAME NUMBER UPLOADED ON THE SHEET MUST BECOME THE SAME
+     STRING. The leaders sheet puts every phone through normPhone -- leading zero and the 255
+     stripped, nine digits left -- and the phone SEARCH, the call app's book and the notice
+     templates all match against exactly that. This form used to only trim, so "0713000001"
+     typed here was stored a different shape from the identical number uploaded, and the officer
+     it belonged to could not be found by their own number. Same rule, both doors. */
+  const PHONE_COLS = new Set(Object.values(TEAM_PHONE_OF));
+  for (const c of TEAM_ROLE_COLS.concat(TEAM_OPTIONAL_COLS)) {
+    if (p[c] === undefined) continue;
+    const v = String(p[c] || '').trim();
+    row[c] = PHONE_COLS.has(c) ? (pnorm(v) || null) : (v || null);
   }
   const existing = (await readTeamsAll(db)) || [];
   /* A DATABASE THAT HAS NOT HAD THE MIGRATION MUST STILL SAVE THE REST. Migrations here are run
@@ -5307,10 +5345,10 @@ async function saveTeam(db, user, p) {
      otherwise adding a field to the form would break saving a team for everybody until
      somebody opened the SQL editor.
 
-     Generalised from the single credit_id case, because 2026-08-09-team-contacts.sql adds
+     Generalised from the original single-column case, because 2026-08-09-team-contacts.sql adds
      thirteen more of exactly the same kind: the region and zone, a phone number for every role
      that already had a name, and the legal and collection officers. */
-  for (const c of ['credit_id'].concat(TEAM_OPTIONAL_COLS)) {
+  for (const c of TEAM_OPTIONAL_COLS) {
     if (row[c] !== undefined && existing.length && !existing.some(t => c in t)) delete row[c];
   }
   const mine = existing.find(t => K(t.team) === K(team));
@@ -5841,25 +5879,18 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      `created_by` is the CUSTOMER CARE agent who RECEIVED the application -- it is the very
      column the CS board below groups by, and it has no business naming an analyst. This
      board is about who APPROVED the sale, so it reads the approval: the analyst ID the
-     approvals file carries, resolved to a person through the CREDIT ID written beside them
-     in the Teams panel, then the team's own credit officer, then the raw ID rather than
-     dropping the row. That is the exact chain the Credit tab uses -- the two screens now
-     answer "who is this analyst" the same way, so they cannot disagree. */
-  const analystIdName = {};
+     approvals file names in words when those words match somebody on the credit column of
+     Teams & Staff, and otherwise the team's own credit officer. That is the exact rule the
+     Credit tab uses -- the two screens answer "who is this analyst" the same way, so they
+     cannot disagree, and neither ever prints an ID. */
+  const analystNames = {};
   for (const t of teamRows || []) {
-    const cid = K(t.credit_id || '');
-    if (cid && t.credit) analystIdName[cid] = t.credit;
+    if (t.credit) analystNames[K(t.credit)] = String(t.credit).trim();
   }
-  /* Written out rather than chained with `||`: officerOf answers the STRING '(unassigned)'
-     when a team has no credit officer, which is truthy, so a chain would stop there and the
-     raw-ID fallback could never fire. */
-  const analystFor = l => {
-    const byId = analystIdName[K(l.approved_by || '')];
-    if (byId) return byId;
-    const t = teamBy[K(l.team)];
-    if (t && t.credit) return String(t.credit).trim();
-    return String(l.approved_by || '').trim() || '(unassigned)';
-  };
+  /* The file's own words when they name a known analyst, else the team's credit officer.
+     officerOf answers the string '(unassigned)' when a team has none, which is the honest
+     end of the line -- an ID is never printed. */
+  const analystFor = l => analystNames[K(l.approved_by || '')] || officerOf(teamBy, l.team, 'credit');
 
   function creditBoard(from, to) {
     const m = {};

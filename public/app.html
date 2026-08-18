@@ -499,7 +499,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-18-b';
+var BUILD = '2026-08-18-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -840,11 +840,24 @@ function cellText(r, c){
   }
   return String(v);
 }
+/* The dialling form of a number, whatever shape it was stored in. Byte-for-byte the call app's
+   telHref: strip everything but digits, drop a leading 255 or any leading zeros, put +255 back
+   on the front. A number already carrying 255 is left with a single +. */
+function telHref_(v){
+  var d = String(v==null?'':v).replace(/\D/g,'');
+  if (!d) return '';
+  return d.indexOf('255')===0 ? '+'+d : '+255'+d.replace(/^0+/,'');
+}
 function cellHtml(r, c){
   var txt = cellText(r, c);
   if (c.kind==='chip') return txt ? '<span class="chip '+(c.chip? c.chip(r):'mut')+'">'+esc(txt)+'</span>' : '';
   // Phone numbers are dialable everywhere in v1 -- keep that, it is how officers actually work.
-  if (c.kind==='tel') return txt ? '<a class="tel" href="tel:'+esc(txt)+'" onclick="event.stopPropagation()">'+esc(txt)+'</a>' : '';
+  /* WHAT IS SHOWN AND WHAT IS DIALLED ARE NOT THE SAME STRING. Phones are stored the way
+     normPhone leaves them -- nine digits, no leading zero, no 255 -- so putting the stored text
+     straight after `tel:` handed the dialler a number no Tanzanian network completes. The text
+     on screen stays as it is; the href gets the full +255 form, the same rule the call app's
+     telHref has always used. */
+  if (c.kind==='tel') return txt ? '<a class="tel" href="tel:'+esc(telHref_(txt))+'" onclick="event.stopPropagation()">'+esc(txt)+'</a>' : '';
   return esc(txt);
 }
 function isNum(c){ return c.kind==='money'||c.kind==='num'||c.kind==='pct'||c.kind==='dur'; }
@@ -3623,16 +3636,16 @@ VIEWS.credit = function(){
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
    report read these columns, so a reassignment has to be editable here, not re-uploaded. */
 var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
-/* credit_id is not a role -- it is the ID that role's holder appears under in the sale-approvals
-   report, which is the only thing standing between an analyst and being named on a slide. It
-   rides in the same form and saves the same way, with a label that says what it is for. */
+/* THERE IS NO CREDIT ID ANY MORE. An analyst used to be carried by the number they appear under
+   in the sale-approvals report, and every report then had to translate that number back into a
+   person. Now the approvals report is read by NAME against the CREDIT column below, so there is
+   nothing left to type in and nothing left to keep in step. */
 /* THE OFFLINE SHEET, TYPED IN HERE INSTEAD OF KEPT IN A SPREADSHEET.
    region · zone · a phone number beside every role that has a name · the legal officer · the
    collection officer. Optional columns: until 2026-08-09-team-contacts.sql is run, saveTeam
    drops them rather than sending them, so the form saves everything else exactly as before. */
 var TEAM_EXTRA = [
   ['region', 'REGION'], ['zone', 'ZONE'],
-  ['credit_id', 'CREDIT ID (kwenye ripoti ya mauzo / in the approvals report)'],
   ['opm_no', 'OPM No'], ['recovery_no', 'RECOVERY No'], ['gmo_no', 'GMO No'],
   ['manager_no', 'MANAGER No'], ['credit_no', 'C. ANALYST No'], ['expected_no', 'EXPECTED No'],
   ['bike_no', 'BIKE No'],
@@ -3730,10 +3743,6 @@ VIEWS.teams = function(){
        get:function(r){ return r.team_code || 'HAKUNA / NONE'; }},
       col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
       col('manager','Manager'), col('credit','Credit'),
-      /* The ID this analyst appears under in the sale-approvals report -- the one fact about
-         them no report carries in words, so it has to be written down once. */
-      {key:'credit_id', label:'Credit ID', cls:function(r){ return (r.credit && !r.credit_id)?'bad':''; },
-       get:function(r){ return r.credit_id || (r.credit ? 'HAIJAWEKWA / NOT SET' : '—'); }},
       col('expected','Expected'), col('bike','Bike')];
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
@@ -4848,8 +4857,8 @@ function openFollowup(r){
   drawer('<h3>'+esc(r.full_name||r.ref)+'</h3><div class="sub">'+esc(r.team||'')+' · REF '+esc(r.ref)+'</div>'
     + '<div class="facts">'
     + '<div class="frow"><span>Arrears</span><b>TZS '+money(r.arrears||r.def_arrears||0)+'</b></div>'
-    + (r.contact?'<div class="frow"><span>Contact</span><a href="tel:'+esc(r.contact)+'">'+esc(r.contact)+'</a></div>':'')
-    + (r.guarantor_contact?'<div class="frow"><span>Guarantor</span><a href="tel:'+esc(r.guarantor_contact)+'">'+esc(r.guarantor_name||r.guarantor_contact)+'</a></div>':'')
+    + (r.contact?'<div class="frow"><span>Contact</span><a href="tel:'+esc(telHref_(r.contact))+'">'+esc(r.contact)+'</a></div>':'')
+    + (r.guarantor_contact?'<div class="frow"><span>Guarantor</span><a href="tel:'+esc(telHref_(r.guarantor_contact))+'">'+esc(r.guarantor_name||r.guarantor_contact)+'</a></div>':'')
     + (r.status?'<div class="frow"><span>Status</span><span>'+esc(r.status)+'</span></div>':'')
     + (r.ds?'<div class="frow"><span>D.S</span><span>'+esc(r.ds)+'</span></div>':'')
     + '</div>'

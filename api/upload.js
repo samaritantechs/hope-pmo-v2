@@ -566,16 +566,15 @@ export default withApi(async (req, res) => {
         const existing = await fetchAll(() => supabase.from('teams').select('*'));
 
         /* COLUMNS A DATABASE HAS NOT GOT YET ARE DROPPED, NOT SENT. The leaders sheet carries
-           region, zone and a phone per role, all added by 2026-08-09-team-contacts.sql, and
-           credit_id by 2026-08-04-credit-analyst-id.sql -- and migrations here are run by hand.
-           Sending a column that does not exist fails the WHOLE file, so an admin who had not yet
-           pasted that SQL would find the leaders upload broken with an error naming a column
-           they never asked about. Same guard saveTeam has.
+           region, zone and a phone per role, all added by 2026-08-09-team-contacts.sql -- and
+           migrations here are run by hand. Sending a column that does not exist fails the WHOLE
+           file, so an admin who had not yet pasted that SQL would find the leaders upload broken
+           with an error naming a column they never asked about. Same guard saveTeam has.
 
            BUT IT USED TO DROP THEM IN SILENCE, and that is how "why didnt even the ids update"
-           happens: the CREDIT ID column is read correctly out of the sheet, thrown away here
-           because the database has no such column, and the upload reports a cheerful success.
-           The names of what was dropped are now carried back and said out loud. */
+           happens: a column is read correctly out of the sheet, thrown away here because the
+           database has not got it, and the upload reports a cheerful success. The names of what
+           was dropped are now carried back and said out loud. */
         const known = existing.length ? Object.keys(existing[0]) : null;
         if (known) {
           const dropped = new Set();
@@ -1159,7 +1158,7 @@ export default withApi(async (req, res) => {
       /* A COLUMN THROWN AWAY IN SILENCE IS THE WORST KIND OF SUCCESS. The file was read right,
          the database has no such column yet, and without this line the upload says "done" while
          the very field the admin uploaded the sheet to change is left exactly as it was. */
-      teamsDroppedCols && teamsDroppedCols.length ? `⚠️ Your file also carried ${teamsDroppedCols.join(', ')} — this database has no such column yet, so ${teamsDroppedCols.length === 1 ? 'it was' : 'they were'} NOT saved and the rest of the file went in as normal. Run the outstanding migration in db/migrations (credit_id comes from 2026-08-04-credit-analyst-id.sql; region, zone and the per-role phone numbers from 2026-08-09-team-contacts.sql), then upload this same sheet again.` : '',
+      teamsDroppedCols && teamsDroppedCols.length ? `⚠️ Your file also carried ${teamsDroppedCols.join(', ')} — this database has no such column yet, so ${teamsDroppedCols.length === 1 ? 'it was' : 'they were'} NOT saved and the rest of the file went in as normal. Run the outstanding migration in db/migrations (region, zone and the per-role phone numbers come from 2026-08-09-team-contacts.sql), then upload this same sheet again.` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
