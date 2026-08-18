@@ -9,7 +9,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
 const { resolveWorkspace, dbFor, workspaceFor, canSwitchWorkspace, hopeLoanConfigured,
-        HOPEPMO, HOPELOAN } = await import('../api/_lib/workspace.js');
+        hopeLoanMode_forDisplay, HOPEPMO, HOPELOAN } = await import('../api/_lib/workspace.js');
 const { supabase } = await import('../api/_lib/supabase.js');
 
 const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
@@ -158,5 +158,68 @@ test('pointing the environment at a different project yields a different client'
     const first = dbFor(HOPELOAN);
     process.env.HOPELOAN_SUPABASE_URL = 'https://hopeloan-two.test.invalid';
     assert.notEqual(dbFor(HOPELOAN), first, 'a changed URL must not reuse the old connection');
+  });
+});
+
+/* =====================================================================================
+   SCHEMA MODE -- the free path: the same project, a second schema, turned on by one flag.
+   ===================================================================================== */
+
+function withSchemaModeEnabled(fn) {
+  const enabled = process.env.HOPELOAN_ENABLED;
+  process.env.HOPELOAN_ENABLED = 'true';
+  try { return fn(); } finally {
+    if (enabled === undefined) delete process.env.HOPELOAN_ENABLED; else process.env.HOPELOAN_ENABLED = enabled;
+  }
+}
+
+test('HOPELOAN_ENABLED alone turns on the free schema-mode sandbox', () => {
+  withoutLoanConfigured(() => {
+    assert.equal(hopeLoanConfigured(), false);
+    withSchemaModeEnabled(() => {
+      assert.equal(hopeLoanConfigured(), true);
+      assert.equal(hopeLoanMode_forDisplay(), 'schema');
+      assert.equal(canSwitchWorkspace(ADMIN), true);
+      assert.notEqual(dbFor(HOPELOAN), supabase, 'schema mode must still be a distinct client');
+      assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPELOAN);
+      assert.equal(resolveWorkspace(GMO, 'hopeloan'), HOPEPMO, 'role check applies in schema mode too');
+    });
+  });
+});
+
+test('junk in HOPELOAN_ENABLED reads as off, same rule as the system-open switch', () => {
+  withoutLoanConfigured(() => {
+    for (const v of ['0', 'false', 'no', '', 'nah', 'disabled']) {
+      process.env.HOPELOAN_ENABLED = v;
+      assert.equal(hopeLoanConfigured(), false, JSON.stringify(v) + ' must not enable the sandbox');
+    }
+    delete process.env.HOPELOAN_ENABLED;
+  });
+});
+
+test('a separate project, once configured, wins over schema mode', () => {
+  withoutLoanConfigured(() => {
+    withSchemaModeEnabled(() => {
+      assert.equal(hopeLoanMode_forDisplay(), 'schema');
+      withLoanConfigured(() => {
+        // withLoanConfigured sets HOPELOAN_SUPABASE_URL/KEY -- project mode should now win,
+        // so a deployment that has graduated to its own project is never left quietly running
+        // on the shared schema because the old flag was never removed.
+        assert.equal(hopeLoanMode_forDisplay(), 'project');
+      });
+      // And falls back to schema mode once the project variables are gone again.
+      assert.equal(hopeLoanMode_forDisplay(), 'schema');
+    });
+  });
+});
+
+test('schema mode and project mode never share a cached client', () => {
+  withoutLoanConfigured(() => {
+    withSchemaModeEnabled(() => {
+      const schemaClient = dbFor(HOPELOAN);
+      withLoanConfigured(() => {
+        assert.notEqual(dbFor(HOPELOAN), schemaClient, 'switching mode must not reuse the old client');
+      });
+    });
   });
 });

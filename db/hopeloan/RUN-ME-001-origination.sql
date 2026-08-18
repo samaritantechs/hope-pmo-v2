@@ -1,16 +1,20 @@
 /* =====================================================================================
-   HOPE LOAN -- ORIGINATION. Run this on the HOPELOAN Supabase project ONLY.
+   HOPE LOAN -- ORIGINATION. Run AFTER RUN-ME-000-create-schema.sql and db/schema.sql.
    =====================================================================================
 
    HOW TO RUN IT
-     1. Create the second Supabase project (name it hopeloan).
-     2. Run db/schema.sql on it first -- HOPE Loan's database is the WHOLE HOPE PMO schema
-        plus what is below, so that a sandbox loan can be originated here and then flow all
-        the way through expected, defaulters, decks and recovery exactly as a real one does.
-        That is what makes the end-to-end demonstration possible, and it is what makes the
-        eventual merge into HOPE PMO a no-op rather than a migration.
-     3. Run this file.
-     4. Put HOPELOAN_SUPABASE_URL and HOPELOAN_SERVICE_ROLE_KEY into Vercel.
+     1. RUN-ME-000-create-schema.sql first -- it makes the `hopeloan` schema and opens
+        PostgREST's door to it, once, however this ends up hosted.
+     2. Paste `set search_path = hopeloan, public;` then the whole of db/schema.sql, in one
+        editor run. HOPE Loan's database is the WHOLE HOPE PMO schema plus what is below, so a
+        sandbox loan can flow all the way through expected, defaulters, decks and recovery
+        exactly as a real one does. That is what makes the end-to-end demonstration possible,
+        and what makes the eventual merge into HOPE PMO a no-op rather than a migration.
+     3. Paste `set search_path = hopeloan, public;` then the whole of THIS file, in one run.
+     4. Turn the switch on -- either is fine, see api/_lib/workspace.js:
+          free:  set HOPELOAN_ENABLED=true in Vercel (same project, this schema)
+          paid:  create a second Supabase project, repeat steps 1-3 inside it, then set
+                 HOPELOAN_SUPABASE_URL and HOPELOAN_SERVICE_ROLE_KEY in Vercel
 
    Until step 4 the switch does not appear anywhere and every request goes to production.
 

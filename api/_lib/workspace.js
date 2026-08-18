@@ -19,56 +19,120 @@ import { supabase } from './supabase.js';
                                 to and nothing that can be missing from one and present in the
                                 other. That is why this is not a separate repository.
 
-     THE DATA NEVER MIXES     -- because there are TWO DATABASES, and which one a request talks
-                                to is decided ONCE, here, from the signed-in role. A query
-                                cannot choose its own database. There is no filter to forget,
-                                no WHERE clause that could be left off at two in the morning:
-                                the sandbox is not hidden from an officer, it is unreachable.
+     THE DATA NEVER MIXES     -- because HOPE Loan's tables live in their OWN NAMED SCHEMA,
+                                `hopeloan`, and which schema a request talks to is decided ONCE,
+                                here, from the signed-in role. A query cannot choose its own
+                                schema. There is no filter to forget, no WHERE clause that could
+                                be left off at two in the morning: the sandbox is not hidden
+                                from an officer, it is unreachable -- an officer's client is
+                                never even pointed at it.
+
+   TWO WAYS TO HOST THE SCHEMA, BOTH USING THE SAME SQL AND THE SAME CODE HERE:
+
+     SCHEMA MODE (free) -- `hopeloan` lives inside the SAME Supabase project as production, as
+       a second schema next to `public`. One project, one bill, and Postgres itself keeps the
+       two apart: a client scoped to `public` cannot see `hopeloan.customers` any more than it
+       can see a table in a different database. This is the default once HOPELOAN_ENABLED is
+       set, and it is what "the free path, start there" means in practice.
+
+     PROJECT MODE (paid) -- `hopeloan` lives inside a SEPARATE Supabase project, reached with
+       its own URL and service key. Strictly stronger isolation -- a different server, not just
+       a different namespace on the same one -- for whenever that becomes worth the ten dollars
+       a month. THE SCHEMA NAME IS STILL `hopeloan` EVEN THERE, so every file in db/hopeloan/
+       runs unmodified in either mode; only which project's credentials get used changes.
+
+   Excel terms, since that is how this was described: this is not a filtered VIEW of the same
+   sheet, where a wrong pivot could show live rows. It is a SEPARATE SHEET in the same
+   workbook -- its own tables, its own primary keys, its own space -- that a formula on the
+   first sheet cannot reach by accident. Nothing here ever writes production data because
+   nothing here ever HOLDS a production connection while working in the sandbox.
 
    WHY THIS FILE IS SO SMALL. Every function in portal-core takes `db` as its first argument --
    which is how the whole surface runs against a fake client under `npm test`. Routing to a
-   second database is therefore a decision at the door, not a change to five thousand lines.
+   second schema is therefore a decision at the door, not a change to five thousand lines.
    The injection was already there; this only chooses what to inject.
 
    IDENTITY IS ALWAYS PRODUCTION. An admin signs in with their real access code against the
-   real access_codes table, and the workspace changes only what data that identity then reads
-   and writes. One set of credentials, one place to revoke them. A second copy of the access
-   codes living in a sandbox is a second copy that can be forgotten when somebody leaves.
+   real access_codes table, in `public`, and the workspace changes only what data that identity
+   then reads and writes. One set of credentials, one place to revoke them. A second copy of
+   the access codes living in a sandbox is a second copy that can be forgotten when somebody
+   leaves.
 
-   FAILING SAFE. With no HOPELOAN_* environment variables configured, hopeLoanConfigured() is
-   false, the switch is never offered, and every request resolves to production. A half-set-up
-   deployment does not get a half-working sandbox -- it gets HOPE PMO exactly as it is today. */
+   FAILING SAFE. With nothing configured, hopeLoanConfigured() is false, the switch is never
+   offered, and every request resolves to production. A half-set-up deployment does not get a
+   half-working sandbox -- it gets HOPE PMO exactly as it is today. */
 
 export const HOPEPMO = 'hopepmo';
 export const HOPELOAN = 'hopeloan';
 export const WORKSPACES = [HOPEPMO, HOPELOAN];
 
-/** True once the second Supabase project's URL and service key are both set. Read from the
+/** Which of the two hosting modes is configured, or null if neither is. Read from the
     environment on every call rather than captured at import: a serverless instance may be
-    reused across a deployment that added them, and a stale `false` would leave the switch
-    missing with no way to tell why. */
+    reused across a deployment that added the variables, and a stale answer would leave the
+    switch missing with no way to tell why.
+
+    PROJECT wins if both are set, because it is the strictly stronger isolation -- a deployment
+    that has graduated to its own project should not keep quietly running on a schema in the
+    shared one just because that variable was never removed. */
+function hopeLoanMode() {
+  if (process.env.HOPELOAN_SUPABASE_URL && process.env.HOPELOAN_SERVICE_ROLE_KEY) return 'project';
+  if (readsAsEnabled(process.env.HOPELOAN_ENABLED)) return 'schema';
+  return null;
+}
+
+/** True for a value that plainly says yes, same reading as the system-open switch: anything
+    else -- unset, blank, 'no', junk -- is off, because a sandbox nobody turned on is a sandbox
+    nobody meant to expose. */
+function readsAsEnabled(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
 export function hopeLoanConfigured() {
-  return !!(process.env.HOPELOAN_SUPABASE_URL && process.env.HOPELOAN_SERVICE_ROLE_KEY);
+  return hopeLoanMode() !== null;
+}
+
+/** Which hosting mode is live, for a status screen -- never for a security decision. Returns
+    'project', 'schema', or null. */
+export function hopeLoanMode_forDisplay() {
+  return hopeLoanMode();
 }
 
 /* Built once and kept, exactly like the production client -- a new client per request would
    open a new connection pool per request, which is the mistake that took the system down when
-   paged reads were fired six at a time. Keyed by URL so that a changed environment variable
-   produces a new client rather than silently reusing the old project's connection. */
+   paged reads were fired six at a time. Keyed on the values that decide its identity, so a
+   changed environment variable produces a fresh client rather than silently reusing the old
+   one's connection. */
 let cached = null;
 function hopeLoanDb() {
-  const url = process.env.HOPELOAN_SUPABASE_URL;
-  const key = process.env.HOPELOAN_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  if (!cached || cached.url !== url) {
-    cached = { url, client: createClient(url, key, { auth: { persistSession: false } }) };
+  const mode = hopeLoanMode();
+  if (mode === 'project') {
+    const url = process.env.HOPELOAN_SUPABASE_URL;
+    const key = process.env.HOPELOAN_SERVICE_ROLE_KEY;
+    if (!cached || cached.mode !== 'project' || cached.url !== url || cached.key !== key) {
+      cached = { mode, url, key,
+        client: createClient(url, key, { auth: { persistSession: false }, db: { schema: 'hopeloan' } }) };
+    }
+    return cached.client;
   }
-  return cached.client;
+  if (mode === 'schema') {
+    // The SAME project, the SAME credentials as production -- only the schema differs, and it
+    // is set on the CLIENT, not per query, so nothing built on this client can ever be pointed
+    // at `public` by a query that forgot to say otherwise.
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!cached || cached.mode !== 'schema' || cached.url !== url || cached.key !== key) {
+      cached = { mode, url, key,
+        client: createClient(url, key, { auth: { persistSession: false }, db: { schema: 'hopeloan' } }) };
+    }
+    return cached.client;
+  }
+  return null;
 }
 
 /** Only an ADMIN may leave production. Deliberately checked on the ROLE STRING rather than on
     a tab or a permission: tabs are editable in Teams & Staff, and a role that someone ticked
-    the wrong box on must never become a door into a second database. */
+    the wrong box on must never become a door into a second schema. */
 function mayUseHopeLoan(user) {
   return String((user && user.role) || '').trim().toUpperCase() === 'ADMIN';
 }
