@@ -455,3 +455,23 @@ on conflict (key) do update set value = excluded.value;
 insert into settings (key, value)
 values ('SANDBOX_REF_PREFIX', '9')
 on conflict (key) do nothing;
+
+
+/* =====================================================================================
+   14. GRANT WHAT WAS JUST CREATED -- the belt to RUN-ME-000's braces.
+   =====================================================================================
+   RUN-ME-000's ALTER DEFAULT PRIVILEGES already covers every table created after it, so on a
+   clean run in the documented order this changes nothing. It is here for the run that did NOT
+   go in that order -- a schema made by hand, files run before the grants existed, tables
+   cloned by an older copy of RUN-ME-000b. Re-granting an existing privilege is free; missing
+   one costs an evening of "permission denied for schema hopeloan" with the schema sitting
+   there looking perfectly installed. */
+grant usage on schema hopeloan to postgres, anon, authenticated, service_role;
+grant all on all tables    in schema hopeloan to postgres, anon, authenticated, service_role;
+grant all on all sequences in schema hopeloan to postgres, anon, authenticated, service_role;
+grant all on all functions in schema hopeloan to postgres, anon, authenticated, service_role;
+
+/* Tell PostgREST to re-read its configuration and schema cache, so the change takes effect
+   without waiting for it to notice on its own. */
+notify pgrst, 'reload schema';
+notify pgrst, 'reload config';

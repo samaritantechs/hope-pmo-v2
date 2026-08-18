@@ -16,6 +16,31 @@
 
 create schema if not exists hopeloan;
 
+/* =====================================================================================
+   AND THE SCHEMA MUST BE GRANTED TO THE API ROLES, WHICH IS NOT AUTOMATIC.
+   =====================================================================================
+   Creating a schema gives NOBODY the right to use it. Supabase's API connects as one of
+   `anon`, `authenticated` or `service_role`, and without USAGE on the schema every request
+   comes back:
+
+       permission denied for schema hopeloan
+
+   That is exactly what happened: the schema existed, it was ticked under Exposed schemas, the
+   tables were all present and correct -- and the switch still would not appear, because the
+   role reading it had no right to look. Creating and exposing a schema are two steps; granting
+   it is a third, and it is the one with no visible control in the dashboard.
+
+   ALTER DEFAULT PRIVILEGES covers what comes NEXT -- the tables RUN-ME-000b clones and
+   RUN-ME-001 creates -- so those arrive already granted rather than needing a fourth step. */
+grant usage on schema hopeloan to postgres, anon, authenticated, service_role;
+
+alter default privileges in schema hopeloan
+  grant all on tables    to postgres, anon, authenticated, service_role;
+alter default privileges in schema hopeloan
+  grant all on sequences to postgres, anon, authenticated, service_role;
+alter default privileges in schema hopeloan
+  grant all on functions to postgres, anon, authenticated, service_role;
+
 /* PostgREST -- the layer Supabase's API sits on -- only answers for schemas it has been told
    to expose. `public` is exposed by default; `hopeloan` is not, until this line runs. Without
    it, every request this system makes to the sandbox would fail with "not found" even though
