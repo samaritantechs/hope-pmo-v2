@@ -174,7 +174,13 @@ class FakeQuery {
       // this the fake handed back an undefined id and that whole path was untestable.
       const made = this.payload.map(r => (r.id == null ? { ...r, id: 'gen-' + (++FakeQuery._seq) } : { ...r }));
       for (const r of made) rows.push({ ...r });
-      return { data: this.wantRows ? made.map(r => ({ ...r })) : null, error: null };
+      /* `.insert(row).select().maybeSingle()` is a real, common shape -- write one row, get
+         that one row's generated id back -- and the fake used to hand back an array regardless
+         of `.maybeSingle()`, so a caller doing `const { data } = await ...insert().select()
+         .maybeSingle()` got an array where real Supabase gives an object, untested until it
+         broke against a real database. Collapsed here exactly as the select path already does. */
+      const madeOut = made.map(r => ({ ...r }));
+      return { data: this.wantRows ? (this.single ? (madeOut[0] || null) : madeOut) : null, error: null };
     }
     if (this.mode === 'upsert') {
       /* POSTGREST TAKES SEVERAL CONFLICT COLUMNS, comma-separated, matching a composite unique
@@ -222,7 +228,11 @@ class FakeQuery {
          to debug because the data looks right and the answer looks wrong. */
       const hit = rows.filter(r => this.filters.every(f => f(r)));
       for (const r of hit) Object.assign(r, this.payload);
-      return { data: this.wantRows ? hit : null, error: null, count: hit.length };
+      // Same collapse as insert: `.update(...).eq('id', x).select().maybeSingle()` is one row
+      // by construction (a primary-key filter), and real Supabase hands back an object, not
+      // a one-element array.
+      const hitOut = hit.map(r => ({ ...r }));
+      return { data: this.wantRows ? (this.single ? (hitOut[0] || null) : hitOut) : null, error: null, count: hit.length };
     }
     let out = rows.filter(r => this.filters.every(f => f(r)));
     // The count is of everything that MATCHED, before any range or limit -- which is what

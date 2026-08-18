@@ -413,6 +413,14 @@
     <div class="top">
       <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
+      <!-- SANDBOX LABEL, ALWAYS ON SCREEN WHILE IN IT. "a person working in a sandbox must be
+           able to see at a glance that they are, or they will eventually report a sandbox
+           figure as if it were the book." Hidden entirely outside HOPE Loan. -->
+      <span id="wsBadge" class="hide" style="font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:20px;background:#a11;color:#fff;margin-right:6px"></span>
+      <!-- THE SWITCH ITSELF -- drawn only when /api/me said this code may use it (ADMIN role
+           AND HOPE Loan actually configured server-side). Anyone else's screen never carries
+           this button at all, not even hidden. -->
+      <button class="btn sm ghost hide" id="wsSwitch" title="HOPE Loan / HOPE PMO">HOPE Loan &rarr;</button>
       <!-- The writing bar that used to sit here (the table filter) was removed on request:
            "The search icon on top should do tafuta mteja work and remove the sidenav and the
            writing bar before language switch". One search, one place: the magnifier. -->
@@ -478,7 +486,12 @@ var SWDAY = { MON:'J3', TUE:'J4', WED:'J5', THU:'AL', FRI:'IJ', SAT:'J1', SUN:'J
 function wdLabel(w){ return SWDAY[String(w||'').toUpperCase()] || w; }
 var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true,
           sort2:null, asc2:false,
-          args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0 };
+          args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0,
+          /* ALWAYS BOOTS TO 'hopepmo', NEVER REMEMBERED. Only an admin ever sees the switch at
+             all, and even for them a page load lands on the real book by default every time --
+             the sandbox has to be chosen on purpose, on this visit, never carried in from a
+             tab that was left open in it yesterday. */
+          workspace: 'hopepmo' };
 
 /* Which portal calls only LOOK at data. Everything not on this list is treated as a change to
    the books, which throws the whole remembered screen away -- a save on one tab can move the
@@ -490,7 +503,11 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
   demandNotices:1, abnormal:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
-  accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1 };
+  accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
+  // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
+  // vice versa; both live under one cache key scheme, so both lists matter equally.
+  csSearch:1, managerQueue:1, teamQueue:1, seniorQueue:1, creditQueue:1, disburseQueue:1,
+  disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
 // the key you would work out from the state afterwards -- keep the real one, or later touches
@@ -499,7 +516,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-18-c';
+var BUILD = '2026-08-18-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -532,7 +549,10 @@ function srv(fn, args){
   var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 45000);
   return fetch('/api/portal', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ code:S.code, fn:fn, args:args||{} }),
+    // `workspace` travels on EVERY call, not just the loan ones -- the server is the one place
+    // that decides whether it is honoured (see api/_lib/workspace.js), so a stray value here
+    // can, at worst, be ignored, never grant anything on its own.
+    body: JSON.stringify({ code:S.code, fn:fn, args:args||{}, workspace:S.workspace }),
     signal: ctl ? ctl.signal : undefined
   }).then(function(r){ clearTimeout(timer); return readJson_(r); },
      function(e){
@@ -637,13 +657,50 @@ var NAV = [
    the gate that matters is upload/settings, which are checked on the server too. */
 var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust'];
 
+/* =====================================================================================
+   HOPE LOAN'S OWN NAV -- one screen per stage, gated on the HOPE LOAN TAB, not the role name.
+   =====================================================================================
+   Every id is prefixed ln_ so it can never collide with a HOPE PMO tab id -- go(), viewKey_()
+   and the view cache all key off S.view as a bare string, and this is what keeps the two
+   workspaces' screens from ever being confused for one another there too.
+
+   "who does what is by allowing user access to sidebar navigations already simple, not by
+    role name" -- LOAN_TABS names the HOPE-Loan-specific tab each screen needs; whether a
+    signed-in code holds admin (today, the only way in at all) or one day holds just
+    "manager" or "finance" on its own row in Teams & Staff, this list and loanAllowed() below
+    do not change. See requireTab() in api/_lib/loan-core.js for the same rule enforced again
+    on the server, which is the one that actually matters. */
+var NAV_LOAN = [
+  { id:'ln_pipeline', label:'Pipeline', tab:null, ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
+  { id:'ln_cs',        label:'Customer Service', tab:'customer_service', ic:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>' },
+  { id:'ln_manager',   label:'Manager · Assign', tab:'manager', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' },
+  { id:'ln_team',      label:'Team · Assessment', tab:'team', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+  { id:'ln_senior',    label:'GMO / OPM Review', tab:'gmo', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
+  { id:'ln_credit',    label:'Credit · Approval', tab:'credit', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
+  { id:'ln_disburse',  label:'Disburse', tab:'manager', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
+  { id:'ln_finance',   label:'Finance', tab:'finance', ic:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
+  { id:'ln_reversals', label:'Reversals', tab:['finance','gm'], ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
+  { id:'ln_gm',        label:'GM · Carriers', tab:'gm', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>' },
+];
+
 function allowed(id){
+  if (S.workspace === 'hopeloan') {
+    var n = NAV_LOAN.filter(function(x){ return x.id===id; })[0];
+    if (!n) return false;
+    // ln_pipeline has tab:null -- everyone who can even open HOPE Loan may see the summary.
+    // A few screens (reversals) need either of two tabs, so `tab` may be one name or a list.
+    if (!n.tab) return true;
+    if (S.me.role === 'ADMIN') return true;
+    var need = Array.isArray(n.tab) ? n.tab : [n.tab];
+    return need.some(function(t){ return (S.me.tabs||[]).indexOf(t) >= 0; });
+  }
   if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
   return ALWAYS.indexOf(id)>=0;
 }
 function buildNav(){
   var el = $('#nav'); el.innerHTML='';
-  NAV.forEach(function(n){
+  var list = S.workspace === 'hopeloan' ? NAV_LOAN : NAV;
+  list.forEach(function(n){
     if (!allowed(n.id) || n.hidden) return;
     var b = document.createElement('button');
     // The icon is how people find a tab in a list of 23 -- they recognise the shape before
@@ -656,6 +713,28 @@ function buildNav(){
     b.onclick = function(){ go(n.id); };
     el.appendChild(b);
   });
+}
+/* THE SWITCH ITSELF. Only ever drawn if the server said so at sign-in (canSwitchWorkspace --
+   admin role AND HOPE Loan actually configured), so an officer's screen never even carries the
+   button to wonder about. Flipping it rebuilds the nav for the OTHER workspace and lands on
+   its first screen, exactly like signing into a different app -- because structurally, it is
+   one: same session, same code, a different `workspace` string riding on every request from
+   here on, decided server-side, never trusted from what this button last said. */
+function toggleWorkspace(){
+  S.workspace = S.workspace === 'hopeloan' ? 'hopepmo' : 'hopeloan';
+  paintWorkspaceBadge_();
+  buildNav();
+  go(S.workspace === 'hopeloan' ? 'ln_pipeline' : 'dashboard');
+}
+function paintWorkspaceBadge_(){
+  var b = $('#wsBadge');
+  if (!b) return;
+  var sandbox = S.workspace === 'hopeloan';
+  b.textContent = sandbox ? 'HOPE LOAN — MAENDELEO / SANDBOX' : '';
+  b.classList.toggle('hide', !sandbox);
+  document.body.classList.toggle('sandboxmode', sandbox);
+  var sw = $('#wsSwitch');
+  if (sw) sw.textContent = sandbox ? '← HOPE PMO' : 'HOPE Loan →';
 }
 function go(view){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
@@ -678,7 +757,7 @@ function go(view){
      honest answer. A tab with a table sets these before it paints, exactly as it always did. */
   S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
-  var t = NAV.filter(function(n){ return n.id===view; })[0];
+  var t = (S.workspace === 'hopeloan' ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
     b.classList.toggle('on', b.getAttribute('data-v')===view);
@@ -799,6 +878,14 @@ function start(me){
   $('#shell').classList.remove('hide');
   $('#meName').textContent = me.name;
   $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams');
+  // "Switch is visible to ADMIN role only" -- and only once the server confirms HOPE Loan is
+  // actually configured; see canSwitchWorkspace in api/_lib/workspace.js. Nothing client-side
+  // decides this on its own.
+  if (me.canSwitchWorkspace) {
+    $('#wsSwitch').classList.remove('hide');
+    $('#wsSwitch').onclick = toggleWorkspace;
+  }
+  paintWorkspaceBadge_();
   buildNav();
   tipsStart();
   go('dashboard');
@@ -4681,6 +4768,389 @@ function snapPut_(s){
   S.args = JSON.parse(JSON.stringify(s.args || {}));
   S.filters = JSON.parse(JSON.stringify(s.filters || {}));
 }
+/* =====================================================================================
+   HOPE LOAN -- the screens.
+   =====================================================================================
+   Every request from a view below carries S.workspace (set by toggleWorkspace) automatically,
+   through the same srv() every HOPE PMO tab uses -- there is no second fetch function, no
+   second endpoint, and no second way any of this could reach the officer-facing tables. */
+var LN = { money: money, esc: esc };   // nothing here needs more than these two, kept short
+
+function lnQueueTable(rows, cols, onRow){
+  S.rows = rows; S.cols = cols; ONROW = onRow;
+}
+function lnStageChip(s){
+  var k = String(s||'').toUpperCase();
+  if (k==='FUNDED'||k==='CLOSED') return 'ok';
+  if (k==='REJECTED'||k==='REVERSED') return 'bad';
+  if (k==='DISBURSED'||k==='APPROVED') return 'warn';
+  return 'mut';
+}
+function lnAct(fn, args, okMsg, after){
+  srv(fn, args).then(function(){
+    toast(okMsg || 'Imefanyika / Done');
+    closeDrawer();
+    (after || render)();
+  }).catch(function(e){ toast(String((e && e.message) || e), true); });
+}
+function lnReasonPrompt_(cb){
+  var reason = prompt('Sababu / Reason (required):');
+  if (reason && reason.trim()) cb(reason.trim());
+}
+
+VIEWS.ln_pipeline = function(){
+  return srv('pipelineSummary', {}).then(function(d){
+    HEAD = '<div class="kpis">'
+      + kpi('Jumla ya mikopo / Total loans', money(d.total))
+      + kpi('Dirisha la malipo / Disbursement window', d.windowOpen ? 'WAZI / OPEN' : 'FUNGWA / CLOSED', null, d.windowOpen ? 'good' : 'bad')
+      + '</div>'
+      + '<table class="otable"><thead><tr><th>Stage</th><th class="r">Count</th><th class="r">Amount (TZS)</th></tr></thead><tbody>'
+      + d.stages.map(function(s){
+          return '<tr><td><span class="chip ' + lnStageChip(s.stage) + '">' + esc(s.stage) + '</span></td>'
+            + '<td class="r">' + money(s.count) + '</td><td class="r">' + money(s.amount) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+    S.rows = []; S.cols = [];
+  });
+};
+
+/* ---------- Customer Service: search first, register second ---------- */
+VIEWS.ln_cs = function(){
+  HEAD = bar('<input id="lnCsQ" placeholder="Jina au namba / Name or phone" style="min-width:220px">'
+    + '<button class="btn sm" id="lnCsSearchBtn">Tafuta / Search</button>'
+    + '<button class="btn sm ghost" id="lnCsNewBtn">+ Mteja mpya / New customer</button>');
+  S.rows = []; S.cols = [];
+  return Promise.resolve();
+};
+/* Wired from wireForms() -- see the note above it: a view function's own promise resolves
+   BEFORE drawView_() paints HEAD into the DOM, so wiring a button here rather than there means
+   $('#lnCsSearchBtn') does not exist yet and the click never attaches. */
+function wireLnCs_(){
+  var b = document.getElementById('lnCsSearchBtn');
+  if (b) b.onclick = function(){
+    var q = document.getElementById('lnCsQ').value.trim();
+    if (!q) return;
+    srv('csSearch', { q: q }).then(function(d){
+      S.rows = d.rows; S.cols = [
+        col('docket', 'Docket'), col('full_name', 'Full name'),
+        { key:'mobile', label:'Phone', kind:'tel' }, col('team', 'Team'), col('branch', 'Branch')];
+      ONROW = function(r){ lnCsRegisterForm_(r); };
+      drawView_();
+    }).catch(function(e){ toast(String(e.message||e), true); });
+  };
+  var n = document.getElementById('lnCsNewBtn');
+  if (n) n.onclick = function(){ lnCsRegisterForm_(null); };
+}
+function lnCsRegisterForm_(existing){
+  drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
+    + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
+    + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+    + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+    + '<div class="fld"><label>Team</label><input id="lnTeam" value="' + esc(existing ? existing.team : '') + '"></div>'
+    + '<div class="fld"><label>Region</label><input id="lnRegion"></div>'
+    + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
+    + '<div class="fld"><label>Landmark</label><input id="lnLandmark"></div>'
+    + '<div class="fld"><label>Disbursement mode</label><input id="lnDisbMode" placeholder="Momo / Bank"></div>'
+    + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
+    + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
+  $('#lnCsSubmit').onclick = function(){
+    lnAct('csRegister', {
+      customer_id: existing ? existing.id : undefined,
+      docket: existing ? existing.docket : undefined,
+      full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
+      team: $('#lnTeam').value.trim(), region: $('#lnRegion').value.trim(),
+      district: $('#lnDistrict').value.trim(), landmark: $('#lnLandmark').value.trim(),
+      disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
+    }, 'Application registered.');
+  };
+}
+
+/* ---------- Manager: assignment ---------- */
+VIEWS.ln_manager = function(){
+  return srv('managerQueue', {}).then(function(d){
+    S.rows = d.rows; S.cols = [
+      col('loan_id', 'Ref'), col('docket_no', 'Docket'), col('full_name', 'Customer'),
+      { key:'contact', label:'Phone', kind:'tel' }, col('team', 'Team'),
+      { key:'requested_amt', label:'Requested', kind:'money' }];
+    ONROW = function(r){ lnManagerAssignForm_(r); };
+    S.foot = money(d.rows.length) + ' waiting for assignment';
+  });
+};
+function lnManagerAssignForm_(loan){
+  drawer('<h3>' + esc(loan.full_name) + '</h3>'
+    + '<div class="sub">Ref ' + esc(loan.loan_id) + ' &middot; Requested ' + money(loan.requested_amt) + '</div>'
+    + '<div class="fld"><label>Assign to team (or SHIFT to a different one of yours)</label><input id="lnAssignTeam" value="' + esc(loan.team || '') + '"></div>'
+    + '<button class="btn w" id="lnAssignBtn">Assign</button>'
+    + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');
+  $('#lnAssignBtn').onclick = function(){
+    lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, 'Assigned.', function(){ go('ln_manager'); });
+  };
+  $('#lnRejectBtn').onclick = function(){
+    lnReasonPrompt_(function(reason){ lnAct('managerReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_manager'); }); });
+  };
+}
+
+/* ---------- Team: the five-section assessment, saved as it goes ---------- */
+VIEWS.ln_team = function(){
+  return srv('teamQueue', {}).then(function(d){
+    S.rows = d.rows; S.cols = [
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      { key:'contact', label:'Phone', kind:'tel' }, col('stage', 'Stage')];
+    ONROW = function(r){ lnTeamAssessForm_(r); };
+  });
+};
+function lnTeamAssessForm_(loan){
+  drawer('<h3>' + esc(loan.full_name) + ' &middot; Ref ' + esc(loan.loan_id) + '</h3>'
+    + '<div class="sub">Each section below SAVES ON ITS OWN -- nothing is lost if you leave and come back. "Add save option ... without losing primary captured data before submitting."</div>'
+    + '<div class="card"><div class="card-h">1. Personal details' + (Number(loan.track_no) > 1 ? ' <span class="chip mut" style="font-size:10px">Track ' + loan.track_no + ' -- identity fields locked</span>' : '') + '</div>'
+    + '<div class="fld"><label>Date of birth</label><input id="lnDob" type="date"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
+    + '<div class="fld"><label>Gender</label><input id="lnGender"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
+    + '<div class="fld"><label>National ID (NIDA)</label><input id="lnNida"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
+    + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
+    + '<div class="card"><div class="card-h">2. Team recommendation</div>'
+    + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (loan.requested_amt||'') + '"></div>'
+    + '<div class="fld"><label>Zone visited</label><input id="lnZone"></div>'
+    + '<div class="fld"><label>Remarks</label><input id="lnRemarks"></div>'
+    + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
+    + '<div class="card"><div class="card-h">3. Guarantor</div>'
+    + '<div class="fld"><label>Full name</label><input id="lnGName"></div>'
+    + '<div class="fld"><label>Phone</label><input id="lnGPhone"></div>'
+    + '<div class="fld"><label>Relationship</label><input id="lnGRel"></div>'
+    + '<button class="btn sm" id="lnSaveGuar">Save this section</button></div>'
+    + '<div class="card"><div class="card-h">4. Residence &amp; business verification</div>'
+    + '<label><input type="checkbox" id="lnResOk"> Customer residence verified</label><br>'
+    + '<label><input type="checkbox" id="lnGResOk"> Guarantor residence verified</label><br>'
+    + '<label><input type="checkbox" id="lnBizOk"> Business ownership verified</label>'
+    + '<button class="btn sm" id="lnSaveVerify" style="margin-top:8px">Save this section</button></div>'
+    + '<div class="fld" style="margin-top:14px"><button class="btn w" id="lnSubmitRec">Submit recommendation</button>'
+    + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>');
+  $('#lnSavePersonal').onclick = function(){
+    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'personal',
+      fields: { dob: $('#lnDob').value, gender: $('#lnGender').value.trim(), national_id: $('#lnNida').value.trim() } }, 'Saved.', function(){});
+  };
+  $('#lnSaveRec').onclick = function(){
+    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
+      fields: { amount: Number($('#lnRecAmt').value) || 0, zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.', function(){});
+  };
+  $('#lnSaveGuar').onclick = function(){
+    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor',
+      fields: { guarantors: [{ full_name: $('#lnGName').value.trim(), phone: $('#lnGPhone').value.trim(), relationship: $('#lnGRel').value.trim() }] } }, 'Saved.', function(){});
+  };
+  $('#lnSaveVerify').onclick = function(){
+    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'residence',
+      fields: { verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked } }, 'Saved.', function(){});
+    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: { verified: $('#lnBizOk').checked } }, '', function(){});
+  };
+  $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
+  $('#lnRejectRec').onclick = function(){
+    lnReasonPrompt_(function(reason){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'REJECTED', reason: reason }, 'Rejected.', function(){ go('ln_team'); }); });
+  };
+}
+
+/* ---------- GMO / OPM senior review ---------- */
+VIEWS.ln_senior = function(){
+  var tier = S.args.tier || 'gmo';
+  HEAD = bar('<select id="lnTier"><option value="gmo"' + (tier==='gmo'?' selected':'') + '>GMO (3M+, MUST)</option>'
+    + '<option value="opm"' + (tier==='opm'?' selected':'') + '>OPM (6M+, MAY)</option></select>');
+  return srv('seniorQueue', { tier: tier }).then(function(d){
+    S.rows = d.rows; S.cols = [
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      { key:'team_recomm', label:'Recommended', kind:'money' }];
+    ONROW = function(r){ lnSeniorForm_(r, tier); };
+  });
+};
+function wireLnSenior_(){
+  var t = document.getElementById('lnTier');
+  if (t) t.onchange = function(){ S.args.tier = this.value; render({ force:true }); };
+}
+function lnSeniorForm_(loan, tier){
+  drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Recommended: ' + money(loan.team_recomm) + '</div>'
+    + '<div class="fld"><label>Your recommended amount</label><input id="lnSrAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
+    + '<div class="fld"><label>Remarks</label><input id="lnSrRemarks"></div>'
+    + '<button class="btn w" id="lnSrSubmit">Record recommendation</button>');
+  $('#lnSrSubmit').onclick = function(){
+    lnAct('seniorRecommend', { loan_id: loan.id, tier: tier, amount: Number($('#lnSrAmt').value) || 0, remarks: $('#lnSrRemarks').value.trim() },
+      'Recorded.', function(){ go('ln_senior'); });
+  };
+}
+
+/* ---------- Credit analyst: approval ---------- */
+VIEWS.ln_credit = function(){
+  return srv('creditQueue', {}).then(function(d){
+    S.rows = d.rows; S.cols = [
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      { key:'team_recomm', label:'Recommended', kind:'money' },
+      { key:'gmo_recommend', label:'GMO said', kind:'money' }];
+    ONROW = function(r){ lnCreditForm_(r); };
+  });
+};
+function lnCreditForm_(loan){
+  drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Ref ' + esc(loan.loan_id) + '</div>'
+    + '<div class="fld"><label>Granted amount (TZS)</label><input id="lnGrantAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
+    + '<div class="fld"><label>Previous balance (for a top-up)</label><input id="lnPrevBal" type="number" value="0"></div>'
+    + '<div class="fld"><label>Disbursement mode</label><input id="lnDisbMode2" value="' + esc(loan.disbursement_type||'') + '"></div>'
+    + '<div class="fld"><label>Bank name (if bank)</label><input id="lnBankName"></div>'
+    + '<div class="fld"><label>Account no.</label><input id="lnAcctNo"></div>'
+    + '<div id="lnSchedulePreview" class="sub" style="margin:6px 0"></div>'
+    + '<button class="btn w" id="lnGrantBtn">Grant</button>'
+    + '<button class="btn w ghost" id="lnCrRejectBtn" style="margin-top:8px">Reject</button>');
+  function preview(){
+    var g = Number($('#lnGrantAmt').value) || 0;
+    var interest = Math.round(g * 0.36), total = g + interest, inst = Math.round(total / 12);
+    $('#lnSchedulePreview').textContent = 'Interest ' + money(interest) + ' · Total ' + money(total) + ' · 12 x ' + money(inst) + '/week';
+  }
+  $('#lnGrantAmt').oninput = preview; preview();
+  $('#lnGrantBtn').onclick = function(){
+    lnAct('creditApprove', {
+      loan_id: loan.id, granted_amount: Number($('#lnGrantAmt').value) || 0,
+      previous_balance: Number($('#lnPrevBal').value) || 0, disbursement_mode: $('#lnDisbMode2').value.trim(),
+      bank_name: $('#lnBankName').value.trim(), account_no: $('#lnAcctNo').value.trim(),
+    }, 'Granted.', function(){ go('ln_credit'); });
+  };
+  $('#lnCrRejectBtn').onclick = function(){
+    lnReasonPrompt_(function(reason){ lnAct('creditReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_credit'); }); });
+  };
+}
+
+/* ---------- Disbursement -- manager, only while finance's window is open ---------- */
+VIEWS.ln_disburse = function(){
+  return Promise.all([srv('disburseWindowStatus', {}), srv('disburseQueue', {})]).then(function(r){
+    var win = r[0], d = r[1];
+    HEAD = '<div class="kpis">' + kpi('Dirisha / Window', win.open ? 'WAZI / OPEN' : 'FUNGWA / CLOSED', null, win.open ? 'good' : 'bad') + '</div>';
+    S.rows = d.rows; S.cols = [
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      { key:'principal_amt', label:'Granted', kind:'money' }, { key:'net_disbursed', label:'To disburse', kind:'money' }];
+    ONROW = function(r){ lnDisburseForm_(r, win.open); };
+  });
+};
+function lnDisburseForm_(loan, windowOpen){
+  drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Granted ' + money(loan.principal_amt) + ' &middot; Disbursing ' + money(loan.net_disbursed) + '</div>'
+    + (windowOpen ? '<button class="btn w" id="lnDisburseBtn">Disburse (authorise)</button>'
+                  : '<div class="hint" style="color:var(--bad)">Window closed -- ask finance to open it.</div>')
+    + '<button class="btn w ghost" id="lnDisburseRejectBtn" style="margin-top:8px">Reject</button>'
+    + '<button class="btn w ghost" id="lnReturnBtn" style="margin-top:8px">Return to Credit</button>');
+  if (windowOpen) $('#lnDisburseBtn').onclick = function(){
+    lnAct('managerDisburse', { loan_id: loan.id }, 'Authorised -- awaiting funding.', function(){ go('ln_disburse'); });
+  };
+  $('#lnDisburseRejectBtn').onclick = function(){
+    lnReasonPrompt_(function(reason){ lnAct('managerDisburseReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_disburse'); }); });
+  };
+  $('#lnReturnBtn').onclick = function(){ lnAct('managerReturnToCredit', { loan_id: loan.id }, 'Returned.', function(){ go('ln_disburse'); }); };
+}
+
+/* ---------- Finance -- window, bank report, funding, payment imports, shifting, iliyonasa ---------- */
+VIEWS.ln_finance = function(){
+  return Promise.all([srv('disburseWindowStatus', {}), srv('financeBankReport', {})]).then(function(r){
+    var win = r[0], bank = r[1];
+    HEAD = '<div class="kpis">' + kpi('Dirisha / Window', win.open ? 'WAZI / OPEN' : 'FUNGWA / CLOSED', null, win.open ? 'good' : 'bad') + '</div>'
+      + bar((win.open ? '<button class="btn sm ghost" id="lnCloseWin">Close window</button>'
+                      : '<button class="btn sm" id="lnOpenWin">Open window</button>')
+        + '<button class="btn sm ghost" id="lnMarkAllFunded">Mark ALL below as funded</button>'
+        + '<button class="btn sm ghost" id="lnImportPayBtn">Import payments (paste rows)</button>'
+        + '<button class="btn sm ghost" id="lnAdjustBtn">Iliyonasa / Manual adjustment</button>');
+    S.rows = bank.rows; S.cols = [
+      col('docket', 'Docket'), col('full_name', 'Customer'),
+      { key:'contact', label:'Phone', kind:'tel' }, col('carrier', 'Carrier'), col('bank_name', 'Bank'),
+      col('account_no', 'Account'), { key:'amount', label:'Amount', kind:'money' }];
+    ONROW = function(r){ lnFundOneForm_(r); };
+    S.foot = money(bank.rows.length) + ' authorised, awaiting funding · ' + money(bank.rows.reduce(function(s,r){return s+(Number(r.amount)||0);},0)) + ' TZS';
+    S.lnBankRows = bank.rows;    // wireLnFinance_ needs these for "mark all", after paint
+    S.lnWinOpen = win.open;
+  });
+};
+function wireLnFinance_(){
+  var close = document.getElementById('lnCloseWin'), open = document.getElementById('lnOpenWin');
+  if (close) close.onclick = function(){ lnAct('financeCloseWindow', {}, 'Window closed.', function(){ go('ln_finance'); }); };
+  if (open) open.onclick = function(){ lnAct('financeOpenWindow', {}, 'Window open.', function(){ go('ln_finance'); }); };
+  var mark = document.getElementById('lnMarkAllFunded');
+  if (mark) mark.onclick = function(){
+    var ids = (S.lnBankRows || []).map(function(r){ return r.loan_id; });
+    if (!ids.length) { toast('Hakuna kitu / Nothing to fund.', true); return; }
+    lnAct('financeMarkFunded', { loan_ids: ids }, money(ids.length) + ' loan(s) funded.', function(){ go('ln_finance'); });
+  };
+  var imp = document.getElementById('lnImportPayBtn');
+  if (imp) imp.onclick = lnImportPaymentsForm_;
+  var adj = document.getElementById('lnAdjustBtn');
+  if (adj) adj.onclick = lnAdjustmentForm_;
+}
+function lnFundOneForm_(row){
+  drawer('<h3>' + esc(row.full_name) + '</h3><div class="sub">' + esc(row.docket) + ' &middot; ' + money(row.amount) + '</div>'
+    + '<button class="btn w" id="lnFundOneBtn">Mark funded (money sent)</button>');
+  $('#lnFundOneBtn').onclick = function(){
+    lnAct('financeMarkFunded', { loan_ids: [row.loan_id] }, 'Funded.', function(){ go('ln_finance'); });
+  };
+}
+function lnImportPaymentsForm_(){
+  drawer('<h3>Import payments / Ingiza malipo</h3>'
+    + '<div class="sub">The receiver for the ISP channel finance already runs by hand -- one line per payment: REF, AMOUNT, PAID_BY (tab or comma separated).</div>'
+    + '<textarea id="lnPayRows" rows="8" style="width:100%" placeholder="919000001, 34000, 0715000001"></textarea>'
+    + '<button class="btn w" id="lnPayImportBtn" style="margin-top:8px">Import</button>');
+  $('#lnPayImportBtn').onclick = function(){
+    var rows = $('#lnPayRows').value.split('\n').map(function(line){
+      var p = line.split(/[,\t]/).map(function(x){ return x.trim(); });
+      return { ref: p[0], amount: Number(p[1]) || 0, paid_by: p[2] || '' };
+    }).filter(function(r){ return r.ref; });
+    lnAct('financeImportPayments', { rows: rows }, money(rows.length) + ' row(s) imported.', function(){ go('ln_finance'); });
+  };
+}
+function lnAdjustmentForm_(){
+  drawer('<h3>Iliyonasa / Manual adjustment</h3>'
+    + '<div class="sub">A SIGNED figure against one team\'s expected or default total for one date -- for a customer who paid what the system could not accept, or a verified transaction that did not land.</div>'
+    + '<div class="fld"><label>Team</label><input id="lnAdjTeam"></div>'
+    + '<div class="fld"><label>Target</label><select id="lnAdjTarget"><option value="expected">Expected</option><option value="defaults">Defaults</option></select></div>'
+    + '<div class="fld"><label>Amount (+ adds, - reduces)</label><input id="lnAdjAmt" type="number"></div>'
+    + '<div class="fld"><label>Reason (required)</label><input id="lnAdjReason"></div>'
+    + '<button class="btn w" id="lnAdjSaveBtn">Save adjustment</button>');
+  $('#lnAdjSaveBtn').onclick = function(){
+    lnAct('adjustmentSave', {
+      team: $('#lnAdjTeam').value.trim(), target: $('#lnAdjTarget').value,
+      amount: Number($('#lnAdjAmt').value) || 0, reason: $('#lnAdjReason').value.trim(),
+    }, 'Saved.', function(){ go('ln_finance'); });
+  };
+}
+
+/* ---------- Reversals: three desks, one screen ---------- */
+VIEWS.ln_reversals = function(){
+  S.rows = []; S.cols = [];
+  HEAD = '<div class="hint">Credit requests a reversal from a loan\'s row in Disburse or Pipeline once it is authorised-but-unfunded; finance and the GM decide here.</div>'
+    + bar('<button class="btn sm ghost" id="lnReqReversal">+ Request reversal (by ref)</button>');
+  S.foot = '';
+  return Promise.resolve();
+};
+function wireLnReversals_(){
+  var b = document.getElementById('lnReqReversal');
+  if (!b) return;
+  b.onclick = function(){
+    drawer('<h3>Request reversal</h3>'
+      + '<div class="fld"><label>Loan ref (as shown on the Disburse screen)</label><input id="lnRevRef"></div>'
+      + '<div class="fld"><label>Amount</label><input id="lnRevAmt" type="number"></div>'
+      + '<div class="fld"><label>Reason (required)</label><input id="lnRevReason"></div>'
+      + '<div class="hint">Reversal is requested by LOAN ID -- open the loan from Disburse or Pipeline and use its id there once that screen is wired to pass it through; this box is the fallback for now.</div>'
+      + '<button class="btn w" id="lnRevSubmit">Request</button>');
+    $('#lnRevSubmit').onclick = function(){
+      lnAct('reversalRequest', { loan_id: $('#lnRevRef').value.trim(), amount: Number($('#lnRevAmt').value) || 0, reason: $('#lnRevReason').value.trim() },
+        'Requested.', function(){ go('ln_reversals'); });
+    };
+  };
+}
+
+/* ---------- GM: carriers, growth ---------- */
+VIEWS.ln_gm = function(){
+  return srv('carriersList', {}).then(function(d){
+    S.rows = d.rows; S.cols = [col('name', 'Carrier'), col('kind', 'Kind')];
+    HEAD = bar('<input id="lnCarrierName" placeholder="e.g. Halotel, DCB Bank">'
+      + '<select id="lnCarrierKind"><option value="momo">Mobile money</option><option value="bank">Bank</option></select>'
+      + '<button class="btn sm" id="lnCarrierAdd">+ Add carrier</button>');
+    ONROW = null;
+  });
+};
+function wireLnGm_(){
+  var b = document.getElementById('lnCarrierAdd');
+  if (!b) return;
+  b.onclick = function(){
+    lnAct('carrierSave', { name: $('#lnCarrierName').value.trim(), kind: $('#lnCarrierKind').value }, 'Added.', function(){ go('ln_gm'); });
+  };
+}
+
 function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
 function drawView_(){
   if (S.cols && S.cols.length) paint(); else paintHeadOnly();
@@ -5129,6 +5599,15 @@ function wireForms(){
      when Settings opens, and an unmasked box that is SUPPOSED to be masked is worse than one
      that never claimed to be. Calling it again is free: a box already masked is left alone. */
   if (window.hopeSecrets) window.hopeSecrets();
+  /* HOPE LOAN'S OWN HEAD BUTTONS, WIRED HERE AND ONLY HERE -- see the note beside wireLnCs_.
+     A view function's own returned promise resolves BEFORE this runs; wiring a button inside
+     the view function itself, before drawView_() has painted HEAD into the page, attaches a
+     click handler to an element that does not exist yet and silently does nothing. Every
+     other HOPE Loan HEAD button (Finance, Reversals, GM, the GMO/OPM select) had exactly this
+     bug on first write; all five are gated here alongside it. */
+  if (S.workspace === 'hopeloan') {
+    wireLnCs_(); wireLnSenior_(); wireLnFinance_(); wireLnReversals_(); wireLnGm_();
+  }
   // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
   // not be counted or filtered, and counting complaints by category is why the register exists.
   var nag = document.getElementById('newAgent');

@@ -1,6 +1,7 @@
 import { gatedUser, withApi } from './_lib/auth.js';
 import { portalApi } from './_lib/portal-core.js';
-import { workspaceFor } from './_lib/workspace.js';
+import { loanApi } from './_lib/loan-core.js';
+import { workspaceFor, HOPELOAN } from './_lib/workspace.js';
 
 // POST /api/portal   { code, fn, args }
 // Every read and write behind the portal (public/app.html) -- one route, one auth check, all
@@ -19,6 +20,9 @@ export default withApi(async (req, res) => {
      that does not name HOPE Loan outright, resolves to production; see _lib/workspace.js.
      The resolved name is echoed back so the screen can say plainly which book is on it. */
   const ws = workspaceFor(user, workspace);
-  const out = await portalApi(ws.db, user, fn, args);
+  /* TWO SEPARATE FUNCTION REGISTRIES, so a HOPE Loan screen and a HOPE PMO tab can never be
+     called by naming the wrong `fn` from the wrong workspace -- loanApi only knows the
+     origination pipeline's own names, and portalApi never runs against the sandbox client. */
+  const out = ws.workspace === HOPELOAN ? await loanApi(ws.db, user, fn, args) : await portalApi(ws.db, user, fn, args);
   return { ...out, workspace: ws.workspace };
 });
