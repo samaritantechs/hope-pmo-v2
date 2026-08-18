@@ -161,8 +161,10 @@
     <div id="defTypeWrap" class="hide">
       <label>Initial or Current?</label>
       <select id="defType">
-        <option value="initial">Initial</option>
-        <option value="current">Current</option>
+        <!-- Current first: the end-of-day FINAL report is the one this door mostly closes a
+             missed day with, and the default is what a hurried hand gets. -->
+        <option value="current">Current (ripoti ya mwisho wa siku / end-of-day final)</option>
+        <option value="initial">Initial (ya asubuhi / the morning book)</option>
       </select>
       <div class="hint"><b>Njia bora / best practice:</b> faili MOJA la jumla (defaulterSummary yenye
         Options: all) &mdash; pakia hilo tu. AU chagua faili ZOTE 3 (default + expired + chronic) kwa
@@ -391,7 +393,10 @@ function syncFields(){
   /* The defaulter summary comes as THREE exports (default, expired, chronic) and the day's
      book is their sum -- so this one type accepts all three files highlighted together. */
   $('file').multiple = ($('type').value === 'defaulters-summary');
-  ['weekdayWrap', 'dateWrap', 'stageWrap'].forEach(function(id){
+  /* expTypeWrap and defTypeWrap were MISSING from this list, so the Today/Initial and
+     Initial/Current selectors could never appear -- and their hidden defaults were silently
+     sent with every summary upload. "i cant see choosing initial or current" was exact. */
+  ['weekdayWrap', 'dateWrap', 'stageWrap', 'expTypeWrap', 'defTypeWrap'].forEach(function(id){
     $(id).classList.toggle('hide', show.indexOf(id) < 0);
   });
   // A picture is not a workbook: take images, drop any sheet picker, and say so on the button.
