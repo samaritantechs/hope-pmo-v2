@@ -19,7 +19,7 @@ const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(t
 import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
 import { buildDashboard } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport } from './expdf.js';
 
@@ -4324,127 +4324,122 @@ async function emailWeeklyExpdf(db, user, _args, nowMs) {
 }
 
 /* ================================================================
-   RECOVERY METRICS: daily recovery tracking per credit user
+   RECOVERY METRICS: OFF JANA and daily recovery per credit user
 
-   OFF JANA = customers 7+ days offline on previous upload
-   RECOVERY = those customers who dropped below 7 days offline today
+   "we need a widget and recognition of OFF JANA column for 7+ counting to know howmany of OFF
+    JANA 7+ days customers were there and recovered/not there today, so we know 7+ recovery and
+    who was making the followup so we get recovery rate by credit per customers they followed
+    up and recovered per previous day. And daily followup should assign random customers to
+    credits, at dashboard add credits dashboard showing no of recovered customers daily in week
+    for each like Monday someone recovered 4 of 15 Tuesday 5 of 10 -- to sunday."
 
-   Goal: Track which customers recovered from being locked out, and
-   who was assigned to chase them (for credit user performance).
-   ================================================================ */
+   OFF JANA  = a customer locked at 7+ days offline on the PREVIOUS day's current-defaulter deck.
+   RECOVERED = that same customer's days_elapsed dropped below 7 by TODAY's deck.
+   ASSIGNED  = OFF JANA customers handed to a credit officer for the day's followup, split by a
+               fair round-robin so nobody's book is heavier than anyone else's by more than one.
 
-/** Helper: get customers with 7+ days offline on a given date.
-    Bounds: one date + team scope. Filters to 'current' snapshot type. */
+   Team scoping runs through the same onTeams()/branches the rest of the portal uses -- a
+   credit officer's team is call_users.team, which is the branch they registered under (the
+   offline-queue register, not a deck-derived label), same as every other fix that had to stop
+   showing "Kinondoni" and start showing the real branch. */
+
+/** Whether a database row belongs to a credit officer -- the ONE definition, shared with
+    callRoleKind (call-core.js) via isCreditRole, so the phone app and this board can never
+    end up with two different opinions about who is a credit officer. */
+function creditRoster(callUsers) {
+  return callUsers.filter(u => u.active !== false && isCreditRole(u.role));
+}
+
+/** Customers locked at 7+ days offline on a given date -- OFF JANA for that day.
+    Bounded to one date, one snapshot_type, and team scope; filtered to 7+ AT THE DATABASE so
+    the row count is the handful actually locked, not the whole day's defaulter book. */
 async function lockedCustomers(db, teams, onDate) {
-  const rows = await fetchAll(() => onTeams(
+  return fetchAll(() => onTeams(
     db.from('defaulter_snapshots')
       .select('ref, full_name, contact, days_elapsed, team')
       .eq('snapshot_type', 'current')
       .eq('snapshot_date', onDate)
       .gte('days_elapsed', 7),
     teams));
-  return rows;
 }
 
-/** Helper: count recovered customers between two days.
-    Off Jana customers (locked 7+ on day N-1) who dropped below 7 on day N.
-
-    Postgres budget: 2 reads (day N-1 and day N defaulters), 1 read for credit users.
-    Rows bounded by team + date on each read. */
-async function countRecovered(db, teams, prevDate, currDate) {
-  const [prevLocked, currDefaults, creditUsers] = await Promise.all([
-    lockedCustomers(db, teams, prevDate),           // 1 trip: day N-1 locked
-    fetchAll(() => onTeams(
-      db.from('defaulter_snapshots')
-        .select('ref, days_elapsed')
-        .eq('snapshot_type', 'current')
-        .eq('snapshot_date', currDate),
-      teams)),                                       // 1 trip: day N defaults
-    fetchAll(() => onTeams(
-      db.from('call_users')                         // 1 trip: credit users
-        .select('user_id, name, team'),
-      teams)),
-  ]);
-
-  // Build a map of current defaults: ref -> days_elapsed
-  const current = new Map(currDefaults.map(r => [r.ref, num(r.days_elapsed)]));
-
-  // Find recovered: were locked 7+ yesterday, now below 7
-  const recovered = prevLocked.filter(r => {
-    const curr = current.get(r.ref);
-    return curr !== undefined && curr < 7;
-  });
-
-  return { recovered, creditUsers };
-}
-
-/** Helper: Assign customers to credit users using round-robin by IMEI/ref.
-    This ensures fair distribution even if customer counts differ.
-    Returns map of { creditUser -> [ref, ref, ...] } */
+/** Round-robin by ref (sorted, so the split is deterministic and reproducible rather than
+    order-of-arrival) -- the same "deal, don't dump the whole book on the first name" fairness
+    rule dealMap uses for the call app's tabs. Nobody's pile differs from anyone else's by more
+    than one. Returns { creditKey -> [customer, ...] }. */
 function assignToCredits(customers, creditUsers) {
-  if (!creditUsers.length) return new Map();
-
-  const sorted = customers.slice()
-    .sort((a, b) => String(a.ref || '').localeCompare(String(b.ref || '')));
-
   const assigned = new Map();
-  for (let i = 0; i < sorted.length; i++) {
-    const creditUser = creditUsers[i % creditUsers.length];
-    const key = creditUser.user_id || creditUser.name;
-    if (!assigned.has(key)) assigned.set(key, []);
-    assigned.get(key).push(sorted[i]);
-  }
+  if (!creditUsers.length) return assigned;
+  const sorted = customers.slice().sort((a, b) => String(a.ref || '').localeCompare(String(b.ref || '')));
+  sorted.forEach((c, i) => {
+    const key = creditUsers[i % creditUsers.length].user_id || creditUsers[i % creditUsers.length].name;
+    (assigned.get(key) || assigned.set(key, []).get(key)).push(c);
+  });
   return assigned;
 }
 
-/** Recovery metrics per credit user per day of the week.
-    Shows which customers recovered from 7+ day lockout and who was assigned to chase them.
+/** Recovery metrics per credit officer per day of the week, Monday through Sunday.
 
-    Output: Array of { weekday, date, creditUser, assigned: count, recovered: count }
-    where assigned = OFF JANA customers on previous day (to chase), recovered = those who improved by today
+    Output: { week: {from, to}, metrics: [{ weekday, date, creditUser, team, assigned, recovered }] }
+      assigned  = OFF JANA customers from the PREVIOUS day, dealt to this credit officer
+      recovered = of those, how many had dropped below 7 days by THIS day
 
-    Postgres budget: 3 reads per day (previous + current defaults + credit users) × 7 days = ~21 reads max.
-    All bounded by team + date at database. */
+    Postgres budget, answered:
+      - 1 read for the credit roster (does not change day to day, so it is read once for the
+        whole week, not once per day).
+      - 1 read per day (Sun of the week before .. Sat of this one, 8 dates) for that day's
+        OFF JANA list -- run in parallel, and each one is reused TWICE: once as "yesterday" for
+        the day after it, once as "today" is never re-derived from it because recovery only
+        ever asks what a locked customer's days_elapsed became, which is answered by the
+        SECOND read below, not by re-fetching the lock list itself.
+      - 1 read per day that actually had an OFF JANA list (at most 7), and that read is bounded
+        to the .in(ref) of just those customers -- never the day's whole defaulter book.
+      Worst case: 1 + 8 + 7 = 16 reads for a full week, every one bounded by team + date (and
+      the last set additionally bounded to specific refs) at the database. A week with no OFF
+      JANA customers at all costs 1 + 8 = 9 and stops there. */
 async function recoveryByCredit(db, user, args = {}, nowMs) {
-  const mon = args.from ? String(args.from) : weekMondayKey(nowMs);
-  const sun = args.to ? String(args.to) : addDaysKey(mon, 6);
+  const asOf = asOfWeek(nowMs, args.weekOf);
+  const mon = asOf.weekOf, sun = addDaysKey(mon, 6);
   const teams = user.teams;
 
-  const result = [];
+  const callUsers = await fetchAll(() => onTeams(
+    db.from('call_users').select('user_id, name, team, role, active'), teams));
+  const creditUsers = creditRoster(callUsers);
+  if (!creditUsers.length) return { week: { from: mon, to: sun }, metrics: [] };
 
-  // Walk each day Monday-Sunday, calculating recovery from previous day
+  // Sunday of the prior week through Saturday of this one: Monday's OFF JANA compares against
+  // the last day with a deck, same as every other weekday compares against its own yesterday.
+  const days = [];
+  for (let i = -1; i < 7; i++) days.push(addDaysKey(mon, i));
+  const lockedByDate = {};
+  await Promise.all(days.map(async d => { lockedByDate[d] = await lockedCustomers(db, teams, d); }));
+
+  const result = [];
   for (let i = 0; i < 7; i++) {
     const currDate = addDaysKey(mon, i);
-    const prevDate = addDaysKey(mon, i - 1);
+    const prevLocked = lockedByDate[addDaysKey(mon, i - 1)] || [];
+    if (!prevLocked.length) continue;
 
-    // Get recovery data: OFF JANA customers and who recovered
-    const { recovered, creditUsers } = await countRecovered(db, teams, prevDate, currDate);
+    // Bounded to exactly the customers being asked about -- the handful OFF JANA yesterday,
+    // never the day's whole defaulter book.
+    const refs = prevLocked.map(r => r.ref);
+    const today = await fetchAll(() => onTeams(db.from('defaulter_snapshots')
+      .select('ref, days_elapsed').eq('snapshot_type', 'current').eq('snapshot_date', currDate)
+      .in('ref', refs), teams));
+    const todayByRef = new Map(today.map(r => [r.ref, num(r.days_elapsed)]));
+    const recovered = prevLocked.filter(r => { const d = todayByRef.get(r.ref); return d !== undefined && d < 7; });
 
-    if (!recovered.length || !creditUsers.length) continue;
+    const assignedByCredit = assignToCredits(prevLocked, creditUsers);
+    const recoveredByCredit = assignToCredits(recovered, creditUsers);
 
-    // Randomly assign recovered customers to credit users using round-robin
-    const assignedByCredit = assignToCredits(recovered, creditUsers);
-
-    // Also count all OFF JANA customers from previous day (the full pool to chase)
-    const allOffJana = await lockedCustomers(db, teams, prevDate);
-    const allOffJanaByCredit = assignToCredits(allOffJana, creditUsers);
-
-    // Build output rows per credit user
     for (const cu of creditUsers) {
-      const creditKey = cu.user_id || cu.name;
-      const recoveredCount = (assignedByCredit.get(creditKey) || []).length;
-      const assignedCount = (allOffJanaByCredit.get(creditKey) || []).length;
-
-      if (assignedCount > 0) {  // Only show if there were OFF JANA customers
-        result.push({
-          weekday: WD7[i],
-          date: currDate,
-          creditUser: cu.name || creditKey,
-          team: cu.team,
-          assigned: assignedCount,
-          recovered: recoveredCount,
-        });
-      }
+      const key = cu.user_id || cu.name;
+      const assigned = (assignedByCredit.get(key) || []).length;
+      if (!assigned) continue;
+      result.push({
+        weekday: WD7[i], date: currDate, creditUser: cu.name || key, team: cu.team,
+        assigned, recovered: (recoveredByCredit.get(key) || []).length,
+      });
     }
   }
 

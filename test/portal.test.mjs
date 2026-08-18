@@ -6013,8 +6013,8 @@ test('recoveryByCredit tracks customers who recovered from 7+ day lockout', asyn
   );
   // Credit users on KONGOWE
   book.call_users = [
-    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', is_leader: false, phone: '0712000001',
-      registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', role: 'CREDIT', is_leader: false,
+      phone: '0712000001', registered_at: '2026-08-01T00:00:00Z' },
   ];
 
   const d = await portalApi(fakeDb(book), ADMIN, 'recoveryByCredit', {}, NOW);
@@ -6029,6 +6029,9 @@ test('recoveryByCredit tracks customers who recovered from 7+ day lockout', asyn
   // Should show that R1 recovered
   const totalRecovered = summary.reduce((sum, m) => sum + m.recovered, 0);
   assert.equal(totalRecovered, 1, '1 OFF JANA customer recovered');
+  // The team on the row is the credit officer's own branch (call_users.team), not a
+  // deck-derived label -- the branches rule, same as the agent scorecard fix.
+  assert.equal(summary[0].team, 'KONGOWE');
 });
 
 test('recoveryByCredit returns empty metrics if no customers locked 7+ days', async () => {
@@ -6039,12 +6042,12 @@ test('recoveryByCredit returns empty metrics if no customers locked 7+ days', as
     D('R2', 'KONGOWE', 600, 'current', 5, TODAY),
   );
   book.call_users = [
-    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', is_leader: false, phone: '0712000001',
-      registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', role: 'CREDIT', is_leader: false,
+      phone: '0712000001', registered_at: '2026-08-01T00:00:00Z' },
   ];
 
   const d = await portalApi(fakeDb(book), ADMIN, 'recoveryByCredit', {}, NOW);
-  
+
   assert.ok(d.metrics, 'returns metrics array');
   assert.equal(d.metrics.length, 0, 'no metrics since no OFF JANA customers');
 });
@@ -6065,18 +6068,58 @@ test('recoveryByCredit scopes results to user\'s teams', async () => {
     D('R2', 'MBAGALA', 600, 'current', 10, YEST),
   );
   book.call_users = [
-    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', is_leader: false, phone: '0712000001',
-      registered_at: '2026-08-01T00:00:00Z' },
-    { user_id: 'UC2', name: 'CREDIT TWO', team: 'MBAGALA', is_leader: false, phone: '0712000002',
-      registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', role: 'CREDIT', is_leader: false,
+      phone: '0712000001', registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UC2', name: 'CREDIT TWO', team: 'MBAGALA', role: 'CREDIT', is_leader: false,
+      phone: '0712000002', registered_at: '2026-08-01T00:00:00Z' },
   ];
 
   // GMO can only see KONGOWE
   const d = await portalApi(fakeDb(book), GMO, 'recoveryByCredit', {}, NOW);
-  
+
   assert.ok(d.metrics, 'returns metrics');
   // Only results from KONGOWE should be present (GMO's team)
   const teams = [...new Set(d.metrics.map(m => m.team))];
   assert.ok(teams.every(t => t === 'KONGOWE'), 'only GMO\'s team in results');
+});
+
+test('recoveryByCredit only assigns to CREDIT-role call_users, not bikes/managers/gmos', async () => {
+  const book = tables();
+  book.defaulter_snapshots.push(
+    D('R1', 'KONGOWE', 500, 'current', 5, TODAY),
+    D('R1', 'KONGOWE', 500, 'current', 8, YEST),
+  );
+  book.call_users = [
+    // Same team, but not a credit role -- must not receive an assignment.
+    { user_id: 'UB1', name: 'BIKE ONE', team: 'KONGOWE', role: 'BIKE', is_leader: false,
+      phone: '0712000009', registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', role: 'CREDIT ANALYST', is_leader: false,
+      phone: '0712000001', registered_at: '2026-08-01T00:00:00Z' },
+  ];
+
+  const d = await portalApi(fakeDb(book), ADMIN, 'recoveryByCredit', {}, NOW);
+
+  assert.ok(d.metrics.some(m => m.creditUser === 'CREDIT ONE'), 'the credit officer got the customer');
+  assert.ok(!d.metrics.some(m => m.creditUser === 'BIKE ONE'), 'a bike officer never appears on this board');
+});
+
+test('recoveryByCredit deals OFF JANA customers fairly across more than one credit officer', async () => {
+  const book = tables();
+  // Four customers, all locked 7+ yesterday, none recovered today -- deal must split 2/2.
+  for (const ref of ['R1', 'R2', 'R3', 'R4']) {
+    book.defaulter_snapshots.push(D(ref, 'KONGOWE', 500, 'current', 5, TODAY));
+    book.defaulter_snapshots.push(D(ref, 'KONGOWE', 500, 'current', 9, YEST));
+  }
+  book.call_users = [
+    { user_id: 'UC1', name: 'CREDIT ONE', team: 'KONGOWE', role: 'CREDIT', is_leader: false,
+      phone: '0712000001', registered_at: '2026-08-01T00:00:00Z' },
+    { user_id: 'UC2', name: 'CREDIT TWO', team: 'KONGOWE', role: 'CREDIT', is_leader: false,
+      phone: '0712000002', registered_at: '2026-08-01T00:00:00Z' },
+  ];
+
+  const d = await portalApi(fakeDb(book), ADMIN, 'recoveryByCredit', {}, NOW);
+  const today = d.metrics.filter(m => m.date === TODAY);
+  const assigned = today.map(m => m.assigned).sort();
+  assert.deepEqual(assigned, [2, 2], 'four OFF JANA customers split evenly across two credit officers');
 });
 

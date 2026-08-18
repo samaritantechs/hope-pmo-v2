@@ -526,6 +526,12 @@ const EXPECTED_WORDS = ['EXPECTED', 'EARLY'];
 const normRole = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 const hasWord = (role, words) => words.some(w => (' ' + role + ' ').includes(' ' + w + ' '));
 
+/** Whether a role string counts as CREDIT -- the same word-contains rule callRoleKind uses,
+    exported so anywhere else that has to pick "the credit people" out of a roster (the
+    recovery-by-credit board, for one) asks the exact same question rather than growing a
+    second opinion about who is a credit officer. */
+export function isCreditRole(role) { return hasWord(normRole(role), CREDIT_WORDS); }
+
 /** paid-of-target off a "4/6" or "4-6" due summary. null when there is nothing to read. */
 export function dsParts(v) {
   const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})\s*[\/\-]\s*(\d{1,2})$/);
