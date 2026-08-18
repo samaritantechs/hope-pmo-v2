@@ -1792,10 +1792,47 @@ function renderReports(){
   body.innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
   srv('api_callReport', DEV, S.repFrom, S.repTo, S.repTeam, S.repLeader).then(function(d){
     S.repData = d;
+    // A new range, team or leader is a new question -- last question's sort order carried
+    // over would be an accident, not a choice, so it resets here rather than in drawReports,
+    // which also runs on a plain re-sort click and must NOT clear itself.
+    S.repSort = null;
     drawReports();
   }).catch(function(e){ body.innerHTML = '<div class="empty"><b>Imeshindikana kupakia.</b>' + esc(String(e)) + '</div>'; });
 }
 var CALL_CAT_LABEL_ = { EXPECTED:'Expected', DEFAULTER:'Defaulter', UNCATEGORIZED:'Uncategorized', OTHER:'Nje ya portfolio' };
+/* CLICK A HEADER, SORT BY IT. "Sometime i want to know bussiest through there" -- finding who
+   made the most calls, or who has the worst % pf, used to mean reading every row by eye. This
+   is a pure client-side re-sort of the ONE page of officers already on screen: zero extra
+   requests, zero extra rows read, so it costs nothing under the Postgres budget -- it is not
+   a query, it is Array.sort() on data already in hand. Clicking the same header again reverses
+   direction, the arrow shows which column and which way, and the sort survives a redraw of the
+   same data (changing the date range or team re-fetches, which resets it -- a new question
+   deserves a fresh default, not last question's sort order carried over by accident). */
+var REP_SORT_KEYS_ = { name:1, calls:0, duration:0, expected:0, defaulter:0, nonPortfolio:0, ratio:0 };
+function sortReportRows_(rows){
+  var s = S.repSort; if (!s || !rows) return rows;
+  var out = rows.slice();
+  out.sort(function(a, b){
+    var av = a[s.key], bv = b[s.key];
+    var cmp = REP_SORT_KEYS_[s.key] ? String(av||'').localeCompare(String(bv||'')) : (Number(av)||0) - (Number(bv)||0);
+    return s.dir === 'desc' ? -cmp : cmp;
+  });
+  return out;
+}
+function toggleReportSort_(key){
+  var s = S.repSort;
+  S.repSort = (s && s.key === key) ? { key: key, dir: s.dir === 'desc' ? 'asc' : 'desc' }
+                                    : { key: key, dir: key === 'name' ? 'asc' : 'desc' };  // numbers default busiest-first
+  drawReports();
+}
+function repSortArrow_(key){
+  var s = S.repSort; if (!s || s.key !== key) return '';
+  return ' ' + (s.dir === 'desc' ? '▼' : '▲');
+}
+function repTh_(key, label, cls){
+  return '<th' + (cls ? ' class="' + cls + '"' : '') + ' data-sort-key="' + key + '" style="cursor:pointer;user-select:none" title="Bofya kupanga / Click to sort">'
+    + esc(label) + repSortArrow_(key) + '</th>';
+}
 function drawReports(){
   var d = S.repData, t = d.totals || {calls:0,duration:0,portfolio:0,nonPortfolio:0,ratio:0};
   var body = $('#body');
@@ -1838,8 +1875,12 @@ function drawReports(){
        recovery (defaulter) book. And after % pf, the officer themselves is one tap away: the
        number is the one they REGISTERED with, so the supervisor reading a zero can ring it
        right here. */
-    + '<table class="otable"><thead><tr><th>Afisa</th><th class="r">Simu</th><th class="r">Muda</th><th class="r">COL</th><th class="r">REC</th><th class="r">Nje ya pf</th><th class="r">% pf</th><th></th></tr></thead><tbody>'
-    + (d.users||[]).map(function(u){
+    + '<table class="otable"><thead><tr>'
+    + repTh_('name', 'Afisa') + repTh_('calls', 'Simu', 'r') + repTh_('duration', 'Muda', 'r')
+    + repTh_('expected', 'COL', 'r') + repTh_('defaulter', 'REC', 'r')
+    + repTh_('nonPortfolio', 'Nje ya pf', 'r') + repTh_('ratio', '% pf', 'r') + '<th></th>'
+    + '</tr></thead><tbody>'
+    + sortReportRows_(d.users).map(function(u){
         var oHref = telHref(u.phone);
         return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
           + '<td class="r">' + money(u.calls) + '</td><td class="r">' + fmtDur(u.duration) + '</td>'
@@ -1855,6 +1896,9 @@ function drawReports(){
      already inside the new one -- in which case nothing is lost -- or outside it, where keeping
      it would silently answer for a team the chosen leader does not hold. */
   $('#repLeader').onchange = function(){ S.repLeader = this.value; S.repTeam = ''; renderReports(); };
+  Array.prototype.forEach.call(body.querySelectorAll('th[data-sort-key]'), function(th){
+    th.onclick = function(){ toggleReportSort_(th.getAttribute('data-sort-key')); };
+  });
 }
 
 $('#bootRetry').onclick = function(){
