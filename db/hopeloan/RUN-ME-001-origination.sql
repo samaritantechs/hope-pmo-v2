@@ -11,12 +11,18 @@
         exactly as a real one does. That is what makes the end-to-end demonstration possible,
         and what makes the eventual merge into HOPE PMO a no-op rather than a migration.
      3. Paste `set search_path = hopeloan, public;` then the whole of THIS file, in one run.
-     4. Turn the switch on -- either is fine, see api/_lib/workspace.js:
-          free:  set HOPELOAN_ENABLED=true in Vercel (same project, this schema)
-          paid:  create a second Supabase project, repeat steps 1-3 inside it, then set
-                 HOPELOAN_SUPABASE_URL and HOPELOAN_SERVICE_ROLE_KEY in Vercel
+   THAT IS ALL. There is NO environment variable to set for the free path: running these files
+   IS the configuration. The application asks the database whether this schema is here and
+   exposed, and draws the admin switch only once the answer is yes -- so the button appears
+   exactly when it will work, and never before. Sign out and back in after running these; the
+   answer is cached for a few minutes.
 
-   Until step 4 the switch does not appear anywhere and every request goes to production.
+   OPTIONAL, and only if you want them:
+     HOPELOAN_ENABLED=false  turns the sandbox off outright, whatever is in the database.
+     HOPELOAN_SUPABASE_URL + HOPELOAN_SERVICE_ROLE_KEY  move HOPE Loan into a SEPARATE
+       Supabase project instead of this schema (stronger isolation, ~$10/mo). Repeat steps
+       1-3 inside that project first. The schema inside it is still called `hopeloan`, so
+       these same files run there unmodified.
 
    IF THE EDITOR COMPLAINS ABOUT A TRANSACTION BLOCK. Section 1 alters an enum type, which is
    the same family of statement as the CREATE INDEX CONCURRENTLY that failed once before. On
