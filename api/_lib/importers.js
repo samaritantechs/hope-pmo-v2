@@ -693,15 +693,15 @@ export function importExpectedSummary(csvRows, { snapshotType, snapshotDate }) {
        collected everything, not less than nothing. */
     const stated = col(r, h, 'UNCOLLECTED', 'OUTSTANDING');
     const hasStated = String(stated == null ? '' : stated).replace(/[\s,-]/g, '') !== '';
-    /* THE FILE'S OWN DATE WINS. The Expected_Summary export stamps every row with the day it
-       reports -- "these are yesterdays final reports, so please make no mistake" -- and a
-       date the file itself carries cannot be mis-picked in a box at one in the morning.
-       Files without the column keep the chosen date exactly as before. */
-    const own = dateOrNull(col(r, h, 'DATE'));
+    /* THE CHOSEN DATE RULES -- the owner's standing rule, same as the application stages:
+       "we are not using the sheets data but the date i choose." The file's own DATE column
+       is not ignored, but its job is on the UPLOAD PAGE: it pre-fills the date box so the
+       right day is one glance away -- and the human's box, not the sheet, is what is
+       stored. */
     return {
       kind: 'expected',
       snapshot_type: snapshotType,
-      snapshot_date: own || snapshotDate,
+      snapshot_date: snapshotDate,
       weekday: null,
       team: normTeam(col(r, h, 'TEAMS', 'TEAM')),
       customers: null,                       // a summary is money, not a list of people
