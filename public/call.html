@@ -453,15 +453,24 @@ function toggleCallWorkspace_(){
   }
   var code = prompt('Msimbo wa ADMIN / ADMIN access code:');
   if (!code || !code.trim()) return;
+  /* THE BANNER WAITS FOR THE SERVER. It used to be painted the moment this button was pressed,
+     so a deployment whose schema was missing showed a red SANDBOX bar over the REAL book while
+     every request behind it failed -- "ends at trying". Nothing on screen changes until the
+     server has actually answered from the sandbox. */
   S.wsCode = code.trim();
   S.workspace = 'hopeloan';
-  S.cache = {}; S.cacheAt = {};            // and live rows must never be shown as sandbox ones
-  paintCallWorkspace_();
-  /* The server decides, not this button. If the code is not an admin's, api/call.js quietly
-     serves production -- so the honest thing is to say what came back rather than announce a
-     sandbox we may not be in. boot() re-reads everything under the new routing. */
-  toast("Inajaribu HOPE Loan / trying HOPE Loan\u2026");
-  boot();
+  S.cache = {}; S.cacheAt = {};            // live rows must never be re-shown as sandbox ones
+  toast('Inajaribu HOPE Loan / trying HOPE Loan\u2026');
+  srv('api_callBoot', DEV).then(function(){
+    paintCallWorkspace_();                 // confirmed: now say so
+    boot();
+  }).catch(function(e){
+    // Refused or unreachable -- go straight back, and say why in the server's own words.
+    S.workspace = 'hopepmo'; S.wsCode = '';
+    S.cache = {}; S.cacheAt = {};
+    paintCallWorkspace_();
+    toast(String((e && e.message) || e), true);
+  });
 }
 function srv(fn){
   var args = Array.prototype.slice.call(arguments, 1);

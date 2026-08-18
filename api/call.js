@@ -1,7 +1,7 @@
 import { supabase } from './_lib/supabase.js';
 import { withApi, authCodeResolved } from './_lib/auth.js';
 import { callApi } from './_lib/call-core.js';
-import { workspaceFor, HOPELOAN } from './_lib/workspace.js';
+import { workspaceFor, HOPELOAN, HOPELOAN_NOT_READY } from './_lib/workspace.js';
 
 // POST /api/call   { fn: 'api_callBoot' | 'api_callRegister' | ..., args: [...] }
 // One route for the whole HOPE Calls app (public/call.html) -- fn names match the old
@@ -26,10 +26,18 @@ export default withApi(async (req, res) => {
      switch and could not use it if it did. */
   let db = supabase;
   if (String(workspace || '').trim().toLowerCase() === HOPELOAN && code) {
-    try {
-      const user = await authCodeResolved(code);
-      db = workspaceFor(user, HOPELOAN).db;
-    } catch { /* an unreadable code is simply not an admin -- stay on the real book */ }
+    let user = null;
+    try { user = await authCodeResolved(code); }
+    catch { /* an unreadable code is simply not an admin -- stay on the real book, silently */ }
+    if (user) {
+      const ws = await workspaceFor(user, HOPELOAN);
+      /* SAY IT, DO NOT HANG. This used to hand back a client pointed at a schema that could not
+         answer, so the phone sat on "trying…" under a red SANDBOX banner while every request
+         failed -- looking like a broken app rather than an un-run migration. An admin who asked
+         for the sandbox and cannot have it is told why, in words naming the fix. */
+      if (ws.ready === false) { const e = new Error(HOPELOAN_NOT_READY); e.status = 503; throw e; }
+      db = ws.db;
+    }
   }
   return callApi(db, fn, args);
 });
