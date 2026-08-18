@@ -14,6 +14,12 @@
 
    Until step 4 the switch does not appear anywhere and every request goes to production.
 
+   IF THE EDITOR COMPLAINS ABOUT A TRANSACTION BLOCK. Section 1 alters an enum type, which is
+   the same family of statement as the CREATE INDEX CONCURRENTLY that failed once before. On
+   Supabase's Postgres this is allowed and the file runs whole. If a future version refuses it,
+   run section 1 on its own first, then the rest -- the two halves are independent, and nothing
+   below section 1 uses the new values, which is the rule that makes splitting it safe.
+
    WHY IT EXTENDS RATHER THAN DUPLICATES. `loans` already carries the eight pipeline stages
    and the four amounts -- requested, team recommendation, principal, net disbursed. It was
    built to mirror this pipeline from uploaded reports. Origination writes to the SAME table
