@@ -1,3 +1,32 @@
+/* THE LINE BELOW IS NOT OPTIONAL AND IS NOW PART OF THE FILE.
+
+   It used to be an instruction in a comment -- "paste this first" -- and an instruction that
+   has to be remembered is an instruction that will be missed. It was, and every table in this
+   file went into `public`, the live book, instead of the sandbox. Nothing was damaged (see
+   RUN-ME-002-undo-into-public.sql for exactly why), but the fix is not to ask people to
+   remember harder. It is to stop the file needing anyone to remember at all. */
+set search_path = hopeloan, public;
+
+/* AND THIS REFUSES TO RUN IF THE STEP BEFORE IT WENT TO THE WRONG PLACE.
+
+   db/schema.sql cannot carry a `set search_path` of its own -- it is the same file that
+   installs PRODUCTION, and hard-wiring it to `hopeloan` would send the live book into the
+   sandbox, which is the same accident pointing the other way and far worse.
+
+   So the check lives here instead. If `hopeloan.teams` is missing, then schema.sql was run
+   without the search_path line and its tables are sitting in `public`. Better to stop with a
+   sentence naming the fix than to add nine more tables to the wrong schema on top of it. */
+do $$
+begin
+  if to_regclass('hopeloan.teams') is null then
+    raise exception
+      'STOP: db/schema.sql has not been run into the hopeloan schema. Its tables went to '
+      '`public` instead, because the line `set search_path = hopeloan, public;` was not pasted '
+      'above it in the SAME query. Fix: run db/hopeloan/RUN-ME-002-undo-into-public.sql to '
+      'tidy public, then re-run db/schema.sql with that line pasted first, then this file.';
+  end if;
+end $$;
+
 /* =====================================================================================
    HOPE LOAN -- ORIGINATION. Run AFTER RUN-ME-000-create-schema.sql and db/schema.sql.
    =====================================================================================
