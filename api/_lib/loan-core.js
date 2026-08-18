@@ -588,14 +588,46 @@ async function financeShiftPayment(db, user, { payment_id, to_ref, reason }) {
    9. REVERSAL -- three desks, because the money never moved.
    ===================================================================================== */
 
+/** THE LIST THE THREE DESKS ACTUALLY WORK FROM, and it was missing: the chain could be
+    requested and decided by name, but nothing could SHOW a pending reversal, so finance and
+    the GM had no way to find one waiting for them. A queue nobody can see is a queue nobody
+    works.
+
+    Returns both halves of the screen in ONE round trip rather than two -- the reversals
+    themselves, and the authorised-but-unfunded loans that are eligible to become one. Those
+    are the same loans the bank report lists, which is the point: every row on that report is
+    money that has not moved yet, so every row on it is reversible until it does. */
+async function reversalsList(db, user) {
+  const rows = await allPaged(db, 'reversals', b => b.select('*').order('requested_at', { ascending: false }));
+  const loans = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'disbursed'));
+  const openIds = new Set(rows.filter(r => r.status === 'Pending').map(r => String(r.loan_id)));
+  return {
+    rows,
+    pending: rows.filter(r => r.status === 'Pending'),
+    /* A loan already carrying an open request is not offered again -- two live reversals for
+       one loan is two people about to close the same contract. */
+    eligible: loans.filter(l => !openIds.has(String(l.id))).map(l => ({
+      loan_id: l.id, ref: l.loan_id, docket: l.docket_no, full_name: l.full_name,
+      team: l.team, amount: l.net_disbursed,
+    })),
+  };
+}
+
 async function reversalRequest(db, user, { loan_id, amount, reason }) {
   requireTab(user, 'credit');
   if (!textOrNull(reason)) throw badRequest('A reason is required to request a reversal.');
   const loan = await mustLoan(db, loan_id);
   if (loan.stage !== 'disbursed') throw badRequest('Only an authorised-but-unfunded loan can be reversed.');
+  /* THE THREE STATUSES ARE WRITTEN OUT, not left to the column defaults. The table does
+     default them to 'Pending', but a value that only exists because of a default is a value
+     this code cannot see in the row it just inserted -- and the reversal queue filters on
+     exactly these three. Saying them here means the returned row is complete on the way back,
+     and means the chain's starting state is readable in the code rather than in the schema. */
   const { data, error } = await db.from('reversals').insert({
     loan_id: loan.id, ref: loan.loan_id, docket: loan.docket_no, full_name: loan.full_name,
     team: loan.team, amount: Number(amount) || loan.net_disbursed, reason, requested_by: user.name,
+    requested_at: new Date().toISOString(),
+    status: 'Pending', finance_status: 'Pending', gm_status: 'Pending',
   }).select('*').maybeSingle();
   if (error) throw new Error(error.message);
   return { row: data };
@@ -742,7 +774,7 @@ const FN = {
   disburseWindowStatus, disburseQueue, managerDisburse, managerDisburseReject, managerReturnToCredit,
   financeOpenWindow, financeCloseWindow, financeBankReport, financeMarkFunded,
   financeImportPayments, financeShiftPayment,
-  reversalRequest, reversalFinanceDecide, reversalGmDecide,
+  reversalsList, reversalRequest, reversalFinanceDecide, reversalGmDecide,
   carriersList, carrierSave,
   adjustmentSave, adjustmentsList,
   pipelineSummary,

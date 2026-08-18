@@ -507,7 +507,8 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
   csSearch:1, managerQueue:1, teamQueue:1, seniorQueue:1, creditQueue:1, disburseQueue:1,
-  disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1 };
+  disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1,
+  reversalsList:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
 // the key you would work out from the state afterwards -- keep the real one, or later touches
@@ -5108,29 +5109,89 @@ function lnAdjustmentForm_(){
   };
 }
 
-/* ---------- Reversals: three desks, one screen ---------- */
+/* ---------- Reversals: three desks, one screen ----------
+   Two lists in one view, because they are two halves of the same job: what is WAITING on a
+   signature, and what could still be reversed at all. `scope` switches between them; the row
+   click does the right thing for whichever is showing. */
 VIEWS.ln_reversals = function(){
-  S.rows = []; S.cols = [];
-  HEAD = '<div class="hint">Credit requests a reversal from a loan\'s row in Disburse or Pipeline once it is authorised-but-unfunded; finance and the GM decide here.</div>'
-    + bar('<button class="btn sm ghost" id="lnReqReversal">+ Request reversal (by ref)</button>');
-  S.foot = '';
-  return Promise.resolve();
+  var scope = S.args.scope || 'pending';
+  return srv('reversalsList', {}).then(function(d){
+    S.lnRev = d;
+    HEAD = '<div class="kpis">'
+      + kpi('Zinasubiri / Awaiting a signature', money(d.pending.length), null, d.pending.length ? 'bad' : 'good')
+      + kpi('Zinazoweza kurudishwa / Reversible', money(d.eligible.length), 'authorised, not yet funded')
+      + '</div>'
+      + bar('<select id="lnRevScope">'
+        + '<option value="pending"' + (scope==='pending'?' selected':'') + '>Awaiting a decision</option>'
+        + '<option value="eligible"' + (scope==='eligible'?' selected':'') + '>Reversible loans (request one)</option>'
+        + '<option value="all"' + (scope==='all'?' selected':'') + '>All reversals</option></select>');
+    if (scope === 'eligible') {
+      S.rows = d.eligible;
+      S.cols = [col('ref', 'Ref'), col('docket', 'Docket'), col('full_name', 'Customer'),
+        col('team', 'Team'), { key:'amount', label:'Amount', kind:'money' }];
+      ONROW = function(r){ lnRevRequestForm_(r); };
+      S.foot = 'Bofya safu kuomba kurudishwa / Tap a row to request a reversal';
+    } else {
+      S.rows = scope === 'all' ? d.rows : d.pending;
+      S.cols = [col('ref', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+        { key:'amount', label:'Amount', kind:'money' }, col('reason', 'Reason'),
+        col('requested_by', 'Requested by'),
+        { key:'finance_status', label:'Finance', kind:'chip', chip:function(r){ return chipFor(r.finance_status); } },
+        { key:'gm_status', label:'GM', kind:'chip', chip:function(r){ return chipFor(r.gm_status); } },
+        { key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); } }];
+      ONROW = function(r){ lnRevDecideForm_(r); };
+      S.foot = money(S.rows.length) + ' reversal(s)';
+    }
+  });
 };
 function wireLnReversals_(){
-  var b = document.getElementById('lnReqReversal');
-  if (!b) return;
-  b.onclick = function(){
-    drawer('<h3>Request reversal</h3>'
-      + '<div class="fld"><label>Loan ref (as shown on the Disburse screen)</label><input id="lnRevRef"></div>'
-      + '<div class="fld"><label>Amount</label><input id="lnRevAmt" type="number"></div>'
-      + '<div class="fld"><label>Reason (required)</label><input id="lnRevReason"></div>'
-      + '<div class="hint">Reversal is requested by LOAN ID -- open the loan from Disburse or Pipeline and use its id there once that screen is wired to pass it through; this box is the fallback for now.</div>'
-      + '<button class="btn w" id="lnRevSubmit">Request</button>');
-    $('#lnRevSubmit').onclick = function(){
-      lnAct('reversalRequest', { loan_id: $('#lnRevRef').value.trim(), amount: Number($('#lnRevAmt').value) || 0, reason: $('#lnRevReason').value.trim() },
-        'Requested.', function(){ go('ln_reversals'); });
-    };
+  var s = document.getElementById('lnRevScope');
+  if (s) s.onchange = function(){ S.args.scope = this.value; render({ force:true }); };
+}
+/* Credit's half: requested FROM THE ROW, so the loan id never has to be read off one screen
+   and typed into another -- which was the rough edge this replaces. */
+function lnRevRequestForm_(row){
+  drawer('<h3>Request reversal</h3>'
+    + '<div class="sub">' + esc(row.full_name) + ' &middot; ' + esc(row.ref) + ' &middot; ' + money(row.amount) + '</div>'
+    + '<div class="hint">Only a loan a manager has authorised but finance has NOT funded can be reversed -- the money has not moved, so nothing needs unwinding at the bank.</div>'
+    + '<div class="fld"><label>Amount</label><input id="lnRevAmt" type="number" value="' + (row.amount||'') + '"></div>'
+    + '<div class="fld"><label>Reason (required)</label><input id="lnRevReason"></div>'
+    + '<button class="btn w" id="lnRevSubmit">Request reversal</button>');
+  $('#lnRevSubmit').onclick = function(){
+    lnAct('reversalRequest', { loan_id: row.loan_id, amount: Number($('#lnRevAmt').value) || 0, reason: $('#lnRevReason').value.trim() },
+      'Requested -- now with finance.', function(){ go('ln_reversals'); });
   };
+}
+/* Finance's and the GM's halves. Which buttons appear follows the CHAIN, not the person:
+   finance decides while finance is Pending; the GM only once finance has approved -- the same
+   order the server enforces, so the screen can never offer a step that will be refused. */
+function lnRevDecideForm_(row){
+  var financePending = row.finance_status === 'Pending';
+  var gmTurn = row.finance_status === 'Approved' && row.gm_status === 'Pending';
+  drawer('<h3>' + esc(row.full_name) + '</h3>'
+    + '<div class="sub">' + esc(row.ref) + ' &middot; ' + money(row.amount) + '</div>'
+    + '<div class="frow"><span>Reason</span>' + esc(row.reason || '') + '</div>'
+    + '<div class="frow"><span>Requested by</span>' + esc(row.requested_by || '') + '</div>'
+    + '<div class="frow"><span>Finance</span>' + esc(row.finance_status || '') + (row.finance_by ? ' — ' + esc(row.finance_by) : '') + '</div>'
+    + '<div class="frow"><span>GM</span>' + esc(row.gm_status || '') + (row.gm_by ? ' — ' + esc(row.gm_by) : '') + '</div>'
+    + (financePending
+        ? '<div class="fld" style="margin-top:10px"><label>Finance note</label><input id="lnRevNote"></div>'
+          + '<button class="btn w" id="lnRevFinOk">Finance: approve</button>'
+          + '<button class="btn w ghost" id="lnRevFinNo" style="margin-top:8px">Finance: reject</button>'
+        : gmTurn
+        ? '<div class="fld" style="margin-top:10px"><label>GM note</label><input id="lnRevNote"></div>'
+          + '<button class="btn w" id="lnRevGmOk">GM: authorise (closes the contract)</button>'
+          + '<button class="btn w ghost" id="lnRevGmNo" style="margin-top:8px">GM: reject</button>'
+        : '<div class="hint" style="margin-top:10px">Hakuna hatua iliyobaki / Nothing left to decide here.</div>'));
+  function note(){ var n = document.getElementById('lnRevNote'); return n ? n.value.trim() : ''; }
+  if (financePending) {
+    $('#lnRevFinOk').onclick = function(){ lnAct('reversalFinanceDecide', { id: row.id, approve: true, note: note() }, 'Approved -- now with the GM.', function(){ go('ln_reversals'); }); };
+    $('#lnRevFinNo').onclick = function(){ lnAct('reversalFinanceDecide', { id: row.id, approve: false, note: note() }, 'Rejected.', function(){ go('ln_reversals'); }); };
+  }
+  if (gmTurn) {
+    $('#lnRevGmOk').onclick = function(){ lnAct('reversalGmDecide', { id: row.id, approve: true, note: note() }, 'Authorised -- contract closed.', function(){ go('ln_reversals'); }); };
+    $('#lnRevGmNo').onclick = function(){ lnAct('reversalGmDecide', { id: row.id, approve: false, note: note() }, 'Rejected.', function(){ go('ln_reversals'); }); };
+  }
 }
 
 /* ---------- GM: carriers, growth ---------- */

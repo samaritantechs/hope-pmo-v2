@@ -284,6 +284,40 @@ test('reversal needs all three signatures, in order, before the loan closes', as
   assert.equal(loan.stage, 'closed', '"keep reversed loan as closed contract"');
 });
 
+/* The queue the three desks work from -- missing on first write, so a pending reversal was
+   requestable and decidable by name but could never be FOUND by the people who must sign it. */
+test('reversalsList shows what is waiting for a signature and what is still reversible', async () => {
+  const db = fakeDb({});
+  const loanId = await toDisbursed(db, 300000);
+
+  let list = await loanApi(db, FINANCE, 'reversalsList', {});
+  assert.equal(list.pending.length, 0);
+  assert.equal(list.eligible.length, 1, 'authorised but unfunded -- the money has not moved, so it is reversible');
+  assert.equal(list.eligible[0].loan_id, loanId);
+
+  const { row } = await loanApi(db, CREDIT, 'reversalRequest', { loan_id: loanId, reason: 'never funded' });
+  list = await loanApi(db, FINANCE, 'reversalsList', {});
+  assert.equal(list.pending.length, 1, 'now waiting on finance');
+  assert.equal(list.eligible.length, 0, 'a loan with a live request is not offered for a second one');
+
+  await loanApi(db, FINANCE, 'reversalFinanceDecide', { id: row.id, approve: true });
+  await loanApi(db, GM, 'reversalGmDecide', { id: row.id, approve: true });
+  list = await loanApi(db, FINANCE, 'reversalsList', {});
+  assert.equal(list.pending.length, 0, 'closed out');
+  assert.equal(list.rows.length, 1, 'but still on the record');
+});
+
+test('a funded loan is NOT reversible -- the money has already moved', async () => {
+  const db = fakeDb({});
+  const loanId = await toDisbursed(db, 300000);
+  await loanApi(db, FINANCE, 'financeMarkFunded', { loan_ids: [loanId] });
+
+  const list = await loanApi(db, FINANCE, 'reversalsList', {});
+  assert.equal(list.eligible.length, 0, 'funded loans leave the reversible list');
+  await assert.rejects(() => loanApi(db, CREDIT, 'reversalRequest', { loan_id: loanId, reason: 'too late' }),
+    /authorised-but-unfunded/i);
+});
+
 test('the next loan for a reversed customer opens on the next track, not a reused one', async () => {
   const db = fakeDb({});
   const { loan: loan1 } = await loanApi(db, CS, 'csRegister', { full_name: 'REVERSED CUSTOMER', mobile: '0700000009', team: 'MABIBO', amount: 300000 });
