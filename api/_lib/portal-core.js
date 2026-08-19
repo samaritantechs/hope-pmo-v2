@@ -5629,7 +5629,19 @@ async function deleteTeam(db, user, p) {
 }
 function normTeamName(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
 
-/** Tips, from the Hints sheet: tab-scoped, bilingual, admin-editable without a deploy. */
+/** Tips, from the Hints sheet: tab-scoped, bilingual, admin-editable without a deploy.
+
+    THE TIMING WAS NEVER READABLE. The client has always carried `S.hintEverySec` /
+    `S.hintHoldSec` and a hard-coded fallback (240s / 7s) for when they are unset -- but nothing
+    server-side ever SET them, so the fallback was the only value that ever ran, and there was
+    nowhere in Settings to change it:
+
+      "Am not seeing were to set tips timelapse in settings"
+
+    There was nowhere to see, because the two numbers these fall back to were never wired to a
+    setting at all. HINT_EVERY_SEC / HINT_HOLD_SEC now read like any other setting -- through
+    settingNum, which reads readSettings' own 20-second cache, so this call very rarely costs a
+    round trip of its own; the settings a working Settings screen has usually already warmed it. */
 async function hints(db, user) {
   const rows = await fetchAll(() => db.from('hints').select('*'));
   const en = {}, sw = {};
@@ -5640,7 +5652,9 @@ async function hints(db, user) {
     (en[t] = en[t] || []).push(m || s);
     (sw[t] = sw[t] || []).push(s || m);
   }
-  return { tips: { en, sw } };
+  const everySec = await settingNum(db, 'HINT_EVERY_SEC', 240);
+  const holdSec = await settingNum(db, 'HINT_HOLD_SEC', 7);
+  return { tips: { en, sw }, everySec, holdSec };
 }
 
 /* =======================================================================================

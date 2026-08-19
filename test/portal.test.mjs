@@ -1633,6 +1633,27 @@ test('hints group many tips per tab, and fall back across languages', async () =
   assert.equal('' in d.tips.en, false);
 });
 
+/* =====================================================================================
+   THE TIPS TIMER HAD NOWHERE TO BE SET, BECAUSE NOTHING EVER READ IT.
+   =====================================================================================
+     "Am not seeing were to set tips timelapse in settings"
+
+   S.hintEverySec / S.hintHoldSec have always existed client-side with a hard-coded fallback
+   (240s / 7s) for when they are unset -- and nothing server-side ever set them, so the
+   fallback was the only value that could ever run. There was nowhere to see because there was
+   nothing to find: hints() carried no timing at all. */
+test('hints carries the tip timer, defaulting to the fallback the client always used', async () => {
+  const bare = await portalApi(fakeDb({ hints: [] }), ADMIN, 'hints', {}, NOW);
+  assert.equal(bare.everySec, 240, 'unset -- the same default the client fell back to');
+  assert.equal(bare.holdSec, 7);
+
+  const set = await portalApi(fakeDb({ hints: [], settings: [
+    { key: 'HINT_EVERY_SEC', value: '600' }, { key: 'HINT_HOLD_SEC', value: '12' } ] }),
+    ADMIN, 'hints', {}, NOW);
+  assert.equal(set.everySec, 600, 'a real setting now actually changes it');
+  assert.equal(set.holdSec, 12);
+});
+
 // An Exp.Def screen that is empty for a reason the officer cannot see costs a phone call and
 // a day. Each of the four ways it empties out must be distinguishable from the response.
 test('expdf says WHY it is empty, and shows the book when the deck has no DISB DATE', async () => {

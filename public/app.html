@@ -923,6 +923,11 @@ function start(me){
    Every list tab is the same thing: rows + a column spec. One renderer means a new tab is a
    few lines of config instead of a new screen, and search/sort/CSV work everywhere for free. */
 function col(key, label, kind){ return { key:key, label:label, kind:kind||'text' }; }
+// Read one key out of the settings rows the page already has, rather than a call of its own.
+function settingVal(rows, key, dflt){
+  var r = (rows||[]).find(function(x){ return x.key === key; });
+  return r ? r.value : dflt;
+}
 function cellText(r, c){
   var v = r[c.key];
   if (c.get) v = c.get(r);
@@ -1468,6 +1473,8 @@ function tipShow(){
 function tipsStart(){
   srv('hints').then(function(h){
     S.tips = h.tips || {};
+    // These used to just be a fallback nothing ever overrode -- see hints() in portal-core.js.
+    S.hintEverySec = h.everySec; S.hintHoldSec = h.holdSec;
     clearInterval(S.tipTimer);
     setTimeout(tipShow, 3000);
     S.tipTimer = setInterval(tipShow, Math.max(30, Number(S.hintEverySec) || 240) * 1000);
@@ -2005,6 +2012,22 @@ function wireClean(){
         toast('Imehifadhiwa. / Saved.');
       })
       .catch(function(e){ fuListOut.className = 'note bad'; fuListOut.textContent = String(e.message || e); });
+  };
+
+  var hintTimingSave = document.getElementById('hintTimingSave'), hintTimingOut = document.getElementById('hintTimingOut');
+  if (hintTimingSave) hintTimingSave.onclick = function(){
+    var every = Math.max(30, parseInt(document.getElementById('hintEvery').value, 10) || 240);
+    var hold = Math.max(3, parseInt(document.getElementById('hintHold').value, 10) || 7);
+    hintTimingOut.style.display = 'block'; hintTimingOut.className = 'note';
+    hintTimingOut.textContent = 'Inahifadhi…';
+    Promise.all([
+      srv('settingSet', { key: 'HINT_EVERY_SEC', value: String(every) }),
+      srv('settingSet', { key: 'HINT_HOLD_SEC', value: String(hold) }),
+    ]).then(function(){
+      hintTimingOut.innerHTML = 'Imehifadhiwa. Simu zitapata muda huu mara moja.'
+        + ' / Saved. Every screen picks this up on its next tip load.';
+      toast('Imehifadhiwa. / Saved.');
+    }).catch(function(e){ hintTimingOut.className = 'note bad'; hintTimingOut.textContent = String(e.message || e); });
   };
 
   /* CHANGING YOUR OWN CODE. It signs you back in with the new one straight away -- the browser
@@ -4330,6 +4353,22 @@ VIEWS.settings = function(){
           + esc(((S.fuMeta && S.fuMeta.fuNeedNumber) || FU_NEED_NUMBER).join(', ') || '\u2014') + '</b></div>'
         + '<div class="clact"><button class="btn sm" id="fuListSave">Hifadhi / Save</button></div>'
         + '<div id="fuListOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+
+      /* TIPS TIMING. "Am not seeing were to set tips timelapse in settings" -- there was
+         nowhere to see, because the two numbers the lightbulb runs on (how often a tip changes,
+         how long each one stays up) were a hard-coded fallback nothing could ever override. Two
+         plain settings now, read straight out of the same list this screen already has below --
+         no extra call to find the current values. */
+      + '<div class="card"><div class="card-h">Muda wa vidokezo / Tips timing'
+        + '<span class="sub">kitufe cha 💡 juu ya skrini / the 💡 button at the top of the screen</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="fld"><label>Kila sekunde ngapi hubadilika / Rotates every (seconds)</label>'
+          + '<input type="number" min="30" id="hintEvery" value="'+esc(settingVal(st.rows,'HINT_EVERY_SEC','240'))+'"></div>'
+        + '<div class="fld"><label>Hubaki sekunde ngapi / Stays visible for (seconds)</label>'
+          + '<input type="number" min="3" id="hintHold" value="'+esc(settingVal(st.rows,'HINT_HOLD_SEC','7'))+'"></div>'
+        + '<div class="clact"><button class="btn sm" id="hintTimingSave">Hifadhi / Save</button></div>'
+        + '<div id="hintTimingOut" class="note" style="display:none"></div>'
         + '</div></div>'
 
       /* YOUR OWN CODE. The access code IS the password here, and changing it used to mean
