@@ -5037,6 +5037,11 @@ function wireLnCs_(){
   var n = document.getElementById('lnCsNewBtn');
   if (n) n.onclick = function(){ lnCsRegisterForm_(null); };
 }
+/* "If Disbursement mode is momo or bank then put choice not typing" -- a free-text field for a
+   value that is only ever one of two things is how "Momo", "momo", "MOMO", "mobile money" all
+   end up meaning the same thing to a person and four different things to a report. */
+var DISB_MODES = ['Momo', 'Bank'];
+
 /* BRANCH, NOT TEAM, AT REGISTRATION.
 
      "Registering a new customer is always by selecting branch so that the customer gets
@@ -5061,7 +5066,10 @@ function lnCsRegisterForm_(existing){
       + '<div class="fld"><label>Region</label><input id="lnRegion"></div>'
       + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
-      + '<div class="fld"><label>Disbursement mode</label><input id="lnDisbMode" placeholder="Momo / Bank"></div>'
+      + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
+        + '<option value="">— chagua / choose —</option>'
+        + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
+        + '</select></div>'
       + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
       + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
     $('#lnCsSubmit').onclick = function(){
@@ -5205,9 +5213,12 @@ function lnCreditForm_(loan){
   drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Ref ' + esc(loan.loan_id) + '</div>'
     + '<div class="fld"><label>Granted amount (TZS)</label><input id="lnGrantAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
     + '<div class="fld"><label>Previous balance (for a top-up)</label><input id="lnPrevBal" type="number" value="0"></div>'
-    + '<div class="fld"><label>Disbursement mode</label><input id="lnDisbMode2" value="' + esc(loan.disbursement_type||'') + '"></div>'
-    + '<div class="fld"><label>Bank name (if bank)</label><input id="lnBankName"></div>'
-    + '<div class="fld"><label>Account no.</label><input id="lnAcctNo"></div>'
+    + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode2">'
+      + '<option value="">— chagua / choose —</option>'
+      + DISB_MODES.map(function(m){ return '<option' + (loan.disbursement_type===m?' selected':'') + '>' + m + '</option>'; }).join('')
+      + '</select></div>'
+    + '<div class="fld" id="lnBankFld"><label>Bank name</label><input id="lnBankName"></div>'
+    + '<div class="fld" id="lnAcctFld"><label>Account no.</label><input id="lnAcctNo"></div>'
     + '<div id="lnSchedulePreview" class="sub" style="margin:6px 0"></div>'
     + '<button class="btn w" id="lnGrantBtn">Grant</button>'
     + '<button class="btn w ghost" id="lnCrRejectBtn" style="margin-top:8px">Reject</button>');
@@ -5217,6 +5228,14 @@ function lnCreditForm_(loan){
     $('#lnSchedulePreview').textContent = 'Interest ' + money(interest) + ' · Total ' + money(total) + ' · 12 x ' + money(inst) + '/week';
   }
   $('#lnGrantAmt').oninput = preview; preview();
+  // Bank name/account only mean something for a bank disbursement -- shown for Bank, hidden
+  // (not required) for Momo or nothing chosen yet.
+  function toggleBankFlds(){
+    var isBank = $('#lnDisbMode2').value === 'Bank';
+    $('#lnBankFld').style.display = isBank ? '' : 'none';
+    $('#lnAcctFld').style.display = isBank ? '' : 'none';
+  }
+  $('#lnDisbMode2').onchange = toggleBankFlds; toggleBankFlds();
   $('#lnGrantBtn').onclick = function(){
     lnAct('creditApprove', {
       loan_id: loan.id, granted_amount: Number($('#lnGrantAmt').value) || 0,
