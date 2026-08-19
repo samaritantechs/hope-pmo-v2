@@ -1287,3 +1287,92 @@ test('midnight and end-of-day both land on the same weekday', async () => {
   assert.equal(weekdayOfKey('2026-08-18T00:00:00Z'), 'TUE');
   assert.equal(weekdayOfKey('2026-08-18T23:59:59Z'), 'TUE');
 });
+
+/* =====================================================================================
+   THE PAID COME OFF THE LIST AUTOMATICALLY, AFTER A SUCCESSFUL UPLOAD.
+   =====================================================================================
+   Reported from the field, with a real customer:
+
+     "i found husna hassani philiko 42141021001 as a defaulter 8-9 yet that customer is a paid
+      one 11-12 ... arreas is 1 seen not even a negative nor underpaid it was defaulter"
+
+   That day's expected book had her at 11-11, overpaid, arrears -833. The officers' register
+   still held the defaulter row a deck had written weeks earlier, because retirement ran only
+   on a defaulters-current upload and only for that customer's OWN weekday. */
+const { retireSettledFromExpected } = await import('../api/upload.js');
+const { PAID_TOLERANCE_KEY } = await import('../api/_lib/settled.js');
+
+test('a customer the expected book says has paid is cleared off the working list', async () => {
+  const db = fakeDb({
+    settings: [],
+    followup_status: [
+      // Her row, exactly as reported: defaulter, 8-9, owing one shilling.
+      { ref: '42141021001', full_name: 'HUSNA HASSANI PHILIKO', team: 'MSAMVU',
+        status: 'Defaulter', ds: '8-9', arrears: 1, fu_status: 'AMETOA AHADI',
+        comment_by: 'AN OFFICER' },
+      // Genuinely still owing -- must be left exactly alone.
+      { ref: '999', full_name: 'STILL OWES', team: 'MSAMVU', status: 'Defaulter', arrears: 450000 },
+      // A follow-up stub: already off the list, must not be rewritten on every upload.
+      { ref: '777', full_name: null, team: 'MSAMVU', status: null, arrears: null },
+    ],
+  });
+  // The expected file for the day: she is overpaid by 833.
+  const cleared = await retireSettledFromExpected(db, [
+    { ref: '42141021001', arrears: -833 },
+    { ref: '999', arrears: 450000 },
+  ]);
+  assert.equal(cleared, 1, 'exactly one customer was settled');
+
+  const rows = (await db.from('followup_status').select('*')).data;
+  const husna = rows.find(r => r.ref === '42141021001');
+  assert.equal(husna.status, null, 'no longer a defaulter');
+  assert.equal(husna.arrears, null, 'and no longer owes anything on the list');
+  /* HER WORK SURVIVES. Only status and arrears are cleared -- an upsert touches only the
+     columns in the payload -- so the promise she gave and who recorded it are still there for
+     the next deck that names her. */
+  assert.equal(husna.fu_status, 'AMETOA AHADI');
+  assert.equal(husna.comment_by, 'AN OFFICER');
+
+  assert.equal(rows.find(r => r.ref === '999').status, 'Defaulter', 'a real debtor is untouched');
+});
+
+test('the tolerance is OFF by default, and is a setting when wanted', async () => {
+  const book = () => ({
+    settings: [],
+    followup_status: [{ ref: 'R1', team: 'T', status: 'Defaulter', arrears: 1 }],
+  });
+  /* DEFAULT ZERO: one shilling is still a debt, exactly as before any of this existed.
+     "dont make a mistake by removing anyone demanded" -- so nothing is forgiven until a
+     person decides it should be. */
+  assert.equal(await retireSettledFromExpected(fakeDb(book()), [{ ref: 'R1', arrears: 1 }]), 0);
+
+  // Set it, and the remainder is forgiven.
+  const lenient = fakeDb({ ...book(), settings: [{ key: PAID_TOLERANCE_KEY, value: '100' }] });
+  assert.equal(await retireSettledFromExpected(lenient, [{ ref: 'R1', arrears: 1 }]), 1,
+    'with a tolerance set, a rounding crumb is not a debt');
+});
+
+/* THE ASYMMETRY THAT MAKES THIS SAFE TO RUN ON EVERY UPLOAD. */
+test('an expected upload can never ADD somebody to the working list', async () => {
+  const db = fakeDb({ settings: [], followup_status: [] });
+  const cleared = await retireSettledFromExpected(db, [
+    { ref: 'NOT-ON-THE-LIST', arrears: -5000 },
+    { ref: 'ALSO-NOT', arrears: 0 },
+  ]);
+  assert.equal(cleared, 0);
+  assert.equal((await db.from('followup_status').select('*')).data.length, 0,
+    'nobody was inserted -- this only ever clears');
+});
+
+test('an unknown arrears is never treated as paid', async () => {
+  const db = fakeDb({
+    settings: [],
+    followup_status: [{ ref: 'U1', team: 'T', status: 'Defaulter', arrears: 250000 }],
+  });
+  // null / blank / not-a-number all mean "we do not know", which is not "settled".
+  for (const a of [null, undefined, '', 'n/a']) {
+    assert.equal(await retireSettledFromExpected(db, [{ ref: 'U1', arrears: a }]), 0,
+      JSON.stringify(a) + ' must not clear a debt');
+  }
+  assert.equal((await db.from('followup_status').select('*')).data[0].status, 'Defaulter');
+});

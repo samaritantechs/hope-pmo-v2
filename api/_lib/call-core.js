@@ -8,6 +8,7 @@ import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
+import { PAID_TOLERANCE_KEY, paidToleranceOf, statusWithPaid } from './settled.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
    constant, because it is typed by a person. Asking the same question the PMO board asks is
    what stops the two screens disagreeing about who is a collection officer. */
@@ -797,7 +798,12 @@ async function list(db, [dev, which, which2], nowMs) {
        say the debt is gone ("officers rapidly call them without seeing they have no status
        at all"). The Expected lists already wear PAID; the defaulter book now does too, and
        only where the balance itself proves it: a null arrears is unknown, never "paid". */
-    const paidChip = r => (r.arrears != null && num(r.arrears) <= 0) ? 'PAID' : (r.status || '');
+    /* A ROUNDING REMAINDER IS NOT A DEBT. `<= 0` forgave a cleared balance and nothing else,
+       so a customer left owing ONE SHILLING by the twelve-way division stayed on this list as
+       a defaulter for ever -- which is exactly how a paid customer at 11-11 was still being
+       rung at 8-9. The line is now a setting; see _lib/settled.js. */
+    const tol = paidToleranceOf(await settingGet(db, PAID_TOLERANCE_KEY));
+    const paidChip = r => statusWithPaid(r.arrears, r.status, tol, '');
     rows = fu.filter(r => teamAllowed(user, r.team) && !(r.status == null && r.arrears == null)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
       amt: num(r.arrears), installment: num(r.rejesho), custStatus: paidChip(r), fuStatus: r.fu_status || '',
@@ -896,6 +902,7 @@ async function list(db, [dev, which, which2], nowMs) {
       });
       const have = new Set(rows.map(r => String(r.ref)));
       const behindMax = Math.max(1, limits.earlyMaxBehind);
+      const scTol = paidToleranceOf(await settingGet(db, PAID_TOLERANCE_KEY));
       const add = fu.filter(r => {
         if (r.status == null && r.arrears == null) return false;   // FK stubs, not defaulters
         if (!teamAllowed(user, r.team) || have.has(String(r.ref))) return false;
@@ -906,8 +913,9 @@ async function list(db, [dev, which, which2], nowMs) {
         ref: r.ref, name: r.full_name, contact: r.contact,
         gName: r.guarantor_name, gContact: r.guarantor_contact,
         amt: num(r.arrears), installment: num(r.rejesho),
-        // The same paid-says-so rule as the Def tab: a cleared balance must not read as work.
-        custStatus: (r.arrears != null && num(r.arrears) <= 0) ? 'PAID' : (r.status || 'Defaulter'),
+        // The same paid-says-so rule as the Def tab, tolerance included -- two lists that
+        // disagree about whether one customer has paid is worse than either answer alone.
+        custStatus: statusWithPaid(r.arrears, r.status, scTol, 'Defaulter'),
         fuStatus: r.fu_status || '',
         ds: dsFmt(r.ds), days: r.days_elapsed == null ? '' : r.days_elapsed, team: r.team,
         called: hit(r.contact, r.guarantor_contact), sc: true,

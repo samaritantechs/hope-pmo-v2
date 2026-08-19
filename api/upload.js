@@ -17,6 +17,7 @@ import {
   importCallUsers, importCallLogs, importSettings, importHints,
   REF_HEADERS,
 } from './_lib/importers.js';
+import { PAID_TOLERANCE_KEY, paidToleranceOf, isSettled } from './_lib/settled.js';
 
 /* ONE FILE IS NOT ONE REQUEST.
  *
@@ -975,13 +976,40 @@ export default withApi(async (req, res) => {
                     from the table -- one column, so the file's own size is no longer the thing
                     that decides who gets retired.
      ===================================================================================== */
-  let followupSynced = 0, followupRetired = 0, followupStaleCapped = 0;
+  let followupSynced = 0, followupRetired = 0, followupStaleCapped = 0, followupSettled = 0;
   if (type === 'defaulters-current') {
     followupSynced = await writeFollowupFromDeck(supabase, records, meta.date);
   }
   if (type === 'defaulters-current' && isLastPart) {
     const fu = await retireFollowupAfterDeck(supabase, meta.weekday, uploadBatch, meta.date);
     followupRetired = fu.retired; followupStaleCapped = fu.staleCapped;
+  }
+  /* =====================================================================================
+     THE EXPECTED BOOK CLEARS THE PAID, AND IT IS THE ONLY THING THAT RUNS EVERY DAY.
+     =====================================================================================
+       "i found husna hassani philiko 42141021001 as a defaulter 8-9 yet that customer is a
+        paid one 11-12 ... arreas is 1 seen not even a negative nor underpaid it was defaulter"
+
+     She was correct in the expected book -- 11-11, overpaid, arrears -833 -- and a defaulter
+     on the officers' phones at 8-9 owing one shilling, because the register still held the row
+     a defaulter deck wrote weeks earlier and NOTHING HAD REMOVED IT.
+
+     Retirement lived only in retireFollowupAfterDeck, which runs on a `defaulters-current`
+     upload and only clears people who were on THAT SAME WEEKDAY'S previous deck. So a customer
+     who pays off survives on the list until their own weekday's deck happens to be uploaded
+     again -- and on any day a SUMMARY is uploaded instead of a full deck, nothing is retired at
+     all, because a summary carries team totals and no customer rows to compare.
+
+     The expected book has neither problem. It arrives daily, it names every customer, and it
+     states what they owe. If it says a customer owes nothing, that is not an opinion about a
+     weekday schedule -- it is the balance. So it clears them here, whatever weekday their deck
+     belonged to and whichever defaulter file was or was not uploaded.
+
+     ONLY EVER CLEARS, NEVER ADDS. A customer this finds is taken OFF the working list; nobody
+     is ever put onto it by an expected upload. The worst case is therefore an officer having
+     one fewer name to ring, not a debtor quietly appearing. */
+  if (EXPECTED_TYPES.has(type) && isLastPart) {
+    followupSettled = await retireSettledFromExpected(supabase, records);
   }
 
   // "Inserted 412" says nothing about whether a second upload of the same file doubles the
@@ -1162,6 +1190,7 @@ export default withApi(async (req, res) => {
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
+      followupSettled ? `\u2713 ${followupSettled} customer(s) who have now PAID were taken off the officers' working list automatically. They were still showing as defaulters from an older deck; the expected book says they owe nothing, so they are cleared. Their comments and history are untouched.` : '',
       followupRetired ? `${followupRetired} customer(s) no deck has confirmed were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
       followupStaleCapped ? `NOTE: ${followupStaleCapped} customers on the follow-up list have not been confirmed by any deck for over ${FU_STALE_DAYS} days -- too many to retire in one go, so none were. That usually means some weekdays' current-defaulter decks have stopped being uploaded. Upload those decks, or clear the old rows under Settings -> storage (Follow-up list, by date).` : '',
     ].filter(Boolean).join(' ') || undefined
@@ -1210,6 +1239,18 @@ async function prevWeekdayDeck(db, weekday, excludeBatch) {
  *  only Monday's are compared against it. */
 /** How long a customer may sit on the working list without a deck confirming them.
     A weekday's deck should come round every seven days, so a fortnight is forgiving. */
+/* The four customer-level expected uploads. The SUMMARY is deliberately absent: it carries
+   team totals and no customer rows, so it cannot say who has paid -- which is precisely the
+   blind spot that let a settled customer sit on the officers' list. */
+const EXPECTED_TYPES = new Set(['expected-today', 'expected-tomorrow', 'expected-yesterday', 'expected-initial']);
+
+/** One settings row, read straight. Kept local so the retirement rules do not have to reach
+    into portal-core for a single value. */
+async function settingGet_(db, key) {
+  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
+  return data ? data.value : null;
+}
+
 const FU_STALE_DAYS = 14;
 /** The most of the working list one upload may retire on age alone, as a fraction. Above this
     it retires nobody and reports the number instead -- see the brake in syncFollowupFromDeck. */
@@ -1259,6 +1300,48 @@ export async function writeFollowupFromDeck(db, records, deckDate) {
  *  column, so it costs a fraction of what re-sending the file would -- which makes "who is in
  *  this deck" a fact about the DECK rather than about however the browser happened to slice it.
  */
+/** THE PAID COME OFF THE WORKING LIST, FROM THE ONE FILE THAT ARRIVES EVERY DAY.
+ *
+ *  Takes the expected records just uploaded, keeps the ones whose arrears prove the customer
+ *  owes nothing worth collecting, and clears their row on the follow-up register.
+ *
+ *  IT ONLY EVER CLEARS. A ref not already on the register is skipped rather than inserted, so
+ *  an expected upload can never put somebody ONTO the officers' list -- it can only take a
+ *  settled customer off it. That asymmetry is what makes this safe to run on every upload
+ *  without a brake: the failure mode is one fewer name to ring, never a debtor appearing.
+ *
+ *  COMMENTS, PROMISES AND HISTORY SURVIVE. Exactly as retireFollowupAfterDeck does it -- only
+ *  status, arrears and the deck stamp are cleared, because a PostgREST upsert touches only the
+ *  columns in the payload. The next deck that names them puts them straight back, with their
+ *  whole follow-up trail intact. */
+export async function retireSettledFromExpected(db, records) {
+  const tol = paidToleranceOf(await settingGet_(db, PAID_TOLERANCE_KEY));
+  const settled = new Set((records || [])
+    .filter(r => r && r.ref && isSettled(r.arrears, tol))
+    .map(r => String(r.ref).trim().toUpperCase()));
+  if (!settled.size) return 0;
+
+  /* Only rows that are actually on the register, and only ones still carrying a live status or
+     arrears -- a follow-up stub (both null) is already off the list and rewriting it would be
+     a pointless write on every upload. */
+  let existing, stamped = true;
+  try {
+    existing = await fetchAll(() => db.from('followup_status').select('ref, status, arrears, deck_date'));
+  } catch (e) {
+    if (!/deck_date/.test(String((e && e.message) || e))) throw e;
+    stamped = false;
+    existing = await fetchAll(() => db.from('followup_status').select('ref, status, arrears'));
+  }
+  const gone = (existing || [])
+    .filter(r => !(r.status == null && r.arrears == null))
+    .filter(r => settled.has(String(r.ref).trim().toUpperCase()))
+    .map(r => ({ ref: r.ref, status: null, arrears: null,
+      ...(stamped ? { deck_date: null } : {}),
+      updated_at: new Date().toISOString() }));
+  if (gone.length) await writeInChunks(db, 'followup_status', gone, 'ref');
+  return gone.length;
+}
+
 export async function retireFollowupAfterDeck(db, weekday, uploadBatch, deckDate) {
   const mine = await fetchAll(() => db.from('defaulter_snapshots').select('ref')
     .eq('snapshot_type', 'current').eq('upload_batch', uploadBatch));
