@@ -378,6 +378,7 @@ export function importTeams(csvRows) {
     put('team_code', textOrNull, 'TEAM CODE', 'TEAM_CODE', 'MSIMBO', 'MSIMBO / CODE', 'CODE');
     put('region', textOrNull, 'REGION');
     put('zone', textOrNull, 'ZONE');
+    put('branch', textOrNull, 'BRANCH');
     put('opm', textOrNull, 'OPM');
     put('opm_no', normPhone, 'OPM NO', 'OPM_NO');
     put('recovery', textOrNull, 'RECOVERY');

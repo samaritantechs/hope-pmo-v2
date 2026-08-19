@@ -754,6 +754,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
    second, differently-computed truth appearing on a second screen. */
 async function followup(db, user, args = {}, nowMs = Date.now()) {
   const today = todayKey(nowMs);
+  const teamBranch = await branchByTeam(db, nowMs);
   const [raw, comments, iniSnap] = await Promise.all([
     fetchAll(() => onTeams(db.from('followup_status').select('*').order('arrears', { ascending: false }), user.teams)),
     /* Only the comments that CARRY a replacement number. This was reading every comment ever
@@ -784,6 +785,7 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
     const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
     return {
       ...r,
+      branch: teamBranch.get(K(r.team)) || null,
       /* A defaulter who has paid says so, here as on the phone: zero or negative arrears
          with no status left officers ringing people whose debt is gone. Only the balance
          itself proves it -- a null arrears is unknown, never "paid". */
@@ -867,6 +869,7 @@ async function addComment(db, user, p, nowMs) {
     -- and a customer who has left the defaulter deck entirely reads CLEARED rather than 0. */
 async function promises(db, user, { from, to } = {}, nowMs) {
   const today = todayKey(nowMs);
+  const teamBranch = await branchByTeam(db, nowMs);
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : null;
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : null;
   const [all, cm, curSnap] = await Promise.all([
@@ -894,6 +897,7 @@ async function promises(db, user, { from, to } = {}, nowMs) {
     const curArr = cleared ? 0 : stillOwing[k];
     const arrBefore = num(r.arrears);
     return { ...r,
+      branch: teamBranch.get(K(r.team)) || null,
       arrears_before: arrBefore, arrears_now: curArr, cleared,
       recovered: Math.max(0, arrBefore - curArr),
       taken_by: (firstCm[k] && firstCm[k].created_by) || r.comment_by || null,
@@ -942,6 +946,7 @@ async function followupReport(db, user, { from, to }, nowMs) {
     const k = K(v);
     return k.includes('CHRON') ? 'chronic' : k.includes('EXPIR') ? 'expired' : 'defaulters';
   };
+  const teamBranch = await branchByTeam(db);
   const byStatus = {}, byOfficer = {}, byTeam = {};
   for (const r of mineFu) {
     const k = K(r.fu_status) || '(NOT TOUCHED)';
@@ -949,7 +954,7 @@ async function followupReport(db, user, { from, to }, nowMs) {
     byStatus[k].customers++; byStatus[k].arrears += num(r.arrears);
     byStatus[k][catOf(r.status)]++;
     const t = r.team || '(no team)';
-    if (!byTeam[t]) byTeam[t] = { team: t, customers: 0, touched: 0, arrears: 0 };
+    if (!byTeam[t]) byTeam[t] = { team: t, branch: teamBranch.get(K(t)) || null, customers: 0, touched: 0, arrears: 0 };
     byTeam[t].customers++; byTeam[t].arrears += num(r.arrears);
     if (r.fu_status) byTeam[t].touched++;
   }
@@ -977,7 +982,8 @@ async function followupReport(db, user, { from, to }, nowMs) {
 
   const log = mineCm.slice()
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
-    .map(c => ({ at: c.created_at, by: c.created_by || '(unknown)', team: c.team, ref: c.ref,
+    .map(c => ({ at: c.created_at, by: c.created_by || '(unknown)', team: c.team,
+      branch: teamBranch.get(K(c.team)) || null, ref: c.ref,
       full_name: c.full_name, fu_status: c.fu_status, promise_date: c.promise_date,
       promise_amt: num(c.promise_amt), comment: c.comment }));
 
@@ -1043,12 +1049,13 @@ async function complaints(db, user, { from, to } = {}, nowMs) {
   const all = await fetchAll(() => onTeams(db.from('complaints').select('*')
     .gte('created_at', fromKey).lte('created_at', toKey + 'T23:59:59.999Z')
     .order('created_at', { ascending: false }), user.teams));
+  const teamRows = await readTeamsAll(db, nowMs);
+  const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
   const rows = scoped(user, all).filter(r => {
     const d = dayOf(r.created_at);
     return d >= fromKey && d <= toKey;
-  });
+  }).map(r => ({ ...r, branch: teamBranch.get(K(r.team)) || null }));
   const today = todayKey(nowMs);
-  const teamRows = await fetchAll(() => db.from('teams').select('team'));
   return { rows, count: rows.length, from: fromKey, to: toKey,
     open: rows.filter(r => cxOpen(r.status)).length,
     resolved: rows.filter(r => !cxOpen(r.status)).length,
@@ -1285,8 +1292,9 @@ async function restructureContract(db, user, { id, ref } = {}) {
 }
 
 async function restructures(db, user, _args, nowMs) {
-  const [r, strat] = await Promise.all([listTable(db, user, 'restructures'), restructureStrategy(db)]);
+  const [r, strat, teamBranch] = await Promise.all([listTable(db, user, 'restructures'), restructureStrategy(db), branchByTeam(db, nowMs)]);
   const rows = r.rows.map(x => ({ ...x,
+    branch: teamBranch.get(K(x.team)) || null,
     schedule: restructureSchedule(num(x.total), num(x.installments), num(x.inst_amt), x.start_date) }));
   return { rows, count: rows.length, strategy: strat,
     canApprove: canApproveRestructure(user, strat),
@@ -1702,9 +1710,10 @@ async function notifSeen(db, user, _p, nowMs = Date.now()) {
 }
 
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
-  const [r, cur] = await Promise.all([
+  const [r, cur, teamBranch] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
+    branchByTeam(db, nowMs),
   ]);
   const nowBy = {};
   for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
@@ -1718,6 +1727,7 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
     // customer would look cleared and the tab would report a triumph that never happened.
     const current = known ? nowBy[key] : (seen ? 0 : null);
     return { ...x,
+      branch: teamBranch.get(K(x.team)) || null,
       arrears_now: current,
       recovered_since: current == null ? null : Math.max(0, at - current),
       // What a person working the notice needs to see at a glance.
@@ -1972,6 +1982,7 @@ async function par(db, user, _args, nowMs) {
   const rows = scoped(user, snap.rows);
   const bands = PAR_BANDS.map(b => ({ band: b.key, customers: 0, arrears: 0 }));
   const pbands = PRINCIPAL_BANDS.map(b => ({ band: b.label, customers: 0, arrears: 0, balance: 0, loanSum: 0 }));
+  const teamBranch = await branchByTeam(db);
   const byStatus = {}, byTeam = {};
   let totArrears = 0, totBalance = 0, totLoan = 0;
   for (const r of rows) {
@@ -1995,7 +2006,7 @@ async function par(db, user, _args, nowMs) {
   return { date: snap.date, weekday: currentWeekday(nowMs), bands,
     byBand: pbands.map(b => ({ band: b.band, ...finish(b) })),
     byStatus: Object.values(byStatus).sort((a, b) => b.arrears - a.arrears),
-    byTeam: Object.values(byTeam).map(t => ({ team: t.team, ...finish(t) })).sort((a, b) => b.arrears - a.arrears),
+    byTeam: Object.values(byTeam).map(t => ({ team: t.team, branch: teamBranch.get(K(t.team)) || null, ...finish(t) })).sort((a, b) => b.arrears - a.arrears),
     totals: { customers: rows.length, arrears: totArrears, balance: totBalance,
       avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance) } };
 }
@@ -2127,7 +2138,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const leadBy = {};
   for (const t of teamRows) leadBy[K(t.team)] = t;
   const teamsOut = Object.values(T).map(b => ({
-    team: b.key, lead: leadBy[K(b.key)] || {},
+    team: b.key, branch: (leadBy[K(b.key)] || {}).branch || null, lead: leadBy[K(b.key)] || {},
     sales: b.sales, salesPct: pctOf(b.sales, perTarget),
     expected: b.expected, collected: b.collected, uncollected: b.uncollected,
     collPct: pctOf(b.collected, b.expected),
@@ -2197,7 +2208,11 @@ const TEAM_PHONE_OF = {
   credit: 'credit_no', expected: 'expected_no', bike: 'bike_no',
   legal: 'legal_no', collection: 'collection_no',
 };
-const TEAM_OPTIONAL_COLS = ['region', 'zone', 'legal', 'collection']
+/* `branch` -- 2026-08-19-team-branch.sql. A team belongs to one branch; customer service picks
+   a branch at registration without needing to know which of its teams will end up serving the
+   customer, so the branch has to live somewhere, and this is the same optional-column pattern
+   as region and zone right beside it. */
+const TEAM_OPTIONAL_COLS = ['region', 'zone', 'branch', 'legal', 'collection']
   .concat(Object.values(TEAM_PHONE_OF));
 
 /** Leader Reports / Team Progress: per-team initial vs current arrears, recovered and
@@ -2213,7 +2228,7 @@ async function teamProgress(db, user, _args, nowMs) {
   const by = {};
   const bump = (team, field, v) => {
     const t = team || '(no team)';
-    if (!by[t]) by[t] = { team: t, initArrears: 0, curArrears: 0, initCust: 0, curCust: 0, recovery: null, gmo: null, manager: null };
+    if (!by[t]) by[t] = { team: t, initArrears: 0, curArrears: 0, initCust: 0, curCust: 0, recovery: null, gmo: null, manager: null, branch: null };
     by[t][field] += v;
   };
   for (const r of scoped(user, ini.rows)) { bump(r.team, 'initArrears', num(r.arrears)); bump(r.team, 'initCust', 1); }
@@ -2221,6 +2236,7 @@ async function teamProgress(db, user, _args, nowMs) {
   for (const t of teamsRows) {
     if (!by[t.team]) continue;
     by[t.team].recovery = t.recovery || null; by[t.team].gmo = t.gmo || null; by[t.team].manager = t.manager || null;
+    by[t.team].branch = t.branch || null;
   }
   const rows = Object.values(by).map(r => ({
     ...r,
@@ -2668,7 +2684,7 @@ async function assignments(db, user, _args, nowMs) {
     const team = teamBy[K(r.team)] || {};
     const leader = team[ROLE_COLS[a.role]] || '';
     return { ref: r.ref, full_name: r.full_name, contact: r.contact, guarantor_contact: r.guarantor_contact,
-      team: r.team, arrears: num(r.arrears), status: r.status, ds: r.ds, dc: r.dc,
+      team: r.team, branch: team.branch || null, arrears: num(r.arrears), status: r.status, ds: r.ds, dc: r.dc,
       days_elapsed: r.days_elapsed, phase: a.phase, role: a.role, cycle: a.label,
       leader: leader || '(unassigned)', assigned: !!leader,
       fu_status: f.fu_status || '', officer: f.comment_by || '', touched_at: f.comment_at || '',
@@ -2820,7 +2836,7 @@ async function credit(db, user, _args, nowMs) {
     const k = K(d.ref), cur = num(d.arrears);
     // No Monday record means new this week -- 0 recovered rather than silently dropped.
     const initA = Object.prototype.hasOwnProperty.call(iniArrBy, k) ? iniArrBy[k] : cur;
-    return { ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
+    return { ref: d.ref, full_name: d.full_name, team: d.team, branch: (teamBy[K(d.team)] || {}).branch || null, contact: d.contact,
       /* THE GUARANTOR, which is who an officer rings when the customer will not answer -- and
          was the one column missing from a list whose entire purpose is ringing people. */
       guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
@@ -4823,6 +4839,19 @@ const teamsCache = new WeakMap();
 
 export function noteTeamsWritten(db) { teamsCache.delete(db); }
 
+/** Every per-team board reads readTeamsAll's own 20-second cache, so this almost never costs a
+    round trip of its own -- whatever report called it has usually already warmed the cache
+    resolving OPM/GMO/manager names for the same rows. A Map, not a plain object, because a team
+    name is looked up by its normalised key (K()) and a Map does not collide with a JS built-in
+    ("constructor", "toString") the way `{}` can. See "the branches column is in all reports
+    just before the team column" -- this is the one place that answer is worked out. */
+async function branchByTeam(db, nowMs) {
+  const rows = await readTeamsAll(db, nowMs);
+  const by = new Map();
+  for (const t of rows || []) by.set(K(t.team), t.branch || null);
+  return by;
+}
+
 async function readTeamsAll(db, nowMs) {
   const at = nowMs || Date.now();
   const hit = teamsCache.get(db);
@@ -5102,7 +5131,7 @@ async function dashboardFull(db, user, args, nowMs) {
   const T = {};
   const slot = t => {
     const k = t || '(no team)';
-    if (!T[k]) T[k] = { team: k, recovery: null, gmo: null, manager: null, opm: null, bike: null,
+    if (!T[k]) T[k] = { team: k, branch: null, recovery: null, gmo: null, manager: null, opm: null, bike: null,
       initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesMonth: 0, salesPct: null,
       expToday: 0, colToday: 0, collPctToday: null, expEarly: 0, colEarly: 0, collPctEarly: null,
       expWeek: 0, colWeek: 0, collPctWeek: null,
@@ -5113,7 +5142,7 @@ async function dashboardFull(db, user, args, nowMs) {
   for (const t of myTeams) {
     const s = slot(t.team);
     s.recovery = t.recovery || null; s.gmo = t.gmo || null; s.manager = t.manager || null;
-    s.opm = t.opm || null; s.bike = t.bike || null;
+    s.opm = t.opm || null; s.bike = t.bike || null; s.branch = t.branch || null;
   }
   for (const r of iniToday) slot(r.team).initArrears += num(r.arrears_amt);
   for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears_amt); s.defaulters += num(r.customers); }
@@ -5290,7 +5319,8 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
     snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs), ...dayOpts });
     fellBack = true;
   }
-  const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r) }));
+  const teamBranch = await branchByTeam(db, nowMs);
+  const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r), branch: teamBranch.get(K(r.team)) || null }));
   const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
   const col = rows.reduce((s, r) => s + r.collected, 0);
   const st = {};
@@ -5629,7 +5659,19 @@ async function deleteTeam(db, user, p) {
 }
 function normTeamName(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
 
-/** Tips, from the Hints sheet: tab-scoped, bilingual, admin-editable without a deploy. */
+/** Tips, from the Hints sheet: tab-scoped, bilingual, admin-editable without a deploy.
+
+    THE TIMING WAS NEVER READABLE. The client has always carried `S.hintEverySec` /
+    `S.hintHoldSec` and a hard-coded fallback (240s / 7s) for when they are unset -- but nothing
+    server-side ever SET them, so the fallback was the only value that ever ran, and there was
+    nowhere in Settings to change it:
+
+      "Am not seeing were to set tips timelapse in settings"
+
+    There was nowhere to see, because the two numbers these fall back to were never wired to a
+    setting at all. HINT_EVERY_SEC / HINT_HOLD_SEC now read like any other setting -- through
+    settingNum, which reads readSettings' own 20-second cache, so this call very rarely costs a
+    round trip of its own; the settings a working Settings screen has usually already warmed it. */
 async function hints(db, user) {
   const rows = await fetchAll(() => db.from('hints').select('*'));
   const en = {}, sw = {};
@@ -5640,7 +5682,9 @@ async function hints(db, user) {
     (en[t] = en[t] || []).push(m || s);
     (sw[t] = sw[t] || []).push(s || m);
   }
-  return { tips: { en, sw } };
+  const everySec = await settingNum(db, 'HINT_EVERY_SEC', 240);
+  const holdSec = await settingNum(db, 'HINT_HOLD_SEC', 7);
+  return { tips: { en, sw }, everySec, holdSec };
 }
 
 /* =======================================================================================

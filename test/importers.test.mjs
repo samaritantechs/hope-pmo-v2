@@ -951,6 +951,21 @@ test('a column that IS on the sheet but left blank still clears the value', asyn
   assert.equal(out[0].gmo, 'GEE MO');
 });
 
+/* "we should update a branch colomn for all teams in both HOPEPMO and HOPELOAN" -- the same
+   optional-column shape as region and zone right beside it, so the same rules apply: absent
+   is untouched, present-but-blank clears it, and it survives a re-upload that omits it. */
+test('a BRANCH column on the teams sheet imports like region and zone do', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  const withBranch = importTeams([
+    ['TEAM', 'BRANCH'],
+    ['TUNDUMA', 'TUNDUMA'],
+  ]);
+  assert.equal(withBranch[0].branch, 'TUNDUMA');
+
+  const noBranchColumn = importTeams([['TEAM', 'REGION'], ['TUNDUMA', 'MBEYA']]);
+  assert.equal('branch' in noBranchColumn[0], false, 'no BRANCH column -- must not send a null');
+});
+
 test('the team code is recognised by the name the screen shows it under', async () => {
   const { importTeams } = await import('../api/_lib/importers.js');
   // The teams screen labels it MSIMBO / CODE, so an admin editing what they see writes that.

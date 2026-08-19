@@ -154,6 +154,24 @@ async function csSearch(db, user, { q }) {
   return { rows };
 }
 
+/** The branches to pick from at registration.
+
+    "Registering a new customer is always by selecting branch so that the customer gets
+     visible in manager assignment window then manager selects team to assign"
+
+    Customer service does not choose a TEAM -- it does not know, and should not have to know,
+    which of a branch's several teams a landmark actually belongs to. That is the manager's
+    call, made from the branch and the customer's own landmark once the application is in the
+    queue (managerQueue). So this is deliberately narrow: branch names only, nothing about who
+    runs each team or what number rings them -- the full roster stays behind the `teams` tab,
+    which customer service does not have. */
+async function branchList(db, user) {
+  requireTab(user, 'customer_service');
+  const rows = await allPaged(db, 'teams', b => b.select('branch'));
+  const branches = [...new Set(rows.map(r => textOrNull(r.branch)).filter(Boolean))].sort();
+  return { branches };
+}
+
 /** A new application. Registers the customer (or reuses one found by csSearch) and opens a
     loan at 'unassigned' with the requested amount -- the first rung of the amount ladder. */
 async function csRegister(db, user, p) {
@@ -687,7 +705,7 @@ async function reversalsList(db, user) {
        one loan is two people about to close the same contract. */
     eligible: loans.filter(l => !openIds.has(String(l.id))).map(l => ({
       loan_id: l.id, ref: l.loan_id, docket: l.docket_no, full_name: l.full_name,
-      team: l.team, amount: l.net_disbursed,
+      team: l.team, branch: l.branch, amount: l.net_disbursed,
     })),
   };
 }
@@ -845,7 +863,7 @@ async function logEvent(db, loanId, from, to, user, amount, note) {
    ===================================================================================== */
 
 const FN = {
-  csSearch, csRegister, csComplaint,
+  csSearch, csRegister, csComplaint, branchList,
   managerQueue, managerAssign, managerReject,
   teamQueue, teamAssessmentSave, teamSubmit,
   seniorQueue, seniorRecommend,

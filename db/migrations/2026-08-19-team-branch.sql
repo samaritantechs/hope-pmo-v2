@@ -1,0 +1,32 @@
+-- =====================================================================================
+-- THE TEAMS TABLE LEARNS ITS BRANCH.
+--
+-- WHY
+--   "Registering a new customer is always by selecting branch so that the customer gets
+--    visible in manager assignment window then manager selects team to assign, now i think
+--    we should update a branch colomn for all teams in both HOPEPMO and HOPELOAN"
+--
+-- A team belongs to one branch. Customer service does not know, and should not have to know,
+-- which of a branch's several teams will end up serving a new customer -- that decision is the
+-- manager's, made from the branch and the customer's own landmark. So registration needs a
+-- BRANCH to select from, and the only honest source for "which branch is TUNDUMA in" is this
+-- column, once it exists.
+--
+-- WHAT IT ADDS -- one nullable column, no default, no data touched. Exactly the same shape as
+-- 2026-08-09-team-contacts.sql's region and zone, and like every migration here, OPTIONAL:
+-- until this is run, saveTeam drops `branch` rather than sending it, so the Teams & Staff
+-- screen keeps saving everything else and nothing breaks by this being late.
+--
+-- THE VALUES THEMSELVES are set separately, by 2026-08-19-team-branch-DATA.sql -- this file is
+-- structure only, so it is safe to run on a database that has never heard of a branch before.
+--
+-- SAFE TO RE-RUN. `if not exists`.
+-- INSTANT. A nullable column with no default is a catalogue change, not a rewrite.
+-- =====================================================================================
+
+alter table teams add column if not exists branch text;
+
+-- DID IT LAND? Reads the catalogue only, takes no locks, answers instantly.
+--
+-- select column_name from information_schema.columns
+-- where table_schema = 'public' and table_name = 'teams' and column_name = 'branch';

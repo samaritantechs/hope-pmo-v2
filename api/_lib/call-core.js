@@ -1381,6 +1381,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   const curTeam = {}, curName = {}, curRole = {}, curPhone = {};
   users0.forEach(r => { curTeam[r.user_id] = r.team || ''; curName[r.user_id] = r.name || ''; curRole[r.user_id] = r.role || ''; curPhone[r.user_id] = r.phone || ''; });
   const { posOf } = buildLeaderMaps(teamRows);
+  const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
 
   const rows = [];
   for (const r of logs) {
@@ -1442,12 +1443,12 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
       const u = users[k];
       /* The phone each officer REGISTERED with rides along, so the board that shows a name
          at zero can also ring that name -- the whole reason a supervisor is looking at it. */
-      return { name: u.name, team: u.team, position: positionOf(posOf, u.name, u.role), phone: u.phone || '', calls: u.calls, duration: u.dur,
+      return { name: u.name, team: u.team, branch: teamBranch.get(K(u.team)) || null, position: positionOf(posOf, u.name, u.role), phone: u.phone || '', calls: u.calls, duration: u.dur,
         portfolio: u.pf, nonPortfolio: u.npf, ratio: u.calls ? u.pf / u.calls : 0,
         uniqCustomers: Object.keys(u.uniq).length, days: Object.keys(u.days).length,
         expected: u.expected, defaulter: u.defaulter, connected: u.connected, connectRatio: u.calls ? u.connected / u.calls : 0 };
     }),
-    teams: Object.keys(teams).sort().map(k => { const t = teams[k]; return { team: t.team, calls: t.calls, duration: t.dur, portfolio: t.pf, nonPortfolio: t.npf, ratio: t.calls ? t.pf / t.calls : 0 }; }),
+    teams: Object.keys(teams).sort().map(k => { const t = teams[k]; return { team: t.team, branch: teamBranch.get(K(t.team)) || null, calls: t.calls, duration: t.dur, portfolio: t.pf, nonPortfolio: t.npf, ratio: t.calls ? t.pf / t.calls : 0 }; }),
     byCategory: Object.keys(byCategory).sort((a, b) => (CAT_ORDER[a] || 9) - (CAT_ORDER[b] || 9)).map(k => { const c = byCategory[k]; return { category: c.category, calls: c.calls, duration: c.dur, connected: c.connected, connectRatio: c.calls ? c.connected / c.calls : 0 }; }),
     byOutcome: Object.keys(byOutcome).sort((a, b) => (OUT_ORDER[a] || 9) - (OUT_ORDER[b] || 9)).map(k => { const o = byOutcome[k]; return { outcome: o.outcome, calls: o.calls, duration: o.dur }; }),
     totals,

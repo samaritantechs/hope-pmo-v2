@@ -83,6 +83,30 @@ test('the "admin" tab opens every HOPE Loan screen, mirroring HOPE PMO\'s own ad
 });
 
 /* =====================================================================================
+   BRANCH, NOT TEAM, IS WHAT REGISTRATION PICKS FROM.
+   =====================================================================================
+     "Registering a new customer is always by selecting branch so that the customer gets
+      visible in manager assignment window then manager selects team to assign"
+
+   branchList is deliberately narrow: distinct branch names only, nothing about who runs a
+   team or what number rings them -- customer service does not have the `teams` tab, and this
+   must not be a second door into the same roster. */
+test('branchList returns the distinct branches, and nothing else about a team', async () => {
+  const db = fakeDb({ teams: [
+    { team: 'MABIBO', branch: 'DAR EAST', recovery: 'SOMEBODY', recovery_no: '712000001' },
+    { team: 'SINZA', branch: 'DAR EAST' },       // same branch as MABIBO -- must not duplicate
+    { team: 'TUNDUMA', branch: 'TUNDUMA' },
+    { team: 'NO BRANCH YET', branch: null },     // migration run, this team just has none set
+  ] });
+  const { branches } = await loanApi(db, CS, 'branchList', {});
+  assert.deepEqual(branches, ['DAR EAST', 'TUNDUMA'], 'sorted, deduplicated, nulls dropped');
+});
+
+test('branchList is refused without the customer_service tab', async () => {
+  await assert.rejects(() => loanApi(fakeDb({}), MGR, 'branchList', {}), /customer_service/i);
+});
+
+/* =====================================================================================
    THE FULL PIPELINE, ONE LOAN, START TO FUNDED.
    ===================================================================================== */
 

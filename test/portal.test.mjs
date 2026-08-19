@@ -255,6 +255,34 @@ test('promises bucket against today, overdue first', async () => {
   assert.equal(d.promised, 200);
 });
 
+/* =====================================================================================
+   BRANCH RIDES ALONG, ON EVERY REPORT THIS PASS COULD REACH.
+   =====================================================================================
+     "The branches column is in all reports just before the team column"
+   One representative per shape: a per-customer list (followup), a per-team summary
+   (dashboardFull), and a customer-service register (complaints). All three read the same
+   branchByTeam() lookup, so proving it here is proving the lookup, not each call site. */
+test('followup and dashboardFull carry branch, straight off the teams table', async () => {
+  const t = tables();
+  t.teams[0].branch = 'KIBAHA-KONGOWE';   // KONGOWE
+  // MBAGALA's branch is left unset on purpose -- null, not a crash, not "(no team)".
+  const db = fakeDb(t);
+
+  const fu = await portalApi(db, ADMIN, 'followup', {}, NOW);
+  const kongoweRow = fu.rows.find(r => r.team === 'KONGOWE');
+  assert.equal(kongoweRow.branch, 'KIBAHA-KONGOWE');
+
+  const dash = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  const kongoweTeam = dash.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(kongoweTeam.branch, 'KIBAHA-KONGOWE');
+});
+
+test('a team with no branch set yet reads null, not a crash', async () => {
+  const d = await run('followup');   // tables()'s default fixture never sets .branch
+  assert.ok(d.rows.length, 'the fixture has rows to check');
+  for (const r of d.rows) assert.equal(r.branch, null);
+});
+
 test('follow-up rules are enforced server-side, and a comment updates both tables', async () => {
   const db = fakeDb(tables());
   await assert.rejects(() => portalApi(db, ADMIN, 'addComment', { ref: '999', fuStatus: 'AMETOA AHADI' }, NOW), /promise date/i);
@@ -479,6 +507,16 @@ test('call report reachable from the portal, scoped by the code', async () => {
   const g = await run('callReport', { from: TODAY, to: TODAY }, GMO);
   assert.deepEqual(g.scope, ['KONGOWE']);                   // live-resolved from teams.recovery
   assert.equal(g.totals.calls, 2);
+});
+
+test('call report carries branch on both the by-team board and the officer table', async () => {
+  const t = tables();
+  t.teams[0].branch = 'KIBAHA-KONGOWE';   // KONGOWE
+  const d = await portalApi(fakeDb(t), ADMIN, 'callReport', { from: TODAY, to: TODAY }, NOW);
+  const teamRow = d.teams.find(x => x.team === 'KONGOWE');
+  assert.equal(teamRow.branch, 'KIBAHA-KONGOWE');
+  const officer = d.users.find(u => u.team === 'KONGOWE');
+  assert.equal(officer.branch, 'KIBAHA-KONGOWE');
 });
 
 test('access codes: add, edit, delete -- and never your own', async () => {
@@ -1631,6 +1669,27 @@ test('hints group many tips per tab, and fall back across languages', async () =
   assert.deepEqual(d.tips.sw.all, ['Pakia kila siku.', 'Check the deck.']);   // no Swahili -> English stands in
   assert.deepEqual(d.tips.en.followup, ['Piga simu mapema.']);                // no English -> Swahili stands in
   assert.equal('' in d.tips.en, false);
+});
+
+/* =====================================================================================
+   THE TIPS TIMER HAD NOWHERE TO BE SET, BECAUSE NOTHING EVER READ IT.
+   =====================================================================================
+     "Am not seeing were to set tips timelapse in settings"
+
+   S.hintEverySec / S.hintHoldSec have always existed client-side with a hard-coded fallback
+   (240s / 7s) for when they are unset -- and nothing server-side ever set them, so the
+   fallback was the only value that could ever run. There was nowhere to see because there was
+   nothing to find: hints() carried no timing at all. */
+test('hints carries the tip timer, defaulting to the fallback the client always used', async () => {
+  const bare = await portalApi(fakeDb({ hints: [] }), ADMIN, 'hints', {}, NOW);
+  assert.equal(bare.everySec, 240, 'unset -- the same default the client fell back to');
+  assert.equal(bare.holdSec, 7);
+
+  const set = await portalApi(fakeDb({ hints: [], settings: [
+    { key: 'HINT_EVERY_SEC', value: '600' }, { key: 'HINT_HOLD_SEC', value: '12' } ] }),
+    ADMIN, 'hints', {}, NOW);
+  assert.equal(set.everySec, 600, 'a real setting now actually changes it');
+  assert.equal(set.holdSec, 12);
 });
 
 // An Exp.Def screen that is empty for a reason the officer cannot see costs a phone call and
@@ -3977,6 +4036,23 @@ test('a phone typed into the leaders form is stored the same shape as an uploade
   const { importTeams } = await import('../api/_lib/importers.js');
   const viaSheet = importTeams([['TEAM', 'RECOVERY NO'], ['KONGOWE', '0713 000 001']])[0];
   assert.equal(viaSheet.recovery_no, saved.recovery_no, 'both doors must agree, exactly');
+});
+
+/* "we should update a branch colomn for all teams in both HOPEPMO and HOPELOAN" -- branch is
+   the same optional-column shape as region and zone, so it gets the same guard: a database
+   that has not run 2026-08-19-team-branch.sql yet must still save everything else. */
+test('saveTeam writes branch once the migration has run, and drops it silently if not', async () => {
+  const ran = fakeDb({ ...tables(), teams: [{ team: 'KONGOWE', branch: null }] });
+  await portalApi(ran, ADMIN, 'saveTeam', { team: 'KONGOWE', branch: 'KIBAHA-KONGOWE' }, NOW);
+  assert.equal(ran._dump('teams').find(t => t.team === 'KONGOWE').branch, 'KIBAHA-KONGOWE');
+
+  // No row anywhere carries a `branch` key -- exactly what a database looks like before the
+  // migration is run, since existing() (readTeamsAll) is what the guard inspects.
+  const notRun = fakeDb({ ...tables(), teams: [{ team: 'KONGOWE' }] });
+  await portalApi(notRun, ADMIN, 'saveTeam', { team: 'KONGOWE', branch: 'KIBAHA-KONGOWE', gmo: 'GEE MO' }, NOW);
+  const row = notRun._dump('teams').find(t => t.team === 'KONGOWE');
+  assert.equal('branch' in row, false, 'dropped rather than sent as a column the database does not have');
+  assert.equal(row.gmo, 'GEE MO', 'the rest of the save still goes through');
 });
 
 test('only an admin may download the leaders sheet', async () => {
