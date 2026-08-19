@@ -2332,7 +2332,7 @@ VIEWS.dashboard = function(){
     });
     HEAD += '<div id="boards"><div class="sk"></div></div>';
     S.rows = d.teamPerf || [];
-    S.cols = [col('team','Team'), col('recovery','Recovery'), col('gmo','GMO'),
+    S.cols = [col('branch','Branch'), col('team','Team'), col('recovery','Recovery'), col('gmo','GMO'),
       col('initArrears','Init arrears','money'), col('curArrears','Current','money'),
       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
       col('sales','Sales','money'), col('salesPct','Sales %','pct'),
@@ -2368,9 +2368,9 @@ VIEWS.apps = function(){
     S.cols = [{key:'stage', label:'Stage', kind:'chip', chip:function(){ return 'mut'; },
         get:function(r){ return String(r.stage||'').replace(/_/g,' '); }},
       col('docket_no','Docket'), col('full_name','Customer'),
-      {key:'contact', label:'Contact', kind:'tel'}, col('team','Team'), col('product','Product'),
+      {key:'contact', label:'Contact', kind:'tel'}, col('branch','Branch'), col('team','Team'), col('product','Product'),
       col('requested_amt','Requested','money'), col('principal_amt','Principal','money'), col('loan_amt','Loan','money'),
-      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'), col('branch','Branch'),
+      col('approved_date','Approved','date'), col('disb_date','Disbursed','date'),
       // When the application was created and by whom -- both already stored, never shown.
       col('created_at','Date','dt'), col('created_by','By')];
     ONROW = null;
@@ -2744,7 +2744,7 @@ VIEWS.fureport = function(){
           [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')],
           sumRow(d.byOfficer, ['comments','customers']))
       + board('frTeam','Kwa timu / By team', null, d.byTeam,
-          [col('team','Team'), col('customers','Customers','num'), col('touched','Touched','num'), col('arrears','Arrears','money')],
+          [col('branch','Branch'), col('team','Team'), col('customers','Customers','num'), col('touched','Touched','num'), col('arrears','Arrears','money')],
           sumRow(d.byTeam, ['customers','touched','arrears']))
       + bar('<input type="date" data-arg="from" value="'+d.from+'"><input type="date" data-arg="to" value="'+d.to+'">'
         + '<select data-filter="team"><option value="">All teams</option>'
@@ -2964,7 +2964,7 @@ VIEWS.par = function(){
           [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')],
           sumRow(d.byStatus, ['customers','arrears']));
     S.rows = d.byTeam;
-    S.cols = [col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
+    S.cols = [col('branch','Branch'), col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
       {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
       col('balance','Balance','money'), col('par','PAR %','pct')];
     ONROW = null;
@@ -3032,11 +3032,11 @@ VIEWS.weekly = function(){
             + money(d.teamTotals.companyTarget) + ' (' + d.teamCount + ' teams).</div>')
       /* The five sections the weekly meeting walks, per team, in this order. */
       + board('wSales','Mauzo / Sales','approved principal vs per-team target', d.teams,
-          [col('team','Team'), col('sales','Sales','money'), col('salesPct','% of target','pct')],
+          [col('branch','Branch'), col('team','Team'), col('sales','Sales','money'), col('salesPct','% of target','pct')],
           {team:'', sales:d.teamTotals.sales, salesPct:d.teamTotals.salesPct})
       + board('wC16','Count 1–6 progress','defaulters paid ≤ 6 of 12 · cleared & reduced are the wins',
           d.teams.filter(function(r){ return r.c16>0; }),
-          [col('team','Team'), col('c16','Count 1–6','num'),
+          [col('branch','Branch'), col('team','Team'), col('c16','Count 1–6','num'),
            {key:'cleared', label:'Cleared', kind:'num', cls:function(){ return 'good'; }},
            {key:'reduced', label:'Reduced', kind:'num', cls:function(){ return 'good'; }},
            {key:'bad', label:'Bad', kind:'num', cls:function(){ return 'bad'; }},
@@ -3044,13 +3044,13 @@ VIEWS.weekly = function(){
           {team:'', c16:d.teamTotals.c16, cleared:d.teamTotals.cleared, reduced:d.teamTotals.reduced,
            bad:d.teamTotals.bad, stat:d.teamTotals.stat, success:d.teamTotals.success})
       + board('wColl','Makusanyo / Collection (Mon–Fri expected)','collected vs expected', d.teams,
-          [col('team','Team'), col('expected','Expected','money'), col('collected','Collected','money'),
+          [col('branch','Branch'), col('team','Team'), col('expected','Expected','money'), col('collected','Collected','money'),
            {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
            col('collPct','Collection %','pct')],
           {team:'', expected:d.teamTotals.expected, collected:d.teamTotals.collected,
            uncollected:d.teamTotals.uncollected, collPct:d.teamTotals.collPct})
       + board('wRec','Urejeshaji / Recovery','recovered ÷ the week’s uncollected', d.teams,
-          [col('team','Team'),
+          [col('branch','Branch'), col('team','Team'),
            {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
            {key:'recovered', label:'Recovered (week)', kind:'money', cls:function(r){ return r.recovered>0?'good':(r.recovered<0?'bad':''); }},
            // Leo, per team, beside the week -- which team moved TODAY is the question a
@@ -3063,7 +3063,7 @@ VIEWS.weekly = function(){
          debt fell, which is why it reads green with a minus sign in front of it. */
       + board('wDebt','Ongezeko la deni (Monday → '+esc(d.weekEndDate||'week end')+')',
           'green = debt fell (recovered) · red = debt rose', d.teams,
-          [col('team','Team'), col('mondayDebt','Monday debt','money'), col('curDebt','Current debt','money'),
+          [col('branch','Branch'), col('team','Team'), col('mondayDebt','Monday debt','money'), col('curDebt','Current debt','money'),
            // Pre-formatted, so kind stays 'num' (right-aligned) instead of being re-run
            // through money() -- a leading minus sign would come back as NaN.
            {key:'debtDelta', label:'Change', kind:'num', cls:function(r){ return r.debtDelta>=0?'good':'bad'; },
@@ -3185,7 +3185,7 @@ VIEWS.reports = function(){
              recovered:sec.totals.recovered, progress:sec.totals.progress, cleared:sec.totals.cleared});
         }).join('');
     S.rows = d.rows;
-    S.cols = [col('team','Team'), col('recovery','Recovery officer'), col('gmo','GMO'), col('manager','Manager'),
+    S.cols = [col('branch','Branch'), col('team','Team'), col('recovery','Recovery officer'), col('gmo','GMO'), col('manager','Manager'),
       col('initArrears','Initial','money'), col('curArrears','Current','money'), col('recovered','Recovered','money'),
       col('progress','Progress %','pct'), col('initCust','Init cust','num'), col('curCust','Cur cust','num'), col('cleared','Cleared','num')];
     ONROW = null;
@@ -3770,7 +3770,7 @@ var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
    collection officer. Optional columns: until 2026-08-09-team-contacts.sql is run, saveTeam
    drops them rather than sending them, so the form saves everything else exactly as before. */
 var TEAM_EXTRA = [
-  ['region', 'REGION'], ['zone', 'ZONE'],
+  ['region', 'REGION'], ['zone', 'ZONE'], ['branch', 'BRANCH'],
   ['opm_no', 'OPM No'], ['recovery_no', 'RECOVERY No'], ['gmo_no', 'GMO No'],
   ['manager_no', 'MANAGER No'], ['credit_no', 'C. ANALYST No'], ['expected_no', 'EXPECTED No'],
   ['bike_no', 'BIKE No'],
@@ -3861,7 +3861,7 @@ VIEWS.teams = function(){
           + '<a class="btn sm ghost" href="/upload?admin=1" style="margin-left:8px">\u2b06 Pakia iliyohaririwa / Upload the edited one</a>'
           + '<span style="font-size:12px;color:var(--mut);margin-left:8px">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
-    S.cols = [col('team','Team'),
+    S.cols = [col('branch','Branch'), col('team','Team'),
       // The code field officers sign in with. Shown in clear on purpose: the PMO reads it out
       // over the phone, and changes it the moment it leaks.
       {key:'team_code', label:'Msimbo / Code', cls:function(r){ return r.team_code?'':'bad'; },
@@ -4925,7 +4925,7 @@ function wireLnCs_(){
     srv('csSearch', { q: q }).then(function(d){
       S.rows = d.rows; S.cols = [
         col('docket', 'Docket'), col('full_name', 'Full name'),
-        { key:'mobile', label:'Phone', kind:'tel' }, col('team', 'Team'), col('branch', 'Branch')];
+        { key:'mobile', label:'Phone', kind:'tel' }, col('branch', 'Branch'), col('team', 'Team')];
       ONROW = function(r){ lnCsRegisterForm_(r); };
       drawView_();
     }).catch(function(e){ toast(String(e.message||e), true); });
@@ -4933,28 +4933,44 @@ function wireLnCs_(){
   var n = document.getElementById('lnCsNewBtn');
   if (n) n.onclick = function(){ lnCsRegisterForm_(null); };
 }
+/* BRANCH, NOT TEAM, AT REGISTRATION.
+
+     "Registering a new customer is always by selecting branch so that the customer gets
+      visible in manager assignment window then manager selects team to assign"
+
+   Customer service used to type a team in free text -- which meant either guessing which of a
+   branch's several teams would end up serving the customer, or leaving it blank. Now it picks
+   a BRANCH from what actually exists (srv('branchList'), the same list this session's
+   2026-08-19-team-branch.sql work put on the teams table), and the team is left for the
+   manager to decide from the branch and the landmark -- see lnManagerAssignForm_. */
 function lnCsRegisterForm_(existing){
-  drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
-    + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
-    + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
-    + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
-    + '<div class="fld"><label>Team</label><input id="lnTeam" value="' + esc(existing ? existing.team : '') + '"></div>'
-    + '<div class="fld"><label>Region</label><input id="lnRegion"></div>'
-    + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
-    + '<div class="fld"><label>Landmark</label><input id="lnLandmark"></div>'
-    + '<div class="fld"><label>Disbursement mode</label><input id="lnDisbMode" placeholder="Momo / Bank"></div>'
-    + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
-    + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
-  $('#lnCsSubmit').onclick = function(){
-    lnAct('csRegister', {
-      customer_id: existing ? existing.id : undefined,
-      docket: existing ? existing.docket : undefined,
-      full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
-      team: $('#lnTeam').value.trim(), region: $('#lnRegion').value.trim(),
-      district: $('#lnDistrict').value.trim(), landmark: $('#lnLandmark').value.trim(),
-      disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
-    }, 'Application registered.');
-  };
+  srv('branchList').then(function(bl){
+    var branches = bl.branches || [];
+    drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
+      + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
+      + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      + '<div class="fld"><label>Branch</label><select id="lnBranch">'
+        + '<option value="">' + (branches.length ? '— chagua tawi / choose a branch —' : 'Hakuna matawi -- run 2026-08-19-team-branch.sql / no branches -- run the migration') + '</option>'
+        + branches.map(function(b){ return '<option' + (existing && existing.branch === b ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Region</label><input id="lnRegion"></div>'
+      + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
+      + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
+      + '<div class="fld"><label>Disbursement mode</label><input id="lnDisbMode" placeholder="Momo / Bank"></div>'
+      + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
+      + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
+    $('#lnCsSubmit').onclick = function(){
+      lnAct('csRegister', {
+        customer_id: existing ? existing.id : undefined,
+        docket: existing ? existing.docket : undefined,
+        full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
+        branch: $('#lnBranch').value.trim(), region: $('#lnRegion').value.trim(),
+        district: $('#lnDistrict').value.trim(), landmark: $('#lnLandmark').value.trim(),
+        disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
+      }, 'Application registered.');
+    };
+  }).catch(function(e){ toast(String(e.message||e), true); });
 }
 
 /* ---------- Manager: assignment ---------- */
@@ -4962,7 +4978,8 @@ VIEWS.ln_manager = function(){
   return srv('managerQueue', {}).then(function(d){
     S.rows = d.rows; S.cols = [
       col('loan_id', 'Ref'), col('docket_no', 'Docket'), col('full_name', 'Customer'),
-      { key:'contact', label:'Phone', kind:'tel' }, col('team', 'Team'),
+      { key:'contact', label:'Phone', kind:'tel' }, col('branch', 'Branch'), col('team', 'Team'),
+      col('nearest_landmark', 'Landmark'),
       { key:'requested_amt', label:'Requested', kind:'money' }];
     ONROW = function(r){ lnManagerAssignForm_(r); };
     S.foot = money(d.rows.length) + ' waiting for assignment';
@@ -4971,6 +4988,10 @@ VIEWS.ln_manager = function(){
 function lnManagerAssignForm_(loan){
   drawer('<h3>' + esc(loan.full_name) + '</h3>'
     + '<div class="sub">Ref ' + esc(loan.loan_id) + ' &middot; Requested ' + money(loan.requested_amt) + '</div>'
+    // Branch and landmark are what a manager assigns FROM -- registration set the branch,
+    // not a team, precisely so this decision is made here, from where the customer actually is.
+    + '<div class="fld"><label>Branch</label><div style="padding:8px 0;font-weight:600">' + esc(loan.branch || '—') + '</div></div>'
+    + (loan.nearest_landmark ? '<div class="fld"><label>Landmark</label><div style="padding:8px 0">' + esc(loan.nearest_landmark) + '</div></div>' : '')
     + '<div class="fld"><label>Assign to team (or SHIFT to a different one of yours)</label><input id="lnAssignTeam" value="' + esc(loan.team || '') + '"></div>'
     + '<button class="btn w" id="lnAssignBtn">Assign</button>'
     + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');

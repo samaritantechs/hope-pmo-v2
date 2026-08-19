@@ -942,6 +942,7 @@ async function followupReport(db, user, { from, to }, nowMs) {
     const k = K(v);
     return k.includes('CHRON') ? 'chronic' : k.includes('EXPIR') ? 'expired' : 'defaulters';
   };
+  const teamBranch = await branchByTeam(db);
   const byStatus = {}, byOfficer = {}, byTeam = {};
   for (const r of mineFu) {
     const k = K(r.fu_status) || '(NOT TOUCHED)';
@@ -949,7 +950,7 @@ async function followupReport(db, user, { from, to }, nowMs) {
     byStatus[k].customers++; byStatus[k].arrears += num(r.arrears);
     byStatus[k][catOf(r.status)]++;
     const t = r.team || '(no team)';
-    if (!byTeam[t]) byTeam[t] = { team: t, customers: 0, touched: 0, arrears: 0 };
+    if (!byTeam[t]) byTeam[t] = { team: t, branch: teamBranch.get(K(t)) || null, customers: 0, touched: 0, arrears: 0 };
     byTeam[t].customers++; byTeam[t].arrears += num(r.arrears);
     if (r.fu_status) byTeam[t].touched++;
   }
@@ -1972,6 +1973,7 @@ async function par(db, user, _args, nowMs) {
   const rows = scoped(user, snap.rows);
   const bands = PAR_BANDS.map(b => ({ band: b.key, customers: 0, arrears: 0 }));
   const pbands = PRINCIPAL_BANDS.map(b => ({ band: b.label, customers: 0, arrears: 0, balance: 0, loanSum: 0 }));
+  const teamBranch = await branchByTeam(db);
   const byStatus = {}, byTeam = {};
   let totArrears = 0, totBalance = 0, totLoan = 0;
   for (const r of rows) {
@@ -1995,7 +1997,7 @@ async function par(db, user, _args, nowMs) {
   return { date: snap.date, weekday: currentWeekday(nowMs), bands,
     byBand: pbands.map(b => ({ band: b.band, ...finish(b) })),
     byStatus: Object.values(byStatus).sort((a, b) => b.arrears - a.arrears),
-    byTeam: Object.values(byTeam).map(t => ({ team: t.team, ...finish(t) })).sort((a, b) => b.arrears - a.arrears),
+    byTeam: Object.values(byTeam).map(t => ({ team: t.team, branch: teamBranch.get(K(t.team)) || null, ...finish(t) })).sort((a, b) => b.arrears - a.arrears),
     totals: { customers: rows.length, arrears: totArrears, balance: totBalance,
       avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance) } };
 }
@@ -2127,7 +2129,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const leadBy = {};
   for (const t of teamRows) leadBy[K(t.team)] = t;
   const teamsOut = Object.values(T).map(b => ({
-    team: b.key, lead: leadBy[K(b.key)] || {},
+    team: b.key, branch: (leadBy[K(b.key)] || {}).branch || null, lead: leadBy[K(b.key)] || {},
     sales: b.sales, salesPct: pctOf(b.sales, perTarget),
     expected: b.expected, collected: b.collected, uncollected: b.uncollected,
     collPct: pctOf(b.collected, b.expected),
@@ -2197,7 +2199,11 @@ const TEAM_PHONE_OF = {
   credit: 'credit_no', expected: 'expected_no', bike: 'bike_no',
   legal: 'legal_no', collection: 'collection_no',
 };
-const TEAM_OPTIONAL_COLS = ['region', 'zone', 'legal', 'collection']
+/* `branch` -- 2026-08-19-team-branch.sql. A team belongs to one branch; customer service picks
+   a branch at registration without needing to know which of its teams will end up serving the
+   customer, so the branch has to live somewhere, and this is the same optional-column pattern
+   as region and zone right beside it. */
+const TEAM_OPTIONAL_COLS = ['region', 'zone', 'branch', 'legal', 'collection']
   .concat(Object.values(TEAM_PHONE_OF));
 
 /** Leader Reports / Team Progress: per-team initial vs current arrears, recovered and
@@ -2213,7 +2219,7 @@ async function teamProgress(db, user, _args, nowMs) {
   const by = {};
   const bump = (team, field, v) => {
     const t = team || '(no team)';
-    if (!by[t]) by[t] = { team: t, initArrears: 0, curArrears: 0, initCust: 0, curCust: 0, recovery: null, gmo: null, manager: null };
+    if (!by[t]) by[t] = { team: t, initArrears: 0, curArrears: 0, initCust: 0, curCust: 0, recovery: null, gmo: null, manager: null, branch: null };
     by[t][field] += v;
   };
   for (const r of scoped(user, ini.rows)) { bump(r.team, 'initArrears', num(r.arrears)); bump(r.team, 'initCust', 1); }
@@ -2221,6 +2227,7 @@ async function teamProgress(db, user, _args, nowMs) {
   for (const t of teamsRows) {
     if (!by[t.team]) continue;
     by[t.team].recovery = t.recovery || null; by[t.team].gmo = t.gmo || null; by[t.team].manager = t.manager || null;
+    by[t.team].branch = t.branch || null;
   }
   const rows = Object.values(by).map(r => ({
     ...r,
@@ -4823,6 +4830,19 @@ const teamsCache = new WeakMap();
 
 export function noteTeamsWritten(db) { teamsCache.delete(db); }
 
+/** Every per-team board reads readTeamsAll's own 20-second cache, so this almost never costs a
+    round trip of its own -- whatever report called it has usually already warmed the cache
+    resolving OPM/GMO/manager names for the same rows. A Map, not a plain object, because a team
+    name is looked up by its normalised key (K()) and a Map does not collide with a JS built-in
+    ("constructor", "toString") the way `{}` can. See "the branches column is in all reports
+    just before the team column" -- this is the one place that answer is worked out. */
+async function branchByTeam(db, nowMs) {
+  const rows = await readTeamsAll(db, nowMs);
+  const by = new Map();
+  for (const t of rows || []) by.set(K(t.team), t.branch || null);
+  return by;
+}
+
 async function readTeamsAll(db, nowMs) {
   const at = nowMs || Date.now();
   const hit = teamsCache.get(db);
@@ -5102,7 +5122,7 @@ async function dashboardFull(db, user, args, nowMs) {
   const T = {};
   const slot = t => {
     const k = t || '(no team)';
-    if (!T[k]) T[k] = { team: k, recovery: null, gmo: null, manager: null, opm: null, bike: null,
+    if (!T[k]) T[k] = { team: k, branch: null, recovery: null, gmo: null, manager: null, opm: null, bike: null,
       initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesMonth: 0, salesPct: null,
       expToday: 0, colToday: 0, collPctToday: null, expEarly: 0, colEarly: 0, collPctEarly: null,
       expWeek: 0, colWeek: 0, collPctWeek: null,
@@ -5113,7 +5133,7 @@ async function dashboardFull(db, user, args, nowMs) {
   for (const t of myTeams) {
     const s = slot(t.team);
     s.recovery = t.recovery || null; s.gmo = t.gmo || null; s.manager = t.manager || null;
-    s.opm = t.opm || null; s.bike = t.bike || null;
+    s.opm = t.opm || null; s.bike = t.bike || null; s.branch = t.branch || null;
   }
   for (const r of iniToday) slot(r.team).initArrears += num(r.arrears_amt);
   for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears_amt); s.defaulters += num(r.customers); }

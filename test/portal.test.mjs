@@ -4000,6 +4000,23 @@ test('a phone typed into the leaders form is stored the same shape as an uploade
   assert.equal(viaSheet.recovery_no, saved.recovery_no, 'both doors must agree, exactly');
 });
 
+/* "we should update a branch colomn for all teams in both HOPEPMO and HOPELOAN" -- branch is
+   the same optional-column shape as region and zone, so it gets the same guard: a database
+   that has not run 2026-08-19-team-branch.sql yet must still save everything else. */
+test('saveTeam writes branch once the migration has run, and drops it silently if not', async () => {
+  const ran = fakeDb({ ...tables(), teams: [{ team: 'KONGOWE', branch: null }] });
+  await portalApi(ran, ADMIN, 'saveTeam', { team: 'KONGOWE', branch: 'KIBAHA-KONGOWE' }, NOW);
+  assert.equal(ran._dump('teams').find(t => t.team === 'KONGOWE').branch, 'KIBAHA-KONGOWE');
+
+  // No row anywhere carries a `branch` key -- exactly what a database looks like before the
+  // migration is run, since existing() (readTeamsAll) is what the guard inspects.
+  const notRun = fakeDb({ ...tables(), teams: [{ team: 'KONGOWE' }] });
+  await portalApi(notRun, ADMIN, 'saveTeam', { team: 'KONGOWE', branch: 'KIBAHA-KONGOWE', gmo: 'GEE MO' }, NOW);
+  const row = notRun._dump('teams').find(t => t.team === 'KONGOWE');
+  assert.equal('branch' in row, false, 'dropped rather than sent as a column the database does not have');
+  assert.equal(row.gmo, 'GEE MO', 'the rest of the save still goes through');
+});
+
 test('only an admin may download the leaders sheet', async () => {
   await assert.rejects(() => portalApi(fakeDb(tables()), GMO, 'teamsExport', {}, NOW),
     e => e.status === 403);
