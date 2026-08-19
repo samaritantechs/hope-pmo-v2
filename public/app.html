@@ -2408,7 +2408,7 @@ VIEWS.expected = function(){
         + '</div>';
     S.rows = d.rows;
     S.cols = [col('ref','REF'), col('full_name','Fullname'),
-      {key:'contact', label:'Contact#', kind:'tel'}, col('team','Team'),
+      {key:'contact', label:'Contact#', kind:'tel'}, col('branch','Branch'), col('team','Team'),
       col('due_summary','Due summary'), col('initial_inst','Installment','money'),
       col('payment_expected','Expected','money'), col('todays_payment','Paid','money'),
       {key:'todays_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.todays_status); }},
@@ -2569,7 +2569,7 @@ VIEWS.defexp = function(){
               return '<option'+(S.filters.leader===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
         + '</div>';
     S.rows = onDay;
-    S.cols = [col('team','Team'), col('ref','REF#'), col('full_name','Fullname'),
+    S.cols = [col('branch','Branch'), col('team','Team'), col('ref','REF#'), col('full_name','Fullname'),
       {key:'contact', label:'Contact#', kind:'tel'},
       {key:'slot', label:'Visit', kind:'chip', chip:function(r){ return !r.primary?'mut':(r.primary===day?'ok':'warn'); },
        get:function(r){ return !r.primary ? 'No date' : (r.primary===day ? 'Day 1' : 'Day 2'); }},
@@ -2609,7 +2609,7 @@ VIEWS.assignments = function(){
       + tableSimple(d.byLeader, [col('leader','Leader'), col('role','Role'), col('customers','Customers','num'),
           col('touched','Touched','num'), col('arrears','Arrears','money')]) + '</div>';
     S.rows = d.rows;
-    S.cols = [col('ref','REF'), col('full_name','Customer'), col('team','Team'),
+    S.cols = [col('ref','REF'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'),
       {key:'contact', label:'Contact', kind:'tel'}, col('arrears','Arrears','money'),
       {key:'phase', label:'Phase', kind:'chip', chip:function(r){
         return r.phase==='CHRONIC'?'bad':r.phase==='EXPIRED'?'warn':'mut'; }},
@@ -2631,7 +2631,7 @@ VIEWS.assignments = function(){
    then the dates that say how long this has been going on, then the money, then what was done
    about it -- rather than the money interrupting the contact details half way down the row. */
 function FOLLOWUP_COLS(){
-  return [col('team','Team'), col('ref','REF'), col('full_name','Customer'),
+  return [col('branch','Branch'), col('team','Team'), col('ref','REF'), col('full_name','Customer'),
     {key:'contact', label:'Contact', kind:'tel'},
     {key:'new_no', label:'New no', kind:'tel'},
     col('guarantor_name','Guarantor'),
@@ -2700,7 +2700,7 @@ VIEWS.promises = function(){
     S.rows = d.rows;
     S.cols = [{key:'bucket', label:'When', kind:'chip', chip:function(r){
         return r.bucket==='overdue'?'bad':r.bucket==='today'?'warn':r.bucket==='upcoming'?'ok':'mut'; }},
-      col('promise_date','Promise date','date'), col('ref','REF#'), col('full_name','Fullname'), col('team','Team'),
+      col('promise_date','Promise date','date'), col('ref','REF#'), col('full_name','Fullname'), col('branch','Branch'), col('team','Team'),
       {key:'contact', label:'Contact#', kind:'tel'},
       col('arrears_before','Arrears before','money'),
       col('promise_amt','Promise TZS','money'),
@@ -2759,7 +2759,7 @@ VIEWS.fureport = function(){
         + '<span class="chip">'+money(d.rows.length)+' follow-ups logged</span>');
     // The log itself is the evidence; every summary above is only an index into it.
     S.rows = d.rows;
-    S.cols = [col('at','When','dt'), col('by','Officer'), col('team','Team'), col('ref','REF#'),
+    S.cols = [col('at','When','dt'), col('by','Officer'), col('branch','Branch'), col('team','Team'), col('ref','REF#'),
       col('full_name','Fullname'),
       {key:'fu_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
       {key:'promise_date', label:'Promise', kind:'text', get:function(r){
@@ -3391,7 +3391,7 @@ VIEWS.calls = function(){
           sumRow(d.byOutcome||[], ['calls','duration']))
       + '</div>'
       + board('clTeam','Kwa timu / By team', 'portfolio vs non-portfolio per team', d.teams||[],
-          [col('team','Team'), col('calls','Calls','num'), col('duration','Talk time','dur'),
+          [col('branch','Branch'), col('team','Team'), col('calls','Calls','num'), col('duration','Talk time','dur'),
            {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
            col('nonPortfolio','Non-portfolio','num'),
            {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }}],
@@ -3415,7 +3415,7 @@ VIEWS.calls = function(){
     /* The officer table is the person's own report, so it is drawn only when there is a person.
        Before that the page is the summaries and the search, and nothing else. */
     S.rows = d.user ? d.users : [];
-    S.cols = [col('name','Officer'), col('team','Team'), col('position','Position'), col('calls','Calls','num'),
+    S.cols = [col('name','Officer'), col('branch','Branch'), col('team','Team'), col('position','Position'), col('calls','Calls','num'),
       col('duration','Talk time','dur'),
       {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
       col('nonPortfolio','Non-portfolio','num'),
@@ -3453,7 +3453,7 @@ VIEWS.complaints = function(){
         + '<button class="btn sm" id="newComplaint">+ Malalamiko mapya / New complaint</button>');
     S.rows = d.rows;
     S.cols = [col('created_at','Date','dt'), col('complainant','Complainant'),
-      {key:'phone', label:'Phone', kind:'tel'}, col('ref','REF#'), col('team','Team'),
+      {key:'phone', label:'Phone', kind:'tel'}, col('ref','REF#'), col('branch','Branch'), col('team','Team'),
       col('category','Category'), col('channel','Channel'),
       {key:'status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.status); }},
       col('details','Details'), col('logged_by','Logged by'), col('resolution','Resolution')];
@@ -3480,7 +3480,7 @@ VIEWS.restructure = function(){
         + (d.canApprove ? '<span class="chip ok">You can approve</span>'
                         : '<span class="chip mut">View only — you cannot approve</span>'));
     S.rows = d.rows;
-    S.cols = [col('created_at','Requested','dt'), col('ref','REF#'), col('full_name','Customer'), col('team','Team'),
+    S.cols = [col('created_at','Requested','dt'), col('ref','REF#'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'),
       col('dc','DC','num'), col('arrears','Arrears','money'), col('first_inst','First','money'),
       col('remaining','Remaining','money'), col('interest_amt','Interest','money'),
       col('total','Total','money'), col('installments','Inst','num'),
@@ -3510,7 +3510,7 @@ VIEWS.legal = function(){
         + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena. / Tap a row to reprint.</span>');
     S.rows = d.rows;
     S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
-      col('ref','REF#'), col('full_name','Customer'), col('team','Team'),
+      col('ref','REF#'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'),
       {key:'contact', label:'Contact', kind:'tel'}, col('notice_days','Days','num'),
       col('paid_count','Paid','num'),
       // "At notice" rather than "Arrears": the point of the next two columns is that this one
@@ -3743,7 +3743,7 @@ VIEWS.credit = function(){
     S.rows = d.portfolio;
     /* The guarantor and their number: this is a list for RINGING PEOPLE, and the number you
        ring when the customer does not answer was the one column not on it. */
-    S.cols = [col('ref','REF#'), col('full_name','Customer'), col('team','Team'), col('analyst','Analyst'),
+    S.cols = [col('ref','REF#'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'), col('analyst','Analyst'),
       {key:'contact', label:'Contact', kind:'tel'},
       col('guarantor_name','Guarantor'),
       {key:'guarantor_contact', label:'G. Contact', kind:'tel'},
@@ -4487,7 +4487,7 @@ function presSlides(){
     var tpBasis = d.teamPerf && d.teamPerf.length ? d.teamPerf[0].basis : 'today';
     var tpLab = tpBasis === 'week' ? ' (week)' : ' (today)';
     slides.push({ id:'teams', kind:'table', title:'Team performance — best first', rows:d.teamPerf.slice(0,12),
-      cols:[col('team','Team'),
+      cols:[col('branch','Branch'), col('team','Team'),
         col('salesMonth','Monthly sales','money'),
         col('curArrears','Total def','money'), col('defaulters','No. of def','num'),
         col('uncollected','Uncollected'+tpLab,'money'), col('collPct','Collection %'+tpLab,'pct'),
@@ -5007,7 +5007,7 @@ function lnManagerAssignForm_(loan){
 VIEWS.ln_team = function(){
   return srv('teamQueue', {}).then(function(d){
     S.rows = d.rows; S.cols = [
-      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('branch', 'Branch'), col('team', 'Team'),
       { key:'contact', label:'Phone', kind:'tel' }, col('stage', 'Stage')];
     ONROW = function(r){ lnTeamAssessForm_(r); };
   });
@@ -5067,7 +5067,7 @@ VIEWS.ln_senior = function(){
     + '<option value="opm"' + (tier==='opm'?' selected':'') + '>OPM (6M+, MAY)</option></select>');
   return srv('seniorQueue', { tier: tier }).then(function(d){
     S.rows = d.rows; S.cols = [
-      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('branch', 'Branch'), col('team', 'Team'),
       { key:'team_recomm', label:'Recommended', kind:'money' }];
     ONROW = function(r){ lnSeniorForm_(r, tier); };
   });
@@ -5091,7 +5091,7 @@ function lnSeniorForm_(loan, tier){
 VIEWS.ln_credit = function(){
   return srv('creditQueue', {}).then(function(d){
     S.rows = d.rows; S.cols = [
-      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('branch', 'Branch'), col('team', 'Team'),
       { key:'team_recomm', label:'Recommended', kind:'money' },
       { key:'gmo_recommend', label:'GMO said', kind:'money' }];
     ONROW = function(r){ lnCreditForm_(r); };
@@ -5131,7 +5131,7 @@ VIEWS.ln_disburse = function(){
   return srv('disburseQueue', {}).then(function(d){
     HEAD = '<div class="kpis">' + kpi('Dirisha / Window', d.windowOpen ? 'WAZI / OPEN' : 'FUNGWA / CLOSED', null, d.windowOpen ? 'good' : 'bad') + '</div>';
     S.rows = d.rows; S.cols = [
-      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('team', 'Team'),
+      col('loan_id', 'Ref'), col('full_name', 'Customer'), col('branch', 'Branch'), col('team', 'Team'),
       { key:'principal_amt', label:'Granted', kind:'money' }, { key:'net_disbursed', label:'To disburse', kind:'money' }];
     ONROW = function(r){ lnDisburseForm_(r, d.windowOpen); };
   });
@@ -5298,7 +5298,7 @@ VIEWS.ln_reversals = function(){
     if (scope === 'eligible') {
       S.rows = d.eligible;
       S.cols = [col('ref', 'Ref'), col('docket', 'Docket'), col('full_name', 'Customer'),
-        col('team', 'Team'), { key:'amount', label:'Amount', kind:'money' }];
+        col('branch', 'Branch'), col('team', 'Team'), { key:'amount', label:'Amount', kind:'money' }];
       ONROW = function(r){ lnRevRequestForm_(r); };
       S.foot = 'Bofya safu kuomba kurudishwa / Tap a row to request a reversal';
     } else {

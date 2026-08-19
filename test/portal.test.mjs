@@ -255,6 +255,34 @@ test('promises bucket against today, overdue first', async () => {
   assert.equal(d.promised, 200);
 });
 
+/* =====================================================================================
+   BRANCH RIDES ALONG, ON EVERY REPORT THIS PASS COULD REACH.
+   =====================================================================================
+     "The branches column is in all reports just before the team column"
+   One representative per shape: a per-customer list (followup), a per-team summary
+   (dashboardFull), and a customer-service register (complaints). All three read the same
+   branchByTeam() lookup, so proving it here is proving the lookup, not each call site. */
+test('followup and dashboardFull carry branch, straight off the teams table', async () => {
+  const t = tables();
+  t.teams[0].branch = 'KIBAHA-KONGOWE';   // KONGOWE
+  // MBAGALA's branch is left unset on purpose -- null, not a crash, not "(no team)".
+  const db = fakeDb(t);
+
+  const fu = await portalApi(db, ADMIN, 'followup', {}, NOW);
+  const kongoweRow = fu.rows.find(r => r.team === 'KONGOWE');
+  assert.equal(kongoweRow.branch, 'KIBAHA-KONGOWE');
+
+  const dash = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  const kongoweTeam = dash.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(kongoweTeam.branch, 'KIBAHA-KONGOWE');
+});
+
+test('a team with no branch set yet reads null, not a crash', async () => {
+  const d = await run('followup');   // tables()'s default fixture never sets .branch
+  assert.ok(d.rows.length, 'the fixture has rows to check');
+  for (const r of d.rows) assert.equal(r.branch, null);
+});
+
 test('follow-up rules are enforced server-side, and a comment updates both tables', async () => {
   const db = fakeDb(tables());
   await assert.rejects(() => portalApi(db, ADMIN, 'addComment', { ref: '999', fuStatus: 'AMETOA AHADI' }, NOW), /promise date/i);
@@ -479,6 +507,16 @@ test('call report reachable from the portal, scoped by the code', async () => {
   const g = await run('callReport', { from: TODAY, to: TODAY }, GMO);
   assert.deepEqual(g.scope, ['KONGOWE']);                   // live-resolved from teams.recovery
   assert.equal(g.totals.calls, 2);
+});
+
+test('call report carries branch on both the by-team board and the officer table', async () => {
+  const t = tables();
+  t.teams[0].branch = 'KIBAHA-KONGOWE';   // KONGOWE
+  const d = await portalApi(fakeDb(t), ADMIN, 'callReport', { from: TODAY, to: TODAY }, NOW);
+  const teamRow = d.teams.find(x => x.team === 'KONGOWE');
+  assert.equal(teamRow.branch, 'KIBAHA-KONGOWE');
+  const officer = d.users.find(u => u.team === 'KONGOWE');
+  assert.equal(officer.branch, 'KIBAHA-KONGOWE');
 });
 
 test('access codes: add, edit, delete -- and never your own', async () => {

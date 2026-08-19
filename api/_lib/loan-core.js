@@ -705,7 +705,7 @@ async function reversalsList(db, user) {
        one loan is two people about to close the same contract. */
     eligible: loans.filter(l => !openIds.has(String(l.id))).map(l => ({
       loan_id: l.id, ref: l.loan_id, docket: l.docket_no, full_name: l.full_name,
-      team: l.team, amount: l.net_disbursed,
+      team: l.team, branch: l.branch, amount: l.net_disbursed,
     })),
   };
 }

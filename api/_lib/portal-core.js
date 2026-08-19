@@ -754,6 +754,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
    second, differently-computed truth appearing on a second screen. */
 async function followup(db, user, args = {}, nowMs = Date.now()) {
   const today = todayKey(nowMs);
+  const teamBranch = await branchByTeam(db, nowMs);
   const [raw, comments, iniSnap] = await Promise.all([
     fetchAll(() => onTeams(db.from('followup_status').select('*').order('arrears', { ascending: false }), user.teams)),
     /* Only the comments that CARRY a replacement number. This was reading every comment ever
@@ -784,6 +785,7 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
     const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
     return {
       ...r,
+      branch: teamBranch.get(K(r.team)) || null,
       /* A defaulter who has paid says so, here as on the phone: zero or negative arrears
          with no status left officers ringing people whose debt is gone. Only the balance
          itself proves it -- a null arrears is unknown, never "paid". */
@@ -867,6 +869,7 @@ async function addComment(db, user, p, nowMs) {
     -- and a customer who has left the defaulter deck entirely reads CLEARED rather than 0. */
 async function promises(db, user, { from, to } = {}, nowMs) {
   const today = todayKey(nowMs);
+  const teamBranch = await branchByTeam(db, nowMs);
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : null;
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : null;
   const [all, cm, curSnap] = await Promise.all([
@@ -894,6 +897,7 @@ async function promises(db, user, { from, to } = {}, nowMs) {
     const curArr = cleared ? 0 : stillOwing[k];
     const arrBefore = num(r.arrears);
     return { ...r,
+      branch: teamBranch.get(K(r.team)) || null,
       arrears_before: arrBefore, arrears_now: curArr, cleared,
       recovered: Math.max(0, arrBefore - curArr),
       taken_by: (firstCm[k] && firstCm[k].created_by) || r.comment_by || null,
@@ -978,7 +982,8 @@ async function followupReport(db, user, { from, to }, nowMs) {
 
   const log = mineCm.slice()
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
-    .map(c => ({ at: c.created_at, by: c.created_by || '(unknown)', team: c.team, ref: c.ref,
+    .map(c => ({ at: c.created_at, by: c.created_by || '(unknown)', team: c.team,
+      branch: teamBranch.get(K(c.team)) || null, ref: c.ref,
       full_name: c.full_name, fu_status: c.fu_status, promise_date: c.promise_date,
       promise_amt: num(c.promise_amt), comment: c.comment }));
 
@@ -1044,12 +1049,13 @@ async function complaints(db, user, { from, to } = {}, nowMs) {
   const all = await fetchAll(() => onTeams(db.from('complaints').select('*')
     .gte('created_at', fromKey).lte('created_at', toKey + 'T23:59:59.999Z')
     .order('created_at', { ascending: false }), user.teams));
+  const teamRows = await readTeamsAll(db, nowMs);
+  const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
   const rows = scoped(user, all).filter(r => {
     const d = dayOf(r.created_at);
     return d >= fromKey && d <= toKey;
-  });
+  }).map(r => ({ ...r, branch: teamBranch.get(K(r.team)) || null }));
   const today = todayKey(nowMs);
-  const teamRows = await fetchAll(() => db.from('teams').select('team'));
   return { rows, count: rows.length, from: fromKey, to: toKey,
     open: rows.filter(r => cxOpen(r.status)).length,
     resolved: rows.filter(r => !cxOpen(r.status)).length,
@@ -1286,8 +1292,9 @@ async function restructureContract(db, user, { id, ref } = {}) {
 }
 
 async function restructures(db, user, _args, nowMs) {
-  const [r, strat] = await Promise.all([listTable(db, user, 'restructures'), restructureStrategy(db)]);
+  const [r, strat, teamBranch] = await Promise.all([listTable(db, user, 'restructures'), restructureStrategy(db), branchByTeam(db, nowMs)]);
   const rows = r.rows.map(x => ({ ...x,
+    branch: teamBranch.get(K(x.team)) || null,
     schedule: restructureSchedule(num(x.total), num(x.installments), num(x.inst_amt), x.start_date) }));
   return { rows, count: rows.length, strategy: strat,
     canApprove: canApproveRestructure(user, strat),
@@ -1703,9 +1710,10 @@ async function notifSeen(db, user, _p, nowMs = Date.now()) {
 }
 
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
-  const [r, cur] = await Promise.all([
+  const [r, cur, teamBranch] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
+    branchByTeam(db, nowMs),
   ]);
   const nowBy = {};
   for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
@@ -1719,6 +1727,7 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
     // customer would look cleared and the tab would report a triumph that never happened.
     const current = known ? nowBy[key] : (seen ? 0 : null);
     return { ...x,
+      branch: teamBranch.get(K(x.team)) || null,
       arrears_now: current,
       recovered_since: current == null ? null : Math.max(0, at - current),
       // What a person working the notice needs to see at a glance.
@@ -2675,7 +2684,7 @@ async function assignments(db, user, _args, nowMs) {
     const team = teamBy[K(r.team)] || {};
     const leader = team[ROLE_COLS[a.role]] || '';
     return { ref: r.ref, full_name: r.full_name, contact: r.contact, guarantor_contact: r.guarantor_contact,
-      team: r.team, arrears: num(r.arrears), status: r.status, ds: r.ds, dc: r.dc,
+      team: r.team, branch: team.branch || null, arrears: num(r.arrears), status: r.status, ds: r.ds, dc: r.dc,
       days_elapsed: r.days_elapsed, phase: a.phase, role: a.role, cycle: a.label,
       leader: leader || '(unassigned)', assigned: !!leader,
       fu_status: f.fu_status || '', officer: f.comment_by || '', touched_at: f.comment_at || '',
@@ -2827,7 +2836,7 @@ async function credit(db, user, _args, nowMs) {
     const k = K(d.ref), cur = num(d.arrears);
     // No Monday record means new this week -- 0 recovered rather than silently dropped.
     const initA = Object.prototype.hasOwnProperty.call(iniArrBy, k) ? iniArrBy[k] : cur;
-    return { ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
+    return { ref: d.ref, full_name: d.full_name, team: d.team, branch: (teamBy[K(d.team)] || {}).branch || null, contact: d.contact,
       /* THE GUARANTOR, which is who an officer rings when the customer will not answer -- and
          was the one column missing from a list whose entire purpose is ringing people. */
       guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
@@ -5310,7 +5319,8 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
     snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs), ...dayOpts });
     fellBack = true;
   }
-  const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r) }));
+  const teamBranch = await branchByTeam(db, nowMs);
+  const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r), branch: teamBranch.get(K(r.team)) || null }));
   const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
   const col = rows.reduce((s, r) => s + r.collected, 0);
   const st = {};
