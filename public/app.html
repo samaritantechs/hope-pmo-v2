@@ -928,6 +928,91 @@ function settingVal(rows, key, dflt){
   var r = (rows||[]).find(function(x){ return x.key === key; });
   return r ? r.value : dflt;
 }
+
+/* THE SETTINGS THAT RUN THE BUSINESS, NAMED, NOT HIDDEN.
+     "i needed these settings at seetings from the fresh start as i did in version one"
+   Every one of these already worked as a setting -- readable through the generic key/value
+   box if you already knew the exact key to type. That is not the same as being IN Settings:
+   the sales-target mismatch (1.58B shown, ~370m expected) was exactly this -- a setting nobody
+   knew existed, quietly running on its built-in fallback. These are the same keys the server
+   has always read (see settingNum/settingGet call sites in portal-core.js and call-core.js),
+   given a label, a current value and a Save button, grouped the way a person filling them in
+   from scratch would think about them. Nothing new is invented; everything here already had a
+   fallback default, which is why leaving a field exactly as shown changes nothing. */
+var SETTINGS_GROUPS = [
+  { id:'salesTarget', title:'Malengo ya mauzo / Sales targets', sub:'kila timu / per team',
+    preview:true, fields:[
+      { key:'SALES_TARGET_WEEKLY', label:'Kwa wiki (siku 5 za kazi) / Per week (5 working days), TZS',
+        type:'number', dflt:'100000000',
+        note:'Dashibodi na ripoti ya wiki: hii ÷ 5 × idadi ya timu = lengo la kampuni kwa siku. / The Dashboard and weekly report divide this by 5 and multiply by the number of teams for the whole-company daily figure.' },
+      { key:'SALES_TARGET_MONTHLY', label:'Kwa mwezi / Per month, TZS', type:'number', dflt:'400000000',
+        note:'HOPE Calls scorecard pekee. / HOPE Calls scorecard only -- a separate board from the two above.' },
+    ] },
+  { id:'rotation', title:'Mzunguko wa kufuatilia wadaiwa / Recycling rotation',
+    sub:'nani anamiliki mdaiwa wiki hii / who owns a defaulter this week', fields:[
+      { key:'ASSIGN_ACTIVE', label:'Hai / Active -- mfululizo, ukitenganisha kwa mkato',
+        type:'text', dflt:'BIKE,MANAGER,GMO' },
+      { key:'ASSIGN_CHRONIC', label:'Sugu / Chronic', type:'text', dflt:'BIKE,GMO,MANAGER' },
+      { key:'ASSIGN_EXPIRED', label:'Muda umepita / Expired', type:'text', dflt:'MANAGER,GMO' },
+      { key:'ASSIGN_GRACE_WEEKS', label:'Wiki za neema kabla ya kuwa sugu / Grace weeks before chronic',
+        type:'number', dflt:'2' },
+      { key:'ASSIGN_BUCKET_DAYS', label:'Siku kabla ya kuzunguka (Hai) / Days before rotating (Active)',
+        type:'number', dflt:'2' },
+    ] },
+  { id:'restructure', title:'Marekebisho ya mikopo / Loan restructuring', sub:'sifa na masharti / eligibility and terms',
+    fields:[
+      { key:'RESTRUCTURE_MIN_DC', label:'Malipo ya chini yaliyokosekana kustahili / Min missed installments (DC) to qualify',
+        type:'number', dflt:'4' },
+      { key:'RESTRUCTURE_MAX_MONTHS', label:'Miezi ya juu ya malipo mapya / Max new repayment months',
+        type:'number', dflt:'4' },
+      { key:'RESTRUCTURE_INTEREST_PCT', label:'Riba mpya kwa kilichobaki (%) / New interest on the remaining (%)',
+        type:'number', dflt:'12' },
+    ] },
+  { id:'thresholds', title:'Vigezo vingine / Other thresholds', sub:null, fields:[
+      { key:'ABNORMAL_STEP', label:'Kizidisho cha malipo ya kawaida (TZS) / Normal payment multiple, TZS',
+        type:'number', dflt:'500',
+        note:'Malipo yasiyo kizidisho cha hii huonekana Abnormal Payments. / A payment that is not a multiple of this is flagged there.' },
+      { key:'CALL_MIN_SECS', label:'Sekunde za chini kuhesabu simu / Minimum seconds to count a call',
+        type:'number', dflt:'5' },
+      { key:'CALL_EARLY_MAX_BEHIND', label:'Kesho: nyuma siku ngapi bado zaonekana / Kesho tab: max days behind still shown',
+        type:'number', dflt:'1' },
+      { key:'CALL_CREDIT_MAX_PAID', label:'1-6: kiwango cha juu cha malipo / Count 1-6: upper paid limit',
+        type:'number', dflt:'5' },
+    ] },
+];
+function settingsGroupCard_(g, rows){
+  var html = '<div class="card"><div class="card-h">' + esc(g.title)
+    + (g.sub ? '<span class="sub">' + esc(g.sub) + '</span>' : '') + '</div><div class="cleanbox">'
+    + g.fields.map(function(f){
+        return '<div class="fld"><label>' + f.label + '</label>'
+          + '<input type="' + (f.type||'text') + '" id="cfg_' + f.key + '" value="'
+          + esc(settingVal(rows, f.key, f.dflt)) + '">'
+          + (f.note ? '<div class="fldnote">' + f.note + '</div>' : '') + '</div>';
+      }).join('')
+    + (g.preview ? '<div class="fldnote" id="cfgPreview_' + g.id + '"></div>' : '')
+    + '<div class="clact"><button class="btn sm" id="cfgSave_' + g.id + '">Hifadhi / Save</button></div>'
+    + '<div id="cfgOut_' + g.id + '" class="note" style="display:none"></div>'
+    + '</div></div>';
+  return html;
+}
+/* THE PREVIEW THAT WOULD HAVE CAUGHT THIS BEFORE IT SHIPPED.
+   "i doubt it uses a monthly target or what am not sure for i have 70+ teams so i expected
+    target to be around 370m+" -- the mismatch was never visible until it showed up on the
+    Dashboard, divided among teams and days by then. Sales Target now shows what it actually
+    produces, live, as you type -- so a number that is off by 4x is caught here instead. */
+function wireSettingsPreview_(){
+  var w = document.getElementById('cfg_SALES_TARGET_WEEKLY'), out = document.getElementById('cfgPreview_salesTarget');
+  if (!w || !out) return;
+  var n = Math.max(1, S.teamCount || 1);
+  var upd = function(){
+    var weekly = Number(w.value) || 0;
+    var daily = Math.round(weekly * n / 5);
+    out.textContent = 'Timu ' + n + ': TZS ' + money(weekly) + '/wiki kila moja → lengo la kampuni TZS '
+      + money(daily) + '/siku. / ' + n + ' teams: TZS ' + money(weekly) + '/week each → company target TZS '
+      + money(daily) + '/day.';
+  };
+  w.oninput = upd; upd();
+}
 function cellText(r, c){
   var v = r[c.key];
   if (c.get) v = c.get(r);
@@ -2029,6 +2114,21 @@ function wireClean(){
       toast('Imehifadhiwa. / Saved.');
     }).catch(function(e){ hintTimingOut.className = 'note bad'; hintTimingOut.textContent = String(e.message || e); });
   };
+
+  wireSettingsPreview_();
+  SETTINGS_GROUPS.forEach(function(g){
+    var btn = document.getElementById('cfgSave_' + g.id), out = document.getElementById('cfgOut_' + g.id);
+    if (!btn) return;
+    btn.onclick = function(){
+      out.style.display = 'block'; out.className = 'note'; out.textContent = 'Inahifadhi…';
+      Promise.all(g.fields.map(function(f){
+        return srv('settingSet', { key: f.key, value: document.getElementById('cfg_' + f.key).value.trim() });
+      })).then(function(){
+        out.textContent = 'Imehifadhiwa. / Saved.';
+        toast('Imehifadhiwa. / Saved.');
+      }).catch(function(e){ out.className = 'note bad'; out.textContent = String(e.message || e); });
+    };
+  });
 
   /* CHANGING YOUR OWN CODE. It signs you back in with the new one straight away -- the browser
      is holding the old code, and a save that quietly left it holding a dead one would look
@@ -4261,9 +4361,10 @@ VIEWS.audit = function(){
 
 VIEWS.settings = function(){
   return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage'),
-      srv('systemOpenGet')]).then(function(r){
-    var st=r[0], ac=r[1], cu=r[2], sg=r[3], so=r[4];
+      srv('systemOpenGet'), srv('teams')]).then(function(r){
+    var st=r[0], ac=r[1], cu=r[2], sg=r[3], so=r[4], tm=r[5];
     S.officers = cu;
+    S.teamCount = (tm.rows||[]).length;
     S.roles = ac.roles || [];
     S.storage = sg;
     // Two registers live here because they answer the same question -- who may use this
@@ -4370,6 +4471,9 @@ VIEWS.settings = function(){
         + '<div class="clact"><button class="btn sm" id="hintTimingSave">Hifadhi / Save</button></div>'
         + '<div id="hintTimingOut" class="note" style="display:none"></div>'
         + '</div></div>'
+
+      /* THE SETTINGS THAT RUN THE BUSINESS -- see SETTINGS_GROUPS above. */
+      + SETTINGS_GROUPS.map(function(g){ return settingsGroupCard_(g, st.rows); }).join('')
 
       /* YOUR OWN CODE. The access code IS the password here, and changing it used to mean
          editing your own row in a list of everybody else's -- a screen for administering other
