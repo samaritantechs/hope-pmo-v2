@@ -977,16 +977,23 @@ test('the team code is recognised by the name the screen shows it under', async 
   }
 });
 
-test('a CREDIT ID column is ignored, and never erases a stored value', async () => {
-  /* "so even remove the credit id column in teams and staff - not using it". A sheet that
-     still carries the column must neither store it nor -- more importantly -- send a null
-     that would wipe whatever a deployment already has. Not mentioning a column is how this
-     importer leaves it alone; that is the same rule that saved the team codes. */
+/* "so even remove the credit id column in teams and staff - not using it" -- and it stayed
+   unused for exactly what it was removed for: the sale-approvals board still matches an
+   analyst by NAME, never by this column. What changed is "my final thought of the teams and
+   staff table", which carries a plain staff-ID column beside every role including credit --
+   apparently a payroll number, not a report key -- so CREDIT ID is recognised again, as
+   storage only. Every OTHER spelling that was never the sheet's own header stays unrecognised,
+   the same as any column this importer does not mention. */
+test('CREDIT ID is stored again, under its one real header -- other spellings still are not', async () => {
   const { importTeams } = await import('../api/_lib/importers.js');
-  for (const header of ['CREDIT ID', 'CREDIT_ID', 'CREDIT ANALYST ID', 'C. ANALYST ID', 'ANALYST ID', 'CA ID']) {
+  const real = importTeams([['TEAM', 'CREDIT ID', 'CREDIT'], ['KONGOWE', '4471', 'ANALYST A']]);
+  assert.equal(real[0].credit_id, '4471');
+  assert.equal(real[0].credit, 'ANALYST A', 'the analyst NAME is still what the report matches on');
+
+  for (const header of ['CREDIT_ID', 'CREDIT ANALYST ID', 'C. ANALYST ID', 'ANALYST ID', 'CA ID']) {
     const out = importTeams([['TEAM', header, 'CREDIT'], ['KONGOWE', 'CA9', 'ANALYST A']]);
     assert.equal('credit_id' in out[0], false, header + ' must not reach the payload');
-    assert.equal(out[0].credit, 'ANALYST A', 'the analyst NAME is what is kept');
+    assert.equal(out[0].credit, 'ANALYST A');
   }
 });
 

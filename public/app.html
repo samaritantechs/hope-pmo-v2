@@ -3772,8 +3772,13 @@ VIEWS.abnormal = function(){
        REF ID was the one missing: the table has always held it and the importer has always
        read it, but it was never put on screen, so a column of the source sheet could not be
        seen anywhere in the system. PAID / REF ID / PAYMENT / SENDER NAME now run in the
-       sheet's own order rather than a rearranged one. */
-    S.cols = [col('gmo','GMO'), col('team','TEAM'),
+       sheet's own order rather than a rearranged one.
+
+       GMO is gone from this table and TRANSACTION DATE now runs immediately before
+       TRANSACTION ID, per instruction. GMO is still imported and still stored -- importAbnormal
+       reads it, nothing here stops that -- it is simply not shown on this screen; it remains in
+       the Excel download alongside REF ID and PAYMENT. */
+    S.cols = [col('team','TEAM'),
       /* PMO is a STAGE as much as a person: early collection while a customer is still
          performing, collection once they fall behind, recovery once expired or chronic. The
          sheet's own value is always kept; a BLANK is filled in from the customer's actual
@@ -3784,6 +3789,7 @@ VIEWS.abnormal = function(){
       {key:'contact_no', label:'CUSTOMER NO', kind:'tel'},
       {key:'phone_number', label:'PAYMENT NO', kind:'tel'},
       col('ref_no','REF NO'), col('customer_name','CUSTOMER NAME'),
+      col('created_at','TRANSACTION DATE','dt'),
       col('transaction_id','TRANSACTION ID'),
       {key:'paid', label:'PAID', kind:'money', cls:function(){ return 'bad'; }},
       /* REF ID and PAYMENT are NOT shown. Both are still imported and still stored -- REF ID
@@ -3871,11 +3877,17 @@ var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
    drops them rather than sending them, so the form saves everything else exactly as before. */
 var TEAM_EXTRA = [
   ['region', 'REGION'], ['zone', 'ZONE'], ['branch', 'BRANCH'],
-  ['opm_no', 'OPM No'], ['recovery_no', 'RECOVERY No'], ['gmo_no', 'GMO No'],
-  ['manager_no', 'MANAGER No'], ['credit_no', 'C. ANALYST No'], ['expected_no', 'EXPECTED No'],
-  ['bike_no', 'BIKE No'],
-  ['legal', 'LEGAL'], ['legal_no', 'LEGAL No'],
-  ['collection', 'COLLECTION'], ['collection_no', 'COL No'],
+  ['opm_no', 'OPM No'],
+  ['recovery_no', 'RECOVERY No'], ['recovery_id', 'RECOVERY ID'],
+  ['gmo_no', 'GMO No'], ['gmo_id', 'GMO ID'],
+  ['manager_no', 'MANAGER No'], ['manager_id', 'MANAGER ID'],
+  ['credit_no', 'C. ANALYST No'], ['credit_id', 'C. ANALYST ID'],
+  // "my final thought of the teams and staff table" renamed EXPECTED to EARLY COL on the
+  // sheet -- the field is still expected/expected_no underneath, so nothing else has to change.
+  ['expected_no', 'EARLY COL No'], ['early_col_id', 'EARLY COL ID'],
+  ['bike_no', 'BIKE No'], ['bike_id', 'BIKE ID'],
+  ['legal', 'LEGAL'], ['legal_no', 'LEGAL No'], ['legal_id', 'LEGAL ID'],
+  ['collection', 'COLLECTION'], ['collection_no', 'COL No'], ['collection_id', 'COL ID'],
 ];
 VIEWS.teams = function(){
   return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; }),
@@ -3968,7 +3980,7 @@ VIEWS.teams = function(){
        get:function(r){ return r.team_code || 'HAKUNA / NONE'; }},
       col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
       col('manager','Manager'), col('credit','Credit'),
-      col('expected','Expected'), col('bike','Bike')];
+      col('expected','Early col'), col('bike','Bike')];
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
 };
@@ -4097,7 +4109,10 @@ function teamForm(x){
       + '<button class="btn sm ghost" id="tGen" style="width:auto">Tengeneza / Generate</button></div>'
       + '<div class="fldnote">Maafisa wa timu hii wanaingia nao. Ukiubadilisha, simu zao zote zinakatwa. / Field officers on this team sign in with this. Changing it releases every one of their handsets.</div></div>'
     + TEAM_ROLES.map(function(c){
-        return '<div class="fld"><label>'+c.toUpperCase()+'</label><input id="t_'+c+'" value="'+esc(x&&x[c]?x[c]:'')+'"></div>';
+        // "my final thought of the teams and staff table" renamed EXPECTED to EARLY COL --
+        // the column is still `expected`, only the label people see changes.
+        var label = c === 'expected' ? 'EARLY COL' : c.toUpperCase();
+        return '<div class="fld"><label>'+label+'</label><input id="t_'+c+'" value="'+esc(x&&x[c]?x[c]:'')+'"></div>';
       }).join('')
     + TEAM_EXTRA.map(function(e){
         return '<div class="fld"><label>'+esc(e[1])+'</label><input id="t_'+e[0]+'" value="'+esc(x&&x[e[0]]?x[e[0]]:'')+'"></div>';
@@ -5054,16 +5069,32 @@ var DISB_MODES = ['Momo', 'Bank'];
    manager to decide from the branch and the landmark -- see lnManagerAssignForm_. */
 function lnCsRegisterForm_(existing){
   srv('branchList').then(function(bl){
-    var branches = bl.branches || [];
+    var regions = bl.regions || [], byRegion = bl.byRegion || {};
+    // Which region the branch already on record belongs to, so re-opening a partly-filled
+    // application shows both selects already lined up rather than just the branch.
+    var curRegion = '';
+    if (existing && existing.branch) {
+      curRegion = regions.find(function(rg){ return (byRegion[rg]||[]).indexOf(existing.branch) >= 0; }) || '';
+    }
     drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
       + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
       + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
       + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
-      + '<div class="fld"><label>Branch</label><select id="lnBranch">'
-        + '<option value="">' + (branches.length ? '— chagua tawi / choose a branch —' : 'Hakuna matawi -- run 2026-08-19-team-branch.sql / no branches -- run the migration') + '</option>'
-        + branches.map(function(b){ return '<option' + (existing && existing.branch === b ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('')
+      /* REGION FIRST, THEN BRANCH.
+           "selecting a branch should autofill its region since customer service agents dont
+            know that / infact they should select among regions and then choose drop list of
+            branches in the regions"
+         An agent knows the region a customer is in; ~80 branch names in one flat list is a
+         search, not a choice. Branch starts disabled and empty -- it has nothing to offer
+         until a region narrows it down to the handful that are actually in it. */
+      + '<div class="fld"><label>Mkoa / Region</label><select id="lnRegion">'
+        + '<option value="">' + (regions.length ? '— chagua mkoa / choose a region —' : 'Hakuna matawi -- run 2026-08-19-team-branch-DATA.sql / no branches -- run the migration') + '</option>'
+        + regions.map(function(rg){ return '<option' + (rg===curRegion?' selected':'') + '>' + esc(rg) + '</option>'; }).join('')
         + '</select></div>'
-      + '<div class="fld"><label>Region</label><input id="lnRegion"></div>'
+      + '<div class="fld"><label>Tawi / Branch</label><select id="lnBranch"' + (curRegion?'':' disabled') + '>'
+        + '<option value="">' + (curRegion ? '— chagua tawi / choose a branch —' : '— chagua mkoa kwanza / choose a region first —') + '</option>'
+        + (byRegion[curRegion]||[]).map(function(b){ return '<option' + (existing && existing.branch===b?' selected':'') + '>' + esc(b) + '</option>'; }).join('')
+        + '</select></div>'
       + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
       + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
@@ -5072,6 +5103,13 @@ function lnCsRegisterForm_(existing){
         + '</select></div>'
       + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
       + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
+    $('#lnRegion').onchange = function(){
+      var rg = this.value, branches = byRegion[rg] || [];
+      var sel = $('#lnBranch');
+      sel.disabled = !rg;
+      sel.innerHTML = '<option value="">' + (rg ? '— chagua tawi / choose a branch —' : '— chagua mkoa kwanza / choose a region first —') + '</option>'
+        + branches.map(function(b){ return '<option>' + esc(b) + '</option>'; }).join('');
+    };
     $('#lnCsSubmit').onclick = function(){
       lnAct('csRegister', {
         customer_id: existing ? existing.id : undefined,

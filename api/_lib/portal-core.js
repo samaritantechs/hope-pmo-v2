@@ -2212,8 +2212,19 @@ const TEAM_PHONE_OF = {
    a branch at registration without needing to know which of its teams will end up serving the
    customer, so the branch has to live somewhere, and this is the same optional-column pattern
    as region and zone right beside it. */
+/* A STAFF ID BESIDE EVERY ROLE -- 2026-08-19-team-staff-ids.sql, "my final thought of the
+   teams and staff table." Plain reference numbers, round-tripped like everything else in this
+   list; nothing in this codebase reads any of them for a calculation. `credit_id` is the one
+   column here that already existed (2026-08-04) for a narrower purpose since retired -- see the
+   migration file for why bringing its STORAGE back is not un-retiring that. */
+const TEAM_ID_OF = {
+  opm: null, recovery: 'recovery_id', gmo: 'gmo_id', manager: 'manager_id',
+  credit: 'credit_id', expected: 'early_col_id', bike: 'bike_id',
+  legal: 'legal_id', collection: 'collection_id',
+};
 const TEAM_OPTIONAL_COLS = ['region', 'zone', 'branch', 'legal', 'collection']
-  .concat(Object.values(TEAM_PHONE_OF));
+  .concat(Object.values(TEAM_PHONE_OF))
+  .concat(Object.values(TEAM_ID_OF).filter(Boolean));
 
 /** Leader Reports / Team Progress: per-team initial vs current arrears, recovered and
     progress %, mirroring the live Team Progress sheet. */
@@ -2857,6 +2868,101 @@ async function credit(db, user, _args, nowMs) {
     hasInitial: defIni.length > 0, hasCurrent: defCur.length > 0,
     analystCount: rows.filter(r => r.cnt > 0).length,
     analysts: [...new Set(portfolio.map(p => p.analyst))].sort() };
+}
+
+/* =====================================================================================
+   BULK SMS EXPORT -- one Excel sheet, shaped for the outside SMS gateway this company
+   already pastes a mail-merge sheet into.
+
+     "we always have an external service to bulk sms our customers that require preparing
+      an excel sheet, so I wish I always get it automatic from system too... The excel for
+      bulk sms must start with the 2 columns named Contact No Contact Person exactly"
+
+   TWO AUDIENCES, chosen by the caller:
+     'defaulters'  every current defaulter, once each.
+     'portfolio'   defaulters FIRST, then this week's Expected (Monday-Friday) who are not
+                   already a defaulter, deduplicated by ref -- "the excel has some Monday to
+                   Friday expected who were already in defaulters so add with data cleanup by
+                   ref no, then the rest who weren't defaulters".
+
+   SIX COLUMNS, FIXED:
+     A  Contact No       the customer's own phone -- what the gateway sends to.
+     B  Contact Person   the customer's name -- "so calling customer name is #b#".
+     C  Team             not named in the request -- the one column between B and the D/E/F
+                          the owner DID name (ref, arrears, HOPE phone), so it carries the
+                          team rather than sitting blank. Easy to drop in the download if it
+                          turns out not to be wanted.
+     D  Ref No            "I placed ref nos in d"
+     E  Arrears            "arreas in e"
+     F  HOPE Phone No      "our hope phone numbers at F" -- ROUTED, not copied from one column.
+
+   THE ROUTING ("1-6" is paidCount < CREDIT_HALF; "the rest" is everyone past it):
+     defaulter,     1-6    -> the customer's team's CREDIT analyst
+     defaulter,     rest   -> PMO_RECOVERY_NO, a company SETTING, not a team column --
+                              "the rest, - no of pmo recovery"
+     expected-only, 1-6    -> the customer's team's EARLY COLLECTION officer
+     expected-only, rest   -> the customer's team's COLLECTION officer
+   A role with no number recorded for that team falls to PMO_RECOVERY_NO rather than an empty
+   cell -- the same fallback demandContact already uses, for the same reason: a message naming
+   nobody is worse than one naming the PMO. */
+async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
+  const today = todayKey(nowMs);
+  const [teamRows, book, pmoNoRaw] = await Promise.all([
+    readTeamsAll(db),
+    defaulterBook(db, user, { type: 'current', notAfter: today }),
+    settingGet(db, 'PMO_RECOVERY_NO'),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const pmo = pmoNoRaw ? String(pmoNoRaw).trim() : '';
+
+  const numberFor = (team, role) => {
+    const t = teamBy[K(team)] || {};
+    const col = TEAM_PHONE_OF[role];
+    const v = col && t[col] ? String(t[col]).trim() : '';
+    return v || pmo;
+  };
+  const hopePhoneFor = (r, isDefaulter) => {
+    const winnable = paidCount(r) < CREDIT_HALF;
+    if (isDefaulter) return winnable ? numberFor(r.team, 'credit') : pmo;
+    return winnable ? numberFor(r.team, 'expected') : numberFor(r.team, 'collection');
+  };
+  const rowFor = (r, isDefaulter) => ([
+    r.contact || '', r.full_name || '', r.team || '', r.ref || '',
+    num(r.arrears), hopePhoneFor(r, isDefaulter),
+  ]);
+
+  const out = [];
+  const seen = new Set();
+  for (const r of scoped(user, book.rows)) {
+    const k = K(r.ref);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(rowFor(r, true));
+  }
+
+  if (audience === 'portfolio') {
+    const mon = weekMondayKey(nowMs), fri = addDaysKey(mon, 4);
+    const expRaw = await fetchAll(() => onTeams(db.from('repayment_snapshots')
+      .select(withBatchKeys(EXPECTED_TAB_COLS + ', snapshot_date')).eq('snapshot_type', 'today')
+      .gte('snapshot_date', mon).lte('snapshot_date', fri), user.teams));
+    const byDay = {};
+    for (const r of scoped(user, expRaw)) (byDay[r.snapshot_date] || (byDay[r.snapshot_date] = [])).push(r);
+    for (const d of Object.keys(byDay)) {
+      for (const r of pickLatestBatchRows(byDay[d])) {
+        const k = K(r.ref);
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(rowFor(r, false));
+      }
+    }
+  }
+
+  return {
+    audience, count: out.length,
+    headers: ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No'],
+    rows: out,
+  };
 }
 
 /** Call agents -- the CUSTOMER SERVICE agents named on loan applications, not the HOPE Calls
@@ -4515,7 +4621,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
@@ -4535,7 +4641,7 @@ const FN = {
    Header names come from the importer's own vocabulary, not from the database column names, so
    the round trip cannot drift: if the importer learns a new column, it appears here too. */
 const TEAM_EXPORT_COLS = [
-  ['team', 'TEAM'], ['team_code', 'TEAM CODE'], ['region', 'REGION'], ['zone', 'ZONE'],
+  ['team', 'TEAM'], ['team_code', 'TEAM CODE'],
   /* "The upload template has no branch column, last time i lost all team codes i have to
      upload when sure" -- branch (2026-08-19-team-branch.sql) joined the importer the same day
      the column did, but this export was not touched, which is exactly the shape of the fault
@@ -4545,16 +4651,20 @@ const TEAM_EXPORT_COLS = [
      now carries it both ways -- and, per the rule the team-code incident wrote, an admin who
      never re-downloads is safe regardless: a column their old file does not have is left alone,
      never blanked. */
-  ['branch', 'BRANCH'],
+  ['region', 'REGION'], ['branch', 'BRANCH'], ['zone', 'ZONE'],
   ['opm', 'OPM'], ['opm_no', 'OPM NO'],
-  ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'],
-  ['gmo', 'GMO'], ['gmo_no', 'GMO NO'],
-  ['manager', 'MANAGER'], ['manager_no', 'MANAGER NO'],
-  ['credit', 'CREDIT'], ['credit_no', 'CREDIT NO'],
-  ['expected', 'EXPECTED'], ['expected_no', 'EXPECTED NO'],
-  ['bike', 'BIKE'], ['bike_no', 'BIKE NO'],
-  ['legal', 'LEGAL'], ['legal_no', 'LEGAL NO'],
-  ['collection', 'COLLECTION'], ['collection_no', 'COL NO'],
+  /* EARLY COL, not EXPECTED -- "my final thought of the teams and staff table" renamed this
+     role on the sheet itself. The database column is still `expected`/`expected_no`; only the
+     header changes, and importTeams still recognises EXPECTED too, so a file from before this
+     rename still reads in exactly as it always did. */
+  ['expected', 'EARLY COL'], ['expected_no', 'EARLY COL NO'], ['early_col_id', 'EARLY COL ID'],
+  ['collection', 'COLLECTION'], ['collection_no', 'COL NO'], ['collection_id', 'COL ID'],
+  ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'], ['recovery_id', 'REC ID'],
+  ['credit', 'CREDIT'], ['credit_no', 'CREDIT NO'], ['credit_id', 'CREDIT ID'],
+  ['gmo', 'GMO'], ['gmo_no', 'GMO NO'], ['gmo_id', 'GMO ID'],
+  ['manager', 'MANAGER'], ['manager_no', 'MANAGER NO'], ['manager_id', 'MANAGER ID'],
+  ['bike', 'BIKE'], ['bike_no', 'BIKE NO'], ['bike_id', 'BIKE ID'],
+  ['legal', 'LEGAL'], ['legal_no', 'LEGAL NO'], ['legal_id', 'LEGAL ID'],
 ];
 
 async function teamsExport(db, user) {

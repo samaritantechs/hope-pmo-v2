@@ -154,22 +154,48 @@ async function csSearch(db, user, { q }) {
   return { rows };
 }
 
-/** The branches to pick from at registration.
+/** The region -> branch choice at registration.
 
     "Registering a new customer is always by selecting branch so that the customer gets
      visible in manager assignment window then manager selects team to assign"
 
+    "selecting a branch should autofill its region since customer service agents dont know
+     that / infact they should select among regions and then choose drop list of branches in
+     the regions"
+
     Customer service does not choose a TEAM -- it does not know, and should not have to know,
     which of a branch's several teams a landmark actually belongs to. That is the manager's
     call, made from the branch and the customer's own landmark once the application is in the
-    queue (managerQueue). So this is deliberately narrow: branch names only, nothing about who
-    runs each team or what number rings them -- the full roster stays behind the `teams` tab,
-    which customer service does not have. */
+    queue (managerQueue). Nor, it turns out, do they reliably know which REGION a branch is
+    in -- so the choice is two steps, region first (the geography an agent actually knows),
+    then branch (narrowed to that region), rather than one flat list of ~80 branch names to
+    search by eye.
+
+    Deliberately narrow, same as before: branch and region names only, nothing about who runs
+    a team or what number rings them -- the full roster stays behind the `teams` tab, which
+    customer service does not have. */
 async function branchList(db, user) {
   requireTab(user, 'customer_service');
-  const rows = await allPaged(db, 'teams', b => b.select('branch'));
+  const rows = await allPaged(db, 'teams', b => b.select('region, branch'));
+  // A branch belongs to one region; several teams share both. First non-null region seen for
+  // a branch wins -- if the data ever disagrees, that is a Teams & Staff data question, not
+  // something this list should silently average or duplicate the branch to "fix".
+  const regionOf = {};
+  for (const r of rows) {
+    const b = textOrNull(r.branch);
+    if (!b || regionOf[b]) continue;
+    const rg = textOrNull(r.region);
+    if (rg) regionOf[b] = rg;
+  }
   const branches = [...new Set(rows.map(r => textOrNull(r.branch)).filter(Boolean))].sort();
-  return { branches };
+  const byRegion = {};
+  for (const b of branches) {
+    const rg = regionOf[b] || '(Region unknown)';
+    (byRegion[rg] = byRegion[rg] || []).push(b);
+  }
+  const regions = Object.keys(byRegion).sort((a, b) =>
+    a === '(Region unknown)' ? 1 : b === '(Region unknown)' ? -1 : a.localeCompare(b));
+  return { regions, byRegion, branches };
 }
 
 /** A new application. Registers the customer (or reuses one found by csSearch) and opens a

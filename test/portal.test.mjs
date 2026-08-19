@@ -490,6 +490,74 @@ test('credit scores analysts on their count 1-6 book and their sales', async () 
   assert.equal(d.portfolio.every(p => p.state === 'Reduced'), true);
 });
 
+test('sms export: defaulters only, deduplicated, in the fixed 6-column shape', async () => {
+  const d = await run('smsExport', { audience: 'defaulters' });
+  assert.equal(d.audience, 'defaulters');
+  assert.deepEqual(d.headers, ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No']);
+  // Today's current defaulter book: 111 and 555 (KONGOWE), 999 (MBAGALA) -- one row each.
+  assert.equal(d.count, 3);
+  const refs = d.rows.map(r => r[3]).sort();
+  assert.deepEqual(refs, ['111', '555', '999']);
+  const r111 = d.rows.find(r => r[3] === '111');
+  assert.equal(r111[0], '07140000111');   // Contact No -- the customer's own phone
+  assert.equal(r111[1], 'C111');          // Contact Person
+  assert.equal(r111[2], 'KONGOWE');       // Team
+  assert.equal(r111[4], 300);             // Arrears -- today's current arrears
+});
+
+test('sms export: 1-6 goes to the credit analyst, the rest to PMO recovery', async () => {
+  const t = tables();
+  t.teams[0].credit_no = '0711000CR';                              // KONGOWE's credit analyst
+  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' });
+  // 999 (MBAGALA) is pushed past count 1-6 -- MBAGALA has no credit officer at all, so the
+  // winnable branch would have nothing to fall back to either way.
+  const snaps = t.defaulter_snapshots;
+  const i999 = snaps.findIndex(r => r.ref === '999' && r.snapshot_type === 'current');
+  snaps[i999] = { ...snaps[i999], ds: '9/12' };
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(d.rows.find(r => r[3] === '111')[5], '0711000CR');   // 1-6, KONGOWE -> credit analyst
+  assert.equal(d.rows.find(r => r[3] === '555')[5], '0711000CR');
+  assert.equal(d.rows.find(r => r[3] === '999')[5], '0700000PMO');  // past 1-6 -> PMO recovery, not a team column
+});
+
+test('sms export: a team missing its own number still falls to PMO recovery, not a blank cell', async () => {
+  const t = tables();
+  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' });
+  // KONGOWE has a credit ANALYST name but no credit_no column value -- the winnable branch
+  // still has to name somebody.
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(d.rows.find(r => r[3] === '111')[5], '0700000PMO');
+});
+
+test('sms export: full portfolio appends this week\'s Expected after Defaulters, deduplicated by ref', async () => {
+  const t = tables();
+  t.teams[0].expected_no = '0711000EC';       // KONGOWE early collection officer
+  t.teams[0].collection_no = '0711000CO';     // (unused here -- MBAGALA has neither)
+  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' });
+  t.repayment_snapshots.push(
+    // 444 is new -- not a defaulter -- 1-6, KONGOWE -> the early collection officer.
+    { ...E('444', 'KONGOWE', 1000, 'UNPAID', 300, '2026-07-21'), due_summary: '2/6' },
+    // 888 is new too, past 1-6, MBAGALA has no collection officer -> PMO recovery.
+    { ...E('888', 'MBAGALA', 1000, 'UNPAID', 400, '2026-07-22'), due_summary: '9/12' },
+    // 111 is ALREADY a defaulter -- must not appear a second time.
+    { ...E('111', 'KONGOWE', 1000, 'UNPAID', 999, '2026-07-23') },
+  );
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'portfolio' }, NOW);
+  assert.equal(d.audience, 'portfolio');
+  const refs = d.rows.map(r => r[3]);
+  assert.equal(refs.filter(r => r === '111').length, 1);            // no duplicate
+  assert.equal(refs.filter(r => r === '444' || r === '888').length, 2);
+  // Defaulters lead, Expected-only trail -- "beginning with defaulters and ending with expected".
+  assert.ok(refs.indexOf('999') < refs.indexOf('444'));
+  const r444 = d.rows.find(r => r[3] === '444');
+  assert.equal(r444[4], 300);                 // arrears carried from the Expected row itself
+  assert.equal(r444[5], '0711000EC');         // 1-6 -> early collection
+  assert.equal(d.rows.find(r => r[3] === '888')[5], '0700000PMO');  // past 1-6, no collection officer -> PMO
+  // 'defaulters' audience never reads the week's Expected at all.
+  const defOnly = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(defOnly.rows.some(r => r[3] === '444'), false);
+});
+
 test('settings and access codes need the settings permission', async () => {
   await assert.rejects(() => run('settings', {}, GMO), e => e.status === 403);
   await assert.rejects(() => run('accessCodes', {}, GMO), e => e.status === 403);
@@ -3977,15 +4045,19 @@ test('the leaders export carries every column, in the importer\'s own shape', as
      which is what normPhone leaves behind on the way in through either door. Seeding "0713..."
      here would make the round trip look lossy when all that changed was the leading zero. */
   book.teams = [{ team: 'KONGOWE', team_code: 'KON123', region: 'DAR', zone: 'A', branch: 'KIBAHA-KONGOWE',
-    recovery: 'JUMA G', recovery_no: '713000001', gmo: 'GEE MO', gmo_no: '714000002',
-    manager: 'BOSS', manager_no: '715000003', credit: 'ANALYST A', credit_id: 'CA9',
-    credit_no: '716000004', expected: 'EXP A', expected_no: '717000005',
-    bike: 'BIKE B', bike_no: '718000006', legal: 'LEGAL L', legal_no: '719000007',
-    collection: 'CATHERINE', collection_no: '720000008', opm: 'OPM O', opm_no: '721000009' }];
+    recovery: 'JUMA G', recovery_no: '713000001', recovery_id: 'R1', gmo: 'GEE MO', gmo_no: '714000002', gmo_id: 'G1',
+    manager: 'BOSS', manager_no: '715000003', manager_id: 'M1', credit: 'ANALYST A', credit_id: 'CA9',
+    credit_no: '716000004', expected: 'EXP A', expected_no: '717000005', early_col_id: 'E1',
+    bike: 'BIKE B', bike_no: '718000006', bike_id: 'B1', legal: 'LEGAL L', legal_no: '719000007', legal_id: 'L1',
+    collection: 'CATHERINE', collection_no: '720000008', collection_id: 'C1', opm: 'OPM O', opm_no: '721000009' }];
   const d = await portalApi(fakeDb(book), ADMIN, 'teamsExport', {}, NOW);
   assert.equal(d.count, 1);
   assert.ok(d.headers.includes('COL NO'));
-  assert.equal(d.headers.includes('CREDIT ID'), false, 'the export no longer offers the ID column');
+  // "my final thought of the teams and staff table" brought the staff-ID columns back,
+  // credit's included -- as plain storage, not as a report key (see importers.test.mjs).
+  assert.ok(d.headers.includes('CREDIT ID'), 'the staff ID columns are on the sheet again');
+  assert.ok(d.headers.includes('EARLY COL'), 'EXPECTED was renamed on the sheet itself');
+  assert.equal(d.headers.includes('EXPECTED'), false, 'the export shows the new name, not both');
   assert.ok(d.headers.includes('REGION'));
   // "The upload template has no branch column, last time i lost all team codes i have to
   // upload when sure" -- BRANCH must round-trip exactly like every other optional column.
@@ -4000,9 +4072,10 @@ test('the leaders export carries every column, in the importer\'s own shape', as
   assert.equal(back.branch, 'KIBAHA-KONGOWE');
   assert.equal(back.collection, 'CATHERINE');
   assert.equal(back.legal, 'LEGAL L');
-  assert.equal('credit_id' in back, false, 'CREDIT ID is gone from the sheet entirely');
-  assert.equal(back.credit, 'ANALYST A', 'the analyst is carried by NAME');
-  for (const k of ['recovery_no', 'gmo_no', 'manager_no', 'expected_no', 'bike_no', 'legal_no', 'collection_no']) {
+  assert.equal(back.credit_id, 'CA9', 'CREDIT ID round-trips now, as plain storage');
+  assert.equal(back.credit, 'ANALYST A', 'and the analyst is still matched by NAME, not this');
+  for (const k of ['recovery_no', 'gmo_no', 'manager_no', 'expected_no', 'bike_no', 'legal_no', 'collection_no',
+                   'recovery_id', 'gmo_id', 'manager_id', 'early_col_id', 'bike_id', 'legal_id', 'collection_id']) {
     assert.ok(back[k], k + ' was lost on the way back');
   }
 

@@ -1,89 +1,127 @@
 -- =====================================================================================
--- SET EVERY TEAM'S BRANCH -- the mapping given directly, matched WITHOUT renaming anything.
+-- REGION, BRANCH AND ZONE, FROM THE ATTACHED TEAMS & STAFF SHEET.
 -- =====================================================================================
--- Run 2026-08-19-team-branch.sql first (adds the column). This file only sets values.
+-- Run 2026-08-19-team-branch.sql first (adds the branch column). This file only sets values.
 --
--- "some teams in the original system were named with a space after like tengeru and msamvu
---  ... just like Tunduru misbehaved ... please check the imports of correct team names
---  changing nothing"
+-- SUPERSEDES THE FIRST VERSION OF THIS FILE, which set branch only, transcribed from a chat
+-- message. This version is drawn from the owner's own downloaded-and-edited teams_and_staff
+-- sheet -- "my final thought of the teams and staff table" -- which carries REGION and ZONE
+-- alongside BRANCH for the first time, for every team that has them filled in today. Running
+-- this after the first version is safe; a team already branched keeps its branch unless this
+-- sheet gives a NEWER one, and nothing here can blank a field the sheet leaves empty (see below).
 --
--- NOTHING HERE RENAMES A TEAM. The list below is typed exactly as given -- including
--- "Tunduru" in mixed case and the trailing spaces after "GONGOLAMBOTO " and "MSAMVU " --
--- because retyping them "corrected" is exactly the kind of quiet edit that caused the Tunduru
--- mismatch before. Instead, the MATCH is normalised on both sides, the same way the app's own
--- normTeam() already does for every upload: trim, collapse internal whitespace, uppercase.
--- "Tunduru" and "TUNDURU " and "TUNDURU" all normalise to the same key, so the match finds
--- your live row whatever exact shape it is stored in today, and writes to THAT row -- your
--- team's name is not touched, only its new branch column.
+-- "please check the imports of correct team names changing nothing" -- same rule as before.
+-- Nothing here renames a team; TUNDURU / Tunduru match on both sides normalised exactly as
+-- normTeam() already does (trim, collapse whitespace, uppercase).
 --
--- WHAT THIS DOES NOT DO. Two teams in the list were given with no branch (ILEMELA B, RUNZEWE)
--- and are deliberately left out of the VALUES below, so their branch stays NULL rather than
--- being set to an empty string -- the same "absent means unknown" rule the rest of this system
--- already lives by.
+-- A BLANK CELL IN THE SHEET LEAVES THE EXISTING VALUE ALONE. The first version of this file
+-- could assume every branch it named was correct because the message it came from had no
+-- blanks. This sheet does -- MSAMVU's branch cell is empty here though it was set by the first
+-- run of this migration, and roughly a third of the 85 rows have no region yet. `coalesce`
+-- keeps whatever is already stored when the sheet says nothing, so re-running this later with
+-- a MORE complete sheet only ever fills gaps, never erases a field a blanker sheet did not
+-- mention.
 --
--- SAFE TO RE-RUN. Every row is an UPDATE by exact (normalised) match; running it twice sets
--- the same values twice, nothing doubles.
+-- SAFE TO RE-RUN, for the same reason: every value is an UPDATE by exact (normalised) match,
+-- and `coalesce` makes a second run idempotent even where the sheet is unchanged.
 -- =====================================================================================
 
-update teams t set branch = v.branch, updated_at = now()
+update teams t set
+  region = coalesce(v.region, t.region),
+  branch = coalesce(v.branch, t.branch),
+  zone = coalesce(v.zone, t.zone),
+  updated_at = now()
 from (values
-  ('BABATI','MANYARA'), ('BARIADI','BARIADI'), ('BOMA NGOMBE','BOMA-SANYA'),
-  ('BUKOBA A','BUKOBA'), ('BUKOBA B','BUKOBA'), ('BUNDA','BUNDA'),
-  ('BUZWAGI A','KAHAMA'), ('BUZWAGI B','KAHAMA'), ('CHALINZE','CHALINZE'),
-  ('CHAMWINO','DODOMA'), ('CHANIKA','CHANIKA'), ('DODOMA CBD','DODOMA'),
-  ('GEITA','GEITA BRANCH'), ('GOBA','GOBA-TEGETA'),
-  ('GONGOLAMBOTO ','TEMEKE-GONGOLAMBOTO '),
-  ('ILEMELA A','ILEMELA'), ('IPURI','TABORA'), ('IRINGA A','IRINGA'), ('IRINGA B','IRINGA'),
-  ('KABWE','MBEYA CENTER '), ('KARATU','KARATU- MTO WA MBU'), ('KASULU','KASULU'),
-  ('KATORO A','KATORO BRANCH'), ('KATORO B','KATORO BRANCH'),
-  ('KIGAMBONI A','KIGAMBONI'), ('KIGAMBONI B','KIGAMBONI'), ('KIGOMA','KIGOMA'),
-  ('KIHONDA A','KIHONDA '), ('KIHONDA B','KIHONDA '),
-  ('KIJENGE-NJIRO','ARUSHA CENTER'), ('KIJICHI','MBAGALA KIJICHI'), ('KIMARA','MBEZI KIMARA'),
-  ('KONGOWE','KIBAHA-KONGOWE'), ('KYELA','KYELA'), ('MABIBO','DAR EAST'), ('MAFIA','MAFIA'),
-  ('MAFINGA','MAFINGA'), ('MAJENGO','ARUSHA CENTER'), ('MAKAMBAKO A','MAKAMBAKO'),
-  ('MASASI','MASASI'), ('MASWA','MASWA'), ('MBAGALA','MBAGALA KIJICHI'),
-  ('MBALIZI','MBEYA CENTER '), ('MBARALI','MBARALI'), ('MBEZI','MBEZI KIMARA'),
-  ('MBINGA','MBINGA'), ('MOROMBOO','MOROMBOO'), ('MPANDA A','MPANDA'), ('MPANDA B','MPANDA'),
-  ('MSAMVU ','MSAMVU'), ('MTWARA TOWN','MTWARA'), ('MULEBA','MULEBA'), ('MUSOMA','MUSOMA'),
-  ('MWINYI','TABORA'), ('NJOMBE','NJOMBE'), ('NYAMAGANA A','NYAMAGANA A'),
-  ('NYAMAGANA B','NYAMAGANA B'), ('NZEGA','NZEGA'), ('SEGEREA','TABATA-SEGEREA'),
-  ('SENGEREMA','SENGEREMA'), ('SERENGETI','SERENGETI'), ('SHINYANGA','SHINYANGA'),
-  ('SINGIDA','SINGIDA'), ('SINZA','DAR EAST'), ('SONGEA','SONGEA'), ('SUA','MSAMVU'),
-  ('SUMBAWANGA','SUMBAWANGA'), ('TABATA','TABATA-SEGEREA'), ('TABORA TOWN','TABORA'),
-  ('TARIME','TARIME'), ('TEGETA','GOBA-TEGETA'), ('TEMEKE','TEMEKE-GONGOLAMBOTO '),
-  ('TENGERU- USARIVER ','MERU'), ('TUNDUMA','TUNDUMA'), ('Tunduru','TUNDURU'),
-  ('VIKINDU','MBAGALA KIJICHI'), ('VWAWA','TUNDUMA')
-) as v(team_key, branch)
+  ('MSAMVU', 'MOROGORO', NULL, 'MSAMVU'),
+  ('TABATA', 'DAR ES SALAAM', 'TABATA-SEGEREA', 'TABATA'),
+  ('SEGEREA', 'DAR ES SALAAM', 'TABATA-SEGEREA', 'TABATA'),
+  ('KONGOWE', 'PWANI', 'KIBAHA-KONGOWE', 'KIMARA'),
+  ('MBEZI', 'DAR ES SALAAM', 'MBEZI KIMARA', 'KIMARA'),
+  ('KIMARA', 'DAR ES SALAAM', 'MBEZI KIMARA', 'KIMARA'),
+  ('CHALINZE', 'PWANI', 'CHALINZE', 'CHALINZE'),
+  ('TABORA TOWN', 'TABORA', 'TABORA', 'TABORA'),
+  ('IPURI', 'TABORA', 'TABORA', 'TABORA'),
+  ('MWINYI', 'TABORA', 'TABORA', 'TABORA'),
+  ('NZEGA', 'TABORA', 'NZEGA', NULL),
+  ('SINGIDA', 'SINGIDA', 'SINGIDA', 'SINGIDA'),
+  ('KIGOMA', 'KIGOMA', 'KIGOMA', NULL),
+  ('SENGEREMA', 'MWANZA', 'SENGEREMA', 'MWANZA'),
+  ('GEITA', 'GEITA', 'GEITA BRANCH', 'GEITA'),
+  ('ILEMELA A', NULL, 'ILEMELA', NULL),
+  ('NYAMAGANA A', NULL, 'NYAMAGANA A', NULL),
+  ('NYAMAGANA B', NULL, 'NYAMAGANA B', NULL),
+  ('MBALIZI', 'MBEYA', 'MBEYA CENTER', 'MBEYA'),
+  ('KABWE', 'MBEYA', 'MBEYA CENTER', 'MBEYA'),
+  ('TUNDUMA', 'SONGWE', 'TUNDUMA', 'MOMBA'),
+  ('VWAWA', 'SONGWE', 'TUNDUMA', 'MOMBA'),
+  ('SUMBAWANGA', 'RUKWA', 'SUMBAWANGA', NULL),
+  ('MBARALI', 'MBEYA', 'MBARALI', NULL),
+  ('KYELA', 'MBEYA', 'KYELA', 'MBEYA'),
+  ('SERENGETI', 'MARA', 'SERENGETI', NULL),
+  ('MUSOMA', 'MARA', 'MUSOMA', 'MUSOMA'),
+  ('BUNDA', 'MARA', 'BUNDA', NULL),
+  ('TARIME', 'MARA', 'TARIME', 'MUSOMA'),
+  ('MAFINGA', 'IRINGA', 'MAFINGA', 'IRINGA'),
+  ('NJOMBE', 'NJOMBE', 'NJOMBE', 'NJOMBE'),
+  ('IRINGA A', 'IRINGA', 'IRINGA', 'IRINGA'),
+  ('IRINGA B', 'IRINGA', 'IRINGA', 'IRINGA'),
+  ('MAKAMBAKO A', 'NJOMBE', 'MAKAMBAKO', 'NJOMBE'),
+  ('KIJENGE-NJIRO', 'ARUSHA', 'ARUSHA CENTER', 'KIJENGE'),
+  ('MAJENGO', 'ARUSHA', 'ARUSHA CENTER', 'MAJENGO'),
+  ('MOROMBOO', 'ARUSHA', 'MOROMBOO', 'MAJENGO'),
+  ('KARATU', 'MANYARA', 'KARATU- MTO WA MBU', 'KIJENGE'),
+  ('BABATI', 'MANYARA', 'MANYARA', 'KIJENGE'),
+  ('TENGERU- USARIVER', 'ARUSHA', NULL, 'ARUMERU'),
+  ('BOMA NGOMBE', 'KILIMANJARO', 'BOMA-SANYA', 'ARUMERU'),
+  ('CHAMWINO', 'DODOMA', 'DODOMA', 'DODOMA'),
+  ('DODOMA CBD', 'DODOMA', 'DODOMA', 'DODOMA'),
+  ('SUA', 'MOROGORO', 'MSAMVU', 'MSAMVU'),
+  ('KIHONDA A', 'MOROGORO', 'KIHONDA', 'KIHONDA'),
+  ('KIHONDA B', 'MOROGORO', 'KIHONDA', 'KIHONDA'),
+  ('TEMEKE', 'DAR ES SALAAM', 'TEMEKE-GONGOLAMBOTO', 'DAR CENTER'),
+  ('KIJICHI', 'DAR ES SALAAM', 'MBAGALA KIJICHI', 'DAR CENTER'),
+  ('MBAGALA', 'DAR ES SALAAM', 'MBAGALA KIJICHI', 'DAR CENTER'),
+  ('GONGOLAMBOTO', 'DAR ES SALAAM', NULL, 'DAR CENTER'),
+  ('CHANIKA', 'DAR ES SALAAM', 'CHANIKA', 'KIGAMBONI'),
+  ('VIKINDU', 'PWANI', 'MBAGALA KIJICHI', 'DAR CENTER'),
+  ('TEGETA', 'DAR ES SALAAM', 'GOBA-TEGETA', 'DAR EAST'),
+  ('GOBA', 'DAR ES SALAAM', 'GOBA-TEGETA', 'DAR EAST'),
+  ('MABIBO', 'DAR ES SALAAM', 'DAR EAST', 'DAR EAST'),
+  ('SINZA', 'DAR ES SALAAM', 'DAR EAST', 'DAR EAST'),
+  ('KIGAMBONI B', 'DAR ES SALAAM', 'KIGAMBONI', 'KIGAMBONI'),
+  ('KIGAMBONI A', 'DAR ES SALAAM', 'KIGAMBONI', 'KIGAMBONI'),
+  ('MBINGA', 'RUVUMA', 'MBINGA', NULL),
+  ('SONGEA', 'RUVUMA', 'SONGEA', 'SONGEA'),
+  ('Tunduru', 'RUVUMA', 'TUNDURU', NULL),
+  ('MTWARA TOWN', 'MTWARA', 'MTWARA', 'MTWARA'),
+  ('MASASI', 'MTWARA', 'MASASI', 'MTWARA'),
+  ('SHINYANGA', 'SHINYANGA', 'SHINYANGA', NULL),
+  ('BUZWAGI A', 'KAHAMA', 'KAHAMA', 'KAHAMA'),
+  ('BUZWAGI B', 'KAHAMA', 'KAHAMA', 'KAHAMA'),
+  ('KATORO B', 'GEITA', 'KATORO BRANCH', 'GEITA'),
+  ('KATORO A', 'GEITA', 'KATORO BRANCH', 'GEITA'),
+  ('KASULU', NULL, 'KASULU', NULL),
+  ('MPANDA B', NULL, 'MPANDA', NULL),
+  ('MPANDA A', NULL, 'MPANDA', NULL),
+  ('MAFIA', NULL, 'MAFIA', NULL),
+  ('MULEBA', NULL, 'MULEBA', NULL),
+  ('BUKOBA B', NULL, 'BUKOBA', NULL),
+  ('BUKOBA A', NULL, 'BUKOBA', NULL),
+  ('BARIADI', NULL, 'BARIADI', NULL),
+  ('MASWA', NULL, 'MASWA', NULL)
+) as v(team_key, region, branch, zone)
 where upper(regexp_replace(trim(t.team), '\s+', ' ', 'g'))
     = upper(regexp_replace(trim(v.team_key), '\s+', ' ', 'g'));
 
 -- =====================================================================================
--- VERIFY -- run these two after the update above. Neither changes anything.
+-- VERIFY -- run after the update above. Neither changes anything.
 -- =====================================================================================
 
--- 1. Names given above that matched NOTHING in your live teams table (typo on either side,
---    or the team does not exist yet -- check spelling against Teams & Staff before assuming
---    the mapping is wrong):
-select v.team_key as "not found in teams"
-from (values
-  ('BABATI'),('BARIADI'),('BOMA NGOMBE'),('BUKOBA A'),('BUKOBA B'),('BUNDA'),('BUZWAGI A'),
-  ('BUZWAGI B'),('CHALINZE'),('CHAMWINO'),('CHANIKA'),('DODOMA CBD'),('GEITA'),('GOBA'),
-  ('GONGOLAMBOTO '),('ILEMELA A'),('ILEMELA B'),('IPURI'),('IRINGA A'),('IRINGA B'),('KABWE'),
-  ('KARATU'),('KASULU'),('KATORO A'),('KATORO B'),('KIGAMBONI A'),('KIGAMBONI B'),('KIGOMA'),
-  ('KIHONDA A'),('KIHONDA B'),('KIJENGE-NJIRO'),('KIJICHI'),('KIMARA'),('KONGOWE'),('KYELA'),
-  ('MABIBO'),('MAFIA'),('MAFINGA'),('MAJENGO'),('MAKAMBAKO A'),('MASASI'),('MASWA'),
-  ('MBAGALA'),('MBALIZI'),('MBARALI'),('MBEZI'),('MBINGA'),('MOROMBOO'),('MPANDA A'),
-  ('MPANDA B'),('MSAMVU '),('MTWARA TOWN'),('MULEBA'),('MUSOMA'),('MWINYI'),('NJOMBE'),
-  ('NYAMAGANA A'),('NYAMAGANA B'),('NZEGA'),('RUNZEWE'),('SEGEREA'),('SENGEREMA'),
-  ('SERENGETI'),('SHINYANGA'),('SINGIDA'),('SINZA'),('SONGEA'),('SUA'),('SUMBAWANGA'),
-  ('TABATA'),('TABORA TOWN'),('TARIME'),('TEGETA'),('TEMEKE'),('TENGERU- USARIVER '),
-  ('TUNDUMA'),('Tunduru'),('VIKINDU'),('VWAWA')
-) as v(team_key)
-left join teams t
-  on upper(regexp_replace(trim(t.team), '\s+', ' ', 'g'))
-   = upper(regexp_replace(trim(v.team_key), '\s+', ' ', 'g'))
-where t.team is null;
+-- 1. Teams in your live table still missing a branch after this -- either genuinely
+--    unmapped (BAGAMOYO, HIMO, KALIUA, KOROGWE, TANDAHIMBA, TANGA MJINI, ILEMELA B, RUNZEWE
+--    all had blank branch cells in the sheet too) or this list has a name that does not match:
+select team, region, branch, zone from teams where branch is null order by team;
 
--- 2. Teams in your live table that STILL have no branch after the update -- either ILEMELA B /
---    RUNZEWE (given with no branch on purpose) or a team this list never mentioned at all:
-select team, branch from teams where branch is null order by team;
+-- 2. Teams still missing a REGION -- a smaller, separate gap; branch is set for several of
+--    these (KASULU, the MPANDA/BUKOBA/etc. group) but the sheet never filled in their region:
+select team, region, branch from teams where region is null and branch is not null order by team;
