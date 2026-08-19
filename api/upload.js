@@ -1,13 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { supabase, fetchAll, runQuery, isTransient } from './_lib/supabase.js';
 import { gatedUser, can, withApi } from './_lib/auth.js';
-import { pickLatestBatch } from './_lib/snapshots.js';
 /* The upload page calls the SAME functions the Settings cards call, rather than a second copy
    of the sweep and the retire rule. Two implementations of "which uploads are superseded" is
    two answers that can disagree, and the disagreement would only ever show up as a figure
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
-import { addDaysKey as addDays_, weekdayOfKey } from './_lib/time.js';
+import { weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
   importFollowup, importComments, commentsDateOrder,
@@ -17,7 +16,6 @@ import {
   importCallUsers, importCallLogs, importSettings, importHints,
   REF_HEADERS,
 } from './_lib/importers.js';
-import { PAID_TOLERANCE_KEY, paidToleranceOf, isSettled } from './_lib/settled.js';
 
 /* ONE FILE IS NOT ONE REQUEST.
  *
@@ -976,41 +974,30 @@ export default withApi(async (req, res) => {
                     from the table -- one column, so the file's own size is no longer the thing
                     that decides who gets retired.
      ===================================================================================== */
-  let followupSynced = 0, followupRetired = 0, followupStaleCapped = 0, followupSettled = 0;
+  let followupSynced = 0, followupRetired = 0, followupCapped = 0;
   if (type === 'defaulters-current') {
     followupSynced = await writeFollowupFromDeck(supabase, records, meta.date);
   }
   if (type === 'defaulters-current' && isLastPart) {
     const fu = await retireFollowupAfterDeck(supabase, meta.weekday, uploadBatch, meta.date);
-    followupRetired = fu.retired; followupStaleCapped = fu.staleCapped;
+    followupRetired = fu.retired; followupCapped = fu.capped;
   }
   /* =====================================================================================
-     THE EXPECTED BOOK CLEARS THE PAID, AND IT IS THE ONLY THING THAT RUNS EVERY DAY.
+     THE DEFAULTERS LIST COMES FROM THE DEFAULTERS FILE. NOTHING ELSE WRITES IT.
      =====================================================================================
-       "i found husna hassani philiko 42141021001 as a defaulter 8-9 yet that customer is a
-        paid one 11-12 ... arreas is 1 seen not even a negative nor underpaid it was defaulter"
+       "we should see defaulters from defaulters since its not the hopeloan yet, now you
+        pulling defaulters from expected yet i upload my defaulters manually thats abusing me
+        brother"
 
-     She was correct in the expected book -- 11-11, overpaid, arrears -833 -- and a defaulter
-     on the officers' phones at 8-9 owing one shilling, because the register still held the row
-     a defaulter deck wrote weeks earlier and NOTHING HAD REMOVED IT.
+     An expected upload used to clear settled customers off the officers' register here. It was
+     added because retirement appeared never to happen -- and it did paper over the symptom,
+     because the expected book arrives daily and states a balance.
 
-     Retirement lived only in retireFollowupAfterDeck, which runs on a `defaulters-current`
-     upload and only clears people who were on THAT SAME WEEKDAY'S previous deck. So a customer
-     who pays off survives on the list until their own weekday's deck happens to be uploaded
-     again -- and on any day a SUMMARY is uploaded instead of a full deck, nothing is retired at
-     all, because a summary carries team totals and no customer rows to compare.
-
-     The expected book has neither problem. It arrives daily, it names every customer, and it
-     states what they owe. If it says a customer owes nothing, that is not an opinion about a
-     weekday schedule -- it is the balance. So it clears them here, whatever weekday their deck
-     belonged to and whichever defaulter file was or was not uploaded.
-
-     ONLY EVER CLEARS, NEVER ADDS. A customer this finds is taken OFF the working list; nobody
-     is ever put onto it by an expected upload. The worst case is therefore an officer having
-     one fewer name to ring, not a debtor quietly appearing. */
-  if (EXPECTED_TYPES.has(type) && isLastPart) {
-    followupSettled = await retireSettledFromExpected(supabase, records);
-  }
+     But the reason retirement never happened was a BUG in the deck comparison, twenty lines
+     down in retireFollowupAfterDeck: it looked for "the previous deck of this weekday", found
+     the upload's own date, and retired nobody. Fixing that makes the defaulters file do its own
+     job, on its own terms, exactly as the person filing it expects. The expected book has no
+     business deciding who is a defaulter, and no longer touches the register at all. */
 
   // "Inserted 412" says nothing about whether a second upload of the same file doubles the
   // figures or corrects them, and there is no append-or-replace option to choose because the
@@ -1190,9 +1177,8 @@ export default withApi(async (req, res) => {
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
-      followupSettled ? `\u2713 ${followupSettled} customer(s) who have now PAID were taken off the officers' working list automatically. They were still showing as defaulters from an older deck; the expected book says they owe nothing, so they are cleared. Their comments and history are untouched.` : '',
-      followupRetired ? `${followupRetired} customer(s) no deck has confirmed were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
-      followupStaleCapped ? `NOTE: ${followupStaleCapped} customers on the follow-up list have not been confirmed by any deck for over ${FU_STALE_DAYS} days -- too many to retire in one go, so none were. That usually means some weekdays' current-defaulter decks have stopped being uploaded. Upload those decks, or clear the old rows under Settings -> storage (Follow-up list, by date).` : '',
+      followupRetired ? `\u2713 ${followupRetired} customer(s) this deck no longer names were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
+      followupCapped ? `\u26a0\ufe0f NOTHING was taken off the officers' working list, because this file would have retired ${followupCapped} of them -- nearly the whole list. A current-defaulters file is meant to carry the WHOLE book, so that shape usually means the export was cut short or only part of it was selected. Check the file has every team in it and upload it again. Nobody was changed.` : '',
     ].filter(Boolean).join(' ') || undefined
   };
 });
@@ -1201,60 +1187,25 @@ export default withApi(async (req, res) => {
     already entered. Customers who have left the deck keep their row (their history is still
     worth reading) but stop looking like live defaulters, so they drop off the working list
     instead of being called for a debt they have already cleared. */
-/** The refs on the latest CURRENT deck for one weekday, other than the one just uploaded.
- *
- *  Two bounded queries, never a table scan: the newest date for that weekday, then that date's
- *  rows. An upload is not a screen, but it is still somebody standing at a laptop waiting.
- *
- *  Returns null when there is no previous deck for this weekday at all -- which must mean
- *  "blank nobody", not "blank everybody". */
-async function prevWeekdayDeck(db, weekday, excludeBatch) {
-  if (!weekday) return null;
-  const base = () => db.from('defaulter_snapshots')
-    .select('ref, snapshot_date, upload_batch, created_at')
-    .eq('snapshot_type', 'current').eq('weekday', weekday);
-  const { data: latest } = await base().order('snapshot_date', { ascending: false }).limit(1).maybeSingle();
-  if (!latest) return null;
-  /* PAGED, and not only for memory. A single unpaged read is capped silently by PostgREST on
-     any deployment that configures a ceiling -- and a TRUNCATED previous deck here means the
-     customers past the cut look as though they left it, so the upload would blank live
-     defaulters off two hundred officers' phones and say nothing. fetchAll is the one read
-     shape in this system that treats a suspiciously round short page as a cap rather than
-     as the end. Four columns, so the body stays small either way. */
-  const rows = await fetchAll(() => base().eq('snapshot_date', latest.snapshot_date));
-  const others = (rows || []).filter(r => String(r.upload_batch || '') !== String(excludeBatch || ''));
-  if (!others.length) return null;                       // that date IS this upload, nothing before it
-  return new Set(pickLatestBatch(others).map(r => String(r.ref).trim().toUpperCase()));
-}
+/* prevWeekdayDeck stood here: two queries that fetched "the previous deck of this weekday" so
+   the upload could be compared against it. It is gone, and so are its two round trips -- the
+   comparison now reads the deck_date stamp the register already carries. See the block inside
+   retireFollowupAfterDeck for why looking for a previous deck was both broken and the wrong
+   question. */
 
-/** THE DECKS ARE PER WEEKDAY, and this used to forget that.
- *
- *  It blanked every customer who was not in the file just uploaded -- so uploading Monday's
- *  current deck cleared the status and arrears of every defaulter whose follow-up day is
- *  Tuesday through Sunday, and then Tuesday's upload cleared Monday's back again. The
- *  Defaulters list on every phone showed roughly a seventh of the book, and which seventh
- *  depended on whichever deck had been loaded last.
- *
- *  A Monday deck says something about Monday's defaulters and NOTHING about anybody else's, so
- *  only Monday's are compared against it. */
-/** How long a customer may sit on the working list without a deck confirming them.
-    A weekday's deck should come round every seven days, so a fortnight is forgiving. */
-/* The four customer-level expected uploads. The SUMMARY is deliberately absent: it carries
-   team totals and no customer rows, so it cannot say who has paid -- which is precisely the
-   blind spot that let a settled customer sit on the officers' list. */
-const EXPECTED_TYPES = new Set(['expected-today', 'expected-tomorrow', 'expected-yesterday', 'expected-initial']);
-
-/** One settings row, read straight. Kept local so the retirement rules do not have to reach
-    into portal-core for a single value. */
-async function settingGet_(db, key) {
-  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
-  return data ? data.value : null;
-}
-
-const FU_STALE_DAYS = 14;
-/** The most of the working list one upload may retire on age alone, as a fraction. Above this
-    it retires nobody and reports the number instead -- see the brake in syncFollowupFromDeck. */
-const FU_RETIRE_CAP = 0.35;
+/* "THE DECKS ARE PER WEEKDAY" was the belief that stood here, and it was half right. Decks
+   ARE filed per weekday and recovery is paired on the weekday -- but a CURRENT file carries the
+   whole defaulter book, so the weekday never decided who belongs on an officer's list. The
+   blanking that seemed to prove otherwise was the slicing fault, fixed separately. The
+   fourteen-day stale rule that compensated for the resulting paralysis is gone with it:
+   somebody missing from the latest current file is retired by that upload, not a fortnight
+   later. See retireFollowupAfterDeck. */
+/** How much of the working list one upload may retire before it is refused outright, as a
+    fraction of the live rows. This is a guard against a TRUNCATED file, not against churn: one
+    current file is the whole defaulter book, so retiring a great many people is often exactly
+    right -- the first upload after the comparison was fixed clears a backlog years deep. Only
+    a file that would empty nearly everything is treated as a file that is not all there. */
+const FU_RETIRE_CAP = 0.9;
 
 /** WRITE ONE SLICE OF A DECK INTO THE REGISTER. No reads, no merge, no retiring.
  *
@@ -1300,215 +1251,92 @@ export async function writeFollowupFromDeck(db, records, deckDate) {
  *  column, so it costs a fraction of what re-sending the file would -- which makes "who is in
  *  this deck" a fact about the DECK rather than about however the browser happened to slice it.
  */
-/** THE PAID COME OFF THE WORKING LIST, FROM THE ONE FILE THAT ARRIVES EVERY DAY.
- *
- *  Takes the expected records just uploaded, keeps the ones whose arrears prove the customer
- *  owes nothing worth collecting, and clears their row on the follow-up register.
- *
- *  IT ONLY EVER CLEARS. A ref not already on the register is skipped rather than inserted, so
- *  an expected upload can never put somebody ONTO the officers' list -- it can only take a
- *  settled customer off it. That asymmetry is what makes this safe to run on every upload
- *  without a brake: the failure mode is one fewer name to ring, never a debtor appearing.
- *
- *  COMMENTS, PROMISES AND HISTORY SURVIVE. Exactly as retireFollowupAfterDeck does it -- only
- *  status, arrears and the deck stamp are cleared, because a PostgREST upsert touches only the
- *  columns in the payload. The next deck that names them puts them straight back, with their
- *  whole follow-up trail intact. */
-export async function retireSettledFromExpected(db, records) {
-  const tol = paidToleranceOf(await settingGet_(db, PAID_TOLERANCE_KEY));
-  const settled = new Set((records || [])
-    .filter(r => r && r.ref && isSettled(r.arrears, tol))
-    .map(r => String(r.ref).trim().toUpperCase()));
-  if (!settled.size) return 0;
-
-  /* Only rows that are actually on the register, and only ones still carrying a live status or
-     arrears -- a follow-up stub (both null) is already off the list and rewriting it would be
-     a pointless write on every upload. */
-  let existing, stamped = true;
-  try {
-    existing = await fetchAll(() => db.from('followup_status').select('ref, status, arrears, deck_date'));
-  } catch (e) {
-    if (!/deck_date/.test(String((e && e.message) || e))) throw e;
-    stamped = false;
-    existing = await fetchAll(() => db.from('followup_status').select('ref, status, arrears'));
-  }
-  const gone = (existing || [])
-    .filter(r => !(r.status == null && r.arrears == null))
-    .filter(r => settled.has(String(r.ref).trim().toUpperCase()))
-    .map(r => ({ ref: r.ref, status: null, arrears: null,
-      ...(stamped ? { deck_date: null } : {}),
-      updated_at: new Date().toISOString() }));
-  if (gone.length) await writeInChunks(db, 'followup_status', gone, 'ref');
-  return gone.length;
-}
+/* retireSettledFromExpected stood here -- an expected upload clearing settled customers off the
+   officers' register. It is gone. The defaulters file writes the defaulters list and nothing
+   else does; see the block at the call site for why it was added and why fixing the deck
+   comparison replaced it. */
 
 export async function retireFollowupAfterDeck(db, weekday, uploadBatch, deckDate) {
   const mine = await fetchAll(() => db.from('defaulter_snapshots').select('ref')
     .eq('snapshot_type', 'current').eq('upload_batch', uploadBatch));
   const inDeck = new Set((mine || []).map(r => String(r.ref).trim().toUpperCase()));
-  if (!inDeck.size) return { retired: 0, staleCapped: 0 };
+  if (!inDeck.size) return { retired: 0, capped: 0 };
 
+  /* deck_date is read only to PROBE whether the column exists yet (migrations here are run by
+     hand) -- the per-row weekday comparison that used to read its value is gone along with
+     prevWeekdayDeck. updated_at is gone from this select entirely: it fed the fortnight-stale
+     fallback, which the fix above subsumes, so nothing in this function reads it any more. */
   let stamped = true, existing = null;
-  const cols = 'ref, updated_at';
   try {
-    existing = await fetchAll(() => db.from('followup_status').select(cols + ', deck_date, status, arrears'));
+    existing = await fetchAll(() => db.from('followup_status').select('ref, deck_date, status, arrears'));
   } catch (e) {
     if (!/deck_date/.test(String((e && e.message) || e))) throw e;
     stamped = false;
-    existing = await fetchAll(() => db.from('followup_status').select(cols + ', status, arrears'));
+    existing = await fetchAll(() => db.from('followup_status').select('ref, status, arrears'));
   }
 
-  /* Only the people who were on THIS WEEKDAY'S previous deck are candidates. Somebody whose
-     follow-up day is Thursday is not "gone" because Monday's file does not mention them. */
-  const wasHere = await prevWeekdayDeck(db, weekday, uploadBatch);
-  const leftThisWeekday = new Set(!wasHere ? [] : (existing || [])
-    .map(r => String(r.ref).trim().toUpperCase())
-    .filter(k => wasHere.has(k) && !inDeck.has(k)));
+  /* =====================================================================================
+     THE LATEST CURRENT FILE IS THE DEFAULTERS LIST. THAT IS THE WHOLE RULE.
+     =====================================================================================
+       "defaulters are uploaded with current and we cant look by last day of last week but
+        read current defaulters latest file no matter when uploaded"
 
-  const confirmedOn = r => String((stamped && r.deck_date) || r.updated_at || '').slice(0, 10);
-  const cutoff = deckDate ? addDays_(deckDate, -FU_STALE_DAYS) : null;
-  let staleRefs = !cutoff ? [] : (existing || [])
-    .filter(r => { const d = confirmedOn(r); return d && d < cutoff; })
-    .map(r => String(r.ref).trim().toUpperCase())
-    .filter(k => !inDeck.has(k) && !leftThisWeekday.has(k));
+       "we just leaving each days reports and using initial to know recovery amount but only
+        latest [current defaulter] file is legit for defaulters list no matter which day it is"
 
-  /* THE BRAKE, and it should have caught this. It only ever guarded the STALE half, so the
-     eight thousand retired as "left this weekday" went through untouched. It now weighs the
-     whole retirement: nothing that can empty most of the officers' working list in one upload
-     may do it quietly, whichever rule produced it. */
-  const live = (existing || []).filter(r => !(r.status == null && r.arrears == null)).length;
-  let retireSet = new Set([...leftThisWeekday, ...staleRefs]);
-  const capAt = Math.max(50, Math.floor(live * FU_RETIRE_CAP));
-  let staleCapped = 0;
-  if (retireSet.size > capAt) { staleCapped = retireSet.size; retireSet = new Set(); }
+     A current file carries the WHOLE defaulter book, not one weekday's slice of it. So the
+     latest one uploaded is the complete answer to "who is a defaulter": anybody the register
+     still shows as live, whom this file does not name, has left the book. No weekday, no
+     previous deck, no clock.
 
-  const gone = (existing || [])
-    .filter(r => retireSet.has(String(r.ref).trim().toUpperCase()))
-    .map(r => ({ ref: r.ref, status: null, arrears: null,
-      ...(stamped ? { deck_date: null } : {}),
-      updated_at: new Date().toISOString() }));
+     WHAT WAS HERE BEFORE, AND WHY IT RETIRED NOBODY. Two rules stood in place of that one:
+
+       prevWeekdayDeck -- "who was on this weekday's PREVIOUS deck and is not on this one". It
+       never found a previous deck: the file is written to defaulter_snapshots BEFORE this
+       runs, so the newest date for the weekday is the upload's own, and dropping this batch
+       left nothing. It returned null and retired NOBODY, every time. The only comparison it
+       ever made was against another upload OF THE SAME DATE -- a same-day re-upload, which is
+       why every test of it passed and no customer ever came off a phone.
+
+       the fourteen-day stale rule -- the backstop that had to exist because the rule above
+       did nothing. Subsumed now: somebody missing from the latest file is retired on that
+       upload, not a fortnight later.
+
+     THE WEEKDAY IS STILL REAL, JUST NOT HERE. Recovery is initial-minus-current paired on the
+     same weekday, and every day's reports are kept for exactly that. The weekday decides
+     RECOVERY ARITHMETIC; it never decided who is on an officer's list. Conflating the two is
+     what produced a register nothing could clear.
+
+     THE BLANKING THAT MADE PEOPLE FEAR THIS. "uploading Monday's current deck cleared every
+     defaulter whose follow-up day is Tuesday through Sunday" was real, and the cause was the
+     SLICING bug documented at the call site: the retirement ran against `records`, a single
+     thousand-row slice, so 8,000 of 8,888 customers looked absent. `inDeck` is now read back
+     from the table by upload_batch -- the whole upload, every slice -- so "not in the file" is
+     a fact about the FILE, and the per-weekday scoping added to compensate is not needed. */
+  const liveRows = (existing || []).filter(r => !(r.status == null && r.arrears == null));
+  const departed = liveRows.filter(r => !inDeck.has(String(r.ref).trim().toUpperCase()));
+
+  /* THE BRAKE, against a file that is not all there.
+     One file is the whole book, so a TRUNCATED or half-selected export would retire almost
+     everybody -- and unlike a wrong figure, an empty list is what two hundred officers see at
+     once. It no longer guesses at a "reasonable" churn, because with this rule a large
+     retirement is often perfectly correct: the first upload after this fix clears the whole
+     backlog nothing has ever been able to clear. It only refuses the catastrophic shape --
+     a file that would empty nearly the entire register -- and says so instead. */
+  const capAt = Math.floor(liveRows.length * FU_RETIRE_CAP);
+  let capped = 0, retire = departed;
+  if (liveRows.length && departed.length > capAt) { capped = departed.length; retire = []; }
+
+  const gone = retire.map(r => ({ ref: r.ref, status: null, arrears: null,
+    ...(stamped ? { deck_date: null } : {}),
+    updated_at: new Date().toISOString() }));
   if (gone.length) await writeInChunks(db, 'followup_status', gone, 'ref');
-  return { retired: gone.length, staleCapped };
+  return { retired: gone.length, capped };
 }
 
-export async function syncFollowupFromDeck(db, records, weekday, uploadBatch, deckDate) {
-  const refs = records.map(r => String(r.ref)).filter(Boolean);
-  if (!refs.length) return 0;
-  /* deck_date is read defensively: it arrived in a later migration, and migrations here are
-     run by hand. A database that has not had it yet simply reports the column as unknown, and
-     everything below carries on without the stamp. */
-  let stamped = true;
-  let existing = null;
-  {
-    /* updated_at is read for the retirement clock below, NOT for the merge -- a row with no
-       deck stamp has only this to say when anything last confirmed it. Leaving it out of the
-       select is not a missing field: the column simply is not there to read, so every row
-       looked freshly confirmed and nothing was ever retired. */
-    /* THE WHOLE WORKING LIST, PAGED. This is the register that only ever grows -- one row per
-       customer, plus a placeholder for every customer a year of imported v1 comments mentions
-       -- so it is the largest "current state" table in the system. Reading it in one request
-       held all of it in memory at once, on the one upload that is already holding the deck and
-       the rebuilt list beside it. Paging costs a few round trips and bounds the peak.
-
-       The first select is tried whole so that a database WITHOUT the deck_date migration still
-       falls back cleanly: PostgREST rejects the entire read for one unknown column, and that
-       rejection is the signal, not an error to report. */
-    const cols = 'ref, fu_status, promise_date, promise_amt, last_comment, comment_by, comment_at, updated_at';
-    try {
-      existing = await fetchAll(() => db.from('followup_status').select(cols + ', deck_date'));
-    } catch (e) {
-      /* Only an UNKNOWN COLUMN drops the stamp. The previous version fell back on any failure
-         at all, which would have turned a database having a bad minute into a silent decision
-         to stop stamping -- and the stamp is what the retirement clock reads. A real failure is
-         reported as a real failure. */
-      const msg = String((e && e.message) || e);
-      if (!/deck_date/.test(msg)) throw new Error(msg);
-      stamped = false;
-      existing = await fetchAll(() => db.from('followup_status').select(cols));
-    }
-  }
-  const prev = {};
-  for (const r of existing || []) prev[String(r.ref).trim().toUpperCase()] = r;
-
-  const rows = records.map(d => {
-    const k = String(d.ref).trim().toUpperCase();
-    const p = prev[k] || {};
-    return {
-      ref: String(d.ref), team: d.team || null, full_name: d.full_name || null,
-      contact: d.contact || null,
-      guarantor_name: d.guarantor_name || null, guarantor_contact: d.guarantor_contact || null,
-      disb_date: d.disb_date || null, last_trans: d.last_trans_date || null,
-      status: d.status || null, ds: d.ds || null, dc: d.dc == null ? null : d.dc,
-      days_elapsed: d.days_elapsed == null ? null : d.days_elapsed,
-      rejesho: d.other_inst == null ? null : d.other_inst,
-      arrears: d.arrears == null ? null : d.arrears,
-      // When a deck last confirmed this customer, so a row nobody re-confirms can be retired.
-      ...(stamped ? { deck_date: deckDate || null } : {}),
-      // Everything below is the officer's own work -- never overwritten by an upload.
-      fu_status: p.fu_status || null, promise_date: p.promise_date || null,
-      promise_amt: p.promise_amt == null ? null : p.promise_amt,
-      last_comment: p.last_comment || null, comment_by: p.comment_by || null,
-      comment_at: p.comment_at || null,
-      updated_at: new Date().toISOString(),
-    };
-  });
-  /* Customers who have LEFT THIS WEEKDAY'S deck: blank the deck-derived figures so they stop
-     showing as live defaulters, while their comment history stays attached to the ref.
-
-     Only the people who were on this weekday's previous deck are candidates. Somebody whose
-     follow-up day is Thursday is not "gone" because Monday's file does not mention them. */
-  const inDeck = new Set(rows.map(r => String(r.ref).trim().toUpperCase()));
-  const wasHere = await prevWeekdayDeck(db, weekday, uploadBatch);
-  const leftThisWeekday = new Set(!wasHere ? [] : (existing || [])
-    .map(r => String(r.ref).trim().toUpperCase())
-    .filter(k => wasHere.has(k) && !inDeck.has(k)));
-
-  /* AND THE ONES NOBODY HAS RE-CONFIRMED AT ALL.
-     The per-weekday rule above only retires somebody whose own weekday deck came round and
-     left them out. If that weekday's deck simply stops being uploaded -- the customer left the
-     book, the file was renamed, whoever sends it went on leave -- they sit on the officers'
-     list for ever. That is the "showing on Def with an eight-day-old D.S when they are not in
-     the current file at all" report from the field.
-
-     WHEN DID ANYTHING LAST CONFIRM THIS ROW? deck_date answers it exactly, and is the answer to
-     use when it is there. But it arrived in a migration, so EVERY row that existed before that
-     migration has none -- and the first version of this rule skipped unstamped rows, which
-     meant precisely the rows the report was about could never be retired. It cleared nothing.
-
-     updated_at is the honest fallback: it is not null, and it moves whenever a deck confirms
-     the row or an officer comments on it. A row with no stamp that nothing has touched for a
-     fortnight has not been confirmed for a fortnight, whatever the reason. */
-  const confirmedOn = r => String(r.deck_date || r.updated_at || '').slice(0, 10);
-  const cutoff = deckDate ? addDays_(deckDate, -FU_STALE_DAYS) : null;
-  let staleRefs = !cutoff ? [] : (existing || [])
-    .filter(r => { const d = confirmedOn(r); return d && d < cutoff; })
-    .map(r => String(r.ref).trim().toUpperCase())
-    .filter(k => !inDeck.has(k) && !leftThisWeekday.has(k));
-
-  /* A BRAKE, BECAUSE THIS IS THE OFFICERS' WORKING LIST.
-     Retiring is not deleting -- it blanks the deck figures and keeps every comment, and the
-     next deck that names the customer brings them straight back. It is still the list two
-     hundred people work from, and a rule that can empty most of it in one upload because a few
-     weekdays' decks fell behind is not a rule anybody should have to trust silently.
-     Above the cap, nothing is retired on age and the upload SAYS SO, with the number. A large
-     stale set is a real problem worth reading about, not one to action quietly. */
-  const staleCapped = staleRefs.length > Math.max(50, Math.floor((existing || []).length * FU_RETIRE_CAP))
-    ? staleRefs.length : 0;
-  if (staleCapped) staleRefs = [];
-
-  const retire = new Set([...leftThisWeekday, ...staleRefs]);
-  const gone = (existing || [])
-    .filter(r => retire.has(String(r.ref).trim().toUpperCase()))
-    .map(r => ({ ref: r.ref, status: null, arrears: null,
-      ...(stamped ? { deck_date: null } : {}),
-      updated_at: new Date().toISOString() }));
-
-  // Chunked for the same reason the deck itself is: a deck-sized upsert in one request is a
-  // body big enough to end the whole function, and this one runs when the other has already
-  // been built.
-  for (const batch of [rows, gone]) {
-    if (!batch.length) continue;
-    await writeInChunks(db, 'followup_status', batch, 'ref');
-  }
-  return { synced: rows.length, retired: gone.length, staleCapped };
-}
+/* syncFollowupFromDeck stood here: the ORIGINAL combined write-and-retire, superseded by
+   writeFollowupFromDeck + retireFollowupAfterDeck when the slicing fault was found. Nothing in
+   the running system had called it since; it survived only because its tests still did, and it
+   carried its own copy of the prevWeekdayDeck comparison that retired nobody. A second
+   implementation of a rule is a second answer that can disagree with the first -- which is what
+   this file's own header warns about -- so it is gone rather than fixed twice. */

@@ -25,22 +25,26 @@ deploys. Server logic lives in `api/_lib/`. **`npm test` is the gate — 553 tes
 Everything flows from **uploads**. Nothing is typed in by hand except an officer's own follow-up.
 
 ```
-  the company's Excel export
+  the company's Excel export -- a CURRENT file is the WHOLE defaulter book, every team
         │
         ▼  upload page, a thousand rows per request
   defaulter_snapshots  ← history, append-only, never overwritten
         │
-        ▼  syncFollowupFromDeck, on every slice
+        ▼  writeFollowupFromDeck (every slice) + retireFollowupAfterDeck (last slice)
   followup_status      ← the WORKING REGISTER. This is what the phones read.
         │
         ▼
   every handset's Defaulters list
 ```
 
-**A deck is a TEAM and a WEEKDAY.** GOBA's Monday deck and GOBA's Thursday deck are two different
-decks uploaded on two different days, and each is read at *its own* date. A defaulter has no day —
-the weekday exists only to pair an initial deck against a current one for Monday's recovery figure.
-You should never have to re-upload Saturday's file to see Saturday's defaulters.
+**The DEFAULTERS LIST has no weekday.** A current file is the whole book, not one weekday's
+slice of it, so the latest one uploaded IS the list: whoever it does not name has left it, full
+stop -- see `retireFollowupAfterDeck` in `api/upload.js` ("LAST WEEK's deck is what this week's
+is compared against"). The weekday still matters for **recovery arithmetic** -- an initial deck
+is paired against a current deck of the SAME weekday, because that is the only honest comparison
+-- and each day's reports are kept for exactly that. It never decided who is on an officer's
+list; an earlier version of this code conflated the two, which is why a paid customer could sit
+on the register for weeks with nothing to clear them.
 
 **The register is not the deck.** The portal reads decks; the phones read the register. A customer
 in one and not the other is on every office screen and no handset, with each half individually
