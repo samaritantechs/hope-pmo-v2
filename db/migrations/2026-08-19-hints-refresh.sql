@@ -7,7 +7,8 @@
 -- without being asked each time.
 --
 -- A handful of tips for what shipped this session -- the branch column, the region-then-branch
--- picker at registration, the four new Settings cards, and the disbursement-mode dropdown.
+-- picker at registration, the four new Settings cards, the disbursement-mode dropdown, and the
+-- bulk SMS export.
 --
 -- ADDITIVE ONLY. Uploading a Hints sheet through the app REPLACES the whole table (see
 -- TYPE_BEHAVIOUR in upload.js) -- these rows survive until the next such upload, exactly like
@@ -24,4 +25,7 @@ insert into hints (tab, message, sw_message) values
    'Mteja mpya: chagua Mkoa, kisha Tawi litakalopunguzwa kulingana nao. Njia ya malipo sasa ni chaguo la Momo/Benki, si kuandika.'),
   ('teams',
    'BRANCH and a staff ID beside every role are on the sheet now -- download it fresh to see them, or add them here directly.',
-   'TAWI na namba ya mfanyakazi kwa kila wadhifa sasa vipo kwenye laha -- pakua upya kuviona, au ongeza hapa moja kwa moja.');
+   'TAWI na namba ya mfanyakazi kwa kila wadhifa sasa vipo kwenye laha -- pakua upya kuviona, au ongeza hapa moja kwa moja.'),
+  ('upload',
+   'Bulk SMS export card: pick Defaulters or Full portfolio and download a ready sheet -- Contact No, Contact Person, Team, Ref No, Arrears and the HOPE Phone to call, picked automatically.',
+   'Kadi ya kupakua SMS kwa wingi: chagua Wadaiwa au Wateja wote, kisha pakua laha tayari -- Namba ya mteja, Jina, Timu, Ref, Deni na Namba ya HOPE ya kupiga, huchaguliwa kiotomatiki.');

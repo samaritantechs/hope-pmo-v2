@@ -2870,6 +2870,101 @@ async function credit(db, user, _args, nowMs) {
     analysts: [...new Set(portfolio.map(p => p.analyst))].sort() };
 }
 
+/* =====================================================================================
+   BULK SMS EXPORT -- one Excel sheet, shaped for the outside SMS gateway this company
+   already pastes a mail-merge sheet into.
+
+     "we always have an external service to bulk sms our customers that require preparing
+      an excel sheet, so I wish I always get it automatic from system too... The excel for
+      bulk sms must start with the 2 columns named Contact No Contact Person exactly"
+
+   TWO AUDIENCES, chosen by the caller:
+     'defaulters'  every current defaulter, once each.
+     'portfolio'   defaulters FIRST, then this week's Expected (Monday-Friday) who are not
+                   already a defaulter, deduplicated by ref -- "the excel has some Monday to
+                   Friday expected who were already in defaulters so add with data cleanup by
+                   ref no, then the rest who weren't defaulters".
+
+   SIX COLUMNS, FIXED:
+     A  Contact No       the customer's own phone -- what the gateway sends to.
+     B  Contact Person   the customer's name -- "so calling customer name is #b#".
+     C  Team             not named in the request -- the one column between B and the D/E/F
+                          the owner DID name (ref, arrears, HOPE phone), so it carries the
+                          team rather than sitting blank. Easy to drop in the download if it
+                          turns out not to be wanted.
+     D  Ref No            "I placed ref nos in d"
+     E  Arrears            "arreas in e"
+     F  HOPE Phone No      "our hope phone numbers at F" -- ROUTED, not copied from one column.
+
+   THE ROUTING ("1-6" is paidCount < CREDIT_HALF; "the rest" is everyone past it):
+     defaulter,     1-6    -> the customer's team's CREDIT analyst
+     defaulter,     rest   -> PMO_RECOVERY_NO, a company SETTING, not a team column --
+                              "the rest, - no of pmo recovery"
+     expected-only, 1-6    -> the customer's team's EARLY COLLECTION officer
+     expected-only, rest   -> the customer's team's COLLECTION officer
+   A role with no number recorded for that team falls to PMO_RECOVERY_NO rather than an empty
+   cell -- the same fallback demandContact already uses, for the same reason: a message naming
+   nobody is worse than one naming the PMO. */
+async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
+  const today = todayKey(nowMs);
+  const [teamRows, book, pmoNoRaw] = await Promise.all([
+    readTeamsAll(db),
+    defaulterBook(db, user, { type: 'current', notAfter: today }),
+    settingGet(db, 'PMO_RECOVERY_NO'),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const pmo = pmoNoRaw ? String(pmoNoRaw).trim() : '';
+
+  const numberFor = (team, role) => {
+    const t = teamBy[K(team)] || {};
+    const col = TEAM_PHONE_OF[role];
+    const v = col && t[col] ? String(t[col]).trim() : '';
+    return v || pmo;
+  };
+  const hopePhoneFor = (r, isDefaulter) => {
+    const winnable = paidCount(r) < CREDIT_HALF;
+    if (isDefaulter) return winnable ? numberFor(r.team, 'credit') : pmo;
+    return winnable ? numberFor(r.team, 'expected') : numberFor(r.team, 'collection');
+  };
+  const rowFor = (r, isDefaulter) => ([
+    r.contact || '', r.full_name || '', r.team || '', r.ref || '',
+    num(r.arrears), hopePhoneFor(r, isDefaulter),
+  ]);
+
+  const out = [];
+  const seen = new Set();
+  for (const r of scoped(user, book.rows)) {
+    const k = K(r.ref);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(rowFor(r, true));
+  }
+
+  if (audience === 'portfolio') {
+    const mon = weekMondayKey(nowMs), fri = addDaysKey(mon, 4);
+    const expRaw = await fetchAll(() => onTeams(db.from('repayment_snapshots')
+      .select(withBatchKeys(EXPECTED_TAB_COLS + ', snapshot_date')).eq('snapshot_type', 'today')
+      .gte('snapshot_date', mon).lte('snapshot_date', fri), user.teams));
+    const byDay = {};
+    for (const r of scoped(user, expRaw)) (byDay[r.snapshot_date] || (byDay[r.snapshot_date] = [])).push(r);
+    for (const d of Object.keys(byDay)) {
+      for (const r of pickLatestBatchRows(byDay[d])) {
+        const k = K(r.ref);
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(rowFor(r, false));
+      }
+    }
+  }
+
+  return {
+    audience, count: out.length,
+    headers: ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No'],
+    rows: out,
+  };
+}
+
 /** Call agents -- the CUSTOMER SERVICE agents named on loan applications, not the HOPE Calls
     app users. Each application in the Unassigned and Assigned reports carries a CREATED BY
     agent id, and this counts what each of them brought in. The per-agent PHONE statistics are
@@ -4526,7 +4621,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,

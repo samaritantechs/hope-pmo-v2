@@ -252,6 +252,22 @@
     <div id="statusBox" class="hint">Enter your access code to see what is already in.</div>
   </div>
 
+  <!-- BULK SMS EXPORT -- "we always have an external service to bulk sms our customers that
+       require preparing an excel sheet... I wish I always get it automatic from system too."
+       Not a round trip like the boxes above -- nothing here is ever uploaded back -- so it gets
+       its own card rather than living inside the type dropdown. -->
+  <div class="card">
+    <label style="margin-bottom:4px">Bulk SMS export</label>
+    <select id="smsAudience">
+      <option value="defaulters">Defaulters only / Wadaiwa tu</option>
+      <option value="portfolio">Full active portfolio (Defaulters + Expected) / Wadaiwa na Wanaotarajiwa</option>
+    </select>
+    <button type="button" id="smsExportBtn" style="margin-top:8px">Pakua faili la SMS / Download SMS file</button>
+    <div class="hint">Contact No, Contact Person, Team, Ref No, Arrears, HOPE Phone No -- the
+      HOPE Phone is picked automatically (credit analyst, PMO recovery, early collection or
+      collection officer) from Count 1-6. Paste straight into the SMS gateway's own sheet.</div>
+  </div>
+
   <div class="card">
     <label style="margin-bottom:4px">API endpoint (optional)</label>
     <input id="apiBase" placeholder="This site" value="">
@@ -522,6 +538,43 @@ paintWd_();
 
 function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g, function(c){
   return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]; }); }
+
+/* THE PHONE COLUMNS STAY TEXT. Same SpreadsheetML trick as the leaders' "namba" download --
+   a CSV opened in Excel eats the leading zero off every phone number, and this file is nothing
+   BUT phone numbers. x:str on every cell keeps Contact No, Team and HOPE Phone No exactly as
+   the server sent them; x:num on Ref No and Arrears so a total or a sort still behaves. */
+$('smsExportBtn').onclick = function(){
+  var code = $('code').value.trim();
+  if (!code){ alert('Weka msimbo wako kwanza. / Enter your access code first.'); return; }
+  var btn = $('smsExportBtn'); btn.disabled = true;
+  fetch(api() + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: code, fn: 'smsExport', args: { audience: $('smsAudience').value } }) })
+    .then(readJson_).then(function(x){
+      if (x.status < 200 || x.status >= 300 || x.body.ok === false) throw new Error(x.body.error || 'HTTP ' + x.status);
+      var d = x.body;
+      var numCol = { 'Ref No': 1, 'Arrears': 1 };
+      var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+        + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+        + '</head><body><table><thead><tr>'
+        + d.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('')
+        + '</tr></thead><tbody>'
+        + (d.rows || []).map(function(r){
+            return '<tr>' + r.map(function(v, i){
+              var num = numCol[d.headers[i]];
+              return '<td ' + (num ? 'x:num' : 'x:str') + '>' + esc(v == null ? '' : v) + '</td>';
+            }).join('') + '</tr>';
+          }).join('')
+        + '</tbody></table></body></html>';
+      var blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xls';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+      btn.disabled = false;
+    })
+    .catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
+};
 
 /* Today on the EAT clock -- the same answer the server would stamp if the box were left
    empty. valueAsDate used the UTC day, which disagrees with the server between midnight and
