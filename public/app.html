@@ -3772,8 +3772,13 @@ VIEWS.abnormal = function(){
        REF ID was the one missing: the table has always held it and the importer has always
        read it, but it was never put on screen, so a column of the source sheet could not be
        seen anywhere in the system. PAID / REF ID / PAYMENT / SENDER NAME now run in the
-       sheet's own order rather than a rearranged one. */
-    S.cols = [col('gmo','GMO'), col('team','TEAM'),
+       sheet's own order rather than a rearranged one.
+
+       GMO is gone from this table and TRANSACTION DATE now runs immediately before
+       TRANSACTION ID, per instruction. GMO is still imported and still stored -- importAbnormal
+       reads it, nothing here stops that -- it is simply not shown on this screen; it remains in
+       the Excel download alongside REF ID and PAYMENT. */
+    S.cols = [col('team','TEAM'),
       /* PMO is a STAGE as much as a person: early collection while a customer is still
          performing, collection once they fall behind, recovery once expired or chronic. The
          sheet's own value is always kept; a BLANK is filled in from the customer's actual
@@ -3784,6 +3789,7 @@ VIEWS.abnormal = function(){
       {key:'contact_no', label:'CUSTOMER NO', kind:'tel'},
       {key:'phone_number', label:'PAYMENT NO', kind:'tel'},
       col('ref_no','REF NO'), col('customer_name','CUSTOMER NAME'),
+      col('created_at','TRANSACTION DATE','dt'),
       col('transaction_id','TRANSACTION ID'),
       {key:'paid', label:'PAID', kind:'money', cls:function(){ return 'bad'; }},
       /* REF ID and PAYMENT are NOT shown. Both are still imported and still stored -- REF ID
