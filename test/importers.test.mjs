@@ -1300,7 +1300,6 @@ test('midnight and end-of-day both land on the same weekday', async () => {
    still held the defaulter row a deck had written weeks earlier, because retirement ran only
    on a defaulters-current upload and only for that customer's OWN weekday. */
 const { retireSettledFromExpected } = await import('../api/upload.js');
-const { PAID_TOLERANCE_KEY } = await import('../api/_lib/settled.js');
 
 test('a customer the expected book says has paid is cleared off the working list', async () => {
   const db = fakeDb({
@@ -1336,20 +1335,15 @@ test('a customer the expected book says has paid is cleared off the working list
   assert.equal(rows.find(r => r.ref === '999').status, 'Defaulter', 'a real debtor is untouched');
 });
 
-test('the tolerance is OFF by default, and is a setting when wanted', async () => {
-  const book = () => ({
+test('a shilling is still a debt -- there is no tolerance to forgive it', async () => {
+  const db = fakeDb({
     settings: [],
     followup_status: [{ ref: 'R1', team: 'T', status: 'Defaulter', arrears: 1 }],
   });
-  /* DEFAULT ZERO: one shilling is still a debt, exactly as before any of this existed.
-     "dont make a mistake by removing anyone demanded" -- so nothing is forgiven until a
-     person decides it should be. */
-  assert.equal(await retireSettledFromExpected(fakeDb(book()), [{ ref: 'R1', arrears: 1 }]), 0);
-
-  // Set it, and the remainder is forgiven.
-  const lenient = fakeDb({ ...book(), settings: [{ key: PAID_TOLERANCE_KEY, value: '100' }] });
-  assert.equal(await retireSettledFromExpected(lenient, [{ ref: 'R1', arrears: 1 }]), 1,
-    'with a tolerance set, a rounding crumb is not a debt');
+  /* "i didnt understand you well, we donmt forgive arreas of 1 shilling"
+     "take the tolerance setting out entirely - everything should be auto"
+     There is no setting any more. Owing exactly 1 is still owing. */
+  assert.equal(await retireSettledFromExpected(db, [{ ref: 'R1', arrears: 1 }]), 0);
 });
 
 /* THE ASYMMETRY THAT MAKES THIS SAFE TO RUN ON EVERY UPLOAD. */

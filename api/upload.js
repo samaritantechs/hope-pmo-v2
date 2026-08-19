@@ -17,7 +17,7 @@ import {
   importCallUsers, importCallLogs, importSettings, importHints,
   REF_HEADERS,
 } from './_lib/importers.js';
-import { PAID_TOLERANCE_KEY, paidToleranceOf, isSettled } from './_lib/settled.js';
+import { isSettled } from './_lib/settled.js';
 
 /* ONE FILE IS NOT ONE REQUEST.
  *
@@ -1244,13 +1244,6 @@ async function prevWeekdayDeck(db, weekday, excludeBatch) {
    blind spot that let a settled customer sit on the officers' list. */
 const EXPECTED_TYPES = new Set(['expected-today', 'expected-tomorrow', 'expected-yesterday', 'expected-initial']);
 
-/** One settings row, read straight. Kept local so the retirement rules do not have to reach
-    into portal-core for a single value. */
-async function settingGet_(db, key) {
-  const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
-  return data ? data.value : null;
-}
-
 const FU_STALE_DAYS = 14;
 /** The most of the working list one upload may retire on age alone, as a fraction. Above this
     it retires nobody and reports the number instead -- see the brake in syncFollowupFromDeck. */
@@ -1315,9 +1308,8 @@ export async function writeFollowupFromDeck(db, records, deckDate) {
  *  columns in the payload. The next deck that names them puts them straight back, with their
  *  whole follow-up trail intact. */
 export async function retireSettledFromExpected(db, records) {
-  const tol = paidToleranceOf(await settingGet_(db, PAID_TOLERANCE_KEY));
   const settled = new Set((records || [])
-    .filter(r => r && r.ref && isSettled(r.arrears, tol))
+    .filter(r => r && r.ref && isSettled(r.arrears))
     .map(r => String(r.ref).trim().toUpperCase()));
   if (!settled.size) return 0;
 
