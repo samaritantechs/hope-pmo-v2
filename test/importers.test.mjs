@@ -934,8 +934,10 @@ test('a column the leaders sheet does not have is left alone, not blanked', asyn
   assert.equal('team_code' in out[0], false, 'team_code must not be in the payload at all');
   assert.equal(out[0].credit, 'ANALYST A');
   assert.equal(out[0].region, 'DAR');
-  // Nor may any other unmentioned role column ride along as a null.
-  for (const k of ['gmo', 'gmo_no', 'manager', 'legal', 'collection', 'expected_no']) {
+  // Nor may any other unmentioned role column ride along as a null -- BRANCH included, since
+  // "last time i lost all team codes" is exactly the fear an old file re-uploaded after
+  // branch existed would otherwise justify.
+  for (const k of ['gmo', 'gmo_no', 'manager', 'legal', 'collection', 'expected_no', 'branch']) {
     assert.equal(k in out[0], false, k + ' was sent as a null and would have erased the stored one');
   }
 });

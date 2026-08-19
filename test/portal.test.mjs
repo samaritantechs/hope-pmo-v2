@@ -3976,7 +3976,7 @@ test('the leaders export carries every column, in the importer\'s own shape', as
   /* PHONES ARE SEEDED THE WAY THE DATABASE ACTUALLY HOLDS THEM -- nine digits, no leading zero,
      which is what normPhone leaves behind on the way in through either door. Seeding "0713..."
      here would make the round trip look lossy when all that changed was the leading zero. */
-  book.teams = [{ team: 'KONGOWE', team_code: 'KON123', region: 'DAR', zone: 'A',
+  book.teams = [{ team: 'KONGOWE', team_code: 'KON123', region: 'DAR', zone: 'A', branch: 'KIBAHA-KONGOWE',
     recovery: 'JUMA G', recovery_no: '713000001', gmo: 'GEE MO', gmo_no: '714000002',
     manager: 'BOSS', manager_no: '715000003', credit: 'ANALYST A', credit_id: 'CA9',
     credit_no: '716000004', expected: 'EXP A', expected_no: '717000005',
@@ -3987,6 +3987,9 @@ test('the leaders export carries every column, in the importer\'s own shape', as
   assert.ok(d.headers.includes('COL NO'));
   assert.equal(d.headers.includes('CREDIT ID'), false, 'the export no longer offers the ID column');
   assert.ok(d.headers.includes('REGION'));
+  // "The upload template has no branch column, last time i lost all team codes i have to
+  // upload when sure" -- BRANCH must round-trip exactly like every other optional column.
+  assert.ok(d.headers.includes('BRANCH'), 'branch belongs on the sheet the importer reads back');
   assert.equal(d.headers.length, d.rows[0].length, 'every header has a cell under it');
 
   // THE ROUND TRIP: what came out goes back in and nothing is lost.
@@ -3994,6 +3997,7 @@ test('the leaders export carries every column, in the importer\'s own shape', as
   const back = importTeams([d.headers].concat(d.rows))[0];
   assert.equal(back.team, 'KONGOWE');
   assert.equal(back.region, 'DAR');
+  assert.equal(back.branch, 'KIBAHA-KONGOWE');
   assert.equal(back.collection, 'CATHERINE');
   assert.equal(back.legal, 'LEGAL L');
   assert.equal('credit_id' in back, false, 'CREDIT ID is gone from the sheet entirely');

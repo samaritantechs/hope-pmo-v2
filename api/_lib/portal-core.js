@@ -4536,6 +4536,16 @@ const FN = {
    the round trip cannot drift: if the importer learns a new column, it appears here too. */
 const TEAM_EXPORT_COLS = [
   ['team', 'TEAM'], ['team_code', 'TEAM CODE'], ['region', 'REGION'], ['zone', 'ZONE'],
+  /* "The upload template has no branch column, last time i lost all team codes i have to
+     upload when sure" -- branch (2026-08-19-team-branch.sql) joined the importer the same day
+     the column did, but this export was not touched, which is exactly the shape of the fault
+     that cost the team codes before: a file this SAME comment already names as "in the same
+     shape the importer reads" quietly fell out of that shape. BRANCH is the importer's own
+     header (see importTeams in importers.js), so a downloaded, edited, and re-uploaded sheet
+     now carries it both ways -- and, per the rule the team-code incident wrote, an admin who
+     never re-downloads is safe regardless: a column their old file does not have is left alone,
+     never blanked. */
+  ['branch', 'BRANCH'],
   ['opm', 'OPM'], ['opm_no', 'OPM NO'],
   ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'],
   ['gmo', 'GMO'], ['gmo_no', 'GMO NO'],
