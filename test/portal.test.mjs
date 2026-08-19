@@ -3977,15 +3977,19 @@ test('the leaders export carries every column, in the importer\'s own shape', as
      which is what normPhone leaves behind on the way in through either door. Seeding "0713..."
      here would make the round trip look lossy when all that changed was the leading zero. */
   book.teams = [{ team: 'KONGOWE', team_code: 'KON123', region: 'DAR', zone: 'A', branch: 'KIBAHA-KONGOWE',
-    recovery: 'JUMA G', recovery_no: '713000001', gmo: 'GEE MO', gmo_no: '714000002',
-    manager: 'BOSS', manager_no: '715000003', credit: 'ANALYST A', credit_id: 'CA9',
-    credit_no: '716000004', expected: 'EXP A', expected_no: '717000005',
-    bike: 'BIKE B', bike_no: '718000006', legal: 'LEGAL L', legal_no: '719000007',
-    collection: 'CATHERINE', collection_no: '720000008', opm: 'OPM O', opm_no: '721000009' }];
+    recovery: 'JUMA G', recovery_no: '713000001', recovery_id: 'R1', gmo: 'GEE MO', gmo_no: '714000002', gmo_id: 'G1',
+    manager: 'BOSS', manager_no: '715000003', manager_id: 'M1', credit: 'ANALYST A', credit_id: 'CA9',
+    credit_no: '716000004', expected: 'EXP A', expected_no: '717000005', early_col_id: 'E1',
+    bike: 'BIKE B', bike_no: '718000006', bike_id: 'B1', legal: 'LEGAL L', legal_no: '719000007', legal_id: 'L1',
+    collection: 'CATHERINE', collection_no: '720000008', collection_id: 'C1', opm: 'OPM O', opm_no: '721000009' }];
   const d = await portalApi(fakeDb(book), ADMIN, 'teamsExport', {}, NOW);
   assert.equal(d.count, 1);
   assert.ok(d.headers.includes('COL NO'));
-  assert.equal(d.headers.includes('CREDIT ID'), false, 'the export no longer offers the ID column');
+  // "my final thought of the teams and staff table" brought the staff-ID columns back,
+  // credit's included -- as plain storage, not as a report key (see importers.test.mjs).
+  assert.ok(d.headers.includes('CREDIT ID'), 'the staff ID columns are on the sheet again');
+  assert.ok(d.headers.includes('EARLY COL'), 'EXPECTED was renamed on the sheet itself');
+  assert.equal(d.headers.includes('EXPECTED'), false, 'the export shows the new name, not both');
   assert.ok(d.headers.includes('REGION'));
   // "The upload template has no branch column, last time i lost all team codes i have to
   // upload when sure" -- BRANCH must round-trip exactly like every other optional column.
@@ -4000,9 +4004,10 @@ test('the leaders export carries every column, in the importer\'s own shape', as
   assert.equal(back.branch, 'KIBAHA-KONGOWE');
   assert.equal(back.collection, 'CATHERINE');
   assert.equal(back.legal, 'LEGAL L');
-  assert.equal('credit_id' in back, false, 'CREDIT ID is gone from the sheet entirely');
-  assert.equal(back.credit, 'ANALYST A', 'the analyst is carried by NAME');
-  for (const k of ['recovery_no', 'gmo_no', 'manager_no', 'expected_no', 'bike_no', 'legal_no', 'collection_no']) {
+  assert.equal(back.credit_id, 'CA9', 'CREDIT ID round-trips now, as plain storage');
+  assert.equal(back.credit, 'ANALYST A', 'and the analyst is still matched by NAME, not this');
+  for (const k of ['recovery_no', 'gmo_no', 'manager_no', 'expected_no', 'bike_no', 'legal_no', 'collection_no',
+                   'recovery_id', 'gmo_id', 'manager_id', 'early_col_id', 'bike_id', 'legal_id', 'collection_id']) {
     assert.ok(back[k], k + ' was lost on the way back');
   }
 

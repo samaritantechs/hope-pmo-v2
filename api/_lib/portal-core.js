@@ -2212,8 +2212,19 @@ const TEAM_PHONE_OF = {
    a branch at registration without needing to know which of its teams will end up serving the
    customer, so the branch has to live somewhere, and this is the same optional-column pattern
    as region and zone right beside it. */
+/* A STAFF ID BESIDE EVERY ROLE -- 2026-08-19-team-staff-ids.sql, "my final thought of the
+   teams and staff table." Plain reference numbers, round-tripped like everything else in this
+   list; nothing in this codebase reads any of them for a calculation. `credit_id` is the one
+   column here that already existed (2026-08-04) for a narrower purpose since retired -- see the
+   migration file for why bringing its STORAGE back is not un-retiring that. */
+const TEAM_ID_OF = {
+  opm: null, recovery: 'recovery_id', gmo: 'gmo_id', manager: 'manager_id',
+  credit: 'credit_id', expected: 'early_col_id', bike: 'bike_id',
+  legal: 'legal_id', collection: 'collection_id',
+};
 const TEAM_OPTIONAL_COLS = ['region', 'zone', 'branch', 'legal', 'collection']
-  .concat(Object.values(TEAM_PHONE_OF));
+  .concat(Object.values(TEAM_PHONE_OF))
+  .concat(Object.values(TEAM_ID_OF).filter(Boolean));
 
 /** Leader Reports / Team Progress: per-team initial vs current arrears, recovered and
     progress %, mirroring the live Team Progress sheet. */
@@ -4535,7 +4546,7 @@ const FN = {
    Header names come from the importer's own vocabulary, not from the database column names, so
    the round trip cannot drift: if the importer learns a new column, it appears here too. */
 const TEAM_EXPORT_COLS = [
-  ['team', 'TEAM'], ['team_code', 'TEAM CODE'], ['region', 'REGION'], ['zone', 'ZONE'],
+  ['team', 'TEAM'], ['team_code', 'TEAM CODE'],
   /* "The upload template has no branch column, last time i lost all team codes i have to
      upload when sure" -- branch (2026-08-19-team-branch.sql) joined the importer the same day
      the column did, but this export was not touched, which is exactly the shape of the fault
@@ -4545,16 +4556,20 @@ const TEAM_EXPORT_COLS = [
      now carries it both ways -- and, per the rule the team-code incident wrote, an admin who
      never re-downloads is safe regardless: a column their old file does not have is left alone,
      never blanked. */
-  ['branch', 'BRANCH'],
+  ['region', 'REGION'], ['branch', 'BRANCH'], ['zone', 'ZONE'],
   ['opm', 'OPM'], ['opm_no', 'OPM NO'],
-  ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'],
-  ['gmo', 'GMO'], ['gmo_no', 'GMO NO'],
-  ['manager', 'MANAGER'], ['manager_no', 'MANAGER NO'],
-  ['credit', 'CREDIT'], ['credit_no', 'CREDIT NO'],
-  ['expected', 'EXPECTED'], ['expected_no', 'EXPECTED NO'],
-  ['bike', 'BIKE'], ['bike_no', 'BIKE NO'],
-  ['legal', 'LEGAL'], ['legal_no', 'LEGAL NO'],
-  ['collection', 'COLLECTION'], ['collection_no', 'COL NO'],
+  /* EARLY COL, not EXPECTED -- "my final thought of the teams and staff table" renamed this
+     role on the sheet itself. The database column is still `expected`/`expected_no`; only the
+     header changes, and importTeams still recognises EXPECTED too, so a file from before this
+     rename still reads in exactly as it always did. */
+  ['expected', 'EARLY COL'], ['expected_no', 'EARLY COL NO'], ['early_col_id', 'EARLY COL ID'],
+  ['collection', 'COLLECTION'], ['collection_no', 'COL NO'], ['collection_id', 'COL ID'],
+  ['recovery', 'RECOVERY'], ['recovery_no', 'RECOVERY NO'], ['recovery_id', 'REC ID'],
+  ['credit', 'CREDIT'], ['credit_no', 'CREDIT NO'], ['credit_id', 'CREDIT ID'],
+  ['gmo', 'GMO'], ['gmo_no', 'GMO NO'], ['gmo_id', 'GMO ID'],
+  ['manager', 'MANAGER'], ['manager_no', 'MANAGER NO'], ['manager_id', 'MANAGER ID'],
+  ['bike', 'BIKE'], ['bike_no', 'BIKE NO'], ['bike_id', 'BIKE ID'],
+  ['legal', 'LEGAL'], ['legal_no', 'LEGAL NO'], ['legal_id', 'LEGAL ID'],
 ];
 
 async function teamsExport(db, user) {

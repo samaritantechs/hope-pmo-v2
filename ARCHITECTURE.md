@@ -147,3 +147,24 @@ in the test deliberately and say why in the commit. A budget that quietly grows 
 failure mode this section exists to stop.
 
 **Every PR says what it cost.** "No extra trips" is an acceptable answer. Silence is not.
+
+---
+
+## The standing rule for every feature: keep the hint table current
+
+> *"You can always update the hint table in background: this is also a forever rule b/se am
+> making a lot updates."*
+> — the owner, 19 August 2026
+
+Same shape as the Postgres rule above: given once, applies from here on, never asked again.
+**A feature nobody can find is a feature that does not exist to the person who needed it** --
+this session's own sales-target mismatch and the tips-timer nobody could locate were both
+exactly that failure. So: when a change adds something a person would otherwise have to
+discover on their own -- a new field, a new screen, a changed workflow, a renamed column --
+add a tip for it to the `hints` table (tab, message, sw_message; bilingual, matching the tab
+name the feature lives on) in the same change, without being asked.
+
+Small and additive, like a migration: a plain `insert into hints (...) values (...)`, safe to
+run, never destructive. Uploading a Hints sheet through the app replaces the whole table (see
+`TYPE_BEHAVIOUR` in `upload.js`), so these survive until the next such upload -- exactly as a
+tip typed in by hand would.

@@ -383,24 +383,38 @@ export function importTeams(csvRows) {
     put('opm_no', normPhone, 'OPM NO', 'OPM_NO');
     put('recovery', textOrNull, 'RECOVERY');
     put('recovery_no', normPhone, 'RECOVERY NO', 'RECOVERY_NO');
+    put('recovery_id', textOrNull, 'REC ID', 'RECOVERY ID');
     put('gmo', textOrNull, 'GMO');
     put('gmo_no', normPhone, 'GMO NO', 'GMO_NO');
+    put('gmo_id', textOrNull, 'GMO ID');
     put('manager', textOrNull, 'MANAGER');
     put('manager_no', normPhone, 'MANAGER NO', 'MANAGER_NO');
+    put('manager_id', textOrNull, 'MANAGER ID');
     put('credit', textOrNull, 'C. ANALYST', 'CREDIT');
-    /* NO CREDIT ID. Analysts are named from the CREDIT column, never numbered, so a sheet
-       still carrying an ID column is simply ignored rather than stored -- and an existing
-       stored value is left untouched, because a column this importer does not mention is a
-       column it does not write. */
     put('credit_no', normPhone, 'CREDIT NO', 'C. ANALYST NO');
-    put('expected', textOrNull, 'EXPECTED');
-    put('expected_no', normPhone, 'EXPECTED NO', 'EXPECTED_NO');
+    /* CREDIT ID IS BACK, as plain storage. It was dropped ("dont use IDs in the approved
+       report ... not using it") because the sale-approvals board matched an analyst by this ID
+       and that matching was replaced with matching by NAME -- and that replacement is
+       untouched: nothing reads this column for that any more. What changed is the sheet itself,
+       which carries an ID beside every role now, apparently a staff/payroll number rather than
+       a report key. Storing it is what "the same shape the importer reads" requires; nothing
+       downstream depends on it. */
+    put('credit_id', textOrNull, 'CREDIT ID');
+    /* EARLY COL, not EXPECTED -- "my final thought of the teams and staff table" renamed this
+       role on the sheet. Both spellings land on the same column, so a file from before the
+       rename still reads in exactly as it always did. */
+    put('expected', textOrNull, 'EARLY COL', 'EXPECTED');
+    put('expected_no', normPhone, 'EARLY COL NO', 'EXPECTED NO', 'EXPECTED_NO');
+    put('early_col_id', textOrNull, 'EARLY COL ID');
     put('bike', textOrNull, 'BIKE');
     put('bike_no', normPhone, 'BIKE NO', 'BIKE_NO');
+    put('bike_id', textOrNull, 'BIKE ID');
     put('legal', textOrNull, 'LEGAL');
     put('legal_no', normPhone, 'LEGAL NO', 'LEGAL_NO');
+    put('legal_id', textOrNull, 'LEGAL ID');
     put('collection', textOrNull, 'COLLECTION');
     put('collection_no', normPhone, 'COL NO', 'COLLECTION NO');
+    put('collection_id', textOrNull, 'COL ID', 'COLLECTION ID');
     return out;
   }).filter(x => x.team);
 }

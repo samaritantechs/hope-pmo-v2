@@ -93,13 +93,25 @@ test('the "admin" tab opens every HOPE Loan screen, mirroring HOPE PMO\'s own ad
    must not be a second door into the same roster. */
 test('branchList returns the distinct branches, and nothing else about a team', async () => {
   const db = fakeDb({ teams: [
-    { team: 'MABIBO', branch: 'DAR EAST', recovery: 'SOMEBODY', recovery_no: '712000001' },
-    { team: 'SINZA', branch: 'DAR EAST' },       // same branch as MABIBO -- must not duplicate
-    { team: 'TUNDUMA', branch: 'TUNDUMA' },
+    { team: 'MABIBO', region: 'DAR ES SALAAM', branch: 'DAR EAST', recovery: 'SOMEBODY', recovery_no: '712000001' },
+    { team: 'SINZA', region: 'DAR ES SALAAM', branch: 'DAR EAST' },  // same branch as MABIBO -- must not duplicate
+    { team: 'TUNDUMA', region: 'SONGWE', branch: 'TUNDUMA' },
     { team: 'NO BRANCH YET', branch: null },     // migration run, this team just has none set
   ] });
-  const { branches } = await loanApi(db, CS, 'branchList', {});
+  const { branches, regions, byRegion } = await loanApi(db, CS, 'branchList', {});
   assert.deepEqual(branches, ['DAR EAST', 'TUNDUMA'], 'sorted, deduplicated, nulls dropped');
+  // "infact they should select among regions and then choose drop list of branches in the
+  // regions" -- the same data, grouped, so a two-step picker can be built from one call.
+  assert.deepEqual(regions, ['DAR ES SALAAM', 'SONGWE']);
+  assert.deepEqual(byRegion['DAR ES SALAAM'], ['DAR EAST']);
+  assert.deepEqual(byRegion['SONGWE'], ['TUNDUMA']);
+});
+
+test('a branch with no region yet is still selectable, grouped under its own heading', async () => {
+  const db = fakeDb({ teams: [{ team: 'KASULU', region: null, branch: 'KASULU' }] });
+  const { regions, byRegion } = await loanApi(db, CS, 'branchList', {});
+  assert.deepEqual(regions, ['(Region unknown)']);
+  assert.deepEqual(byRegion['(Region unknown)'], ['KASULU']);
 });
 
 test('branchList is refused without the customer_service tab', async () => {
