@@ -110,6 +110,13 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
   .card-h{padding:11px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .card-h .sub{font-weight:400;color:var(--mut);font-size:12px;margin-left:auto}
+  /* THE PER-TABLE SEARCH -- distinct from the magnifier (Tafuta mteja) up in the top bar. That
+     one is company-wide and opens the full customer insight; this one only narrows whatever
+     list is already on screen, in ANY of its columns, exactly the way sorting or a dropdown
+     filter already narrows it. */
+  .tblsearch{padding:8px 14px;border-bottom:1px solid var(--line)}
+  .tblsearch input{width:100%;padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;font-size:13px}
+  .tblsearch input:focus{outline:none;border-color:var(--b500)}
   .scroll{overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:left;padding:8px 12px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;
@@ -1407,6 +1414,9 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
   + '.jpgshot .card-h{display:block !important;white-space:normal !important;}'
   + '.jpgshot .card-h .sub{display:block !important;margin-left:0 !important;}'
   + '.jpgshot table{width:-moz-max-content !important;width:max-content !important;}'
+  // The per-table search box types into the LIVE screen -- a static image of it is an empty
+  // input nobody can use, not data. Same reasoning as leaving it out of CSV/Excel's own columns.
+  + '.jpgshot .tblsearch{display:none !important;}'
 
   /* EVERY REPORT IS ITS OWN WIDTH, AND CAPPING THEM ALL AT ONE NUMBER CUTS THE WIDE ONES OFF.
 
@@ -1589,6 +1599,30 @@ function bar(html){ return '<div class="bar">'+html+'</div>'; }
 
 /* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
 var HEAD = '', ONROW = null;
+/* A SEARCH BOX ON EVERY TABLE, NOT JUST THE ONE MAGNIFIER.
+   "leaving the above robust search alone, all navs should also have search on top of their
+   tables to search a customer in the respective fiend only" -- the magnifier (findBtn) stays
+   exactly as it is, a company-wide search that opens the full insight drawer. This is the
+   OTHER thing: narrowing the table already on screen, field by field, to whatever S.q matches
+   in ANY of its columns -- filtered() already does this (it is what CSV/Excel/JPG export off
+   of), the only piece missing was a box to type into. One box, wired once here in paint(), so
+   every screen that draws through the generic table gets it -- nothing per-tab to remember. */
+function tableSearchHtml_(){
+  return '<div class="tblsearch"><input id="tblQ" placeholder="Tafuta kwenye orodha hii / Search this list" value="' + esc(S.q) + '"></div>';
+}
+function wireTableSearch(){
+  var box = document.getElementById('tblQ');
+  if (!box) return;
+  box.oninput = function(){
+    // paint() rebuilds #view whole, including a brand new #tblQ -- without putting the caret
+    // back, the box would lose focus after every single keystroke.
+    var pos = box.selectionStart;
+    S.q = box.value;
+    paint();
+    var b2 = document.getElementById('tblQ');
+    if (b2) { b2.focus(); try { b2.setSelectionRange(pos, pos); } catch(e){} }
+  };
+}
 function paint(){
   var rows = sorted(filtered());
   $('#view').innerHTML = HEAD + '<div class="card" id="mainCard">'
@@ -1596,10 +1630,12 @@ function paint(){
     + ' <button class="btn sm ghost" data-xls="mainCard">Excel</button>'
     + ' <button class="btn sm ghost" data-jpg="mainCard">JPG</button>'
     + ' <button class="btn sm ghost" data-csv="mainCard">CSV</button></span></div>'
+    + tableSearchHtml_()
     + tableHtml(rows, S.cols, ONROW)
     + (S.foot ? '<div class="tblfoot">Showing '+rows.length+' of '+S.rows.length+' · '+esc(S.foot)+'</div>' : '')
     + '</div>';
   wireTable(rows, ONROW);
+  wireTableSearch();
   wireBar();
   wireOfficerFind();
 }
