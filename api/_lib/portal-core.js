@@ -357,7 +357,27 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
     });
     for (const r of rows) if (g.want.has(deckKey(r.team, r.weekday))) all.push(r);
   }
-  const rows = pickLatestPerCustomer(all);
+  /* TWO DIFFERENT DUPLICATES, TWO DIFFERENT FIXES, BOTH NEEDED.
+     "Some customers were texted arrears when I exported the sms file ... yet she aint in the
+     defaulters file" -- ANASTAZIA JUMBE NGOI, SINGIDA. Her team's deck had been corrected with
+     a same-day re-upload that no longer named her (she was no longer a defaulter), but the one
+     step this used to run -- pickLatestPerCustomer, straight over `all` -- resolves the winning
+     row PER CUSTOMER: with nothing in the newer batch to compare her old row against, her old
+     row just won by default, and she came back from the dead into every export and every
+     screen. pickLatestBatchRows carries the correct rule instead -- an upload that stops naming
+     somebody IS the correction, so the whole older batch loses, that customer included.
+
+     But pickLatestBatchRows resolves its winner PER TEAM, and `all` can hold two different
+     WEEKDAY decks of the same team that both happen to land on the same date in two different
+     batches -- resolve across them undivided and one whole deck loses to the other's batch
+     stamp, the exact fault `recByDay` further down this file already grouped by weekday to
+     avoid, for the same reason. So: batch-resolve within each weekday first (fixes the
+     resurrection), THEN pickLatestPerCustomer across the result (still needed -- see its own
+     comment above -- for the separate, legitimate case of one customer genuinely sitting in
+     two different weekdays' decks on the same date, who must still count once, not twice). */
+  const perDeck = [...new Set(all.map(r => K(r.weekday)))]
+    .flatMap(wd => pickLatestBatchRows(all.filter(r => K(r.weekday) === wd)));
+  const rows = pickLatestPerCustomer(perDeck);
   const seen = [...byDate.keys()].sort();
   return { rows, date: seen[seen.length - 1] || null, dates: seen,
     weekdays: [...new Set(all.map(r => r.weekday).filter(Boolean))].sort(),
