@@ -734,17 +734,29 @@ function buildNav(){
     b.onclick = function(){ go(n.id); };
     el.appendChild(b);
   }
-  NAV.forEach(function(n){ if (allowed(n.id) && !n.hidden) drawItem(n); });
+  // HOPE LOAN FIRST, THEN HOPE PMO -- "hopeloanones should start before the pmo ones". Origination
+  // is the front door for anyone who holds one of its tabs; everything else follows below it.
+  var loanShown = false;
   if (S.me.hopeLoanAvailable) {
     var loanItems = NAV_LOAN.filter(function(n){ return allowed(n.id) && !n.hidden; });
     if (loanItems.length) {
-      var head = document.createElement('div');
-      head.className = 'navhead';
-      head.textContent = 'HOPE Loan';
-      el.appendChild(head);
+      var loanHead = document.createElement('div');
+      loanHead.className = 'navhead';
+      loanHead.textContent = 'HOPE Loan';
+      el.appendChild(loanHead);
       loanItems.forEach(drawItem);
+      loanShown = true;
     }
   }
+  // A second label only once there is something above it to tell it apart from -- a code with
+  // no HOPE Loan tab still gets the plain, unlabelled list it always had.
+  if (loanShown) {
+    var pmoHead = document.createElement('div');
+    pmoHead.className = 'navhead';
+    pmoHead.textContent = 'HOPE PMO';
+    el.appendChild(pmoHead);
+  }
+  NAV.forEach(function(n){ if (allowed(n.id) && !n.hidden) drawItem(n); });
 }
 function go(view){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
