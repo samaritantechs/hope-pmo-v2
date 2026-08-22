@@ -15,10 +15,12 @@ export default withApi(async (req, res) => {
 
   /* THE HOPE LOAN SWITCH, ON THE PHONE.
      Calls signs in with a DEVICE ID, not an access code -- a device resolves to a call_users
-     row whose `role` is an officer role, never ADMIN. So a device alone can never be the
-     authority for leaving production, and this deliberately does NOT invent a second, weaker
-     rule for the phone: reaching the sandbox here costs the same ADMIN ACCESS CODE the portal
-     asks for, resolved the same way /api/me resolves it.
+     row whose `role` is an officer role, and a device id alone can never be the authority for
+     leaving production. This deliberately does NOT invent a second, weaker rule for the phone:
+     reaching the sandbox here costs the same PORTAL ACCESS CODE the portal itself asks for,
+     resolved the same way /api/me resolves it and authorised by the same rule (ADMIN, or a
+     code holding one of HOPE Loan's own tabs -- see mayUseHopeLoan in workspace.js). Whatever a
+     code cannot open in the portal it cannot open here either; there is one door, checked once.
 
      Anything short of that -- no code, a wrong code, an officer's code, a code that is valid
      but not an admin -- falls through to production untouched, and silently: an error would

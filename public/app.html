@@ -82,6 +82,11 @@
   .nav button span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .nav button:hover{background:rgba(255,255,255,.08);color:#fff}
   .nav button.on{background:#fff;color:var(--b800)}
+  /* ONE FLOW, NOT TWO SIDEBARS. HOPE Loan's own tabs sit in the SAME list as HOPE PMO's, one
+     continuous scroll -- this is only a quiet label above them, not a switch to flip and not a
+     banner to warn anybody they have left somewhere. Drawn once, only when there is at least
+     one HOPE Loan item this code actually holds a tab for. */
+  .navhead{padding:14px 11px 4px;font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--b300);text-transform:uppercase}
   .side .foot{border-top:1px solid rgba(255,255,255,.12);padding-top:12px;margin-top:10px}
   .side .foot b{color:#fff;font-size:12.5px;display:block}
   .side .foot span{font-size:11px;color:var(--b300);display:block;margin-bottom:8px}
@@ -413,14 +418,6 @@
     <div class="top">
       <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
-      <!-- SANDBOX LABEL, ALWAYS ON SCREEN WHILE IN IT. "a person working in a sandbox must be
-           able to see at a glance that they are, or they will eventually report a sandbox
-           figure as if it were the book." Hidden entirely outside HOPE Loan. -->
-      <span id="wsBadge" class="hide" style="font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:20px;background:#a11;color:#fff;margin-right:6px"></span>
-      <!-- THE SWITCH ITSELF -- drawn only when /api/me said this code may use it (ADMIN role
-           AND HOPE Loan actually configured server-side). Anyone else's screen never carries
-           this button at all, not even hidden. -->
-      <button class="btn sm ghost hide" id="wsSwitch" title="HOPE Loan / HOPE PMO">HOPE Loan &rarr;</button>
       <!-- The writing bar that used to sit here (the table filter) was removed on request:
            "The search icon on top should do tafuta mteja work and remove the sidenav and the
            writing bar before language switch". One search, one place: the magnifier. -->
@@ -698,8 +695,13 @@ var NAV_LOAN = [
   { id:'ln_gm',        label:'GM · Carriers', tab:'gm', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>' },
 ];
 
+/* A view id says which workspace it belongs to just by its own name -- every HOPE Loan id is
+   prefixed ln_, on purpose (see NAV_LOAN above), so nothing needs to be told separately which
+   book a screen reads from. This is what let the switch go away: there is no mode to be in
+   ahead of time, only the tab in front of you. */
+function isLoanId_(id){ return typeof id === 'string' && id.indexOf('ln_') === 0; }
 function allowed(id){
-  if (S.workspace === 'hopeloan') {
+  if (isLoanId_(id)) {
     var n = NAV_LOAN.filter(function(x){ return x.id===id; })[0];
     if (!n) return false;
     // ln_pipeline has tab:null -- everyone who can even open HOPE Loan may see the summary.
@@ -712,11 +714,15 @@ function allowed(id){
   if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
   return ALWAYS.indexOf(id)>=0;
 }
+/* ONE SIDEBAR, NOT TWO -- "i thout we killing the sandbox shotcut and having one flow from now
+   on". HOPE Loan's items are appended after HOPE PMO's own, gated exactly like every other
+   tab: a code with no HOPE Loan tab draws nothing extra and never learns the section exists.
+   `hopeLoanAvailable` (from /api/me) covers the other half -- a code that DOES hold a HOPE
+   Loan tab still sees nothing here on a deployment where HOPE Loan itself was never configured,
+   so nobody is ever shown a door that leads nowhere. */
 function buildNav(){
   var el = $('#nav'); el.innerHTML='';
-  var list = S.workspace === 'hopeloan' ? NAV_LOAN : NAV;
-  list.forEach(function(n){
-    if (!allowed(n.id) || n.hidden) return;
+  function drawItem(n){
     var b = document.createElement('button');
     // The icon is how people find a tab in a list of 23 -- they recognise the shape before
     // they read the word, which is the whole reason v1 had them.
@@ -727,33 +733,27 @@ function buildNav(){
     b.setAttribute('data-v', n.id);
     b.onclick = function(){ go(n.id); };
     el.appendChild(b);
-  });
-}
-/* THE SWITCH ITSELF. Only ever drawn if the server said so at sign-in (canSwitchWorkspace --
-   admin role AND HOPE Loan actually configured), so an officer's screen never even carries the
-   button to wonder about. Flipping it rebuilds the nav for the OTHER workspace and lands on
-   its first screen, exactly like signing into a different app -- because structurally, it is
-   one: same session, same code, a different `workspace` string riding on every request from
-   here on, decided server-side, never trusted from what this button last said. */
-function toggleWorkspace(){
-  S.workspace = S.workspace === 'hopeloan' ? 'hopepmo' : 'hopeloan';
-  paintWorkspaceBadge_();
-  buildNav();
-  go(S.workspace === 'hopeloan' ? 'ln_pipeline' : 'dashboard');
-}
-function paintWorkspaceBadge_(){
-  var b = $('#wsBadge');
-  if (!b) return;
-  var sandbox = S.workspace === 'hopeloan';
-  b.textContent = sandbox ? 'HOPE LOAN — MAENDELEO / SANDBOX' : '';
-  b.classList.toggle('hide', !sandbox);
-  document.body.classList.toggle('sandboxmode', sandbox);
-  var sw = $('#wsSwitch');
-  if (sw) sw.textContent = sandbox ? '← HOPE PMO' : 'HOPE Loan →';
+  }
+  NAV.forEach(function(n){ if (allowed(n.id) && !n.hidden) drawItem(n); });
+  if (S.me.hopeLoanAvailable) {
+    var loanItems = NAV_LOAN.filter(function(n){ return allowed(n.id) && !n.hidden; });
+    if (loanItems.length) {
+      var head = document.createElement('div');
+      head.className = 'navhead';
+      head.textContent = 'HOPE Loan';
+      el.appendChild(head);
+      loanItems.forEach(drawItem);
+    }
+  }
 }
 function go(view){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   S.args={}; S.filters={}; S.foot='';
+  /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
+     mode left over from whatever was open before. Every request from here rides S.workspace to
+     the server (see srv() below), which resolves it for real against this code's own tabs --
+     this is only what picks the RIGHT one, never what grants it. */
+  S.workspace = isLoanId_(view) ? 'hopeloan' : 'hopepmo';
   /* THE TABLE BELONGS TO THE TAB, AND IT WAS BEING INHERITED.
      Reported from the field: "downloading most reports excel brings team performance report
      instead of the desired one; found this at expected and so on."
@@ -772,7 +772,7 @@ function go(view){
      honest answer. A tab with a table sets these before it paints, exactly as it always did. */
   S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
-  var t = (S.workspace === 'hopeloan' ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
+  var t = (isLoanId_(view) ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
     b.classList.toggle('on', b.getAttribute('data-v')===view);
@@ -900,14 +900,9 @@ function start(me){
   $('#shell').classList.remove('hide');
   $('#meName').textContent = me.name;
   $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams');
-  // "Switch is visible to ADMIN role only" -- and only once the server confirms HOPE Loan is
-  // actually configured; see canSwitchWorkspace in api/_lib/workspace.js. Nothing client-side
-  // decides this on its own.
-  if (me.canSwitchWorkspace) {
-    $('#wsSwitch').classList.remove('hide');
-    $('#wsSwitch').onclick = toggleWorkspace;
-  }
-  paintWorkspaceBadge_();
+  // me.hopeLoanAvailable rides along on S.me (set above) and is all buildNav() needs to decide
+  // whether HOPE Loan's own items belong in this sidebar at all -- see /api/me.js. Nothing
+  // client-side decides this on its own.
   buildNav();
   tipsStart();
   go('dashboard');
@@ -4976,9 +4971,10 @@ function snapPut_(s){
 /* =====================================================================================
    HOPE LOAN -- the screens.
    =====================================================================================
-   Every request from a view below carries S.workspace (set by toggleWorkspace) automatically,
-   through the same srv() every HOPE PMO tab uses -- there is no second fetch function, no
-   second endpoint, and no second way any of this could reach the officer-facing tables. */
+   Every request from a view below carries S.workspace (set by go(), from the view id's own
+   ln_ prefix -- see isLoanId_) automatically, through the same srv() every HOPE PMO tab uses --
+   there is no second fetch function, no second endpoint, and no second way any of this could
+   reach the officer-facing tables. */
 var LN = { money: money, esc: esc };   // nothing here needs more than these two, kept short
 
 function lnQueueTable(rows, cols, onRow){

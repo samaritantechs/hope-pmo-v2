@@ -16,28 +16,50 @@ const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: 
 const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
 const OFFICER = { code: 'F', name: 'A FIELD OFFICER', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: [] };
 
+/* `try { return fn(); } finally { restore(); }` is wrong for an ASYNC fn, and every test below
+   that awaits one of these now takes that path (checking more than one user needs more than
+   one `await workspaceFor(...)`, which is where this bites). `return fn()` hands back a
+   pending promise the instant fn suspends at its first internal await -- it does not wait for
+   fn to finish -- so `finally` restores the environment while fn is still only partway
+   through, and a SECOND user checked later in the same callback runs for real against
+   whatever the environment reverted to. That is not a hypothetical: it is exactly what turned
+   a `hopeloan` client back into a live network probe against `SUPABASE_URL` mid-loop, timing
+   out for several seconds before failing the assertion for a reason that had nothing to do
+   with the code under test.
+
+   The fix is the same one `.finally()` exists for: restore synchronously when fn is
+   synchronous (so a sync assertion failure still throws synchronously, exactly as before, and
+   no caller has to start awaiting these), and defer the restore onto the returned promise when
+   fn is async, so it runs only once fn has actually settled. */
+function withRestore_(fn, restore) {
+  let result;
+  try { result = fn(); }
+  catch (e) { restore(); throw e; }
+  if (result && typeof result.finally === 'function') return result.finally(restore);
+  restore();
+  return result;
+}
+
 /* The sandbox exists only while these are set. Every test that needs it configured sets them
    and puts the environment back, so the order tests run in cannot change what they prove. */
 function withLoanConfigured(fn) {
   const url = process.env.HOPELOAN_SUPABASE_URL, key = process.env.HOPELOAN_SERVICE_ROLE_KEY;
   process.env.HOPELOAN_SUPABASE_URL = 'https://hopeloan.test.invalid';
   process.env.HOPELOAN_SERVICE_ROLE_KEY = 'hopeloan-test-key';
-  try { return fn(); }
-  finally {
+  return withRestore_(fn, () => {
     if (url === undefined) delete process.env.HOPELOAN_SUPABASE_URL; else process.env.HOPELOAN_SUPABASE_URL = url;
     if (key === undefined) delete process.env.HOPELOAN_SERVICE_ROLE_KEY; else process.env.HOPELOAN_SERVICE_ROLE_KEY = key;
-  }
+  });
 }
 
 function withoutLoanConfigured(fn) {
   const url = process.env.HOPELOAN_SUPABASE_URL, key = process.env.HOPELOAN_SERVICE_ROLE_KEY;
   delete process.env.HOPELOAN_SUPABASE_URL;
   delete process.env.HOPELOAN_SERVICE_ROLE_KEY;
-  try { return fn(); }
-  finally {
+  return withRestore_(fn, () => {
     if (url !== undefined) process.env.HOPELOAN_SUPABASE_URL = url;
     if (key !== undefined) process.env.HOPELOAN_SERVICE_ROLE_KEY = key;
-  }
+  });
 }
 
 test('nobody reaches HOPE Loan unless they ask for it by name', () => {
@@ -58,8 +80,11 @@ test('an admin who asks for HOPE Loan gets it, in any capitalisation', () => {
 });
 
 /* THE ONE THAT MATTERS. An officer's phone can send whatever it likes -- a copied URL, an old
-   cached page, a deliberately edited request. None of it moves them off the real book. */
-test('no role but ADMIN can reach HOPE Loan, however they ask', async () => {
+   cached page, a deliberately edited request. None of it moves them off the real book. Every
+   fixture below is either not ADMIN and holds none of HOPE Loan's own seven tabs, or holds
+   only HOPE PMO tabs (upload/settings/audit) -- neither counts, same as a code with no
+   `upload` tab still cannot reach Upload. */
+test('no role, and no ticked HOPE Loan tab, can reach HOPE Loan, however they ask', async () => {
   await withLoanConfigured(async () => {
     const roles = [GMO, OFFICER,
       { role: 'PMO', teams: null, tabs: [] },
@@ -67,7 +92,7 @@ test('no role but ADMIN can reach HOPE Loan, however they ask', async () => {
       { role: 'OPM', teams: null, tabs: [] },
       { role: 'GENERAL MANAGER', teams: null, tabs: [] },
       { role: 'AUDITOR', teams: null, tabs: [] },
-      // A role somebody has ticked every box on is still not an admin.
+      // Every HOPE PMO admin tab ticked, and still not one HOPE Loan tab among them.
       { role: 'SUPERUSER', teams: null, tabs: ['upload', 'settings', 'audit'] },
       { role: '', teams: null, tabs: [] },
       {},
@@ -85,9 +110,34 @@ test('no role but ADMIN can reach HOPE Loan, however they ask', async () => {
   });
 });
 
-test('a tab cannot be mistaken for a role -- admin is the role string, nothing else', () => {
+/* THE OTHER HALF OF THE SAME RULE. "i mean they cant reach tabs i didnt tick for anyone to
+   see yet" -- a code that WAS ticked for one of HOPE Loan's own tabs is exactly the code this
+   whole redesign is for: no ADMIN role, no separate "sandbox" switch to be granted, just the
+   same checkbox every other tab uses. */
+test('a non-admin holding even one HOPE Loan tab reaches HOPE Loan', async () => {
+  await withLoanConfigured(async () => {
+    const holders = [
+      { role: 'MANAGER', teams: ['KONGOWE'], tabs: ['manager'] },
+      { role: 'GMO', teams: null, tabs: ['gmo'] },
+      { role: 'CUSTOMER SERVICE', teams: null, tabs: ['customer_service'] },
+      // Holding a HOPE Loan tab alongside ordinary HOPE PMO ones changes nothing about those.
+      { role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['followup', 'finance'] },
+    ];
+    for (const user of holders) {
+      assert.equal(resolveWorkspace(user, 'hopeloan'), HOPELOAN,
+        JSON.stringify(user.tabs) + ' must be enough, with no ADMIN role at all');
+      const ws = await workspaceFor(user, 'hopeloan');
+      assert.equal(ws.workspace, HOPELOAN);
+      assert.equal(ws.sandbox, true);
+      assert.notEqual(ws.db, supabase);
+    }
+  });
+});
+
+test('a HOPE PMO tab cannot be mistaken for a HOPE Loan one', () => {
   withLoanConfigured(() => {
-    // Tabs are edited in Teams & Staff. A wrongly ticked box must not open a second database.
+    // upload/settings/audit are HOPE PMO's own admin tabs -- ticking all three of them is not
+    // the same as being ticked for any of HOPE Loan's seven, so this must still stay on production.
     assert.equal(resolveWorkspace({ role: 'GMO', tabs: ['upload', 'settings', 'audit'] }, 'hopeloan'), HOPEPMO);
     assert.equal(resolveWorkspace({ role: 'admin', tabs: [] }, 'hopeloan'), HOPELOAN, 'case is not the point');
   });
@@ -122,12 +172,14 @@ test('half-configured PROJECT mode falls back to schema mode rather than half-wo
   });
 });
 
-test('the switch is offered to an admin only', async () => {
+test('the switch is offered to an admin, or a code holding a HOPE Loan tab, and nobody else', async () => {
   await withLoanConfigured(async () => {
     assert.equal(await canSwitchWorkspace(ADMIN), true);
     for (const u of [GMO, OFFICER, {}]) {
       assert.equal(await canSwitchWorkspace(u), false, JSON.stringify(u.role));
     }
+    assert.equal(await canSwitchWorkspace({ role: 'MANAGER', tabs: ['manager'] }), true,
+      'a ticked HOPE Loan tab is enough, admin or not');
   });
 });
 
@@ -198,9 +250,9 @@ test('pointing the environment at a different project yields a different client'
 function withSchemaModeEnabled(fn) {
   const enabled = process.env.HOPELOAN_ENABLED;
   process.env.HOPELOAN_ENABLED = 'true';
-  try { return fn(); } finally {
+  return withRestore_(fn, () => {
     if (enabled === undefined) delete process.env.HOPELOAN_ENABLED; else process.env.HOPELOAN_ENABLED = enabled;
-  }
+  });
 }
 
 /* RUNNING THE SQL IS THE CONFIGURATION. The switch used to need HOPELOAN_ENABLED on top of
@@ -213,7 +265,7 @@ test('schema mode needs no environment variable at all', async () => {
     assert.equal(hopeLoanConfigured(), true);
     assert.notEqual(dbFor(HOPELOAN), supabase, 'schema mode is still a distinct client');
     assert.equal(resolveWorkspace(ADMIN, 'hopeloan'), HOPELOAN);
-    assert.equal(resolveWorkspace(GMO, 'hopeloan'), HOPEPMO, 'the role check applies regardless');
+    assert.equal(resolveWorkspace(GMO, 'hopeloan'), HOPEPMO, 'the role-or-tab check applies regardless');
   });
 });
 
@@ -252,7 +304,7 @@ test('the switch appears only once the SQL has actually been run', async () => {
     clearHopeLoanProbe();
     assert.equal(await hopeLoanReady(), true, 'the SQL is in -- the switch appears');
     assert.equal(await canSwitchWorkspace(ADMIN), true);
-    assert.equal(await canSwitchWorkspace(GMO), false, 'still admin-only, however ready it is');
+    assert.equal(await canSwitchWorkspace(GMO), false, 'no HOPE Loan tab, however ready the sandbox is');
   } finally {
     globalThis.fetch = real;
     clearHopeLoanProbe();
