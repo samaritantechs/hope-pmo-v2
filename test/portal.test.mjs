@@ -520,6 +520,26 @@ test('sms export: carries its own .gaps, so the Upload page never has to fetch t
     g.teamGaps.map(x => x.team + '|' + x.role).sort());
 });
 
+test('sms export: carries buckets + teamPhones too, so a gap-fill save never re-fetches the book', async () => {
+  // "Save & download" used to call smsExport a SECOND time after saving new numbers -- a fresh
+  // request paying for the whole defaulter book again, which is exactly what "error 504" came
+  // back from the moment someone actually used the gap-fill form. The fix moves the final HOPE
+  // Phone resolution to the browser: it needs, per row, which fallback CHAIN it belongs to
+  // (an index into the four fixed chains) and the raw phone columns of every team involved --
+  // both of which this locks in the shape of.
+  const t = tables();
+  t.teams[0].credit_no = '0711000CR';
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(d.buckets.length, d.rows.length, 'one bucket index per row, same order');
+  // 111 and 555 are KONGOWE, paid < 6 -> bucket 0 (credit chain).
+  const i111 = d.rows.findIndex(r => r[3] === '111');
+  assert.equal(d.buckets[i111], 0);
+  assert.deepEqual(d.teamPhones.KONGOWE, { credit_no: '0711000CR' });   // the raw value on file, un-resolved
+  assert.equal(d.pmo, '');
+  // MBAGALA has no numbers on file at all -- still present, just an empty slot, not missing.
+  assert.deepEqual(d.teamPhones.MBAGALA, {});
+});
+
 test('sms export: 1-6 goes to the credit analyst, the rest to the team\'s OWN recovery officer', async () => {
   const t = tables();
   t.teams[0].credit_no = '0711000CR';                              // KONGOWE's credit analyst

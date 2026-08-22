@@ -685,15 +685,46 @@ function renderSmsGaps_(code, audience, exported, btn){
     });
     var jobs = Object.keys(byTeam).map(function(t){ return portalCall_(code, 'saveTeam', byTeam[t]); });
     if (pmoVal) jobs.push(portalCall_(code, 'settingSet', { key: 'PMO_RECOVERY_NO', value: pmoVal }));
-    // Numbers just changed, so THIS one re-fetch is unavoidable -- it is the only way the file
-    // can carry what was just saved instead of the stale fallback. Every export after this one
-    // is back to a single fetch, since the gap that caused it is now filled in on the team.
+    // NOT A RE-FETCH OF THE BOOK. That was the second "error 504" -- "Save & download" pressed
+    // the same expensive button twice in a row, in a fresh request with its own fresh 60s clock,
+    // so the fix for the first 504 did nothing for this one. Saving a number changes a handful
+    // of rows on `teams`, not one row of the defaulter book -- so once the saves land, the HOPE
+    // Phone column is recomputed right here in the browser from `exported.buckets` and
+    // `exported.teamPhones` (patched with what was just typed in), over rows already sitting in
+    // memory. No second request, so nothing left to time out.
     Promise.all(jobs)
-      .then(function(){ box.className = 'hide'; box.innerHTML = ''; return fetchSmsExport_(code, audience); })
-      .then(function(fresh){ saveSmsFile_(fresh); })
+      .then(function(){
+        box.className = 'hide'; box.innerHTML = '';
+        saveSmsFile_(patchSmsPhones_(exported, byTeam, pmoVal));
+      })
       .catch(function(e){ alert(String((e && e.message) || e)); })
       .then(function(){ saveBtn.disabled = false; btn.disabled = false; });
   };
+}
+
+/* THE SAME CHAINS THE SERVER RESOLVES WITH, small and stable enough to keep a second copy of --
+   see SMS_BUCKET_CHAINS in portal-core.js, which is where these four actually come from. */
+var SMS_BUCKET_CHAINS_ = [['credit'], ['recovery', 'collection'], ['expected'], ['collection']];
+var SMS_PHONE_FIELD_OF_ = { credit: 'credit_no', recovery: 'recovery_no', expected: 'expected_no', collection: 'collection_no' };
+function patchSmsPhones_(exported, byTeam, pmoVal){
+  var teamPhones = exported.teamPhones || {};
+  Object.keys(byTeam).forEach(function(team){
+    var slot = teamPhones[team] || (teamPhones[team] = {});
+    var patch = byTeam[team];
+    Object.keys(patch).forEach(function(k){ if (k !== 'team' && k.slice(-3) === '_no') slot[k] = patch[k]; });
+  });
+  var pmo = pmoVal || exported.pmo || '';
+  (exported.rows || []).forEach(function(r, i){
+    var chain = SMS_BUCKET_CHAINS_[(exported.buckets || [])[i]] || [];
+    var tp = teamPhones[r[2]] || {};
+    var phone = '';
+    for (var c = 0; c < chain.length; c++){
+      var v = tp[SMS_PHONE_FIELD_OF_[chain[c]]];
+      if (v) { phone = v; break; }
+    }
+    r[5] = phone || pmo || '';
+  });
+  return exported;
 }
 
 $('smsExportBtn').onclick = function(){
