@@ -683,7 +683,14 @@ var NAV_LOAN = [
   { id:'ln_cs',        label:'Customer Service', tab:'customer_service', ic:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>' },
   { id:'ln_manager',   label:'Manager · Assign', tab:'manager', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' },
   { id:'ln_team',      label:'Team · Assessment', tab:'team', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
-  { id:'ln_senior',    label:'GMO / OPM Review', tab:'gmo', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
+  /* TWO SIDE NAVS, NOT ONE SCREEN WITH A DROPDOWN -- "so here we'll have two side navs b/se
+     that's the way I distribute operations people login and I give them navigation tabs
+     access at access codes". Manager Review reuses the 'manager' tab on purpose (see the
+     senior-review comment in loan-core.js): whoever can Assign or Disburse today can now also
+     do this, by the owner's own choice. Both are mandatory now, not the old MUST/MAY split --
+     see GMO_THRESHOLD / MANAGER_THRESHOLD in loan-core.js. */
+  { id:'ln_manager_review', label:'Manager Review', tab:'manager', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
+  { id:'ln_gmo_review',     label:'GMO Review', tab:'gmo', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
   { id:'ln_credit',    label:'Credit · Approval', tab:'credit', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
   { id:'ln_disburse',  label:'Disburse', tab:'manager', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
   { id:'ln_finance',   label:'Finance', tab:'finance', ic:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
@@ -5233,29 +5240,33 @@ function lnTeamAssessForm_(loan){
 }
 
 /* ---------- GMO / OPM senior review ---------- */
-VIEWS.ln_senior = function(){
-  var tier = S.args.tier || 'gmo';
-  HEAD = bar('<select id="lnTier"><option value="gmo"' + (tier==='gmo'?' selected':'') + '>GMO (3M+, MUST)</option>'
-    + '<option value="opm"' + (tier==='opm'?' selected':'') + '>OPM (6M+, MAY)</option></select>');
+/* TWO SCREENS, ONE HELPER. Each nav id now fixes its own tier -- Manager Review always asks
+   for 'manager', GMO Review always asks for 'gmo' -- so there is no dropdown to wire any more;
+   which screen you are on already says which tier you are working. */
+function lnSeniorView_(navId, tier, thresholdNote){
+  HEAD = '<div class="note">' + esc(thresholdNote) + '</div>';
   return srv('seniorQueue', { tier: tier }).then(function(d){
     S.rows = d.rows; S.cols = [
       col('loan_id', 'Ref'), col('full_name', 'Customer'), col('branch', 'Branch'), col('team', 'Team'),
       { key:'team_recomm', label:'Recommended', kind:'money' }];
-    ONROW = function(r){ lnSeniorForm_(r, tier); };
+    ONROW = function(r){ lnSeniorForm_(r, tier, navId); };
   });
-};
-function wireLnSenior_(){
-  var t = document.getElementById('lnTier');
-  if (t) t.onchange = function(){ S.args.tier = this.value; render({ force:true }); };
 }
-function lnSeniorForm_(loan, tier){
+VIEWS.ln_manager_review = function(){
+  return lnSeniorView_('ln_manager_review', 'manager', 'Mandatory for every loan 1,000,000+. / Lazima kwa mkopo wowote wa 1,000,000+.');
+};
+VIEWS.ln_gmo_review = function(){
+  return lnSeniorView_('ln_gmo_review', 'gmo', 'Mandatory for every loan 6,000,000+, ALONGSIDE Manager Review, not instead of it. / '
+    + 'Lazima kwa mkopo wowote wa 6,000,000+, PAMOJA na Manager Review, si badala yake.');
+};
+function lnSeniorForm_(loan, tier, navId){
   drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Recommended: ' + money(loan.team_recomm) + '</div>'
     + '<div class="fld"><label>Your recommended amount</label><input id="lnSrAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
     + '<div class="fld"><label>Remarks</label><input id="lnSrRemarks"></div>'
     + '<button class="btn w" id="lnSrSubmit">Record recommendation</button>');
   $('#lnSrSubmit').onclick = function(){
     lnAct('seniorRecommend', { loan_id: loan.id, tier: tier, amount: Number($('#lnSrAmt').value) || 0, remarks: $('#lnSrRemarks').value.trim() },
-      'Recorded.', function(){ go('ln_senior'); });
+      'Recorded.', function(){ go(navId); });
   };
 }
 
@@ -6017,10 +6028,11 @@ function wireForms(){
      A view function's own returned promise resolves BEFORE this runs; wiring a button inside
      the view function itself, before drawView_() has painted HEAD into the page, attaches a
      click handler to an element that does not exist yet and silently does nothing. Every
-     other HOPE Loan HEAD button (Finance, Reversals, GM, the GMO/OPM select) had exactly this
-     bug on first write; all five are gated here alongside it. */
+     other HOPE Loan HEAD button (Finance, Reversals, GM) had exactly this bug on first write;
+     all four are gated here alongside it. (Manager/GMO Review had a fifth -- the tier select --
+     but each is its own fixed-tier nav item now, so there is no dropdown left to wire.) */
   if (S.workspace === 'hopeloan') {
-    wireLnCs_(); wireLnSenior_(); wireLnFinance_(); wireLnReversals_(); wireLnGm_();
+    wireLnCs_(); wireLnFinance_(); wireLnReversals_(); wireLnGm_();
   }
   // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
   // not be counted or filtered, and counting complaints by category is why the register exists.
