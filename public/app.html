@@ -4410,6 +4410,9 @@ VIEWS.settings = function(){
     S.officers = cu;
     S.teamCount = (tm.rows||[]).length;
     S.roles = ac.roles || [];
+    // Feeds codeForm's tab checkboxes -- HOPE PMO and HOPE Loan together, same list roleForm
+    // already draws from, so "Extra tabs" stops being a box where a typo grants nothing.
+    S.allTabs = ac.allTabs || [];
     S.storage = sg;
     // Two registers live here because they answer the same question -- who may use this
     // system: an access code is a PORTAL login, a call user is a PHONE registration.
@@ -6223,13 +6226,26 @@ function codeForm(x){
       + '<div class="fldnote">Kwa wadhifa wenye safu kwenye jedwali la timu (OPM, RECOVERY, GMO, MANAGER, CREDIT, EXPECTED, BIKE), orodha hii pia inamweka mtu huyu kwenye Timu na Wafanyakazi. ALL haimpi mtu timu zote — inafungua tu kuona.'
       + '<br>For a role that has a column in the teams table, this list also files the person into Teams &amp; Staff. ALL only opens the view; it never makes somebody the officer of every team.</div>'
       + '</div>'
-    + '<div class="fld"><label>Tabs za ziada / Extra tabs (upload, settings)</label><input id="kTabs" value="'+esc(x&&x.tabs?x.tabs.join(', '):'')+'"></div>'
+    /* TICKED, NOT TYPED. "i'll then need to from now on set accesscodes by ticking the nav
+       pannels from all existing whatever the future stage am on because writing could error"
+       -- this used to be free text, the one tab-editing screen in the system that was, and a
+       typo here did not error, it just silently granted nothing. Same checkbox list roleForm
+       already uses, same source (S.allTabs, HOPE PMO and HOPE Loan together) -- so a tab added
+       for either side is tickable from both screens without either one being told about it
+       twice. */
+    + '<div class="fld"><label>Tabs za ziada / Extra tabs</label><div class="checks">'
+      + (S.allTabs||[]).map(function(t){
+          return '<label><input type="checkbox" class="kTab" value="'+esc(t)+'"'
+            + ((x && x.tabs || []).indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
+      + '</div></div>'
     + '<button class="btn w" id="kSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="kDel">Futa msimbo / Delete code</button>'));
   document.getElementById('kSave').onclick = function(){
+    var tabs = Array.prototype.filter.call(document.querySelectorAll('.kTab'), function(c){ return c.checked; })
+      .map(function(c){ return c.value; }).join(',');
     srv('saveAccessCode', { code:document.getElementById('kCode').value.trim(), oldCode:(x?x.code:''), name:document.getElementById('kName').value.trim(),
       role:document.getElementById('kRole').value.trim(), teams:document.getElementById('kTeams').value.trim(),
-      tabs:document.getElementById('kTabs').value.trim() })
+      tabs:tabs })
       /* THE ROSTER FOLLOWED, SO SAY SO. Saving a code now also re-files that person in the
          teams table, and a change to a screen the admin is not looking at has to be reported
          or it is indistinguishable from nothing happening. */

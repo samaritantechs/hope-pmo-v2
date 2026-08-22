@@ -70,6 +70,20 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit']);
    without inventing its own list. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit'];
 
+/* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
+   into an "Extra tabs" box on every access code. "i'll then need to from now on set
+   accesscodes by ticking the nav pannels from all existing whatever the future stage am on
+   because writing could error" -- a free-text tabs field is exactly that risk (one typo and a
+   grant silently does nothing), and it existed for access codes even though the Roles screen
+   had already solved it for roles with a checkbox list. Both now tick from the SAME list.
+   'credit' deliberately appears only once even though it gates a screen on each side (PMO's
+   own Credit Analysts board and HOPE Loan's Credit · Approval) -- one word, one permission,
+   the same person doing the same kind of work wherever it shows up. */
+export const LOAN_TABS = ['customer_service', 'manager', 'team', 'gmo', 'credit', 'finance', 'gm'];
+/* Everything tickable, PMO and Loan together, deduplicated -- what a Roles or Access Code
+   checkbox list draws from so neither has to be told about a tab twice. */
+export const ALL_TABS = [...new Set([...ADMIN_TABS, ...LOAN_TABS])];
+
 /* =======================================================================================
    THE READ-ONLY ADMIN -- SUPERVISION THAT CANNOT LEAVE FINGERPRINTS.
 

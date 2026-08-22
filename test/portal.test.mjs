@@ -1584,6 +1584,26 @@ test('roles can be created, edited and safely deleted', async () => {
     e => e.status === 403);
 });
 
+test('a role can be ticked into a HOPE Loan tab too, not just HOPE PMO -- both live in the same checkbox list', async () => {
+  // "ticking the nav pannels from all existing whatever the future stage am on because
+  // writing could error" -- saveRole used to filter against ADMIN_TABS alone, so a Loan tab
+  // ticked on the checkbox list this same allTabs feeds was silently dropped on save.
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'saveRole', { role: 'senior', tabs: 'dashboard, gmo, manager, nonsense' }, NOW);
+  const saved = db._dump('roles').find(r => r.role === 'SENIOR');
+  assert.deepEqual(saved.tabs, ['dashboard', 'gmo', 'manager']);
+
+  // Both screens that offer this checkbox draw from the same combined list.
+  const t = await portalApi(db, ADMIN, 'teams', {}, NOW);
+  const ac = await portalApi(db, ADMIN, 'accessCodes', {}, NOW);
+  for (const list of [t.allTabs, ac.allTabs]) {
+    for (const lt of ['customer_service', 'manager', 'team', 'gmo', 'credit', 'finance', 'gm']) {
+      assert.ok(list.includes(lt), lt + ' is tickable');
+    }
+    assert.ok(list.includes('upload'), 'HOPE PMO tabs are still there too');
+  }
+});
+
 test('leader reports roll teams up under each supervisor, not just per team', async () => {
   const db = fakeDb(tables());
   const d = await portalApi(db, ADMIN, 'leaderReports', {}, NOW);
