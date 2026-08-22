@@ -527,23 +527,61 @@ test('speed: an officer and an admin must NOT read the same amount', async () =>
 });
 
 /* =====================================================================================
-   A WEEK OF DECKS, EACH UPLOADED ON ITS OWN DAY.
+   A WEEK OF DECKS, EACH UPLOADED ON ITS OWN DAY -- STILL TRUE FOR 'initial' BASELINES.
    =====================================================================================
    Resolving the deck date per team AND per weekday is what finally made every defaulter
    visible without waiting on a re-upload. It also changed the read's shape: it used to resolve
    to one or two distinct dates and now resolves to one per distinct upload day -- six or seven
    in a normal week.
 
-   That is fine, and it must STAY fine. This is the fixture that would notice if it stopped
-   being: six weekdays, every one uploaded on a different day, across forty teams. The trip
-   budget is what catches somebody later deciding to read each team separately, and the row
-   budget is what catches a read that stops narrowing by weekday and drags the whole window.
+   'current' no longer takes this path at all -- "one file, all weekdays together, every time"
+   -- see defaulterBook's own comment in portal-core.js and the test just below this one. But a
+   baseline is not re-uploaded on a defaulter's cadence, so 'initial' still needs exactly this
+   protection, and this is the fixture that would notice if the mechanism itself broke: six
+   weekdays, every one uploaded on a different day, across forty teams. The trip budget is what
+   catches somebody later deciding to read each team separately, and the row budget is what
+   catches a read that stops narrowing by weekday and drags the whole window.
 
    It is also why the loop is sequential. Six requests in flight per screen, times the several
    these screens each fire, times two hundred handsets, is the concurrency that exhausted the
-   connection pool the last time it was tried.
-   ===================================================================================== */
-test('speed: a week of decks on six different upload dates stays within 20 trips and 40,000 rows', async () => {
+   connection pool the last time it was tried. */
+test('speed: a week of INITIAL decks on six different upload dates stays within 20 trips and 40,000 rows', async () => {
+  const WDS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  const DATES = ['2026-07-24', '2026-07-23', '2026-07-22', '2026-07-21', '2026-07-20', '2026-07-17'];
+  const rows = [];
+  let n = 0;
+  for (let w = 0; w < WDS.length; w++) {
+    for (const team of TEAMS) {
+      for (let i = 0; i < 40; i++) {
+        rows.push({ id: 'd' + (++n), ref: 'R' + n, full_name: 'C' + n, team,
+          status: 'Defaulter', arrears: 1000, ds: '2-4',
+          snapshot_type: 'initial', snapshot_date: DATES[w], weekday: WDS[w],
+          upload_batch: 'b' + w, created_at: DATES[w] + 'T06:00:00Z' });
+      }
+    }
+  }
+  const c = counting({ ...bigBook(), defaulter_snapshots: rows },
+    { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } });
+  const out = await portalApi(c.db, ADMIN, 'defaulters', { type: 'initial' }, NOW);
+  const s = c.stat();
+
+  assert.equal(out.rows.length, rows.length,
+    `every deck must come back whole: ${out.rows.length} of ${rows.length}`);
+  assert.equal(new Set(out.rows.map(r => r.weekday)).size, 6,
+    'all six weekdays, each read at its own date');
+  assert.ok(s.trips <= 20, `${s.trips} trips for six dates -- one per date, not one per team`);
+  assert.ok(s.rows <= 40000, `${s.rows} rows -- the weekday narrowing has stopped working`);
+});
+
+/* =====================================================================================
+   CURRENT DEFAULTERS: THE SAME SPREAD-ACROSS-THE-WEEK SHAPE READS AS ONE DATE, CHEAPLY.
+   =====================================================================================
+   The mirror image of the test above, same fixture shape, 'current' instead of 'initial'.
+   Only the single latest date's rows (Monday's, here) come back -- the older five weekdays'
+   rows are leftovers from before "one whole-company file, every time" and must not resurrect
+   a paid-off customer's team. This also costs far less: no deckDatesPerTeam round trip at all,
+   just the one date lookup and the one page of rows on it. */
+test('speed: CURRENT defaulters read the single latest date only, and cheaply', async () => {
   const WDS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   const DATES = ['2026-07-24', '2026-07-23', '2026-07-22', '2026-07-21', '2026-07-20', '2026-07-17'];
   const rows = [];
@@ -563,12 +601,11 @@ test('speed: a week of decks on six different upload dates stays within 20 trips
   const out = await portalApi(c.db, ADMIN, 'defaulters', {}, NOW);
   const s = c.stat();
 
-  assert.equal(out.rows.length, rows.length,
-    `every deck must come back whole: ${out.rows.length} of ${rows.length}`);
-  assert.equal(new Set(out.rows.map(r => r.weekday)).size, 6,
-    'all six weekdays, each read at its own date');
-  assert.ok(s.trips <= 20, `${s.trips} trips for six dates -- one per date, not one per team`);
-  assert.ok(s.rows <= 40000, `${s.rows} rows -- the weekday narrowing has stopped working`);
+  const mondayRows = TEAMS.length * 40;
+  assert.equal(out.rows.length, mondayRows,
+    `only today's whole-company upload counts: ${out.rows.length} of ${mondayRows}`);
+  assert.equal(new Set(out.rows.map(r => r.weekday)).size, 1, 'today\'s one weekday, not all six');
+  assert.ok(s.trips <= 6, `${s.trips} trips -- no per-team-per-weekday lookback needed any more`);
 });
 
 /* =====================================================================================

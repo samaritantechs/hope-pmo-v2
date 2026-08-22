@@ -2332,7 +2332,7 @@ VIEWS.dashboard = function(){
             ['U '+d.appsTrend.reduce(function(s,x){return s+x.unassigned;},0)+' · A '+d.appsTrend.reduce(function(s,x){return s+x.assigned;},0), 'mutl'],
             ['<b>'+d.appsTrend.reduce(function(s,x){return s+x.apps;},0)+' apps</b>'],
             ['TZS '+money(d.appsTrend.reduce(function(s,x){return s+x.amount;},0)), 'mutl']], 'tot'))
-      + trendGrid('Sales trend (Mon–Fri)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
+      + trendGrid('Sales trend (Mon–Sat)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
           d.salesTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
@@ -5127,6 +5127,17 @@ function lnCsRegisterForm_(existing){
         + '<option value="">— chagua / choose —</option>'
         + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
         + '</select></div>'
+      // "after disb mode in loanapp, fill the disb no (mobile money/momo no or bank a/c no)" --
+      // right where the mode is chosen, not left for credit approval to ask a second time with
+      // nothing on file. Momo and Bank fields swap in and out under the SAME mode select, same
+      // pattern lnCreditForm_ already uses further down the pipeline.
+      + '<div class="fld" id="lnMomoFld"><label>Namba ya Momo / Momo no.</label><input id="lnMomoNo"></div>'
+      + '<div class="fld" id="lnBankFld"><label>Jina la Benki / Bank name</label><input id="lnBankName"></div>'
+      + '<div class="fld" id="lnAcctFld"><label>Namba ya Akaunti / Account no.</label><input id="lnAcctNo"></div>'
+      // "shift requested amount in apploan before region selection and add filling business
+      // type before location choices too" -- both now sit here, ahead of Region/Branch/Landmark.
+      + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
+      + '<div class="fld"><label>Aina ya biashara / Business type</label><input id="lnBizType" value="' + esc(existing ? existing.business_type : '') + '"></div>'
       /* REGION FIRST, THEN BRANCH.
            "selecting a branch should autofill its region since customer service agents dont
             know that / infact they should select among regions and then choose drop list of
@@ -5143,8 +5154,16 @@ function lnCsRegisterForm_(existing){
         + (byRegion[curRegion]||[]).map(function(b){ return '<option' + (existing && existing.branch===b?' selected':'') + '>' + esc(b) + '</option>'; }).join('')
         + '</select></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
-      + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
       + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
+    // Momo no. for a Momo disbursement, Bank name + Account no. for a Bank one -- nothing shown
+    // (and nothing required) until a mode is actually chosen.
+    function toggleDisbFlds(){
+      var mode = $('#lnDisbMode').value;
+      $('#lnMomoFld').style.display = mode === 'Momo' ? '' : 'none';
+      $('#lnBankFld').style.display = mode === 'Bank' ? '' : 'none';
+      $('#lnAcctFld').style.display = mode === 'Bank' ? '' : 'none';
+    }
+    $('#lnDisbMode').onchange = toggleDisbFlds; toggleDisbFlds();
     $('#lnRegion').onchange = function(){
       var rg = this.value, branches = byRegion[rg] || [];
       var sel = $('#lnBranch');
@@ -5158,8 +5177,9 @@ function lnCsRegisterForm_(existing){
         docket: existing ? existing.docket : undefined,
         full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
         branch: $('#lnBranch').value.trim(), region: $('#lnRegion').value.trim(),
-        landmark: $('#lnLandmark').value.trim(),
+        landmark: $('#lnLandmark').value.trim(), business_type: $('#lnBizType').value.trim(),
         disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
+        momo: $('#lnMomoNo').value.trim(), bank_name: $('#lnBankName').value.trim(), account_no: $('#lnAcctNo').value.trim(),
       }, 'Application registered.');
     };
   }).catch(function(e){ toast(String(e.message||e), true); });

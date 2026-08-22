@@ -511,18 +511,22 @@ test('the newest deck date is learned for every team, not just the first thousan
   }
 });
 
-test('every weekday\'s deck is read at ITS OWN date -- a defaulter has no day', async () => {
-  /* Corrected in the owner's own words:
-       "defaulters have no day so as to read like the expected its just to know recovery of
-        monday having them on monday so not that i have to upload saturady report today to see
-        the defaulter"
+/* =====================================================================================
+   CURRENT DEFAULTERS NO LONGER READ EACH WEEKDAY AT ITS OWN DATE.
+   =====================================================================================
+   The two tests this replaces protected exactly the shape the owner described when this was
+   built: "defaulters have no day... its just to know recovery of monday having them on monday
+   so not that i have to upload saturday report today to see the defaulter" -- a company that
+   uploaded one weekday's file on its own day, spread across the week.
 
-     The weekday on a deck exists to pair an initial against a current for recovery. It does NOT
-     say which day a customer belongs to -- a defaulter is a defaulter every day. So Saturday's
-     people must be on the list today without Saturday's file being uploaded again today.
-
-     This is the shape that produced "(deki 8,783 · rejista 12,391 · MON, TUE)": one date per
-     TEAM keeps whichever weekdays went up most recently and drops the rest of the week. */
+   That is no longer how 'current' defaulters arrive: "one file, all weekdays together, every
+   time" -- confirmed directly, specifically asked about THIS scenario, after "i bulked paid
+   clients, many of them brother!" turned out to be the SAME mechanism keeping a team's stale,
+   already-cleared deck alive. With no more per-weekday files to protect, holding onto an older
+   weekday's deck only ever means resurrecting defaulters the newest whole-company upload no
+   longer names. See defaulterBook's 'current' branch in portal-core.js for the code that
+   changed; deckDatesPerTeam itself is untouched and still runs for 'initial' baselines. */
+test('CURRENT reads only the single latest date -- an older weekday no longer lingers', async () => {
   const { portalApi } = await import('../api/_lib/portal-core.js');
   const NOWF = Date.parse('2026-07-24T09:00:00Z');
   const mk = (ref, wd, d) => ({ id: ref, ref, full_name: ref, team: 'GOBA', arrears: 1000,
@@ -530,7 +534,8 @@ test('every weekday\'s deck is read at ITS OWN date -- a defaulter has no day', 
     upload_batch: 'b' + d, created_at: d + 'T06:00:00Z' });
   const db = fakeDb({
     teams: [{ team: 'GOBA' }],
-    // Monday's and Tuesday's decks went up today; the rest of the week went up earlier.
+    // Monday's and Tuesday's rows are on TODAY'S whole-company upload; the rest are leftovers
+    // from before that upload shape existed -- exactly what should now be gone.
     defaulter_snapshots: [
       mk('MON-CUST', 'MON', '2026-07-24'), mk('TUE-CUST', 'TUE', '2026-07-24'),
       mk('WED-CUST', 'WED', '2026-07-22'), mk('THU-CUST', 'THU', '2026-07-21'),
@@ -541,13 +546,11 @@ test('every weekday\'s deck is read at ITS OWN date -- a defaulter has no day', 
   const admin = { code: 'A', name: 'A', role: 'ADMIN', teams: null, tabs: ['settings'] };
   const out = await portalApi(db, admin, 'defaulters', {}, NOWF);
   const refs = out.rows.map(r => r.ref).sort();
-  assert.deepEqual(refs, ['MON-CUST', 'SAT-CUST', 'THU-CUST', 'TUE-CUST', 'WED-CUST'],
-    'every weekday\'s deck, each at its own date -- nobody waits on a re-upload');
+  assert.deepEqual(refs, ['MON-CUST', 'TUE-CUST'],
+    'only today\'s whole-company upload counts -- older weekdays it did not repeat are gone');
 });
 
-test('a re-uploaded weekday wins for that weekday only, and disturbs no other', async () => {
-  /* The other half of the same rule: resolving per weekday must not turn into "read every
-     upload ever". Tuesday uploaded twice keeps only the newer Tuesday, and Monday is untouched. */
+test('a re-upload still wins outright, and nothing outside today\'s date survives either way', async () => {
   const { portalApi } = await import('../api/_lib/portal-core.js');
   const NOWF = Date.parse('2026-07-24T09:00:00Z');
   const mk = (ref, wd, d) => ({ id: ref + d, ref, full_name: ref, team: 'GOBA', arrears: 1000,
@@ -556,14 +559,14 @@ test('a re-uploaded weekday wins for that weekday only, and disturbs no other', 
   const db = fakeDb({
     teams: [{ team: 'GOBA' }],
     defaulter_snapshots: [
-      mk('MON-CUST', 'MON', '2026-07-20'),
-      mk('TUE-OLD', 'TUE', '2026-07-21'),       // superseded
-      mk('TUE-NEW', 'TUE', '2026-07-24'),       // Tuesday, uploaded again
+      mk('MON-CUST', 'MON', '2026-07-20'),      // an older date -- no longer read at all
+      mk('TUE-OLD', 'TUE', '2026-07-21'),       // superseded, same as before
+      mk('TUE-NEW', 'TUE', '2026-07-24'),       // today's date -- the only one that counts now
     ],
   }, { rpc: SNAPSHOT_TOTALS_RPC });
   const admin = { code: 'A', name: 'A', role: 'ADMIN', teams: null, tabs: ['settings'] };
   const out = await portalApi(db, admin, 'defaulters', {}, NOWF);
   const refs = out.rows.map(r => r.ref).sort();
-  assert.deepEqual(refs, ['MON-CUST', 'TUE-NEW'],
-    'the older Tuesday is gone, and Monday is exactly where it was');
+  assert.deepEqual(refs, ['TUE-NEW'],
+    'the older Tuesday is still gone, and Monday no longer gets to linger either');
 });
