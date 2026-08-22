@@ -494,7 +494,7 @@ test('guarantor section: the primary carries every KYC field, five alternates ca
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'G CUSTOMER', mobile: '0700000036', team: 'MABIBO', amount: 200000 });
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: [
     { full_name: 'PRIMARY GUARANTOR', phone: '0711000010', relationship: 'Brother',
-      street: 'Mtaa wa Pili', ward: 'Kigogo', district: 'Ilala', national_id: '1985-2',
+      street: 'Mtaa wa Pili', ward: 'Kigogo', district: 'Ilala', id_type: 'Voters ID', national_id: '1985-2',
       residence_lat: -6.81, residence_lng: 39.21, residence_verify_photo_url: 'loans/x/g-res.jpg',
       photo_url: 'loans/x/g-photo.jpg', signature_url: 'loans/x/g-sig.jpg', thumbprint_url: 'loans/x/g-thumb.jpg' },
     { full_name: 'ALT A', phone: '0711000011', relationship: 'Uncle' },
@@ -506,6 +506,9 @@ test('guarantor section: the primary carries every KYC field, five alternates ca
   const rows = db._dump('guarantors').filter(r => r.loan_id === loan.id).sort((a, b) => a.rank - b.rank);
   assert.equal(rows.length, 6, 'the primary plus all five alternates');
   assert.equal(rows[0].street, 'Mtaa wa Pili');
+  // "guarantor id should be choices too.. not just nida"
+  assert.equal(rows[0].id_type, 'Voters ID');
+  assert.equal(rows[0].national_id, '1985-2', 'the number itself still lands in the one existing column');
   assert.equal(Number(rows[0].residence_lat), -6.81);
   assert.equal(rows[0].signature_url, 'loans/x/g-sig.jpg');
   for (let i = 1; i <= 5; i++) {
@@ -513,6 +516,20 @@ test('guarantor section: the primary carries every KYC field, five alternates ca
     assert.equal(rows[i].signature_url, null);
     assert.ok(rows[i].full_name && rows[i].phone && rows[i].relationship);
   }
+});
+
+test('once the recommendation is submitted, no section can be edited any more', async () => {
+  // "as long as recommendation is not submitted - can edit previous stages but always load /
+  // preview presaved info" -- and not once it has been.
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  await assert.rejects(
+    () => loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loanId, section: 'personal', fields: { gender: 'Male' } }),
+    /already been submitted/i);
+  await assert.rejects(
+    () => loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loanId, section: 'business', fields: { business_name: 'Late edit' } }),
+    /already been submitted/i);
 });
 
 /* =====================================================================================

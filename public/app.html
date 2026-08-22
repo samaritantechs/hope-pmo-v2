@@ -5042,35 +5042,26 @@ function lnAct(fn, args, okMsg, after){
     (after || render)();
   }).catch(function(e){ toast(String((e && e.message) || e), true); });
 }
+/** Same call, but the panel stays open -- "updating personal info shoulnt close the pannel
+    after each section filling". lnAct's closeDrawer() is right for a TERMINAL action (assign,
+    approve, submit -- the loan leaves this queue), wrong for one section of a multi-section
+    form the officer is still working through. Returns the promise so a caller can chain
+    (e.g. the pad/upload saves that have to finish before the section save itself fires). */
+function lnActKeep_(fn, args, okMsg){
+  return srv(fn, args).then(function(){
+    toast(okMsg || 'Imefanyika / Done');
+  }, function(e){ toast(String((e && e.message) || e), true); throw e; });
+}
 /* =====================================================================================
    KYC CAPTURE -- COMPRESS ON THE DEVICE, DRAW ON A CANVAS, ASK FOR GPS. Three small building
    blocks, reused everywhere a photo, a signature/thumbprint, or a pinpoint is asked for.
    ===================================================================================== */
 
 /* "adapt the whatsapp tech, when someone uploads their 5mb photo, we optimize it before
-   storing and store the low quality" -- resized and re-encoded on the PHONE, before a byte of
-   it is sent, which is what actually matters on a field connection; kycUpload's own 2MB cap
-   is only the backstop. */
-function compressImageFile_(file, maxDim, quality){
-  maxDim = maxDim || 1280; quality = quality || 0.7;
-  return new Promise(function(resolve, reject){
-    var reader = new FileReader();
-    reader.onerror = function(){ reject(new Error('Imeshindikana kusoma faili / could not read the file.')); };
-    reader.onload = function(){
-      var img = new Image();
-      img.onerror = function(){ reject(new Error('Imeshindikana kusoma picha / could not read the image.')); };
-      img.onload = function(){
-        var w = img.width, h = img.height, scale = Math.min(1, maxDim / Math.max(w, h));
-        var cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
-        var c = document.createElement('canvas'); c.width = cw; c.height = ch;
-        c.getContext('2d').drawImage(img, 0, 0, cw, ch);
-        resolve(c.toDataURL('image/jpeg', quality));
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
+   storing and store the low quality" -- every capture path resizes and re-encodes ON THE
+   DEVICE before a byte is sent (openCameraOverlay_ draws straight from the live video frame
+   at a capped dimension), which is what actually matters on a field connection; kycUpload's
+   own 2MB cap is only the backstop. */
 function kycUpload_(loanId, kind, dataUrl){
   return srv('kycUpload', { loan_id: loanId, kind: kind, data_url: dataUrl });
 }
@@ -5081,21 +5072,45 @@ function kycUpload_(loanId, kind, dataUrl){
    finger; there is no hardware fingerprint reader involved, on purpose, confirmed rather than
    assumed before this was built. Pointer events cover touch and mouse the same way, so this
    works identically on a phone in the field and a laptop in the office. */
-function wireCanvasPad_(canvasId){
+/** mode 'line' is a signature -- a pen stroke, thin, follows the path exactly. mode 'stamp' is
+    a thumbprint -- "fingerprint capturing is still miserable it works as typing": a thin exact
+    line IS what typing/drawing precisely feels like, and a thumb pressed on glass is neither
+    thin nor precise. Stamp mode lays down overlapping soft-edged circles the width of a real
+    thumb along wherever the finger moves, so the result reads as a pressed smear, not a traced
+    outline -- the same physical gesture a real inked thumbprint takes. */
+function wireCanvasPad_(canvasId, mode){
   var canvas = document.getElementById(canvasId);
   if (!canvas) return null;
   var ctx = canvas.getContext('2d');
-  ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.strokeStyle = '#1a2b4a';
+  var stamp = mode === 'stamp';
+  ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a2b4a';
+  ctx.fillStyle = 'rgba(26,43,74,.55)';
   var drawing = false, dirty = false, last = null;
   function pos(e){
     var r = canvas.getBoundingClientRect();
     return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
   }
-  function start(e){ e.preventDefault(); drawing = true; last = pos(e); }
+  function dab(p){
+    var r = Math.max(canvas.width, canvas.height) * 0.09;   // thumb-pad sized, not pen-tip sized
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  function start(e){
+    e.preventDefault(); drawing = true; last = pos(e);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}   // keeps the stroke on THIS canvas even off a fast, small screen
+    if (stamp) { dab(last); dirty = true; }
+  }
   function move(e){
     if (!drawing) return; e.preventDefault();
     var p = pos(e);
-    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    if (stamp) {
+      // Dab along the path, not just at the endpoints, or a fast smear leaves gaps.
+      var dx = p.x - last.x, dy = p.y - last.y, dist = Math.sqrt(dx * dx + dy * dy);
+      var step = Math.max(canvas.width, canvas.height) * 0.03;
+      for (var d = 0; d < dist; d += step) dab({ x: last.x + dx * (d / dist), y: last.y + dy * (d / dist) });
+      dab(p);
+    } else {
+      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    }
     last = p; dirty = true;
   }
   function end(){ drawing = false; }
@@ -5103,6 +5118,7 @@ function wireCanvasPad_(canvasId){
   canvas.addEventListener('pointermove', move);
   canvas.addEventListener('pointerup', end);
   canvas.addEventListener('pointerleave', end);
+  canvas.addEventListener('pointercancel', end);
   return {
     isDirty: function(){ return dirty; },
     dataUrl: function(){ return canvas.toDataURL('image/png'); },
@@ -5120,19 +5136,65 @@ function saveCanvasPad_(pad, loanId, kind, onPath){
 /** A camera/file capture button -- compress, upload, remember the path. Used for the passport
     photo (customer and guarantor) and for the three site-verification photos alike; only the
     `kind` string and where the resulting path lands differ. */
-function wirePhotoCapture_(btnId, fileId, statusId, loanId, kind, existingPath, onPath){
-  var btn = document.getElementById(btnId), file = document.getElementById(fileId), status = document.getElementById(statusId);
-  if (!btn || !file) return;
+/** A LIVE camera feed, never a file/gallery picker -- "photo shouldnt use gallary but phone
+    camera only". A file input's capture="environment" is only a HINT some browsers ignore,
+    and any hint still leaves a chooser a gallery photo can be picked from. getUserMedia opens
+    the camera directly; there is no picker step for an old photo to be substituted at. */
+function openCameraOverlay_(onCapture){
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  var video = document.createElement('video');
+  video.autoplay = true; video.playsInline = true; video.muted = true;
+  video.style.cssText = 'width:100%;max-height:80vh;object-fit:contain;background:#000';
+  var bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:12px;padding:16px;width:100%;max-width:420px';
+  var shotBtn = document.createElement('button');
+  shotBtn.type = 'button'; shotBtn.className = 'btn w'; shotBtn.style.flex = '1'; shotBtn.textContent = '📷 Piga / Capture';
+  var cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button'; cancelBtn.className = 'btn w ghost'; cancelBtn.style.flex = '1'; cancelBtn.textContent = 'Ghairi / Cancel';
+  bar.appendChild(shotBtn); bar.appendChild(cancelBtn);
+  overlay.appendChild(video); overlay.appendChild(bar);
+  document.body.appendChild(overlay);
+
+  var stream = null, stopped = false;
+  function stop(){
+    if (stopped) return; stopped = true;
+    if (stream) stream.getTracks().forEach(function(t){ t.stop(); });
+    if (overlay.parentNode) document.body.removeChild(overlay);
+  }
+  cancelBtn.onclick = stop;
+  shotBtn.disabled = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    stop(); toast('Kamera haipatikani kwenye kivinjari hiki. / Camera is not available in this browser.', true); return;
+  }
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+    .then(function(s){
+      if (stopped) { s.getTracks().forEach(function(t){ t.stop(); }); return; }   // Cancel pressed while permission was pending
+      stream = s; video.srcObject = s; shotBtn.disabled = false;
+    })
+    .catch(function(e){ stop(); toast('Imeshindikana kufungua kamera / could not open camera: ' + (e.message || e), true); });
+  shotBtn.onclick = function(){
+    var maxDim = 1280, vw = video.videoWidth || maxDim, vh = video.videoHeight || maxDim;
+    var scale = Math.min(1, maxDim / Math.max(vw, vh));
+    var c = document.createElement('canvas'); c.width = Math.round(vw * scale); c.height = Math.round(vh * scale);
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+    var dataUrl = c.toDataURL('image/jpeg', 0.7);
+    stop();
+    onCapture(dataUrl);
+  };
+}
+function wirePhotoCapture_(btnId, statusId, loanId, kind, existingPath, onPath){
+  var btn = document.getElementById(btnId), status = document.getElementById(statusId);
+  if (!btn) return;
   function setStatus(has){ if (status) status.textContent = has ? '✓ Imepigwa / Captured' : ''; }
   setStatus(!!existingPath);
-  btn.onclick = function(){ file.click(); };
-  file.onchange = function(){
-    var f = file.files && file.files[0];
-    if (!f) return;
-    btn.disabled = true; if (status) status.textContent = 'Inashughulikia... / Processing...';
-    compressImageFile_(f).then(function(dataUrl){ return kycUpload_(loanId, kind, dataUrl); })
-      .then(function(r){ onPath(r.path); setStatus(true); btn.disabled = false; })
-      .catch(function(e){ btn.disabled = false; setStatus(!!existingPath); toast(String((e && e.message) || e), true); });
+  btn.onclick = function(){
+    openCameraOverlay_(function(dataUrl){
+      btn.disabled = true; if (status) status.textContent = 'Inapakia... / Uploading...';
+      kycUpload_(loanId, kind, dataUrl)
+        .then(function(r){ onPath(r.path); setStatus(true); btn.disabled = false; })
+        .catch(function(e){ btn.disabled = false; setStatus(!!existingPath); toast(String((e && e.message) || e), true); });
+    });
   };
 }
 /** A "Capture location" button -- one GPS reading, shown back as coordinates so the officer
@@ -5158,9 +5220,8 @@ function wireGpsCapture_(btnId, statusId, existingLat, existingLng, onCoords){
 /** The three capture rows (photo button, canvas pad x2) share the same markup shape -- built
     once here so personal details and the guarantor section (customer and guarantor, the same
     three captures each) do not carry four copies of it. */
-function captureRowPhoto_(label, btnId, fileId, statusId){
+function captureRowPhoto_(label, btnId, statusId){
   return '<div class="fld"><label>' + esc(label) + '</label>'
-    + '<input type="file" accept="image/*" capture="environment" id="' + fileId + '" class="hide">'
     + '<button type="button" class="btn sm ghost" id="' + btnId + '">📷 Piga picha / Take photo</button>'
     + ' <span class="sub" id="' + statusId + '"></span></div>';
 }
@@ -5447,20 +5508,41 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="fld" id="lnIdOtherFld"><label>Aina gani? / Which kind?</label><input id="lnIdOther" value="' + esc(c.other_id_type || '') + '"' + (locked ? ' disabled' : '') + '></div>'
       + captureRowPad_('Sahihi / Signature', 'lnSigPad', 'lnSigClear')
       + captureRowPad_('Alama ya kidole gumba / Thumbprint press', 'lnThumbPad', 'lnThumbClear')
-      + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoFile', 'lnPhotoStatus')
+      + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoStatus')
       + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
 
-      + '<div class="card"><div class="card-h">2. Team recommendation</div>'
-      + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (a.recommend_amount || loan.requested_amt || '') + '"></div>'
-      + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
-      + '<div class="fld"><label>Remarks</label><input id="lnRemarks" value="' + esc(a.remarks || '') + '"></div>'
-      + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
+      // "business verification should come before guarantor info and team recommenation is
+      // the last" -- 2. Residence & business, 3. Guarantor, 4. Team recommendation (was 2nd).
+      + '<div class="card"><div class="card-h">2. Residence &amp; business verification</div>'
+      + '<div class="fld"><label>Mtaa / Street</label><input id="lnCustStreet" value="' + esc(c.street || '') + '"></div>'
+      + '<div class="fld"><label>Kata / Ward</label><input id="lnCustWard" value="' + esc(c.ward || '') + '"></div>'
+      + '<div class="fld"><label>Wilaya / District</label><input id="lnDistrict" value="' + esc(c.district || '') + '"></div>'
+      + captureRowGps_('Mahali pa makazi ya mteja / Customer residence location', 'lnCustGpsBtn', 'lnCustGpsStatus')
+      + captureRowPhoto_('Picha ya uthibitisho makazi (na afisa) / Residence verification photo (with officer)', 'lnCustResPhotoBtn', 'lnCustResPhotoStatus')
+      + '<label><input type="checkbox" id="lnResOk"' + (a.residence_verified ? ' checked' : '') + '> Customer residence verified</label><br>'
+      + '<label><input type="checkbox" id="lnGResOk"' + (a.guarantor_residence_verified ? ' checked' : '') + '> Guarantor residence verified</label>'
+      + '<div class="sub" style="margin:10px 0 4px">Biashara / Business</div>'
+      // "business type from the cs registration, fill business name and capture live
+      // location coordinates for all 3 placess business and their residences" -- business
+      // TYPE was already asked at CS registration; this is the name, and the third place.
+      + '<div class="fld"><label>Jina la biashara / Business name</label><input id="lnBizName" value="' + esc(c.business_name || '') + '"></div>'
+      + captureRowGps_('Mahali pa biashara / Business location', 'lnBizGpsBtn', 'lnBizGpsStatus')
+      + captureRowPhoto_('Picha ya mbele ya biashara (na afisa) / Business front verification photo (with officer)', 'lnBizPhotoBtn', 'lnBizPhotoStatus')
+      + '<label><input type="checkbox" id="lnBizOk"' + (a.business_verified ? ' checked' : '') + '> Business ownership verified</label>'
+      + '<button class="btn sm" id="lnSaveVerify" style="margin-top:8px">Save this section</button></div>'
 
       + '<div class="card"><div class="card-h">3. Guarantor</div>'
       + '<div class="fld"><label>Full name</label><input id="lnGName" value="' + esc(g.full_name || '') + '"></div>'
       + '<div class="fld"><label>Phone</label><input id="lnGPhone" value="' + esc(g.phone || '') + '"></div>'
       + '<div class="fld"><label>Relationship</label><input id="lnGRel" value="' + esc(g.relationship || '') + '"></div>'
-      + '<div class="fld"><label>National ID</label><input id="lnGNida" value="' + esc(g.national_id || '') + '"></div>'
+      // "guarantor id should be choices too.. not just nida" -- same choice as personal
+      // details; stored in the guarantor's one national_id column, alongside id_type saying
+      // which kind it actually is (no bureau reporting requires the guarantor to have a
+      // separate column per type the way the customer does).
+      + '<div class="fld"><label>Aina ya kitambulisho / ID type</label><select id="lnGIdType">'
+        + Object.keys(ID_TYPES).map(function(x){ return '<option' + ((g.id_type || 'NIDA') === x ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Namba ya kitambulisho / ID number</label><input id="lnGIdNo" value="' + esc(g.national_id || '') + '"></div>'
       // "residence and business ver should be filled street, ward, district for both customer
       // and guarantor" -- the guarantor's half lives here, alongside the rest of their own
       // record, not split off into section 4 where their row might not exist yet.
@@ -5468,8 +5550,8 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="fld"><label>Kata / Ward</label><input id="lnGWard" value="' + esc(g.ward || '') + '"></div>'
       + '<div class="fld"><label>Wilaya / District</label><input id="lnGDistrict" value="' + esc(g.district || '') + '"></div>'
       + captureRowGps_('Mahali pa makazi ya mdhamini / Guarantor residence location', 'lnGGpsBtn', 'lnGGpsStatus')
-      + captureRowPhoto_('Picha ya uthibitisho makazi ya mdhamini (na afisa) / Guarantor residence verification photo (with officer)', 'lnGResPhotoBtn', 'lnGResPhotoFile', 'lnGResPhotoStatus')
-      + captureRowPhoto_('Picha ya mdhamini / Guarantor photo', 'lnGPhotoBtn', 'lnGPhotoFile', 'lnGPhotoStatus')
+      + captureRowPhoto_('Picha ya uthibitisho makazi ya mdhamini (na afisa) / Guarantor residence verification photo (with officer)', 'lnGResPhotoBtn', 'lnGResPhotoStatus')
+      + captureRowPhoto_('Picha ya mdhamini / Guarantor photo', 'lnGPhotoBtn', 'lnGPhotoStatus')
       + captureRowPad_('Sahihi ya mdhamini / Guarantor signature', 'lnGSigPad', 'lnGSigClear')
       + captureRowPad_('Alama ya kidole gumba ya mdhamini / Guarantor thumbprint', 'lnGThumbPad', 'lnGThumbClear')
       // "we have 5 extra guarantors who we just say are the close people to the customer
@@ -5485,23 +5567,11 @@ function lnTeamAssessForm_(loanRow){
         }).join('')
       + '<button class="btn sm" id="lnSaveGuar" style="margin-top:6px">Save this section</button></div>'
 
-      + '<div class="card"><div class="card-h">4. Residence &amp; business verification</div>'
-      + '<div class="fld"><label>Mtaa / Street</label><input id="lnCustStreet" value="' + esc(c.street || '') + '"></div>'
-      + '<div class="fld"><label>Kata / Ward</label><input id="lnCustWard" value="' + esc(c.ward || '') + '"></div>'
-      + '<div class="fld"><label>Wilaya / District</label><input id="lnDistrict" value="' + esc(c.district || '') + '"></div>'
-      + captureRowGps_('Mahali pa makazi ya mteja / Customer residence location', 'lnCustGpsBtn', 'lnCustGpsStatus')
-      + captureRowPhoto_('Picha ya uthibitisho makazi (na afisa) / Residence verification photo (with officer)', 'lnCustResPhotoBtn', 'lnCustResPhotoFile', 'lnCustResPhotoStatus')
-      + '<label><input type="checkbox" id="lnResOk"' + (a.residence_verified ? ' checked' : '') + '> Customer residence verified</label><br>'
-      + '<label><input type="checkbox" id="lnGResOk"' + (a.guarantor_residence_verified ? ' checked' : '') + '> Guarantor residence verified</label>'
-      + '<div class="sub" style="margin:10px 0 4px">Biashara / Business</div>'
-      // "business type from the cs registration, fill business name and capture live
-      // location coordinates for all 3 placess business and their residences" -- business
-      // TYPE was already asked at CS registration; this is the name, and the third place.
-      + '<div class="fld"><label>Jina la biashara / Business name</label><input id="lnBizName" value="' + esc(c.business_name || '') + '"></div>'
-      + captureRowGps_('Mahali pa biashara / Business location', 'lnBizGpsBtn', 'lnBizGpsStatus')
-      + captureRowPhoto_('Picha ya mbele ya biashara (na afisa) / Business front verification photo (with officer)', 'lnBizPhotoBtn', 'lnBizPhotoFile', 'lnBizPhotoStatus')
-      + '<label><input type="checkbox" id="lnBizOk"' + (a.business_verified ? ' checked' : '') + '> Business ownership verified</label>'
-      + '<button class="btn sm" id="lnSaveVerify" style="margin-top:8px">Save this section</button></div>'
+      + '<div class="card"><div class="card-h">4. Team recommendation</div>'
+      + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (a.recommend_amount || loan.requested_amt || '') + '"></div>'
+      + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
+      + '<div class="fld"><label>Remarks</label><input id="lnRemarks" value="' + esc(a.remarks || '') + '"></div>'
+      + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
 
       + '<div class="fld" style="margin-top:14px">'
       // "Having all the recommendation filled should produce a copy icon on the customer
@@ -5516,8 +5586,8 @@ function lnTeamAssessForm_(loanRow){
     $('#lnIdType').onchange = toggleIdOther; toggleIdOther();
 
     // ---- captures: canvas pads, camera buttons, GPS -- wired once, uploaded as they happen ----
-    var sigPad = wireCanvasPad_('lnSigPad'), thumbPad = wireCanvasPad_('lnThumbPad');
-    var gSigPad = wireCanvasPad_('lnGSigPad'), gThumbPad = wireCanvasPad_('lnGThumbPad');
+    var sigPad = wireCanvasPad_('lnSigPad', 'line'), thumbPad = wireCanvasPad_('lnThumbPad', 'stamp');
+    var gSigPad = wireCanvasPad_('lnGSigPad', 'line'), gThumbPad = wireCanvasPad_('lnGThumbPad', 'stamp');
     $('#lnSigClear').onclick = function(){ sigPad.clear(); };
     $('#lnThumbClear').onclick = function(){ thumbPad.clear(); };
     $('#lnGSigClear').onclick = function(){ gSigPad.clear(); };
@@ -5525,11 +5595,11 @@ function lnTeamAssessForm_(loanRow){
 
     var PATHS = { photo: c.photo_url, gPhoto: g.photo_url, gResPhoto: g.residence_verify_photo_url,
       custResPhoto: c.residence_verify_photo_url, bizPhoto: c.business_verify_photo_url };
-    wirePhotoCapture_('lnPhotoBtn', 'lnPhotoFile', 'lnPhotoStatus', loan.id, 'photo', PATHS.photo, function(p){ PATHS.photo = p; });
-    wirePhotoCapture_('lnGPhotoBtn', 'lnGPhotoFile', 'lnGPhotoStatus', loan.id, 'g-photo', PATHS.gPhoto, function(p){ PATHS.gPhoto = p; });
-    wirePhotoCapture_('lnGResPhotoBtn', 'lnGResPhotoFile', 'lnGResPhotoStatus', loan.id, 'g-residence', PATHS.gResPhoto, function(p){ PATHS.gResPhoto = p; });
-    wirePhotoCapture_('lnCustResPhotoBtn', 'lnCustResPhotoFile', 'lnCustResPhotoStatus', loan.id, 'residence', PATHS.custResPhoto, function(p){ PATHS.custResPhoto = p; });
-    wirePhotoCapture_('lnBizPhotoBtn', 'lnBizPhotoFile', 'lnBizPhotoStatus', loan.id, 'business', PATHS.bizPhoto, function(p){ PATHS.bizPhoto = p; });
+    wirePhotoCapture_('lnPhotoBtn', 'lnPhotoStatus', loan.id, 'photo', PATHS.photo, function(p){ PATHS.photo = p; });
+    wirePhotoCapture_('lnGPhotoBtn', 'lnGPhotoStatus', loan.id, 'g-photo', PATHS.gPhoto, function(p){ PATHS.gPhoto = p; });
+    wirePhotoCapture_('lnGResPhotoBtn', 'lnGResPhotoStatus', loan.id, 'g-residence', PATHS.gResPhoto, function(p){ PATHS.gResPhoto = p; });
+    wirePhotoCapture_('lnCustResPhotoBtn', 'lnCustResPhotoStatus', loan.id, 'residence', PATHS.custResPhoto, function(p){ PATHS.custResPhoto = p; });
+    wirePhotoCapture_('lnBizPhotoBtn', 'lnBizPhotoStatus', loan.id, 'business', PATHS.bizPhoto, function(p){ PATHS.bizPhoto = p; });
 
     var COORDS = { custRes: { lat: c.residence_lat, lng: c.residence_lng },
       biz: { lat: c.business_lat, lng: c.business_lng },
@@ -5554,21 +5624,27 @@ function lnTeamAssessForm_(loanRow){
           photo_url: PATHS.photo };
         if (idCol) fields[idCol] = $('#lnIdNo').value.trim();
         if (type === 'Other') fields.other_id_type = $('#lnIdOther').value.trim();
-        lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: fields }, 'Saved.', function(){});
+        lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: fields }, 'Saved.');
       }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveRec').onclick = function(){
-      lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
-        fields: { amount: Number($('#lnRecAmt').value) || 0, zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.', function(){});
+      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
+        fields: { amount: Number($('#lnRecAmt').value) || 0, zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.');
     };
     $('#lnSaveGuar').onclick = function(){
       Promise.all([
         saveCanvasPad_(gSigPad, loan.id, 'g-signature', function(p){ PATHS.gSignature = p; }),
         saveCanvasPad_(gThumbPad, loan.id, 'g-thumbprint', function(p){ PATHS.gThumbprint = p; }),
       ]).then(function(){
+        // "guarantor id should be choices too.. not just nida" -- same ID_TYPES choice as
+        // personal details; the guarantor is not reported to the bureau per-type the way the
+        // customer is, so whichever type is picked is simply stored in the one national_id
+        // column alongside which type it actually is.
+        var gIdType = $('#lnGIdType').value;
         var primary = {
           full_name: $('#lnGName').value.trim(), phone: $('#lnGPhone').value.trim(), relationship: $('#lnGRel').value.trim(),
-          national_id: $('#lnGNida').value.trim(), street: $('#lnGStreet').value.trim(), ward: $('#lnGWard').value.trim(), district: $('#lnGDistrict').value.trim(),
+          id_type: gIdType, national_id: $('#lnGIdNo').value.trim(),
+          street: $('#lnGStreet').value.trim(), ward: $('#lnGWard').value.trim(), district: $('#lnGDistrict').value.trim(),
           residence_lat: COORDS.gRes.lat, residence_lng: COORDS.gRes.lng,
           residence_verify_photo_url: PATHS.gResPhoto, photo_url: PATHS.gPhoto,
           signature_url: PATHS.gSignature != null ? PATHS.gSignature : g.signature_url,
@@ -5578,19 +5654,19 @@ function lnTeamAssessForm_(loanRow){
         for (var i = 0; i < 5; i++) list.push({
           full_name: $('#lnAlt' + i + 'Name').value.trim(), phone: $('#lnAlt' + i + 'Phone').value.trim(), relationship: $('#lnAlt' + i + 'Rel').value.trim(),
         });
-        lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: list } }, 'Saved.', function(){});
+        lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: list } }, 'Saved.');
       }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveVerify').onclick = function(){
-      lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
+      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
         verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked,
         street: $('#lnCustStreet').value.trim(), ward: $('#lnCustWard').value.trim(), district: $('#lnDistrict').value.trim(),
         residence_lat: COORDS.custRes.lat, residence_lng: COORDS.custRes.lng, residence_verify_photo_url: PATHS.custResPhoto,
-      } }, 'Saved.', function(){});
-      lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
+      } }, 'Saved.');
+      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
         verified: $('#lnBizOk').checked, business_name: $('#lnBizName').value.trim(),
         business_lat: COORDS.biz.lat, business_lng: COORDS.biz.lng, business_verify_photo_url: PATHS.bizPhoto,
-      } }, '', function(){});
+      } }, '');
     };
     $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
     $('#lnRejectRec').onclick = function(){

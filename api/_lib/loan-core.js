@@ -429,6 +429,14 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   if (!SECTIONS.has(section)) throw badRequest('Unknown assessment section: ' + section);
   const loan = await mustLoan(db, loan_id);
   let a = await assessmentFor(db, loan_id);
+  /* "as long as recommendation is not submitted - can edit previous stages but always load /
+     preview presaved info" -- and NOT once it has been. teamSubmit sets submitted_at and moves
+     the loan out of the team's queue, but a screen already open (or a stale one someone kept
+     a tab on) could still fire a save after that -- straight past senior review or credit,
+     who may already be looking at the very numbers this would quietly change underneath them. */
+  if (a && a.submitted_at) {
+    throw badRequest('This recommendation has already been submitted -- it can no longer be edited here.');
+  }
   const patch = { ['done_' + section]: true, updated_at: new Date().toISOString(), submitted_by: user.name };
 
   if (section === 'personal') {
@@ -526,7 +534,7 @@ async function saveGuarantors(db, loan, user, list) {
   const rows = (list || []).slice(0, 6).map((g, i) => ({
     loan_id: loan.id, customer_id: loan.customer_id, rank: i,
     full_name: textOrNull(g.full_name), phone: normPhone(g.phone), relationship: textOrNull(g.relationship),
-    occupation: textOrNull(g.occupation), national_id: textOrNull(g.national_id),
+    occupation: textOrNull(g.occupation), id_type: textOrNull(g.id_type), national_id: textOrNull(g.national_id),
     street: textOrNull(g.street), district: textOrNull(g.district), ward: textOrNull(g.ward),
     residence_lat: g.residence_lat != null ? Number(g.residence_lat) : null,
     residence_lng: g.residence_lng != null ? Number(g.residence_lng) : null,

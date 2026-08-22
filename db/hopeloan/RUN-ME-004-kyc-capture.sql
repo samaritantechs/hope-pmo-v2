@@ -37,7 +37,11 @@ alter table customers add column if not exists business_verify_photo_url text;  
 
 /* THE GUARANTOR'S OWN THREE CAPTURES, AND THE PLACE THEY LIVE.
    district, ward, occupation, national_id, photo_url already exist (RUN-ME-001) -- street was
-   the one place-column customers had that guarantors did not. */
+   the one place-column customers had that guarantors did not.
+   "guarantor id should be choices too.. not just nida" -- id_type records which kind was
+   picked; the guarantor is not reported to the bureau per-type the way the customer is, so
+   the number itself still lands in the one existing national_id column, whichever type it is. */
+alter table guarantors add column if not exists id_type text;
 alter table guarantors add column if not exists street text;
 alter table guarantors add column if not exists signature_url text;
 alter table guarantors add column if not exists thumbprint_url text;
