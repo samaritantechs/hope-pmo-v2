@@ -266,6 +266,12 @@
     <div class="hint">Contact No, Contact Person, Team, Ref No, Arrears, HOPE Phone No -- the
       HOPE Phone is picked automatically (credit analyst, PMO recovery, early collection or
       collection officer) from Count 1-6. Paste straight into the SMS gateway's own sheet.</div>
+
+    <!-- MISSING NUMBERS, ASKED FOR BEFORE THE DOWNLOAD, NOT AFTER --
+         "the sms file should promt to input no of a user role and name if not present so that
+         to save it and make sure all clients go with numbers". Hidden until a check against
+         the chosen audience finds a team with no number on file for the role it would need. -->
+    <div id="smsGapsBox" class="hide" style="margin-top:10px"></div>
   </div>
 
   <div class="card">
@@ -543,37 +549,120 @@ function esc(x){ return String(x==null?'':x).replace(/[&<>"]/g, function(c){
    a CSV opened in Excel eats the leading zero off every phone number, and this file is nothing
    BUT phone numbers. x:str on every cell keeps Contact No, Team and HOPE Phone No exactly as
    the server sent them; x:num on Ref No and Arrears so a total or a sort still behaves. */
+function portalCall_(code, fn, args){
+  return fetch(api() + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: code, fn: fn, args: args || {} }) })
+    .then(readJson_).then(function(x){
+      if (x.status < 200 || x.status >= 300 || x.body.ok === false) throw new Error(x.body.error || 'HTTP ' + x.status);
+      return x.body;
+    });
+}
+
+function downloadSmsFile_(code, audience, btn){
+  return portalCall_(code, 'smsExport', { audience: audience }).then(function(d){
+    var numCol = { 'Ref No': 1, 'Arrears': 1 };
+    var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+      + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+      + '</head><body><table><thead><tr>'
+      + d.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('')
+      + '</tr></thead><tbody>'
+      + (d.rows || []).map(function(r){
+          return '<tr>' + r.map(function(v, i){
+            var num = numCol[d.headers[i]];
+            return '<td ' + (num ? 'x:num' : 'x:str') + '>' + esc(v == null ? '' : v) + '</td>';
+          }).join('') + '</tr>';
+        }).join('')
+      + '</tbody></table></body></html>';
+    var blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xls';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  });
+}
+
+/* THE GAP FORM. One row per team+role the chosen audience actually needs and does not have a
+   number for yet, plus PMO Recovery No itself if the "rest" bucket has nobody to fall back to.
+   Filling a row in and pressing Save writes it to Teams & Staff (or Settings, for the PMO row)
+   through the same saveTeam / settingSet the Teams page itself uses -- so it is there for
+   every export after this one too, not just typed in once and thrown away. */
+function renderSmsGaps_(code, audience, gaps, btn){
+  var box = $('smsGapsBox');
+  var rows = [];
+  if (gaps.pmoNeeded) {
+    rows.push({ key: 'pmo', label: 'PMO Recovery No', sub: 'fallback for every "rest" (7-12 paid) defaulter with no team credit analyst' });
+  }
+  (gaps.teamGaps || []).forEach(function(g){
+    rows.push({ key: 'team:' + g.team + ':' + g.role, label: g.team + ' — ' + g.roleLabel,
+      sub: 'no ' + g.roleLabel.toLowerCase() + ' number on file for this team', team: g.team,
+      role: g.role, nameField: g.nameField, phoneField: g.phoneField, name: g.name });
+  });
+  if (!rows.length) { box.className = 'hide'; box.innerHTML = ''; return; }
+
+  box.className = '';
+  box.innerHTML = '<div class="msg warn" style="margin:0 0 10px">' + rows.length
+    + ' number' + (rows.length > 1 ? 's are' : ' is') + ' missing for this audience — fill in what you '
+    + 'have, or download anyway and the rest fall back to PMO Recovery No.'
+    + ' / Namba ' + (rows.length > 1 ? 'kadhaa hazipo' : 'moja haipo') + ' — jaza ulizonazo, au pakua '
+    + 'hivyo hivyo na zilizobaki zitaenda kwa namba ya PMO Recovery.</div>'
+    + rows.map(function(r){
+        return '<div style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:8px">'
+          + '<div style="font-weight:700;font-size:13px">' + esc(r.label) + '</div>'
+          + '<div class="hint" style="margin:2px 0 6px">' + esc(r.sub) + '</div>'
+          + (r.key === 'pmo'
+              ? '<input data-gap="pmo" placeholder="Phone number" style="width:100%;margin-bottom:0">'
+              : '<div style="display:flex;gap:6px">'
+                + '<input data-gap="' + esc(r.key) + '" data-part="name" placeholder="Name (optional)" value="' + esc(r.name || '') + '" style="flex:1;margin-bottom:0">'
+                + '<input data-gap="' + esc(r.key) + '" data-part="phone" placeholder="Phone number" style="flex:1;margin-bottom:0">'
+                + '</div>')
+          + '</div>';
+      }).join('')
+    + '<div style="display:flex;gap:8px;margin-top:6px">'
+    + '<button type="button" id="smsGapsSave" style="flex:1">Hifadhi na upakue / Save & download</button>'
+    + '<button type="button" id="smsGapsSkip" class="modebtn" style="flex:1">Ruka, pakua hivyo hivyo / Skip, download anyway</button>'
+    + '</div>';
+
+  $('smsGapsSkip').onclick = function(){
+    box.className = 'hide'; box.innerHTML = '';
+    btn.disabled = true;
+    downloadSmsFile_(code, audience, btn).catch(function(e){ alert(String((e && e.message) || e)); }).then(function(){ btn.disabled = false; });
+  };
+
+  $('smsGapsSave').onclick = function(){
+    var saveBtn = $('smsGapsSave'); saveBtn.disabled = true;
+    var byTeam = {};   // team -> { phoneField: v, nameField: v }
+    var pmoVal = '';
+    box.querySelectorAll('[data-gap]').forEach(function(inp){
+      var v = inp.value.trim();
+      if (!v) return;
+      if (inp.getAttribute('data-gap') === 'pmo') { pmoVal = v; return; }
+      var g = rows.filter(function(r){ return r.key === inp.getAttribute('data-gap'); })[0];
+      if (!g) return;
+      var slot = byTeam[g.team] || (byTeam[g.team] = { team: g.team });
+      var field = inp.getAttribute('data-part') === 'name' ? g.nameField : g.phoneField;
+      slot[field] = v;
+    });
+    var jobs = Object.keys(byTeam).map(function(t){ return portalCall_(code, 'saveTeam', byTeam[t]); });
+    if (pmoVal) jobs.push(portalCall_(code, 'settingSet', { key: 'PMO_RECOVERY_NO', value: pmoVal }));
+    Promise.all(jobs)
+      .then(function(){ box.className = 'hide'; box.innerHTML = ''; return downloadSmsFile_(code, audience, btn); })
+      .catch(function(e){ alert(String((e && e.message) || e)); })
+      .then(function(){ saveBtn.disabled = false; btn.disabled = false; });
+  };
+}
+
 $('smsExportBtn').onclick = function(){
   var code = $('code').value.trim();
   if (!code){ alert('Weka msimbo wako kwanza. / Enter your access code first.'); return; }
+  var audience = $('smsAudience').value;
   var btn = $('smsExportBtn'); btn.disabled = true;
-  fetch(api() + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: code, fn: 'smsExport', args: { audience: $('smsAudience').value } }) })
-    .then(readJson_).then(function(x){
-      if (x.status < 200 || x.status >= 300 || x.body.ok === false) throw new Error(x.body.error || 'HTTP ' + x.status);
-      var d = x.body;
-      var numCol = { 'Ref No': 1, 'Arrears': 1 };
-      var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
-        + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
-        + '</head><body><table><thead><tr>'
-        + d.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('')
-        + '</tr></thead><tbody>'
-        + (d.rows || []).map(function(r){
-            return '<tr>' + r.map(function(v, i){
-              var num = numCol[d.headers[i]];
-              return '<td ' + (num ? 'x:num' : 'x:str') + '>' + esc(v == null ? '' : v) + '</td>';
-            }).join('') + '</tr>';
-          }).join('')
-        + '</tbody></table></body></html>';
-      var blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xls';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
-      btn.disabled = false;
-    })
-    .catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
+  $('smsGapsBox').className = 'hide'; $('smsGapsBox').innerHTML = '';
+  portalCall_(code, 'smsGaps', { audience: audience }).then(function(gaps){
+    if (!gaps.count) return downloadSmsFile_(code, audience, btn).then(function(){ btn.disabled = false; });
+    renderSmsGaps_(code, audience, gaps, btn);
+    btn.disabled = false;
+  }).catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
 };
 
 /* Today on the EAT clock -- the same answer the server would stamp if the box were left

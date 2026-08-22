@@ -558,6 +558,80 @@ test('sms export: full portfolio appends this week\'s Expected after Defaulters,
   assert.equal(defOnly.rows.some(r => r[3] === '444'), false);
 });
 
+test('sms gaps: flags a team with no number on file for the role its defaulters need', async () => {
+  const t = tables();
+  // Neither team has a credit_no, and both KONGOWE's 111/555 and MBAGALA's 999 default to
+  // paid < 6 (the D() fixture's "3-6" ds does not match the N/M regex, so paidCount falls to
+  // 0) -- so all three route to 'credit', and nobody has a PMO_RECOVERY_NO fallback needed.
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(d.pmoNeeded, false);
+  assert.equal(d.teamGaps.length, 2);
+  const kongowe = d.teamGaps.find(g => g.team === 'KONGOWE');
+  assert.equal(kongowe.role, 'credit');
+  assert.equal(kongowe.roleLabel, 'Credit Analyst');
+  assert.equal(kongowe.phoneField, 'credit_no');
+  assert.equal(kongowe.name, 'ANALYST A');            // the name already on file, for a prefill
+  const mbagala = d.teamGaps.find(g => g.team === 'MBAGALA');
+  assert.equal(mbagala.role, 'credit');
+  assert.equal(mbagala.name, '');                     // no analyst named at all
+  assert.equal(d.count, 2);
+});
+
+test('sms gaps: a team that already has the number is not a gap', async () => {
+  const t = tables();
+  t.teams[0].credit_no = '0711000CR';
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(d.teamGaps.some(g => g.team === 'KONGOWE'), false);
+  assert.equal(d.teamGaps.some(g => g.team === 'MBAGALA'), true);   // MBAGALA still has none
+});
+
+test('sms gaps: PMO Recovery No itself is the gap for the "rest" bucket, once, not per team', async () => {
+  const t = tables();
+  // Push both KONGOWE defaulters and MBAGALA's past count 1-6 -- everybody now routes to PMO.
+  for (const r of t.defaulter_snapshots) if (r.snapshot_type === 'current') r.ds = '9/12';
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(d.pmoNeeded, true);
+  assert.equal(d.teamGaps.length, 0);       // nothing team-shaped to fill in -- only the setting
+  assert.equal(d.count, 1);
+});
+
+test('sms gaps: saving the number through saveTeam clears the gap on the next check', async () => {
+  const t = tables();
+  // saveTeam drops a column no fetched row carries at all, on the assumption the migration
+  // that added it has not been run yet (see TEAM_OPTIONAL_COLS in portal-core.js) -- a blank
+  // credit_no on file, like a real post-migration database has, is what lets the save land.
+  t.teams[0].credit_no = null;
+  const db = dbWithRpc(t);
+  const before = await portalApi(db, ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(before.teamGaps.some(g => g.team === 'KONGOWE'), true);
+  // saveTeam runs every phone number through the same pnorm() the leaders sheet and the phone
+  // search use -- leading zero and 255 stripped, nine digits left -- so what comes back out is
+  // not the literal string typed in, same as a real save through the Teams & Staff form.
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', credit_no: '0711000001' }, NOW);
+  const after = await portalApi(db, ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(after.teamGaps.some(g => g.team === 'KONGOWE'), false);
+  // Downloading now actually carries the number just saved, not a stale PMO fallback.
+  const exp = await portalApi(db, ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(exp.rows.find(r => r[3] === '111')[5], '711000001');
+});
+
+test('sms gaps: the portfolio audience also checks the expected/collection roles Expected-only rows need', async () => {
+  const t = tables();
+  t.repayment_snapshots.push(
+    { ...E('444', 'KONGOWE', 1000, 'UNPAID', 300, '2026-07-21'), due_summary: '2/6' },   // winnable -> expected
+    { ...E('888', 'MBAGALA', 1000, 'UNPAID', 400, '2026-07-22'), due_summary: '9/12' },  // rest -> collection
+  );
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'portfolio' }, NOW);
+  const kongoweExp = d.teamGaps.find(g => g.team === 'KONGOWE' && g.role === 'expected');
+  assert.ok(kongoweExp, 'KONGOWE has no expected_no on file, so this is a gap');
+  assert.equal(kongoweExp.name, 'EARLY E');           // the early collection officer's name
+  const mbagalaCol = d.teamGaps.find(g => g.team === 'MBAGALA' && g.role === 'collection');
+  assert.ok(mbagalaCol, 'MBAGALA has no collection officer at all');
+  // 'defaulters' audience never looks at Expected, so it must not surface these two.
+  const defOnly = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(defOnly.teamGaps.some(g => g.role === 'expected' || g.role === 'collection'), false);
+});
+
 test('settings and access codes need the settings permission', async () => {
   await assert.rejects(() => run('settings', {}, GMO), e => e.status === 403);
   await assert.rejects(() => run('accessCodes', {}, GMO), e => e.status === 403);
