@@ -48,15 +48,12 @@ async function allPaged(db, table, build) {
 }
 
 /** A tab gate, the same shape as HOPE PMO's: a screen is reachable only if its name is on the
-    signed-in code's tab list -- built for the day several different codes hold different HOPE
-    Loan tabs (a manager sees Assignment, a credit analyst sees Approval) exactly the way HOPE
-    PMO tabs already work, so nothing here needs rewriting when that day comes.
+    signed-in code's tab list -- a manager sees Assignment, a credit analyst sees Approval, each
+    on its own ticked box, exactly the way HOPE PMO tabs already work (see mayUseHopeLoan in
+    workspace.js: ADMIN, or a code holding at least one of HOPE Loan's own tabs, may even reach
+    this file at all -- this is the SECOND check, per screen, once they are in it).
 
-    TODAY, only the ADMIN role ever reaches this file at all -- _lib/workspace.js refuses the
-    HOPE Loan workspace to anyone else before loanApi is even called, per instruction ("Switch
-    is visible to ADMIN role only"), and the owner is deliberately the one person walking every
-    screen end to end for now ("i'll go test after switching ... from the start to the end").
-    So the ADMIN role is let through here on the role string, same check workspace.js already
+    The ADMIN role is let through here on the role string, same check workspace.js already
     makes -- not on a tab named "admin", which does not exist; HOPE PMO's own ADMIN_TABS is
     upload/settings/audit, never the word "admin" itself. */
 function requireTab(user, tab) {
@@ -64,6 +61,18 @@ function requireTab(user, tab) {
   const tabs = (user && user.tabs) || [];
   if (!tabs.includes(tab)) {
     throw forbidden('Hujaruhusiwa kufungua hii. / You do not have the "' + tab + '" tab for HOPE Loan.');
+  }
+}
+
+/** Same rule, any ONE of several tabs -- for a screen more than one role legitimately needs.
+    branchList is the first: Customer Service picks a branch at registration, and now Manager
+    picks a team FROM that same branch/team list at assignment ("Manager assigning to a team
+    should be choice not filling") -- one list, two tabs allowed to ask for it. */
+function requireAnyTab(user, tabs) {
+  if (String((user && user.role) || '').trim().toUpperCase() === 'ADMIN') return;
+  const utabs = (user && user.tabs) || [];
+  if (!tabs.some(t => utabs.includes(t))) {
+    throw forbidden('Hujaruhusiwa kufungua hii. / You do not have any of the required tabs for HOPE Loan.');
   }
 }
 
@@ -175,8 +184,11 @@ async function csSearch(db, user, { q }) {
     a team or what number rings them -- the full roster stays behind the `teams` tab, which
     customer service does not have. */
 async function branchList(db, user) {
-  requireTab(user, 'customer_service');
-  const rows = await allPaged(db, 'teams', b => b.select('region, branch'));
+  // CS picks a branch at registration; Manager now picks a TEAM from that same branch at
+  // assignment ("Manager assigning to a team should be choice not filling") -- one read, two
+  // tabs allowed to ask for it, same as any other screen more than one role legitimately needs.
+  requireAnyTab(user, ['customer_service', 'manager']);
+  const rows = await allPaged(db, 'teams', b => b.select('team, region, branch'));
   // A branch belongs to one region; several teams share both. First non-null region seen for
   // a branch wins -- if the data ever disagrees, that is a Teams & Staff data question, not
   // something this list should silently average or duplicate the branch to "fix".
@@ -195,7 +207,17 @@ async function branchList(db, user) {
   }
   const regions = Object.keys(byRegion).sort((a, b) =>
     a === '(Region unknown)' ? 1 : b === '(Region unknown)' ? -1 : a.localeCompare(b));
-  return { regions, byRegion, branches };
+  // Which teams sit in each branch -- the manager's own choice list, so assigning a loan is a
+  // SELECT off what actually exists (same reasoning branch/region already got), not a name
+  // typed from memory that a typo or a stale one turns into an orphaned loan nobody's queue picks up.
+  const teamsByBranch = {};
+  for (const r of rows) {
+    const b = textOrNull(r.branch), t = textOrNull(r.team);
+    if (!b || !t) continue;
+    (teamsByBranch[b] = teamsByBranch[b] || []).push(t);
+  }
+  for (const b of Object.keys(teamsByBranch)) teamsByBranch[b] = [...new Set(teamsByBranch[b])].sort();
+  return { regions, byRegion, branches, teamsByBranch };
 }
 
 /** A new application. Registers the customer (or reuses one found by csSearch) and opens a
@@ -302,6 +324,17 @@ async function managerAssign(db, user, { loan_id, team }) {
   const t = normTeam(team);
   if (!t) throw badRequest('A team is required.');
   const loan = await mustLoan(db, loan_id);
+  /* "Manager assigning to a team should be choice not filling" -- the client now offers only
+     the branch's own teams (branchList's teamsByBranch), but the choice is enforced here too,
+     not merely suggested there: a team that is not actually one of this loan's branch's teams
+     is refused, the same protection a typo or a stale client would otherwise slip past.
+     Loans from before branch tracking existed carry no branch at all -- nothing to check
+     against, so those fall back to the old bare non-empty rule rather than being blocked by a
+     fact the record never had. */
+  if (loan.branch) {
+    const rows = await allPaged(db, 'teams', b => b.select('team').eq('team', t).eq('branch', loan.branch));
+    if (!rows.length) throw badRequest('"' + t + '" is not one of ' + loan.branch + '\'s teams.');
+  }
   await transition(db, loan, 'unassigned', 'assigned', user, {
     team: t, assigned_by: user.name, assigned_at: new Date().toISOString(),
   }, 'Assigned to ' + t);

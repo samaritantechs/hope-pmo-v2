@@ -5197,22 +5197,32 @@ VIEWS.ln_manager = function(){
     S.foot = money(d.rows.length) + ' waiting for assignment';
   });
 };
+/* "Manager assigning to a team should be choice not filling" -- a free-text box let a typo or
+   a stale team name misfile a customer with nothing to catch it. Now a SELECT, offered from the
+   same teamsByBranch branchList() already builds for CS registration -- the branch's own teams,
+   nothing typed. Enforced again on the server (managerAssign), not just offered here. */
 function lnManagerAssignForm_(loan){
-  drawer('<h3>' + esc(loan.full_name) + '</h3>'
-    + '<div class="sub">Ref ' + esc(loan.loan_id) + ' &middot; Requested ' + money(loan.requested_amt) + '</div>'
-    // Branch and landmark are what a manager assigns FROM -- registration set the branch,
-    // not a team, precisely so this decision is made here, from where the customer actually is.
-    + '<div class="fld"><label>Branch</label><div style="padding:8px 0;font-weight:600">' + esc(loan.branch || '—') + '</div></div>'
-    + (loan.nearest_landmark ? '<div class="fld"><label>Landmark</label><div style="padding:8px 0">' + esc(loan.nearest_landmark) + '</div></div>' : '')
-    + '<div class="fld"><label>Assign to team (or SHIFT to a different one of yours)</label><input id="lnAssignTeam" value="' + esc(loan.team || '') + '"></div>'
-    + '<button class="btn w" id="lnAssignBtn">Assign</button>'
-    + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');
-  $('#lnAssignBtn').onclick = function(){
-    lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, 'Assigned.', function(){ go('ln_manager'); });
-  };
-  $('#lnRejectBtn').onclick = function(){
-    lnReasonPrompt_(function(reason){ lnAct('managerReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_manager'); }); });
-  };
+  srv('branchList').then(function(bl){
+    var teams = (bl.teamsByBranch || {})[loan.branch] || [];
+    drawer('<h3>' + esc(loan.full_name) + '</h3>'
+      + '<div class="sub">Ref ' + esc(loan.loan_id) + ' &middot; Requested ' + money(loan.requested_amt) + '</div>'
+      // Branch and landmark are what a manager assigns FROM -- registration set the branch,
+      // not a team, precisely so this decision is made here, from where the customer actually is.
+      + '<div class="fld"><label>Branch</label><div style="padding:8px 0;font-weight:600">' + esc(loan.branch || '—') + '</div></div>'
+      + (loan.nearest_landmark ? '<div class="fld"><label>Landmark</label><div style="padding:8px 0">' + esc(loan.nearest_landmark) + '</div></div>' : '')
+      + '<div class="fld"><label>Assign to team (or SHIFT to a different one of yours)</label><select id="lnAssignTeam"' + (teams.length?'':' disabled') + '>'
+        + '<option value="">' + (teams.length ? '— chagua timu / choose a team —' : 'Hakuna timu za tawi hili -- run 2026-08-19-team-branch-DATA.sql / no teams on file for this branch') + '</option>'
+        + teams.map(function(t){ return '<option' + (loan.team===t?' selected':'') + '>' + esc(t) + '</option>'; }).join('')
+        + '</select></div>'
+      + '<button class="btn w" id="lnAssignBtn">Assign</button>'
+      + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');
+    $('#lnAssignBtn').onclick = function(){
+      lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, 'Assigned.', function(){ go('ln_manager'); });
+    };
+    $('#lnRejectBtn').onclick = function(){
+      lnReasonPrompt_(function(reason){ lnAct('managerReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_manager'); }); });
+    };
+  }).catch(function(e){ toast(String(e.message||e), true); });
 }
 
 /* ---------- Team: the five-section assessment, saved as it goes ---------- */
@@ -5759,27 +5769,39 @@ function fitPanelToKeyboard_(bgId){
   bg.style.height = vv.height + 'px';
   bg.style.top = vv.offsetTop + 'px';
 }
+/* THE LOGIN BOX IS THE SAME SHAPE AS THE DRAWER, AND HAD THE SAME FAULT.
+   "login page doesnt slide app visibility of writting field: refer this challenge to what i
+   faced in hopcalls comment field" -- #signin is `position:fixed;inset:0` too, same as
+   #drawerBg was, just centred instead of flush to the bottom. A phone that does not honour
+   `interactive-widget=resizes-content` never shrank it for the keyboard, so the access-code
+   box (and the field itself) could sit wherever the keyboard now covers, same blind typing the
+   comment box already had. Same fix, same function -- just another id in the list. */
 (function(){
   var vv = window.visualViewport;
   if (!vv) return;
-  var ids = ['drawerBg'];
+  var ids = ['drawerBg', 'signin'];
   function refit(){
     ids.forEach(function(id){
       var bg = document.getElementById(id);
-      if (bg && bg.style.display !== 'none') fitPanelToKeyboard_(id);
+      if (bg && bg.style.display !== 'none' && !bg.classList.contains('hide')) fitPanelToKeyboard_(id);
     });
   }
   vv.addEventListener('resize', refit);
   vv.addEventListener('scroll', refit);
 })();
 /* Belt-and-suspenders for a WebView slow to fire visualViewport's resize: once the keyboard's
-   own open animation has had time to run, bring the field the officer is actually typing into
-   back into the drawer's own visible area -- so even a late resize event still ends with the
-   words on screen. */
-$('#drawerBg').addEventListener('focusin', function(e){
-  var t = e.target;
-  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-  setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+   own open animation has had time to run, bring the field being typed into back into its
+   panel's own visible area -- so even a late resize event still ends with the words on screen.
+   One listener, both panels: #signin exists in the DOM from page load, unlike the drawer which
+   is built by drawer() each time it opens. */
+['drawerBg', 'signin'].forEach(function(id){
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('focusin', function(e){
+    var t = e.target;
+    if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+  });
 });
 
 var FU_STATUSES = ['AMENASIA / WRONG REF','HAJAPATA MKOPO','HAPATIKANI YEYE & MDHAMINI','YEYE / MDHAMINI HANA USHIRIKIANO',
