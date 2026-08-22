@@ -85,28 +85,33 @@ test('the "admin" tab opens every HOPE Loan screen, mirroring HOPE PMO\'s own ad
 });
 
 /* =====================================================================================
-   BRANCH, NOT TEAM, IS WHAT REGISTRATION PICKS FROM.
+   BRANCH, NOT TEAM, IS WHAT REGISTRATION PICKS FROM -- AND NOW WHAT ASSIGNMENT PICKS FROM TOO.
    =====================================================================================
      "Registering a new customer is always by selecting branch so that the customer gets
       visible in manager assignment window then manager selects team to assign"
+     "Manager assigning to a team should be choice not filling"
 
-   branchList is deliberately narrow: distinct branch names only, nothing about who runs a
-   team or what number rings them -- customer service does not have the `teams` tab, and this
-   must not be a second door into the same roster. */
-test('branchList returns the distinct branches, and nothing else about a team', async () => {
+   branchList is deliberately narrow: distinct branch names and which teams sit in each, nothing
+   about who runs a team or what number rings them -- customer service does not have the `teams`
+   tab, and this must not be a second door into the same roster. Both CS and Manager may call it
+   now, one list serving both steps of the same handoff. */
+test('branchList returns the distinct branches, its teams, and nothing else about a team', async () => {
   const db = fakeDb({ teams: [
     { team: 'MABIBO', region: 'DAR ES SALAAM', branch: 'DAR EAST', recovery: 'SOMEBODY', recovery_no: '712000001' },
     { team: 'SINZA', region: 'DAR ES SALAAM', branch: 'DAR EAST' },  // same branch as MABIBO -- must not duplicate
     { team: 'TUNDUMA', region: 'SONGWE', branch: 'TUNDUMA' },
     { team: 'NO BRANCH YET', branch: null },     // migration run, this team just has none set
   ] });
-  const { branches, regions, byRegion } = await loanApi(db, CS, 'branchList', {});
+  const { branches, regions, byRegion, teamsByBranch } = await loanApi(db, CS, 'branchList', {});
   assert.deepEqual(branches, ['DAR EAST', 'TUNDUMA'], 'sorted, deduplicated, nulls dropped');
   // "infact they should select among regions and then choose drop list of branches in the
   // regions" -- the same data, grouped, so a two-step picker can be built from one call.
   assert.deepEqual(regions, ['DAR ES SALAAM', 'SONGWE']);
   assert.deepEqual(byRegion['DAR ES SALAAM'], ['DAR EAST']);
   assert.deepEqual(byRegion['SONGWE'], ['TUNDUMA']);
+  assert.deepEqual(teamsByBranch['DAR EAST'], ['MABIBO', 'SINZA'], 'both of DAR EAST\'s teams, sorted');
+  assert.deepEqual(teamsByBranch['TUNDUMA'], ['TUNDUMA']);
+  assert.equal(teamsByBranch['recovery_no'], undefined, 'still no phone numbers, no role names');
 });
 
 test('a branch with no region yet is still selectable, grouped under its own heading', async () => {
@@ -116,8 +121,38 @@ test('a branch with no region yet is still selectable, grouped under its own hea
   assert.deepEqual(byRegion['(Region unknown)'], ['KASULU']);
 });
 
-test('branchList is refused without the customer_service tab', async () => {
-  await assert.rejects(() => loanApi(fakeDb({}), MGR, 'branchList', {}), /customer_service/i);
+test('branchList is open to Manager too, not just Customer Service', async () => {
+  const db = fakeDb({ teams: [{ team: 'MABIBO', region: 'DAR ES SALAAM', branch: 'DAR EAST' }] });
+  const { branches } = await loanApi(db, MGR, 'branchList', {});
+  assert.deepEqual(branches, ['DAR EAST']);
+});
+
+test('branchList is refused to a code holding neither tab', async () => {
+  await assert.rejects(() => loanApi(fakeDb({}), TEAM, 'branchList', {}), /required tabs/i);
+});
+
+test('managerAssign refuses a team that is not one of the loan\'s own branch', async () => {
+  const db = fakeDb({ teams: [
+    { team: 'MABIBO', region: 'DAR ES SALAAM', branch: 'DAR EAST' },
+    { team: 'TUNDUMA', region: 'SONGWE', branch: 'TUNDUMA' },        // a different branch entirely
+  ] });
+  const { loan } = await loanApi(db, CS, 'csRegister', {
+    full_name: 'A CUSTOMER', mobile: '0700000020', branch: 'DAR EAST', amount: 200000,
+  });
+  await assert.rejects(
+    () => loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'TUNDUMA' }),
+    /not one of.*DAR EAST/i,
+    'TUNDUMA does not sit in DAR EAST -- the choice is enforced server-side, not just offered');
+  // The loan's own branch's team still works.
+  await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+});
+
+test('managerAssign does not check branch on a loan that never had one -- old data, old rule', async () => {
+  const db = fakeDb({ teams: [{ team: 'MABIBO', region: 'DAR ES SALAAM', branch: 'DAR EAST' }] });
+  // No branch passed at registration -- the same shape a loan from before branch tracking has.
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'B CUSTOMER', mobile: '0700000021', amount: 200000 });
+  assert.equal(loan.branch, null);
+  await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'ANY TEAM NAME' });
 });
 
 /* =====================================================================================
