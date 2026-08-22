@@ -5251,8 +5251,16 @@ test('only an admin may rebuild the register', async () => {
 
    Not a few rows -- the whole team. And it is why re-uploading her team changed nothing: her
    deck was landing perfectly and being filtered out by somebody else's more recent upload.
-   ===================================================================================== */
-function twoTeamBook(gobaDate) {
+
+   THAT FIX STILL STANDS -- for 'initial' baselines, and for anything else that reads a deck
+   type teams might genuinely upload on different days. It no longer applies to 'current'
+   defaulters: see the comment on defaulterBook's own 'current' branch in portal-core.js.
+   "the latest current defaulter file is to live until the next one, no limit" -- confirmed
+   after paid-off customers kept resurfacing from a stale deck the exact same shape as GOBA's
+   here. A team missing from today's whole-company CURRENT file is now read as zero, not as
+   "their own latest deck" -- the tests below were rewritten to prove that on purpose, not
+   because the old protection was wrong for what it was built for. */
+function twoTeamBook(gobaDate, type) {
   const t = tables();
   t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
     credit: 'ANALYST A', expected: 'E', bike: 'B' });
@@ -5260,47 +5268,36 @@ function twoTeamBook(gobaDate) {
     credit: 'ANALYST B', expected: 'E2', bike: 'B2' });
   const mk = (ref, team, date, wd) => ({ ref, full_name: ref + ' NAME', team, arrears: 1000,
     status: 'Partial Defaulter', ds: '2-4', dc: 2, disb_date: '2026-07-09',
-    snapshot_type: 'current', weekday: wd, snapshot_date: date,
+    snapshot_type: type || 'current', weekday: wd, snapshot_date: date,
     upload_batch: 'b' + team + date, created_at: date + 'T04:00:00Z' });
   t.defaulter_snapshots.push(mk('ESTHER', 'GOBA', gobaDate, 'TUE'));
   t.defaulter_snapshots.push(mk('OTHER', 'MBEYA', TODAY, 'MON'));
   return t;
 }
 
-test('a team whose deck is older than another team\'s is NOT wiped out', async () => {
-  /* The reported fault, exactly. MBEYA uploaded today, GOBA two days ago -- and GOBA used to
-     disappear completely because the date was resolved for the whole table at once. */
+test('a team missing from today\'s CURRENT file reads as zero, not their own older deck', async () => {
+  /* The policy this session deliberately flipped, aware it reopens the door the OLD version of
+     this test closed. MBEYA uploaded today; GOBA's only CURRENT deck is two days old, and a
+     team quiet since must mean paid off, not "still catching up". */
   const t = twoTeamBook('2026-07-22');             // TODAY is 2026-07-24
   const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
-  assert.ok(d.rows.some(r => r.ref === 'ESTHER'), 'GOBA, on its own older deck');
-  assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'and MBEYA, on today\'s');
+  assert.ok(!d.rows.some(r => r.ref === 'ESTHER'), 'GOBA\'s two-day-old deck no longer counts');
+  assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'MBEYA, on today\'s, still does');
 });
 
-test('each team is read on ITS OWN latest date, not the newest in the table', async () => {
-  const t = twoTeamBook('2026-07-22');
-  // A third, older GOBA deck must lose to GOBA's own newer one -- not to MBEYA's.
-  t.defaulter_snapshots.push({ ...t.defaulter_snapshots.find(r => r.ref === 'ESTHER'),
-    snapshot_date: '2026-07-20', arrears: 999999, upload_batch: 'bold',
-    created_at: '2026-07-20T04:00:00Z' });
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
-  const hers = d.rows.filter(r => r.ref === 'ESTHER');
-  assert.equal(hers.length, 1, 'once');
-  assert.equal(Number(hers[0].arrears), 1000, 'from her team\'s own newest deck');
+test('...but an INITIAL baseline still protects a team on an older date -- only CURRENT changed', async () => {
+  const t = twoTeamBook('2026-07-22', 'initial');
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { type: 'initial' }, NOW);
+  assert.ok(d.rows.some(r => r.ref === 'ESTHER'),
+    'a baseline is not re-uploaded on a defaulter\'s cadence -- staying sticky is still right here');
 });
 
-test('the credit analyst gets their customer back too', async () => {
-  const d = await portalApi(dbWithRpc(twoTeamBook('2026-07-22')), ADMIN, 'credit', {}, NOW);
-  const a = d.rows.find(r => r.analyst === 'ANALYST A');
-  assert.ok(a && a.cnt >= 1, 'GOBA\'s analyst can see their count 1-6 customer');
-});
-
-test('rebuilding the register now reaches a team on an older deck', async () => {
-  /* Which is why the rebuild appeared to do nothing: it read the same wiped-out book. */
+test('rebuilding the register no longer reaches into an old CURRENT deck either', async () => {
   const t = twoTeamBook('2026-07-22');
   const db = dbWithRpc(t);
   await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
-  assert.ok(db._dump('followup_status').some(r => r.ref === 'ESTHER'),
-    'she is in the register, so HOPE Calls can show her');
+  assert.ok(!db._dump('followup_status').some(r => r.ref === 'ESTHER'),
+    'the register follows the same current-deck rule everything else now does');
 });
 
 test('an explicit weekday choice is still exactly that', async () => {

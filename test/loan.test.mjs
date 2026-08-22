@@ -332,6 +332,28 @@ test('District is captured at assessment, not registration -- "cs agents are sup
   assert.equal(cust.district, 'Ilala', 'district can change between loan cycles, unlike DOB/NIDA');
 });
 
+test('registration captures the disbursement number and business type, right where they belong', async () => {
+  // "after disb mode in loanapp, fill the disb no (mobile money/momo no or bank a/c no)" and
+  // "add filling business type before location choices too".
+  const db = fakeDb({});
+  const { loan: momoLoan } = await loanApi(db, CS, 'csRegister', {
+    full_name: 'MOMO CUSTOMER', mobile: '0700000005', team: 'MABIBO', amount: 200000,
+    disbursement_mode: 'Momo', momo: '0700000005', business_type: 'Duka la nguo',
+  });
+  assert.equal(momoLoan.disbursement_type, 'Momo');
+  assert.equal(momoLoan.momo, '700000005', 'normalised, same as the mobile field');
+  const momoCust = (await db.from('customers').select('*')).data.find(c => c.id === momoLoan.customer_id);
+  assert.equal(momoCust.business_type, 'Duka la nguo');
+
+  const { loan: bankLoan } = await loanApi(db, CS, 'csRegister', {
+    full_name: 'BANK CUSTOMER', mobile: '0700000006', team: 'MABIBO', amount: 200000,
+    disbursement_mode: 'Bank', bank_name: 'CRDB', account_no: '0150-123456-00',
+  });
+  assert.equal(bankLoan.bank_name, 'CRDB');
+  assert.equal(bankLoan.account_no, '0150-123456-00');
+  assert.equal(bankLoan.momo, null, 'a bank disbursement carries no momo number');
+});
+
 /* =====================================================================================
    THE REVERSAL CHAIN -- credit requests, finance reviews, GM authorises. All three, in order.
    ===================================================================================== */

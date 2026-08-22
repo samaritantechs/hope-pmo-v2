@@ -150,7 +150,7 @@ async function csSearch(db, user, { q }) {
   const cols = ['full_name.ilike.' + like, 'docket.ilike.' + like]
     .concat(numLike ? ['mobile.ilike.' + numLike] : []);
   const rows = await allPaged(db, 'customers', b =>
-    b.select('id, docket, full_name, mobile, team, branch').or(cols.join(',')).limit(25));
+    b.select('id, docket, full_name, mobile, team, branch, business_type').or(cols.join(',')).limit(25));
   return { rows };
 }
 
@@ -214,6 +214,11 @@ async function csRegister(db, user, p) {
     const { data, error } = await db.from('customers').insert({
       docket, full_name: name, mobile, region: textOrNull(p.region), district: textOrNull(p.district),
       nearest_landmark: textOrNull(p.landmark), team: normTeam(p.team), branch: textOrNull(p.branch),
+      // "add filling business type before location choices too" -- asked at registration now,
+      // the SAME column the team's own Business assessment section writes later (see
+      // teamAssessmentSave's 'business' branch) -- one field, filled early when CS already has
+      // the answer, still editable at assessment if it needs correcting.
+      business_type: textOrNull(p.business_type),
       created_by: user.name, updated_by: user.name,
     }).select('id, docket').maybeSingle();
     if (error) throw new Error(error.message);
@@ -236,6 +241,11 @@ async function csRegister(db, user, p) {
     team: normTeam(p.team), zone: textOrNull(p.zone), location: textOrNull(p.location),
     nearest_landmark: textOrNull(p.landmark), product: 'Business Loan',
     disbursement_type: textOrNull(p.disbursement_mode),
+    // "after disb mode in loanapp, fill the disb no (mobile money/momo no or bank a/c no)" --
+    // the SAME three columns credit approval already offers (momo / bank_name / account_no),
+    // asked for once, right where the mode itself is chosen, instead of waiting for credit to
+    // ask a second time with nothing on file yet if this step is skipped.
+    momo: normPhone(p.momo), bank_name: textOrNull(p.bank_name), account_no: textOrNull(p.account_no),
     requested_amt: Number(p.amount) || 0,
     stage: 'unassigned', customer_id: customerId, created_by: user.name,
   }).select('*').maybeSingle();

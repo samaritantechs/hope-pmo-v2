@@ -307,6 +307,29 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
     return { ...snap, perTeam: false };
   }
   const to = notAfter;
+  /* CURRENT DEFAULTERS LIVE UNTIL THE NEXT UPLOAD REPLACES THEM -- NO LOOKBACK, NO GRACE.
+     "the latest current defaulter file is to live until the next one, no limit" -- and the
+     other independent reports (approved, received, expected) "just there to keep record how
+     we closed the day but they dont decide defaulters". Confirmed after "i bulked paid
+     clients, many of them brother!" kept recurring: a team missing from today's whole-company
+     CURRENT file has zero current defaulters, full stop -- not a team whose own upload merely
+     lagged a day. So this pins to the single latest date across the WHOLE table (same as the
+     "migration not run" fallback a few lines down always has) and never reaches back through
+     the per-team, up-to-45-day lookback below.
+
+     THIS DELIBERATELY REOPENS A DOOR THE GOBA/MBEYA TESTS BELOW WERE WRITTEN TO CLOSE: a team
+     on an older date now reads as zero for CURRENT, not as "their own latest deck" -- see
+     deckDatesPerTeam's own comment in snapshot-totals.js for the real incident that door was
+     built for. Weighed and accepted on purpose, for 'current' only: a paid-off team's ghosts
+     must not outlive one more whole-company upload. 'initial' baselines (and anything else
+     that calls this) still take the per-team path below, unchanged -- a customer's baseline
+     arrears is not re-uploaded on the same cadence a defaulter list is, and staying sticky
+     there is still the safer failure. */
+  if (type === 'current') {
+    const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
+      { notAfter: to, teams: user.teams, columns });
+    return { ...snap, perTeam: false };
+  }
   const from = addDaysKey(to, -DECK_LOOKBACK_DAYS);
   const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });
   if (!dates || !dates.size) {
@@ -5056,6 +5079,10 @@ export const PORTAL_FUNCTIONS = Object.keys(FN);
    ======================================================================================= */
 
 const WD5 = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+/* Sales, and only sales, run six days -- "there happen to be approved sales on saturdays".
+   The weekly TARGET stays a 5-working-day figure (see dailyTarget below); this is only which
+   days the trend widget counts actual approvals on, so a Saturday sale is shown, not dropped. */
+const WD6 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const WD7 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 /** Snapshot date of a given weekday inside the week containing nowMs. */
@@ -5340,9 +5367,14 @@ async function dashboardFull(db, user, args, nowMs) {
         .reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
   });
 
-  /* ---- sales trend Mon-Fri: approved principal per day against the daily target ---- */
+  /* ---- sales trend Mon-Sat: approved principal per day against the daily target ----
+     dailyTarget itself is still a 5-WORKING-DAY figure -- the quota does not change, only how
+     many days are shown against it. A Saturday approval used to be approved for real and then
+     simply never counted anywhere on this board -- not the day it happened, not the week's
+     total -- "there happen to be approved sales on saturdays, so add its widget at dashboard
+     too". */
   const dailyTarget = Math.round(weeklyTarget * Math.max(myTeams.length, 1) / 5);
-  const salesTrend = WD5.map((wd, i) => {
+  const salesTrend = WD6.map((wd, i) => {
     const d = addDaysKey(mon, i);
     const on = myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) === d);
     const amt = on.reduce((s, l) => s + (num(l.principal_amt) || num(l.loan_amt)), 0);
