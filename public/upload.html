@@ -558,37 +558,48 @@ function portalCall_(code, fn, args){
     });
 }
 
-function downloadSmsFile_(code, audience, btn){
-  return portalCall_(code, 'smsExport', { audience: audience }).then(function(d){
-    var numCol = { 'Ref No': 1, 'Arrears': 1 };
-    var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
-      + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
-      + '</head><body><table><thead><tr>'
-      + d.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('')
-      + '</tr></thead><tbody>'
-      + (d.rows || []).map(function(r){
-          return '<tr>' + r.map(function(v, i){
-            var num = numCol[d.headers[i]];
-            return '<td ' + (num ? 'x:num' : 'x:str') + '>' + esc(v == null ? '' : v) + '</td>';
-          }).join('') + '</tr>';
-        }).join('')
-      + '</tbody></table></body></html>';
-    var blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
-    var a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xls';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
-  });
+function fetchSmsExport_(code, audience){
+  return portalCall_(code, 'smsExport', { audience: audience });
+}
+
+/* THE ALREADY-FETCHED DATA, NOT A SECOND ROUND TRIP. This used to call smsGaps first and, once
+   that came back clean (or once "skip" was pressed), call smsExport all over again -- doubling
+   the one expensive fetch (the whole defaulter book) on every single download, which is exactly
+   what turned into "error 504" on the real 9,297-row book: the second fetch alone was enough to
+   walk the server past its own time limit. smsExport's response now carries its own .gaps (see
+   smsBuild_ in portal-core.js), so a download only ever costs one fetch -- this just turns
+   whatever export response it is handed into the actual .xls file and triggers the save. */
+function saveSmsFile_(d){
+  var numCol = { 'Ref No': 1, 'Arrears': 1 };
+  var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+    + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+    + '</head><body><table><thead><tr>'
+    + d.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('')
+    + '</tr></thead><tbody>'
+    + (d.rows || []).map(function(r){
+        return '<tr>' + r.map(function(v, i){
+          var num = numCol[d.headers[i]];
+          return '<td ' + (num ? 'x:num' : 'x:str') + '>' + esc(v == null ? '' : v) + '</td>';
+        }).join('') + '</tr>';
+      }).join('')
+    + '</tbody></table></body></html>';
+  var blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xls';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
 }
 
 /* THE GAP FORM. One row per team+role the chosen audience actually needs and does not have a
    number for yet, plus PMO Recovery No itself if the "rest" bucket has nobody to fall back to.
    Filling a row in and pressing Save writes it to Teams & Staff (or Settings, for the PMO row)
    through the same saveTeam / settingSet the Teams page itself uses -- so it is there for
-   every export after this one too, not just typed in once and thrown away. */
-function renderSmsGaps_(code, audience, gaps, btn){
+   every export after this one too, not just typed in once and thrown away. `exported` is the
+   smsExport response already sitting in hand -- "skip" downloads that as-is, no re-fetch. */
+function renderSmsGaps_(code, audience, exported, btn){
   var box = $('smsGapsBox');
+  var gaps = exported.gaps || {};
   var rows = [];
   if (gaps.pmoNeeded) {
     rows.push({ key: 'pmo', label: 'PMO Recovery No', sub: 'fallback for every "rest" (7-12 paid) defaulter with no team credit analyst' });
@@ -598,7 +609,7 @@ function renderSmsGaps_(code, audience, gaps, btn){
       sub: 'no ' + g.roleLabel.toLowerCase() + ' number on file for this team', team: g.team,
       role: g.role, nameField: g.nameField, phoneField: g.phoneField, name: g.name });
   });
-  if (!rows.length) { box.className = 'hide'; box.innerHTML = ''; return; }
+  if (!rows.length) { box.className = 'hide'; box.innerHTML = ''; saveSmsFile_(exported); return; }
 
   box.className = '';
   box.innerHTML = '<div class="msg warn" style="margin:0 0 10px">' + rows.length
@@ -625,8 +636,7 @@ function renderSmsGaps_(code, audience, gaps, btn){
 
   $('smsGapsSkip').onclick = function(){
     box.className = 'hide'; box.innerHTML = '';
-    btn.disabled = true;
-    downloadSmsFile_(code, audience, btn).catch(function(e){ alert(String((e && e.message) || e)); }).then(function(){ btn.disabled = false; });
+    saveSmsFile_(exported);   // the data already in hand -- no second fetch of the same book
   };
 
   $('smsGapsSave').onclick = function(){
@@ -645,8 +655,12 @@ function renderSmsGaps_(code, audience, gaps, btn){
     });
     var jobs = Object.keys(byTeam).map(function(t){ return portalCall_(code, 'saveTeam', byTeam[t]); });
     if (pmoVal) jobs.push(portalCall_(code, 'settingSet', { key: 'PMO_RECOVERY_NO', value: pmoVal }));
+    // Numbers just changed, so THIS one re-fetch is unavoidable -- it is the only way the file
+    // can carry what was just saved instead of the stale fallback. Every export after this one
+    // is back to a single fetch, since the gap that caused it is now filled in on the team.
     Promise.all(jobs)
-      .then(function(){ box.className = 'hide'; box.innerHTML = ''; return downloadSmsFile_(code, audience, btn); })
+      .then(function(){ box.className = 'hide'; box.innerHTML = ''; return fetchSmsExport_(code, audience); })
+      .then(function(fresh){ saveSmsFile_(fresh); })
       .catch(function(e){ alert(String((e && e.message) || e)); })
       .then(function(){ saveBtn.disabled = false; btn.disabled = false; });
   };
@@ -658,9 +672,10 @@ $('smsExportBtn').onclick = function(){
   var audience = $('smsAudience').value;
   var btn = $('smsExportBtn'); btn.disabled = true;
   $('smsGapsBox').className = 'hide'; $('smsGapsBox').innerHTML = '';
-  portalCall_(code, 'smsGaps', { audience: audience }).then(function(gaps){
-    if (!gaps.count) return downloadSmsFile_(code, audience, btn).then(function(){ btn.disabled = false; });
-    renderSmsGaps_(code, audience, gaps, btn);
+  fetchSmsExport_(code, audience).then(function(d){
+    var gaps = d.gaps || {};
+    if (!gaps.count) { saveSmsFile_(d); btn.disabled = false; return; }
+    renderSmsGaps_(code, audience, d, btn);
     btn.disabled = false;
   }).catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
 };

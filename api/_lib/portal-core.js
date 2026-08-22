@@ -2917,7 +2917,13 @@ function smsRoleFor(r, isDefaulter) {
 }
 const SMS_ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection Officer' };
 
-async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
+/** ONE FETCH, NOT TWO. The first cut of this had smsExport and smsGaps each doing their own
+    Promise.all of readTeamsAll + defaulterBook + the PMO setting, so the Upload page's "check,
+    then download" made the defaulter book pay for itself twice in a row -- fine on a small
+    book, but "error 504" on the real one (9,297 rows): the second fetch alone was enough to
+    walk the sixty-second function budget off the edge. Both callers below now share this one
+    pass over the data; the rows and the gaps come out of the very same loop. */
+async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
   const today = todayKey(nowMs);
   const [teamRows, book, pmoNoRaw] = await Promise.all([
     readTeamsAll(db),
@@ -2934,14 +2940,23 @@ async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
     const v = col && t[col] ? String(t[col]).trim() : '';
     return v || pmo;
   };
-  const hopePhoneFor = (r, isDefaulter) => {
-    const role = smsRoleFor(r, isDefaulter);
-    return role === 'pmo' ? pmo : numberFor(r.team, role);
+
+  let pmoNeeded = false;
+  const gapBy = new Map();       // "TEAM|role" -> { team, role, name }
+  const noteGap = (r, role) => {
+    if (role === 'pmo') { if (!pmo) pmoNeeded = true; return; }
+    const t = teamBy[K(r.team)] || {};
+    const col = TEAM_PHONE_OF[role];
+    if (col && t[col] && String(t[col]).trim()) return;          // this team already has one
+    const key = K(r.team) + '|' + role;
+    if (!gapBy.has(key)) gapBy.set(key, { team: r.team, role, name: (t[role] && String(t[role]).trim()) || '' });
   };
-  const rowFor = (r, isDefaulter) => ([
-    r.contact || '', r.full_name || '', r.team || '', r.ref || '',
-    num(r.arrears), hopePhoneFor(r, isDefaulter),
-  ]);
+  const rowFor = (r, isDefaulter) => {
+    const role = smsRoleFor(r, isDefaulter);
+    noteGap(r, role);
+    const phone = role === 'pmo' ? pmo : numberFor(r.team, role);
+    return [r.contact || '', r.full_name || '', r.team || '', r.ref || '', num(r.arrears), phone];
+  };
 
   const out = [];
   const seen = new Set();
@@ -2969,80 +2984,37 @@ async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
     }
   }
 
-  return {
-    audience, count: out.length,
-    headers: ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No'],
-    rows: out,
-  };
-}
-
-/** BEFORE THE DOWNLOAD, A DRY RUN. "the sms file should promt to input no of a user role and
-    name if not present so that to save it and make sure all clients go with numbers" -- the
-    fallback in smsExport (a role with no number recorded falls to PMO_RECOVERY_NO) keeps the
-    column from ever being BLANK, but a sheet where half the "HOPE Phone" column is really just
-    the same PMO number standing in for a missing credit analyst is not what was asked for.
-
-    This walks the exact same rows smsExport would export, for the same audience, and instead
-    of resolving a phone number it asks whether the team ACTUALLY HAS one on file for the role
-    that row would use -- returning the gaps for the Upload page to prompt for, one row per
-    (team, role), so an admin can type each number in once and have it saved to the team
-    permanently rather than re-typed on every future export. PMO_RECOVERY_NO itself is the one
-    non-team gap: every "rest" defaulter routes straight there, so an empty setting is flagged
-    once, not once per team. */
-async function smsGaps(db, user, { audience = 'defaulters' } = {}, nowMs) {
-  const today = todayKey(nowMs);
-  const [teamRows, book, pmoNoRaw] = await Promise.all([
-    readTeamsAll(db),
-    defaulterBook(db, user, { type: 'current', notAfter: today }),
-    settingGet(db, 'PMO_RECOVERY_NO'),
-  ]);
-  const teamBy = {};
-  for (const t of teamRows) teamBy[K(t.team)] = t;
-  const pmo = pmoNoRaw ? String(pmoNoRaw).trim() : '';
-
-  let pmoNeeded = false;
-  const gapBy = new Map();       // "TEAM|role" -> { team, role }
-  const seen = new Set();
-  const consider = (r, isDefaulter) => {
-    const role = smsRoleFor(r, isDefaulter);
-    if (role === 'pmo') { if (!pmo) pmoNeeded = true; return; }
-    const t = teamBy[K(r.team)] || {};
-    const col = TEAM_PHONE_OF[role];
-    if (col && t[col] && String(t[col]).trim()) return;         // this team already has one
-    const key = K(r.team) + '|' + role;
-    if (!gapBy.has(key)) gapBy.set(key, { team: r.team, role, name: (t[role] && String(t[role]).trim()) || '' });
-  };
-
-  for (const r of scoped(user, book.rows)) {
-    const k = K(r.ref);
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
-    consider(r, true);
-  }
-
-  if (audience === 'portfolio') {
-    const mon = weekMondayKey(nowMs), fri = addDaysKey(mon, 4);
-    const expRaw = await fetchAll(() => onTeams(db.from('repayment_snapshots')
-      .select(withBatchKeys(EXPECTED_TAB_COLS + ', snapshot_date')).eq('snapshot_type', 'today')
-      .gte('snapshot_date', mon).lte('snapshot_date', fri), user.teams));
-    const byDay = {};
-    for (const r of scoped(user, expRaw)) (byDay[r.snapshot_date] || (byDay[r.snapshot_date] = [])).push(r);
-    for (const d of Object.keys(byDay)) {
-      for (const r of pickLatestBatchRows(byDay[d])) {
-        const k = K(r.ref);
-        if (!k || seen.has(k)) continue;
-        seen.add(k);
-        consider(r, false);
-      }
-    }
-  }
-
   const teamGaps = [...gapBy.values()]
     .map(g => ({ team: g.team, role: g.role, roleLabel: SMS_ROLE_LABEL[g.role],
       nameField: g.role, phoneField: TEAM_PHONE_OF[g.role], name: g.name }))
     .sort((a, b) => a.team.localeCompare(b.team) || a.role.localeCompare(b.role));
 
-  return { audience, pmoNeeded, pmoNo: pmo, teamGaps, count: teamGaps.length + (pmoNeeded ? 1 : 0) };
+  return { rows: out, gaps: { pmoNeeded, pmoNo: pmo, teamGaps, count: teamGaps.length + (pmoNeeded ? 1 : 0) } };
+}
+
+/** THE DOWNLOAD ITSELF -- and, riding along in the same single pass, the same GAPS smsGaps
+    reports on its own (see smsBuild_ above). The Upload page reads .gaps off this one response
+    instead of calling smsGaps first and this second: one defaulter-book fetch, not two. */
+async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
+  const { rows, gaps } = await smsBuild_(db, user, { audience }, nowMs);
+  return {
+    audience, count: rows.length,
+    headers: ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No'],
+    rows, gaps,
+  };
+}
+
+/** THE SAME GAPS, ON THEIR OWN. "the sms file should promt to input no of a user role and name
+    if not present so that to save it and make sure all clients go with numbers" -- the fallback
+    in smsExport (a role with no number recorded falls to PMO_RECOVERY_NO) keeps the column from
+    ever being BLANK, but a sheet where half the "HOPE Phone" column is really just the same PMO
+    number standing in for a missing credit analyst is not what was asked for. Kept as its own
+    dispatched function for anything that wants the gap list without the six-column export
+    riding along -- the Upload page itself no longer calls this before a download; it reads
+    .gaps off smsExport's own response instead, for the reason smsBuild_ explains above. */
+async function smsGaps(db, user, { audience = 'defaulters' } = {}, nowMs) {
+  const { gaps } = await smsBuild_(db, user, { audience }, nowMs);
+  return { audience, ...gaps };
 }
 
 /** Call agents -- the CUSTOMER SERVICE agents named on loan applications, not the HOPE Calls
