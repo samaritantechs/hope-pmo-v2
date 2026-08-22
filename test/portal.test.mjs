@@ -5023,6 +5023,26 @@ test('a customer in two weekdays\' decks is listed ONCE, from the newer one', as
   assert.equal(Number(hits[0].arrears), 999, 'and it is the newer upload that wins');
 });
 
+test('a customer dropped from a same-day corrected re-upload does not survive on their old batch row', async () => {
+  // "Some customers were texted arrears when I exported the sms file ... yet she aint in the
+  // defaulters file" -- ANASTAZIA JUMBE NGOI, SINGIDA. A team's CURRENT deck corrected with a
+  // same-day re-upload that no longer names a given customer -- because they paid off -- must
+  // not resurrect them from the batch it replaced. pickLatestPerCustomer alone had nothing in
+  // the newer, more complete batch to compare her old row against, so her old row just won.
+  const t = estherBook('TUE');
+  // A LATER upload for GOBA's TUE current deck, same date, that does NOT mention her -- but
+  // does name somebody else, so the fix has to be "her batch loses, not the whole date".
+  t.defaulter_snapshots.push({
+    ref: '9-000-00001', full_name: 'SOMEBODY ELSE', team: 'GOBA', arrears: 400000,
+    status: 'Defaulter', ds: '3-6', snapshot_type: 'current', weekday: 'TUE',
+    snapshot_date: TODAY, upload_batch: 'bg2', created_at: TODAY + 'T06:00:00Z',
+  });
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
+  assert.equal(d.rows.some(r => K2(r.ref) === '2-209-72865'), false,
+    'she is not in the corrected file -- the old batch\'s row must not survive');
+  assert.ok(d.rows.some(r => K2(r.ref) === '9-000-00001'), 'the corrected file\'s own customer is there');
+});
+
 test('and Find customer says exactly where she is and why she cannot be seen', async () => {
   const d = await portalApi(dbWithRpc(estherBook('TUE')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
   // The fixture carries an 'initial' AND a 'current' snapshot for her -- one ref's whole
