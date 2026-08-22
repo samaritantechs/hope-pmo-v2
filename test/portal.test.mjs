@@ -502,7 +502,21 @@ test('sms export: defaulters only, deduplicated, in the fixed 6-column shape', a
   assert.equal(r111[0], '07140000111');   // Contact No -- the customer's own phone
   assert.equal(r111[1], 'C111');          // Contact Person
   assert.equal(r111[2], 'KONGOWE');       // Team
-  assert.equal(r111[4], 300);             // Arrears -- today's current arrears
+  // Arrears rounded UP to the nearest 500 for the SMS text -- "our customers aint demanded
+  // decimals" -- 300 reads as 500, the same roundUp500 a demand notice already uses.
+  assert.equal(r111[4], 500);
+});
+
+test('sms export: arrears are rounded UP to the nearest 500, never left exact', async () => {
+  const t = tables();
+  const snaps = t.defaulter_snapshots;
+  snaps[snaps.findIndex(r => r.ref === '111' && r.snapshot_type === 'current')].arrears = 45333;
+  snaps[snaps.findIndex(r => r.ref === '555' && r.snapshot_type === 'current')].arrears = 67800;
+  snaps[snaps.findIndex(r => r.ref === '999' && r.snapshot_type === 'current')].arrears = 50000;
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(d.rows.find(r => r[3] === '111')[4], 45500);
+  assert.equal(d.rows.find(r => r[3] === '555')[4], 68000);
+  assert.equal(d.rows.find(r => r[3] === '999')[4], 50000);   // already an exact multiple -- left alone
 });
 
 test('sms export: carries its own .gaps, so the Upload page never has to fetch the book twice', async () => {
@@ -609,7 +623,7 @@ test('sms export: full portfolio appends this week\'s Expected after Defaulters,
   // Defaulters lead, Expected-only trail -- "beginning with defaulters and ending with expected".
   assert.ok(refs.indexOf('999') < refs.indexOf('444'));
   const r444 = d.rows.find(r => r[3] === '444');
-  assert.equal(r444[4], 300);                 // arrears carried from the Expected row itself
+  assert.equal(r444[4], 500);                 // arrears carried from the Expected row, rounded up to 500
   assert.equal(r444[5], '0711000EC');         // 1-6 -> early collection
   assert.equal(d.rows.find(r => r[3] === '888')[5], '0700000PMO');  // past 1-6, no collection officer -> PMO
   // 'defaulters' audience never reads the week's Expected at all.

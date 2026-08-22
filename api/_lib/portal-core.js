@@ -3034,7 +3034,12 @@ async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
     notePhones(r.team);
     buckets.push(bucket);
     const phone = resolveChain(r.team, chain);
-    return [r.contact || '', r.full_name || '', r.team || '', r.ref || '', num(r.arrears), phone];
+    /* "our customers aint demanded decimals, all amounts sent in the messages must be capped
+       500" -- 45,333 reads as 45,500 in the text, 67,800 as 68,000, and a figure already an
+       exact multiple of 500 (50,000) is left alone. Same roundUp500 the legal demand notice
+       already rounds a total to, so the arrears a customer is TOLD on the phone/SMS and the
+       arrears a demand notice prints are never two different roundings of the same number. */
+    return [r.contact || '', r.full_name || '', r.team || '', r.ref || '', roundUp500(r.arrears), phone];
   };
 
   const out = [];
