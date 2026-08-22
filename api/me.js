@@ -28,10 +28,15 @@ export default withApi(async (req, res) => {
        for them it is -- they are the ones who close it, and they have to be able to get back
        in and turn it on again. */
     systemOpen: open,
-    /* Whether to draw the HOPE Loan switch. False for everybody but an admin, and false for an
-       admin too until the second database is configured -- so an officer is never told the
-       sandbox exists, and a half-set-up deployment offers no door that leads nowhere. */
-    canSwitchWorkspace: await canSwitchWorkspace(user),
+    /* Whether HOPE Loan's own nav items belong in this code's sidebar at all -- "i thout we
+       killing the sandbox shotcut and having one flow from now on". There is no separate
+       switch to draw any more: an admin, or a code ticked for at least one of HOPE Loan's
+       tabs, simply finds its screens sitting in the SAME sidebar as everything else, gated
+       item-by-item exactly like every HOPE PMO tab. False for anybody holding none of those
+       tabs, and false even for an admin until the second database is configured -- so an
+       officer is never told the sandbox exists, and a half-set-up deployment offers no door
+       that leads nowhere. */
+    hopeLoanAvailable: await canSwitchWorkspace(user),
     can: {
       // Closed, there is no portal to offer. The server refuses these routes too; this is only
       // so the launcher does not draw a door that will not open.
