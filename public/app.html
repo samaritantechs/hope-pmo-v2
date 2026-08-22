@@ -5106,9 +5106,16 @@ function lnCsRegisterForm_(existing){
       curRegion = regions.find(function(rg){ return (byRegion[rg]||[]).indexOf(existing.branch) >= 0; }) || '';
     }
     drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
-      + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
+      + '<div class="sub">Loan Application -- requested amount only. KYC (District included) is captured by the team at assessment, not here -- CS stays fast.</div>'
       + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      // Mobile and Disbursement mode sequenced together on purpose: a Momo disbursement pays
+      // OUT to the same number just typed above, so the two belong next to each other, not
+      // Mobile up top and Disbursement mode buried after Region/Branch/Landmark.
       + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
+        + '<option value="">— chagua / choose —</option>'
+        + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
+        + '</select></div>'
       /* REGION FIRST, THEN BRANCH.
            "selecting a branch should autofill its region since customer service agents dont
             know that / infact they should select among regions and then choose drop list of
@@ -5124,12 +5131,7 @@ function lnCsRegisterForm_(existing){
         + '<option value="">' + (curRegion ? '— chagua tawi / choose a branch —' : '— chagua mkoa kwanza / choose a region first —') + '</option>'
         + (byRegion[curRegion]||[]).map(function(b){ return '<option' + (existing && existing.branch===b?' selected':'') + '>' + esc(b) + '</option>'; }).join('')
         + '</select></div>'
-      + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
-      + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
-        + '<option value="">— chagua / choose —</option>'
-        + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
-        + '</select></div>'
       + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
       + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
     $('#lnRegion').onchange = function(){
@@ -5145,7 +5147,7 @@ function lnCsRegisterForm_(existing){
         docket: existing ? existing.docket : undefined,
         full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
         branch: $('#lnBranch').value.trim(), region: $('#lnRegion').value.trim(),
-        district: $('#lnDistrict').value.trim(), landmark: $('#lnLandmark').value.trim(),
+        landmark: $('#lnLandmark').value.trim(),
         disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
       }, 'Application registered.');
     };
@@ -5198,6 +5200,10 @@ function lnTeamAssessForm_(loan){
     + '<div class="fld"><label>Date of birth</label><input id="lnDob" type="date"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
     + '<div class="fld"><label>Gender</label><input id="lnGender"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
     + '<div class="fld"><label>National ID (NIDA)</label><input id="lnNida"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
+    // District moved here from CS registration -- "that should be at assessment stage, the cs
+    // agents are superbusy to go into details". Not an identity field, so still open on a
+    // returning customer's later tracks (a residence can change between loan cycles).
+    + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
     + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
     + '<div class="card"><div class="card-h">2. Team recommendation</div>'
     + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (loan.requested_amt||'') + '"></div>'
@@ -5218,7 +5224,8 @@ function lnTeamAssessForm_(loan){
     + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>');
   $('#lnSavePersonal').onclick = function(){
     lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'personal',
-      fields: { dob: $('#lnDob').value, gender: $('#lnGender').value.trim(), national_id: $('#lnNida').value.trim() } }, 'Saved.', function(){});
+      fields: { dob: $('#lnDob').value, gender: $('#lnGender').value.trim(), national_id: $('#lnNida').value.trim(),
+        district: $('#lnDistrict').value.trim() } }, 'Saved.', function(){});
   };
   $('#lnSaveRec').onclick = function(){
     lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
