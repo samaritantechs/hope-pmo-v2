@@ -602,9 +602,31 @@ function renderSmsGaps_(code, audience, exported, btn){
   var gaps = exported.gaps || {};
   var rows = [];
   if (gaps.pmoNeeded) {
-    rows.push({ key: 'pmo', label: 'PMO Recovery No', sub: 'fallback for every "rest" (7-12 paid) defaulter with no team credit analyst' });
+    rows.push({ key: 'pmo', label: 'PMO Recovery No', sub: 'last resort, only when a team has nobody else on file' });
   }
+  /* SAME NAME, SAME NUMBER, TYPED ONCE. One credit analyst or recovery officer commonly covers
+     several teams, and each team missing that person's number used to mean re-typing the same
+     number once per team -- "a single c.a could require filling the number multiple times yet
+     if the same name appears for multiple teams it should have just required the names number
+     once". Anything with a name already on file gets grouped by (role, name) into ONE prompt
+     that saves to every team it lists; only a genuinely unnamed gap still asks per team, since
+     there is no name to tell two different blank officers apart by. */
+  var groups = {};      // "role|NAME" -> { role, roleLabel, name, members: [teamGap,...] }
+  var solo = [];
   (gaps.teamGaps || []).forEach(function(g){
+    var nm = (g.name || '').trim();
+    if (!nm) { solo.push(g); return; }
+    var gk = g.role + '|' + nm.toUpperCase();
+    (groups[gk] || (groups[gk] = { role: g.role, roleLabel: g.roleLabel, name: nm, members: [] })).members.push(g);
+  });
+  Object.keys(groups).forEach(function(gk){
+    var grp = groups[gk];
+    var teamList = grp.members.map(function(m){ return m.team; });
+    rows.push({ key: 'grp:' + gk, label: grp.name + ' — ' + grp.roleLabel,
+      sub: 'covers ' + teamList.length + ' team' + (teamList.length > 1 ? 's' : '') + ' with no number on file yet: ' + teamList.join(', '),
+      members: grp.members, phoneField: grp.members[0].phoneField });
+  });
+  solo.forEach(function(g){
     rows.push({ key: 'team:' + g.team + ':' + g.role, label: g.team + ' — ' + g.roleLabel,
       sub: 'no ' + g.roleLabel.toLowerCase() + ' number on file for this team', team: g.team,
       role: g.role, nameField: g.nameField, phoneField: g.phoneField, name: g.name });
@@ -618,15 +640,18 @@ function renderSmsGaps_(code, audience, exported, btn){
     + ' / Namba ' + (rows.length > 1 ? 'kadhaa hazipo' : 'moja haipo') + ' — jaza ulizonazo, au pakua '
     + 'hivyo hivyo na zilizobaki zitaenda kwa namba ya PMO Recovery.</div>'
     + rows.map(function(r){
+        // A group (same officer, several teams) only ever asks for the phone once -- the name
+        // is already known and shown right in the label, so there is nothing left to type twice.
+        var field = r.key === 'pmo' ? '<input data-gap="pmo" placeholder="Phone number" style="width:100%;margin-bottom:0">'
+          : r.members ? '<input data-gap="' + esc(r.key) + '" data-part="phone" placeholder="Phone number" style="width:100%;margin-bottom:0">'
+          : '<div style="display:flex;gap:6px">'
+            + '<input data-gap="' + esc(r.key) + '" data-part="name" placeholder="Name (optional)" value="' + esc(r.name || '') + '" style="flex:1;margin-bottom:0">'
+            + '<input data-gap="' + esc(r.key) + '" data-part="phone" placeholder="Phone number" style="flex:1;margin-bottom:0">'
+            + '</div>';
         return '<div style="margin-bottom:8px;padding:8px;border:1px solid var(--line);border-radius:8px">'
           + '<div style="font-weight:700;font-size:13px">' + esc(r.label) + '</div>'
           + '<div class="hint" style="margin:2px 0 6px">' + esc(r.sub) + '</div>'
-          + (r.key === 'pmo'
-              ? '<input data-gap="pmo" placeholder="Phone number" style="width:100%;margin-bottom:0">'
-              : '<div style="display:flex;gap:6px">'
-                + '<input data-gap="' + esc(r.key) + '" data-part="name" placeholder="Name (optional)" value="' + esc(r.name || '') + '" style="flex:1;margin-bottom:0">'
-                + '<input data-gap="' + esc(r.key) + '" data-part="phone" placeholder="Phone number" style="flex:1;margin-bottom:0">'
-                + '</div>')
+          + field
           + '</div>';
       }).join('')
     + '<div style="display:flex;gap:8px;margin-top:6px">'
@@ -643,15 +668,20 @@ function renderSmsGaps_(code, audience, exported, btn){
     var saveBtn = $('smsGapsSave'); saveBtn.disabled = true;
     var byTeam = {};   // team -> { phoneField: v, nameField: v }
     var pmoVal = '';
+    var slotFor = function(team){ return byTeam[team] || (byTeam[team] = { team: team }); };
     box.querySelectorAll('[data-gap]').forEach(function(inp){
       var v = inp.value.trim();
       if (!v) return;
       if (inp.getAttribute('data-gap') === 'pmo') { pmoVal = v; return; }
       var g = rows.filter(function(r){ return r.key === inp.getAttribute('data-gap'); })[0];
       if (!g) return;
-      var slot = byTeam[g.team] || (byTeam[g.team] = { team: g.team });
+      if (g.members) {
+        // One phone, every team in the group -- this is the whole point of grouping by name.
+        g.members.forEach(function(m){ slotFor(m.team)[m.phoneField] = v; });
+        return;
+      }
       var field = inp.getAttribute('data-part') === 'name' ? g.nameField : g.phoneField;
-      slot[field] = v;
+      slotFor(g.team)[field] = v;
     });
     var jobs = Object.keys(byTeam).map(function(t){ return portalCall_(code, 'saveTeam', byTeam[t]); });
     if (pmoVal) jobs.push(portalCall_(code, 'settingSet', { key: 'PMO_RECOVERY_NO', value: pmoVal }));

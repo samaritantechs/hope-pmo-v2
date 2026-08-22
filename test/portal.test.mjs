@@ -520,22 +520,46 @@ test('sms export: carries its own .gaps, so the Upload page never has to fetch t
     g.teamGaps.map(x => x.team + '|' + x.role).sort());
 });
 
-test('sms export: 1-6 goes to the credit analyst, the rest to PMO recovery', async () => {
+test('sms export: 1-6 goes to the credit analyst, the rest to the team\'s OWN recovery officer', async () => {
   const t = tables();
   t.teams[0].credit_no = '0711000CR';                              // KONGOWE's credit analyst
-  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' });
-  // 999 (MBAGALA) is pushed past count 1-6 -- MBAGALA has no credit officer at all, so the
-  // winnable branch would have nothing to fall back to either way.
+  t.teams[1].recovery_no = '0722000RC';                            // MBAGALA's OWN recovery officer
+  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' }); // must NOT win over a team that has one
+  // 999 (MBAGALA) is pushed past count 1-6.
   const snaps = t.defaulter_snapshots;
   const i999 = snaps.findIndex(r => r.ref === '999' && r.snapshot_type === 'current');
   snaps[i999] = { ...snaps[i999], ds: '9/12' };
   const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
   assert.equal(d.rows.find(r => r[3] === '111')[5], '0711000CR');   // 1-6, KONGOWE -> credit analyst
   assert.equal(d.rows.find(r => r[3] === '555')[5], '0711000CR');
-  assert.equal(d.rows.find(r => r[3] === '999')[5], '0700000PMO');  // past 1-6 -> PMO recovery, not a team column
+  // past 1-6 -> MBAGALA's OWN recovery officer -- "not first, there is no company wide, each
+  // team must have one" -- PMO_RECOVERY_NO is set here too, and must lose to the team's own.
+  assert.equal(d.rows.find(r => r[3] === '999')[5], '0722000RC');
 });
 
-test('sms export: a team missing its own number still falls to PMO recovery, not a blank cell', async () => {
+test('sms export: rest bucket falls to the team\'s COLLECTION officer when it has no recovery officer', async () => {
+  const t = tables();
+  t.teams[1].collection_no = '0722000CO';   // MBAGALA has a collection officer but no recovery officer
+  const snaps = t.defaulter_snapshots;
+  const i999 = snaps.findIndex(r => r.ref === '999' && r.snapshot_type === 'current');
+  snaps[i999] = { ...snaps[i999], ds: '9/12' };
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  // "if no recovery officer at all default to collection officer" -- tried before PMO, not after.
+  assert.equal(d.rows.find(r => r[3] === '999')[5], '0722000CO');
+});
+
+test('sms export: only once a team has NEITHER recovery NOR collection does a row reach PMO recovery', async () => {
+  const t = tables();
+  t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' });
+  const snaps = t.defaulter_snapshots;
+  const i999 = snaps.findIndex(r => r.ref === '999' && r.snapshot_type === 'current');
+  snaps[i999] = { ...snaps[i999], ds: '9/12' };
+  // MBAGALA has neither recovery_no nor collection_no on file at all.
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  assert.equal(d.rows.find(r => r[3] === '999')[5], '0700000PMO');
+});
+
+test('sms export: a team missing its own credit number still falls to PMO recovery, not a blank cell', async () => {
   const t = tables();
   t.settings.push({ key: 'PMO_RECOVERY_NO', value: '0700000PMO' });
   // KONGOWE has a credit ANALYST name but no credit_no column value -- the winnable branch
@@ -577,9 +601,10 @@ test('sms gaps: flags a team with no number on file for the role its defaulters 
   const t = tables();
   // Neither team has a credit_no, and both KONGOWE's 111/555 and MBAGALA's 999 default to
   // paid < 6 (the D() fixture's "3-6" ds does not match the N/M regex, so paidCount falls to
-  // 0) -- so all three route to 'credit', and nobody has a PMO_RECOVERY_NO fallback needed.
+  // 0) -- so all three route to 'credit'. PMO_RECOVERY_NO is not set either, so these rows
+  // would genuinely render a blank cell right now -- pmoNeeded says so.
   const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
-  assert.equal(d.pmoNeeded, false);
+  assert.equal(d.pmoNeeded, true);
   assert.equal(d.teamGaps.length, 2);
   const kongowe = d.teamGaps.find(g => g.team === 'KONGOWE');
   assert.equal(kongowe.role, 'credit');
@@ -589,7 +614,7 @@ test('sms gaps: flags a team with no number on file for the role its defaulters 
   const mbagala = d.teamGaps.find(g => g.team === 'MBAGALA');
   assert.equal(mbagala.role, 'credit');
   assert.equal(mbagala.name, '');                     // no analyst named at all
-  assert.equal(d.count, 2);
+  assert.equal(d.count, 3);                           // 2 team gaps + PMO Recovery No itself
 });
 
 test('sms gaps: a team that already has the number is not a gap', async () => {
@@ -600,14 +625,31 @@ test('sms gaps: a team that already has the number is not a gap', async () => {
   assert.equal(d.teamGaps.some(g => g.team === 'MBAGALA'), true);   // MBAGALA still has none
 });
 
-test('sms gaps: PMO Recovery No itself is the gap for the "rest" bucket, once, not per team', async () => {
+test('sms gaps: the "rest" bucket asks for a RECOVERY OFFICER per team, not one company setting', async () => {
   const t = tables();
-  // Push both KONGOWE defaulters and MBAGALA's past count 1-6 -- everybody now routes to PMO.
+  // Push both KONGOWE defaulters and MBAGALA's past count 1-6. Neither team has a recovery_no
+  // or a collection_no on file, and PMO_RECOVERY_NO is not set either -- "each team must have
+  // one" means this is now a gap on EVERY team that needs the rest bucket, not one shared blank.
   for (const r of t.defaulter_snapshots) if (r.snapshot_type === 'current') r.ds = '9/12';
   const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(d.teamGaps.length, 2);
+  assert.ok(d.teamGaps.every(g => g.role === 'recovery'), 'the primary ask is the recovery officer, not collection');
+  assert.equal(d.teamGaps.find(g => g.team === 'KONGOWE').name, 'JUMA G');   // KONGOWE's recovery is named
+  assert.equal(d.teamGaps.find(g => g.team === 'MBAGALA').name, '');
+  // Still nobody's last resort -- PMO_RECOVERY_NO itself is unset, so a team with nothing at
+  // all filled in would still land on a blank cell without it.
   assert.equal(d.pmoNeeded, true);
-  assert.equal(d.teamGaps.length, 0);       // nothing team-shaped to fill in -- only the setting
-  assert.equal(d.count, 1);
+  assert.equal(d.count, 3);
+});
+
+test('sms gaps: a team with EITHER a recovery or a collection officer on file is not a gap', async () => {
+  const t = tables();
+  for (const r of t.defaulter_snapshots) if (r.snapshot_type === 'current') r.ds = '9/12';
+  t.teams[0].recovery_no = '0711000RC';       // KONGOWE covered via recovery
+  t.teams[1].collection_no = '0722000CO';     // MBAGALA covered via collection, no recovery officer
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.equal(d.teamGaps.length, 0);
+  assert.equal(d.pmoNeeded, false);
 });
 
 test('sms gaps: saving the number through saveTeam clears the gap on the next check', async () => {
@@ -4949,7 +4991,10 @@ test('a customer in two weekdays\' decks is listed ONCE, from the newer one', as
 
 test('and Find customer says exactly where she is and why she cannot be seen', async () => {
   const d = await portalApi(dbWithRpc(estherBook('TUE')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
-  assert.equal(d.count, 2, 'both deck rows found');
+  // The fixture carries an 'initial' AND a 'current' snapshot for her -- one ref's whole
+  // history, not two different results -- so this is the latest (current) row alone now.
+  assert.equal(d.count, 1, 'one row, the latest upload, not the full snapshot history');
+  assert.equal(d.decks[0].arrears, 1766336, 'the CURRENT figure, not the initial baseline');
   assert.ok(d.decks.every(x => x.weekday === 'TUE'));
   assert.ok(d.decks.every(x => x.onToday === false));
   assert.ok(d.notes.some(n => /weekday TUE/.test(n) && /today is FRI/.test(n)),
@@ -4958,9 +5003,26 @@ test('and Find customer says exactly where she is and why she cannot be seen', a
 
 test('found by reference and by phone number too, not just by name', async () => {
   const db = dbWithRpc(estherBook('TUE'));
-  assert.equal((await portalApi(db, ADMIN, 'findCustomer', { q: '2-209-72865' }, NOW)).count, 2);
+  assert.equal((await portalApi(db, ADMIN, 'findCustomer', { q: '2-209-72865' }, NOW)).count, 1);
   assert.equal((await portalApi(dbWithRpc(estherBook('TUE')), ADMIN,
-    'findCustomer', { q: '0746115063' }, NOW)).count, 2);
+    'findCustomer', { q: '0746115063' }, NOW)).count, 1);
+});
+
+test('find customer: one row per ref carries the contact and guarantor, for the panel it opens into', async () => {
+  const d = await portalApi(dbWithRpc(estherBook('TUE')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  const r = d.decks[0];
+  assert.equal(r.contact, '746115063');
+  assert.equal(r.guarantor_name, 'PETER CHARLES OMARY');
+  assert.equal(r.guarantor_contact, '783384221');
+});
+
+test('find customer: no separate follow-up-register rows in the result list any more', async () => {
+  const t = estherBook('THU');
+  t.followup_status = [{ ref: '2-209-72865', team: 'GOBA', full_name: 'ESTER PETER OMARY',
+    status: 'Partial Defaulter', arrears: 1766336, ds: '2-4', updated_at: TODAY + 'T04:00:00Z' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
+  assert.equal(d.follow, undefined, '"not transactions or whatever" -- the register is not a result row');
+  assert.equal(d.decks.length, 1);
 });
 
 test('when the deck IS today\'s weekday, it says so instead of crying wolf', async () => {
@@ -5038,7 +5100,9 @@ test('a customer in the deck but not the register is invisible to the phone -- a
   const t = estherBook('TUE');
   t.followup_status = t.followup_status.filter(r => r.ref !== '2-209-72865');
   const d = await portalApi(dbWithRpc(t), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
-  assert.equal(d.follow.length, 0, 'she is not in the register');
+  // follow-up register rows are no longer part of the result list at all (see the
+  // "no separate follow-up-register rows" test) -- the verdict below is what proves she is
+  // missing from it, not a row count on a list that no longer exists.
   assert.ok(d.decks.length > 0, 'but she IS in the deck');
   assert.ok(d.notes.some(n => /NOT in the follow-up register/.test(n) && /no handset/.test(n)),
     'and the diagnostic says exactly that, rather than leaving it to be worked out');

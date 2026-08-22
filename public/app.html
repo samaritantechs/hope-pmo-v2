@@ -3889,6 +3889,23 @@ var TEAM_EXTRA = [
   ['legal', 'LEGAL'], ['legal_no', 'LEGAL No'], ['legal_id', 'LEGAL ID'],
   ['collection', 'COLLECTION'], ['collection_no', 'COL No'], ['collection_id', 'COL ID'],
 ];
+/* NAME AND NUMBER, ONE COLUMN, RED WHEN THE NUMBER IS MISSING. "I need to see the full table
+   of detailed teams and staff in the web so that I know what misses when am there too -- b/se
+   its still unlike the export, there I see as before" -- the main table used to show only the
+   name half of every role, so a team with nobody to call for its Bulk SMS export looked exactly
+   like one that did. Every role column now carries its number too, and turns the same `bad` red
+   the Msimbo/Code column already uses for "field officers cannot sign in" -- so a gap is visible
+   by scanning the table, not only by running an export and reading its prompt. */
+function roleCol(nameKey, phoneKey, label){
+  return { key: nameKey, label: label,
+    cls: function(r){ return r[phoneKey] ? '' : 'bad'; },
+    get: function(r){
+      var nm = String(r[nameKey] || '').trim(), ph = String(r[phoneKey] || '').trim();
+      if (!nm && !ph) return '—';
+      if (nm && ph) return nm + ' · ' + ph;
+      return nm ? (nm + ' — no number') : ('(' + ph + ')');
+    } };
+}
 VIEWS.teams = function(){
   return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; }),
                       srv('staffRoster').catch(function(){ return null; })]).then(function(rr){
@@ -3973,14 +3990,16 @@ VIEWS.teams = function(){
           + '<a class="btn sm ghost" href="/upload?admin=1" style="margin-left:8px">\u2b06 Pakia iliyohaririwa / Upload the edited one</a>'
           + '<span style="font-size:12px;color:var(--mut);margin-left:8px">Bofya mstari kubadili wasimamizi. / Tap a row to edit its supervisors.</span>') : '');
     S.rows = d.rows;
-    S.cols = [col('branch','Branch'), col('team','Team'),
+    S.cols = [col('branch','Branch'), col('region','Region'), col('zone','Zone'), col('team','Team'),
       // The code field officers sign in with. Shown in clear on purpose: the PMO reads it out
       // over the phone, and changes it the moment it leaks.
       {key:'team_code', label:'Msimbo / Code', cls:function(r){ return r.team_code?'':'bad'; },
        get:function(r){ return r.team_code || 'HAKUNA / NONE'; }},
-      col('opm','OPM'), col('recovery','Recovery'), col('gmo','GMO'),
-      col('manager','Manager'), col('credit','Credit'),
-      col('expected','Early col'), col('bike','Bike')];
+      roleCol('opm', 'opm_no', 'OPM'), roleCol('recovery', 'recovery_no', 'Recovery'),
+      roleCol('gmo', 'gmo_no', 'GMO'), roleCol('manager', 'manager_no', 'Manager'),
+      roleCol('credit', 'credit_no', 'Credit'), roleCol('expected', 'expected_no', 'Early col'),
+      roleCol('bike', 'bike_no', 'Bike'), roleCol('legal', 'legal_no', 'Legal'),
+      roleCol('collection', 'collection_no', 'Collection')];
     ONROW = S.me.can.admin ? function(r){ teamForm(r); } : null;
   });
 };
@@ -4309,37 +4328,40 @@ VIEWS.findcust = function(){
   }
   return srv('findCustomer', { q: q }).then(function(d){
     HEAD += '<div class="kpis">'
-      + kpi('Imepatikana / Found', money(d.count), 'places this customer appears', d.count?'good':'bad')
+      + kpi('Imepatikana / Found', money(d.count), 'latest upload only, one row per customer', d.count?'good':'bad')
       + kpi('Leo / Today', esc(d.weekdayToday), esc(d.today))
       + kpi('Timu / Teams', esc((d.teams||[]).join(', ') || '\u2014'))
       + '</div>'
       + (d.notes||[]).map(function(n){
           return '<div class="note' + (/ARE in the defaulter deck|Not found/.test(n) ? ' bad' : '') + '">'
-            + esc(n) + '</div>'; }).join('');
+            + esc(n) + '</div>'; }).join('')
+      + (d.count ? '<div class="note">Bofya mstari kuona historia na kuongeza maoni. / Tap a row to see full history and add a comment.</div>' : '');
+    /* ONE ROW PER CUSTOMER, THE LATEST UPLOAD ONLY -- "results should show of latest uploaded
+       labeled [expected or default] file only and not transactions or whatever". The server
+       already collapsed each ref's whole snapshot history down to its newest row and dropped
+       the follow-up register from this list entirely (its comments are not gone -- opening a
+       row below reads them fresh, same as every other follow-up drawer in this system). */
     S.rows = (d.decks||[]).map(function(r){ return {
-      where: r.where, date: r.date, weekday: r.weekday, type: r.type, team: r.team,
-      ref: r.ref, name: r.name, status: r.status, ds: r.ds, arrears: r.arrears,
-      seen: r.onToday && r.dated ? 'Ndiyo / yes' : (r.onToday ? 'Si ya leo / not today\u2019s date' : 'Siku nyingine / other weekday'),
-      batch: r.batch };
+      where: r.where, date: r.date, team: r.team, ref: r.ref, name: r.name, full_name: r.name,
+      contact: r.contact, guarantor_name: r.guarantor_name, guarantor_contact: r.guarantor_contact,
+      status: r.status, ds: r.ds, arrears: r.arrears,
+      seen: r.onToday && r.dated ? 'Ndiyo / yes' : (r.onToday ? 'Si ya leo / not today\u2019s date' : 'Siku nyingine / other weekday') };
     }).concat((d.expected||[]).map(function(r){ return {
-      where: r.where, date: r.date, weekday: '\u2014', type: r.type, team: r.team,
-      ref: r.ref, name: r.name, status: r.status, ds: r.ds, arrears: r.arrears,
-      seen: r.dated ? 'Ndiyo / yes' : 'Si ya leo / not today\u2019s date', batch: r.batch };
-    })).concat((d.follow||[]).map(function(r){ return {
-      where: r.where, date: '\u2014', weekday: '\u2014', type: '\u2014', team: r.team,
-      ref: r.ref, name: r.name, status: r.status, ds: r.ds, arrears: r.arrears,
-      seen: 'Daima / always', batch: '\u2014' };
+      where: r.where, date: r.date, team: r.team, ref: r.ref, name: r.name, full_name: r.name,
+      contact: r.contact, status: r.status, ds: r.ds, arrears: r.arrears,
+      seen: r.dated ? 'Ndiyo / yes' : 'Si ya leo / not today\u2019s date' };
     }));
-    S.cols = [col('where','Iko wapi / Where'), col('date','Date','date'),
-      {key:'weekday', label:'Weekday', kind:'chip', chip:function(r){
-        return r.weekday === S.fcToday ? 'ok' : 'warn'; }},
-      col('type','Deck'), col('team','Team'), col('ref','REF#'), col('name','Fullname'),
-      col('status','Status'), col('ds','D.S'), col('arrears','Arrears','money'),
+    S.cols = [col('where','Deck'), col('date','Date','date'), col('team','Team'),
+      col('ref','REF#'), col('name','Fullname'), col('status','Status'), col('ds','D.S'),
+      col('arrears','Arrears','money'),
       {key:'seen', label:'Inaonekana leo? / Visible today?', kind:'chip', chip:function(r){
-        return /Ndiyo|Daima/.test(r.seen) ? 'ok' : 'bad'; }},
-      col('batch','Upload')];
+        return /Ndiyo/.test(r.seen) ? 'ok' : 'bad'; }}];
     S.fcToday = d.weekdayToday;
     S.foot = 'Leo / today: ' + d.weekdayToday + ' \u00b7 ' + d.today;
+    // The whole point of this screen now: pick the customer, see the insight, add a comment --
+    // the same drawer Defaulters Followup already opens, so there is one comment box in this
+    // system, not a second one reinvented here.
+    ONROW = function(r){ openFollowup(r); };
   });
 };
 
