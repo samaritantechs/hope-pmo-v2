@@ -568,25 +568,29 @@ function fetchSmsExport_(code, audience){
    what turned into "error 504" on the real 9,297-row book: the second fetch alone was enough to
    walk the server past its own time limit. smsExport's response now carries its own .gaps (see
    smsBuild_ in portal-core.js), so a download only ever costs one fetch -- this just turns
-   whatever export response it is handed into the actual .xls file and triggers the save. */
+   whatever export response it is handed into the actual file and triggers the save.
+
+   A REAL WORKBOOK, NOT HTML WEARING AN .xls EXTENSION. The SMS gateway's own importer reads
+   this automatically rather than a person opening it in Excel, and it turned out to check two
+   things a browser never complained about: the header text has to read EXACTLY "Contact No" /
+   "Contact Person" (true all along -- these come straight off d.headers, unchanged here), and
+   the WORKSHEET ITSELF has to be named Sheet1 -- something an HTML table dressed up with
+   xmlns:x="urn:schemas-microsoft-com:office:excel" has no way to say, because it is not
+   actually a workbook and never had a sheet name to set. SheetJS is already loaded on this page
+   for reading uploads; it writes a real .xlsx here too, with a worksheet literally named Sheet1.
+   Phone numbers and Ref No stay whatever type the server sent (string, so a leading zero on a
+   Contact No or an alphanumeric docket-style Ref No survives); Arrears is already a JS number
+   (roundUp500's own return type), so it lands in the sheet as one too. */
 function saveSmsFile_(d){
-  var numCol = { 'Ref No': 1, 'Arrears': 1 };
-  var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
-    + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
-    + '</head><body><table><thead><tr>'
-    + d.headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('')
-    + '</tr></thead><tbody>'
-    + (d.rows || []).map(function(r){
-        return '<tr>' + r.map(function(v, i){
-          var num = numCol[d.headers[i]];
-          return '<td ' + (num ? 'x:num' : 'x:str') + '>' + esc(v == null ? '' : v) + '</td>';
-        }).join('') + '</tr>';
-      }).join('')
-    + '</tbody></table></body></html>';
-  var blob = new Blob(['﻿' + html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+  var aoa = [d.headers].concat(d.rows || []);
+  var ws = XLSX.utils.aoa_to_sheet(aoa);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  var blob = new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })],
+    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xls';
+  a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xlsx';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
 }
