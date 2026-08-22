@@ -2939,24 +2939,55 @@ async function credit(db, user, _args, nowMs) {
     team has ANY link covered before ever reporting a gap). The first name in the chain is what
     smsGaps prompts for when nothing in the chain is on file -- the "proper" officer for that
     bucket, not whichever one happens to fill the gap. */
-function smsRoleChainFor(r, isDefaulter) {
+/** The four chains, in a fixed order -- every row's HOPE Phone comes from exactly one of
+    these, chosen by smsBucketFor. Numbered, not named, because the NUMBER is what travels back
+    to the client alongside each row (see smsBuild_'s own comment on why): four short integers
+    repeated 9,000-odd times cost nothing, four copies of ['recovery','collection'] would not
+    be much more, but a resolved phone string recomputed by a second server round trip is
+    exactly the cost this whole scheme exists to avoid paying twice. */
+const SMS_BUCKET_CHAINS = [
+  ['credit'],                    // 0: defaulter, 1-6 paid
+  ['recovery', 'collection'],    // 1: defaulter, rest -- team's own recovery, else its collection officer
+  ['expected'],                  // 2: expected-only, 1-6 paid
+  ['collection'],                // 3: expected-only, rest
+];
+function smsBucketFor(r, isDefaulter) {
   const winnable = paidCount(r) < CREDIT_HALF;
-  if (isDefaulter) return winnable ? ['credit'] : ['recovery', 'collection'];
-  return winnable ? ['expected'] : ['collection'];
+  if (isDefaulter) return winnable ? 0 : 1;
+  return winnable ? 2 : 3;
 }
 const SMS_ROLE_LABEL = { credit: 'Credit Analyst', recovery: 'Recovery Officer', expected: 'Early Collection', collection: 'Collection Officer' };
 
-/** ONE FETCH, NOT TWO. The first cut of this had smsExport and smsGaps each doing their own
-    Promise.all of readTeamsAll + defaulterBook + the PMO setting, so the Upload page's "check,
-    then download" made the defaulter book pay for itself twice in a row -- fine on a small
-    book, but "error 504" on the real one (9,297 rows): the second fetch alone was enough to
-    walk the sixty-second function budget off the edge. Both callers below now share this one
-    pass over the data; the rows and the gaps come out of the very same loop. */
+/** ONE FETCH FOR THE DOWNLOAD, AND NEVER A SECOND ONE FOR A FIX.
+    The first cut of this had smsExport and smsGaps each doing their own Promise.all of
+    readTeamsAll + defaulterBook + the PMO setting, so the Upload page's "check, then download"
+    made the defaulter book pay for itself twice in a row -- fine on a small book, but "error
+    504" on the real one (9,297 rows): the second fetch alone was enough to walk the sixty-second
+    function budget off the edge. Merging that into one pass (both callers below share it; rows
+    and gaps come out of the same loop) fixed the plain download.
+
+    It did NOT fix "Save & download" in the gap-fill form, which pressed the exact same button a
+    second time after saving new numbers -- so it paid for the whole defaulter book AGAIN, in a
+    fresh request with its own fresh 60s clock, and "error 504" came right back the moment
+    someone actually used the feature it was built for.
+
+    Fetching the book again was never necessary: filling a gap changes a handful of numbers on
+    teams, a small table, not one row of the defaulter book itself. So smsExport now sends back
+    exactly enough for the Upload page to re-resolve the HOPE Phone column ON THE CLIENT after a
+    save -- the bucket each row belongs to (an index into SMS_BUCKET_CHAINS) and the phone
+    numbers of every team involved -- and "Save & download" recomputes column F in the browser,
+    in a loop over rows already sitting in memory, and downloads. No second request, so nothing
+    left to time out. */
 async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
   const today = todayKey(nowMs);
   const [teamRows, book, pmoNoRaw] = await Promise.all([
     readTeamsAll(db),
-    defaulterBook(db, user, { type: 'current', notAfter: today }),
+    // Narrowed to what routing and the six export columns actually read -- '*' (every column
+    // defaulter_snapshots has, guarantor and disbursement details included) was being fetched
+    // and parsed for 9,297 rows to use six of its fields, on the one request left that still
+    // has to pay for the whole book.
+    defaulterBook(db, user, { type: 'current', notAfter: today,
+      columns: 'ref, team, weekday, full_name, contact, arrears, ds' }),
     settingGet(db, 'PMO_RECOVERY_NO'),
   ]);
   const teamBy = {};
@@ -2984,9 +3015,24 @@ async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
     if (!gapBy.has(key)) gapBy.set(key, { team: r.team, role: primary, name: (t[primary] && String(t[primary]).trim()) || '' });
     if (!pmo) pmoNeeded = true;   // nothing in the chain AND no company backstop -- this row would be blank
   };
+  const teamPhonesOut = {};    // TEAM -> { credit_no, recovery_no, expected_no, collection_no }, only teams a row touches
+  const notePhones = team => {
+    if (teamPhonesOut[team]) return;
+    const t = teamBy[K(team)] || {};
+    const slot = {};
+    for (const role of ['credit', 'recovery', 'expected', 'collection']) {
+      const col = TEAM_PHONE_OF[role];
+      if (t[col]) slot[col] = String(t[col]).trim();
+    }
+    teamPhonesOut[team] = slot;
+  };
+  const buckets = [];           // parallel to `out`, one SMS_BUCKET_CHAINS index per row
   const rowFor = (r, isDefaulter) => {
-    const chain = smsRoleChainFor(r, isDefaulter);
+    const bucket = smsBucketFor(r, isDefaulter);
+    const chain = SMS_BUCKET_CHAINS[bucket];
     noteGap(r, chain);
+    notePhones(r.team);
+    buckets.push(bucket);
     const phone = resolveChain(r.team, chain);
     return [r.contact || '', r.full_name || '', r.team || '', r.ref || '', num(r.arrears), phone];
   };
@@ -3022,18 +3068,19 @@ async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
       nameField: g.role, phoneField: TEAM_PHONE_OF[g.role], name: g.name }))
     .sort((a, b) => a.team.localeCompare(b.team) || a.role.localeCompare(b.role));
 
-  return { rows: out, gaps: { pmoNeeded, pmoNo: pmo, teamGaps, count: teamGaps.length + (pmoNeeded ? 1 : 0) } };
+  return { rows: out, buckets, teamPhones: teamPhonesOut, pmo,
+    gaps: { pmoNeeded, pmoNo: pmo, teamGaps, count: teamGaps.length + (pmoNeeded ? 1 : 0) } };
 }
 
 /** THE DOWNLOAD ITSELF -- and, riding along in the same single pass, the same GAPS smsGaps
-    reports on its own (see smsBuild_ above). The Upload page reads .gaps off this one response
-    instead of calling smsGaps first and this second: one defaulter-book fetch, not two. */
+    reports on its own, and the bucket/teamPhones ingredients the Upload page needs to fix a
+    gap WITHOUT a second request (see smsBuild_'s own comment above for why that matters). */
 async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
-  const { rows, gaps } = await smsBuild_(db, user, { audience }, nowMs);
+  const { rows, buckets, teamPhones, pmo, gaps } = await smsBuild_(db, user, { audience }, nowMs);
   return {
     audience, count: rows.length,
     headers: ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No'],
-    rows, gaps,
+    rows, buckets, teamPhones, pmo, gaps,
   };
 }
 
