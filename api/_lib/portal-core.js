@@ -243,7 +243,7 @@ async function demandMessage(db, user, { ref, team }, nowMs) {
    POSTGRES: three bounded reads. Each is team-scoped for a scoped user, capped, and searched
    with an indexed prefix rather than a whole-table scan followed by JavaScript. */
 const FIND_LIMIT = 200;
-const FIND_COLS = 'ref, full_name, contact, team, status, ds, arrears, snapshot_type, weekday, snapshot_date, upload_batch, created_at';
+const FIND_COLS = 'ref, full_name, contact, guarantor_name, guarantor_contact, team, status, ds, arrears, snapshot_type, weekday, snapshot_date, upload_batch, created_at';
 
 /* =====================================================================================
    THE PHONE READS THE REGISTER, NOT THE DECK.
@@ -530,21 +530,28 @@ async function findCustomer(db, user, args, nowMs) {
     K(r.ref).includes(K(q)) || K(r.full_name).includes(K(q)) || byNum(r));
 
   const decks = matches(defRows).map(r => ({
-    where: 'Defaulter deck', ref: r.ref, name: r.full_name, team: r.team,
+    where: 'Defaulter', ref: r.ref, name: r.full_name, team: r.team, contact: r.contact,
+    guarantor_name: r.guarantor_name, guarantor_contact: r.guarantor_contact,
     date: r.snapshot_date, weekday: r.weekday, type: r.snapshot_type,
     batch: r.upload_batch || 'legacy', status: r.status, ds: r.ds, arrears: num(r.arrears),
     /* THE WHOLE POINT. Today's screens read today's weekday and the latest date -- so a row
        that is neither is present, correct, and unreachable. */
     onToday: String(r.weekday || '') === wdToday,
     dated: String(r.snapshot_date) === today,
-  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    /* 'initial' shares its date with the SAME upload's 'current' row -- it is Monday's
+       baseline, kept for the weekly comparison, not a second real sighting of the customer.
+       Sorted after its own date's other rows so latestPerRef's dedupe below never keeps a
+       stale baseline over the live figure just because the two happen to tie on date. */
+    rank: r.snapshot_type === 'initial' ? 1 : 0,
+  })).sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.rank - b.rank);
 
   const expected = matches(expRows).map(r => ({
-    where: 'Expected deck', ref: r.ref, name: r.full_name, team: r.team,
+    where: 'Expected', ref: r.ref, name: r.full_name, team: r.team, contact: r.contact,
     date: r.snapshot_date, type: r.snapshot_type, batch: r.upload_batch || 'legacy',
     status: r.todays_status, ds: r.due_summary, arrears: num(r.arrears),
     dated: String(r.snapshot_date) === today,
-  })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    rank: r.snapshot_type === 'initial' ? 1 : 0,
+  })).sort((a, b) => String(b.date).localeCompare(String(a.date)) || a.rank - b.rank);
 
   const follow = matches(fuRows).map(r => ({
     where: 'Follow-up register', ref: r.ref, name: r.full_name, team: r.team,
@@ -628,9 +635,27 @@ async function findCustomer(db, user, args, nowMs) {
     }
   }
 
-  return { q, today, weekdayToday: wdToday, decks, expected, follow,
-    count: total, notes,
-    teams: [...new Set([...decks, ...expected, ...follow].map(r => r.team).filter(Boolean))] };
+  /* "results should show of latest uploaded labeled [expected or default] file only and not
+     transactions or whatever" -- decks/expected above are every matching snapshot row, which is
+     a customer's whole upload HISTORY, not a result list. The verdicts above still read that
+     full history (a note about which weekday they last appeared under needs every row); what
+     goes back to the screen is one row per ref, the latest upload only -- and the follow-up
+     register does not go back at all, because it is not a separate FILE a customer was in, it
+     is the running commentary on the same customer already named above. Its comments are not
+     lost: openFollowup's own drawer reads them by ref the moment a result row is opened. */
+  /* NOT `new Map(rows.map(r => [r.ref, r]))` -- a Map built from repeated keys keeps the LAST
+     value set, not the first, which would have quietly kept the OLDEST row instead of the
+     newest despite rows already being sorted newest-first. */
+  const latestPerRef = rows => {
+    const seen = new Set(), out = [];
+    for (const r of rows) { if (seen.has(r.ref)) continue; seen.add(r.ref); out.push(r); }
+    return out;
+  };
+  const decksOut = latestPerRef(decks), expectedOut = latestPerRef(expected);
+
+  return { q, today, weekdayToday: wdToday, decks: decksOut, expected: expectedOut,
+    count: decksOut.length + expectedOut.length, notes,
+    teams: [...new Set([...decksOut, ...expectedOut].map(r => r.team).filter(Boolean))] };
 }
 
 async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) {
@@ -2896,26 +2921,30 @@ async function credit(db, user, _args, nowMs) {
      E  Arrears            "arreas in e"
      F  HOPE Phone No      "our hope phone numbers at F" -- ROUTED, not copied from one column.
 
-   THE ROUTING ("1-6" is paidCount < CREDIT_HALF; "the rest" is everyone past it):
+   THE ROUTING ("1-6" is paidCount < CREDIT_HALF; "the rest" is everyone past it) -- EVERY
+   bucket is a CHAIN of team columns tried in order, PMO_RECOVERY_NO only ever the very last
+   resort, never the first answer: "not first, there is no company wide, each team must have
+   one, if no recovery officer at all default to collection officer".
      defaulter,     1-6    -> the customer's team's CREDIT analyst
-     defaulter,     rest   -> PMO_RECOVERY_NO, a company SETTING, not a team column --
-                              "the rest, - no of pmo recovery"
+     defaulter,     rest   -> the team's RECOVERY officer, else the team's COLLECTION officer
      expected-only, 1-6    -> the customer's team's EARLY COLLECTION officer
      expected-only, rest   -> the customer's team's COLLECTION officer
-   A role with no number recorded for that team falls to PMO_RECOVERY_NO rather than an empty
-   cell -- the same fallback demandContact already uses, for the same reason: a message naming
-   nobody is worse than one naming the PMO. */
-/** Which HOPE number a row routes to, named rather than resolved -- shared by smsExport
-    (which turns the name into an actual number, falling back to PMO_RECOVERY_NO) and smsGaps
-    (which uses the same name to ask "does that team even HAVE one on file"). 'pmo' means the
-    row always goes to the company number, never a team column -- there is nothing to fill in
-    on the team for that case, only the PMO_RECOVERY_NO setting itself. */
-function smsRoleFor(r, isDefaulter) {
+   Only once EVERY column in the chain is blank for that team does a row fall through to
+   PMO_RECOVERY_NO rather than an empty cell -- the same fallback demandContact already uses,
+   for the same reason: a message naming nobody is worse than one naming the PMO, but a
+   TEAM'S OWN officer is always tried first. */
+/** Which HOPE numbers a row routes to, IN ORDER, named rather than resolved -- shared by
+    smsBuild_'s row-building (which turns the chain into an actual number, falling back to
+    PMO_RECOVERY_NO only once every link is blank) and its gap-checking (which asks whether the
+    team has ANY link covered before ever reporting a gap). The first name in the chain is what
+    smsGaps prompts for when nothing in the chain is on file -- the "proper" officer for that
+    bucket, not whichever one happens to fill the gap. */
+function smsRoleChainFor(r, isDefaulter) {
   const winnable = paidCount(r) < CREDIT_HALF;
-  if (isDefaulter) return winnable ? 'credit' : 'pmo';
-  return winnable ? 'expected' : 'collection';
+  if (isDefaulter) return winnable ? ['credit'] : ['recovery', 'collection'];
+  return winnable ? ['expected'] : ['collection'];
 }
-const SMS_ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection Officer' };
+const SMS_ROLE_LABEL = { credit: 'Credit Analyst', recovery: 'Recovery Officer', expected: 'Early Collection', collection: 'Collection Officer' };
 
 /** ONE FETCH, NOT TWO. The first cut of this had smsExport and smsGaps each doing their own
     Promise.all of readTeamsAll + defaulterBook + the PMO setting, so the Upload page's "check,
@@ -2934,27 +2963,31 @@ async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const pmo = pmoNoRaw ? String(pmoNoRaw).trim() : '';
 
-  const numberFor = (team, role) => {
+  const rawNumberFor = (team, role) => {
     const t = teamBy[K(team)] || {};
     const col = TEAM_PHONE_OF[role];
-    const v = col && t[col] ? String(t[col]).trim() : '';
-    return v || pmo;
+    return col && t[col] ? String(t[col]).trim() : '';
+  };
+  /** The chain, tried in order; PMO_RECOVERY_NO only once every link in it is blank. */
+  const resolveChain = (team, chain) => {
+    for (const role of chain) { const v = rawNumberFor(team, role); if (v) return v; }
+    return pmo;
   };
 
   let pmoNeeded = false;
-  const gapBy = new Map();       // "TEAM|role" -> { team, role, name }
-  const noteGap = (r, role) => {
-    if (role === 'pmo') { if (!pmo) pmoNeeded = true; return; }
+  const gapBy = new Map();       // "TEAM|primaryRole" -> { team, role, name }
+  const noteGap = (r, chain) => {
+    if (chain.some(role => rawNumberFor(r.team, role))) return;   // some link in the chain covers this row
+    const primary = chain[0];
     const t = teamBy[K(r.team)] || {};
-    const col = TEAM_PHONE_OF[role];
-    if (col && t[col] && String(t[col]).trim()) return;          // this team already has one
-    const key = K(r.team) + '|' + role;
-    if (!gapBy.has(key)) gapBy.set(key, { team: r.team, role, name: (t[role] && String(t[role]).trim()) || '' });
+    const key = K(r.team) + '|' + primary;
+    if (!gapBy.has(key)) gapBy.set(key, { team: r.team, role: primary, name: (t[primary] && String(t[primary]).trim()) || '' });
+    if (!pmo) pmoNeeded = true;   // nothing in the chain AND no company backstop -- this row would be blank
   };
   const rowFor = (r, isDefaulter) => {
-    const role = smsRoleFor(r, isDefaulter);
-    noteGap(r, role);
-    const phone = role === 'pmo' ? pmo : numberFor(r.team, role);
+    const chain = smsRoleChainFor(r, isDefaulter);
+    noteGap(r, chain);
+    const phone = resolveChain(r.team, chain);
     return [r.contact || '', r.full_name || '', r.team || '', r.ref || '', num(r.arrears), phone];
   };
 
