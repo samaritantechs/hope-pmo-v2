@@ -140,6 +140,16 @@ const BUDGETS = [
   ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  14,  3500],
   ['The bell',                'notifications', {}, ADMIN,    6,    200,   6,   200],
   ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200,   6,   200],
+  /* THE TWO "error 504"s THIS GUARD WOULD HAVE CAUGHT ON DAY ONE. smsGaps and smsExport used
+     to each read the whole defaulter book on their own -- a plain download paid for it once,
+     "Save & download" in the gap-fill form paid for it TWICE in the same click -- and nothing
+     in this file was watching, because nothing here measured the SMS export at all. Both are
+     one fetch of the book now (smsBuild_ in portal-core.js); these numbers are what that
+     actually costs on a 40-team, 3,500-defaulter book, with a little headroom -- if a future
+     change pushes past them, that is this guard doing its job, not a nuisance to raise blindly. */
+  ['SMS export (defaulters)',   'smsExport', { audience: 'defaulters' }, ADMIN, 8, 2000, 6, 2000],
+  ['SMS export (portfolio)',    'smsExport', { audience: 'portfolio' }, ADMIN, 10, 15000, 8, 15000],
+  ['SMS gaps (portfolio)',      'smsGaps',   { audience: 'portfolio' }, ADMIN, 10, 15000, 8, 15000],
 ];
 
 /* Both worlds, every screen. `rpc: undefined` is a database where the migration has not been
