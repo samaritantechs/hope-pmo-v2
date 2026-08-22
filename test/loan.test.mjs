@@ -390,6 +390,132 @@ test('registration captures the disbursement number and business type, right whe
 });
 
 /* =====================================================================================
+   KYC CAPTURE -- ID TYPE, SIGNATURE, THUMBPRINT, THE THREE VERIFIED PLACES, AND THE
+   FIVE EXTRA GUARANTORS.
+   ===================================================================================== */
+
+// A real, tiny, well-formed PNG (1x1, transparent) -- enough for the decode/size path to be
+// genuine rather than a string that merely looks like a data URL.
+const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+test('kycUpload stores the bytes in the private bucket and hands back a path', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'A CUSTOMER', mobile: '0700000030', team: 'MABIBO', amount: 200000 });
+  const { path } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'signature', data_url: TINY_PNG });
+  assert.ok(path.startsWith('loans/' + loan.id + '/signature-'), path);
+  assert.ok(path.endsWith('.png'));
+  const file = db._storageDump('kyc-photos')[path];
+  assert.ok(file, 'the bytes actually landed in the bucket');
+  assert.equal(file.contentType, 'image/png');
+});
+
+test('kycUpload refuses anything that is not a data URL, and anything requiring team it does not have', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'B CUSTOMER', mobile: '0700000031', team: 'MABIBO', amount: 200000 });
+  await assert.rejects(() => loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'signature', data_url: 'not-a-data-url' }), /did not look like/i);
+  await assert.rejects(() => loanApi(db, CS, 'kycUpload', { loan_id: loan.id, kind: 'signature', data_url: TINY_PNG }), /"team"/i);
+});
+
+test('teamAssessDetail opens pre-filled: customer, every guarantor rank, and the draft assessment', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'C CUSTOMER', mobile: '0700000032', team: 'MABIBO', amount: 200000 });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: { gender: 'Female', id_type: 'NIDA', national_id: '1990-1' } });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: [
+    { full_name: 'THE GUARANTOR', phone: '0711000001', relationship: 'Sister', street: 'Uhuru St' },
+    { full_name: 'ALT ONE', phone: '0711000002', relationship: 'Neighbour' },
+  ] } });
+  const d = await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loan.id });
+  assert.equal(d.loan.id, loan.id);
+  assert.equal(d.customer.gender, 'Female');
+  assert.equal(d.customer.id_type, 'NIDA');
+  assert.equal(d.guarantors.length, 2);
+  assert.equal(d.guarantors[0].rank, 0);
+  assert.equal(d.guarantors[0].street, 'Uhuru St');
+  assert.equal(d.guarantors[1].rank, 1);
+  assert.equal(d.guarantors[1].full_name, 'ALT ONE');
+  assert.ok(d.assessment, 'a draft exists once any section has been saved');
+});
+
+test('personal details: gender/ID type/signature/thumbprint/photo all pass through, the same generic write DOB already used', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });
+  const { path: sigPath } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'signature', data_url: TINY_PNG });
+  const { path: thumbPath } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'thumbprint', data_url: TINY_PNG });
+  const { path: photoPath } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'photo', data_url: TINY_PNG });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: {
+    gender: 'Male', id_type: 'Driving Licence', driving_licence: 'DL-001',
+    signature_url: sigPath, thumbprint_url: thumbPath, photo_url: photoPath,
+  } });
+  const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.gender, 'Male');
+  assert.equal(cust.id_type, 'Driving Licence');
+  assert.equal(cust.driving_licence, 'DL-001');
+  assert.equal(cust.signature_url, sigPath);
+  assert.equal(cust.thumbprint_url, thumbPath);
+  assert.equal(cust.photo_url, photoPath);
+});
+
+test('residence section: customer street/ward/district/GPS/photo land on the permanent record, other fields untouched', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'E CUSTOMER', mobile: '0700000034', team: 'MABIBO', amount: 200000 });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: { gender: 'Female' } });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
+    verified: true, guarantor_verified: false,
+    street: 'Kilimani Rd', ward: 'Manzese', district: 'Kinondoni',
+    residence_lat: -6.792354, residence_lng: 39.208328, residence_verify_photo_url: 'loans/x/residence-1.jpg',
+  } });
+  const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.street, 'Kilimani Rd');
+  assert.equal(cust.district, 'Kinondoni');
+  assert.equal(Number(cust.residence_lat), -6.792354);
+  assert.equal(Number(cust.residence_lng), 39.208328);
+  assert.equal(cust.residence_verify_photo_url, 'loans/x/residence-1.jpg');
+  assert.equal(cust.gender, 'Female', 'the earlier personal-section write is untouched by this one');
+});
+
+test('business section: business name, GPS and the site photo all save alongside the existing fields', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'F CUSTOMER', mobile: '0700000035', team: 'MABIBO', amount: 200000, business_type: 'Retail' });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
+    verified: true, business_name: 'Mama Asha Duka', business_lat: -6.8, business_lng: 39.2, business_verify_photo_url: 'loans/x/biz-1.jpg',
+  } });
+  const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.business_type, 'Retail', 'set at registration, still there');
+  assert.equal(cust.business_name, 'Mama Asha Duka');
+  assert.equal(Number(cust.business_lat), -6.8);
+  assert.equal(cust.business_verify_photo_url, 'loans/x/biz-1.jpg');
+});
+
+test('guarantor section: the primary carries every KYC field, five alternates carry only name/phone/relationship', async () => {
+  // "we have 5 extra guarantors who we just say are the close people to the customer these
+  // are filled names nos and relationship [help in followup by having people to ask whats
+  // going on when both customer and guarantor are unreachable]"
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'G CUSTOMER', mobile: '0700000036', team: 'MABIBO', amount: 200000 });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: [
+    { full_name: 'PRIMARY GUARANTOR', phone: '0711000010', relationship: 'Brother',
+      street: 'Mtaa wa Pili', ward: 'Kigogo', district: 'Ilala', national_id: '1985-2',
+      residence_lat: -6.81, residence_lng: 39.21, residence_verify_photo_url: 'loans/x/g-res.jpg',
+      photo_url: 'loans/x/g-photo.jpg', signature_url: 'loans/x/g-sig.jpg', thumbprint_url: 'loans/x/g-thumb.jpg' },
+    { full_name: 'ALT A', phone: '0711000011', relationship: 'Uncle' },
+    { full_name: 'ALT B', phone: '0711000012', relationship: 'Aunt' },
+    { full_name: 'ALT C', phone: '0711000013', relationship: 'Cousin' },
+    { full_name: 'ALT D', phone: '0711000014', relationship: 'Friend' },
+    { full_name: 'ALT E', phone: '0711000015', relationship: 'Neighbour' },
+  ] } });
+  const rows = db._dump('guarantors').filter(r => r.loan_id === loan.id).sort((a, b) => a.rank - b.rank);
+  assert.equal(rows.length, 6, 'the primary plus all five alternates');
+  assert.equal(rows[0].street, 'Mtaa wa Pili');
+  assert.equal(Number(rows[0].residence_lat), -6.81);
+  assert.equal(rows[0].signature_url, 'loans/x/g-sig.jpg');
+  for (let i = 1; i <= 5; i++) {
+    assert.equal(rows[i].street, null, 'rank ' + i + ' is name/phone/relationship only');
+    assert.equal(rows[i].signature_url, null);
+    assert.ok(rows[i].full_name && rows[i].phone && rows[i].relationship);
+  }
+});
+
+/* =====================================================================================
    THE REVERSAL CHAIN -- credit requests, finance reviews, GM authorises. All three, in order.
    ===================================================================================== */
 

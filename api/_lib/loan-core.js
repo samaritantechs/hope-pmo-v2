@@ -364,6 +364,56 @@ async function teamQueue(db, user) {
   return { rows: await allPaged(db, 'loans', () => b) };
 }
 
+/** Everything the assessment drawer needs to open ALREADY FILLED, not blank -- the customer,
+    every guarantor slot (rank 0 the guarantor, 1-5 the alternates), and the draft assessment
+    itself. Without this, leaving the screen and coming back showed empty boxes over data that
+    was actually saved -- "nothing is lost if you leave and come back" was true in the database
+    and false on the screen. Also what the KYC copy button reads from: one fetch, the same
+    fields either way. */
+async function teamAssessDetail(db, user, { loan_id }) {
+  requireTab(user, 'team');
+  const loan = await mustLoan(db, loan_id);
+  const [custRows, guarantors, assessment] = await Promise.all([
+    loan.customer_id ? allPaged(db, 'customers', b => b.select('*').eq('id', loan.customer_id)) : [],
+    allPaged(db, 'guarantors', b => b.select('*').eq('loan_id', loan.id).order('rank')),
+    assessmentFor(db, loan.id),
+  ]);
+  return { loan, customer: custRows[0] || null, guarantors, assessment };
+}
+
+/* =====================================================================================
+   KYC CAPTURES -- SIGNATURE, THUMBPRINT PRESS, AND THE VERIFICATION PHOTOS.
+   =====================================================================================
+   "i mean they press the thumb on phone screen and we record the fingerprint or draw
+    signature too llike how we work with phone notes apps" -- a canvas capture, drawn on the
+   device; there is no browser API and no bridge method in this app that reads an actual
+   fingerprint sensor, and this was confirmed rather than assumed before it was built.
+
+   Every byte here is compressed on the PHONE before it is ever sent -- "adapt the whatsapp
+   tech ... optimize it before storing and store the low quality" -- so the cap below is a
+   backstop, not the primary defence. Uploaded through the API with the service-role key, the
+   same as every write in this system; the bucket itself is private (see RUN-ME-004), so a
+   leaked path is not a leaked photo. */
+const KYC_BUCKET = 'kyc-photos';
+const KYC_MAX_BYTES = 2 * 1024 * 1024;
+async function kycUpload(db, user, { loan_id, kind, data_url }) {
+  requireTab(user, 'team');
+  await mustLoan(db, loan_id);
+  const m = /^data:([^;]+);base64,(.+)$/.exec(String(data_url || ''));
+  if (!m) throw badRequest('That did not look like an image.');
+  const [, contentType, b64] = m;
+  let bytes;
+  try { bytes = Buffer.from(b64, 'base64'); } catch { throw badRequest('That image could not be read.'); }
+  if (!bytes.length) throw badRequest('That image was empty.');
+  if (bytes.length > KYC_MAX_BYTES) throw badRequest('That image is still too large (over 2MB) even after compression.');
+  const ext = contentType.indexOf('png') >= 0 ? 'png' : 'jpg';
+  const safeKind = String(kind || 'file').replace(/[^a-z0-9_-]/gi, '') || 'file';
+  const path = 'loans/' + loan_id + '/' + safeKind + '-' + Date.now() + '.' + ext;
+  const { error } = await db.storage.from(KYC_BUCKET).upload(path, bytes, { contentType, upsert: false });
+  if (error) throw new Error(error.message);
+  return { path };
+}
+
 async function assessmentFor(db, loanId) {
   const rows = await allPaged(db, 'assessments', b => b.select('*').eq('loan_id', loanId).order('created_at', { ascending: false }));
   return rows[0] || null;
@@ -407,12 +457,33 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   if (section === 'residence') {
     patch.residence_verified = !!(fields || {}).verified;
     patch.guarantor_residence_verified = !!(fields || {}).guarantor_verified;
+    // "residence and business ver should be filled street, ward, district for both customer
+    // and guarantor" -- the CUSTOMER half lands here, on their permanent record, the same
+    // merge-only update 'personal' already uses (only the keys actually sent are touched;
+    // everything else on the customer stays exactly as it was). The guarantor half travels
+    // with the guarantor section instead (see saveGuarantors) -- their row may not exist yet
+    // the first time this section is saved, and a guarantor's own facts belong together.
+    if (loan.customer_id) {
+      const resPatch = {};
+      for (const k of ['street', 'ward', 'district', 'residence_lat', 'residence_lng', 'residence_verify_photo_url']) {
+        if ((fields || {})[k] !== undefined) resPatch[k] = (fields || {})[k];
+      }
+      if (Object.keys(resPatch).length) {
+        resPatch.updated_by = user.name; resPatch.updated_at = new Date().toISOString();
+        const { error } = await db.from('customers').update(resPatch).eq('id', loan.customer_id);
+        if (error) throw new Error(error.message);
+      }
+    }
   }
   if (section === 'business') {
     patch.business_verified = !!(fields || {}).verified;
     if (loan.customer_id) {
       const bizPatch = { updated_by: user.name, updated_at: new Date().toISOString() };
-      for (const k of ['business_type', 'business_name', 'daily_sales', 'daily_profit', 'weekly_expenses']) {
+      // "fill business name and capture live location coordinates for all 3 placess business
+      // and their residences" -- business_lat/lng and the site photo (officer + customer AT
+      // the business front) join business_name and business_type here.
+      for (const k of ['business_type', 'business_name', 'daily_sales', 'daily_profit', 'weekly_expenses',
+        'business_lat', 'business_lng', 'business_verify_photo_url']) {
         if ((fields || {})[k] !== undefined) bizPatch[k] = (fields || {})[k];
       }
       if ((fields || {}).daily_profit != null) bizPatch.weekly_profit = Number((fields || {}).daily_profit) * 6;
@@ -446,16 +517,29 @@ const FIELD_LOCK_ = new Set([
   'country_of_birth', 'national_id', 'tin',
 ]);
 
+/** rank 0 is the guarantor -- a full record, street/GPS/photo/signature/thumbprint included.
+    "we have 5 extra guarantors who we just say are the close people to the customer these are
+     filled names nos and relationship" -- ranks 1-5 are exactly that and nothing more; the
+     extra columns simply come back undefined for them and textOrNull/normPhone leave them
+     null, the same as an alternate has always worked. */
 async function saveGuarantors(db, loan, user, list) {
   const rows = (list || []).slice(0, 6).map((g, i) => ({
     loan_id: loan.id, customer_id: loan.customer_id, rank: i,
     full_name: textOrNull(g.full_name), phone: normPhone(g.phone), relationship: textOrNull(g.relationship),
     occupation: textOrNull(g.occupation), national_id: textOrNull(g.national_id),
-    district: textOrNull(g.district), ward: textOrNull(g.ward), created_by: user.name,
+    street: textOrNull(g.street), district: textOrNull(g.district), ward: textOrNull(g.ward),
+    residence_lat: g.residence_lat != null ? Number(g.residence_lat) : null,
+    residence_lng: g.residence_lng != null ? Number(g.residence_lng) : null,
+    residence_verify_photo_url: textOrNull(g.residence_verify_photo_url),
+    photo_url: textOrNull(g.photo_url), signature_url: textOrNull(g.signature_url), thumbprint_url: textOrNull(g.thumbprint_url),
+    created_by: user.name,
   })).filter(r => r.full_name);
   if (!rows.length) return;
   // Replace this loan's guarantor set whole -- a short list edited in the field is simpler to
-  // resend complete than to diff, and it is at most six rows.
+  // resend complete than to diff, and it is at most six rows. The DRAWER is what guarantees
+  // nothing already saved gets clobbered by this: it opens pre-filled from teamAssessDetail,
+  // so "resend complete" really does mean complete, not blanking out fields the officer never
+  // touched this visit.
   await db.from('guarantors').delete().eq('loan_id', loan.id);
   const { error } = await db.from('guarantors').insert(rows);
   if (error) throw new Error(error.message);
@@ -954,7 +1038,7 @@ async function logEvent(db, loanId, from, to, user, amount, note) {
 const FN = {
   csSearch, csRegister, csComplaint, branchList,
   managerQueue, managerAssign, managerReject,
-  teamQueue, teamAssessmentSave, teamSubmit,
+  teamQueue, teamAssessDetail, teamAssessmentSave, teamSubmit, kycUpload,
   seniorQueue, seniorRecommend,
   creditQueue, creditApprove, creditReject,
   disburseWindowStatus, disburseQueue, managerDisburse, managerDisburseReject, managerReturnToCredit,
