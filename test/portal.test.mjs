@@ -505,6 +505,21 @@ test('sms export: defaulters only, deduplicated, in the fixed 6-column shape', a
   assert.equal(r111[4], 300);             // Arrears -- today's current arrears
 });
 
+test('sms export: carries its own .gaps, so the Upload page never has to fetch the book twice', async () => {
+  // The 504 that came out of the first cut of this was smsGaps and smsExport each doing their
+  // own full defaulter-book fetch back to back for a single download -- see smsBuild_'s own
+  // comment in portal-core.js. Locking in that smsExport's response IS the gap report too, not
+  // a second round trip's worth, is what keeps that regression from creeping back in.
+  const t = tables();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'smsExport', { audience: 'defaulters' }, NOW);
+  const g = await portalApi(dbWithRpc(tables()), ADMIN, 'smsGaps', { audience: 'defaulters' }, NOW);
+  assert.ok(d.gaps, 'smsExport response carries a .gaps field');
+  assert.equal(d.gaps.pmoNeeded, g.pmoNeeded);
+  assert.equal(d.gaps.count, g.count);
+  assert.deepEqual(d.gaps.teamGaps.map(x => x.team + '|' + x.role).sort(),
+    g.teamGaps.map(x => x.team + '|' + x.role).sort());
+});
+
 test('sms export: 1-6 goes to the credit analyst, the rest to PMO recovery', async () => {
   const t = tables();
   t.teams[0].credit_no = '0711000CR';                              // KONGOWE's credit analyst
