@@ -2905,6 +2905,18 @@ async function credit(db, user, _args, nowMs) {
    A role with no number recorded for that team falls to PMO_RECOVERY_NO rather than an empty
    cell -- the same fallback demandContact already uses, for the same reason: a message naming
    nobody is worse than one naming the PMO. */
+/** Which HOPE number a row routes to, named rather than resolved -- shared by smsExport
+    (which turns the name into an actual number, falling back to PMO_RECOVERY_NO) and smsGaps
+    (which uses the same name to ask "does that team even HAVE one on file"). 'pmo' means the
+    row always goes to the company number, never a team column -- there is nothing to fill in
+    on the team for that case, only the PMO_RECOVERY_NO setting itself. */
+function smsRoleFor(r, isDefaulter) {
+  const winnable = paidCount(r) < CREDIT_HALF;
+  if (isDefaulter) return winnable ? 'credit' : 'pmo';
+  return winnable ? 'expected' : 'collection';
+}
+const SMS_ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection Officer' };
+
 async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
   const today = todayKey(nowMs);
   const [teamRows, book, pmoNoRaw] = await Promise.all([
@@ -2923,9 +2935,8 @@ async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
     return v || pmo;
   };
   const hopePhoneFor = (r, isDefaulter) => {
-    const winnable = paidCount(r) < CREDIT_HALF;
-    if (isDefaulter) return winnable ? numberFor(r.team, 'credit') : pmo;
-    return winnable ? numberFor(r.team, 'expected') : numberFor(r.team, 'collection');
+    const role = smsRoleFor(r, isDefaulter);
+    return role === 'pmo' ? pmo : numberFor(r.team, role);
   };
   const rowFor = (r, isDefaulter) => ([
     r.contact || '', r.full_name || '', r.team || '', r.ref || '',
@@ -2963,6 +2974,75 @@ async function smsExport(db, user, { audience = 'defaulters' } = {}, nowMs) {
     headers: ['Contact No', 'Contact Person', 'Team', 'Ref No', 'Arrears', 'HOPE Phone No'],
     rows: out,
   };
+}
+
+/** BEFORE THE DOWNLOAD, A DRY RUN. "the sms file should promt to input no of a user role and
+    name if not present so that to save it and make sure all clients go with numbers" -- the
+    fallback in smsExport (a role with no number recorded falls to PMO_RECOVERY_NO) keeps the
+    column from ever being BLANK, but a sheet where half the "HOPE Phone" column is really just
+    the same PMO number standing in for a missing credit analyst is not what was asked for.
+
+    This walks the exact same rows smsExport would export, for the same audience, and instead
+    of resolving a phone number it asks whether the team ACTUALLY HAS one on file for the role
+    that row would use -- returning the gaps for the Upload page to prompt for, one row per
+    (team, role), so an admin can type each number in once and have it saved to the team
+    permanently rather than re-typed on every future export. PMO_RECOVERY_NO itself is the one
+    non-team gap: every "rest" defaulter routes straight there, so an empty setting is flagged
+    once, not once per team. */
+async function smsGaps(db, user, { audience = 'defaulters' } = {}, nowMs) {
+  const today = todayKey(nowMs);
+  const [teamRows, book, pmoNoRaw] = await Promise.all([
+    readTeamsAll(db),
+    defaulterBook(db, user, { type: 'current', notAfter: today }),
+    settingGet(db, 'PMO_RECOVERY_NO'),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const pmo = pmoNoRaw ? String(pmoNoRaw).trim() : '';
+
+  let pmoNeeded = false;
+  const gapBy = new Map();       // "TEAM|role" -> { team, role }
+  const seen = new Set();
+  const consider = (r, isDefaulter) => {
+    const role = smsRoleFor(r, isDefaulter);
+    if (role === 'pmo') { if (!pmo) pmoNeeded = true; return; }
+    const t = teamBy[K(r.team)] || {};
+    const col = TEAM_PHONE_OF[role];
+    if (col && t[col] && String(t[col]).trim()) return;         // this team already has one
+    const key = K(r.team) + '|' + role;
+    if (!gapBy.has(key)) gapBy.set(key, { team: r.team, role, name: (t[role] && String(t[role]).trim()) || '' });
+  };
+
+  for (const r of scoped(user, book.rows)) {
+    const k = K(r.ref);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    consider(r, true);
+  }
+
+  if (audience === 'portfolio') {
+    const mon = weekMondayKey(nowMs), fri = addDaysKey(mon, 4);
+    const expRaw = await fetchAll(() => onTeams(db.from('repayment_snapshots')
+      .select(withBatchKeys(EXPECTED_TAB_COLS + ', snapshot_date')).eq('snapshot_type', 'today')
+      .gte('snapshot_date', mon).lte('snapshot_date', fri), user.teams));
+    const byDay = {};
+    for (const r of scoped(user, expRaw)) (byDay[r.snapshot_date] || (byDay[r.snapshot_date] = [])).push(r);
+    for (const d of Object.keys(byDay)) {
+      for (const r of pickLatestBatchRows(byDay[d])) {
+        const k = K(r.ref);
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        consider(r, false);
+      }
+    }
+  }
+
+  const teamGaps = [...gapBy.values()]
+    .map(g => ({ team: g.team, role: g.role, roleLabel: SMS_ROLE_LABEL[g.role],
+      nameField: g.role, phoneField: TEAM_PHONE_OF[g.role], name: g.name }))
+    .sort((a, b) => a.team.localeCompare(b.team) || a.role.localeCompare(b.role));
+
+  return { audience, pmoNeeded, pmoNo: pmo, teamGaps, count: teamGaps.length + (pmoNeeded ? 1 : 0) };
 }
 
 /** Call agents -- the CUSTOMER SERVICE agents named on loan applications, not the HOPE Calls
@@ -4621,7 +4701,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
