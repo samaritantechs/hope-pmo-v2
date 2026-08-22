@@ -8,14 +8,16 @@ import { fakeDb } from './fake-db.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
-const { loanApi, mintDocket, refFor, docketFromRef, GMO_THRESHOLD, OPM_THRESHOLD,
+const { loanApi, mintDocket, refFor, docketFromRef, GMO_THRESHOLD, MANAGER_THRESHOLD,
         INTEREST_FLAT_RATE, INSTALLMENTS } = await import('../api/_lib/loan-core.js');
 
 const CS = { code: 'CS', name: 'ASHA CS', role: 'CUSTOMER SERVICE', tabs: ['customer_service'] };
+// MGR already holds 'manager' for Assign and Disburse -- reused for Manager Review too, by the
+// owner's own choice ("so here we'll have two side navs ... I give them navigation tabs access
+// at access codes"), not a new tab minted just for this screen.
 const MGR = { code: 'M', name: 'BOSS MANAGER', role: 'MANAGER', tabs: ['manager'], teams: ['MABIBO'] };
 const TEAM = { code: 'T', name: 'A LOAN OFFICER', role: 'FIELD OFFICER', tabs: ['team'], teams: ['MABIBO'] };
 const GMO_U = { code: 'GM1', name: 'A GMO', role: 'GMO', tabs: ['gmo'] };
-const OPM_U = { code: 'OP1', name: 'AN OPM', role: 'OPM', tabs: ['opm'] };
 const CREDIT = { code: 'CR', name: 'A CREDIT ANALYST', role: 'CREDIT', tabs: ['credit'] };
 const FINANCE = { code: 'F', name: 'THE FINANCE MANAGER', role: 'FINANCE', tabs: ['finance'] };
 const GM = { code: 'GM', name: 'THE GM', role: 'GENERAL MANAGER', tabs: ['gm'] };
@@ -151,30 +153,51 @@ test('a small loan flows unassigned -> assigned -> pending_approval without any 
   assert.equal(Number(loan.team_recomm), 300000);
 
   const q = await loanApi(db, CREDIT, 'creditQueue', {});
-  assert.equal(q.rows.length, 1, 'below the GMO threshold, credit sees it directly');
+  assert.equal(q.rows.length, 1, 'below both the Manager (1M) and GMO (6M) thresholds, credit sees it directly');
 });
 
-test('at or above the GMO threshold, credit cannot see the loan until GMO recommends', async () => {
+test('at or above the Manager threshold (1M), credit cannot see the loan until Manager recommends', async () => {
+  // "manager is all loans 1million+ loans ... all mandatory" -- a loan under the GMO threshold
+  // (6M) still needs the Manager review now, where it used to need nothing at all.
   const db = fakeDb({});
-  const { loanId } = await registerAssignAssess(db, GMO_THRESHOLD);
+  const { loanId } = await registerAssignAssess(db, 2_000_000);
   await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
 
   assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 0,
-    'blocked until the mandatory GMO review has happened');
-  const gq = await loanApi(db, GMO_U, 'seniorQueue', { tier: 'gmo' });
-  assert.equal(gq.rows.length, 1);
+    'blocked until the mandatory Manager review has happened');
+  const mq = await loanApi(db, MGR, 'seniorQueue', { tier: 'manager' });
+  assert.equal(mq.rows.length, 1);
+  // GMO's own queue must not see it -- it is under GMO's own 6M threshold.
+  assert.equal((await loanApi(db, GMO_U, 'seniorQueue', { tier: 'gmo' })).rows.length, 0);
 
-  await loanApi(db, GMO_U, 'seniorRecommend', { loan_id: loanId, tier: 'gmo', amount: GMO_THRESHOLD, remarks: 'seen' });
-  assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 1, 'unblocked once GMO has recommended');
+  await loanApi(db, MGR, 'seniorRecommend', { loan_id: loanId, tier: 'manager', amount: 2_000_000, remarks: 'seen' });
+  assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 1, 'unblocked once Manager has recommended');
 });
 
-test('OPM review is optional (MAY, not MUST) below its own threshold', async () => {
+test('at or above the GMO threshold (6M), credit needs BOTH Manager and GMO, not either alone', async () => {
   const db = fakeDb({});
   const { loanId } = await registerAssignAssess(db, GMO_THRESHOLD);
   await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
-  await loanApi(db, GMO_U, 'seniorRecommend', { loan_id: loanId, tier: 'gmo', amount: GMO_THRESHOLD, remarks: 'ok' });
-  // Below OPM_THRESHOLD (6M) -- credit must already be reachable without any OPM action.
-  assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 1);
+  assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 0);
+
+  await loanApi(db, MGR, 'seniorRecommend', { loan_id: loanId, tier: 'manager', amount: GMO_THRESHOLD, remarks: 'seen' });
+  assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 0,
+    'Manager alone is not enough at 6M -- GMO is still owed');
+
+  await loanApi(db, GMO_U, 'seniorRecommend', { loan_id: loanId, tier: 'gmo', amount: GMO_THRESHOLD, remarks: 'seen' });
+  assert.equal((await loanApi(db, CREDIT, 'creditQueue', {})).rows.length, 1, 'both done -- unblocked');
+});
+
+test('the Manager tier is gated on the manager tab, not the gmo tab, and the other way round', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, GMO_THRESHOLD);
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  await assert.rejects(
+    () => loanApi(db, GMO_U, 'seniorRecommend', { loan_id: loanId, tier: 'manager', amount: GMO_THRESHOLD, remarks: 'x' }),
+    e => e.status === 403, 'a GMO-only code cannot record the Manager tier');
+  await assert.rejects(
+    () => loanApi(db, MGR, 'seniorRecommend', { loan_id: loanId, tier: 'gmo', amount: GMO_THRESHOLD, remarks: 'x' }),
+    e => e.status === 403, 'a Manager-only code cannot record the GMO tier');
 });
 
 /* THE CENTRAL GUARANTEE: authorised is not paid. */

@@ -438,19 +438,33 @@ async function teamSubmit(db, user, { loan_id, decision, reason }) {
 }
 
 /* =====================================================================================
-   4. SENIOR REVIEW -- the tier the wireframes never drew.
+   4. SENIOR REVIEW -- the tier the wireframes never drew, now TWO SIDE NAVS, BOTH MANDATORY.
    =====================================================================================
-   GMO MUST add a recommendation at 3M+; OPM MAY at 6M+. Both happen before credit sees it,
-   and neither BLOCKS the stage machine on their own -- they attach a record to the loan,
-   which credit's screen shows alongside everything else, exactly as described: "add
-   recommendation of their own assessment based on the recommended loan application before
-   the application proceeds to the Credit Analyst." */
-export const GMO_THRESHOLD = 3_000_000;
-export const OPM_THRESHOLD = 6_000_000;
+   "the GMO and OPM review should be Manager and GMO review and all mandatory. Where manager
+   is all loans 1million+ loans, gmo all 6m+ loans (change of policy, I'd been off on followup
+   for a moment)". Both used to be one nav item and one optional tier (OPM MAY at 6M, never
+   blocking); now they are two separate screens, gated on their own tab, and BOTH block credit
+   once a loan crosses their threshold -- Manager at 1M, GMO at 6M, so a loan of 6M+ needs both,
+   a loan of 1M-5,999,999 needs Manager alone, and anything under 1M needs neither.
+
+   THE OLD 'opm' TAB IS GONE -- "so here we'll have two side navs b/se that's the way I
+   distribute operations people login and I give them navigation tabs access at access codes"
+   was answered by reusing the 'manager' tab that already grants Manager·Assign and Disburse,
+   rather than minting a new one: an access code holding 'manager' now also reaches this screen,
+   by the owner's own choice, not an oversight.
+
+   THE STORAGE COLUMNS KEEP THEIR OLD NAME ON PURPOSE. opm_recommend / opm_remarks / opm_by /
+   opm_at are a live table on a live system -- renaming a column is a migration this deploy does
+   not need to make just to relabel what a tier is called. Anything already recorded under the
+   old optional OPM step satisfies the new mandatory Manager step retroactively, which is the
+   right outcome: a loan a senior person already looked at does not need looking at again just
+   because the title on the button changed. */
+export const GMO_THRESHOLD = 6_000_000;
+export const MANAGER_THRESHOLD = 1_000_000;
 
 async function seniorQueue(db, user, { tier }) {
-  requireTab(user, tier === 'opm' ? 'opm' : 'gmo');
-  const min = tier === 'opm' ? OPM_THRESHOLD : GMO_THRESHOLD;
+  requireTab(user, tier === 'manager' ? 'manager' : 'gmo');
+  const min = tier === 'manager' ? MANAGER_THRESHOLD : GMO_THRESHOLD;
   /* Filtered in JS rather than with `.gte()`: PostgREST/Postgres compares this NUMERICALLY,
      which is what a threshold needs, but a couple of the amounts here span different digit
      counts (500,000 vs 3,000,000) and any fake or intermediary that compared the column as a
@@ -460,18 +474,18 @@ async function seniorQueue(db, user, { tier }) {
   const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'pending_approval'));
   const eligible = rows.filter(r => (Number(r.team_recomm) || 0) >= min);
   if (tier === 'gmo') return { rows: eligible.filter(r => !r.gmo_at) };
-  return { rows: eligible.filter(r => !r.opm_at) };
+  return { rows: eligible.filter(r => !r.opm_at) };          // 'manager' tier, opm_* columns underneath
 }
 
 async function seniorRecommend(db, user, { loan_id, tier, amount, remarks }) {
-  requireTab(user, tier === 'opm' ? 'opm' : 'gmo');
+  requireTab(user, tier === 'manager' ? 'manager' : 'gmo');
   const loan = await mustLoan(db, loan_id);
-  const patch = tier === 'opm'
+  const patch = tier === 'manager'
     ? { opm_recommend: Number(amount) || null, opm_remarks: textOrNull(remarks), opm_by: user.name, opm_at: new Date().toISOString() }
     : { gmo_recommend: Number(amount) || null, gmo_remarks: textOrNull(remarks), gmo_by: user.name, gmo_at: new Date().toISOString() };
   const { error } = await db.from('loans').update(patch).eq('id', loan.id);
   if (error) throw new Error(error.message);
-  await logEvent(db, loan.id, loan.stage, loan.stage, user, Number(amount) || 0, (tier === 'opm' ? 'OPM' : 'GMO') + ' recommendation');
+  await logEvent(db, loan.id, loan.stage, loan.stage, user, Number(amount) || 0, (tier === 'manager' ? 'MANAGER' : 'GMO') + ' recommendation');
   return { ok: true };
 }
 
@@ -482,8 +496,14 @@ async function seniorRecommend(db, user, { loan_id, tier, amount, remarks }) {
 async function creditQueue(db, user) {
   requireTab(user, 'credit');
   const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'pending_approval').order('team_recomm', { ascending: false }));
-  // Blocked until the mandatory senior review has happened, for anything above its threshold.
-  return { rows: rows.filter(r => (Number(r.team_recomm) || 0) < GMO_THRESHOLD || r.gmo_at) };
+  // Blocked until EVERY mandatory senior review for this amount has happened -- Manager at 1M,
+  // GMO at 6M, both required once a loan crosses both thresholds (see the section above).
+  return { rows: rows.filter(r => {
+    const amt = Number(r.team_recomm) || 0;
+    if (amt >= MANAGER_THRESHOLD && !r.opm_at) return false;
+    if (amt >= GMO_THRESHOLD && !r.gmo_at) return false;
+    return true;
+  }) };
 }
 
 async function creditApprove(db, user, p) {
