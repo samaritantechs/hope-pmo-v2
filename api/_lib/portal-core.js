@@ -1,5 +1,5 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
-import { teamAllowed, ADMIN_TABS } from './auth.js';
+import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
@@ -3466,14 +3466,20 @@ async function teams(db, user) {
   // supervisor sees that a team HAS a code, never what it is.
   if (user.readOnly) mine = mine.map(r => (r.team_code ? { ...r, team_code: '••••' } : r));
   return { rows: mine, count: rows.length,
-    roles: roleRows, allTabs: ADMIN_TABS.slice() };
+    // ALL_TABS, not ADMIN_TABS -- a role is exactly as likely to need a HOPE Loan tab
+    // (customer_service, manager, team, gmo, finance, gm) as a HOPE PMO one, and the checkbox
+    // list this feeds was quietly unable to grant any of the seven until now.
+    roles: roleRows, allTabs: ALL_TABS.slice() };
 }
 async function saveRole(db, user, p) {
   requireAdmin(user);
   const role = String((p && p.role) || '').trim().toUpperCase();
   if (!role) throw badRequest('A role name is required.');
+  // ALL_TABS, not ADMIN_TABS -- the checkbox list above now offers HOPE Loan's seven
+  // alongside HOPE PMO's, and a role saved with one ticked was being silently stripped back
+  // out here before this file's own smsGaps/saveTeam-shaped audit went looking for it.
   const tabs = String((p && p.tabs) || '').split(/[;,]/).map(x => x.trim().toLowerCase())
-    .filter(x => ADMIN_TABS.includes(x));
+    .filter(x => ALL_TABS.includes(x));
   const { error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' });
   if (error) throw new Error(error.message);
   return { role, tabs };
@@ -3555,7 +3561,9 @@ async function accessCodes(db, user) {
      scope -- never the secrets themselves. Checking the system and collecting its keys are
      different jobs, and this screen only serves the first to them. */
   const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••' })) : rows;
-  return { rows: out, count: rows.length, roles: roleRows };
+  // allTabs rides along so the Extra-tabs field on this same screen can be a checkbox list
+  // instead of free text -- "ticking the nav pannels ... because writing could error".
+  return { rows: out, count: rows.length, roles: roleRows, allTabs: ALL_TABS.slice() };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
