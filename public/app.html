@@ -4993,6 +4993,48 @@ function lnReasonPrompt_(cb){
   if (reason && reason.trim()) cb(reason.trim());
 }
 
+/* ---------- signature / fingerprint capture ----------
+   "customer could digital sign their contact copy, sign and biometrics inclusive on a single
+    signatory split screen" -- one canvas pad, reused three times (customer signature, customer
+    fingerprint, guarantor signature) on the team's assessment. Pointer Events cover mouse,
+    touch and pen with one listener each; no separate touch handling needed. */
+function lnSigPad_(id, label){
+  return '<div class="fld"><label>' + esc(label) + '</label>'
+    + '<canvas id="' + id + '" width="320" height="150" style="width:100%;max-width:360px;height:150px;'
+      + 'border:1.5px solid var(--line);border-radius:11px;touch-action:none;background:#fff;display:block"></canvas>'
+    + '<div style="margin-top:6px"><button type="button" class="btn sm ghost" data-lnclearsig="' + id + '">Futa / Clear</button></div></div>';
+}
+function lnWireSigPad_(id){
+  var c = document.getElementById(id);
+  if (!c || c._wired) return;
+  c._wired = true;
+  var ctx = c.getContext('2d');
+  ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
+  var drawing = false, last = null;
+  function pos(e){
+    var r = c.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) };
+  }
+  c.addEventListener('pointerdown', function(e){ drawing = true; last = pos(e); try { c.setPointerCapture(e.pointerId); } catch(_){} e.preventDefault(); });
+  c.addEventListener('pointermove', function(e){
+    if (!drawing) return;
+    var p = pos(e);
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    last = p; e.preventDefault();
+  });
+  var stop = function(){ drawing = false; };
+  c.addEventListener('pointerup', stop); c.addEventListener('pointerleave', stop);
+  var btn = document.querySelector('[data-lnclearsig="' + id + '"]');
+  if (btn) btn.onclick = function(){ ctx.clearRect(0, 0, c.width, c.height); };
+}
+function lnSigDataUrl_(id){
+  var c = document.getElementById(id);
+  if (!c) return '';
+  var blank = document.createElement('canvas'); blank.width = c.width; blank.height = c.height;
+  if (c.toDataURL() === blank.toDataURL()) return '';   // untouched -- never send a blank capture as "signed"
+  return c.toDataURL('image/png');
+}
+
 VIEWS.ln_pipeline = function(){
   return srv('pipelineSummary', {}).then(function(d){
     HEAD = '<div class="kpis">'
@@ -5089,7 +5131,22 @@ var DISB_MODES = ['Momo', 'Bank'];
    a BRANCH from what actually exists (srv('branchList'), the same list this session's
    2026-08-19-team-branch.sql work put on the teams table), and the team is left for the
    manager to decide from the branch and the landmark -- see lnManagerAssignForm_. */
+/** A returning customer found via csSearch always opens a NEW loan/track when submitted here
+    (see loan.test.mjs: "the next loan for a reversed customer opens on the next track") -- so
+    `existing` truthy is the reliable signal this submission will be a TRACK# 2+ top-up, and is
+    exactly when the top-up fields and the supervisor gate below apply. */
+function lnIsSupervisor_(){
+  return (S.me.tabs||[]).indexOf('customer_service_supervisor') >= 0 || S.me.role === 'ADMIN';
+}
 function lnCsRegisterForm_(existing){
+  if (existing && !lnIsSupervisor_()) {
+    // "at multi loan we allow these customers to double... that's the policy" -- refused here,
+    // before anyone fills in a form the server will reject anyway.
+    drawer('<h3>' + esc(existing.full_name) + '</h3>'
+      + '<div class="note bad">This customer already has a loan on file -- registering another '
+      + '(a multi-loan top-up) needs the CS Supervisor tab. Ask your supervisor to register it.</div>');
+    return;
+  }
   srv('branchList').then(function(bl){
     var regions = bl.regions || [], byRegion = bl.byRegion || {};
     // Which region the branch already on record belongs to, so re-opening a partly-filled
@@ -5100,8 +5157,15 @@ function lnCsRegisterForm_(existing){
     }
     drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
       + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
+      + (existing ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">Multi-loan top-up (TRACK# 2+) -- "not more than two installments left" on the current loan.</div>' : '')
       + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      /* MOBILE NUMBER AND DISBURSEMENT MODE, ONE AFTER THE OTHER -- on request: "Mobile number
+         and disb mode should be sequenced together." Both used to sit five fields apart. */
       + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
+        + '<option value="">— chagua / choose —</option>'
+        + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
+        + '</select></div>'
       /* REGION FIRST, THEN BRANCH.
            "selecting a branch should autofill its region since customer service agents dont
             know that / infact they should select among regions and then choose drop list of
@@ -5119,12 +5183,21 @@ function lnCsRegisterForm_(existing){
         + '</select></div>'
       + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
-      + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
-        + '<option value="">— chagua / choose —</option>'
-        + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
-        + '</select></div>'
       + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
-      + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
+      /* TOP-UP ELIGIBILITY. No repayment tracking exists in the sandbox yet (see loan-core.js's
+         own note on the boundary "deliberately not crossed" past funding), so this is typed in
+         off the customer's real book, the same trust model creditApprove's own "previous
+         balance" field already uses at approval. */
+      + (existing ? '<div class="fld"><label>Instalments left on the current loan</label><input id="lnTopupLeft" type="number" min="0"></div>'
+          + '<div class="fld"><label>Arrears on the current loan (TZS)</label><input id="lnTopupArrears" type="number" min="0" value="0"></div>'
+          + '<div class="fldnote">Deducted from THIS loan\'s disbursement only -- the amount above is what its own instalments are computed from.</div>'
+        : '')
+      + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>'
+      + (existing ? '<div class="card" style="padding:12px;margin-top:14px"><b style="font-size:13px">Historia / Notes</b>'
+          + '<div id="lnHist"><div class="sk" style="margin:14px auto"></div></div>'
+          + '<div class="fld" style="margin-top:8px"><textarea id="lnNote" rows="2" placeholder="Ongeza maoni / Add a note"></textarea></div>'
+          + '<button class="btn sm" id="lnNoteSave">Ongeza / Add</button></div>'
+        : ''));
     $('#lnRegion').onchange = function(){
       var rg = this.value, branches = byRegion[rg] || [];
       var sel = $('#lnBranch');
@@ -5133,15 +5206,49 @@ function lnCsRegisterForm_(existing){
         + branches.map(function(b){ return '<option>' + esc(b) + '</option>'; }).join('');
     };
     $('#lnCsSubmit').onclick = function(){
-      lnAct('csRegister', {
+      var args = {
         customer_id: existing ? existing.id : undefined,
         docket: existing ? existing.docket : undefined,
         full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
         branch: $('#lnBranch').value.trim(), region: $('#lnRegion').value.trim(),
         district: $('#lnDistrict').value.trim(), landmark: $('#lnLandmark').value.trim(),
         disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
-      }, 'Application registered.');
+      };
+      if (existing) {
+        args.topup_installments_left = $('#lnTopupLeft').value;
+        args.topup_arrears = $('#lnTopupArrears').value;
+      }
+      lnAct('csRegister', args, 'Application registered.');
     };
+    if (existing) {
+      // The panel from the search result: the customer's whole comment trail, no matter which
+      // track it was filed under -- "so that loan followup history can be tracked no matter
+      // the current track no."
+      srv('loanComments', { customer_id: existing.id }).then(function(d){
+        var h = document.getElementById('lnHist'); if (!h) return;
+        h.innerHTML = (d.rows||[]).length ? d.rows.map(function(c){
+          return '<div class="hist"><div class="t"><span>' + esc(c.created_by||'') + '</span>'
+            + '<span>' + esc(String(c.created_at||'').replace('T',' ').slice(0,16)) + '</span></div>' + esc(c.comment||'') + '</div>';
+        }).join('') : '<div style="color:var(--soft);font-size:12.5px;padding:8px 0">Hakuna historia bado. / No notes yet.</div>';
+      }).catch(function(){});
+      document.getElementById('lnNoteSave').onclick = function(){
+        var text = document.getElementById('lnNote').value.trim();
+        if (!text) { toast('Andika maoni kwanza. / Write a note first.', true); return; }
+        var btn = document.getElementById('lnNoteSave'); btn.disabled = true;
+        srv('loanAddComment', { customer_id: existing.id, comment: text }).then(function(){
+          document.getElementById('lnNote').value = '';
+          btn.disabled = false;
+          toast('Imeongezwa. / Added.');
+          srv('loanComments', { customer_id: existing.id }).then(function(d){
+            var h = document.getElementById('lnHist'); if (!h) return;
+            h.innerHTML = (d.rows||[]).map(function(c){
+              return '<div class="hist"><div class="t"><span>' + esc(c.created_by||'') + '</span>'
+                + '<span>' + esc(String(c.created_at||'').replace('T',' ').slice(0,16)) + '</span></div>' + esc(c.comment||'') + '</div>';
+            }).join('');
+          });
+        }).catch(function(e){ btn.disabled = false; toast(String(e.message||e), true); });
+      };
+    }
   }).catch(function(e){ toast(String(e.message||e), true); });
 }
 
@@ -5207,8 +5314,17 @@ function lnTeamAssessForm_(loan){
     + '<label><input type="checkbox" id="lnGResOk"> Guarantor residence verified</label><br>'
     + '<label><input type="checkbox" id="lnBizOk"> Business ownership verified</label>'
     + '<button class="btn sm" id="lnSaveVerify" style="margin-top:8px">Save this section</button></div>'
+    /* THE SINGLE-SIGNATORY SPLIT SCREEN. One card, one capture: the customer's contract
+       signature, their fingerprint, and the guarantor's signature -- taken together, here, at
+       assessment, where the rest of KYC already lives. */
+    + '<div class="card"><div class="card-h">5. Signature &amp; fingerprint</div>'
+    + lnSigPad_('lnSigCust', 'Sahihi ya mteja / Customer signature')
+    + lnSigPad_('lnSigPrint', 'Alama ya kidole cha mteja / Customer fingerprint')
+    + lnSigPad_('lnSigGuar', 'Sahihi ya mdhamini / Guarantor signature')
+    + '<button class="btn sm" id="lnSaveSig">Save this section</button></div>'
     + '<div class="fld" style="margin-top:14px"><button class="btn w" id="lnSubmitRec">Submit recommendation</button>'
     + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>');
+  lnWireSigPad_('lnSigCust'); lnWireSigPad_('lnSigPrint'); lnWireSigPad_('lnSigGuar');
   $('#lnSavePersonal').onclick = function(){
     lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'personal',
       fields: { dob: $('#lnDob').value, gender: $('#lnGender').value.trim(), national_id: $('#lnNida').value.trim() } }, 'Saved.', function(){});
@@ -5225,6 +5341,15 @@ function lnTeamAssessForm_(loan){
     lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'residence',
       fields: { verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked } }, 'Saved.', function(){});
     lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: { verified: $('#lnBizOk').checked } }, '', function(){});
+  };
+  $('#lnSaveSig').onclick = function(){
+    var fields = { customer_signature: lnSigDataUrl_('lnSigCust'), customer_fingerprint: lnSigDataUrl_('lnSigPrint'),
+      guarantor_signature: lnSigDataUrl_('lnSigGuar') };
+    if (!fields.customer_signature && !fields.customer_fingerprint && !fields.guarantor_signature) {
+      toast('Chukua sahihi au alama ya kidole angalau moja. / Capture at least one signature or fingerprint first.', true);
+      return;
+    }
+    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'signature', fields: fields }, 'Saved.', function(){});
   };
   $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
   $('#lnRejectRec').onclick = function(){

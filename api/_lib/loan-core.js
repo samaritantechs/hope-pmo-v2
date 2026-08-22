@@ -32,7 +32,18 @@ import { todayKey } from './time.js';
    person a Manager" -- it exposes one function per SCREEN, and which screens a signed-in code
    can reach is the tab list on their role, exactly the mechanism HOPE PMO already uses for
    upload/settings/audit. A team leader who also holds the "finance" tab sees Finance; nothing
-   here hard-codes who that must be. */
+   here hard-codes who that must be.
+
+   CREDIT SCORING -- ASKED FOR, NOT BUILT YET, AND HERE IS WHY. "I now need to set like top
+   score of 10/10 but reduces one whenever a customer defaults an installment" is a one-line
+   formula (CREDIT_SCORE_MAX minus D.C, floored at zero) -- but D.C only exists on HOPE PMO's
+   defaulter deck, and that is exactly the boundary this file does not cross: a sandbox loan
+   never reaches a state where it CAN default, because funding is as far as this pipeline goes.
+   Shipping the formula against an input that is always zero would show every customer at
+   10/10 with no real signal behind it, which is worse than not showing a score at all. It
+   waits on either repayment tracking joining the sandbox, or an explicit, separate decision to
+   read HOPE PMO's live deck (read-only) from inside a HOPE Loan screen -- which is its own
+   "day we discuss merges"-sized question, not a side effect of this file. */
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
 function badRequest(m) { const e = new Error(m); e.status = 400; return e; }
@@ -198,6 +209,27 @@ async function branchList(db, user) {
   return { regions, byRegion, branches };
 }
 
+/* MULTI-LOAN TOP-UPS ("doubles") ARE THE SUPERVISOR'S DESK, NOT CUSTOMER SERVICE'S.
+
+   "at multi loan we allow these customers to double, this is to topup their loans only when
+    they request loans and get registered with not more than two installments left ... e.g if
+    a multiloan [from track 2+] customer of installment 34,000 has ds 10/12 arreas 50,000 tzs
+    then that amount will be deducted from the next disbursement amount but will not affect
+    next loan installement as per its amount requested"
+
+   creditApprove already does that maths -- previous_balance comes off net_disbursed, never off
+   the granted amount the new instalments are computed from. What it does not have is the GATE:
+   a track 2+ application must never reach the queue at all unless the customer's CURRENT loan
+   has 2 or fewer instalments left. That has to be decided HERE, at registration, not left for
+   credit to discover four desks later.
+
+   The sandbox has no repayment tracking of its own (see this file's header note on the
+   boundary "deliberately not crossed" past funding), so there is nothing here to read the
+   instalment count FROM -- topup_installments_left/topup_arrears are typed in by whoever holds
+   customer_service_supervisor, off the customer's real book, the same trust model
+   previous_balance already uses at approval. */
+const TOPUP_MAX_INSTALLMENTS_LEFT = 2;
+
 /** A new application. Registers the customer (or reuses one found by csSearch) and opens a
     loan at 'unassigned' with the requested amount -- the first rung of the amount ladder. */
 async function csRegister(db, user, p) {
@@ -229,6 +261,20 @@ async function csRegister(db, user, p) {
   }
 
   const track = await nextTrackFor(db, customerId);
+  let topupFields = {};
+  if (track >= 2) {
+    requireTab(user, 'customer_service_supervisor');
+    const left = p.topup_installments_left != null && p.topup_installments_left !== ''
+      ? Number(p.topup_installments_left) : null;
+    if (left == null || !Number.isFinite(left)) {
+      throw badRequest('Instalments left on the current loan is required for a top-up (TRACK# ' + track + ').');
+    }
+    if (left > TOPUP_MAX_INSTALLMENTS_LEFT) {
+      throw badRequest('This customer has ' + left + ' instalments left -- a top-up needs '
+        + TOPUP_MAX_INSTALLMENTS_LEFT + ' or fewer.');
+    }
+    topupFields = { topup_installments_left: left, topup_arrears: Number(p.topup_arrears) || 0 };
+  }
   const ref = refFor(docket, track);
   const { data: loan, error: lerr } = await db.from('loans').insert({
     docket_no: docket, docket_ref: docket, track_no: String(track), loan_id: ref,
@@ -238,9 +284,11 @@ async function csRegister(db, user, p) {
     disbursement_type: textOrNull(p.disbursement_mode),
     requested_amt: Number(p.amount) || 0,
     stage: 'unassigned', customer_id: customerId, created_by: user.name,
+    ...topupFields,
   }).select('*').maybeSingle();
   if (lerr) throw new Error(lerr.message);
-  await logEvent(db, loan.id, null, 'unassigned', user, Number(p.amount) || 0, 'Registered by customer service');
+  await logEvent(db, loan.id, null, 'unassigned', user, Number(p.amount) || 0,
+    track >= 2 ? 'Registered by customer service supervisor -- TRACK# ' + track + ' top-up' : 'Registered by customer service');
   return { loan, docket, ref };
 }
 
@@ -326,11 +374,24 @@ async function assessmentFor(db, loanId) {
   return rows[0] || null;
 }
 
-/** One call for all five sections -- pass whichever `section` you're saving and its fields.
+/** Signature/fingerprint image capture, validated the same way an announcement image is in
+    HOPE PMO's portal-core.js: a real captured picture, not a URL (which would let a screen
+    point at somebody else's server), and small enough that a canvas capture over mobile data
+    is not a burden. */
+const SIGNATURE_MAX = 400 * 1024;
+function checkSignatureImage(label, v) {
+  if (!v) return null;
+  const s = String(v);
+  if (!/^data:image\/(png|jpe?g|webp);base64,/i.test(s)) throw badRequest(label + ' must be a captured image (PNG, JPG or WEBP).');
+  if (s.length > SIGNATURE_MAX) throw badRequest(label + ' is too large -- keep the capture under about 400 KB.');
+  return s;
+}
+
+/** One call for all six sections -- pass whichever `section` you're saving and its fields.
     Personal-detail writes ALSO update the permanent customer record (write-once fields are
     simply not offered by the screen past track 1 -- see FIELD_LOCK_ below); everything else
     stays local to this assessment draft until SUBMIT. */
-const SECTIONS = new Set(['personal', 'recommendation', 'guarantor', 'residence', 'business']);
+const SECTIONS = new Set(['personal', 'recommendation', 'guarantor', 'residence', 'business', 'signature']);
 async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   requireTab(user, 'team');
   if (!SECTIONS.has(section)) throw badRequest('Unknown assessment section: ' + section);
@@ -376,6 +437,30 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
       const { error } = await db.from('customers').update(bizPatch).eq('id', loan.customer_id);
       if (error) throw new Error(error.message);
     }
+  }
+  /* THE SINGLE-SIGNATORY SPLIT SCREEN. "customer could digital sign their contact copy, sign
+     and biometrics inclusive on a single signatory split screen -- so that when multiloaning,
+     we may later need the customer to just put the finger and it pulls the assigned docket to
+     proceed with the permanent KYC prefilled." One capture, three images: the customer's
+     contract signature, their fingerprint, and the guarantor's signature -- all on this one
+     assessment row, findable later by the docket this loan already carries.
+
+     PULLING A DOCKET BY FINGERPRINT IS NOT BUILT HERE, and cannot be from a canvas capture --
+     that needs a real fingerprint MATCHER (a template + comparison), not an image. What this
+     does is exactly the "sign by finger on the phone screen" WatuCredit-style capture; the
+     "put the finger and it pulls the docket" step is native biometric work (e.g. Android
+     BiometricPrompt) for whichever app ends up carrying this to the field, and is out of
+     scope for the sandbox's browser-based screen. */
+  if (section === 'signature') {
+    const custSig = checkSignatureImage('The customer signature', (fields || {}).customer_signature);
+    const custPrint = checkSignatureImage('The fingerprint capture', (fields || {}).customer_fingerprint);
+    const guarSig = checkSignatureImage('The guarantor signature', (fields || {}).guarantor_signature);
+    if (!custSig && !custPrint && !guarSig) throw badRequest('At least one signature or fingerprint capture is required.');
+    if (custSig) patch.customer_signature = custSig;
+    if (custPrint) patch.customer_fingerprint = custPrint;
+    if (guarSig) patch.guarantor_signature = guarSig;
+    patch.signed_by = user.name;
+    patch.signed_at = new Date().toISOString();
   }
 
   if (a) {
@@ -830,7 +915,57 @@ async function adjustmentsList(db, user, { team, date }) {
 }
 
 /* =====================================================================================
-   12. THE PIPELINE VIEW -- one screen, every stage's count, for whoever holds several tabs.
+   12. COMMENTS -- BY CUSTOMER, NOT BY LOAN OR DOCKET.
+   =====================================================================================
+   HOPE PMO's followup_comments carries a docket_no column that nothing ever read by, because
+   the docket changes every track and there is no single persistent customer row underneath it
+   to key off instead -- comments filed against a customer's first loan go silent the moment
+   they take a second one. HOPE Loan does not have that problem: `customers.id` already IS the
+   one thing "no matter the current track no" was asking for, so a comment logged against
+   ANY of a customer's loans is visible from every one of them, automatically, with no chain
+   to walk.
+
+   Open to every desk that can reach a customer at all (no single tab owns "insight into this
+   person"), same reasoning reversalsList already uses for its own list. */
+async function loanComments(db, user, { loan_id, customer_id }) {
+  const cid = customer_id || (loan_id ? (await mustLoan(db, loan_id)).customer_id : null);
+  if (!cid) return { rows: [] };
+  const rows = await allPaged(db, 'loan_comments', b =>
+    b.select('*').eq('customer_id', cid).order('created_at', { ascending: false }).limit(200));
+  return { rows, customer_id: cid };
+}
+
+/** Same either/or as loanComments -- a note about a customer found by search (csSearch's own
+    result carries a customer id, never a loan id) has no loan to key off yet, and must not be
+    stranded until one exists. loan_id is still accepted (and preferred, for the docket it
+    carries) wherever a loan is already open. */
+async function loanAddComment(db, user, { loan_id, customer_id, comment }) {
+  const text = textOrNull(comment);
+  if (!text) throw badRequest('A comment is required.');
+  let cid = customer_id || null, docket = null;
+  if (loan_id) {
+    const loan = await mustLoan(db, loan_id);
+    cid = loan.customer_id; docket = loan.docket_no;
+  } else if (cid) {
+    const rows = await allPaged(db, 'customers', b => b.select('docket').eq('id', cid));
+    if (!rows[0]) throw badRequest('That customer could not be found.');
+    docket = rows[0].docket;
+  } else {
+    throw badRequest('loan_id or customer_id is required.');
+  }
+  // Stamped here rather than left to the column default: loanComments orders on it, and two
+  // comments filed in the same test (or the same second, in the field) must still resolve to
+  // a real, comparable order rather than two equal-and-therefore-undefined timestamps.
+  const { error } = await db.from('loan_comments').insert({
+    customer_id: cid, loan_id: loan_id || null, docket,
+    comment: text, created_by: user.name, created_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
+/* =====================================================================================
+   13. THE PIPELINE VIEW -- one screen, every stage's count, for whoever holds several tabs.
    ===================================================================================== */
 
 const STAGE_ORDER = ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_approval',
@@ -901,6 +1036,7 @@ const FN = {
   reversalsList, reversalRequest, reversalFinanceDecide, reversalGmDecide,
   carriersList, carrierSave,
   adjustmentSave, adjustmentsList,
+  loanComments, loanAddComment,
   pipelineSummary,
 };
 
