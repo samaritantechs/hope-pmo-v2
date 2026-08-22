@@ -313,6 +313,25 @@ test('a customer\'s DOB is locked from track 2 onward, but still editable on the
   assert.equal(cust.dob, '1985-05-05', 'track 2: DOB is locked, the write is silently dropped');
 });
 
+test('District is captured at assessment, not registration -- "cs agents are superbusy to go into details"', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'A CUSTOMER', mobile: '0700000004', team: 'MABIBO', amount: 200000 });
+  let cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.district, null, 'csRegister no longer asks for it -- nothing to write yet');
+
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: { district: 'Kinondoni' } });
+  cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.district, 'Kinondoni', 'the team\'s assessment is what sets it now');
+
+  // Not an identity field -- still open on a returning customer's later tracks, unlike DOB.
+  const { loan: loan2 } = await loanApi(db, CS, 'csRegister', {
+    customer_id: loan.customer_id, full_name: 'A CUSTOMER', mobile: '0700000004', team: 'MABIBO', amount: 250000,
+  });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan2.id, section: 'personal', fields: { district: 'Ilala' } });
+  cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.district, 'Ilala', 'district can change between loan cycles, unlike DOB/NIDA');
+});
+
 /* =====================================================================================
    THE REVERSAL CHAIN -- credit requests, finance reviews, GM authorises. All three, in order.
    ===================================================================================== */
