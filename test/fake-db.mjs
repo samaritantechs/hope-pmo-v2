@@ -296,10 +296,27 @@ class FakeRpc {
                 for one that has NOT been created yet, which is the state of every live database
                 between a deploy and someone running the migration by hand. Code that calls an
                 RPC has to survive that, so the fake has to be able to reproduce it. */
+/** A bare-minimum stand-in for Supabase Storage -- an in-memory map of bucket -> path -> bytes,
+    just enough for kycUpload's own upload()/list-of-one behaviour to be exercised without a
+    real project. `upsert:false` (the only mode this codebase uses) refuses a path already
+    written, the same as the real thing. */
+class FakeStorageBucket {
+  constructor(store, name) { this.store = store; this.name = name; }
+  async upload(path, bytes, opts) {
+    const b = (this.store.buckets[this.name] = this.store.buckets[this.name] || {});
+    if (b[path] && !(opts && opts.upsert)) {
+      return { data: null, error: { message: 'The resource already exists' } };
+    }
+    b[path] = { bytes, contentType: opts && opts.contentType };
+    return { data: { path }, error: null };
+  }
+}
+
 export function fakeDb(tables, opts = {}) {
   const store = {};
   for (const [name, rows] of Object.entries(tables || {})) store[name] = { rows: rows.map(r => ({ ...r })) };
   const rpcs = opts.rpc || {};
+  const storageFiles = { buckets: {} };
   return {
     from(name) { if (!store[name]) store[name] = { rows: [] };
       return new FakeQuery(store[name], name, (opts.missingColumns || {})[name]); },
@@ -312,6 +329,8 @@ export function fakeDb(tables, opts = {}) {
         return { data: await rpcs[name](store, args), error: null };
       });
     },
+    storage: { from(bucket) { return new FakeStorageBucket(storageFiles, bucket); } },
     _dump(name) { return store[name] ? store[name].rows : []; },
+    _storageDump(bucket) { return storageFiles.buckets[bucket] || {}; },
   };
 }
