@@ -125,9 +125,19 @@ public class MainActivity extends Activity {
                 if (hasLocationPermission()) { callback.invoke(origin, true, false); return; }
                 pendingGeoCallback = callback;
                 pendingGeoOrigin = origin;
-                showLocationRationale_(() -> requestPermissions(
-                        new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION },
-                        REQ_PERMS));
+                showLocationRationale_(
+                        () -> requestPermissions(
+                                new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION },
+                                REQ_PERMS),
+                        // Baadaye/Later or a cancel -- answer the page's callback "no" rather than
+                        // leaving its "Finding location..." button spinning forever with no reply.
+                        () -> {
+                            if (pendingGeoCallback != null) {
+                                pendingGeoCallback.invoke(pendingGeoOrigin, false, false);
+                                pendingGeoCallback = null;
+                                pendingGeoOrigin = null;
+                            }
+                        });
             }
 
             @Override
@@ -245,23 +255,29 @@ public class MainActivity extends Activity {
         }
         if (need.isEmpty()) return;
         String[] perms = need.toArray(new String[0]);
-        if (needsLocation) showLocationRationale_(() -> requestPermissions(perms, REQ_PERMS));
+        if (needsLocation) showLocationRationale_(() -> requestPermissions(perms, REQ_PERMS), null);
         else requestPermissions(perms, REQ_PERMS);
     }
 
-    /** "we say for future assessment and recovery navigations" -- the same reason HOPE Loan's
-        KYC screens actually capture GPS for: verifying where a customer's residence and
-        business are now, and finding the way back for recovery follow-up later. A plain
-        AlertDialog, not a Toast, because a note that can be missed on the way past does not
-        make anyone more likely to tap Allow -- this one has to be dismissed to continue. */
-    private void showLocationRationale_(Runnable thenRequest) {
+    /** "tell 'Allow report auto-updates whenever the background is updated'" -- final wording, and
+        "dont even mention gps" -- neither the title nor the message names location/GPS at
+        all, in Swahili or English, on purpose. Not a forced dialog either -- Baadaye/Later
+        dismisses it like every other friendly prompt in this app (the battery one included):
+        a note that can only be escaped by agreeing is not a friendly note.
+        "when someone hit later even when they reoopen next minutes it comes again" -- nothing
+        here is remembered on Later or on cancel; requestMissingPermissions() runs fresh on
+        every onCreate with no flag saved anywhere, so the very next launch asks again exactly
+        the same way, however soon that is. onDecline lets the caller answer anything left
+        waiting on this (a GPS button's own callback) rather than leaving it hanging -- pass
+        null where there is nothing to answer. */
+    private void showLocationRationale_(Runnable thenRequest, Runnable onDecline) {
         new AlertDialog.Builder(this)
-                .setTitle("Ruhusa ya Mahali / Location Permission")
-                .setMessage("HOPE Loan inahitaji mahali (GPS) kwa ajili ya tathmini ya wateja na "
-                        + "kuwafuatilia baadaye endapo itahitajika. / HOPE Loan needs your location "
-                        + "for customer assessment now, and to find the way back for recovery "
-                        + "follow-up in future.")
-                .setCancelable(false)
+                .setTitle("Ruhusu Taarifa Kuupdate / Allow Updates")
+                .setMessage("Ruhusu taarifa kuupdate zenyewe kila zinapobadilika. / "
+                        + "Allow report auto-updates whenever the background is updated.")
+                .setCancelable(true)
+                .setOnCancelListener(d -> { if (onDecline != null) onDecline.run(); })
+                .setNegativeButton("Baadaye / Later", (d, w) -> { if (onDecline != null) onDecline.run(); })
                 .setPositiveButton("Endelea / Continue", (d, w) -> thenRequest.run())
                 .show();
     }
