@@ -358,10 +358,20 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 <div class="sheet-backdrop" id="bgPrompt" style="align-items:center;justify-content:center">
   <div class="sheet-card" style="max-width:330px;margin:0 24px;padding:22px;border-radius:16px">
     <div style="font-size:17px;font-weight:800;line-height:1.35;margin-bottom:8px">🔋 Ruhusu comment kusave automatic</div>
-    <div style="font-size:13.5px;color:var(--mut);line-height:1.5;margin-bottom:18px">
+    <div style="font-size:13.5px;color:var(--mut);line-height:1.5;margin-bottom:10px">
       Simu yako inazima HOPE Calls ikiwa nyuma. Ukiruhusu, maoni na simu zako zinahifadhika zenyewe
       bila kusubiri. Bonyeza <b>Ruhusu</b>, kisha kwenye dirisha la simu chagua <b>Allow</b>.
     </div>
+    <!-- "if its not they feel like being hacked their massages or photos or call voices" -- said
+         plainly, before the OS dialog, not left to a fear the OS dialog's own wording never
+         answers: this only keeps THIS app syncing in the background. No messages, no photos, no
+         call recordings -- HOPE Calls has never read any of those and this permission does not
+         change that. -->
+    <div style="font-size:12.5px;color:var(--mut);line-height:1.5;margin-bottom:10px">
+      Hii <b>haihusu</b> ujumbe, picha, wala sauti za simu — HOPE Calls haijawahi kusoma hivyo, na
+      ruhusa hii haibadilishi hilo. Inahusu tu app hii kuendelea kufanya kazi ikiwa nyuma.
+    </div>
+    <div id="bgOemNote" class="hide" style="font-size:12.5px;color:var(--mut);line-height:1.5;margin-bottom:18px"></div>
     <div style="display:flex;gap:10px">
       <button type="button" class="btn btn-ghost" id="bgLater">Baadaye</button>
       <button type="button" class="btn btn-pri" id="bgYes">Ruhusu</button>
@@ -623,32 +633,29 @@ function startSyncLoop(){
     specifically exempted -- this is a well-documented OEM-level restriction on top of Android's
     own permission system, and is the most likely reason calls sync fine on some phones and never
     on others. Standard battery-optimization exemption is the one part of this with a real API;
-    the rest is OEM-specific settings screens with no API, so we just point at them by name. */
-function batteryGuidanceHtml_(){
+    the rest is OEM-specific settings screens with no API, so we just point at them by name.
+    "even the battery opptimization remove it and ask permission on open only if not allowed ...
+    with a friendly note" -- this used to be its own persistent banner at the top of every list,
+    on every draw, for most Android phones sold in Tanzania -- read once, then sat there
+    forever, exactly the "yellow info in callapp still there" complaint. It is now one more
+    line inside the SAME on-open friendly prompt as the real permission (askBackground_ /
+    #bgPrompt below), asked with the same "once a day, until allowed" cadence, not a fixture. */
+function oemBatteryText_(){
   var nb = nativeBridge();
   if (!nb || !nb.getManufacturer) return '';
   var mfr = '';
   try { mfr = String(nb.getManufacturer() || '').toLowerCase(); } catch(e){}
-  var ignoring = true;
-  try { ignoring = !nb.isIgnoringBatteryOptimizations || nb.isIgnoringBatteryOptimizations() === '1'; } catch(e){}
-  var extra = '';
   if (mfr.indexOf('xiaomi') >= 0 || mfr.indexOf('redmi') >= 0 || mfr.indexOf('poco') >= 0)
-    extra = ' Kwenye Xiaomi/Redmi/POCO: fungua Settings \u2192 Apps \u2192 HOPE Calls, ruhusu Autostart, na weka Battery saver kuwa "No restrictions".';
-  else if (mfr.indexOf('oppo') >= 0 || mfr.indexOf('realme') >= 0)
-    extra = ' Kwenye Oppo/Realme: Settings \u2192 Battery \u2192 HOPE Calls \u2192 ruhusu "Allow background activity".';
-  else if (mfr.indexOf('vivo') >= 0)
-    extra = ' Kwenye Vivo: Settings \u2192 Battery \u2192 Background power consumption \u2192 ruhusu HOPE Calls.';
-  else if (mfr.indexOf('huawei') >= 0 || mfr.indexOf('honor') >= 0)
-    extra = ' Kwenye Huawei/Honor: Settings \u2192 Battery \u2192 App launch \u2192 HOPE Calls \u2192 chagua "Manage manually" na washa vyote.';
-  else if (mfr.indexOf('samsung') >= 0)
-    extra = ' Kwenye Samsung: Settings \u2192 Battery \u2192 Background usage limits \u2192 toa HOPE Calls kwenye orodha ya "Put unused apps to sleep".';
-  /* THE BUTTON IS GONE FROM HERE ON PURPOSE. Asking is now something the app DOES when it
-     opens (see askBackground_) rather than something an officer has to notice on a list and
-     decide to press -- the same way the call-log permission and the update check have always
-     worked. What is left in this banner is only the part Android has no API for: the OEM's own
-     settings screens, which no dialog can open and which have to be described by name. */
-  if (!extra) return '';
-  return '<div class="banner" id="battBanner">\uD83D\uDD0B Simu yako inaweza kuzima programu ikiwa nyuma, maoni yasihifadhike.' + extra + '</div>';
+    return 'Kwenye Xiaomi/Redmi/POCO: fungua Settings \u2192 Apps \u2192 HOPE Calls, ruhusu Autostart, na weka Battery saver kuwa "No restrictions".';
+  if (mfr.indexOf('oppo') >= 0 || mfr.indexOf('realme') >= 0)
+    return 'Kwenye Oppo/Realme: Settings \u2192 Battery \u2192 HOPE Calls \u2192 ruhusu "Allow background activity".';
+  if (mfr.indexOf('vivo') >= 0)
+    return 'Kwenye Vivo: Settings \u2192 Battery \u2192 Background power consumption \u2192 ruhusu HOPE Calls.';
+  if (mfr.indexOf('huawei') >= 0 || mfr.indexOf('honor') >= 0)
+    return 'Kwenye Huawei/Honor: Settings \u2192 Battery \u2192 App launch \u2192 HOPE Calls \u2192 chagua "Manage manually" na washa vyote.';
+  if (mfr.indexOf('samsung') >= 0)
+    return 'Kwenye Samsung: Settings \u2192 Battery \u2192 Background usage limits \u2192 toa HOPE Calls kwenye orodha ya "Put unused apps to sleep".';
+  return '';
 }
 
 /* ---------------------------------------------------------------- RUHUSU KUFANYA KAZI CHINI CHINI
@@ -667,25 +674,24 @@ function batteryGuidanceHtml_(){
  * customer's door. "Ruhusu comment kusave automatic" is the same permission described as the
  * thing it actually buys, which is the difference between being read and being dismissed.
  *
- * ASKED AT MOST ONCE A DAY. Android's own dialog is the second step, so a refusal costs two
- * taps and re-asking every few minutes would train people to refuse. Once a day, until it is
- * allowed, then never again -- the check is the granted state itself, not a flag we set, so an
- * officer who allows it and later has it revoked by a battery-saver sweep is asked again.
+ * ASKED ON EVERY OPEN, NOT THROTTLED. "if one didnt allow any permission, always ask them to
+ * allow at every open" -- the same rule this app already applies to the OS-level call-log and
+ * location permissions. The check is the granted state itself, not a flag saying it was asked
+ * before, so this stops on its own the moment it is actually allowed -- and starts again on
+ * its own if a battery-saver sweep later revokes it, with no "later" tap able to defer it past
+ * today.
  */
-var BG_ASK_LS_KEY = 'hcBgAsk_v1';
 function backgroundBlocked_(){
   var nb = nativeBridge();
   if (!nb || !nb.isIgnoringBatteryOptimizations || !nb.requestIgnoreBatteryOptimizations) return false;
   try { return nb.isIgnoringBatteryOptimizations() !== '1'; } catch(e){ return false; }
 }
-function askBackground_(force){
+function askBackground_(){
   if (!backgroundBlocked_()) return;
-  if (!force) {
-    var last = '';
-    try { last = localStorage.getItem(BG_ASK_LS_KEY) || ''; } catch(e){}
-    if (last === todayKeyLocal_()) return;                 // already asked today
-  }
-  try { localStorage.setItem(BG_ASK_LS_KEY, todayKeyLocal_()); } catch(e){}
+  var oem = oemBatteryText_();
+  var note = $('#bgOemNote');
+  if (oem) { note.textContent = oem; note.classList.remove('hide'); }
+  else note.classList.add('hide');
   $('#bgPrompt').style.display = 'flex';
 }
 function wireBackgroundPrompt_(){
@@ -1044,7 +1050,7 @@ function enterApp(d){
   /* Ask for background permission the way the app asks for everything else -- on its own, when
      it opens. Behind the first draw so the officer sees their customers underneath it and knows
      what the app is, rather than being met by a dialog on a blank screen. */
-  setTimeout(function(){ if (S.entered) askBackground_(false); }, 900);
+  setTimeout(function(){ if (S.entered) askBackground_(); }, 900);
   startSyncLoop();
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
@@ -1597,7 +1603,10 @@ function drawList(){
       ? '<div class="banner">\uD83D\uDCF1 iPhone haiwezi kusoma kumbukumbu za simu moja kwa moja (kizuizi cha Apple, si tatizo la programu hii). Bofya "Piga" hapa chini kupiga \u2014 orodha na maoni yanafanya kazi kama kawaida, lakini muda wa simu hautarekodiwa kiotomatiki.</div>'
       : '<div class="banner">\uD83D\uDCF1 Sakinisha programu ya HOPE Calls (APK) ili simu zako zirekodiwe kiotomatiki. Bofya "Piga" hapa chini bado kinafanya kazi.</div>')
     : (S.permOk === false ? '<div class="banner" style="background:var(--badbg);border-color:var(--badline);color:var(--bad)">\u26A0 Taarifa zinachelewa kuupdate. Nenda Settings \u2192 Apps \u2192 HOPE Calls \u2192 Permissions kuwasha ruhusa ili ziupdate zenyewe.</div>'
-       : batteryGuidanceHtml_());
+       // "even the battery opptimization remove it" -- the OEM guidance used to be its own
+       // persistent banner here, on every draw. It now travels inside the same on-open
+       // friendly prompt as the real permission ask (askBackground_ / #bgPrompt) instead.
+       : '');
   var searching = !!S.q.trim();
   body.innerHTML = banner
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
