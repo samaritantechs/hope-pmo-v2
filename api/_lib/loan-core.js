@@ -812,6 +812,33 @@ async function financeMarkFunded(db, user, { loan_ids, batch }) {
   return { funded: n, batch: batchName };
 }
 
+/** "CreditInfo asks for a Real End Date, which needs a closing event to hang on rather than
+    being inferred from a zero balance" -- this IS that closing event: the payment that finally
+    covers everything owed (loan_amt, principal plus the flat interest/fees). Runs after every
+    import and after a shift lands money on a new ref; touches only 'funded' loans -- nothing
+    still moving through origination, and nothing already closed/rejected/reversed -- and it
+    only ever CLOSES. A shift that moves money away and drops a loan back under full payment
+    does not reopen it automatically; whether a closed contract un-closes is a human call, not
+    something a stray transfer should decide by itself. */
+async function closeIfFullyPaid_(db, user, ref) {
+  if (!ref) return;
+  const loanRows = await allPaged(db, 'loans', b => b.select('*').eq('loan_id', ref));
+  const loan = loanRows[0];
+  if (!loan || loan.stage !== 'funded' || !(Number(loan.loan_amt) > 0)) return;
+  const payments = await allPaged(db, 'payment_imports', b => b.select('amount, paid_at').eq('ref', ref));
+  const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  if (paid < Number(loan.loan_amt)) return;
+  // The Real End Date is when the balance actually reached zero, i.e. the latest payment on
+  // file for this loan -- not today, if this import is finance catching up on a backlog.
+  const lastPaidAt = payments.reduce((max, p) => {
+    const d = p.paid_at ? String(p.paid_at).slice(0, 10) : null;
+    return d && (!max || d > max) ? d : max;
+  }, null);
+  await transition(db, loan, 'funded', 'closed', user, {
+    real_end_date: lastPaidAt || todayKey(Date.now()),
+  }, 'Closed -- fully repaid (' + paid + ' against ' + loan.loan_amt + ')');
+}
+
 async function financeImportPayments(db, user, { rows, batch }) {
   requireTab(user, 'finance');
   const batchName = textOrNull(batch) || ('PAY-' + todayKey(Date.now()));
@@ -823,6 +850,7 @@ async function financeImportPayments(db, user, { rows, batch }) {
   if (!clean.length) throw badRequest('No usable rows -- each needs at least a reference and an amount.');
   const { error } = await db.from('payment_imports').insert(clean);
   if (error) throw new Error(error.message);
+  for (const ref of new Set(clean.map(r => r.ref))) await closeIfFullyPaid_(db, user, ref);
   return { imported: clean.length, batch: batchName };
 }
 
@@ -864,6 +892,9 @@ async function financeShiftPayment(db, user, { payment_id, to_ref, reason }) {
     shifted_at: new Date().toISOString(), shift_reason: reason,
   }).eq('id', p.id);
   if (error) throw new Error(error.message);
+  // The money that just landed on to_ref might be what finally covers it -- same closing
+  // check an import gets. The ref it left is not re-checked: money LEAVING never closes a loan.
+  await closeIfFullyPaid_(db, user, textOrNull(to_ref));
   return { ok: true };
 }
 
