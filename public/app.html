@@ -5528,9 +5528,13 @@ function lnTeamAssessForm_(loanRow){
       + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoStatus')
       + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
 
-      // "business verification should come before guarantor info and team recommenation is
-      // the last" -- 2. Residence & business, 3. Guarantor, 4. Team recommendation (was 2nd).
-      + '<div class="card"><div class="card-h">2. Residence &amp; business verification</div>'
+      // "customer residense and business verification should be segmented since officers
+      // could reach those in different timeframes" -- these were one card behind one save
+      // button, so a visit to only the residence (or only the business) still needed the
+      // other half filled in before anything could be saved. Two cards, two independent
+      // saves now -- each already writes to its own SECTIONS entry server-side ('residence' /
+      // 'business'), this was purely a client-side coupling.
+      + '<div class="card"><div class="card-h">2. Customer residence verification</div>'
       + '<div class="fld"><label>Mtaa / Street</label><input id="lnCustStreet" value="' + esc(c.street || '') + '"></div>'
       + '<div class="fld"><label>Kata / Ward</label><input id="lnCustWard" value="' + esc(c.ward || '') + '"></div>'
       + '<div class="fld"><label>Wilaya / District</label><input id="lnDistrict" value="' + esc(c.district || '') + '"></div>'
@@ -5538,7 +5542,9 @@ function lnTeamAssessForm_(loanRow){
       + captureRowPhoto_('Picha ya uthibitisho makazi (na afisa) / Residence verification photo (with officer)', 'lnCustResPhotoBtn', 'lnCustResPhotoStatus')
       + '<label><input type="checkbox" id="lnResOk"' + (a.residence_verified ? ' checked' : '') + '> Customer residence verified</label><br>'
       + '<label><input type="checkbox" id="lnGResOk"' + (a.guarantor_residence_verified ? ' checked' : '') + '> Guarantor residence verified</label>'
-      + '<div class="sub" style="margin:10px 0 4px">Biashara / Business</div>'
+      + '<button class="btn sm" id="lnSaveResidence" style="margin-top:8px">Save this section</button></div>'
+
+      + '<div class="card"><div class="card-h">3. Business verification</div>'
       // "business type from the cs registration, fill business name and capture live
       // location coordinates for all 3 placess business and their residences" -- business
       // TYPE was already asked at CS registration; this is the name, and the third place.
@@ -5546,9 +5552,9 @@ function lnTeamAssessForm_(loanRow){
       + captureRowGps_('Mahali pa biashara / Business location', 'lnBizGpsBtn', 'lnBizGpsStatus')
       + captureRowPhoto_('Picha ya mbele ya biashara (na afisa) / Business front verification photo (with officer)', 'lnBizPhotoBtn', 'lnBizPhotoStatus')
       + '<label><input type="checkbox" id="lnBizOk"' + (a.business_verified ? ' checked' : '') + '> Business ownership verified</label>'
-      + '<button class="btn sm" id="lnSaveVerify" style="margin-top:8px">Save this section</button></div>'
+      + '<button class="btn sm" id="lnSaveBusiness" style="margin-top:8px">Save this section</button></div>'
 
-      + '<div class="card"><div class="card-h">3. Guarantor</div>'
+      + '<div class="card"><div class="card-h">4. Guarantor</div>'
       + '<div class="fld"><label>Full name</label><input id="lnGName" value="' + esc(g.full_name || '') + '"></div>'
       + '<div class="fld"><label>Phone</label><input id="lnGPhone" value="' + esc(g.phone || '') + '"></div>'
       + '<div class="fld"><label>Relationship</label><input id="lnGRel" value="' + esc(g.relationship || '') + '"></div>'
@@ -5584,7 +5590,7 @@ function lnTeamAssessForm_(loanRow){
         }).join('')
       + '<button class="btn sm" id="lnSaveGuar" style="margin-top:6px">Save this section</button></div>'
 
-      + '<div class="card"><div class="card-h">4. Team recommendation</div>'
+      + '<div class="card"><div class="card-h">5. Team recommendation</div>'
       + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (a.recommend_amount || loan.requested_amt || '') + '"></div>'
       + '<div class="fld"><label>Credit score</label><input id="lnCreditScore" type="number" step="0.1" value="' + (a.credit_score != null ? a.credit_score : '') + '"></div>'
       + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
@@ -5676,16 +5682,21 @@ function lnTeamAssessForm_(loanRow){
         lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: list } }, 'Saved.');
       }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
-    $('#lnSaveVerify').onclick = function(){
+    // Two independent saves now -- "officers could reach those in different timeframes", so
+    // a residence visit today must be bankable today without waiting on a business visit
+    // that might not happen until next week (and vice versa).
+    $('#lnSaveResidence').onclick = function(){
       lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
         verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked,
         street: $('#lnCustStreet').value.trim(), ward: $('#lnCustWard').value.trim(), district: $('#lnDistrict').value.trim(),
         residence_lat: COORDS.custRes.lat, residence_lng: COORDS.custRes.lng, residence_verify_photo_url: PATHS.custResPhoto,
       } }, 'Saved.');
+    };
+    $('#lnSaveBusiness').onclick = function(){
       lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
         verified: $('#lnBizOk').checked, business_name: $('#lnBizName').value.trim(),
         business_lat: COORDS.biz.lat, business_lng: COORDS.biz.lng, business_verify_photo_url: PATHS.bizPhoto,
-      } }, '');
+      } }, 'Saved.');
     };
     $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
     $('#lnRejectRec').onclick = function(){
