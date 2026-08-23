@@ -436,6 +436,22 @@ test('teamAssessDetail opens pre-filled: customer, every guarantor rank, and the
   assert.ok(d.assessment, 'a draft exists once any section has been saved');
 });
 
+test('recommendation section: credit score is saved and surfaced back through teamAssessDetail', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'SCORED CUSTOMER', mobile: '0700000038', team: 'MABIBO', amount: 300000 });
+  await loanApi(db, TEAM, 'teamAssessmentSave', {
+    loan_id: loan.id, section: 'recommendation', fields: { amount: 300000, credit_score: '72.5', zone: 'Manzese', remarks: 'ok' },
+  });
+  const d = await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loan.id });
+  assert.equal(d.assessment.credit_score, 72.5);
+  // Re-saving with an empty string (the field cleared, not typed) must not resurrect a stale number.
+  await loanApi(db, TEAM, 'teamAssessmentSave', {
+    loan_id: loan.id, section: 'recommendation', fields: { amount: 300000, credit_score: '', zone: 'Manzese', remarks: 'ok' },
+  });
+  const d2 = await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loan.id });
+  assert.equal(d2.assessment.credit_score, null);
+});
+
 test('personal details: gender/ID type/signature/thumbprint/photo all pass through, the same generic write DOB already used', async () => {
   const db = fakeDb({});
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });

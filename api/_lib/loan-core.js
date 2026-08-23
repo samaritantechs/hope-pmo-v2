@@ -458,6 +458,11 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
     patch.recommend_amount = Number((fields || {}).amount) || null;
     patch.zone_visited = textOrNull((fields || {}).zone);
     patch.remarks = textOrNull((fields || {}).remarks);
+    // "recommendation kyc should go with team name, track no and credit score" -- team and
+    // track_no already live on the loan itself; this is the one new number, the officer's own
+    // scoring of the customer, carried into the copied KYC text alongside the amount.
+    const scoreRaw = (fields || {}).credit_score;
+    patch.credit_score = (scoreRaw === '' || scoreRaw == null) ? null : (Number(scoreRaw) || null);
   }
   if (section === 'guarantor') {
     await saveGuarantors(db, loan, user, (fields || {}).guarantors || []);

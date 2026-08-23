@@ -5090,9 +5090,26 @@ function wireCanvasPad_(canvasId, mode){
     var r = canvas.getBoundingClientRect();
     return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
   }
+  /* "fingerprint are now taking a big dot, not the reality lines" -- a filled circle is ink,
+     not a print. A real thumbprint reads as RIDGES: a handful of wavy, roughly-concentric
+     lines, not a solid disc. Each dab now draws that ridge texture instead of filling one. */
   function dab(p){
-    var r = Math.max(canvas.width, canvas.height) * 0.09;   // thumb-pad sized, not pen-tip sized
-    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    var R = Math.max(canvas.width, canvas.height) * 0.09;   // thumb-pad sized, not pen-tip sized
+    var rings = 5;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(26,43,74,.6)';
+    ctx.lineWidth = 1.1;
+    for (var i = 0; i < rings; i++) {
+      var r = R * (0.3 + i * (0.7 / rings));
+      ctx.beginPath();
+      for (var a = 0; a <= Math.PI * 2 + 0.3; a += 0.3) {
+        var wob = Math.sin(a * 3 + i * 1.7) * R * 0.05;       // waviness -- ridges, not a perfect ring
+        var x = p.x + Math.cos(a) * (r + wob), y = p.y + Math.sin(a) * (r + wob);
+        if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
   }
   function start(e){
     e.preventDefault(); drawing = true; last = pos(e);
@@ -5569,6 +5586,7 @@ function lnTeamAssessForm_(loanRow){
 
       + '<div class="card"><div class="card-h">4. Team recommendation</div>'
       + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (a.recommend_amount || loan.requested_amt || '') + '"></div>'
+      + '<div class="fld"><label>Credit score</label><input id="lnCreditScore" type="number" step="0.1" value="' + (a.credit_score != null ? a.credit_score : '') + '"></div>'
       + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
       + '<div class="fld"><label>Remarks</label><input id="lnRemarks" value="' + esc(a.remarks || '') + '"></div>'
       + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
@@ -5629,7 +5647,8 @@ function lnTeamAssessForm_(loanRow){
     };
     $('#lnSaveRec').onclick = function(){
       lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
-        fields: { amount: Number($('#lnRecAmt').value) || 0, zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.');
+        fields: { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
+          zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.');
     };
     $('#lnSaveGuar').onclick = function(){
       Promise.all([
@@ -5685,6 +5704,9 @@ function lnTeamAssessForm_(loanRow){
       var lines = [
         '*HOPE LOAN - KYC*',
         'Ref: ' + (loan.loan_id || '') + '   Docket: ' + (loan.docket_no || ''),
+        // "recommendation kyc should go with team name, track no and credit score" -- team and
+        // track_no are the loan's own, already-set fields; credit score is typed just above.
+        'Timu / Team: ' + (loan.team || '—') + '   Track: ' + (loan.track_no || 1),
         'Jina / Name: ' + loan.full_name,
         'Simu / Phone: ' + (loan.contact || ''),
         'Jinsia / Gender: ' + ($('#lnGender').value || '—'),
@@ -5693,6 +5715,7 @@ function lnTeamAssessForm_(loanRow){
         'Biashara / Business: ' + ($('#lnBizName').value || '—') + ' (' + (c.business_type || '—') + ')',
         'Kiasi kilichoombwa / Requested: ' + money(loan.requested_amt),
         'Kiasi kilichopendekezwa / Recommended: ' + money(Number($('#lnRecAmt').value) || 0),
+        'Alama ya mkopo / Credit score: ' + ($('#lnCreditScore').value.trim() || '—'),
         '',
         '*Mdhamini / Guarantor*: ' + ($('#lnGName').value || '—') + '  ·  ' + ($('#lnGPhone').value || '—') + '  ·  ' + ($('#lnGRel').value || '—'),
         'Wilaya/Kata/Mtaa: ' + [$('#lnGDistrict').value, $('#lnGWard').value, $('#lnGStreet').value].filter(Boolean).join(' / '),

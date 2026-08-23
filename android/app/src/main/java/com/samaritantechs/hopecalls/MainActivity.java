@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.GeolocationPermissions;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -21,6 +22,9 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * HOPE PMO in one app: a WebView around the portal launcher, so a leader signs in once and
@@ -33,12 +37,19 @@ import android.widget.Toast;
  * The app carries no business logic, so the pages can change without shipping a new APK.
  */
 public class MainActivity extends Activity {
-    private static final int REQ_CALL_LOG = 71;
+    /** One combined runtime-permission ask (call log + location) so the two dialogs never race
+        each other -- Android does not guarantee a second requestPermissions() queues cleanly
+        behind a first that is still on screen. */
+    private static final int REQ_PERMS = 71;
     private static final int REQ_FILE_PICK = 72;
 
     private WebView web;
     private SharedPreferences prefs;
     private ValueCallback<Uri[]> pendingFileCallback;
+    // The page's getCurrentPosition() call is answered async, once the OS permission dialog
+    // (if any) resolves -- see onGeolocationPermissionsShowPrompt / onRequestPermissionsResult.
+    private GeolocationPermissions.Callback pendingGeoCallback;
+    private String pendingGeoOrigin;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -57,6 +68,7 @@ public class MainActivity extends Activity {
         s.setDomStorageEnabled(true);          // localStorage holds the access code, device id, list cache
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setAllowFileAccess(false);           // the page never needs file:// -- keep it shut
+        s.setGeolocationEnabled(true);         // required or the page's GPS capture buttons fail silently, permission or not
         web.addJavascriptInterface(new HopeCallsBridge(this, prefs), "HopeCalls");
 
         web.setWebViewClient(new WebViewClient() {
@@ -98,6 +110,30 @@ public class MainActivity extends Activity {
                     return false;
                 }
             }
+
+            /* "geolocation still an issue and app never asked permission for that" -- true: a
+               bare WebView denies every geolocation request with NO prompt at all unless this
+               callback is implemented. There is no ACTIVITY dialog here to show -- the OS
+               permission is asked once up front in onCreate (every launch, not just the first),
+               so by the time a page button fires this we normally already know the answer. On
+               the rare case a user answers the OS dialog only after this fires, park the
+               WebView callback and resolve it from onRequestPermissionsResult instead of
+               guessing "no". */
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                if (hasLocationPermission()) { callback.invoke(origin, true, false); return; }
+                pendingGeoCallback = callback;
+                pendingGeoOrigin = origin;
+                requestPermissions(
+                        new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION },
+                        REQ_PERMS);
+            }
+
+            @Override
+            public void onGeolocationPermissionsHidePrompt() {
+                pendingGeoCallback = null;
+                pendingGeoOrigin = null;
+            }
         });
 
         // Reports the page offers for download go to the phone's Downloads folder via the
@@ -134,9 +170,11 @@ public class MainActivity extends Activity {
             }
         });
 
-        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.READ_CALL_LOG}, REQ_CALL_LOG);
-        }
+        // "those who denied any permission, always prompt them to allow whenever they open app"
+        // -- this runs on every onCreate, i.e. every launch, not only the first. Android itself
+        // stops showing the dialog once a user has picked "Don't ask again"; short of that, this
+        // re-asks every time rather than making them dig through Settings.
+        requestMissingPermissions();
         web.loadUrl(startUrl());
         // Ask the portal whether a newer build exists. Off the UI thread, failures ignored --
         // an update check must never be the reason the app does not open.
@@ -183,6 +221,24 @@ public class MainActivity extends Activity {
         web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
     }
 
+    private boolean hasLocationPermission() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Asks for whichever of {call log, location} is not already granted, in one dialog queue. */
+    private void requestMissingPermissions() {
+        List<String> need = new ArrayList<>();
+        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.READ_CALL_LOG);
+        }
+        if (!hasLocationPermission()) {
+            need.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            need.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        }
+        if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERMS);
+    }
+
     void retryFromBridge() {
         runOnUiThread(() -> web.loadUrl(startUrl()));
     }
@@ -219,7 +275,15 @@ public class MainActivity extends Activity {
     @Override
     public void onRequestPermissionsResult(int code, String[] perms, int[] grants) {
         super.onRequestPermissionsResult(code, perms, grants);
+        if (code != REQ_PERMS) return;
         // The page checks hasCallLogPermission() on every sync -- reload so its banner updates now.
-        if (code == REQ_CALL_LOG) web.reload();
+        web.reload();
+        // If a GPS capture button is what triggered this ask, answer it now instead of leaving
+        // the page's "Finding location..." button spinning forever.
+        if (pendingGeoCallback != null) {
+            pendingGeoCallback.invoke(pendingGeoOrigin, hasLocationPermission(), false);
+            pendingGeoCallback = null;
+            pendingGeoOrigin = null;
+        }
     }
 }

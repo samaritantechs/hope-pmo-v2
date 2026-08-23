@@ -539,7 +539,11 @@ function deviceId(){
 
 /* ================= state ================= */
 var DEV = deviceId();
-var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:weekStartIso_(), repTo:weekEndIso_(), repTeam:'', repLeader:'', syncEverySec:300, permOk:null,
+// Ripoti defaults to TODAY, not the whole week -- "change default reading from weekly range
+// date to todays date unles the dates altered". Only the DEFAULT moved; repFrom/repTo are
+// still two independent boxes an officer can widen back out to a week (or any range) at will,
+// and once touched they stay exactly what was typed -- see the onchange handlers below.
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:todayKeyLocal_(), repTo:todayKeyLocal_(), repTeam:'', repLeader:'', syncEverySec:300, permOk:null,
           /* ALWAYS BOOTS TO THE REAL BOOK. Never remembered across a page load: the sandbox has
              to be chosen deliberately, on this visit, and the code that authorises it is held
              in memory only -- never in localStorage, where a shared handset would keep an
@@ -564,17 +568,6 @@ function startOfWeekMs_(){
   d.setDate(d.getDate() - diff);
   return d.getTime();
 }
-function weekStartIso_(){
-  var d = new Date(startOfWeekMs_());
-  var m = ('0'+(d.getMonth()+1)).slice(-2), dd = ('0'+d.getDate()).slice(-2);
-  return d.getFullYear() + '-' + m + '-' + dd;
-}
-function weekEndIso_(){
-  var d = new Date(startOfWeekMs_() + 6*86400000);
-  var m = ('0'+(d.getMonth()+1)).slice(-2), dd = ('0'+d.getDate()).slice(-2);
-  return d.getFullYear() + '-' + m + '-' + dd;
-}
-
 /* ================= sync status pill ================= */
 function setSyncStatus(kind){
   var p = $('#syncPill');
