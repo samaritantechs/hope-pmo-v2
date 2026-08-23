@@ -1,6 +1,6 @@
 {
-  "versionCode": 9,
-  "versionName": "1.7.0",
-  "notes": "Ruhusa ya mahali (GPS) sasa inaulizwa -- kabla haikuwahi kuombwa hata kidogo, kwa hiyo kuchukua mahali kwenye HOPE Loan kulishindwa kimya kimya. Sasa inaombwa kila unapofungua app, kama huja ruhusa. / Location (GPS) permission is now actually requested -- it was never asked for at all before, so every location-capture button in HOPE Loan failed silently. It is asked for again on every launch if not yet granted.",
+  "versionCode": 10,
+  "versionName": "1.7.1",
+  "notes": "Ombi la ruhusa (ripoti kuupdate zenyewe) sasa lina maelezo rahisi, na si la lazima -- unaweza kuchagua Baadaye, na litaulizwa tena mara nyingine. / The permission prompt (for reports to auto-update) now has simpler wording and is no longer forced -- you can tap Later, and it will ask again next time you open the app.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
