@@ -96,10 +96,17 @@ class Updater {
                                boolean failedBefore) {
         String body = "HOPE LOAN " + versionName + "\n\n" + notes;
         if (failedBefore) {
+            // "updatted, name didnt change and keep bumping on usahihishaji haujakamilika" --
+            // this dialog was TRUE (the install genuinely never finished) but never said WHY:
+            // downloading is only half of it -- Android's own installer screen still has to be
+            // tapped through afterwards, and backing out of THAT screen looks, to an officer,
+            // exactly like a successful update. Name the missing step instead of just the fact.
             body = "Usasishaji uliopita haukukamilika — bado unatumia toleo la zamani.\n"
-                 + "Ruhusu \"Sakinisha programu zisizojulikana\" kwa HOPE LOAN, kisha jaribu tena.\n\n"
-                 + "The last update did not finish, so this is still the old build. Allow "
-                 + "\"Install unknown apps\" for HOPE LOAN, then try again.\n\n"
+                 + "Bonyeza Sasisha, kisha kwenye skrini ya kusakinisha itakayofungua, bonyeza "
+                 + "Install kisha Open. Usirudi nyuma kabla ya kumaliza.\n\n"
+                 + "The last update did not finish, so this is still the old build. Tap Update, "
+                 + "then on the installer screen that opens, tap Install and then Open. Do not "
+                 + "go back before it finishes.\n\n"
                  + "HOPE LOAN " + versionName + "\n" + notes;
         }
         new AlertDialog.Builder(activity)
@@ -192,6 +199,14 @@ class Updater {
             return;
         }
         try {
+            // A heads-up before the installer screen takes over -- "install unknown apps" being
+            // granted is not the same as the officer knowing this next screen still needs two
+            // more taps. It fades before that screen would cover it, but it is the one honest
+            // place left to say it, and every extra warning is one fewer stuck-on-the-old-build
+            // report.
+            Toast.makeText(activity,
+                    "Bonyeza Install kisha Open kwenye skrini itakayofungua. / Tap Install then Open on the next screen.",
+                    Toast.LENGTH_LONG).show();
             Uri uri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", apk);
             Intent i = new Intent(Intent.ACTION_VIEW);
             i.setDataAndType(uri, "application/vnd.android.package-archive");
