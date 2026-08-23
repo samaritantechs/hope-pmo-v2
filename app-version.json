@@ -1,6 +1,6 @@
 {
-  "versionCode": 11,
-  "versionName": "1.8.0",
-  "notes": "Jina la app sasa ni HOPE LOAN badala ya HOPE PMO -- anwani ile ile, huduma zile zile (Calls, dashibodi, upakiaji, na Loan), jina jipya tu. / The app is now named HOPE LOAN instead of HOPE PMO -- same install, same features (Calls, dashboard, uploads, and Loan), just a new name.",
+  "versionCode": 12,
+  "versionName": "1.8.1",
+  "notes": "Kama usasishaji unaonekana kutokamilika mara kwa mara: baada ya kubonyeza Sasisha, subiri skrini nyingine ifunguke kisha bonyeza Install na Open humo -- usirudi nyuma kabla ya kumaliza. / If the update keeps showing as not finished: after tapping Update, wait for a second screen to open and tap Install then Open there -- don't go back before it finishes.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
