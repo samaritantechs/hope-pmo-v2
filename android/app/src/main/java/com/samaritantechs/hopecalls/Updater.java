@@ -94,13 +94,13 @@ class Updater {
     private static void prompt(final MainActivity activity, final int versionCode,
                                String versionName, String notes, final String url,
                                boolean failedBefore) {
-        String body = "HOPE PMO " + versionName + "\n\n" + notes;
+        String body = "HOPE LOAN " + versionName + "\n\n" + notes;
         if (failedBefore) {
             body = "Usasishaji uliopita haukukamilika — bado unatumia toleo la zamani.\n"
-                 + "Ruhusu \"Sakinisha programu zisizojulikana\" kwa HOPE PMO, kisha jaribu tena.\n\n"
+                 + "Ruhusu \"Sakinisha programu zisizojulikana\" kwa HOPE LOAN, kisha jaribu tena.\n\n"
                  + "The last update did not finish, so this is still the old build. Allow "
-                 + "\"Install unknown apps\" for HOPE PMO, then try again.\n\n"
-                 + "HOPE PMO " + versionName + "\n" + notes;
+                 + "\"Install unknown apps\" for HOPE LOAN, then try again.\n\n"
+                 + "HOPE LOAN " + versionName + "\n" + notes;
         }
         new AlertDialog.Builder(activity)
                 .setTitle(failedBefore ? "Usasishaji haukukamilika / Update did not finish"
@@ -123,10 +123,10 @@ class Updater {
 
     private static void download(final MainActivity activity, String url) {
         try {
-            final File out = new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "HOPE-PMO-update.apk");
+            final File out = new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "HOPE-LOAN-update.apk");
             if (out.exists() && !out.delete()) { /* stale copy stays -- the fresh download overwrites it below */ }
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-            r.setTitle("HOPE PMO");
+            r.setTitle("HOPE LOAN");
             r.setDescription("Inapakua toleo jipya…");
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
             r.setDestinationUri(Uri.fromFile(out));
@@ -175,15 +175,15 @@ class Updater {
                 && !activity.getPackageManager().canRequestPackageInstalls()) {
             new AlertDialog.Builder(activity)
                     .setTitle("Ruhusa inahitajika / Permission needed")
-                    .setMessage("Ili kusakinisha toleo jipya, washa \"Sakinisha programu zisizojulikana\" kwa HOPE PMO.\n\n"
-                            + "To install the update, allow \"Install unknown apps\" for HOPE PMO, then press Update again.")
+                    .setMessage("Ili kusakinisha toleo jipya, washa \"Sakinisha programu zisizojulikana\" kwa HOPE LOAN.\n\n"
+                            + "To install the update, allow \"Install unknown apps\" for HOPE LOAN, then press Update again.")
                     .setPositiveButton("Fungua mipangilio / Open settings", (d, w) -> {
                         try {
                             activity.startActivity(new Intent(
                                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:" + activity.getPackageName())));
                         } catch (Exception ignored) {
-                            Toast.makeText(activity, "Mipangilio > Programu > HOPE PMO > Sakinisha programu zisizojulikana.",
+                            Toast.makeText(activity, "Mipangilio > Programu > HOPE LOAN > Sakinisha programu zisizojulikana.",
                                     Toast.LENGTH_LONG).show();
                         }
                     })
@@ -198,7 +198,7 @@ class Updater {
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             activity.startActivity(i);
         } catch (Exception e) {
-            Toast.makeText(activity, "Fungua faili HOPE-PMO-update.apk kwenye Downloads ili kusakinisha.", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "Fungua faili HOPE-LOAN-update.apk kwenye Downloads ili kusakinisha.", Toast.LENGTH_LONG).show();
         }
     }
 }
