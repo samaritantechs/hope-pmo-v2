@@ -685,6 +685,65 @@ test('shifting a payment keeps the original, marked, rather than deleting it', a
 });
 
 /* =====================================================================================
+   REAL END DATE -- the closing event CreditInfo needs, instead of inferring it from a
+   zero balance. "close all these gaps starting with real_end_date".
+   ===================================================================================== */
+
+async function toFunded(db, amount) {
+  const loanId = await toDisbursed(db, amount);
+  await loanApi(db, FINANCE, 'financeMarkFunded', { loan_ids: [loanId] });
+  const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
+  return loan;   // loan_amt = amount * 1.36; loan_id is the ref payment_imports matches on
+}
+
+test('a payment that covers the loan in full closes it and stamps the Real End Date', async () => {
+  const db = fakeDb({});
+  const loan = await toFunded(db, 300000);   // loan_amt = 408000
+  await loanApi(db, FINANCE, 'financeImportPayments', {
+    rows: [{ ref: loan.loan_id, amount: 200000, paid_at: '2026-01-05' }],
+  });
+  let after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
+  assert.equal(after.stage, 'funded', 'short of the total -- stays open');
+  assert.equal(after.real_end_date, undefined);
+
+  await loanApi(db, FINANCE, 'financeImportPayments', {
+    rows: [{ ref: loan.loan_id, amount: 208000, paid_at: '2026-01-19' }],
+  });
+  after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
+  assert.equal(after.stage, 'closed', 'fully covered now -- the closing event fires');
+  assert.equal(after.real_end_date, '2026-01-19', 'the date of the payment that actually cleared it, not today');
+
+  const events = (await db.from('loan_events').select('*')).data.filter(e => e.loan_id === loan.id);
+  assert.ok(events.some(e => e.to_stage === 'closed'), 'the closure is on the record like every other transition');
+});
+
+test('a loan not yet funded never auto-closes, even if a matching ref is fully paid', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
+  const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
+  assert.equal(loan.stage, 'approved', 'sanity: not disbursed or funded yet');
+  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: loan.loan_id, amount: 999999999 }] });
+  const after = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
+  assert.equal(after.stage, 'approved', 'never disbursed or funded -- a stray payment cannot close it');
+});
+
+test('shifting a payment onto a ref can be the transaction that finally closes it', async () => {
+  const db = fakeDb({});
+  const loan = await toFunded(db, 300000);   // loan_amt = 408000
+  await loanApi(db, FINANCE, 'financeImportPayments', {
+    rows: [{ ref: 'WRONG-REF', amount: 408000, paid_at: '2026-02-10' }],
+  });
+  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: 'WRONG-REF', amount: 1 }] });
+  const rows = (await db.from('payment_imports').select('*')).data.filter(p => p.ref === 'WRONG-REF' && p.amount === 408000);
+  await loanApi(db, FINANCE, 'financeShiftPayment', { payment_id: rows[0].id, to_ref: loan.loan_id, reason: 'misapplied slip' });
+  const after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
+  assert.equal(after.stage, 'closed');
+  assert.equal(after.real_end_date, '2026-02-10');
+});
+
+/* =====================================================================================
    ILIYONASA -- signed and attributable, never an anonymous edit.
    ===================================================================================== */
 
