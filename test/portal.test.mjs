@@ -335,7 +335,11 @@ test('weekly lays out Mon-Fri with the week totals', async () => {
   assert.equal(fri.recovered, 400);                         // initial 2100 - current 1700, and the
                                                             // same 400 team progress splits 300/100
   assert.equal(fri.received, 1500);
-  assert.equal(d.totals.salesCount, 2);
+  // 3, not 2: l3 (stage 'disbursed', approved 2026-07-20, within Mon-Fri) is a genuine sale
+  // that had already moved past 'approved' by the time this reads it -- "sales ... aint
+  // reflecting okay", the bug SALES_STAGES fixes. l1 and l2 (still at 'approved') count as
+  // before; only l4 (never reached approval) sits out.
+  assert.equal(d.totals.salesCount, 3);
 });
 
 test('team progress pairs initial and current decks per team', async () => {
@@ -482,7 +486,9 @@ test('credit scores analysts on their count 1-6 book and their sales', async () 
   assert.equal(a.cleared, 0); assert.equal(a.bad, 0); assert.equal(a.stat, 0);
   assert.equal(a.success, 100);                             // (cleared + reduced) / count 1-6
   assert.equal(a.recovered, 300);
-  assert.equal(a.sales, 300000);                            // the one approved KONGOWE loan
+  // l1 (approved, 300000) + l3 (disbursed, 100000) -- both are ANALYST A's KONGOWE sales;
+  // l3 does not stop being one just because it has since moved past 'approved' (SALES_STAGES).
+  assert.equal(a.sales, 400000);
   // MBAGALA names no analyst, so its 999 lands on (unassigned) rather than vanishing.
   assert.equal(d.rows.find(r => r.analyst === '(unassigned)').cnt, 1);
   // The portfolio is the daily call list, built from TODAY's deck, not Monday's.

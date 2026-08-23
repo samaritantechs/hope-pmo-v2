@@ -3916,7 +3916,14 @@ VIEWS.credit = function(){
 
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
    report read these columns, so a reassignment has to be editable here, not re-uploaded. */
-var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
+// "recovery officers and collection officers names aint reflecting in abnormal payments ...
+// pmo column" -- the PMO column on Abnormal Payments names whoever the customer's stage maps
+// to (RECOVERY -> teams.recovery, COLLECTION -> teams.collection -- see ABN_STAGE server-side)
+// but 'collection' was never on this list, so there was never a box on this screen to type a
+// Collection officer's name into at all. The column itself already exists once
+// db/migrations/2026-08-09-team-contacts.sql has been run (it is additive/optional -- saveTeam
+// silently drops the field until then); this is the other half, the form to fill it from.
+var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike','collection'];
 /* THERE IS NO CREDIT ID ANY MORE. An analyst used to be carried by the number they appear under
    in the sale-approvals report, and every report then had to translate that number back into a
    person. Now the approvals report is read by NAME against the CREDIT column below, so there is
@@ -5035,12 +5042,28 @@ function lnStageChip(s){
   if (k==='DISBURSED'||k==='APPROVED') return 'warn';
   return 'mut';
 }
+/** "presing save in assessment stages or any submissions should always turn the button off to
+    saving, some think it doesnt fn and multiple click" -- a click focuses its button first, in
+    every browser and WebView, so document.activeElement AT THE MOMENT lnAct/lnActKeep_ is
+    called is reliably the button that triggered it -- no call site has to be touched to pass
+    it in. Disabling it synchronously, before the network call even starts, is what actually
+    stops a second tap: a disabled button does not dispatch a second click at all. */
+function lnDisableTrigger_(){
+  var btn = document.activeElement;
+  if (!btn || btn.tagName !== 'BUTTON' || btn.disabled) return null;
+  btn.disabled = true;
+  return btn;
+}
 function lnAct(fn, args, okMsg, after){
+  var btn = lnDisableTrigger_();
   srv(fn, args).then(function(){
     toast(okMsg || 'Imefanyika / Done');
-    closeDrawer();
+    closeDrawer();               // the button leaves with the drawer -- nothing to re-enable
     (after || render)();
-  }).catch(function(e){ toast(String((e && e.message) || e), true); });
+  }).catch(function(e){
+    if (btn) btn.disabled = false;   // failed -- give it back so the officer can retry
+    toast(String((e && e.message) || e), true);
+  });
 }
 /** Same call, but the panel stays open -- "updating personal info shoulnt close the pannel
     after each section filling". lnAct's closeDrawer() is right for a TERMINAL action (assign,
@@ -5048,9 +5071,14 @@ function lnAct(fn, args, okMsg, after){
     form the officer is still working through. Returns the promise so a caller can chain
     (e.g. the pad/upload saves that have to finish before the section save itself fires). */
 function lnActKeep_(fn, args, okMsg){
+  var btn = lnDisableTrigger_();
   return srv(fn, args).then(function(){
+    if (btn) btn.disabled = false;   // panel stays open -- the same button may be pressed again
     toast(okMsg || 'Imefanyika / Done');
-  }, function(e){ toast(String((e && e.message) || e), true); throw e; });
+  }, function(e){
+    if (btn) btn.disabled = false;
+    toast(String((e && e.message) || e), true); throw e;
+  });
 }
 /* =====================================================================================
    KYC CAPTURE -- COMPRESS ON THE DEVICE, DRAW ON A CANVAS, ASK FOR GPS. Three small building
@@ -5356,6 +5384,15 @@ var ID_TYPES = { 'NIDA': 'national_id', 'Driving Licence': 'driving_licence', 'V
 var CREDIT_RETURN_REASONS = ['Missing signature', 'Missing thumbprint', 'Missing customer photo',
   'Missing guarantor details', 'Location (GPS) not captured', 'Verification photo missing',
   'Incomplete business details', 'Other'];
+// "are all information captured enough for the future creditinfo crb report?" -- these
+// columns already existed on customers (RUN-ME-001, "Every one of these is a CreditInfo
+// Individual column") but nothing on any screen ever asked for them. Same pattern as GENDERS/
+// ID_TYPES above: a plain choice list, generic passthrough on the server does the rest.
+var MARITAL_STATUSES = ['Single', 'Married', 'Divorced', 'Widowed'];
+var EDUCATIONS = ['None', 'Primary', 'Secondary', 'Tertiary'];
+var EMPLOYMENTS = ['SelfEmployed', 'Employed', 'Both', 'Unemployed'];
+var RESIDENCE_TYPES = ['Owned', 'Rented', 'Family'];
+var RESIDENCY_CAPACITIES = ['Owner', 'Tenant', 'Living with family'];
 
 /* BRANCH, NOT TEAM, AT REGISTRATION.
 
@@ -5513,16 +5550,45 @@ function lnTeamAssessForm_(loanRow){
     drawer('<h3>' + esc(loan.full_name) + ' &middot; Ref ' + esc(loan.loan_id) + '</h3>'
       + '<div class="sub">Each section below SAVES ON ITS OWN -- nothing is lost if you leave and come back. "Add save option ... without losing primary captured data before submitting."</div>'
       + '<div class="card"><div class="card-h">1. Personal details' + (locked ? ' <span class="chip mut" style="font-size:10px">Track ' + loan.track_no + ' -- identity fields locked</span>' : '') + '</div>'
+      // "are all information captured enough for the future creditinfo crb report?" -- the
+      // bureau "wants the parts, not only the whole" (RUN-ME-001): full_name stays what every
+      // other screen searches and displays, these are the split parts alongside it, same
+      // write-once treatment as DOB/national ID since they identify the same one person.
+      + '<div class="fld"><label>Jina la kwanza / First name</label><input id="lnFirstName" value="' + esc(c.first_name || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Majina ya kati / Middle name(s)</label><input id="lnMiddleNames" value="' + esc(c.middle_names || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Jina la ukoo la sasa / Present surname</label><input id="lnPresentSurname" value="' + esc(c.present_surname || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Jina la ukoo la kuzaliwa / Birth surname</label><input id="lnBirthSurname" value="' + esc(c.birth_surname || '') + '"' + (locked ? ' disabled' : '') + '></div>'
       + '<div class="fld"><label>Date of birth</label><input id="lnDob" type="date" value="' + esc(c.dob || '') + '"' + (locked ? ' disabled' : '') + '></div>'
       + '<div class="fld"><label>Gender</label><select id="lnGender"' + (locked ? ' disabled' : '') + '>'
         + '<option value="">— chagua / choose —</option>'
         + GENDERS.map(function(x){ return '<option' + (c.gender === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Hali ya ndoa / Marital status</label><select id="lnMarital">'
+        + '<option value="">— chagua / choose —</option>'
+        + MARITAL_STATUSES.map(function(x){ return '<option' + (c.marital_status === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Wenza / Spouses</label><input id="lnSpouses" type="number" value="' + (c.spouses != null ? c.spouses : '') + '"></div>'
+      + '<div class="fld"><label>Watoto / Children</label><input id="lnChildren" type="number" value="' + (c.children != null ? c.children : '') + '"></div>'
+      + '<div class="fld"><label>Elimu / Education</label><select id="lnEducation">'
+        + '<option value="">— chagua / choose —</option>'
+        + EDUCATIONS.map(function(x){ return '<option' + (c.education === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
         + '</select></div>'
       + '<div class="fld"><label>Aina ya kitambulisho / ID type</label><select id="lnIdType"' + (locked ? ' disabled' : '') + '>'
         + Object.keys(ID_TYPES).map(function(x){ return '<option' + (idType === x ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('')
         + '</select></div>'
       + '<div class="fld"><label>Namba ya kitambulisho / ID number</label><input id="lnIdNo" value="' + esc(idNo) + '"' + (locked ? ' disabled' : '') + '></div>'
       + '<div class="fld" id="lnIdOtherFld"><label>Aina gani? / Which kind?</label><input id="lnIdOther" value="' + esc(c.other_id_type || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>TIN</label><input id="lnTin" value="' + esc(c.tin || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="sub" style="margin:10px 0 4px">Kazi / Employment</div>'
+      + '<div class="fld"><label>Kazi/shughuli / Occupation</label><input id="lnOccupation" value="' + esc(c.occupation || '') + '"></div>'
+      + '<div class="fld"><label>Ajira / Employment</label><select id="lnEmployment">'
+        + '<option value="">— chagua / choose —</option>'
+        + EMPLOYMENTS.map(function(x){ return '<option' + (c.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Mwajiri (kama yupo) / Employer (if any)</label><input id="lnEmployerName" value="' + esc(c.employer_name || '') + '"></div>'
+      + '<div class="sub" style="margin:10px 0 4px">Mawasiliano zaidi / More contact</div>'
+      + '<div class="fld"><label>Simu ya pili / Alternate phone</label><input id="lnMobileAlt" value="' + esc(c.mobile_alt || '') + '"></div>'
+      + '<div class="fld"><label>Barua pepe / Email</label><input id="lnEmail" type="email" value="' + esc(c.email || '') + '"></div>'
       + captureRowPad_('Sahihi / Signature', 'lnSigPad', 'lnSigClear')
       + captureRowPad_('Alama ya kidole gumba / Thumbprint press', 'lnThumbPad', 'lnThumbClear')
       + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoStatus')
@@ -5538,8 +5604,22 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="fld"><label>Mtaa / Street</label><input id="lnCustStreet" value="' + esc(c.street || '') + '"></div>'
       + '<div class="fld"><label>Kata / Ward</label><input id="lnCustWard" value="' + esc(c.ward || '') + '"></div>'
       + '<div class="fld"><label>Wilaya / District</label><input id="lnDistrict" value="' + esc(c.district || '') + '"></div>'
+      + '<div class="fld"><label>Namba ya kiwanja / Block number</label><input id="lnCustBlock" value="' + esc(c.block_number || '') + '"></div>'
+      + '<div class="fld"><label>Aina ya makazi / Type of residence</label><select id="lnCustResType">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCE_TYPES.map(function(x){ return '<option' + (c.type_of_residence === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Hadhi ya makazi / Residency capacity</label><select id="lnCustResCap">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCY_CAPACITIES.map(function(x){ return '<option' + (c.residency_capacity === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Miaka ya kuishi hapo / Years at this residence</label><input id="lnCustResYears" type="number" step="0.1" value="' + (c.years_of_residence != null ? c.years_of_residence : '') + '"></div>'
       + captureRowGps_('Mahali pa makazi ya mteja / Customer residence location', 'lnCustGpsBtn', 'lnCustGpsStatus')
       + captureRowPhoto_('Picha ya uthibitisho makazi (na afisa) / Residence verification photo (with officer)', 'lnCustResPhotoBtn', 'lnCustResPhotoStatus')
+      // Kiambatanisho Na. 3 of the loan contract: "Barua ya utambulisho wa makazi na biashara
+      // ya Mkopaji kutoka Serikali ya Mtaa" -- a photograph OF a letter the local government
+      // office issues, distinct from the officer-present verification photo above it.
+      + captureRowPhoto_('Barua ya Serikali ya Mtaa (makazi/biashara) / Local govt letter (residence/business)', 'lnCustLetterBtn', 'lnCustLetterStatus')
       + '<label><input type="checkbox" id="lnResOk"' + (a.residence_verified ? ' checked' : '') + '> Customer residence verified</label><br>'
       + '<label><input type="checkbox" id="lnGResOk"' + (a.guarantor_residence_verified ? ' checked' : '') + '> Guarantor residence verified</label>'
       + '<button class="btn sm" id="lnSaveResidence" style="margin-top:8px">Save this section</button></div>'
@@ -5549,6 +5629,12 @@ function lnTeamAssessForm_(loanRow){
       // location coordinates for all 3 placess business and their residences" -- business
       // TYPE was already asked at CS registration; this is the name, and the third place.
       + '<div class="fld"><label>Jina la biashara / Business name</label><input id="lnBizName" value="' + esc(c.business_name || '') + '"></div>'
+      // "Every one of these is a CreditInfo Individual column" -- income figures officers
+      // already ask about verbally at this visit; weekly_profit is derived server-side from
+      // daily_profit x 6, same as it already was for the other columns in this list.
+      + '<div class="fld"><label>Mauzo ya siku / Daily sales (TZS)</label><input id="lnDailySales" type="number" value="' + (c.daily_sales != null ? c.daily_sales : '') + '"></div>'
+      + '<div class="fld"><label>Faida ya siku / Daily profit (TZS)</label><input id="lnDailyProfit" type="number" value="' + (c.daily_profit != null ? c.daily_profit : '') + '"></div>'
+      + '<div class="fld"><label>Matumizi ya wiki / Weekly expenses (TZS)</label><input id="lnWeeklyExpenses" type="number" value="' + (c.weekly_expenses != null ? c.weekly_expenses : '') + '"></div>'
       + captureRowGps_('Mahali pa biashara / Business location', 'lnBizGpsBtn', 'lnBizGpsStatus')
       + captureRowPhoto_('Picha ya mbele ya biashara (na afisa) / Business front verification photo (with officer)', 'lnBizPhotoBtn', 'lnBizPhotoStatus')
       + '<label><input type="checkbox" id="lnBizOk"' + (a.business_verified ? ' checked' : '') + '> Business ownership verified</label>'
@@ -5566,14 +5652,27 @@ function lnTeamAssessForm_(loanRow){
         + Object.keys(ID_TYPES).map(function(x){ return '<option' + ((g.id_type || 'NIDA') === x ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('')
         + '</select></div>'
       + '<div class="fld"><label>Namba ya kitambulisho / ID number</label><input id="lnGIdNo" value="' + esc(g.national_id || '') + '"></div>'
+      + '<div class="fld"><label>Kazi/shughuli / Occupation</label><input id="lnGOccupation" value="' + esc(g.occupation || '') + '"></div>'
       // "residence and business ver should be filled street, ward, district for both customer
       // and guarantor" -- the guarantor's half lives here, alongside the rest of their own
       // record, not split off into section 4 where their row might not exist yet.
       + '<div class="fld"><label>Mtaa / Street</label><input id="lnGStreet" value="' + esc(g.street || '') + '"></div>'
       + '<div class="fld"><label>Kata / Ward</label><input id="lnGWard" value="' + esc(g.ward || '') + '"></div>'
       + '<div class="fld"><label>Wilaya / District</label><input id="lnGDistrict" value="' + esc(g.district || '') + '"></div>'
+      + '<div class="fld"><label>Namba ya kiwanja / Block number</label><input id="lnGBlock" value="' + esc(g.block_number || '') + '"></div>'
+      + '<div class="fld"><label>Aina ya makazi / Type of residence</label><select id="lnGResType">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCE_TYPES.map(function(x){ return '<option' + (g.type_of_residence === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Hadhi ya makazi / Residency capacity</label><select id="lnGResCap">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCY_CAPACITIES.map(function(x){ return '<option' + (g.residency_capacity === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
       + captureRowGps_('Mahali pa makazi ya mdhamini / Guarantor residence location', 'lnGGpsBtn', 'lnGGpsStatus')
       + captureRowPhoto_('Picha ya uthibitisho makazi ya mdhamini (na afisa) / Guarantor residence verification photo (with officer)', 'lnGResPhotoBtn', 'lnGResPhotoStatus')
+      // Kiambatanisho Na. 2: "Barua ya Utambulisho ya Mdhamini kutoka kwa Serikali ya Mtaa
+      // ikimtambua Mdhamini pamoja na makazi yake" -- the guarantor's own local govt letter.
+      + captureRowPhoto_('Barua ya Serikali ya Mtaa ya mdhamini / Guarantor local govt letter', 'lnGLetterBtn', 'lnGLetterStatus')
       + captureRowPhoto_('Picha ya mdhamini / Guarantor photo', 'lnGPhotoBtn', 'lnGPhotoStatus')
       + captureRowPad_('Sahihi ya mdhamini / Guarantor signature', 'lnGSigPad', 'lnGSigClear')
       + captureRowPad_('Alama ya kidole gumba ya mdhamini / Guarantor thumbprint', 'lnGThumbPad', 'lnGThumbClear')
@@ -5593,6 +5692,11 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="card"><div class="card-h">5. Team recommendation</div>'
       + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (a.recommend_amount || loan.requested_amt || '') + '"></div>'
       + '<div class="fld"><label>Credit score</label><input id="lnCreditScore" type="number" step="0.1" value="' + (a.credit_score != null ? a.credit_score : '') + '"></div>'
+      // "DHAMANA YA MKOPO ... mali za biashara na mali za nyumbani ... zenye thamani mara
+      // mbili ya mkopo" -- the contract's own collateral clause; collateral_type/_value
+      // already existed on loans (RUN-ME-001), nothing ever wrote to them until now.
+      + '<div class="fld"><label>Aina ya dhamana / Collateral type</label><input id="lnCollType" placeholder="e.g. Business & household assets" value="' + esc(loan.collateral_type || '') + '"></div>'
+      + '<div class="fld"><label>Thamani ya dhamana (TZS) / Collateral value</label><input id="lnCollValue" type="number" value="' + (loan.collateral_value != null ? loan.collateral_value : '') + '"></div>'
       + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
       + '<div class="fld"><label>Remarks</label><input id="lnRemarks" value="' + esc(a.remarks || '') + '"></div>'
       + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
@@ -5618,12 +5722,17 @@ function lnTeamAssessForm_(loanRow){
     $('#lnGThumbClear').onclick = function(){ gThumbPad.clear(); };
 
     var PATHS = { photo: c.photo_url, gPhoto: g.photo_url, gResPhoto: g.residence_verify_photo_url,
-      custResPhoto: c.residence_verify_photo_url, bizPhoto: c.business_verify_photo_url };
+      custResPhoto: c.residence_verify_photo_url, bizPhoto: c.business_verify_photo_url,
+      custLetter: c.local_govt_letter_url, gLetter: g.local_govt_letter_url };
     wirePhotoCapture_('lnPhotoBtn', 'lnPhotoStatus', loan.id, 'photo', PATHS.photo, function(p){ PATHS.photo = p; });
     wirePhotoCapture_('lnGPhotoBtn', 'lnGPhotoStatus', loan.id, 'g-photo', PATHS.gPhoto, function(p){ PATHS.gPhoto = p; });
     wirePhotoCapture_('lnGResPhotoBtn', 'lnGResPhotoStatus', loan.id, 'g-residence', PATHS.gResPhoto, function(p){ PATHS.gResPhoto = p; });
     wirePhotoCapture_('lnCustResPhotoBtn', 'lnCustResPhotoStatus', loan.id, 'residence', PATHS.custResPhoto, function(p){ PATHS.custResPhoto = p; });
     wirePhotoCapture_('lnBizPhotoBtn', 'lnBizPhotoStatus', loan.id, 'business', PATHS.bizPhoto, function(p){ PATHS.bizPhoto = p; });
+    // Kiambatanisho Na. 2/3 -- the two local-government letters, same live-camera capture as
+    // every other photo here, just a different piece of paper being photographed.
+    wirePhotoCapture_('lnCustLetterBtn', 'lnCustLetterStatus', loan.id, 'residence-letter', PATHS.custLetter, function(p){ PATHS.custLetter = p; });
+    wirePhotoCapture_('lnGLetterBtn', 'lnGLetterStatus', loan.id, 'g-letter', PATHS.gLetter, function(p){ PATHS.gLetter = p; });
 
     var COORDS = { custRes: { lat: c.residence_lat, lng: c.residence_lng },
       biz: { lat: c.business_lat, lng: c.business_lng },
@@ -5643,6 +5752,14 @@ function lnTeamAssessForm_(loanRow){
         // District moved to section 4 with street/ward ("residence and business ver should be
         // filled street, ward, district") -- not asked here any more.
         var fields = { dob: $('#lnDob').value, gender: $('#lnGender').value, id_type: type,
+          first_name: $('#lnFirstName').value.trim(), middle_names: $('#lnMiddleNames').value.trim(),
+          present_surname: $('#lnPresentSurname').value.trim(), birth_surname: $('#lnBirthSurname').value.trim(),
+          marital_status: $('#lnMarital').value, education: $('#lnEducation').value,
+          spouses: $('#lnSpouses').value !== '' ? Number($('#lnSpouses').value) : null,
+          children: $('#lnChildren').value !== '' ? Number($('#lnChildren').value) : null,
+          tin: $('#lnTin').value.trim(), occupation: $('#lnOccupation').value.trim(),
+          employment: $('#lnEmployment').value, employer_name: $('#lnEmployerName').value.trim(),
+          mobile_alt: $('#lnMobileAlt').value.trim(), email: $('#lnEmail').value.trim(),
           signature_url: PATHS.signature != null ? PATHS.signature : c.signature_url,
           thumbprint_url: PATHS.thumbprint != null ? PATHS.thumbprint : c.thumbprint_url,
           photo_url: PATHS.photo };
@@ -5654,6 +5771,7 @@ function lnTeamAssessForm_(loanRow){
     $('#lnSaveRec').onclick = function(){
       lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
         fields: { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
+          collateral_type: $('#lnCollType').value.trim(), collateral_value: $('#lnCollValue').value.trim(),
           zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.');
     };
     $('#lnSaveGuar').onclick = function(){
@@ -5668,10 +5786,11 @@ function lnTeamAssessForm_(loanRow){
         var gIdType = $('#lnGIdType').value;
         var primary = {
           full_name: $('#lnGName').value.trim(), phone: $('#lnGPhone').value.trim(), relationship: $('#lnGRel').value.trim(),
-          id_type: gIdType, national_id: $('#lnGIdNo').value.trim(),
+          id_type: gIdType, national_id: $('#lnGIdNo').value.trim(), occupation: $('#lnGOccupation').value.trim(),
           street: $('#lnGStreet').value.trim(), ward: $('#lnGWard').value.trim(), district: $('#lnGDistrict').value.trim(),
+          block_number: $('#lnGBlock').value.trim(), type_of_residence: $('#lnGResType').value, residency_capacity: $('#lnGResCap').value,
           residence_lat: COORDS.gRes.lat, residence_lng: COORDS.gRes.lng,
-          residence_verify_photo_url: PATHS.gResPhoto, photo_url: PATHS.gPhoto,
+          residence_verify_photo_url: PATHS.gResPhoto, local_govt_letter_url: PATHS.gLetter, photo_url: PATHS.gPhoto,
           signature_url: PATHS.gSignature != null ? PATHS.gSignature : g.signature_url,
           thumbprint_url: PATHS.gThumbprint != null ? PATHS.gThumbprint : g.thumbprint_url,
         };
@@ -5689,12 +5808,16 @@ function lnTeamAssessForm_(loanRow){
       lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
         verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked,
         street: $('#lnCustStreet').value.trim(), ward: $('#lnCustWard').value.trim(), district: $('#lnDistrict').value.trim(),
+        block_number: $('#lnCustBlock').value.trim(), type_of_residence: $('#lnCustResType').value, residency_capacity: $('#lnCustResCap').value,
+        years_of_residence: $('#lnCustResYears').value !== '' ? Number($('#lnCustResYears').value) : null,
         residence_lat: COORDS.custRes.lat, residence_lng: COORDS.custRes.lng, residence_verify_photo_url: PATHS.custResPhoto,
+        local_govt_letter_url: PATHS.custLetter,
       } }, 'Saved.');
     };
     $('#lnSaveBusiness').onclick = function(){
       lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
         verified: $('#lnBizOk').checked, business_name: $('#lnBizName').value.trim(),
+        daily_sales: $('#lnDailySales').value.trim(), daily_profit: $('#lnDailyProfit').value.trim(), weekly_expenses: $('#lnWeeklyExpenses').value.trim(),
         business_lat: COORDS.biz.lat, business_lng: COORDS.biz.lng, business_verify_photo_url: PATHS.bizPhoto,
       } }, 'Saved.');
     };
@@ -5800,6 +5923,12 @@ function lnCreditForm_(loan){
   drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Ref ' + esc(loan.loan_id) + '</div>'
     + '<div class="fld"><label>Granted amount (TZS)</label><input id="lnGrantAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
     + '<div class="fld"><label>Previous balance (for a top-up)</label><input id="lnPrevBal" type="number" value="0"></div>'
+    // "ADA YA MKOPO (APPLICATION FEES) ... asilimia tano (5%) ... na haitakuwa chini ya
+    // Shilingi ..." -- the contract's own application fee, deducted from what is disbursed.
+    // Suggested at 5% and recalculated as the grant changes, UNTIL touched by hand -- the
+    // contract's minimum-shillings floor is a blank in the template, so raising this past 5%
+    // to match it is exactly what editing it is for.
+    + '<div class="fld"><label>Ada ya mkopo (5%) / Application fee (TZS)</label><input id="lnAppFee" type="number" value="' + Math.round((Number(loan.team_recomm) || 0) * 0.05) + '"></div>'
     + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode2">'
       + '<option value="">— chagua / choose —</option>'
       + DISB_MODES.map(function(m){ return '<option' + (loan.disbursement_type===m?' selected':'') + '>' + m + '</option>'; }).join('')
@@ -5818,12 +5947,24 @@ function lnCreditForm_(loan){
     + '<div class="fld"><label>Maelezo zaidi (hiari) / More detail (optional)</label><input id="lnCrReasonNote"></div>'
     + '<button class="btn w ghost" id="lnCrRejectConfirm">Thibitisha kurudisha / Confirm return</button>'
     + '</div>');
-  function preview(){
+  // The fee box tracks 5% of the grant until the analyst types in it directly -- same
+  // "stays exactly what was typed once touched" rule as every other paired default in this app.
+  var appFeeTouched = false;
+  function preview(fromFeeBox){
+    if (fromFeeBox) appFeeTouched = true;
     var g = Number($('#lnGrantAmt').value) || 0;
     var interest = Math.round(g * 0.36), total = g + interest, inst = Math.round(total / 12);
-    $('#lnSchedulePreview').textContent = 'Interest ' + money(interest) + ' · Total ' + money(total) + ' · 12 x ' + money(inst) + '/week';
+    if (!appFeeTouched) $('#lnAppFee').value = Math.round(g * 0.05);
+    var fee = Number($('#lnAppFee').value) || 0;
+    var prevBal = Number($('#lnPrevBal').value) || 0;
+    var disbursing = Math.max(0, g - prevBal - fee);
+    $('#lnSchedulePreview').textContent = 'Interest ' + money(interest) + ' · Total ' + money(total) + ' · 12 x ' + money(inst) + '/week'
+      + ' · Fee ' + money(fee) + ' · Disbursing ' + money(disbursing);
   }
-  $('#lnGrantAmt').oninput = preview; preview();
+  $('#lnGrantAmt').oninput = function(){ preview(false); };
+  $('#lnAppFee').oninput = function(){ preview(true); };
+  $('#lnPrevBal').oninput = function(){ preview(false); };
+  preview(false);
   // Bank name/account only mean something for a bank disbursement -- shown for Bank, hidden
   // (not required) for Momo or nothing chosen yet.
   function toggleBankFlds(){
@@ -5835,7 +5976,8 @@ function lnCreditForm_(loan){
   $('#lnGrantBtn').onclick = function(){
     lnAct('creditApprove', {
       loan_id: loan.id, granted_amount: Number($('#lnGrantAmt').value) || 0,
-      previous_balance: Number($('#lnPrevBal').value) || 0, disbursement_mode: $('#lnDisbMode2').value.trim(),
+      previous_balance: Number($('#lnPrevBal').value) || 0, application_fee: $('#lnAppFee').value.trim(),
+      disbursement_mode: $('#lnDisbMode2').value.trim(),
       bank_name: $('#lnBankName').value.trim(), account_no: $('#lnAcctNo').value.trim(),
     }, 'Granted.', function(){ go('ln_credit'); });
   };
