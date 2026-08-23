@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The app now opens the whole portal (Calls + dashboard + uploads), so it is named for
-         the system rather than just the calls half. Package id is unchanged, so this installs
-         as an UPDATE over the earlier "HOPE Calls" build. -->
-    <string name="app_name">HOPE PMO</string>
+    <!-- "i wish the app name changes to HOPE LOAN automatic": renamed for the whole fleet,
+         not just Loan officers, per the explicit confirmation this was the intent. Package id
+         is unchanged, so this installs as an UPDATE over every earlier build, "HOPE Calls" and
+         "HOPE PMO" alike; nobody has to reinstall. XML comments cannot contain a double
+         hyphen (see #44's own lesson on this), which is why this one has none. -->
+    <string name="app_name">HOPE LOAN</string>
 </resources>

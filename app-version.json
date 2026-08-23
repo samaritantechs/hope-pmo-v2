@@ -1,6 +1,6 @@
 {
-  "versionCode": 10,
-  "versionName": "1.7.1",
-  "notes": "Ombi la ruhusa (ripoti kuupdate zenyewe) sasa lina maelezo rahisi, na si la lazima -- unaweza kuchagua Baadaye, na litaulizwa tena mara nyingine. / The permission prompt (for reports to auto-update) now has simpler wording and is no longer forced -- you can tap Later, and it will ask again next time you open the app.",
+  "versionCode": 11,
+  "versionName": "1.8.0",
+  "notes": "Jina la app sasa ni HOPE LOAN badala ya HOPE PMO -- anwani ile ile, huduma zile zile (Calls, dashibodi, upakiaji, na Loan), jina jipya tu. / The app is now named HOPE LOAN instead of HOPE PMO -- same install, same features (Calls, dashboard, uploads, and Loan), just a new name.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
