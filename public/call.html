@@ -674,25 +674,20 @@ function oemBatteryText_(){
  * customer's door. "Ruhusu comment kusave automatic" is the same permission described as the
  * thing it actually buys, which is the difference between being read and being dismissed.
  *
- * ASKED AT MOST ONCE A DAY. Android's own dialog is the second step, so a refusal costs two
- * taps and re-asking every few minutes would train people to refuse. Once a day, until it is
- * allowed, then never again -- the check is the granted state itself, not a flag we set, so an
- * officer who allows it and later has it revoked by a battery-saver sweep is asked again.
+ * ASKED ON EVERY OPEN, NOT THROTTLED. "if one didnt allow any permission, always ask them to
+ * allow at every open" -- the same rule this app already applies to the OS-level call-log and
+ * location permissions. The check is the granted state itself, not a flag saying it was asked
+ * before, so this stops on its own the moment it is actually allowed -- and starts again on
+ * its own if a battery-saver sweep later revokes it, with no "later" tap able to defer it past
+ * today.
  */
-var BG_ASK_LS_KEY = 'hcBgAsk_v1';
 function backgroundBlocked_(){
   var nb = nativeBridge();
   if (!nb || !nb.isIgnoringBatteryOptimizations || !nb.requestIgnoreBatteryOptimizations) return false;
   try { return nb.isIgnoringBatteryOptimizations() !== '1'; } catch(e){ return false; }
 }
-function askBackground_(force){
+function askBackground_(){
   if (!backgroundBlocked_()) return;
-  if (!force) {
-    var last = '';
-    try { last = localStorage.getItem(BG_ASK_LS_KEY) || ''; } catch(e){}
-    if (last === todayKeyLocal_()) return;                 // already asked today
-  }
-  try { localStorage.setItem(BG_ASK_LS_KEY, todayKeyLocal_()); } catch(e){}
   var oem = oemBatteryText_();
   var note = $('#bgOemNote');
   if (oem) { note.textContent = oem; note.classList.remove('hide'); }
@@ -1055,7 +1050,7 @@ function enterApp(d){
   /* Ask for background permission the way the app asks for everything else -- on its own, when
      it opens. Behind the first draw so the officer sees their customers underneath it and knows
      what the app is, rather than being met by a dialog on a blank screen. */
-  setTimeout(function(){ if (S.entered) askBackground_(false); }, 900);
+  setTimeout(function(){ if (S.entered) askBackground_(); }, 900);
   startSyncLoop();
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
