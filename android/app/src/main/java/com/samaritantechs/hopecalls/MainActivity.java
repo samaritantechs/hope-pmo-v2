@@ -3,6 +3,7 @@ package com.samaritantechs.hopecalls;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.DownloadManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -124,9 +125,9 @@ public class MainActivity extends Activity {
                 if (hasLocationPermission()) { callback.invoke(origin, true, false); return; }
                 pendingGeoCallback = callback;
                 pendingGeoOrigin = origin;
-                requestPermissions(
+                showLocationRationale_(() -> requestPermissions(
                         new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION },
-                        REQ_PERMS);
+                        REQ_PERMS));
             }
 
             @Override
@@ -226,17 +227,43 @@ public class MainActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    /** Asks for whichever of {call log, location} is not already granted, in one dialog queue. */
+    /** Asks for whichever of {call log, location} is not already granted, in one dialog queue.
+        "use friendly note that an officer will adhere to allowing" -- the bare OS dialog names
+        a permission, not a reason, and a reason is what makes someone tap Allow instead of the
+        reflex Deny. When location is the one missing, a short rationale explains why BEFORE
+        Android's own dialog appears; call log alone (nothing new to explain) skips straight to
+        it, as it always has. */
     private void requestMissingPermissions() {
         List<String> need = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
             need.add(Manifest.permission.READ_CALL_LOG);
         }
-        if (!hasLocationPermission()) {
+        boolean needsLocation = !hasLocationPermission();
+        if (needsLocation) {
             need.add(Manifest.permission.ACCESS_FINE_LOCATION);
             need.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         }
-        if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ_PERMS);
+        if (need.isEmpty()) return;
+        String[] perms = need.toArray(new String[0]);
+        if (needsLocation) showLocationRationale_(() -> requestPermissions(perms, REQ_PERMS));
+        else requestPermissions(perms, REQ_PERMS);
+    }
+
+    /** "we say for future assessment and recovery navigations" -- the same reason HOPE Loan's
+        KYC screens actually capture GPS for: verifying where a customer's residence and
+        business are now, and finding the way back for recovery follow-up later. A plain
+        AlertDialog, not a Toast, because a note that can be missed on the way past does not
+        make anyone more likely to tap Allow -- this one has to be dismissed to continue. */
+    private void showLocationRationale_(Runnable thenRequest) {
+        new AlertDialog.Builder(this)
+                .setTitle("Ruhusa ya Mahali / Location Permission")
+                .setMessage("HOPE Loan inahitaji mahali (GPS) kwa ajili ya tathmini ya wateja na "
+                        + "kuwafuatilia baadaye endapo itahitajika. / HOPE Loan needs your location "
+                        + "for customer assessment now, and to find the way back for recovery "
+                        + "follow-up in future.")
+                .setCancelable(false)
+                .setPositiveButton("Endelea / Continue", (d, w) -> thenRequest.run())
+                .show();
     }
 
     void retryFromBridge() {

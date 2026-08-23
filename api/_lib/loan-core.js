@@ -463,6 +463,18 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
     // scoring of the customer, carried into the copied KYC text alongside the amount.
     const scoreRaw = (fields || {}).credit_score;
     patch.credit_score = (scoreRaw === '' || scoreRaw == null) ? null : (Number(scoreRaw) || null);
+    // "DHAMANA YA MKOPO ... mali za biashara na mali za nyumbani ... zenye thamani mara mbili
+    // ya mkopo" (the contract's own collateral clause) -- collateral_type/collateral_value
+    // already existed on loans (RUN-ME-001); this is the one place that ever writes to them.
+    const collType = textOrNull((fields || {}).collateral_type);
+    const collValRaw = (fields || {}).collateral_value;
+    const collVal = (collValRaw === '' || collValRaw == null) ? null : (Number(collValRaw) || null);
+    if (collType != null || collVal != null) {
+      const { error } = await db.from('loans').update({
+        collateral_type: collType, collateral_value: collVal, updated_at: new Date().toISOString(),
+      }).eq('id', loan.id);
+      if (error) throw new Error(error.message);
+    }
   }
   if (section === 'guarantor') {
     await saveGuarantors(db, loan, user, (fields || {}).guarantors || []);
@@ -478,7 +490,11 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
     // the first time this section is saved, and a guarantor's own facts belong together.
     if (loan.customer_id) {
       const resPatch = {};
-      for (const k of ['street', 'ward', 'district', 'residence_lat', 'residence_lng', 'residence_verify_photo_url']) {
+      // block_number/type_of_residence/residency_capacity/years_of_residence and the local
+      // government letter are all CreditInfo Individual columns that already existed on
+      // customers (RUN-ME-001/006) with nothing on this screen ever asking for them.
+      for (const k of ['street', 'ward', 'district', 'residence_lat', 'residence_lng', 'residence_verify_photo_url',
+        'block_number', 'type_of_residence', 'residency_capacity', 'years_of_residence', 'local_govt_letter_url']) {
         if ((fields || {})[k] !== undefined) resPatch[k] = (fields || {})[k];
       }
       if (Object.keys(resPatch).length) {
@@ -495,11 +511,18 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
       // "fill business name and capture live location coordinates for all 3 placess business
       // and their residences" -- business_lat/lng and the site photo (officer + customer AT
       // the business front) join business_name and business_type here.
+      const BIZ_NUMERIC_ = new Set(['daily_sales', 'daily_profit', 'weekly_expenses']);
       for (const k of ['business_type', 'business_name', 'daily_sales', 'daily_profit', 'weekly_expenses',
         'business_lat', 'business_lng', 'business_verify_photo_url']) {
-        if ((fields || {})[k] !== undefined) bizPatch[k] = (fields || {})[k];
+        const v = (fields || {})[k];
+        if (v === undefined) continue;
+        // These come off the form as trimmed strings, same as every text field -- cast rather
+        // than hand '' or '12000' straight to a numeric(14,2) column and let Postgres decide.
+        bizPatch[k] = BIZ_NUMERIC_.has(k) ? (v === '' || v == null ? null : (Number(v) || null)) : v;
       }
-      if ((fields || {}).daily_profit != null) bizPatch.weekly_profit = Number((fields || {}).daily_profit) * 6;
+      if ((fields || {}).daily_profit != null && (fields || {}).daily_profit !== '') {
+        bizPatch.weekly_profit = Number((fields || {}).daily_profit) * 6;
+      }
       const { error } = await db.from('customers').update(bizPatch).eq('id', loan.customer_id);
       if (error) throw new Error(error.message);
     }
@@ -541,9 +564,12 @@ async function saveGuarantors(db, loan, user, list) {
     full_name: textOrNull(g.full_name), phone: normPhone(g.phone), relationship: textOrNull(g.relationship),
     occupation: textOrNull(g.occupation), id_type: textOrNull(g.id_type), national_id: textOrNull(g.national_id),
     street: textOrNull(g.street), district: textOrNull(g.district), ward: textOrNull(g.ward),
+    block_number: textOrNull(g.block_number), type_of_residence: textOrNull(g.type_of_residence),
+    residency_capacity: textOrNull(g.residency_capacity),
     residence_lat: g.residence_lat != null ? Number(g.residence_lat) : null,
     residence_lng: g.residence_lng != null ? Number(g.residence_lng) : null,
     residence_verify_photo_url: textOrNull(g.residence_verify_photo_url),
+    local_govt_letter_url: textOrNull(g.local_govt_letter_url),
     photo_url: textOrNull(g.photo_url), signature_url: textOrNull(g.signature_url), thumbprint_url: textOrNull(g.thumbprint_url),
     created_by: user.name,
   })).filter(r => r.full_name);
@@ -646,24 +672,35 @@ async function creditQueue(db, user) {
   }) };
 }
 
+/** "ADA YA MKOPO (APPLICATION FEES) ... asilimia tano (5%) ya kiasi cha msingi na haitakuwa
+    chini ya Shilingi ................." -- the contract's own 5%-of-principal application fee,
+    separate from the 36% interest/management-fee already in INTEREST_FLAT_RATE. The minimum-
+    shillings floor is a blank in the contract template itself, so it is not hard-coded here --
+    this is only the suggested 5%; credit can raise it by hand on the form when the floor
+    applies. Deducted from what is actually disbursed, per the contract's own "Barua ya Ahadi
+    ya Mkopo": the amount promised is the principal MINUS this fee, not the principal itself. */
+const APPLICATION_FEE_RATE = 0.05;
+
 async function creditApprove(db, user, p) {
   requireTab(user, 'credit');
   const loan = await mustLoan(db, p.loan_id);
   const granted = Number(p.granted_amount) || 0;
   if (!granted) throw badRequest('A granted amount is required.');
   const previousBalance = Number(p.previous_balance) || 0;
-  const disbursing = Math.max(0, granted - previousBalance);
+  const appFee = p.application_fee != null && p.application_fee !== ''
+    ? Number(p.application_fee) || 0 : Math.round(granted * APPLICATION_FEE_RATE);
+  const disbursing = Math.max(0, granted - previousBalance - appFee);
   const interest = Math.round(granted * INTEREST_FLAT_RATE);
   const total = granted + interest;
   const installment = Math.round(total / INSTALLMENTS);
   await transition(db, loan, 'pending_approval', 'approved', user, {
     principal_amt: granted, previous_balance: previousBalance, net_disbursed: disbursing,
-    interest_amt: interest, loan_amt: total, installment_amt: installment,
+    interest_amt: interest, loan_amt: total, installment_amt: installment, application_fee: appFee,
     installments: INSTALLMENTS, disbursement_type: textOrNull(p.disbursement_mode) || loan.disbursement_type,
     approved_by: user.name, approved_date: todayKey(Date.now()), bank_name: textOrNull(p.bank_name),
     account_no: textOrNull(p.account_no),
   }, 'Granted ' + granted);
-  return { ok: true, interest, total, installment };
+  return { ok: true, interest, total, installment, application_fee: appFee };
 }
 
 async function creditReject(db, user, { loan_id, reason }) {

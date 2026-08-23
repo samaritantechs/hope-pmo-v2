@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.6.0",
-  "notes": "Kupakua ripoti (JPG, Excel, CSV) sasa kunafanya kazi ndani ya app -- zinahifadhiwa kwenye Downloads za simu. Awali app ilijifunga. / Downloading reports now works inside the app and saves straight to the phone’s Downloads. It used to close the app.",
+  "versionCode": 9,
+  "versionName": "1.7.0",
+  "notes": "Ruhusa ya mahali (GPS) sasa inaulizwa -- kabla haikuwahi kuombwa hata kidogo, kwa hiyo kuchukua mahali kwenye HOPE Loan kulishindwa kimya kimya. Sasa inaombwa kila unapofungua app, kama huja ruhusa. / Location (GPS) permission is now actually requested -- it was never asked for at all before, so every location-capture button in HOPE Loan failed silently. It is asked for again on every launch if not yet granted.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

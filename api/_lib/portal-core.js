@@ -17,7 +17,7 @@ import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.j
     stopped working must not become a data leak -- but by then there is little left to drop. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
 import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
-import { buildDashboard } from './dashboard-core.js';
+import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
@@ -2114,7 +2114,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: fri, teams: user.teams }),
-    fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').eq('stage', 'approved').gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
+    fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').in('stage', SALES_STAGES).gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
     fetchAll(() => db.from('received_payments').select('team, amount_paid, paid_at').gte('paid_at', mon).lte('paid_at', addDaysKey(mon, 6))),
   ]);
   const days = [];
@@ -2824,7 +2824,7 @@ async function credit(db, user, _args, nowMs) {
     defaulterBook(db, user, { type: 'current', notAfter: today }),
     defaulterBook(db, user, { type: 'initial', onDate: mon }),
     defaulterBook(db, user, { type: 'initial', notAfter: today }),
-    fetchAll(() => onTeams(db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').eq('stage', 'approved'), user.teams)),
+    fetchAll(() => onTeams(db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').in('stage', SALES_STAGES), user.teams)),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -5376,7 +5376,7 @@ async function dashboardFull(db, user, args, nowMs) {
   const dailyTarget = Math.round(weeklyTarget * Math.max(myTeams.length, 1) / 5);
   const salesTrend = WD6.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const on = myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) === d);
+    const on = myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) === d);
     const amt = on.reduce((s, l) => s + (num(l.principal_amt) || num(l.loan_amt)), 0);
     return { weekday: wd, date: d, amount: amt, loans: on.length,
       pct: dailyTarget > 0 ? Math.round((amt / dailyTarget) * 1000) / 10 : null };
@@ -5556,7 +5556,7 @@ async function dashboardFull(db, user, args, nowMs) {
       defaultersInitial: tCustomers(iniToday),
       cleared: Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
-      salesLoans: myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
+      salesLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
       abnormal: myAbn.length,
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),

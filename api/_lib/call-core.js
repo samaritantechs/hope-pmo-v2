@@ -3,7 +3,7 @@ import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, tCustomers, tExpected, tCollected } from './snapshot-totals.js';
-import { buildDashboard } from './dashboard-core.js';
+import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
@@ -986,8 +986,10 @@ async function summaryCompute(db, user, nowMs) {
 
   const today = todayKey(nowMs);
   const monthFrom = today.slice(0, 8) + '01';
+  // "sales in the app interface report summary bar aint reflecting okay" -- SALES_STAGES, not
+  // just 'approved': a sale does not stop being one the moment it is disbursed.
   const loans = await fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date')
-    .eq('stage', 'approved').gte('approved_date', monthFrom).lte('approved_date', today));
+    .in('stage', SALES_STAGES).gte('approved_date', monthFrom).lte('approved_date', today));
   const salesNum = mine(loans).reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0);
   const teamCount = user.teams ? user.teams.length : (await teamList(db)).length;
   const salesDen = monthly * Math.max(teamCount, 1);

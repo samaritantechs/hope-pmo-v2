@@ -14,6 +14,17 @@ import { recoveryBasis, num } from './recovery.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 
+/** "sales in the app interface report summary bar aint reflecting okay" -- every sales query in
+    this codebase filtered on stage === 'approved', which is a CURRENT-STATE check being asked
+    a HISTORY question ("was this loan sold this period?"). A loan does not sit at 'approved'
+    for long -- the very next thing that normally happens to it is disbursement -- so within a
+    day or two of a real sale, that loan's stage moves on and it silently stops counting as a
+    sale for the rest of the month, understating every sales figure on the system (dashboard,
+    the call app's own strip, the GM's weekly report, the sales trend widgets). A sale that was
+    approved and later disbursed/funded/closed is still a sale; only 'rejected' (undone before
+    it ever went out) and 'reversed' (money never moved) genuinely were not one. */
+export const SALES_STAGES = ['approved', 'disbursed', 'funded', 'closed'];
+
 /* THE DASHBOARD NEVER READS A CUSTOMER ROW ANY MORE. Every figure it returns is a sum or a
    count -- no name, phone or balance appears anywhere on it -- and it used to fetch every
    snapshot row of the week to work them out: about 161,000 of them here, all held in this
@@ -65,7 +76,7 @@ async function buildDashboardUncached(db, user, nowMs) {
     // it is the rule, and a filter that quietly stopped working must not become a data leak --
     // but by then there is almost nothing left for it to drop.
     fetchAll(() => onTeams(db.from('loans').select('team, principal_amt, loan_amt, approved_date')
-      .eq('stage', 'approved').gte('approved_date', weekMon).lte('approved_date', today), user.teams)),
+      .in('stage', SALES_STAGES).gte('approved_date', weekMon).lte('approved_date', today), user.teams)),
     fetchAll(() => onTeams(weekend
       ? db.from('received_payments').select('team, amount_paid').gte('paid_at', weekMon).lte('paid_at', today)
       : db.from('received_payments').select('team, amount_paid').eq('paid_at', today), user.teams)),

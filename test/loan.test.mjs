@@ -300,9 +300,33 @@ test('a top-up nets the new principal against the previous balance for the disbu
   const db = fakeDb({});
   const { loanId } = await registerAssignAssess(db, 500000);
   await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
-  await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 500000, previous_balance: 120000 });
+  // application_fee: 0 -- isolating the previous-balance netting from the application fee,
+  // which has its own test below.
+  await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 500000, previous_balance: 120000, application_fee: 0 });
   const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
   assert.equal(Number(loan.net_disbursed), 380000);
+});
+
+test('the application fee defaults to 5% of the grant and is deducted from what disburses', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 500000);
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  const r = await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 500000 });
+  assert.equal(r.application_fee, 25000, 'suggested at 5% when nothing overrides it');
+  const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
+  assert.equal(Number(loan.application_fee), 25000);
+  assert.equal(Number(loan.net_disbursed), 475000, 'granted minus the fee, principal and interest untouched');
+  assert.equal(Number(loan.loan_amt), 680000, 'the fee never inflates what the customer owes -- only the 36% does');
+});
+
+test('the application fee can be overridden by hand, e.g. to match the contract minimum floor', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 500000);
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  const r = await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 500000, application_fee: 40000 });
+  assert.equal(r.application_fee, 40000);
+  const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
+  assert.equal(Number(loan.net_disbursed), 460000);
 });
 
 /* =====================================================================================
@@ -452,6 +476,20 @@ test('recommendation section: credit score is saved and surfaced back through te
   assert.equal(d2.assessment.credit_score, null);
 });
 
+test('recommendation section: collateral type/value land on the loan itself, not the assessment draft', async () => {
+  // "DHAMANA YA MKOPO ... mali za biashara na mali za nyumbani ... zenye thamani mara mbili
+  // ya mkopo" -- the contract's own collateral clause.
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'COLLATERAL CUSTOMER', mobile: '0700000039', team: 'MABIBO', amount: 300000 });
+  await loanApi(db, TEAM, 'teamAssessmentSave', {
+    loan_id: loan.id, section: 'recommendation',
+    fields: { amount: 300000, collateral_type: 'Business & household assets', collateral_value: '900000' },
+  });
+  const after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
+  assert.equal(after.collateral_type, 'Business & household assets');
+  assert.equal(Number(after.collateral_value), 900000);
+});
+
 test('personal details: gender/ID type/signature/thumbprint/photo all pass through, the same generic write DOB already used', async () => {
   const db = fakeDb({});
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });
@@ -461,6 +499,12 @@ test('personal details: gender/ID type/signature/thumbprint/photo all pass throu
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: {
     gender: 'Male', id_type: 'Driving Licence', driving_licence: 'DL-001',
     signature_url: sigPath, thumbprint_url: thumbPath, photo_url: photoPath,
+    // "are all information captured enough for the future creditinfo crb report?" -- the rest
+    // of the CreditInfo Individual columns (RUN-ME-001), all of them accepted the same
+    // generic way DOB always was.
+    first_name: 'Amina', middle_names: 'Juma', present_surname: 'Mwakalinga', birth_surname: 'Kimaro',
+    marital_status: 'Married', spouses: 1, children: 3, education: 'Secondary', tin: '109-233-445',
+    occupation: 'Tailor', employment: 'SelfEmployed', employer_name: '', mobile_alt: '0755000002', email: 'amina@example.com',
   } });
   const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
   assert.equal(cust.gender, 'Male');
@@ -469,6 +513,17 @@ test('personal details: gender/ID type/signature/thumbprint/photo all pass throu
   assert.equal(cust.signature_url, sigPath);
   assert.equal(cust.thumbprint_url, thumbPath);
   assert.equal(cust.photo_url, photoPath);
+  assert.equal(cust.first_name, 'Amina');
+  assert.equal(cust.birth_surname, 'Kimaro');
+  assert.equal(cust.marital_status, 'Married');
+  assert.equal(Number(cust.spouses), 1);
+  assert.equal(Number(cust.children), 3);
+  assert.equal(cust.education, 'Secondary');
+  assert.equal(cust.tin, '109-233-445');
+  assert.equal(cust.occupation, 'Tailor');
+  assert.equal(cust.employment, 'SelfEmployed');
+  assert.equal(cust.mobile_alt, '0755000002');
+  assert.equal(cust.email, 'amina@example.com');
 });
 
 test('residence section: customer street/ward/district/GPS/photo land on the permanent record, other fields untouched', async () => {
@@ -478,7 +533,9 @@ test('residence section: customer street/ward/district/GPS/photo land on the per
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
     verified: true, guarantor_verified: false,
     street: 'Kilimani Rd', ward: 'Manzese', district: 'Kinondoni',
+    block_number: 'B-14', type_of_residence: 'Rented', residency_capacity: 'Tenant', years_of_residence: 2.5,
     residence_lat: -6.792354, residence_lng: 39.208328, residence_verify_photo_url: 'loans/x/residence-1.jpg',
+    local_govt_letter_url: 'loans/x/residence-letter-1.jpg',
   } });
   const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
   assert.equal(cust.street, 'Kilimani Rd');
@@ -486,6 +543,11 @@ test('residence section: customer street/ward/district/GPS/photo land on the per
   assert.equal(Number(cust.residence_lat), -6.792354);
   assert.equal(Number(cust.residence_lng), 39.208328);
   assert.equal(cust.residence_verify_photo_url, 'loans/x/residence-1.jpg');
+  assert.equal(cust.block_number, 'B-14');
+  assert.equal(cust.type_of_residence, 'Rented');
+  assert.equal(cust.residency_capacity, 'Tenant');
+  assert.equal(Number(cust.years_of_residence), 2.5);
+  assert.equal(cust.local_govt_letter_url, 'loans/x/residence-letter-1.jpg');
   assert.equal(cust.gender, 'Female', 'the earlier personal-section write is untouched by this one');
 });
 
@@ -494,12 +556,25 @@ test('business section: business name, GPS and the site photo all save alongside
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'F CUSTOMER', mobile: '0700000035', team: 'MABIBO', amount: 200000, business_type: 'Retail' });
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
     verified: true, business_name: 'Mama Asha Duka', business_lat: -6.8, business_lng: 39.2, business_verify_photo_url: 'loans/x/biz-1.jpg',
+    daily_sales: '45000', daily_profit: '12000', weekly_expenses: '20000',
   } });
   const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
   assert.equal(cust.business_type, 'Retail', 'set at registration, still there');
   assert.equal(cust.business_name, 'Mama Asha Duka');
   assert.equal(Number(cust.business_lat), -6.8);
   assert.equal(cust.business_verify_photo_url, 'loans/x/biz-1.jpg');
+  assert.equal(Number(cust.daily_sales), 45000);
+  assert.equal(Number(cust.daily_profit), 12000);
+  assert.equal(Number(cust.weekly_expenses), 20000);
+  assert.equal(Number(cust.weekly_profit), 72000, 'daily_profit x 6, same derivation as before');
+});
+
+test('business section: numbers sent as trimmed strings from the form still land as numbers, and a cleared field writes null', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'F2 CUSTOMER', mobile: '0700000037', team: 'MABIBO', amount: 200000 });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: { daily_sales: '' } });
+  const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.daily_sales, null);
 });
 
 test('guarantor section: the primary carries every KYC field, five alternates carry only name/phone/relationship', async () => {
@@ -511,6 +586,8 @@ test('guarantor section: the primary carries every KYC field, five alternates ca
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: [
     { full_name: 'PRIMARY GUARANTOR', phone: '0711000010', relationship: 'Brother',
       street: 'Mtaa wa Pili', ward: 'Kigogo', district: 'Ilala', id_type: 'Voters ID', national_id: '1985-2',
+      occupation: 'Mechanic', block_number: 'B-9', type_of_residence: 'Owned', residency_capacity: 'Owner',
+      local_govt_letter_url: 'loans/x/g-letter.jpg',
       residence_lat: -6.81, residence_lng: 39.21, residence_verify_photo_url: 'loans/x/g-res.jpg',
       photo_url: 'loans/x/g-photo.jpg', signature_url: 'loans/x/g-sig.jpg', thumbprint_url: 'loans/x/g-thumb.jpg' },
     { full_name: 'ALT A', phone: '0711000011', relationship: 'Uncle' },
@@ -525,6 +602,11 @@ test('guarantor section: the primary carries every KYC field, five alternates ca
   // "guarantor id should be choices too.. not just nida"
   assert.equal(rows[0].id_type, 'Voters ID');
   assert.equal(rows[0].national_id, '1985-2', 'the number itself still lands in the one existing column');
+  assert.equal(rows[0].occupation, 'Mechanic');
+  assert.equal(rows[0].block_number, 'B-9');
+  assert.equal(rows[0].type_of_residence, 'Owned');
+  assert.equal(rows[0].residency_capacity, 'Owner');
+  assert.equal(rows[0].local_govt_letter_url, 'loans/x/g-letter.jpg');
   assert.equal(Number(rows[0].residence_lat), -6.81);
   assert.equal(rows[0].signature_url, 'loans/x/g-sig.jpg');
   for (let i = 1; i <= 5; i++) {
