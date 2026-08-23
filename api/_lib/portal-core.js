@@ -5225,10 +5225,8 @@ async function settingNum(db, key, dflt) {
    working day. Choose last Monday and you get the week as it stood at the close of business on
    Friday, which is the week the room actually discusses.
 
-   THE CURRENT WEEK IS ALWAYS NOW. Picking this week's Monday -- or a future one, or nothing at
-   all -- leaves the clock alone, so the live screen is bit-for-bit what it was before this
-   existed. A future week is clamped rather than honoured: there is nothing in it, and a
-   dashboard of zeroes reads as a broken system rather than as an empty future.
+   THE CURRENT WEEK IS ALWAYS NOW. Picking this week's Monday -- or nothing at all -- leaves
+   the clock alone, so the live screen is bit-for-bit what it was before this existed.
 
    ANY DAY IN THE WEEK WILL DO. The picker offers Mondays, but a date typed by hand, or pasted,
    or arrived at through a phone's date wheel, is snapped to its own Monday instead of being
@@ -5244,23 +5242,27 @@ async function settingNum(db, key, dflt) {
    anywhere to say the choice had been overruled. A control that ignores you without saying so
    is indistinguishable from a broken one, and it was reported as broken.
 
-   The clamp itself is right and stays: a week that has not happened has no snapshots in it, so
-   reading it would produce a screen of zeros that looks like a collapse rather than a calendar.
-   What was missing was the SAYING SO. `requested` and `future` now come back with the answer,
-   and the week bar prints a line explaining which week is actually on screen and why. */
+   "Dashboard date should be able to slide next week since am uploading next week progress
+   reports too" / "so backward and foward should both work" -- the future week is no longer
+   clamped back to this one. The clamp assumed a week that has not happened yet has nothing in
+   it, and that stopped being true the moment reports started arriving for it in advance --
+   this now reads whatever has actually been uploaded for that week, same as any other, and
+   simply shows zeros where nothing has landed yet rather than refusing to look. `requested`
+   and `future` still come back with the answer so the week bar can label an upcoming week as
+   what it is, without pretending the choice was overruled. */
 export function asOfWeek(nowMs, weekOf) {
   const thisMon = weekMondayKey(nowMs);
   const blank = { ms: nowMs, weekOf: thisMon, past: false, requested: null, future: false };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || ''))) return blank;
   // Midday, so no amount of timezone arithmetic can roll the chosen date onto its neighbour.
   const pickedMon = weekMondayKey(Date.parse(String(weekOf) + 'T09:00:00Z'));
-  if (pickedMon > thisMon) {
-    // A week that has not started. Answer with this one, and say that is what happened.
-    return { ms: nowMs, weekOf: thisMon, past: false, requested: pickedMon, future: true };
-  }
   if (pickedMon === thisMon) return { ...blank, requested: pickedMon };
-  return { ms: Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z'), weekOf: pickedMon,
-    past: true, requested: pickedMon, future: false };
+  // Same reference point (Friday, the close of that week's business) whether the week is
+  // behind or ahead -- a future week being read here is one an officer has already populated
+  // in advance, so it gets read as a whole week too, not as a partial one.
+  const asOfMs = Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z');
+  if (pickedMon > thisMon) return { ms: asOfMs, weekOf: pickedMon, past: false, requested: pickedMon, future: true };
+  return { ms: asOfMs, weekOf: pickedMon, past: true, requested: pickedMon, future: false };
 }
 
 async function dashboardFull(db, user, args, nowMs) {
