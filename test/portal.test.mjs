@@ -3137,28 +3137,29 @@ test('any day of a past week snaps to that week, not to a week starting mid-way'
   }
 });
 
-test('this week, a future week, and no choice at all leave the clock exactly alone', () => {
-  /* The live screen has to be bit-for-bit what it was before the picker existed. A future
-     week is clamped rather than honoured: there is nothing in it, and a dashboard of zeroes
-     reads as a broken system rather than as an empty future. */
-  for (const pick of ['', null, undefined, 'rubbish', '2026-07-20', '2026-07-24', '2026-09-01']) {
+test('this week and no choice at all leave the clock exactly alone', () => {
+  // The live screen has to be bit-for-bit what it was before the picker existed.
+  for (const pick of ['', null, undefined, 'rubbish', '2026-07-20', '2026-07-24']) {
     const a = asOfWeek(NOW, pick);
     assert.equal(a.ms, NOW, String(pick));
     assert.equal(a.past, false, String(pick));
+    assert.equal(a.future, false, String(pick));
     assert.equal(a.weekOf, MON, String(pick));
   }
 });
 
 /* "I tried pressing the date picker to 10th august so that all info start of next week but
-   didn't work". Picked on the Sunday, the 10th is NEXT week -- and the clamp answered with
-   the current week SILENTLY, so the screen redrew with the identical figures and looked
-   broken. The clamp is right; the silence was the bug. */
-test('a week that has not started says so, instead of pretending nothing was pressed', () => {
+   didn't work". Picked on the Sunday, the 10th is NEXT week -- and the clamp used to answer
+   with the current week SILENTLY, so the screen redrew with the identical figures and looked
+   broken. "Dashboard date should be able to slide next week since am uploading next week
+   progress reports too" / "so backward and foward should both work" -- the clamp itself is
+   gone now, not just the silence: a future week reads back as itself. */
+test('a week that has not started yet is shown as itself, not bounced back to this week', () => {
   const a = asOfWeek(NOW, '2026-09-01');            // NOW is Friday 2026-07-24
-  assert.equal(a.future, true, 'the screen has to be able to say the week has not started');
-  assert.equal(a.requested, '2026-08-31', 'and which week was actually asked for, as its Monday');
-  assert.equal(a.weekOf, MON, 'while still showing the live week rather than a screen of zeroes');
-  assert.equal(a.ms, NOW);
+  assert.equal(a.future, true, 'the screen can still say this week is upcoming, not "this week"');
+  assert.equal(a.requested, '2026-08-31', 'which week was actually asked for, as its Monday');
+  assert.equal(a.weekOf, '2026-08-31', 'and that IS what is shown -- no more falling back to today');
+  assert.equal(todayKeyOf(a.ms), '2026-09-04', 'the Friday of the chosen future week, same as a past one');
 });
 
 test('a mid-week date reports the Monday it resolved to, so the snap is explainable', () => {
@@ -3181,7 +3182,7 @@ test('the weekly report carries the week bar its own answer', async () => {
   const d = await portalApi(fakeDb(tables()), ADMIN, 'weekly', { weekOf: '2026-09-01' }, NOW);
   assert.equal(d.weekFuture, true);
   assert.equal(d.weekRequested, '2026-08-31');
-  assert.equal(d.weekOf, MON, 'and still shows the live week');
+  assert.equal(d.weekOf, '2026-08-31', 'the upcoming week itself, not the live one');
 });
 
 test('the dashboard computes a past week from that week, not from today', async () => {
@@ -3211,6 +3212,31 @@ test('the dashboard computes a past week from that week, not from today', async 
   assert.equal(last.cards.recovered, 1000);
   // And this week's screen is untouched by the existence of last week's.
   assert.notEqual(now.cards.curArrears, 4000);
+});
+
+/* "Dashboard date should be able to slide next week since am uploading next week progress
+   reports too" / "so backward and foward should both work" -- the mirror image of the past-
+   week test above: a week not yet lived through, already populated in advance, reads back
+   exactly like any other week instead of being refused. */
+test('the dashboard computes a future week from that week too, once it has been uploaded', async () => {
+  const book = tables();
+  const NEXTMON = '2026-07-27', NEXTFRI = '2026-07-31';
+  book.repayment_snapshots.push(
+    { ...E('NW1', 'KONGOWE', 9000, 'UNPAID', 0, NEXTFRI), upload_batch: 'bnw', created_at: NEXTFRI + 'T04:00:00Z' });
+  book.defaulter_snapshots.push(
+    { ...D('NW1', 'KONGOWE', 5000, 'initial', 45, NEXTFRI, 'FRI'), upload_batch: 'inw', created_at: NEXTFRI + 'T04:00:00Z' },
+    { ...D('NW1', 'KONGOWE', 4000, 'current', 45, NEXTFRI, 'FRI'), upload_batch: 'cnw', created_at: NEXTFRI + 'T04:00:00Z' });
+  const db = fakeDb(book);
+
+  const next = await portalApi(db, ADMIN, 'dashboardFull', { weekOf: NEXTMON }, NOW);
+  assert.equal(next.weekOf, NEXTMON, 'the upcoming week it was asked for, not the live one');
+  assert.equal(next.weekFuture, true);
+  assert.equal(next.pastWeek, false);
+  // Read back the figures actually uploaded for it, the same as any other week -- no zeroing
+  // out, no substitution.
+  assert.equal(next.cards.curArrears, 4000);
+  assert.equal(next.cards.initArrears, 5000);
+  assert.equal(next.cards.recovered, 1000);
 });
 
 test('the recovery trend of a past week lands on that week\'s own days', async () => {

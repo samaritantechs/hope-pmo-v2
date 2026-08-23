@@ -2301,28 +2301,31 @@ function mondayOf(key){
 function weekBar(d, extra){
   var shown = d.weekOf || '';
   var asked = d.weekRequested || '';
+  // "Dashboard date should be able to slide next week since am uploading next week progress
+  // reports too" / "so backward and foward should both work" -- a future week is no longer
+  // bounced back to this one server-side (asOfWeek), so the chip now has three states instead
+  // of two: past (as it always stood), upcoming (new), or this week.
+  var chip = d.pastWeek
+      ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(shown)
+        + ' \u2192 ' + esc(d.weekEnd||'') + ' \u00B7 kama ilivyokuwa ' + esc(d.asOfDate||'') + '</span>'
+      : (d.weekFuture
+          ? '<span class="chip ok" style="margin-left:8px">Wiki ijayo / Upcoming week \u00B7 ' + esc(shown) + '</span>'
+          : '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>');
   return bar('<label style="font-size:12px;color:var(--mut)">Wiki (Jumatatu) / Week starting Monday</label>'
     + '<button class="btn sm ghost" data-week-step="-1" title="Wiki iliyopita / previous week">\u25C0</button>'
     + '<input type="date" data-week="1" value="' + esc(shown) + '">'
     + '<button class="btn sm ghost" data-week-step="1" title="Wiki ijayo / next week">\u25B6</button>'
-    + (d.pastWeek
-        ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(shown)
-          + ' \u2192 ' + esc(d.weekEnd||'') + ' \u00B7 kama ilivyokuwa ' + esc(d.asOfDate||'') + '</span>'
-        : '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>')
-    + (d.pastWeek ? ' <button class="btn sm ghost" data-week-set="">Rudi wiki hii / Back to this week</button>' : '')
+    + chip
+    + ((d.pastWeek || d.weekFuture) ? ' <button class="btn sm ghost" data-week-set="">Rudi wiki hii / Back to this week</button>' : '')
     + (extra || ''))
     /* SAYING WHAT HAPPENED TO THE CHOICE. Only ever shown when the answer differs from the
-       ask, so the ordinary case stays quiet. */
-    + (d.weekFuture
-        ? '<div class="note">Wiki ya <b>' + esc(asked) + '</b> bado haijaanza \u2014 hakuna ripoti'
-          + ' iliyopakiwa. Inaonyeshwa wiki hii (<b>' + esc(shown) + '</b>).'
-          + ' / The week of ' + esc(asked) + ' has not started yet, so nothing has been uploaded'
-          + ' for it. Showing this week instead.</div>'
-        : (asked && asked !== shown
-            ? '<div class="note">Umechagua <b>' + esc(asked) + '</b> \u2014 wiki huanza Jumatatu,'
-              + ' hivyo inaonyeshwa <b>' + esc(shown) + '</b>.'
-              + ' / A week starts on Monday, so that date resolved to ' + esc(shown) + '.</div>'
-            : ''));
+       ask (a date snapped to its own Monday), so the ordinary case stays quiet -- a future
+       week is no longer an overruled choice, so it no longer prints a note here at all. */
+    + (asked && asked !== shown
+        ? '<div class="note">Umechagua <b>' + esc(asked) + '</b> \u2014 wiki huanza Jumatatu,'
+          + ' hivyo inaonyeshwa <b>' + esc(shown) + '</b>.'
+          + ' / A week starts on Monday, so that date resolved to ' + esc(shown) + '.</div>'
+        : '');
 }
 /* Wired once, beside the other global handlers, so every screen that prints a week bar gets
    the same behaviour rather than three copies that drift apart. */
