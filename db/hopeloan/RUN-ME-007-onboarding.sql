@@ -11,14 +11,19 @@ begin
 end $$;
 
 /* =====================================================================================
-   HOPE LOAN -- ONBOARDING: the multi-loan top-up gate, the signature/fingerprint capture,
-   and comments that follow the CUSTOMER rather than any one loan.
+   HOPE LOAN -- ONBOARDING: the multi-loan top-up gate, and comments that follow the
+   CUSTOMER rather than any one loan.
    =====================================================================================
 
    WHY IT EXTENDS RATHER THAN DUPLICATES, same rule as RUN-ME-001 itself: every statement
    below is unqualified and resolves against `hopeloan` because of the search_path line above
    -- nothing here can land in `public`, and nothing here needs a second file the day this
    sandbox becomes the live pipeline.
+
+   (An earlier draft of this file also added signature/fingerprint columns to `assessments`.
+   They are gone: RUN-ME-004-kyc-capture.sql landed first and does that job better -- customer
+   AND guarantor signature/thumbprint as storage-bucket paths on the permanent records, not
+   data URIs bloating assessment rows. One mechanism, not two.)
 
    1. TOP-UP ELIGIBILITY, AT REGISTRATION.
       creditApprove already deducts a typed-in `previous_balance` from disbursement without
@@ -34,25 +39,7 @@ end $$;
 alter table loans add column if not exists topup_installments_left integer;
 alter table loans add column if not exists topup_arrears numeric(14,2);
 
-/* 2. SIGNATURE / FINGERPRINT -- a sixth assessment section, alongside personal / recommendation
-      / guarantor / residence / business. "at our Hope loan assessment - customer could digital
-      sign their contact copy, sign and biometrics inclusive on a single signatory split
-      screen" -- this is assessment, where KYC already lives ("KYC is captured by the team at
-      assessment", app.html's own note on the registration form), not registration.
-
-      Stored as data URIs -- no object storage is configured for this deployment; same
-      pattern the settings-held company stamp already uses on demand notices in HOPE PMO.
-      WORTH REVISITING if these start costing real row size at volume. No native biometric API
-      exists in a plain browser/WebView, so the "fingerprint" is captured the same way the
-      signature is, on a canvas pad -- the pragmatic v1, not a real fingerprint reader. */
-alter table assessments add column if not exists customer_signature text;
-alter table assessments add column if not exists customer_fingerprint text;
-alter table assessments add column if not exists guarantor_signature text;
-alter table assessments add column if not exists signed_by text;
-alter table assessments add column if not exists signed_at timestamptz;
-alter table assessments add column if not exists done_signature boolean;
-
-/* 3. COMMENTS, BY CUSTOMER -- not by docket, and not by loan. HOPE PMO's followup_comments
+/* 2. COMMENTS, BY CUSTOMER -- not by docket, and not by loan. HOPE PMO's followup_comments
       carries docket_no but nothing ever read by it, because the docket changes every track
       and HOPE PMO has no single persistent customer row to key off instead. HOPE Loan does:
       `customers.id` is exactly the entity "no matter the current track no" was asking for, so
@@ -72,6 +59,4 @@ create index if not exists idx_loan_comments_customer on loan_comments(customer_
 /* DID IT LAND?
    select column_name from information_schema.columns
    where table_schema = 'hopeloan' and table_name = 'loans' and column_name like 'topup_%';
-   select column_name from information_schema.columns
-   where table_schema = 'hopeloan' and table_name = 'assessments' and column_name like '%signature%';
    select count(*) from hopeloan.loan_comments; */

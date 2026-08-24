@@ -1,5 +1,5 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
-import { teamAllowed, ADMIN_TABS } from './auth.js';
+import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
@@ -17,7 +17,7 @@ import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.j
     stopped working must not become a data leak -- but by then there is little left to drop. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
 import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
-import { buildDashboard } from './dashboard-core.js';
+import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
@@ -308,6 +308,29 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
     return { ...snap, perTeam: false };
   }
   const to = notAfter;
+  /* CURRENT DEFAULTERS LIVE UNTIL THE NEXT UPLOAD REPLACES THEM -- NO LOOKBACK, NO GRACE.
+     "the latest current defaulter file is to live until the next one, no limit" -- and the
+     other independent reports (approved, received, expected) "just there to keep record how
+     we closed the day but they dont decide defaulters". Confirmed after "i bulked paid
+     clients, many of them brother!" kept recurring: a team missing from today's whole-company
+     CURRENT file has zero current defaulters, full stop -- not a team whose own upload merely
+     lagged a day. So this pins to the single latest date across the WHOLE table (same as the
+     "migration not run" fallback a few lines down always has) and never reaches back through
+     the per-team, up-to-45-day lookback below.
+
+     THIS DELIBERATELY REOPENS A DOOR THE GOBA/MBEYA TESTS BELOW WERE WRITTEN TO CLOSE: a team
+     on an older date now reads as zero for CURRENT, not as "their own latest deck" -- see
+     deckDatesPerTeam's own comment in snapshot-totals.js for the real incident that door was
+     built for. Weighed and accepted on purpose, for 'current' only: a paid-off team's ghosts
+     must not outlive one more whole-company upload. 'initial' baselines (and anything else
+     that calls this) still take the per-team path below, unchanged -- a customer's baseline
+     arrears is not re-uploaded on the same cadence a defaulter list is, and staying sticky
+     there is still the safer failure. */
+  if (type === 'current') {
+    const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
+      { notAfter: to, teams: user.teams, columns });
+    return { ...snap, perTeam: false };
+  }
   const from = addDaysKey(to, -DECK_LOOKBACK_DAYS);
   const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });
   if (!dates || !dates.size) {
@@ -358,7 +381,27 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
     });
     for (const r of rows) if (g.want.has(deckKey(r.team, r.weekday))) all.push(r);
   }
-  const rows = pickLatestPerCustomer(all);
+  /* TWO DIFFERENT DUPLICATES, TWO DIFFERENT FIXES, BOTH NEEDED.
+     "Some customers were texted arrears when I exported the sms file ... yet she aint in the
+     defaulters file" -- ANASTAZIA JUMBE NGOI, SINGIDA. Her team's deck had been corrected with
+     a same-day re-upload that no longer named her (she was no longer a defaulter), but the one
+     step this used to run -- pickLatestPerCustomer, straight over `all` -- resolves the winning
+     row PER CUSTOMER: with nothing in the newer batch to compare her old row against, her old
+     row just won by default, and she came back from the dead into every export and every
+     screen. pickLatestBatchRows carries the correct rule instead -- an upload that stops naming
+     somebody IS the correction, so the whole older batch loses, that customer included.
+
+     But pickLatestBatchRows resolves its winner PER TEAM, and `all` can hold two different
+     WEEKDAY decks of the same team that both happen to land on the same date in two different
+     batches -- resolve across them undivided and one whole deck loses to the other's batch
+     stamp, the exact fault `recByDay` further down this file already grouped by weekday to
+     avoid, for the same reason. So: batch-resolve within each weekday first (fixes the
+     resurrection), THEN pickLatestPerCustomer across the result (still needed -- see its own
+     comment above -- for the separate, legitimate case of one customer genuinely sitting in
+     two different weekdays' decks on the same date, who must still count once, not twice). */
+  const perDeck = [...new Set(all.map(r => K(r.weekday)))]
+    .flatMap(wd => pickLatestBatchRows(all.filter(r => K(r.weekday) === wd)));
+  const rows = pickLatestPerCustomer(perDeck);
   const seen = [...byDate.keys()].sort();
   return { rows, date: seen[seen.length - 1] || null, dates: seen,
     weekdays: [...new Set(all.map(r => r.weekday).filter(Boolean))].sort(),
@@ -2072,7 +2115,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: fri, teams: user.teams }),
-    fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').eq('stage', 'approved').gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
+    fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').in('stage', SALES_STAGES).gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
     fetchAll(() => db.from('received_payments').select('team, amount_paid, paid_at').gte('paid_at', mon).lte('paid_at', addDaysKey(mon, 6))),
   ]);
   const days = [];
@@ -2782,7 +2825,7 @@ async function credit(db, user, _args, nowMs) {
     defaulterBook(db, user, { type: 'current', notAfter: today }),
     defaulterBook(db, user, { type: 'initial', onDate: mon }),
     defaulterBook(db, user, { type: 'initial', notAfter: today }),
-    fetchAll(() => onTeams(db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').eq('stage', 'approved'), user.teams)),
+    fetchAll(() => onTeams(db.from('loans').select('team, approved_date, approved_by, created_by, principal_amt, loan_amt').in('stage', SALES_STAGES), user.teams)),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -3447,14 +3490,20 @@ async function teams(db, user) {
   // supervisor sees that a team HAS a code, never what it is.
   if (user.readOnly) mine = mine.map(r => (r.team_code ? { ...r, team_code: '••••' } : r));
   return { rows: mine, count: rows.length,
-    roles: roleRows, allTabs: ADMIN_TABS.slice() };
+    // ALL_TABS, not ADMIN_TABS -- a role is exactly as likely to need a HOPE Loan tab
+    // (customer_service, manager, team, gmo, finance, gm) as a HOPE PMO one, and the checkbox
+    // list this feeds was quietly unable to grant any of the seven until now.
+    roles: roleRows, allTabs: ALL_TABS.slice() };
 }
 async function saveRole(db, user, p) {
   requireAdmin(user);
   const role = String((p && p.role) || '').trim().toUpperCase();
   if (!role) throw badRequest('A role name is required.');
+  // ALL_TABS, not ADMIN_TABS -- the checkbox list above now offers HOPE Loan's seven
+  // alongside HOPE PMO's, and a role saved with one ticked was being silently stripped back
+  // out here before this file's own smsGaps/saveTeam-shaped audit went looking for it.
   const tabs = String((p && p.tabs) || '').split(/[;,]/).map(x => x.trim().toLowerCase())
-    .filter(x => ADMIN_TABS.includes(x));
+    .filter(x => ALL_TABS.includes(x));
   const { error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' });
   if (error) throw new Error(error.message);
   return { role, tabs };
@@ -3536,7 +3585,9 @@ async function accessCodes(db, user) {
      scope -- never the secrets themselves. Checking the system and collecting its keys are
      different jobs, and this screen only serves the first to them. */
   const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••' })) : rows;
-  return { rows: out, count: rows.length, roles: roleRows };
+  // allTabs rides along so the Extra-tabs field on this same screen can be a checkbox list
+  // instead of free text -- "ticking the nav pannels ... because writing could error".
+  return { rows: out, count: rows.length, roles: roleRows, allTabs: ALL_TABS.slice() };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
@@ -5031,6 +5082,10 @@ export const PORTAL_FUNCTIONS = Object.keys(FN);
    ======================================================================================= */
 
 const WD5 = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+/* Sales, and only sales, run six days -- "there happen to be approved sales on saturdays".
+   The weekly TARGET stays a 5-working-day figure (see dailyTarget below); this is only which
+   days the trend widget counts actual approvals on, so a Saturday sale is shown, not dropped. */
+const WD6 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const WD7 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 /** Snapshot date of a given weekday inside the week containing nowMs. */
@@ -5173,10 +5228,8 @@ async function settingNum(db, key, dflt) {
    working day. Choose last Monday and you get the week as it stood at the close of business on
    Friday, which is the week the room actually discusses.
 
-   THE CURRENT WEEK IS ALWAYS NOW. Picking this week's Monday -- or a future one, or nothing at
-   all -- leaves the clock alone, so the live screen is bit-for-bit what it was before this
-   existed. A future week is clamped rather than honoured: there is nothing in it, and a
-   dashboard of zeroes reads as a broken system rather than as an empty future.
+   THE CURRENT WEEK IS ALWAYS NOW. Picking this week's Monday -- or nothing at all -- leaves
+   the clock alone, so the live screen is bit-for-bit what it was before this existed.
 
    ANY DAY IN THE WEEK WILL DO. The picker offers Mondays, but a date typed by hand, or pasted,
    or arrived at through a phone's date wheel, is snapped to its own Monday instead of being
@@ -5192,23 +5245,27 @@ async function settingNum(db, key, dflt) {
    anywhere to say the choice had been overruled. A control that ignores you without saying so
    is indistinguishable from a broken one, and it was reported as broken.
 
-   The clamp itself is right and stays: a week that has not happened has no snapshots in it, so
-   reading it would produce a screen of zeros that looks like a collapse rather than a calendar.
-   What was missing was the SAYING SO. `requested` and `future` now come back with the answer,
-   and the week bar prints a line explaining which week is actually on screen and why. */
+   "Dashboard date should be able to slide next week since am uploading next week progress
+   reports too" / "so backward and foward should both work" -- the future week is no longer
+   clamped back to this one. The clamp assumed a week that has not happened yet has nothing in
+   it, and that stopped being true the moment reports started arriving for it in advance --
+   this now reads whatever has actually been uploaded for that week, same as any other, and
+   simply shows zeros where nothing has landed yet rather than refusing to look. `requested`
+   and `future` still come back with the answer so the week bar can label an upcoming week as
+   what it is, without pretending the choice was overruled. */
 export function asOfWeek(nowMs, weekOf) {
   const thisMon = weekMondayKey(nowMs);
   const blank = { ms: nowMs, weekOf: thisMon, past: false, requested: null, future: false };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || ''))) return blank;
   // Midday, so no amount of timezone arithmetic can roll the chosen date onto its neighbour.
   const pickedMon = weekMondayKey(Date.parse(String(weekOf) + 'T09:00:00Z'));
-  if (pickedMon > thisMon) {
-    // A week that has not started. Answer with this one, and say that is what happened.
-    return { ms: nowMs, weekOf: thisMon, past: false, requested: pickedMon, future: true };
-  }
   if (pickedMon === thisMon) return { ...blank, requested: pickedMon };
-  return { ms: Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z'), weekOf: pickedMon,
-    past: true, requested: pickedMon, future: false };
+  // Same reference point (Friday, the close of that week's business) whether the week is
+  // behind or ahead -- a future week being read here is one an officer has already populated
+  // in advance, so it gets read as a whole week too, not as a partial one.
+  const asOfMs = Date.parse(addDaysKey(pickedMon, 4) + 'T09:00:00Z');
+  if (pickedMon > thisMon) return { ms: asOfMs, weekOf: pickedMon, past: false, requested: pickedMon, future: true };
+  return { ms: asOfMs, weekOf: pickedMon, past: true, requested: pickedMon, future: false };
 }
 
 async function dashboardFull(db, user, args, nowMs) {
@@ -5315,11 +5372,16 @@ async function dashboardFull(db, user, args, nowMs) {
         .reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
   });
 
-  /* ---- sales trend Mon-Fri: approved principal per day against the daily target ---- */
+  /* ---- sales trend Mon-Sat: approved principal per day against the daily target ----
+     dailyTarget itself is still a 5-WORKING-DAY figure -- the quota does not change, only how
+     many days are shown against it. A Saturday approval used to be approved for real and then
+     simply never counted anywhere on this board -- not the day it happened, not the week's
+     total -- "there happen to be approved sales on saturdays, so add its widget at dashboard
+     too". */
   const dailyTarget = Math.round(weeklyTarget * Math.max(myTeams.length, 1) / 5);
-  const salesTrend = WD5.map((wd, i) => {
+  const salesTrend = WD6.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const on = myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) === d);
+    const on = myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) === d);
     const amt = on.reduce((s, l) => s + (num(l.principal_amt) || num(l.loan_amt)), 0);
     return { weekday: wd, date: d, amount: amt, loans: on.length,
       pct: dailyTarget > 0 ? Math.round((amt / dailyTarget) * 1000) / 10 : null };
@@ -5499,7 +5561,7 @@ async function dashboardFull(db, user, args, nowMs) {
       defaultersInitial: tCustomers(iniToday),
       cleared: Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
-      salesLoans: myLoans.filter(l => l.stage === 'approved' && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
+      salesLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
       abnormal: myAbn.length,
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),

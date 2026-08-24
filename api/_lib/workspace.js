@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { supabase } from './supabase.js';
+import { LOAN_TABS } from './auth.js';
 
 /* =====================================================================================
    TWO DATABASES, ONE CODEBASE.
@@ -188,20 +189,31 @@ function hopeLoanDb() {
   return null;
 }
 
-/** Only an ADMIN may leave production. Deliberately checked on the ROLE STRING rather than on
-    a tab or a permission: tabs are editable in Teams & Staff, and a role that someone ticked
-    the wrong box on must never become a door into a second schema. */
+/** Production is left by an ADMIN, or by a code holding at least one of HOPE Loan's own tabs --
+    "i mean they cant reach tabs i didnt tick for anyone to see yet". The gate used to be the
+    ROLE STRING alone, on the reasoning that a tab is editable in Teams & Staff and a role
+    someone ticked the wrong box on must never become a door into a second schema. That still
+    holds -- what changed is which tabs count as "the wrong box": a code that has never been
+    ticked for customer_service/manager/team/gmo/credit/finance/gm has no more access to
+    `hopeloan` than before, exactly as a code with no `upload` tab still cannot reach Upload.
+    The checkbox IS the permission now, same as everywhere else -- one mechanism for who may
+    do what, not two, and "someone does something b/se they have access to the panel not that
+    we match the role" applies here too. `user.tabs` is the RESOLVED list (see
+    authCodeResolved/resolveTabs in auth.js) -- a role's own tabs already merged in, so a code
+    reaches HOPE Loan by role OR by its own ticked tabs, same as every other tab check. */
 function mayUseHopeLoan(user) {
-  return String((user && user.role) || '').trim().toUpperCase() === 'ADMIN';
+  if (String((user && user.role) || '').trim().toUpperCase() === 'ADMIN') return true;
+  const tabs = (user && user.tabs) || [];
+  return LOAN_TABS.some(t => tabs.includes(t));
 }
 
 /** Which workspace this request runs in. The ONLY function that may answer this question.
 
-    Anything other than a plain, configured, admin-authorised request for HOPE Loan resolves to
-    production -- an unknown name, a blank, a field officer asking for the sandbox, an admin
-    asking before the environment is configured. There is no error for asking wrongly, because
-    an error would be a way to discover that the sandbox exists; the request simply runs where
-    it always ran. */
+    Anything other than a plain, configured, tab-authorised request for HOPE Loan resolves to
+    production -- an unknown name, a blank, a field officer asking for the sandbox, an admin or
+    tab-holder asking before the environment is configured. There is no error for asking
+    wrongly, because an error would be a way to discover that the sandbox exists; the request
+    simply runs where it always ran. */
 export function resolveWorkspace(user, asked) {
   const want = String(asked == null ? '' : asked).trim().toLowerCase();
   if (want !== HOPELOAN) return HOPEPMO;
@@ -265,7 +277,10 @@ export function hopeLoanNotReadyMessage() {
   return why ? HOPELOAN_NOT_READY + ' -- the database said: ' + why : HOPELOAN_NOT_READY;
 }
 
-/** Whether to offer the switch at all, for /api/me. An officer is never told it exists.
+/** Whether HOPE Loan's own nav items belong in this code's sidebar at all, for /api/me. A code
+    holding none of HOPE Loan's tabs (and not ADMIN) is never told the sandbox exists -- same
+    name, same job it always had, now answering a tab question instead of a role question; see
+    mayUseHopeLoan.
 
     ASYNC NOW, because "is it configured" became "is it actually there" -- see hopeLoanReady().
     The probe is cached, so this costs a round trip roughly once every five minutes across the

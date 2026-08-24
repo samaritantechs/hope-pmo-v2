@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <!-- GPS for the loan KYC capture screens (residence/business/guarantor location). Both are
+         needed: FINE for an actual reading, COARSE because some OEM WebViews refuse the
+         geolocation prompt if only FINE is declared. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Lets the app offer its own update; Android still shows the normal install prompt. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

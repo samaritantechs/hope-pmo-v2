@@ -94,13 +94,20 @@ class Updater {
     private static void prompt(final MainActivity activity, final int versionCode,
                                String versionName, String notes, final String url,
                                boolean failedBefore) {
-        String body = "HOPE PMO " + versionName + "\n\n" + notes;
+        String body = "HOPE LOAN " + versionName + "\n\n" + notes;
         if (failedBefore) {
+            // "updatted, name didnt change and keep bumping on usahihishaji haujakamilika" --
+            // this dialog was TRUE (the install genuinely never finished) but never said WHY:
+            // downloading is only half of it -- Android's own installer screen still has to be
+            // tapped through afterwards, and backing out of THAT screen looks, to an officer,
+            // exactly like a successful update. Name the missing step instead of just the fact.
             body = "Usasishaji uliopita haukukamilika — bado unatumia toleo la zamani.\n"
-                 + "Ruhusu \"Sakinisha programu zisizojulikana\" kwa HOPE PMO, kisha jaribu tena.\n\n"
-                 + "The last update did not finish, so this is still the old build. Allow "
-                 + "\"Install unknown apps\" for HOPE PMO, then try again.\n\n"
-                 + "HOPE PMO " + versionName + "\n" + notes;
+                 + "Bonyeza Sasisha, kisha kwenye skrini ya kusakinisha itakayofungua, bonyeza "
+                 + "Install kisha Open. Usirudi nyuma kabla ya kumaliza.\n\n"
+                 + "The last update did not finish, so this is still the old build. Tap Update, "
+                 + "then on the installer screen that opens, tap Install and then Open. Do not "
+                 + "go back before it finishes.\n\n"
+                 + "HOPE LOAN " + versionName + "\n" + notes;
         }
         new AlertDialog.Builder(activity)
                 .setTitle(failedBefore ? "Usasishaji haukukamilika / Update did not finish"
@@ -123,10 +130,10 @@ class Updater {
 
     private static void download(final MainActivity activity, String url) {
         try {
-            final File out = new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "HOPE-PMO-update.apk");
+            final File out = new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "HOPE-LOAN-update.apk");
             if (out.exists() && !out.delete()) { /* stale copy stays -- the fresh download overwrites it below */ }
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
-            r.setTitle("HOPE PMO");
+            r.setTitle("HOPE LOAN");
             r.setDescription("Inapakua toleo jipya…");
             r.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
             r.setDestinationUri(Uri.fromFile(out));
@@ -175,15 +182,15 @@ class Updater {
                 && !activity.getPackageManager().canRequestPackageInstalls()) {
             new AlertDialog.Builder(activity)
                     .setTitle("Ruhusa inahitajika / Permission needed")
-                    .setMessage("Ili kusakinisha toleo jipya, washa \"Sakinisha programu zisizojulikana\" kwa HOPE PMO.\n\n"
-                            + "To install the update, allow \"Install unknown apps\" for HOPE PMO, then press Update again.")
+                    .setMessage("Ili kusakinisha toleo jipya, washa \"Sakinisha programu zisizojulikana\" kwa HOPE LOAN.\n\n"
+                            + "To install the update, allow \"Install unknown apps\" for HOPE LOAN, then press Update again.")
                     .setPositiveButton("Fungua mipangilio / Open settings", (d, w) -> {
                         try {
                             activity.startActivity(new Intent(
                                     Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                                     Uri.parse("package:" + activity.getPackageName())));
                         } catch (Exception ignored) {
-                            Toast.makeText(activity, "Mipangilio > Programu > HOPE PMO > Sakinisha programu zisizojulikana.",
+                            Toast.makeText(activity, "Mipangilio > Programu > HOPE LOAN > Sakinisha programu zisizojulikana.",
                                     Toast.LENGTH_LONG).show();
                         }
                     })
@@ -192,13 +199,21 @@ class Updater {
             return;
         }
         try {
+            // A heads-up before the installer screen takes over -- "install unknown apps" being
+            // granted is not the same as the officer knowing this next screen still needs two
+            // more taps. It fades before that screen would cover it, but it is the one honest
+            // place left to say it, and every extra warning is one fewer stuck-on-the-old-build
+            // report.
+            Toast.makeText(activity,
+                    "Bonyeza Install kisha Open kwenye skrini itakayofungua. / Tap Install then Open on the next screen.",
+                    Toast.LENGTH_LONG).show();
             Uri uri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", apk);
             Intent i = new Intent(Intent.ACTION_VIEW);
             i.setDataAndType(uri, "application/vnd.android.package-archive");
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             activity.startActivity(i);
         } catch (Exception e) {
-            Toast.makeText(activity, "Fungua faili HOPE-PMO-update.apk kwenye Downloads ili kusakinisha.", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "Fungua faili HOPE-LOAN-update.apk kwenye Downloads ili kusakinisha.", Toast.LENGTH_LONG).show();
         }
     }
 }

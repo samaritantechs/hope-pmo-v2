@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.6.0",
-  "notes": "Kupakua ripoti (JPG, Excel, CSV) sasa kunafanya kazi ndani ya app -- zinahifadhiwa kwenye Downloads za simu. Awali app ilijifunga. / Downloading reports now works inside the app and saves straight to the phone’s Downloads. It used to close the app.",
+  "versionCode": 12,
+  "versionName": "1.8.1",
+  "notes": "Kama usasishaji unaonekana kutokamilika mara kwa mara: baada ya kubonyeza Sasisha, subiri skrini nyingine ifunguke kisha bonyeza Install na Open humo -- usirudi nyuma kabla ya kumaliza. / If the update keeps showing as not finished: after tapping Update, wait for a second screen to open and tap Install then Open there -- don't go back before it finishes.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

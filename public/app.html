@@ -82,6 +82,11 @@
   .nav button span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .nav button:hover{background:rgba(255,255,255,.08);color:#fff}
   .nav button.on{background:#fff;color:var(--b800)}
+  /* ONE FLOW, NOT TWO SIDEBARS. HOPE Loan's own tabs sit in the SAME list as HOPE PMO's, one
+     continuous scroll -- this is only a quiet label above them, not a switch to flip and not a
+     banner to warn anybody they have left somewhere. Drawn once, only when there is at least
+     one HOPE Loan item this code actually holds a tab for. */
+  .navhead{padding:14px 11px 4px;font-size:10px;font-weight:700;letter-spacing:.06em;color:var(--b300);text-transform:uppercase}
   .side .foot{border-top:1px solid rgba(255,255,255,.12);padding-top:12px;margin-top:10px}
   .side .foot b{color:#fff;font-size:12.5px;display:block}
   .side .foot span{font-size:11px;color:var(--b300);display:block;margin-bottom:8px}
@@ -105,6 +110,13 @@
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
   .card-h{padding:11px 14px;border-bottom:1px solid var(--line);font-weight:700;font-size:13.5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .card-h .sub{font-weight:400;color:var(--mut);font-size:12px;margin-left:auto}
+  /* THE PER-TABLE SEARCH -- distinct from the magnifier (Tafuta mteja) up in the top bar. That
+     one is company-wide and opens the full customer insight; this one only narrows whatever
+     list is already on screen, in ANY of its columns, exactly the way sorting or a dropdown
+     filter already narrows it. */
+  .tblsearch{padding:8px 14px;border-bottom:1px solid var(--line)}
+  .tblsearch input{width:100%;padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;font-size:13px}
+  .tblsearch input:focus{outline:none;border-color:var(--b500)}
   .scroll{overflow-x:auto}
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:left;padding:8px 12px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;
@@ -413,14 +425,6 @@
     <div class="top">
       <button class="menuBtn" id="menuBtn" title="Menyu / Menu">&#9776;</button>
       <h1 id="title">Dashboard</h1>
-      <!-- SANDBOX LABEL, ALWAYS ON SCREEN WHILE IN IT. "a person working in a sandbox must be
-           able to see at a glance that they are, or they will eventually report a sandbox
-           figure as if it were the book." Hidden entirely outside HOPE Loan. -->
-      <span id="wsBadge" class="hide" style="font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:20px;background:#a11;color:#fff;margin-right:6px"></span>
-      <!-- THE SWITCH ITSELF -- drawn only when /api/me said this code may use it (ADMIN role
-           AND HOPE Loan actually configured server-side). Anyone else's screen never carries
-           this button at all, not even hidden. -->
-      <button class="btn sm ghost hide" id="wsSwitch" title="HOPE Loan / HOPE PMO">HOPE Loan &rarr;</button>
       <!-- The writing bar that used to sit here (the table filter) was removed on request:
            "The search icon on top should do tafuta mteja work and remove the sidenav and the
            writing bar before language switch". One search, one place: the magnifier. -->
@@ -683,7 +687,14 @@ var NAV_LOAN = [
   { id:'ln_cs',        label:'Customer Service', tab:'customer_service', ic:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>' },
   { id:'ln_manager',   label:'Manager · Assign', tab:'manager', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' },
   { id:'ln_team',      label:'Team · Assessment', tab:'team', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
-  { id:'ln_senior',    label:'GMO / OPM Review', tab:'gmo', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
+  /* TWO SIDE NAVS, NOT ONE SCREEN WITH A DROPDOWN -- "so here we'll have two side navs b/se
+     that's the way I distribute operations people login and I give them navigation tabs
+     access at access codes". Manager Review reuses the 'manager' tab on purpose (see the
+     senior-review comment in loan-core.js): whoever can Assign or Disburse today can now also
+     do this, by the owner's own choice. Both are mandatory now, not the old MUST/MAY split --
+     see GMO_THRESHOLD / MANAGER_THRESHOLD in loan-core.js. */
+  { id:'ln_manager_review', label:'Manager Review', tab:'manager', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
+  { id:'ln_gmo_review',     label:'GMO Review', tab:'gmo', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
   { id:'ln_credit',    label:'Credit · Approval', tab:'credit', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
   { id:'ln_disburse',  label:'Disburse', tab:'manager', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
   { id:'ln_finance',   label:'Finance', tab:'finance', ic:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
@@ -691,8 +702,13 @@ var NAV_LOAN = [
   { id:'ln_gm',        label:'GM · Carriers', tab:'gm', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>' },
 ];
 
+/* A view id says which workspace it belongs to just by its own name -- every HOPE Loan id is
+   prefixed ln_, on purpose (see NAV_LOAN above), so nothing needs to be told separately which
+   book a screen reads from. This is what let the switch go away: there is no mode to be in
+   ahead of time, only the tab in front of you. */
+function isLoanId_(id){ return typeof id === 'string' && id.indexOf('ln_') === 0; }
 function allowed(id){
-  if (S.workspace === 'hopeloan') {
+  if (isLoanId_(id)) {
     var n = NAV_LOAN.filter(function(x){ return x.id===id; })[0];
     if (!n) return false;
     // ln_pipeline has tab:null -- everyone who can even open HOPE Loan may see the summary.
@@ -705,11 +721,15 @@ function allowed(id){
   if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
   return ALWAYS.indexOf(id)>=0;
 }
+/* ONE SIDEBAR, NOT TWO -- "i thout we killing the sandbox shotcut and having one flow from now
+   on". HOPE Loan's items are appended after HOPE PMO's own, gated exactly like every other
+   tab: a code with no HOPE Loan tab draws nothing extra and never learns the section exists.
+   `hopeLoanAvailable` (from /api/me) covers the other half -- a code that DOES hold a HOPE
+   Loan tab still sees nothing here on a deployment where HOPE Loan itself was never configured,
+   so nobody is ever shown a door that leads nowhere. */
 function buildNav(){
   var el = $('#nav'); el.innerHTML='';
-  var list = S.workspace === 'hopeloan' ? NAV_LOAN : NAV;
-  list.forEach(function(n){
-    if (!allowed(n.id) || n.hidden) return;
+  function drawItem(n){
     var b = document.createElement('button');
     // The icon is how people find a tab in a list of 23 -- they recognise the shape before
     // they read the word, which is the whole reason v1 had them.
@@ -720,33 +740,39 @@ function buildNav(){
     b.setAttribute('data-v', n.id);
     b.onclick = function(){ go(n.id); };
     el.appendChild(b);
-  });
-}
-/* THE SWITCH ITSELF. Only ever drawn if the server said so at sign-in (canSwitchWorkspace --
-   admin role AND HOPE Loan actually configured), so an officer's screen never even carries the
-   button to wonder about. Flipping it rebuilds the nav for the OTHER workspace and lands on
-   its first screen, exactly like signing into a different app -- because structurally, it is
-   one: same session, same code, a different `workspace` string riding on every request from
-   here on, decided server-side, never trusted from what this button last said. */
-function toggleWorkspace(){
-  S.workspace = S.workspace === 'hopeloan' ? 'hopepmo' : 'hopeloan';
-  paintWorkspaceBadge_();
-  buildNav();
-  go(S.workspace === 'hopeloan' ? 'ln_pipeline' : 'dashboard');
-}
-function paintWorkspaceBadge_(){
-  var b = $('#wsBadge');
-  if (!b) return;
-  var sandbox = S.workspace === 'hopeloan';
-  b.textContent = sandbox ? 'HOPE LOAN — MAENDELEO / SANDBOX' : '';
-  b.classList.toggle('hide', !sandbox);
-  document.body.classList.toggle('sandboxmode', sandbox);
-  var sw = $('#wsSwitch');
-  if (sw) sw.textContent = sandbox ? '← HOPE PMO' : 'HOPE Loan →';
+  }
+  // HOPE LOAN FIRST, THEN HOPE PMO -- "hopeloanones should start before the pmo ones". Origination
+  // is the front door for anyone who holds one of its tabs; everything else follows below it.
+  var loanShown = false;
+  if (S.me.hopeLoanAvailable) {
+    var loanItems = NAV_LOAN.filter(function(n){ return allowed(n.id) && !n.hidden; });
+    if (loanItems.length) {
+      var loanHead = document.createElement('div');
+      loanHead.className = 'navhead';
+      loanHead.textContent = 'HOPE Loan';
+      el.appendChild(loanHead);
+      loanItems.forEach(drawItem);
+      loanShown = true;
+    }
+  }
+  // A second label only once there is something above it to tell it apart from -- a code with
+  // no HOPE Loan tab still gets the plain, unlabelled list it always had.
+  if (loanShown) {
+    var pmoHead = document.createElement('div');
+    pmoHead.className = 'navhead';
+    pmoHead.textContent = 'HOPE PMO';
+    el.appendChild(pmoHead);
+  }
+  NAV.forEach(function(n){ if (allowed(n.id) && !n.hidden) drawItem(n); });
 }
 function go(view){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   S.args={}; S.filters={}; S.foot='';
+  /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
+     mode left over from whatever was open before. Every request from here rides S.workspace to
+     the server (see srv() below), which resolves it for real against this code's own tabs --
+     this is only what picks the RIGHT one, never what grants it. */
+  S.workspace = isLoanId_(view) ? 'hopeloan' : 'hopepmo';
   /* THE TABLE BELONGS TO THE TAB, AND IT WAS BEING INHERITED.
      Reported from the field: "downloading most reports excel brings team performance report
      instead of the desired one; found this at expected and so on."
@@ -765,7 +791,7 @@ function go(view){
      honest answer. A tab with a table sets these before it paints, exactly as it always did. */
   S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
-  var t = (S.workspace === 'hopeloan' ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
+  var t = (isLoanId_(view) ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
   $('#title').textContent = t ? t.label : view;
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
     b.classList.toggle('on', b.getAttribute('data-v')===view);
@@ -893,14 +919,9 @@ function start(me){
   $('#shell').classList.remove('hide');
   $('#meName').textContent = me.name;
   $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams');
-  // "Switch is visible to ADMIN role only" -- and only once the server confirms HOPE Loan is
-  // actually configured; see canSwitchWorkspace in api/_lib/workspace.js. Nothing client-side
-  // decides this on its own.
-  if (me.canSwitchWorkspace) {
-    $('#wsSwitch').classList.remove('hide');
-    $('#wsSwitch').onclick = toggleWorkspace;
-  }
-  paintWorkspaceBadge_();
+  // me.hopeLoanAvailable rides along on S.me (set above) and is all buildNav() needs to decide
+  // whether HOPE Loan's own items belong in this sidebar at all -- see /api/me.js. Nothing
+  // client-side decides this on its own.
   buildNav();
   tipsStart();
   go('dashboard');
@@ -1393,6 +1414,9 @@ var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:non
   + '.jpgshot .card-h{display:block !important;white-space:normal !important;}'
   + '.jpgshot .card-h .sub{display:block !important;margin-left:0 !important;}'
   + '.jpgshot table{width:-moz-max-content !important;width:max-content !important;}'
+  // The per-table search box types into the LIVE screen -- a static image of it is an empty
+  // input nobody can use, not data. Same reasoning as leaving it out of CSV/Excel's own columns.
+  + '.jpgshot .tblsearch{display:none !important;}'
 
   /* EVERY REPORT IS ITS OWN WIDTH, AND CAPPING THEM ALL AT ONE NUMBER CUTS THE WIDE ONES OFF.
 
@@ -1575,6 +1599,30 @@ function bar(html){ return '<div class="bar">'+html+'</div>'; }
 
 /* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
 var HEAD = '', ONROW = null;
+/* A SEARCH BOX ON EVERY TABLE, NOT JUST THE ONE MAGNIFIER.
+   "leaving the above robust search alone, all navs should also have search on top of their
+   tables to search a customer in the respective fiend only" -- the magnifier (findBtn) stays
+   exactly as it is, a company-wide search that opens the full insight drawer. This is the
+   OTHER thing: narrowing the table already on screen, field by field, to whatever S.q matches
+   in ANY of its columns -- filtered() already does this (it is what CSV/Excel/JPG export off
+   of), the only piece missing was a box to type into. One box, wired once here in paint(), so
+   every screen that draws through the generic table gets it -- nothing per-tab to remember. */
+function tableSearchHtml_(){
+  return '<div class="tblsearch"><input id="tblQ" placeholder="Tafuta kwenye orodha hii / Search this list" value="' + esc(S.q) + '"></div>';
+}
+function wireTableSearch(){
+  var box = document.getElementById('tblQ');
+  if (!box) return;
+  box.oninput = function(){
+    // paint() rebuilds #view whole, including a brand new #tblQ -- without putting the caret
+    // back, the box would lose focus after every single keystroke.
+    var pos = box.selectionStart;
+    S.q = box.value;
+    paint();
+    var b2 = document.getElementById('tblQ');
+    if (b2) { b2.focus(); try { b2.setSelectionRange(pos, pos); } catch(e){} }
+  };
+}
 function paint(){
   var rows = sorted(filtered());
   $('#view').innerHTML = HEAD + '<div class="card" id="mainCard">'
@@ -1582,10 +1630,12 @@ function paint(){
     + ' <button class="btn sm ghost" data-xls="mainCard">Excel</button>'
     + ' <button class="btn sm ghost" data-jpg="mainCard">JPG</button>'
     + ' <button class="btn sm ghost" data-csv="mainCard">CSV</button></span></div>'
+    + tableSearchHtml_()
     + tableHtml(rows, S.cols, ONROW)
     + (S.foot ? '<div class="tblfoot">Showing '+rows.length+' of '+S.rows.length+' · '+esc(S.foot)+'</div>' : '')
     + '</div>';
   wireTable(rows, ONROW);
+  wireTableSearch();
   wireBar();
   wireOfficerFind();
 }
@@ -2251,28 +2301,31 @@ function mondayOf(key){
 function weekBar(d, extra){
   var shown = d.weekOf || '';
   var asked = d.weekRequested || '';
+  // "Dashboard date should be able to slide next week since am uploading next week progress
+  // reports too" / "so backward and foward should both work" -- a future week is no longer
+  // bounced back to this one server-side (asOfWeek), so the chip now has three states instead
+  // of two: past (as it always stood), upcoming (new), or this week.
+  var chip = d.pastWeek
+      ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(shown)
+        + ' \u2192 ' + esc(d.weekEnd||'') + ' \u00B7 kama ilivyokuwa ' + esc(d.asOfDate||'') + '</span>'
+      : (d.weekFuture
+          ? '<span class="chip ok" style="margin-left:8px">Wiki ijayo / Upcoming week \u00B7 ' + esc(shown) + '</span>'
+          : '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>');
   return bar('<label style="font-size:12px;color:var(--mut)">Wiki (Jumatatu) / Week starting Monday</label>'
     + '<button class="btn sm ghost" data-week-step="-1" title="Wiki iliyopita / previous week">\u25C0</button>'
     + '<input type="date" data-week="1" value="' + esc(shown) + '">'
     + '<button class="btn sm ghost" data-week-step="1" title="Wiki ijayo / next week">\u25B6</button>'
-    + (d.pastWeek
-        ? '<span class="chip warn" style="margin-left:8px">Wiki iliyopita \u00B7 ' + esc(shown)
-          + ' \u2192 ' + esc(d.weekEnd||'') + ' \u00B7 kama ilivyokuwa ' + esc(d.asOfDate||'') + '</span>'
-        : '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>')
-    + (d.pastWeek ? ' <button class="btn sm ghost" data-week-set="">Rudi wiki hii / Back to this week</button>' : '')
+    + chip
+    + ((d.pastWeek || d.weekFuture) ? ' <button class="btn sm ghost" data-week-set="">Rudi wiki hii / Back to this week</button>' : '')
     + (extra || ''))
     /* SAYING WHAT HAPPENED TO THE CHOICE. Only ever shown when the answer differs from the
-       ask, so the ordinary case stays quiet. */
-    + (d.weekFuture
-        ? '<div class="note">Wiki ya <b>' + esc(asked) + '</b> bado haijaanza \u2014 hakuna ripoti'
-          + ' iliyopakiwa. Inaonyeshwa wiki hii (<b>' + esc(shown) + '</b>).'
-          + ' / The week of ' + esc(asked) + ' has not started yet, so nothing has been uploaded'
-          + ' for it. Showing this week instead.</div>'
-        : (asked && asked !== shown
-            ? '<div class="note">Umechagua <b>' + esc(asked) + '</b> \u2014 wiki huanza Jumatatu,'
-              + ' hivyo inaonyeshwa <b>' + esc(shown) + '</b>.'
-              + ' / A week starts on Monday, so that date resolved to ' + esc(shown) + '.</div>'
-            : ''));
+       ask (a date snapped to its own Monday), so the ordinary case stays quiet -- a future
+       week is no longer an overruled choice, so it no longer prints a note here at all. */
+    + (asked && asked !== shown
+        ? '<div class="note">Umechagua <b>' + esc(asked) + '</b> \u2014 wiki huanza Jumatatu,'
+          + ' hivyo inaonyeshwa <b>' + esc(shown) + '</b>.'
+          + ' / A week starts on Monday, so that date resolved to ' + esc(shown) + '.</div>'
+        : '');
 }
 /* Wired once, beside the other global handlers, so every screen that prints a week bar gets
    the same behaviour rather than three copies that drift apart. */
@@ -2318,7 +2371,7 @@ VIEWS.dashboard = function(){
             ['U '+d.appsTrend.reduce(function(s,x){return s+x.unassigned;},0)+' · A '+d.appsTrend.reduce(function(s,x){return s+x.assigned;},0), 'mutl'],
             ['<b>'+d.appsTrend.reduce(function(s,x){return s+x.apps;},0)+' apps</b>'],
             ['TZS '+money(d.appsTrend.reduce(function(s,x){return s+x.amount;},0)), 'mutl']], 'tot'))
-      + trendGrid('Sales trend (Mon–Fri)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
+      + trendGrid('Sales trend (Mon–Sat)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
           d.salesTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
@@ -3871,7 +3924,14 @@ VIEWS.credit = function(){
 
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
    report read these columns, so a reassignment has to be editable here, not re-uploaded. */
-var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike'];
+// "recovery officers and collection officers names aint reflecting in abnormal payments ...
+// pmo column" -- the PMO column on Abnormal Payments names whoever the customer's stage maps
+// to (RECOVERY -> teams.recovery, COLLECTION -> teams.collection -- see ABN_STAGE server-side)
+// but 'collection' was never on this list, so there was never a box on this screen to type a
+// Collection officer's name into at all. The column itself already exists once
+// db/migrations/2026-08-09-team-contacts.sql has been run (it is additive/optional -- saveTeam
+// silently drops the field until then); this is the other half, the form to fill it from.
+var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike','collection'];
 /* THERE IS NO CREDIT ID ANY MORE. An analyst used to be carried by the number they appear under
    in the sale-approvals report, and every report then had to translate that number back into a
    person. Now the approvals report is read by NAME against the CREDIT column below, so there is
@@ -4408,6 +4468,9 @@ VIEWS.settings = function(){
     S.officers = cu;
     S.teamCount = (tm.rows||[]).length;
     S.roles = ac.roles || [];
+    // Feeds codeForm's tab checkboxes -- HOPE PMO and HOPE Loan together, same list roleForm
+    // already draws from, so "Extra tabs" stops being a box where a typo grants nothing.
+    S.allTabs = ac.allTabs || [];
     S.storage = sg;
     // Two registers live here because they answer the same question -- who may use this
     // system: an access code is a PORTAL login, a call user is a PHONE registration.
@@ -4971,9 +5034,10 @@ function snapPut_(s){
 /* =====================================================================================
    HOPE LOAN -- the screens.
    =====================================================================================
-   Every request from a view below carries S.workspace (set by toggleWorkspace) automatically,
-   through the same srv() every HOPE PMO tab uses -- there is no second fetch function, no
-   second endpoint, and no second way any of this could reach the officer-facing tables. */
+   Every request from a view below carries S.workspace (set by go(), from the view id's own
+   ln_ prefix -- see isLoanId_) automatically, through the same srv() every HOPE PMO tab uses --
+   there is no second fetch function, no second endpoint, and no second way any of this could
+   reach the officer-facing tables. */
 var LN = { money: money, esc: esc };   // nothing here needs more than these two, kept short
 
 function lnQueueTable(rows, cols, onRow){
@@ -4986,59 +5050,253 @@ function lnStageChip(s){
   if (k==='DISBURSED'||k==='APPROVED') return 'warn';
   return 'mut';
 }
+/** "presing save in assessment stages or any submissions should always turn the button off to
+    saving, some think it doesnt fn and multiple click" -- a click focuses its button first, in
+    every browser and WebView, so document.activeElement AT THE MOMENT lnAct/lnActKeep_ is
+    called is reliably the button that triggered it -- no call site has to be touched to pass
+    it in. Disabling it synchronously, before the network call even starts, is what actually
+    stops a second tap: a disabled button does not dispatch a second click at all. */
+function lnDisableTrigger_(){
+  var btn = document.activeElement;
+  if (!btn || btn.tagName !== 'BUTTON' || btn.disabled) return null;
+  btn.disabled = true;
+  return btn;
+}
 function lnAct(fn, args, okMsg, after){
+  var btn = lnDisableTrigger_();
   srv(fn, args).then(function(){
     toast(okMsg || 'Imefanyika / Done');
-    closeDrawer();
+    closeDrawer();               // the button leaves with the drawer -- nothing to re-enable
     (after || render)();
-  }).catch(function(e){ toast(String((e && e.message) || e), true); });
+  }).catch(function(e){
+    if (btn) btn.disabled = false;   // failed -- give it back so the officer can retry
+    toast(String((e && e.message) || e), true);
+  });
 }
+/** Same call, but the panel stays open -- "updating personal info shoulnt close the pannel
+    after each section filling". lnAct's closeDrawer() is right for a TERMINAL action (assign,
+    approve, submit -- the loan leaves this queue), wrong for one section of a multi-section
+    form the officer is still working through. Returns the promise so a caller can chain
+    (e.g. the pad/upload saves that have to finish before the section save itself fires). */
+function lnActKeep_(fn, args, okMsg){
+  var btn = lnDisableTrigger_();
+  return srv(fn, args).then(function(){
+    if (btn) btn.disabled = false;   // panel stays open -- the same button may be pressed again
+    toast(okMsg || 'Imefanyika / Done');
+  }, function(e){
+    if (btn) btn.disabled = false;
+    toast(String((e && e.message) || e), true); throw e;
+  });
+}
+/* =====================================================================================
+   KYC CAPTURE -- COMPRESS ON THE DEVICE, DRAW ON A CANVAS, ASK FOR GPS. Three small building
+   blocks, reused everywhere a photo, a signature/thumbprint, or a pinpoint is asked for.
+   ===================================================================================== */
+
+/* "adapt the whatsapp tech, when someone uploads their 5mb photo, we optimize it before
+   storing and store the low quality" -- every capture path resizes and re-encodes ON THE
+   DEVICE before a byte is sent (openCameraOverlay_ draws straight from the live video frame
+   at a capped dimension), which is what actually matters on a field connection; kycUpload's
+   own 2MB cap is only the backstop. */
+function kycUpload_(loanId, kind, dataUrl){
+  return srv('kycUpload', { loan_id: loanId, kind: kind, data_url: dataUrl });
+}
+
+/* THE SAME CAPTURE FOR BOTH SIGNATURE AND THUMBPRINT.
+   "i mean they press the thumb on phone screen and we record the fingerprint or draw
+    signature too llike how we work with phone notes apps" -- one canvas, drawn on with a
+   finger; there is no hardware fingerprint reader involved, on purpose, confirmed rather than
+   assumed before this was built. Pointer events cover touch and mouse the same way, so this
+   works identically on a phone in the field and a laptop in the office. */
+/** mode 'line' is a signature -- a pen stroke, thin, follows the path exactly. mode 'stamp' is
+    a thumbprint -- "fingerprint capturing is still miserable it works as typing": a thin exact
+    line IS what typing/drawing precisely feels like, and a thumb pressed on glass is neither
+    thin nor precise. Stamp mode lays down overlapping soft-edged circles the width of a real
+    thumb along wherever the finger moves, so the result reads as a pressed smear, not a traced
+    outline -- the same physical gesture a real inked thumbprint takes. */
+function wireCanvasPad_(canvasId, mode){
+  var canvas = document.getElementById(canvasId);
+  if (!canvas) return null;
+  var ctx = canvas.getContext('2d');
+  var stamp = mode === 'stamp';
+  ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a2b4a';
+  ctx.fillStyle = 'rgba(26,43,74,.55)';
+  var drawing = false, dirty = false, last = null;
+  function pos(e){
+    var r = canvas.getBoundingClientRect();
+    return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
+  }
+  /* "fingerprint are now taking a big dot, not the reality lines" -- a filled circle is ink,
+     not a print. A real thumbprint reads as RIDGES: a handful of wavy, roughly-concentric
+     lines, not a solid disc. Each dab now draws that ridge texture instead of filling one. */
+  function dab(p){
+    var R = Math.max(canvas.width, canvas.height) * 0.09;   // thumb-pad sized, not pen-tip sized
+    var rings = 5;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(26,43,74,.6)';
+    ctx.lineWidth = 1.1;
+    for (var i = 0; i < rings; i++) {
+      var r = R * (0.3 + i * (0.7 / rings));
+      ctx.beginPath();
+      for (var a = 0; a <= Math.PI * 2 + 0.3; a += 0.3) {
+        var wob = Math.sin(a * 3 + i * 1.7) * R * 0.05;       // waviness -- ridges, not a perfect ring
+        var x = p.x + Math.cos(a) * (r + wob), y = p.y + Math.sin(a) * (r + wob);
+        if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function start(e){
+    e.preventDefault(); drawing = true; last = pos(e);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) {}   // keeps the stroke on THIS canvas even off a fast, small screen
+    if (stamp) { dab(last); dirty = true; }
+  }
+  function move(e){
+    if (!drawing) return; e.preventDefault();
+    var p = pos(e);
+    if (stamp) {
+      // Dab along the path, not just at the endpoints, or a fast smear leaves gaps.
+      var dx = p.x - last.x, dy = p.y - last.y, dist = Math.sqrt(dx * dx + dy * dy);
+      var step = Math.max(canvas.width, canvas.height) * 0.03;
+      for (var d = 0; d < dist; d += step) dab({ x: last.x + dx * (d / dist), y: last.y + dy * (d / dist) });
+      dab(p);
+    } else {
+      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+    }
+    last = p; dirty = true;
+  }
+  function end(){ drawing = false; }
+  canvas.addEventListener('pointerdown', start);
+  canvas.addEventListener('pointermove', move);
+  canvas.addEventListener('pointerup', end);
+  canvas.addEventListener('pointerleave', end);
+  canvas.addEventListener('pointercancel', end);
+  return {
+    isDirty: function(){ return dirty; },
+    dataUrl: function(){ return canvas.toDataURL('image/png'); },
+    clear: function(){ ctx.clearRect(0, 0, canvas.width, canvas.height); dirty = false; },
+  };
+}
+/** A pad's "Save" button: upload only if something was actually drawn since the pad opened
+    (re-saving the section must not silently re-upload and re-point at a new file when nothing
+    changed), and hand the resulting path to whoever owns this field. */
+function saveCanvasPad_(pad, loanId, kind, onPath){
+  if (!pad || !pad.isDirty()) return Promise.resolve();
+  return kycUpload_(loanId, kind, pad.dataUrl()).then(function(r){ onPath(r.path); });
+}
+
+/** A camera/file capture button -- compress, upload, remember the path. Used for the passport
+    photo (customer and guarantor) and for the three site-verification photos alike; only the
+    `kind` string and where the resulting path lands differ. */
+/** A LIVE camera feed, never a file/gallery picker -- "photo shouldnt use gallary but phone
+    camera only". A file input's capture="environment" is only a HINT some browsers ignore,
+    and any hint still leaves a chooser a gallery photo can be picked from. getUserMedia opens
+    the camera directly; there is no picker step for an old photo to be substituted at. */
+function openCameraOverlay_(onCapture){
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+  var video = document.createElement('video');
+  video.autoplay = true; video.playsInline = true; video.muted = true;
+  video.style.cssText = 'width:100%;max-height:80vh;object-fit:contain;background:#000';
+  var bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:12px;padding:16px;width:100%;max-width:420px';
+  var shotBtn = document.createElement('button');
+  shotBtn.type = 'button'; shotBtn.className = 'btn w'; shotBtn.style.flex = '1'; shotBtn.textContent = '📷 Piga / Capture';
+  var cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button'; cancelBtn.className = 'btn w ghost'; cancelBtn.style.flex = '1'; cancelBtn.textContent = 'Ghairi / Cancel';
+  bar.appendChild(shotBtn); bar.appendChild(cancelBtn);
+  overlay.appendChild(video); overlay.appendChild(bar);
+  document.body.appendChild(overlay);
+
+  var stream = null, stopped = false;
+  function stop(){
+    if (stopped) return; stopped = true;
+    if (stream) stream.getTracks().forEach(function(t){ t.stop(); });
+    if (overlay.parentNode) document.body.removeChild(overlay);
+  }
+  cancelBtn.onclick = stop;
+  shotBtn.disabled = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    stop(); toast('Kamera haipatikani kwenye kivinjari hiki. / Camera is not available in this browser.', true); return;
+  }
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false })
+    .then(function(s){
+      if (stopped) { s.getTracks().forEach(function(t){ t.stop(); }); return; }   // Cancel pressed while permission was pending
+      stream = s; video.srcObject = s; shotBtn.disabled = false;
+    })
+    .catch(function(e){ stop(); toast('Imeshindikana kufungua kamera / could not open camera: ' + (e.message || e), true); });
+  shotBtn.onclick = function(){
+    var maxDim = 1280, vw = video.videoWidth || maxDim, vh = video.videoHeight || maxDim;
+    var scale = Math.min(1, maxDim / Math.max(vw, vh));
+    var c = document.createElement('canvas'); c.width = Math.round(vw * scale); c.height = Math.round(vh * scale);
+    c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+    var dataUrl = c.toDataURL('image/jpeg', 0.7);
+    stop();
+    onCapture(dataUrl);
+  };
+}
+function wirePhotoCapture_(btnId, statusId, loanId, kind, existingPath, onPath){
+  var btn = document.getElementById(btnId), status = document.getElementById(statusId);
+  if (!btn) return;
+  function setStatus(has){ if (status) status.textContent = has ? '✓ Imepigwa / Captured' : ''; }
+  setStatus(!!existingPath);
+  btn.onclick = function(){
+    openCameraOverlay_(function(dataUrl){
+      btn.disabled = true; if (status) status.textContent = 'Inapakia... / Uploading...';
+      kycUpload_(loanId, kind, dataUrl)
+        .then(function(r){ onPath(r.path); setStatus(true); btn.disabled = false; })
+        .catch(function(e){ btn.disabled = false; setStatus(!!existingPath); toast(String((e && e.message) || e), true); });
+    });
+  };
+}
+/** A "Capture location" button -- one GPS reading, shown back as coordinates so the officer
+    can see it actually landed before moving on. Used for the customer's residence, the
+    business, and the guarantor's residence -- three buttons, same wiring. */
+function wireGpsCapture_(btnId, statusId, existingLat, existingLng, onCoords){
+  var btn = document.getElementById(btnId), status = document.getElementById(statusId);
+  if (!btn) return;
+  function setStatus(lat, lng){ if (status) status.textContent = (lat != null && lng != null) ? (Number(lat).toFixed(5) + ', ' + Number(lng).toFixed(5)) : ''; }
+  setStatus(existingLat, existingLng);
+  btn.onclick = function(){
+    if (!navigator.geolocation) { toast('Simu hii haina GPS. / This device has no GPS.', true); return; }
+    btn.disabled = true; if (status) status.textContent = 'Inatafuta mahali... / Finding location...';
+    navigator.geolocation.getCurrentPosition(function(pos){
+      var lat = pos.coords.latitude, lng = pos.coords.longitude;
+      onCoords(lat, lng); setStatus(lat, lng); btn.disabled = false;
+    }, function(err){
+      btn.disabled = false; setStatus(existingLat, existingLng);
+      toast('Imeshindikana kupata mahali / could not get location: ' + err.message, true);
+    }, { enableHighAccuracy: true, timeout: 15000 });
+  };
+}
+/** The three capture rows (photo button, canvas pad x2) share the same markup shape -- built
+    once here so personal details and the guarantor section (customer and guarantor, the same
+    three captures each) do not carry four copies of it. */
+function captureRowPhoto_(label, btnId, statusId){
+  return '<div class="fld"><label>' + esc(label) + '</label>'
+    + '<button type="button" class="btn sm ghost" id="' + btnId + '">📷 Piga picha / Take photo</button>'
+    + ' <span class="sub" id="' + statusId + '"></span></div>';
+}
+function captureRowPad_(label, canvasId, clearBtnId){
+  return '<div class="fld"><label>' + esc(label) + '</label>'
+    + '<canvas id="' + canvasId + '" width="300" height="120" style="width:100%;max-width:300px;height:120px;border:1.5px solid var(--line);border-radius:9px;touch-action:none;background:#fff"></canvas>'
+    + ' <button type="button" class="btn sm ghost" id="' + clearBtnId + '" style="margin-top:4px">Futa / Clear</button></div>';
+}
+function captureRowGps_(label, btnId, statusId){
+  return '<div class="fld"><label>' + esc(label) + '</label>'
+    + '<button type="button" class="btn sm ghost" id="' + btnId + '">📍 Chukua mahali / Capture location</button>'
+    + ' <span class="sub" id="' + statusId + '"></span></div>';
+}
+
 function lnReasonPrompt_(cb){
   var reason = prompt('Sababu / Reason (required):');
   if (reason && reason.trim()) cb(reason.trim());
 }
 
-/* ---------- signature / fingerprint capture ----------
-   "customer could digital sign their contact copy, sign and biometrics inclusive on a single
-    signatory split screen" -- one canvas pad, reused three times (customer signature, customer
-    fingerprint, guarantor signature) on the team's assessment. Pointer Events cover mouse,
-    touch and pen with one listener each; no separate touch handling needed. */
-function lnSigPad_(id, label){
-  return '<div class="fld"><label>' + esc(label) + '</label>'
-    + '<canvas id="' + id + '" width="320" height="150" style="width:100%;max-width:360px;height:150px;'
-      + 'border:1.5px solid var(--line);border-radius:11px;touch-action:none;background:#fff;display:block"></canvas>'
-    + '<div style="margin-top:6px"><button type="button" class="btn sm ghost" data-lnclearsig="' + id + '">Futa / Clear</button></div></div>';
-}
-function lnWireSigPad_(id){
-  var c = document.getElementById(id);
-  if (!c || c._wired) return;
-  c._wired = true;
-  var ctx = c.getContext('2d');
-  ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#111';
-  var drawing = false, last = null;
-  function pos(e){
-    var r = c.getBoundingClientRect();
-    return { x: (e.clientX - r.left) * (c.width / r.width), y: (e.clientY - r.top) * (c.height / r.height) };
-  }
-  c.addEventListener('pointerdown', function(e){ drawing = true; last = pos(e); try { c.setPointerCapture(e.pointerId); } catch(_){} e.preventDefault(); });
-  c.addEventListener('pointermove', function(e){
-    if (!drawing) return;
-    var p = pos(e);
-    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
-    last = p; e.preventDefault();
-  });
-  var stop = function(){ drawing = false; };
-  c.addEventListener('pointerup', stop); c.addEventListener('pointerleave', stop);
-  var btn = document.querySelector('[data-lnclearsig="' + id + '"]');
-  if (btn) btn.onclick = function(){ ctx.clearRect(0, 0, c.width, c.height); };
-}
-function lnSigDataUrl_(id){
-  var c = document.getElementById(id);
-  if (!c) return '';
-  var blank = document.createElement('canvas'); blank.width = c.width; blank.height = c.height;
-  if (c.toDataURL() === blank.toDataURL()) return '';   // untouched -- never send a blank capture as "signed"
-  return c.toDataURL('image/png');
-}
+/* A trio of lnSigPad_ canvas helpers stood here briefly on this branch -- superseded before
+   they ever merged by the KYC capture work's own pads (captureRowPad_/saveCanvasPad_ below),
+   which upload through the storage bucket the moment a capture is taken. */
 
 VIEWS.ln_pipeline = function(){
   return srv('pipelineSummary', {}).then(function(d){
@@ -5125,6 +5383,28 @@ function wireLnCs_(){
    value that is only ever one of two things is how "Momo", "momo", "MOMO", "mobile money" all
    end up meaning the same thing to a person and four different things to a report. */
 var DISB_MODES = ['Momo', 'Bank'];
+// "gender should be choice not filling" / "ID too - choose type to fill wether NIDA, drivers,
+// voters, passport etc" -- GENDERS is a plain choice; ID_TYPES maps the choice to the ONE
+// column that type's number actually belongs in (customers already has all of them -- see
+// RUN-ME-001 -- this is only which one the form shows and writes to).
+var GENDERS = ['Female', 'Male'];
+var ID_TYPES = { 'NIDA': 'national_id', 'Driving Licence': 'driving_licence', 'Voters ID': 'voters_id', 'Passport': 'passport_no', 'Other': 'other_id_no' };
+// "the credit analysts will review that and return anything thats not adequate for refilling
+// with choice comment to return" -- nothing at team level is compulsory (see teamAssessmentSave
+// -- every section still saves whatever's filled, gaps and all); the gate is here instead, at
+// the one place that already had the power to send a loan back: credit's own reject.
+var CREDIT_RETURN_REASONS = ['Missing signature', 'Missing thumbprint', 'Missing customer photo',
+  'Missing guarantor details', 'Location (GPS) not captured', 'Verification photo missing',
+  'Incomplete business details', 'Other'];
+// "are all information captured enough for the future creditinfo crb report?" -- these
+// columns already existed on customers (RUN-ME-001, "Every one of these is a CreditInfo
+// Individual column") but nothing on any screen ever asked for them. Same pattern as GENDERS/
+// ID_TYPES above: a plain choice list, generic passthrough on the server does the rest.
+var MARITAL_STATUSES = ['Single', 'Married', 'Divorced', 'Widowed'];
+var EDUCATIONS = ['None', 'Primary', 'Secondary', 'Tertiary'];
+var EMPLOYMENTS = ['SelfEmployed', 'Employed', 'Both', 'Unemployed'];
+var RESIDENCE_TYPES = ['Owned', 'Rented', 'Family'];
+var RESIDENCY_CAPACITIES = ['Owner', 'Tenant', 'Living with family'];
 
 /* BRANCH, NOT TEAM, AT REGISTRATION.
 
@@ -5161,16 +5441,28 @@ function lnCsRegisterForm_(existing){
       curRegion = regions.find(function(rg){ return (byRegion[rg]||[]).indexOf(existing.branch) >= 0; }) || '';
     }
     drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
-      + '<div class="sub">Loan Application -- requested amount only. KYC is captured by the team at assessment.</div>'
+      + '<div class="sub">Loan Application -- requested amount only. KYC (District included) is captured by the team at assessment, not here -- CS stays fast.</div>'
       + (existing ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">Multi-loan top-up (TRACK# 2+) -- "not more than two installments left" on the current loan.</div>' : '')
       + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
-      /* MOBILE NUMBER AND DISBURSEMENT MODE, ONE AFTER THE OTHER -- on request: "Mobile number
-         and disb mode should be sequenced together." Both used to sit five fields apart. */
+      // Mobile and Disbursement mode sequenced together on purpose: a Momo disbursement pays
+      // OUT to the same number just typed above, so the two belong next to each other, not
+      // Mobile up top and Disbursement mode buried after Region/Branch/Landmark.
       + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
       + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
         + '<option value="">— chagua / choose —</option>'
         + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
         + '</select></div>'
+      // "after disb mode in loanapp, fill the disb no (mobile money/momo no or bank a/c no)" --
+      // right where the mode is chosen, not left for credit approval to ask a second time with
+      // nothing on file. Momo and Bank fields swap in and out under the SAME mode select, same
+      // pattern lnCreditForm_ already uses further down the pipeline.
+      + '<div class="fld" id="lnMomoFld"><label>Namba ya Momo / Momo no.</label><input id="lnMomoNo"></div>'
+      + '<div class="fld" id="lnBankFld"><label>Jina la Benki / Bank name</label><input id="lnBankName"></div>'
+      + '<div class="fld" id="lnAcctFld"><label>Namba ya Akaunti / Account no.</label><input id="lnAcctNo"></div>'
+      // "shift requested amount in apploan before region selection and add filling business
+      // type before location choices too" -- both now sit here, ahead of Region/Branch/Landmark.
+      + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
+      + '<div class="fld"><label>Aina ya biashara / Business type</label><input id="lnBizType" value="' + esc(existing ? existing.business_type : '') + '"></div>'
       /* REGION FIRST, THEN BRANCH.
            "selecting a branch should autofill its region since customer service agents dont
             know that / infact they should select among regions and then choose drop list of
@@ -5186,9 +5478,7 @@ function lnCsRegisterForm_(existing){
         + '<option value="">' + (curRegion ? '— chagua tawi / choose a branch —' : '— chagua mkoa kwanza / choose a region first —') + '</option>'
         + (byRegion[curRegion]||[]).map(function(b){ return '<option' + (existing && existing.branch===b?' selected':'') + '>' + esc(b) + '</option>'; }).join('')
         + '</select></div>'
-      + '<div class="fld"><label>District</label><input id="lnDistrict"></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
-      + '<div class="fld"><label>Requested amount (TZS)</label><input id="lnAmount" type="number"></div>'
       /* TOP-UP ELIGIBILITY. No repayment tracking exists in the sandbox yet (see loan-core.js's
          own note on the boundary "deliberately not crossed" past funding), so this is typed in
          off the customer's real book, the same trust model creditApprove's own "previous
@@ -5203,6 +5493,15 @@ function lnCsRegisterForm_(existing){
           + '<div class="fld" style="margin-top:8px"><textarea id="lnNote" rows="2" placeholder="Ongeza maoni / Add a note"></textarea></div>'
           + '<button class="btn sm" id="lnNoteSave">Ongeza / Add</button></div>'
         : ''));
+    // Momo no. for a Momo disbursement, Bank name + Account no. for a Bank one -- nothing shown
+    // (and nothing required) until a mode is actually chosen.
+    function toggleDisbFlds(){
+      var mode = $('#lnDisbMode').value;
+      $('#lnMomoFld').style.display = mode === 'Momo' ? '' : 'none';
+      $('#lnBankFld').style.display = mode === 'Bank' ? '' : 'none';
+      $('#lnAcctFld').style.display = mode === 'Bank' ? '' : 'none';
+    }
+    $('#lnDisbMode').onchange = toggleDisbFlds; toggleDisbFlds();
     $('#lnRegion').onchange = function(){
       var rg = this.value, branches = byRegion[rg] || [];
       var sel = $('#lnBranch');
@@ -5216,8 +5515,9 @@ function lnCsRegisterForm_(existing){
         docket: existing ? existing.docket : undefined,
         full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
         branch: $('#lnBranch').value.trim(), region: $('#lnRegion').value.trim(),
-        district: $('#lnDistrict').value.trim(), landmark: $('#lnLandmark').value.trim(),
+        landmark: $('#lnLandmark').value.trim(), business_type: $('#lnBizType').value.trim(),
         disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
+        momo: $('#lnMomoNo').value.trim(), bank_name: $('#lnBankName').value.trim(), account_no: $('#lnAcctNo').value.trim(),
       };
       if (existing) {
         args.topup_installments_left = $('#lnTopupLeft').value;
@@ -5269,22 +5569,32 @@ VIEWS.ln_manager = function(){
     S.foot = money(d.rows.length) + ' waiting for assignment';
   });
 };
+/* "Manager assigning to a team should be choice not filling" -- a free-text box let a typo or
+   a stale team name misfile a customer with nothing to catch it. Now a SELECT, offered from the
+   same teamsByBranch branchList() already builds for CS registration -- the branch's own teams,
+   nothing typed. Enforced again on the server (managerAssign), not just offered here. */
 function lnManagerAssignForm_(loan){
-  drawer('<h3>' + esc(loan.full_name) + '</h3>'
-    + '<div class="sub">Ref ' + esc(loan.loan_id) + ' &middot; Requested ' + money(loan.requested_amt) + '</div>'
-    // Branch and landmark are what a manager assigns FROM -- registration set the branch,
-    // not a team, precisely so this decision is made here, from where the customer actually is.
-    + '<div class="fld"><label>Branch</label><div style="padding:8px 0;font-weight:600">' + esc(loan.branch || '—') + '</div></div>'
-    + (loan.nearest_landmark ? '<div class="fld"><label>Landmark</label><div style="padding:8px 0">' + esc(loan.nearest_landmark) + '</div></div>' : '')
-    + '<div class="fld"><label>Assign to team (or SHIFT to a different one of yours)</label><input id="lnAssignTeam" value="' + esc(loan.team || '') + '"></div>'
-    + '<button class="btn w" id="lnAssignBtn">Assign</button>'
-    + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');
-  $('#lnAssignBtn').onclick = function(){
-    lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, 'Assigned.', function(){ go('ln_manager'); });
-  };
-  $('#lnRejectBtn').onclick = function(){
-    lnReasonPrompt_(function(reason){ lnAct('managerReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_manager'); }); });
-  };
+  srv('branchList').then(function(bl){
+    var teams = (bl.teamsByBranch || {})[loan.branch] || [];
+    drawer('<h3>' + esc(loan.full_name) + '</h3>'
+      + '<div class="sub">Ref ' + esc(loan.loan_id) + ' &middot; Requested ' + money(loan.requested_amt) + '</div>'
+      // Branch and landmark are what a manager assigns FROM -- registration set the branch,
+      // not a team, precisely so this decision is made here, from where the customer actually is.
+      + '<div class="fld"><label>Branch</label><div style="padding:8px 0;font-weight:600">' + esc(loan.branch || '—') + '</div></div>'
+      + (loan.nearest_landmark ? '<div class="fld"><label>Landmark</label><div style="padding:8px 0">' + esc(loan.nearest_landmark) + '</div></div>' : '')
+      + '<div class="fld"><label>Assign to team (or SHIFT to a different one of yours)</label><select id="lnAssignTeam"' + (teams.length?'':' disabled') + '>'
+        + '<option value="">' + (teams.length ? '— chagua timu / choose a team —' : 'Hakuna timu za tawi hili -- run 2026-08-19-team-branch-DATA.sql / no teams on file for this branch') + '</option>'
+        + teams.map(function(t){ return '<option' + (loan.team===t?' selected':'') + '>' + esc(t) + '</option>'; }).join('')
+        + '</select></div>'
+      + '<button class="btn w" id="lnAssignBtn">Assign</button>'
+      + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');
+    $('#lnAssignBtn').onclick = function(){
+      lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, 'Assigned.', function(){ go('ln_manager'); });
+    };
+    $('#lnRejectBtn').onclick = function(){
+      lnReasonPrompt_(function(reason){ lnAct('managerReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_manager'); }); });
+    };
+  }).catch(function(e){ toast(String(e.message||e), true); });
 }
 
 /* ---------- Team: the five-section assessment, saved as it goes ---------- */
@@ -5296,96 +5606,381 @@ VIEWS.ln_team = function(){
     ONROW = function(r){ lnTeamAssessForm_(r); };
   });
 };
-function lnTeamAssessForm_(loan){
-  drawer('<h3>' + esc(loan.full_name) + ' &middot; Ref ' + esc(loan.loan_id) + '</h3>'
-    + '<div class="sub">Each section below SAVES ON ITS OWN -- nothing is lost if you leave and come back. "Add save option ... without losing primary captured data before submitting."</div>'
-    + '<div class="card"><div class="card-h">1. Personal details' + (Number(loan.track_no) > 1 ? ' <span class="chip mut" style="font-size:10px">Track ' + loan.track_no + ' -- identity fields locked</span>' : '') + '</div>'
-    + '<div class="fld"><label>Date of birth</label><input id="lnDob" type="date"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
-    + '<div class="fld"><label>Gender</label><input id="lnGender"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
-    + '<div class="fld"><label>National ID (NIDA)</label><input id="lnNida"' + (Number(loan.track_no) > 1 ? ' disabled' : '') + '></div>'
-    + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
-    + '<div class="card"><div class="card-h">2. Team recommendation</div>'
-    + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (loan.requested_amt||'') + '"></div>'
-    + '<div class="fld"><label>Zone visited</label><input id="lnZone"></div>'
-    + '<div class="fld"><label>Remarks</label><input id="lnRemarks"></div>'
-    + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
-    + '<div class="card"><div class="card-h">3. Guarantor</div>'
-    + '<div class="fld"><label>Full name</label><input id="lnGName"></div>'
-    + '<div class="fld"><label>Phone</label><input id="lnGPhone"></div>'
-    + '<div class="fld"><label>Relationship</label><input id="lnGRel"></div>'
-    + '<button class="btn sm" id="lnSaveGuar">Save this section</button></div>'
-    + '<div class="card"><div class="card-h">4. Residence &amp; business verification</div>'
-    + '<label><input type="checkbox" id="lnResOk"> Customer residence verified</label><br>'
-    + '<label><input type="checkbox" id="lnGResOk"> Guarantor residence verified</label><br>'
-    + '<label><input type="checkbox" id="lnBizOk"> Business ownership verified</label>'
-    + '<button class="btn sm" id="lnSaveVerify" style="margin-top:8px">Save this section</button></div>'
-    /* THE SINGLE-SIGNATORY SPLIT SCREEN. One card, one capture: the customer's contract
-       signature, their fingerprint, and the guarantor's signature -- taken together, here, at
-       assessment, where the rest of KYC already lives. */
-    + '<div class="card"><div class="card-h">5. Signature &amp; fingerprint</div>'
-    + lnSigPad_('lnSigCust', 'Sahihi ya mteja / Customer signature')
-    + lnSigPad_('lnSigPrint', 'Alama ya kidole cha mteja / Customer fingerprint')
-    + lnSigPad_('lnSigGuar', 'Sahihi ya mdhamini / Guarantor signature')
-    + '<button class="btn sm" id="lnSaveSig">Save this section</button></div>'
-    + '<div class="fld" style="margin-top:14px"><button class="btn w" id="lnSubmitRec">Submit recommendation</button>'
-    + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>');
-  lnWireSigPad_('lnSigCust'); lnWireSigPad_('lnSigPrint'); lnWireSigPad_('lnSigGuar');
-  $('#lnSavePersonal').onclick = function(){
-    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'personal',
-      fields: { dob: $('#lnDob').value, gender: $('#lnGender').value.trim(), national_id: $('#lnNida').value.trim() } }, 'Saved.', function(){});
-  };
-  $('#lnSaveRec').onclick = function(){
-    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
-      fields: { amount: Number($('#lnRecAmt').value) || 0, zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.', function(){});
-  };
-  $('#lnSaveGuar').onclick = function(){
-    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor',
-      fields: { guarantors: [{ full_name: $('#lnGName').value.trim(), phone: $('#lnGPhone').value.trim(), relationship: $('#lnGRel').value.trim() }] } }, 'Saved.', function(){});
-  };
-  $('#lnSaveVerify').onclick = function(){
-    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'residence',
-      fields: { verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked } }, 'Saved.', function(){});
-    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: { verified: $('#lnBizOk').checked } }, '', function(){});
-  };
-  $('#lnSaveSig').onclick = function(){
-    var fields = { customer_signature: lnSigDataUrl_('lnSigCust'), customer_fingerprint: lnSigDataUrl_('lnSigPrint'),
-      guarantor_signature: lnSigDataUrl_('lnSigGuar') };
-    if (!fields.customer_signature && !fields.customer_fingerprint && !fields.guarantor_signature) {
-      toast('Chukua sahihi au alama ya kidole angalau moja. / Capture at least one signature or fingerprint first.', true);
-      return;
-    }
-    lnAct('teamAssessmentSave', { loan_id: loan.id, section: 'signature', fields: fields }, 'Saved.', function(){});
-  };
-  $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
-  $('#lnRejectRec').onclick = function(){
-    lnReasonPrompt_(function(reason){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'REJECTED', reason: reason }, 'Rejected.', function(){ go('ln_team'); }); });
-  };
+/* THE WHOLE FORM OPENS PRE-FILLED, NOT BLANK -- teamAssessDetail, not the bare row
+   teamQueue's table carries. "nothing is lost if you leave and come back" was already true in
+   the database; every save here except lnAct's own closeDrawer used to leave the SCREEN saying
+   otherwise. Captures upload the moment they happen (kycUpload), independent of the section's
+   own Save button -- a photo taken and then the drawer closed before pressing Save is still on
+   file, not lost with the rest of the section's typed fields. */
+function lnTeamAssessForm_(loanRow){
+  srv('teamAssessDetail', { loan_id: loanRow.id }).then(function(d){
+    var loan = d.loan, c = d.customer || {}, a = d.assessment || {};
+    var g = (d.guarantors || [])[0] || {};
+    var alts = (d.guarantors || []).slice(1, 6);
+    while (alts.length < 5) alts.push({});
+    var locked = Number(loan.track_no) > 1;
+    var idType = c.id_type || 'NIDA';
+    var idNo = ID_TYPES[idType] ? (c[ID_TYPES[idType]] || '') : '';
+
+    drawer('<h3>' + esc(loan.full_name) + ' &middot; Ref ' + esc(loan.loan_id) + '</h3>'
+      + '<div class="sub">Each section below SAVES ON ITS OWN -- nothing is lost if you leave and come back. "Add save option ... without losing primary captured data before submitting."</div>'
+      + '<div class="card"><div class="card-h">1. Personal details' + (locked ? ' <span class="chip mut" style="font-size:10px">Track ' + loan.track_no + ' -- identity fields locked</span>' : '') + '</div>'
+      // "are all information captured enough for the future creditinfo crb report?" -- the
+      // bureau "wants the parts, not only the whole" (RUN-ME-001): full_name stays what every
+      // other screen searches and displays, these are the split parts alongside it, same
+      // write-once treatment as DOB/national ID since they identify the same one person.
+      + '<div class="fld"><label>Jina la kwanza / First name</label><input id="lnFirstName" value="' + esc(c.first_name || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Majina ya kati / Middle name(s)</label><input id="lnMiddleNames" value="' + esc(c.middle_names || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Jina la ukoo la sasa / Present surname</label><input id="lnPresentSurname" value="' + esc(c.present_surname || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Jina la ukoo la kuzaliwa / Birth surname</label><input id="lnBirthSurname" value="' + esc(c.birth_surname || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Date of birth</label><input id="lnDob" type="date" value="' + esc(c.dob || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>Gender</label><select id="lnGender"' + (locked ? ' disabled' : '') + '>'
+        + '<option value="">— chagua / choose —</option>'
+        + GENDERS.map(function(x){ return '<option' + (c.gender === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Hali ya ndoa / Marital status</label><select id="lnMarital">'
+        + '<option value="">— chagua / choose —</option>'
+        + MARITAL_STATUSES.map(function(x){ return '<option' + (c.marital_status === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Wenza / Spouses</label><input id="lnSpouses" type="number" value="' + (c.spouses != null ? c.spouses : '') + '"></div>'
+      + '<div class="fld"><label>Watoto / Children</label><input id="lnChildren" type="number" value="' + (c.children != null ? c.children : '') + '"></div>'
+      + '<div class="fld"><label>Elimu / Education</label><select id="lnEducation">'
+        + '<option value="">— chagua / choose —</option>'
+        + EDUCATIONS.map(function(x){ return '<option' + (c.education === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Aina ya kitambulisho / ID type</label><select id="lnIdType"' + (locked ? ' disabled' : '') + '>'
+        + Object.keys(ID_TYPES).map(function(x){ return '<option' + (idType === x ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Namba ya kitambulisho / ID number</label><input id="lnIdNo" value="' + esc(idNo) + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld" id="lnIdOtherFld"><label>Aina gani? / Which kind?</label><input id="lnIdOther" value="' + esc(c.other_id_type || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="fld"><label>TIN</label><input id="lnTin" value="' + esc(c.tin || '') + '"' + (locked ? ' disabled' : '') + '></div>'
+      + '<div class="sub" style="margin:10px 0 4px">Kazi / Employment</div>'
+      + '<div class="fld"><label>Kazi/shughuli / Occupation</label><input id="lnOccupation" value="' + esc(c.occupation || '') + '"></div>'
+      + '<div class="fld"><label>Ajira / Employment</label><select id="lnEmployment">'
+        + '<option value="">— chagua / choose —</option>'
+        + EMPLOYMENTS.map(function(x){ return '<option' + (c.employment === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Mwajiri (kama yupo) / Employer (if any)</label><input id="lnEmployerName" value="' + esc(c.employer_name || '') + '"></div>'
+      + '<div class="sub" style="margin:10px 0 4px">Mawasiliano zaidi / More contact</div>'
+      + '<div class="fld"><label>Simu ya pili / Alternate phone</label><input id="lnMobileAlt" value="' + esc(c.mobile_alt || '') + '"></div>'
+      + '<div class="fld"><label>Barua pepe / Email</label><input id="lnEmail" type="email" value="' + esc(c.email || '') + '"></div>'
+      + captureRowPad_('Sahihi / Signature', 'lnSigPad', 'lnSigClear')
+      + captureRowPad_('Alama ya kidole gumba / Thumbprint press', 'lnThumbPad', 'lnThumbClear')
+      + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoStatus')
+      + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
+
+      // "customer residense and business verification should be segmented since officers
+      // could reach those in different timeframes" -- these were one card behind one save
+      // button, so a visit to only the residence (or only the business) still needed the
+      // other half filled in before anything could be saved. Two cards, two independent
+      // saves now -- each already writes to its own SECTIONS entry server-side ('residence' /
+      // 'business'), this was purely a client-side coupling.
+      + '<div class="card"><div class="card-h">2. Customer residence verification</div>'
+      + '<div class="fld"><label>Mtaa / Street</label><input id="lnCustStreet" value="' + esc(c.street || '') + '"></div>'
+      + '<div class="fld"><label>Kata / Ward</label><input id="lnCustWard" value="' + esc(c.ward || '') + '"></div>'
+      + '<div class="fld"><label>Wilaya / District</label><input id="lnDistrict" value="' + esc(c.district || '') + '"></div>'
+      + '<div class="fld"><label>Namba ya kiwanja / Block number</label><input id="lnCustBlock" value="' + esc(c.block_number || '') + '"></div>'
+      + '<div class="fld"><label>Aina ya makazi / Type of residence</label><select id="lnCustResType">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCE_TYPES.map(function(x){ return '<option' + (c.type_of_residence === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Hadhi ya makazi / Residency capacity</label><select id="lnCustResCap">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCY_CAPACITIES.map(function(x){ return '<option' + (c.residency_capacity === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Miaka ya kuishi hapo / Years at this residence</label><input id="lnCustResYears" type="number" step="0.1" value="' + (c.years_of_residence != null ? c.years_of_residence : '') + '"></div>'
+      + captureRowGps_('Mahali pa makazi ya mteja / Customer residence location', 'lnCustGpsBtn', 'lnCustGpsStatus')
+      + captureRowPhoto_('Picha ya uthibitisho makazi (na afisa) / Residence verification photo (with officer)', 'lnCustResPhotoBtn', 'lnCustResPhotoStatus')
+      // Kiambatanisho Na. 3 of the loan contract: "Barua ya utambulisho wa makazi na biashara
+      // ya Mkopaji kutoka Serikali ya Mtaa" -- a photograph OF a letter the local government
+      // office issues, distinct from the officer-present verification photo above it.
+      + captureRowPhoto_('Barua ya Serikali ya Mtaa (makazi/biashara) / Local govt letter (residence/business)', 'lnCustLetterBtn', 'lnCustLetterStatus')
+      + '<label><input type="checkbox" id="lnResOk"' + (a.residence_verified ? ' checked' : '') + '> Customer residence verified</label><br>'
+      + '<label><input type="checkbox" id="lnGResOk"' + (a.guarantor_residence_verified ? ' checked' : '') + '> Guarantor residence verified</label>'
+      + '<button class="btn sm" id="lnSaveResidence" style="margin-top:8px">Save this section</button></div>'
+
+      + '<div class="card"><div class="card-h">3. Business verification</div>'
+      // "business type from the cs registration, fill business name and capture live
+      // location coordinates for all 3 placess business and their residences" -- business
+      // TYPE was already asked at CS registration; this is the name, and the third place.
+      + '<div class="fld"><label>Jina la biashara / Business name</label><input id="lnBizName" value="' + esc(c.business_name || '') + '"></div>'
+      // "Every one of these is a CreditInfo Individual column" -- income figures officers
+      // already ask about verbally at this visit; weekly_profit is derived server-side from
+      // daily_profit x 6, same as it already was for the other columns in this list.
+      + '<div class="fld"><label>Mauzo ya siku / Daily sales (TZS)</label><input id="lnDailySales" type="number" value="' + (c.daily_sales != null ? c.daily_sales : '') + '"></div>'
+      + '<div class="fld"><label>Faida ya siku / Daily profit (TZS)</label><input id="lnDailyProfit" type="number" value="' + (c.daily_profit != null ? c.daily_profit : '') + '"></div>'
+      + '<div class="fld"><label>Matumizi ya wiki / Weekly expenses (TZS)</label><input id="lnWeeklyExpenses" type="number" value="' + (c.weekly_expenses != null ? c.weekly_expenses : '') + '"></div>'
+      + captureRowGps_('Mahali pa biashara / Business location', 'lnBizGpsBtn', 'lnBizGpsStatus')
+      + captureRowPhoto_('Picha ya mbele ya biashara (na afisa) / Business front verification photo (with officer)', 'lnBizPhotoBtn', 'lnBizPhotoStatus')
+      + '<label><input type="checkbox" id="lnBizOk"' + (a.business_verified ? ' checked' : '') + '> Business ownership verified</label>'
+      + '<button class="btn sm" id="lnSaveBusiness" style="margin-top:8px">Save this section</button></div>'
+
+      + '<div class="card"><div class="card-h">4. Guarantor</div>'
+      + '<div class="fld"><label>Full name</label><input id="lnGName" value="' + esc(g.full_name || '') + '"></div>'
+      + '<div class="fld"><label>Phone</label><input id="lnGPhone" value="' + esc(g.phone || '') + '"></div>'
+      + '<div class="fld"><label>Relationship</label><input id="lnGRel" value="' + esc(g.relationship || '') + '"></div>'
+      // "guarantor id should be choices too.. not just nida" -- same choice as personal
+      // details; stored in the guarantor's one national_id column, alongside id_type saying
+      // which kind it actually is (no bureau reporting requires the guarantor to have a
+      // separate column per type the way the customer does).
+      + '<div class="fld"><label>Aina ya kitambulisho / ID type</label><select id="lnGIdType">'
+        + Object.keys(ID_TYPES).map(function(x){ return '<option' + ((g.id_type || 'NIDA') === x ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Namba ya kitambulisho / ID number</label><input id="lnGIdNo" value="' + esc(g.national_id || '') + '"></div>'
+      + '<div class="fld"><label>Kazi/shughuli / Occupation</label><input id="lnGOccupation" value="' + esc(g.occupation || '') + '"></div>'
+      // "residence and business ver should be filled street, ward, district for both customer
+      // and guarantor" -- the guarantor's half lives here, alongside the rest of their own
+      // record, not split off into section 4 where their row might not exist yet.
+      + '<div class="fld"><label>Mtaa / Street</label><input id="lnGStreet" value="' + esc(g.street || '') + '"></div>'
+      + '<div class="fld"><label>Kata / Ward</label><input id="lnGWard" value="' + esc(g.ward || '') + '"></div>'
+      + '<div class="fld"><label>Wilaya / District</label><input id="lnGDistrict" value="' + esc(g.district || '') + '"></div>'
+      + '<div class="fld"><label>Namba ya kiwanja / Block number</label><input id="lnGBlock" value="' + esc(g.block_number || '') + '"></div>'
+      + '<div class="fld"><label>Aina ya makazi / Type of residence</label><select id="lnGResType">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCE_TYPES.map(function(x){ return '<option' + (g.type_of_residence === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + '<div class="fld"><label>Hadhi ya makazi / Residency capacity</label><select id="lnGResCap">'
+        + '<option value="">— chagua / choose —</option>'
+        + RESIDENCY_CAPACITIES.map(function(x){ return '<option' + (g.residency_capacity === x ? ' selected' : '') + '>' + x + '</option>'; }).join('')
+        + '</select></div>'
+      + captureRowGps_('Mahali pa makazi ya mdhamini / Guarantor residence location', 'lnGGpsBtn', 'lnGGpsStatus')
+      + captureRowPhoto_('Picha ya uthibitisho makazi ya mdhamini (na afisa) / Guarantor residence verification photo (with officer)', 'lnGResPhotoBtn', 'lnGResPhotoStatus')
+      // Kiambatanisho Na. 2: "Barua ya Utambulisho ya Mdhamini kutoka kwa Serikali ya Mtaa
+      // ikimtambua Mdhamini pamoja na makazi yake" -- the guarantor's own local govt letter.
+      + captureRowPhoto_('Barua ya Serikali ya Mtaa ya mdhamini / Guarantor local govt letter', 'lnGLetterBtn', 'lnGLetterStatus')
+      + captureRowPhoto_('Picha ya mdhamini / Guarantor photo', 'lnGPhotoBtn', 'lnGPhotoStatus')
+      + captureRowPad_('Sahihi ya mdhamini / Guarantor signature', 'lnGSigPad', 'lnGSigClear')
+      + captureRowPad_('Alama ya kidole gumba ya mdhamini / Guarantor thumbprint', 'lnGThumbPad', 'lnGThumbClear')
+      // "we have 5 extra guarantors who we just say are the close people to the customer
+      // these are filled names nos and relationship [help in followup by having people to
+      // ask whats going on when both customer and guarantor are unreachable]"
+      + '<div class="sub" style="margin:10px 0 4px">Wadhamini wa ziada (5) / Extra close contacts (5) -- name, phone, relationship only</div>'
+      + [0, 1, 2, 3, 4].map(function(i){
+          var alt = alts[i] || {};
+          return '<div class="fld" style="display:flex;gap:6px">'
+            + '<input id="lnAlt' + i + 'Name" placeholder="Jina / Name" value="' + esc(alt.full_name || '') + '" style="flex:2">'
+            + '<input id="lnAlt' + i + 'Phone" placeholder="Simu / Phone" value="' + esc(alt.phone || '') + '" style="flex:1">'
+            + '<input id="lnAlt' + i + 'Rel" placeholder="Uhusiano / Relation" value="' + esc(alt.relationship || '') + '" style="flex:1"></div>';
+        }).join('')
+      + '<button class="btn sm" id="lnSaveGuar" style="margin-top:6px">Save this section</button></div>'
+
+      + '<div class="card"><div class="card-h">5. Team recommendation</div>'
+      + '<div class="fld"><label>Recommended amount (TZS)</label><input id="lnRecAmt" type="number" value="' + (a.recommend_amount || loan.requested_amt || '') + '"></div>'
+      + '<div class="fld"><label>Credit score</label><input id="lnCreditScore" type="number" step="0.1" value="' + (a.credit_score != null ? a.credit_score : '') + '"></div>'
+      // "DHAMANA YA MKOPO ... mali za biashara na mali za nyumbani ... zenye thamani mara
+      // mbili ya mkopo" -- the contract's own collateral clause; collateral_type/_value
+      // already existed on loans (RUN-ME-001), nothing ever wrote to them until now.
+      + '<div class="fld"><label>Aina ya dhamana / Collateral type</label><input id="lnCollType" placeholder="e.g. Business & household assets" value="' + esc(loan.collateral_type || '') + '"></div>'
+      + '<div class="fld"><label>Thamani ya dhamana (TZS) / Collateral value</label><input id="lnCollValue" type="number" value="' + (loan.collateral_value != null ? loan.collateral_value : '') + '"></div>'
+      + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
+      + '<div class="fld"><label>Remarks</label><input id="lnRemarks" value="' + esc(a.remarks || '') + '"></div>'
+      + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
+
+      + '<div class="fld" style="margin-top:14px">'
+      // "Having all the recommendation filled should produce a copy icon on the customer
+      // pannel for copying all the loan recommendation KYC organized text to report in
+      // whatsapp" -- enabled once there is a recommended amount to report, live as it's typed.
+      + '<button class="btn w ghost" id="lnCopyKyc" disabled>📋 Nakili KYC / Copy KYC for WhatsApp</button>'
+      + '<button class="btn w" id="lnSubmitRec" style="margin-top:8px">Submit recommendation</button>'
+      + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>');
+
+    // ---- ID type: which number field is actually being asked for ----
+    function toggleIdOther(){ $('#lnIdOtherFld').style.display = $('#lnIdType').value === 'Other' ? '' : 'none'; }
+    $('#lnIdType').onchange = toggleIdOther; toggleIdOther();
+
+    // ---- captures: canvas pads, camera buttons, GPS -- wired once, uploaded as they happen ----
+    var sigPad = wireCanvasPad_('lnSigPad', 'line'), thumbPad = wireCanvasPad_('lnThumbPad', 'stamp');
+    var gSigPad = wireCanvasPad_('lnGSigPad', 'line'), gThumbPad = wireCanvasPad_('lnGThumbPad', 'stamp');
+    $('#lnSigClear').onclick = function(){ sigPad.clear(); };
+    $('#lnThumbClear').onclick = function(){ thumbPad.clear(); };
+    $('#lnGSigClear').onclick = function(){ gSigPad.clear(); };
+    $('#lnGThumbClear').onclick = function(){ gThumbPad.clear(); };
+
+    var PATHS = { photo: c.photo_url, gPhoto: g.photo_url, gResPhoto: g.residence_verify_photo_url,
+      custResPhoto: c.residence_verify_photo_url, bizPhoto: c.business_verify_photo_url,
+      custLetter: c.local_govt_letter_url, gLetter: g.local_govt_letter_url };
+    wirePhotoCapture_('lnPhotoBtn', 'lnPhotoStatus', loan.id, 'photo', PATHS.photo, function(p){ PATHS.photo = p; });
+    wirePhotoCapture_('lnGPhotoBtn', 'lnGPhotoStatus', loan.id, 'g-photo', PATHS.gPhoto, function(p){ PATHS.gPhoto = p; });
+    wirePhotoCapture_('lnGResPhotoBtn', 'lnGResPhotoStatus', loan.id, 'g-residence', PATHS.gResPhoto, function(p){ PATHS.gResPhoto = p; });
+    wirePhotoCapture_('lnCustResPhotoBtn', 'lnCustResPhotoStatus', loan.id, 'residence', PATHS.custResPhoto, function(p){ PATHS.custResPhoto = p; });
+    wirePhotoCapture_('lnBizPhotoBtn', 'lnBizPhotoStatus', loan.id, 'business', PATHS.bizPhoto, function(p){ PATHS.bizPhoto = p; });
+    // Kiambatanisho Na. 2/3 -- the two local-government letters, same live-camera capture as
+    // every other photo here, just a different piece of paper being photographed.
+    wirePhotoCapture_('lnCustLetterBtn', 'lnCustLetterStatus', loan.id, 'residence-letter', PATHS.custLetter, function(p){ PATHS.custLetter = p; });
+    wirePhotoCapture_('lnGLetterBtn', 'lnGLetterStatus', loan.id, 'g-letter', PATHS.gLetter, function(p){ PATHS.gLetter = p; });
+
+    var COORDS = { custRes: { lat: c.residence_lat, lng: c.residence_lng },
+      biz: { lat: c.business_lat, lng: c.business_lng },
+      gRes: { lat: g.residence_lat, lng: g.residence_lng } };
+    wireGpsCapture_('lnCustGpsBtn', 'lnCustGpsStatus', COORDS.custRes.lat, COORDS.custRes.lng, function(lat, lng){ COORDS.custRes = { lat: lat, lng: lng }; });
+    wireGpsCapture_('lnBizGpsBtn', 'lnBizGpsStatus', COORDS.biz.lat, COORDS.biz.lng, function(lat, lng){ COORDS.biz = { lat: lat, lng: lng }; });
+    wireGpsCapture_('lnGGpsBtn', 'lnGGpsStatus', COORDS.gRes.lat, COORDS.gRes.lng, function(lat, lng){ COORDS.gRes = { lat: lat, lng: lng }; });
+
+    // ---- save handlers -- each one merges whatever this visit captured with the currently
+    //      typed fields, so a pad drawn but not yet part of a save is picked up here. ----
+    $('#lnSavePersonal').onclick = function(){
+      Promise.all([
+        saveCanvasPad_(sigPad, loan.id, 'signature', function(p){ PATHS.signature = p; }),
+        saveCanvasPad_(thumbPad, loan.id, 'thumbprint', function(p){ PATHS.thumbprint = p; }),
+      ]).then(function(){
+        var type = $('#lnIdType').value, idCol = ID_TYPES[type];
+        // District moved to section 4 with street/ward ("residence and business ver should be
+        // filled street, ward, district") -- not asked here any more.
+        var fields = { dob: $('#lnDob').value, gender: $('#lnGender').value, id_type: type,
+          first_name: $('#lnFirstName').value.trim(), middle_names: $('#lnMiddleNames').value.trim(),
+          present_surname: $('#lnPresentSurname').value.trim(), birth_surname: $('#lnBirthSurname').value.trim(),
+          marital_status: $('#lnMarital').value, education: $('#lnEducation').value,
+          spouses: $('#lnSpouses').value !== '' ? Number($('#lnSpouses').value) : null,
+          children: $('#lnChildren').value !== '' ? Number($('#lnChildren').value) : null,
+          tin: $('#lnTin').value.trim(), occupation: $('#lnOccupation').value.trim(),
+          employment: $('#lnEmployment').value, employer_name: $('#lnEmployerName').value.trim(),
+          mobile_alt: $('#lnMobileAlt').value.trim(), email: $('#lnEmail').value.trim(),
+          signature_url: PATHS.signature != null ? PATHS.signature : c.signature_url,
+          thumbprint_url: PATHS.thumbprint != null ? PATHS.thumbprint : c.thumbprint_url,
+          photo_url: PATHS.photo };
+        if (idCol) fields[idCol] = $('#lnIdNo').value.trim();
+        if (type === 'Other') fields.other_id_type = $('#lnIdOther').value.trim();
+        lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: fields }, 'Saved.');
+      }).catch(function(e){ toast(String((e && e.message) || e), true); });
+    };
+    $('#lnSaveRec').onclick = function(){
+      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
+        fields: { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
+          collateral_type: $('#lnCollType').value.trim(), collateral_value: $('#lnCollValue').value.trim(),
+          zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.');
+    };
+    $('#lnSaveGuar').onclick = function(){
+      Promise.all([
+        saveCanvasPad_(gSigPad, loan.id, 'g-signature', function(p){ PATHS.gSignature = p; }),
+        saveCanvasPad_(gThumbPad, loan.id, 'g-thumbprint', function(p){ PATHS.gThumbprint = p; }),
+      ]).then(function(){
+        // "guarantor id should be choices too.. not just nida" -- same ID_TYPES choice as
+        // personal details; the guarantor is not reported to the bureau per-type the way the
+        // customer is, so whichever type is picked is simply stored in the one national_id
+        // column alongside which type it actually is.
+        var gIdType = $('#lnGIdType').value;
+        var primary = {
+          full_name: $('#lnGName').value.trim(), phone: $('#lnGPhone').value.trim(), relationship: $('#lnGRel').value.trim(),
+          id_type: gIdType, national_id: $('#lnGIdNo').value.trim(), occupation: $('#lnGOccupation').value.trim(),
+          street: $('#lnGStreet').value.trim(), ward: $('#lnGWard').value.trim(), district: $('#lnGDistrict').value.trim(),
+          block_number: $('#lnGBlock').value.trim(), type_of_residence: $('#lnGResType').value, residency_capacity: $('#lnGResCap').value,
+          residence_lat: COORDS.gRes.lat, residence_lng: COORDS.gRes.lng,
+          residence_verify_photo_url: PATHS.gResPhoto, local_govt_letter_url: PATHS.gLetter, photo_url: PATHS.gPhoto,
+          signature_url: PATHS.gSignature != null ? PATHS.gSignature : g.signature_url,
+          thumbprint_url: PATHS.gThumbprint != null ? PATHS.gThumbprint : g.thumbprint_url,
+        };
+        var list = [primary];
+        for (var i = 0; i < 5; i++) list.push({
+          full_name: $('#lnAlt' + i + 'Name').value.trim(), phone: $('#lnAlt' + i + 'Phone').value.trim(), relationship: $('#lnAlt' + i + 'Rel').value.trim(),
+        });
+        lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: list } }, 'Saved.');
+      }).catch(function(e){ toast(String((e && e.message) || e), true); });
+    };
+    // Two independent saves now -- "officers could reach those in different timeframes", so
+    // a residence visit today must be bankable today without waiting on a business visit
+    // that might not happen until next week (and vice versa).
+    $('#lnSaveResidence').onclick = function(){
+      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
+        verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked,
+        street: $('#lnCustStreet').value.trim(), ward: $('#lnCustWard').value.trim(), district: $('#lnDistrict').value.trim(),
+        block_number: $('#lnCustBlock').value.trim(), type_of_residence: $('#lnCustResType').value, residency_capacity: $('#lnCustResCap').value,
+        years_of_residence: $('#lnCustResYears').value !== '' ? Number($('#lnCustResYears').value) : null,
+        residence_lat: COORDS.custRes.lat, residence_lng: COORDS.custRes.lng, residence_verify_photo_url: PATHS.custResPhoto,
+        local_govt_letter_url: PATHS.custLetter,
+      } }, 'Saved.');
+    };
+    $('#lnSaveBusiness').onclick = function(){
+      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
+        verified: $('#lnBizOk').checked, business_name: $('#lnBizName').value.trim(),
+        daily_sales: $('#lnDailySales').value.trim(), daily_profit: $('#lnDailyProfit').value.trim(), weekly_expenses: $('#lnWeeklyExpenses').value.trim(),
+        business_lat: COORDS.biz.lat, business_lng: COORDS.biz.lng, business_verify_photo_url: PATHS.bizPhoto,
+      } }, 'Saved.');
+    };
+    $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
+    $('#lnRejectRec').onclick = function(){
+      lnReasonPrompt_(function(reason){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'REJECTED', reason: reason }, 'Rejected.', function(){ go('ln_team'); }); });
+    };
+
+    // ---- copy KYC for WhatsApp -- text only; if a pinpoint was captured this visit it is not
+    //      yet saved server-side, so the copy reads live DOM/capture state, not the stale `c`/`g`
+    //      this drawer opened with. Maps links, not photos -- a photo needs the private bucket's
+    //      signed URL to open at all, and is not something to paste into a chat unprotected. ----
+    function mapLink_(coord){ return (coord && coord.lat != null && coord.lng != null) ? ('https://maps.google.com/?q=' + coord.lat + ',' + coord.lng) : null; }
+    function toggleCopyBtn(){ $('#lnCopyKyc').disabled = !Number($('#lnRecAmt').value); }
+    $('#lnRecAmt').oninput = toggleCopyBtn; toggleCopyBtn();
+    $('#lnCopyKyc').onclick = function(){
+      var idType = $('#lnIdType').value, idNo = $('#lnIdNo').value.trim();
+      var lines = [
+        '*HOPE LOAN - KYC*',
+        'Ref: ' + (loan.loan_id || '') + '   Docket: ' + (loan.docket_no || ''),
+        // "recommendation kyc should go with team name, track no and credit score" -- team and
+        // track_no are the loan's own, already-set fields; credit score is typed just above.
+        'Timu / Team: ' + (loan.team || '—') + '   Track: ' + (loan.track_no || 1),
+        'Jina / Name: ' + loan.full_name,
+        'Simu / Phone: ' + (loan.contact || ''),
+        'Jinsia / Gender: ' + ($('#lnGender').value || '—'),
+        idType + ': ' + (idNo || '—'),
+        'Wilaya/Kata/Mtaa: ' + [$('#lnDistrict').value, $('#lnCustWard').value, $('#lnCustStreet').value].filter(Boolean).join(' / '),
+        'Biashara / Business: ' + ($('#lnBizName').value || '—') + ' (' + (c.business_type || '—') + ')',
+        'Kiasi kilichoombwa / Requested: ' + money(loan.requested_amt),
+        'Kiasi kilichopendekezwa / Recommended: ' + money(Number($('#lnRecAmt').value) || 0),
+        'Alama ya mkopo / Credit score: ' + ($('#lnCreditScore').value.trim() || '—'),
+        '',
+        '*Mdhamini / Guarantor*: ' + ($('#lnGName').value || '—') + '  ·  ' + ($('#lnGPhone').value || '—') + '  ·  ' + ($('#lnGRel').value || '—'),
+        'Wilaya/Kata/Mtaa: ' + [$('#lnGDistrict').value, $('#lnGWard').value, $('#lnGStreet').value].filter(Boolean).join(' / '),
+      ];
+      var extra = [0, 1, 2, 3, 4].map(function(i){ return $('#lnAlt' + i + 'Name').value.trim(); }).filter(Boolean);
+      if (extra.length) lines.push('Wadhamini wa ziada / Extra contacts: ' + [0, 1, 2, 3, 4]
+        .map(function(i){ var n = $('#lnAlt' + i + 'Name').value.trim(); return n ? (n + ' (' + $('#lnAlt' + i + 'Phone').value.trim() + ', ' + $('#lnAlt' + i + 'Rel').value.trim() + ')') : ''; })
+        .filter(Boolean).join('; '));
+      var locLines = [
+        ['Makazi ya mteja / Customer residence', mapLink_(COORDS.custRes)],
+        ['Biashara / Business', mapLink_(COORDS.biz)],
+        ['Makazi ya mdhamini / Guarantor residence', mapLink_(COORDS.gRes)],
+      ].filter(function(x){ return x[1]; });
+      if (locLines.length) {
+        lines.push('', '*Mahali / Locations*');
+        locLines.forEach(function(x){ lines.push(x[0] + ': ' + x[1]); });
+      }
+      var text = lines.join('\n');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function(){ toast('Imenakiliwa. / Copied.'); })
+          .catch(function(){ toast('Imeshindikana kunakili. / Could not copy.', true); });
+      } else {
+        toast('Kivinjari hiki hakiwezi kunakili moja kwa moja. / This browser cannot copy directly.', true);
+      }
+    };
+  }).catch(function(e){ toast(String((e && e.message) || e), true); });
 }
 
 /* ---------- GMO / OPM senior review ---------- */
-VIEWS.ln_senior = function(){
-  var tier = S.args.tier || 'gmo';
-  HEAD = bar('<select id="lnTier"><option value="gmo"' + (tier==='gmo'?' selected':'') + '>GMO (3M+, MUST)</option>'
-    + '<option value="opm"' + (tier==='opm'?' selected':'') + '>OPM (6M+, MAY)</option></select>');
+/* TWO SCREENS, ONE HELPER. Each nav id now fixes its own tier -- Manager Review always asks
+   for 'manager', GMO Review always asks for 'gmo' -- so there is no dropdown to wire any more;
+   which screen you are on already says which tier you are working. */
+function lnSeniorView_(navId, tier, thresholdNote){
+  HEAD = '<div class="note">' + esc(thresholdNote) + '</div>';
   return srv('seniorQueue', { tier: tier }).then(function(d){
     S.rows = d.rows; S.cols = [
       col('loan_id', 'Ref'), col('full_name', 'Customer'), col('branch', 'Branch'), col('team', 'Team'),
       { key:'team_recomm', label:'Recommended', kind:'money' }];
-    ONROW = function(r){ lnSeniorForm_(r, tier); };
+    ONROW = function(r){ lnSeniorForm_(r, tier, navId); };
   });
-};
-function wireLnSenior_(){
-  var t = document.getElementById('lnTier');
-  if (t) t.onchange = function(){ S.args.tier = this.value; render({ force:true }); };
 }
-function lnSeniorForm_(loan, tier){
+VIEWS.ln_manager_review = function(){
+  return lnSeniorView_('ln_manager_review', 'manager', 'Mandatory for every loan 1,000,000+. / Lazima kwa mkopo wowote wa 1,000,000+.');
+};
+VIEWS.ln_gmo_review = function(){
+  return lnSeniorView_('ln_gmo_review', 'gmo', 'Mandatory for every loan 6,000,000+, ALONGSIDE Manager Review, not instead of it. / '
+    + 'Lazima kwa mkopo wowote wa 6,000,000+, PAMOJA na Manager Review, si badala yake.');
+};
+function lnSeniorForm_(loan, tier, navId){
   drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Recommended: ' + money(loan.team_recomm) + '</div>'
     + '<div class="fld"><label>Your recommended amount</label><input id="lnSrAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
     + '<div class="fld"><label>Remarks</label><input id="lnSrRemarks"></div>'
     + '<button class="btn w" id="lnSrSubmit">Record recommendation</button>');
   $('#lnSrSubmit').onclick = function(){
     lnAct('seniorRecommend', { loan_id: loan.id, tier: tier, amount: Number($('#lnSrAmt').value) || 0, remarks: $('#lnSrRemarks').value.trim() },
-      'Recorded.', function(){ go('ln_senior'); });
+      'Recorded.', function(){ go(navId); });
   };
 }
 
@@ -5403,6 +5998,12 @@ function lnCreditForm_(loan){
   drawer('<h3>' + esc(loan.full_name) + '</h3><div class="sub">Ref ' + esc(loan.loan_id) + '</div>'
     + '<div class="fld"><label>Granted amount (TZS)</label><input id="lnGrantAmt" type="number" value="' + (loan.team_recomm||'') + '"></div>'
     + '<div class="fld"><label>Previous balance (for a top-up)</label><input id="lnPrevBal" type="number" value="0"></div>'
+    // "ADA YA MKOPO (APPLICATION FEES) ... asilimia tano (5%) ... na haitakuwa chini ya
+    // Shilingi ..." -- the contract's own application fee, deducted from what is disbursed.
+    // Suggested at 5% and recalculated as the grant changes, UNTIL touched by hand -- the
+    // contract's minimum-shillings floor is a blank in the template, so raising this past 5%
+    // to match it is exactly what editing it is for.
+    + '<div class="fld"><label>Ada ya mkopo (5%) / Application fee (TZS)</label><input id="lnAppFee" type="number" value="' + Math.round((Number(loan.team_recomm) || 0) * 0.05) + '"></div>'
     + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode2">'
       + '<option value="">— chagua / choose —</option>'
       + DISB_MODES.map(function(m){ return '<option' + (loan.disbursement_type===m?' selected':'') + '>' + m + '</option>'; }).join('')
@@ -5411,13 +6012,34 @@ function lnCreditForm_(loan){
     + '<div class="fld" id="lnAcctFld"><label>Account no.</label><input id="lnAcctNo"></div>'
     + '<div id="lnSchedulePreview" class="sub" style="margin:6px 0"></div>'
     + '<button class="btn w" id="lnGrantBtn">Grant</button>'
-    + '<button class="btn w ghost" id="lnCrRejectBtn" style="margin-top:8px">Reject</button>');
-  function preview(){
+    + '<button class="btn w ghost" id="lnCrRejectBtn" style="margin-top:8px">Reject / Return for refilling</button>'
+    // "with choice comment to return" -- a picked reason, not a typed one, so a return says
+    // WHAT is missing instead of whatever prose came to mind. Hidden until Reject is pressed.
+    + '<div id="lnCrReasonBox" class="hide" style="margin-top:8px">'
+    + '<div class="fld"><label>Sababu / Reason</label><select id="lnCrReasonChoice">'
+      + CREDIT_RETURN_REASONS.map(function(r){ return '<option>' + esc(r) + '</option>'; }).join('')
+      + '</select></div>'
+    + '<div class="fld"><label>Maelezo zaidi (hiari) / More detail (optional)</label><input id="lnCrReasonNote"></div>'
+    + '<button class="btn w ghost" id="lnCrRejectConfirm">Thibitisha kurudisha / Confirm return</button>'
+    + '</div>');
+  // The fee box tracks 5% of the grant until the analyst types in it directly -- same
+  // "stays exactly what was typed once touched" rule as every other paired default in this app.
+  var appFeeTouched = false;
+  function preview(fromFeeBox){
+    if (fromFeeBox) appFeeTouched = true;
     var g = Number($('#lnGrantAmt').value) || 0;
     var interest = Math.round(g * 0.36), total = g + interest, inst = Math.round(total / 12);
-    $('#lnSchedulePreview').textContent = 'Interest ' + money(interest) + ' · Total ' + money(total) + ' · 12 x ' + money(inst) + '/week';
+    if (!appFeeTouched) $('#lnAppFee').value = Math.round(g * 0.05);
+    var fee = Number($('#lnAppFee').value) || 0;
+    var prevBal = Number($('#lnPrevBal').value) || 0;
+    var disbursing = Math.max(0, g - prevBal - fee);
+    $('#lnSchedulePreview').textContent = 'Interest ' + money(interest) + ' · Total ' + money(total) + ' · 12 x ' + money(inst) + '/week'
+      + ' · Fee ' + money(fee) + ' · Disbursing ' + money(disbursing);
   }
-  $('#lnGrantAmt').oninput = preview; preview();
+  $('#lnGrantAmt').oninput = function(){ preview(false); };
+  $('#lnAppFee').oninput = function(){ preview(true); };
+  $('#lnPrevBal').oninput = function(){ preview(false); };
+  preview(false);
   // Bank name/account only mean something for a bank disbursement -- shown for Bank, hidden
   // (not required) for Momo or nothing chosen yet.
   function toggleBankFlds(){
@@ -5429,12 +6051,16 @@ function lnCreditForm_(loan){
   $('#lnGrantBtn').onclick = function(){
     lnAct('creditApprove', {
       loan_id: loan.id, granted_amount: Number($('#lnGrantAmt').value) || 0,
-      previous_balance: Number($('#lnPrevBal').value) || 0, disbursement_mode: $('#lnDisbMode2').value.trim(),
+      previous_balance: Number($('#lnPrevBal').value) || 0, application_fee: $('#lnAppFee').value.trim(),
+      disbursement_mode: $('#lnDisbMode2').value.trim(),
       bank_name: $('#lnBankName').value.trim(), account_no: $('#lnAcctNo').value.trim(),
     }, 'Granted.', function(){ go('ln_credit'); });
   };
-  $('#lnCrRejectBtn').onclick = function(){
-    lnReasonPrompt_(function(reason){ lnAct('creditReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_credit'); }); });
+  $('#lnCrRejectBtn').onclick = function(){ $('#lnCrReasonBox').classList.remove('hide'); };
+  $('#lnCrRejectConfirm').onclick = function(){
+    var choice = $('#lnCrReasonChoice').value, note = $('#lnCrReasonNote').value.trim();
+    lnAct('creditReject', { loan_id: loan.id, reason: note ? (choice + ' -- ' + note) : choice },
+      'Returned.', function(){ go('ln_credit'); });
   };
 }
 
@@ -5840,27 +6466,39 @@ function fitPanelToKeyboard_(bgId){
   bg.style.height = vv.height + 'px';
   bg.style.top = vv.offsetTop + 'px';
 }
+/* THE LOGIN BOX IS THE SAME SHAPE AS THE DRAWER, AND HAD THE SAME FAULT.
+   "login page doesnt slide app visibility of writting field: refer this challenge to what i
+   faced in hopcalls comment field" -- #signin is `position:fixed;inset:0` too, same as
+   #drawerBg was, just centred instead of flush to the bottom. A phone that does not honour
+   `interactive-widget=resizes-content` never shrank it for the keyboard, so the access-code
+   box (and the field itself) could sit wherever the keyboard now covers, same blind typing the
+   comment box already had. Same fix, same function -- just another id in the list. */
 (function(){
   var vv = window.visualViewport;
   if (!vv) return;
-  var ids = ['drawerBg'];
+  var ids = ['drawerBg', 'signin'];
   function refit(){
     ids.forEach(function(id){
       var bg = document.getElementById(id);
-      if (bg && bg.style.display !== 'none') fitPanelToKeyboard_(id);
+      if (bg && bg.style.display !== 'none' && !bg.classList.contains('hide')) fitPanelToKeyboard_(id);
     });
   }
   vv.addEventListener('resize', refit);
   vv.addEventListener('scroll', refit);
 })();
 /* Belt-and-suspenders for a WebView slow to fire visualViewport's resize: once the keyboard's
-   own open animation has had time to run, bring the field the officer is actually typing into
-   back into the drawer's own visible area -- so even a late resize event still ends with the
-   words on screen. */
-$('#drawerBg').addEventListener('focusin', function(e){
-  var t = e.target;
-  if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
-  setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+   own open animation has had time to run, bring the field being typed into back into its
+   panel's own visible area -- so even a late resize event still ends with the words on screen.
+   One listener, both panels: #signin exists in the DOM from page load, unlike the drawer which
+   is built by drawer() each time it opens. */
+['drawerBg', 'signin'].forEach(function(id){
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('focusin', function(e){
+    var t = e.target;
+    if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+  });
 });
 
 var FU_STATUSES = ['AMENASIA / WRONG REF','HAJAPATA MKOPO','HAPATIKANI YEYE & MDHAMINI','YEYE / MDHAMINI HANA USHIRIKIANO',
@@ -6147,10 +6785,11 @@ function wireForms(){
      A view function's own returned promise resolves BEFORE this runs; wiring a button inside
      the view function itself, before drawView_() has painted HEAD into the page, attaches a
      click handler to an element that does not exist yet and silently does nothing. Every
-     other HOPE Loan HEAD button (Finance, Reversals, GM, the GMO/OPM select) had exactly this
-     bug on first write; all five are gated here alongside it. */
+     other HOPE Loan HEAD button (Finance, Reversals, GM) had exactly this bug on first write;
+     all four are gated here alongside it. (Manager/GMO Review had a fifth -- the tier select --
+     but each is its own fixed-tier nav item now, so there is no dropdown left to wire.) */
   if (S.workspace === 'hopeloan') {
-    wireLnCs_(); wireLnSenior_(); wireLnFinance_(); wireLnReversals_(); wireLnGm_();
+    wireLnCs_(); wireLnFinance_(); wireLnReversals_(); wireLnGm_();
   }
   // One drawer for new and existing complaints: free-text Category/Channel/Team boxes could
   // not be counted or filtered, and counting complaints by category is why the register exists.
@@ -6334,13 +6973,26 @@ function codeForm(x){
       + '<div class="fldnote">Kwa wadhifa wenye safu kwenye jedwali la timu (OPM, RECOVERY, GMO, MANAGER, CREDIT, EXPECTED, BIKE), orodha hii pia inamweka mtu huyu kwenye Timu na Wafanyakazi. ALL haimpi mtu timu zote — inafungua tu kuona.'
       + '<br>For a role that has a column in the teams table, this list also files the person into Teams &amp; Staff. ALL only opens the view; it never makes somebody the officer of every team.</div>'
       + '</div>'
-    + '<div class="fld"><label>Tabs za ziada / Extra tabs (upload, settings)</label><input id="kTabs" value="'+esc(x&&x.tabs?x.tabs.join(', '):'')+'"></div>'
+    /* TICKED, NOT TYPED. "i'll then need to from now on set accesscodes by ticking the nav
+       pannels from all existing whatever the future stage am on because writing could error"
+       -- this used to be free text, the one tab-editing screen in the system that was, and a
+       typo here did not error, it just silently granted nothing. Same checkbox list roleForm
+       already uses, same source (S.allTabs, HOPE PMO and HOPE Loan together) -- so a tab added
+       for either side is tickable from both screens without either one being told about it
+       twice. */
+    + '<div class="fld"><label>Tabs za ziada / Extra tabs</label><div class="checks">'
+      + (S.allTabs||[]).map(function(t){
+          return '<label><input type="checkbox" class="kTab" value="'+esc(t)+'"'
+            + ((x && x.tabs || []).indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
+      + '</div></div>'
     + '<button class="btn w" id="kSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="kDel">Futa msimbo / Delete code</button>'));
   document.getElementById('kSave').onclick = function(){
+    var tabs = Array.prototype.filter.call(document.querySelectorAll('.kTab'), function(c){ return c.checked; })
+      .map(function(c){ return c.value; }).join(',');
     srv('saveAccessCode', { code:document.getElementById('kCode').value.trim(), oldCode:(x?x.code:''), name:document.getElementById('kName').value.trim(),
       role:document.getElementById('kRole').value.trim(), teams:document.getElementById('kTeams').value.trim(),
-      tabs:document.getElementById('kTabs').value.trim() })
+      tabs:tabs })
       /* THE ROSTER FOLLOWED, SO SAY SO. Saving a code now also re-files that person in the
          teams table, and a change to a screen the admin is not looking at has to be reported
          or it is indistinguishable from nothing happening. */

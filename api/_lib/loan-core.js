@@ -59,15 +59,12 @@ async function allPaged(db, table, build) {
 }
 
 /** A tab gate, the same shape as HOPE PMO's: a screen is reachable only if its name is on the
-    signed-in code's tab list -- built for the day several different codes hold different HOPE
-    Loan tabs (a manager sees Assignment, a credit analyst sees Approval) exactly the way HOPE
-    PMO tabs already work, so nothing here needs rewriting when that day comes.
+    signed-in code's tab list -- a manager sees Assignment, a credit analyst sees Approval, each
+    on its own ticked box, exactly the way HOPE PMO tabs already work (see mayUseHopeLoan in
+    workspace.js: ADMIN, or a code holding at least one of HOPE Loan's own tabs, may even reach
+    this file at all -- this is the SECOND check, per screen, once they are in it).
 
-    TODAY, only the ADMIN role ever reaches this file at all -- _lib/workspace.js refuses the
-    HOPE Loan workspace to anyone else before loanApi is even called, per instruction ("Switch
-    is visible to ADMIN role only"), and the owner is deliberately the one person walking every
-    screen end to end for now ("i'll go test after switching ... from the start to the end").
-    So the ADMIN role is let through here on the role string, same check workspace.js already
+    The ADMIN role is let through here on the role string, same check workspace.js already
     makes -- not on a tab named "admin", which does not exist; HOPE PMO's own ADMIN_TABS is
     upload/settings/audit, never the word "admin" itself. */
 function requireTab(user, tab) {
@@ -75,6 +72,18 @@ function requireTab(user, tab) {
   const tabs = (user && user.tabs) || [];
   if (!tabs.includes(tab)) {
     throw forbidden('Hujaruhusiwa kufungua hii. / You do not have the "' + tab + '" tab for HOPE Loan.');
+  }
+}
+
+/** Same rule, any ONE of several tabs -- for a screen more than one role legitimately needs.
+    branchList is the first: Customer Service picks a branch at registration, and now Manager
+    picks a team FROM that same branch/team list at assignment ("Manager assigning to a team
+    should be choice not filling") -- one list, two tabs allowed to ask for it. */
+function requireAnyTab(user, tabs) {
+  if (String((user && user.role) || '').trim().toUpperCase() === 'ADMIN') return;
+  const utabs = (user && user.tabs) || [];
+  if (!tabs.some(t => utabs.includes(t))) {
+    throw forbidden('Hujaruhusiwa kufungua hii. / You do not have any of the required tabs for HOPE Loan.');
   }
 }
 
@@ -161,7 +170,7 @@ async function csSearch(db, user, { q }) {
   const cols = ['full_name.ilike.' + like, 'docket.ilike.' + like]
     .concat(numLike ? ['mobile.ilike.' + numLike] : []);
   const rows = await allPaged(db, 'customers', b =>
-    b.select('id, docket, full_name, mobile, team, branch').or(cols.join(',')).limit(25));
+    b.select('id, docket, full_name, mobile, team, branch, business_type').or(cols.join(',')).limit(25));
   return { rows };
 }
 
@@ -186,8 +195,11 @@ async function csSearch(db, user, { q }) {
     a team or what number rings them -- the full roster stays behind the `teams` tab, which
     customer service does not have. */
 async function branchList(db, user) {
-  requireTab(user, 'customer_service');
-  const rows = await allPaged(db, 'teams', b => b.select('region, branch'));
+  // CS picks a branch at registration; Manager now picks a TEAM from that same branch at
+  // assignment ("Manager assigning to a team should be choice not filling") -- one read, two
+  // tabs allowed to ask for it, same as any other screen more than one role legitimately needs.
+  requireAnyTab(user, ['customer_service', 'manager']);
+  const rows = await allPaged(db, 'teams', b => b.select('team, region, branch'));
   // A branch belongs to one region; several teams share both. First non-null region seen for
   // a branch wins -- if the data ever disagrees, that is a Teams & Staff data question, not
   // something this list should silently average or duplicate the branch to "fix".
@@ -206,7 +218,17 @@ async function branchList(db, user) {
   }
   const regions = Object.keys(byRegion).sort((a, b) =>
     a === '(Region unknown)' ? 1 : b === '(Region unknown)' ? -1 : a.localeCompare(b));
-  return { regions, byRegion, branches };
+  // Which teams sit in each branch -- the manager's own choice list, so assigning a loan is a
+  // SELECT off what actually exists (same reasoning branch/region already got), not a name
+  // typed from memory that a typo or a stale one turns into an orphaned loan nobody's queue picks up.
+  const teamsByBranch = {};
+  for (const r of rows) {
+    const b = textOrNull(r.branch), t = textOrNull(r.team);
+    if (!b || !t) continue;
+    (teamsByBranch[b] = teamsByBranch[b] || []).push(t);
+  }
+  for (const b of Object.keys(teamsByBranch)) teamsByBranch[b] = [...new Set(teamsByBranch[b])].sort();
+  return { regions, byRegion, branches, teamsByBranch };
 }
 
 /* MULTI-LOAN TOP-UPS ("doubles") ARE THE SUPERVISOR'S DESK, NOT CUSTOMER SERVICE'S.
@@ -246,6 +268,11 @@ async function csRegister(db, user, p) {
     const { data, error } = await db.from('customers').insert({
       docket, full_name: name, mobile, region: textOrNull(p.region), district: textOrNull(p.district),
       nearest_landmark: textOrNull(p.landmark), team: normTeam(p.team), branch: textOrNull(p.branch),
+      // "add filling business type before location choices too" -- asked at registration now,
+      // the SAME column the team's own Business assessment section writes later (see
+      // teamAssessmentSave's 'business' branch) -- one field, filled early when CS already has
+      // the answer, still editable at assessment if it needs correcting.
+      business_type: textOrNull(p.business_type),
       created_by: user.name, updated_by: user.name,
     }).select('id, docket').maybeSingle();
     if (error) throw new Error(error.message);
@@ -282,6 +309,11 @@ async function csRegister(db, user, p) {
     team: normTeam(p.team), zone: textOrNull(p.zone), location: textOrNull(p.location),
     nearest_landmark: textOrNull(p.landmark), product: 'Business Loan',
     disbursement_type: textOrNull(p.disbursement_mode),
+    // "after disb mode in loanapp, fill the disb no (mobile money/momo no or bank a/c no)" --
+    // the SAME three columns credit approval already offers (momo / bank_name / account_no),
+    // asked for once, right where the mode itself is chosen, instead of waiting for credit to
+    // ask a second time with nothing on file yet if this step is skipped.
+    momo: normPhone(p.momo), bank_name: textOrNull(p.bank_name), account_no: textOrNull(p.account_no),
     requested_amt: Number(p.amount) || 0,
     stage: 'unassigned', customer_id: customerId, created_by: user.name,
     ...topupFields,
@@ -340,6 +372,17 @@ async function managerAssign(db, user, { loan_id, team }) {
   const t = normTeam(team);
   if (!t) throw badRequest('A team is required.');
   const loan = await mustLoan(db, loan_id);
+  /* "Manager assigning to a team should be choice not filling" -- the client now offers only
+     the branch's own teams (branchList's teamsByBranch), but the choice is enforced here too,
+     not merely suggested there: a team that is not actually one of this loan's branch's teams
+     is refused, the same protection a typo or a stale client would otherwise slip past.
+     Loans from before branch tracking existed carry no branch at all -- nothing to check
+     against, so those fall back to the old bare non-empty rule rather than being blocked by a
+     fact the record never had. */
+  if (loan.branch) {
+    const rows = await allPaged(db, 'teams', b => b.select('team').eq('team', t).eq('branch', loan.branch));
+    if (!rows.length) throw badRequest('"' + t + '" is not one of ' + loan.branch + '\'s teams.');
+  }
   await transition(db, loan, 'unassigned', 'assigned', user, {
     team: t, assigned_by: user.name, assigned_at: new Date().toISOString(),
   }, 'Assigned to ' + t);
@@ -369,34 +412,85 @@ async function teamQueue(db, user) {
   return { rows: await allPaged(db, 'loans', () => b) };
 }
 
+/** Everything the assessment drawer needs to open ALREADY FILLED, not blank -- the customer,
+    every guarantor slot (rank 0 the guarantor, 1-5 the alternates), and the draft assessment
+    itself. Without this, leaving the screen and coming back showed empty boxes over data that
+    was actually saved -- "nothing is lost if you leave and come back" was true in the database
+    and false on the screen. Also what the KYC copy button reads from: one fetch, the same
+    fields either way. */
+async function teamAssessDetail(db, user, { loan_id }) {
+  requireTab(user, 'team');
+  const loan = await mustLoan(db, loan_id);
+  const [custRows, guarantors, assessment] = await Promise.all([
+    loan.customer_id ? allPaged(db, 'customers', b => b.select('*').eq('id', loan.customer_id)) : [],
+    allPaged(db, 'guarantors', b => b.select('*').eq('loan_id', loan.id).order('rank')),
+    assessmentFor(db, loan.id),
+  ]);
+  return { loan, customer: custRows[0] || null, guarantors, assessment };
+}
+
+/* =====================================================================================
+   KYC CAPTURES -- SIGNATURE, THUMBPRINT PRESS, AND THE VERIFICATION PHOTOS.
+   =====================================================================================
+   "i mean they press the thumb on phone screen and we record the fingerprint or draw
+    signature too llike how we work with phone notes apps" -- a canvas capture, drawn on the
+   device; there is no browser API and no bridge method in this app that reads an actual
+   fingerprint sensor, and this was confirmed rather than assumed before it was built.
+
+   Every byte here is compressed on the PHONE before it is ever sent -- "adapt the whatsapp
+   tech ... optimize it before storing and store the low quality" -- so the cap below is a
+   backstop, not the primary defence. Uploaded through the API with the service-role key, the
+   same as every write in this system; the bucket itself is private (see RUN-ME-004), so a
+   leaked path is not a leaked photo. */
+const KYC_BUCKET = 'kyc-photos';
+const KYC_MAX_BYTES = 2 * 1024 * 1024;
+async function kycUpload(db, user, { loan_id, kind, data_url }) {
+  requireTab(user, 'team');
+  await mustLoan(db, loan_id);
+  const m = /^data:([^;]+);base64,(.+)$/.exec(String(data_url || ''));
+  if (!m) throw badRequest('That did not look like an image.');
+  const [, contentType, b64] = m;
+  let bytes;
+  try { bytes = Buffer.from(b64, 'base64'); } catch { throw badRequest('That image could not be read.'); }
+  if (!bytes.length) throw badRequest('That image was empty.');
+  if (bytes.length > KYC_MAX_BYTES) throw badRequest('That image is still too large (over 2MB) even after compression.');
+  const ext = contentType.indexOf('png') >= 0 ? 'png' : 'jpg';
+  const safeKind = String(kind || 'file').replace(/[^a-z0-9_-]/gi, '') || 'file';
+  const path = 'loans/' + loan_id + '/' + safeKind + '-' + Date.now() + '.' + ext;
+  const { error } = await db.storage.from(KYC_BUCKET).upload(path, bytes, { contentType, upsert: false });
+  if (error) throw new Error(error.message);
+  return { path };
+}
+
 async function assessmentFor(db, loanId) {
   const rows = await allPaged(db, 'assessments', b => b.select('*').eq('loan_id', loanId).order('created_at', { ascending: false }));
   return rows[0] || null;
 }
 
-/** Signature/fingerprint image capture, validated the same way an announcement image is in
-    HOPE PMO's portal-core.js: a real captured picture, not a URL (which would let a screen
-    point at somebody else's server), and small enough that a canvas capture over mobile data
-    is not a burden. */
-const SIGNATURE_MAX = 400 * 1024;
-function checkSignatureImage(label, v) {
-  if (!v) return null;
-  const s = String(v);
-  if (!/^data:image\/(png|jpe?g|webp);base64,/i.test(s)) throw badRequest(label + ' must be a captured image (PNG, JPG or WEBP).');
-  if (s.length > SIGNATURE_MAX) throw badRequest(label + ' is too large -- keep the capture under about 400 KB.');
-  return s;
-}
+/* A 'signature' assessment section stood here briefly on this branch -- data-URI canvas
+   captures written onto the assessments row. It never merged: the KYC capture work
+   (RUN-ME-004-kyc-capture.sql, kycUpload above) landed first and does the same job better --
+   customer AND guarantor signature/thumbprint, through the storage bucket rather than
+   bloating table rows, uploaded the moment they are taken. One mechanism, not two. */
 
-/** One call for all six sections -- pass whichever `section` you're saving and its fields.
+/** One call for all five sections -- pass whichever `section` you're saving and its fields.
     Personal-detail writes ALSO update the permanent customer record (write-once fields are
     simply not offered by the screen past track 1 -- see FIELD_LOCK_ below); everything else
     stays local to this assessment draft until SUBMIT. */
-const SECTIONS = new Set(['personal', 'recommendation', 'guarantor', 'residence', 'business', 'signature']);
+const SECTIONS = new Set(['personal', 'recommendation', 'guarantor', 'residence', 'business']);
 async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   requireTab(user, 'team');
   if (!SECTIONS.has(section)) throw badRequest('Unknown assessment section: ' + section);
   const loan = await mustLoan(db, loan_id);
   let a = await assessmentFor(db, loan_id);
+  /* "as long as recommendation is not submitted - can edit previous stages but always load /
+     preview presaved info" -- and NOT once it has been. teamSubmit sets submitted_at and moves
+     the loan out of the team's queue, but a screen already open (or a stale one someone kept
+     a tab on) could still fire a save after that -- straight past senior review or credit,
+     who may already be looking at the very numbers this would quietly change underneath them. */
+  if (a && a.submitted_at) {
+    throw badRequest('This recommendation has already been submitted -- it can no longer be edited here.');
+  }
   const patch = { ['done_' + section]: true, updated_at: new Date().toISOString(), submitted_by: user.name };
 
   if (section === 'personal') {
@@ -418,6 +512,23 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
     patch.recommend_amount = Number((fields || {}).amount) || null;
     patch.zone_visited = textOrNull((fields || {}).zone);
     patch.remarks = textOrNull((fields || {}).remarks);
+    // "recommendation kyc should go with team name, track no and credit score" -- team and
+    // track_no already live on the loan itself; this is the one new number, the officer's own
+    // scoring of the customer, carried into the copied KYC text alongside the amount.
+    const scoreRaw = (fields || {}).credit_score;
+    patch.credit_score = (scoreRaw === '' || scoreRaw == null) ? null : (Number(scoreRaw) || null);
+    // "DHAMANA YA MKOPO ... mali za biashara na mali za nyumbani ... zenye thamani mara mbili
+    // ya mkopo" (the contract's own collateral clause) -- collateral_type/collateral_value
+    // already existed on loans (RUN-ME-001); this is the one place that ever writes to them.
+    const collType = textOrNull((fields || {}).collateral_type);
+    const collValRaw = (fields || {}).collateral_value;
+    const collVal = (collValRaw === '' || collValRaw == null) ? null : (Number(collValRaw) || null);
+    if (collType != null || collVal != null) {
+      const { error } = await db.from('loans').update({
+        collateral_type: collType, collateral_value: collVal, updated_at: new Date().toISOString(),
+      }).eq('id', loan.id);
+      if (error) throw new Error(error.message);
+    }
   }
   if (section === 'guarantor') {
     await saveGuarantors(db, loan, user, (fields || {}).guarantors || []);
@@ -425,44 +536,51 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   if (section === 'residence') {
     patch.residence_verified = !!(fields || {}).verified;
     patch.guarantor_residence_verified = !!(fields || {}).guarantor_verified;
+    // "residence and business ver should be filled street, ward, district for both customer
+    // and guarantor" -- the CUSTOMER half lands here, on their permanent record, the same
+    // merge-only update 'personal' already uses (only the keys actually sent are touched;
+    // everything else on the customer stays exactly as it was). The guarantor half travels
+    // with the guarantor section instead (see saveGuarantors) -- their row may not exist yet
+    // the first time this section is saved, and a guarantor's own facts belong together.
+    if (loan.customer_id) {
+      const resPatch = {};
+      // block_number/type_of_residence/residency_capacity/years_of_residence and the local
+      // government letter are all CreditInfo Individual columns that already existed on
+      // customers (RUN-ME-001/006) with nothing on this screen ever asking for them.
+      for (const k of ['street', 'ward', 'district', 'residence_lat', 'residence_lng', 'residence_verify_photo_url',
+        'block_number', 'type_of_residence', 'residency_capacity', 'years_of_residence', 'local_govt_letter_url']) {
+        if ((fields || {})[k] !== undefined) resPatch[k] = (fields || {})[k];
+      }
+      if (Object.keys(resPatch).length) {
+        resPatch.updated_by = user.name; resPatch.updated_at = new Date().toISOString();
+        const { error } = await db.from('customers').update(resPatch).eq('id', loan.customer_id);
+        if (error) throw new Error(error.message);
+      }
+    }
   }
   if (section === 'business') {
     patch.business_verified = !!(fields || {}).verified;
     if (loan.customer_id) {
       const bizPatch = { updated_by: user.name, updated_at: new Date().toISOString() };
-      for (const k of ['business_type', 'business_name', 'daily_sales', 'daily_profit', 'weekly_expenses']) {
-        if ((fields || {})[k] !== undefined) bizPatch[k] = (fields || {})[k];
+      // "fill business name and capture live location coordinates for all 3 placess business
+      // and their residences" -- business_lat/lng and the site photo (officer + customer AT
+      // the business front) join business_name and business_type here.
+      const BIZ_NUMERIC_ = new Set(['daily_sales', 'daily_profit', 'weekly_expenses']);
+      for (const k of ['business_type', 'business_name', 'daily_sales', 'daily_profit', 'weekly_expenses',
+        'business_lat', 'business_lng', 'business_verify_photo_url']) {
+        const v = (fields || {})[k];
+        if (v === undefined) continue;
+        // These come off the form as trimmed strings, same as every text field -- cast rather
+        // than hand '' or '12000' straight to a numeric(14,2) column and let Postgres decide.
+        bizPatch[k] = BIZ_NUMERIC_.has(k) ? (v === '' || v == null ? null : (Number(v) || null)) : v;
       }
-      if ((fields || {}).daily_profit != null) bizPatch.weekly_profit = Number((fields || {}).daily_profit) * 6;
+      if ((fields || {}).daily_profit != null && (fields || {}).daily_profit !== '') {
+        bizPatch.weekly_profit = Number((fields || {}).daily_profit) * 6;
+      }
       const { error } = await db.from('customers').update(bizPatch).eq('id', loan.customer_id);
       if (error) throw new Error(error.message);
     }
   }
-  /* THE SINGLE-SIGNATORY SPLIT SCREEN. "customer could digital sign their contact copy, sign
-     and biometrics inclusive on a single signatory split screen -- so that when multiloaning,
-     we may later need the customer to just put the finger and it pulls the assigned docket to
-     proceed with the permanent KYC prefilled." One capture, three images: the customer's
-     contract signature, their fingerprint, and the guarantor's signature -- all on this one
-     assessment row, findable later by the docket this loan already carries.
-
-     PULLING A DOCKET BY FINGERPRINT IS NOT BUILT HERE, and cannot be from a canvas capture --
-     that needs a real fingerprint MATCHER (a template + comparison), not an image. What this
-     does is exactly the "sign by finger on the phone screen" WatuCredit-style capture; the
-     "put the finger and it pulls the docket" step is native biometric work (e.g. Android
-     BiometricPrompt) for whichever app ends up carrying this to the field, and is out of
-     scope for the sandbox's browser-based screen. */
-  if (section === 'signature') {
-    const custSig = checkSignatureImage('The customer signature', (fields || {}).customer_signature);
-    const custPrint = checkSignatureImage('The fingerprint capture', (fields || {}).customer_fingerprint);
-    const guarSig = checkSignatureImage('The guarantor signature', (fields || {}).guarantor_signature);
-    if (!custSig && !custPrint && !guarSig) throw badRequest('At least one signature or fingerprint capture is required.');
-    if (custSig) patch.customer_signature = custSig;
-    if (custPrint) patch.customer_fingerprint = custPrint;
-    if (guarSig) patch.guarantor_signature = guarSig;
-    patch.signed_by = user.name;
-    patch.signed_at = new Date().toISOString();
-  }
-
   if (a) {
     const { data, error } = await db.from('assessments').update(patch).eq('id', a.id).select('*').maybeSingle();
     if (error) throw new Error(error.message);
@@ -488,16 +606,32 @@ const FIELD_LOCK_ = new Set([
   'country_of_birth', 'national_id', 'tin',
 ]);
 
+/** rank 0 is the guarantor -- a full record, street/GPS/photo/signature/thumbprint included.
+    "we have 5 extra guarantors who we just say are the close people to the customer these are
+     filled names nos and relationship" -- ranks 1-5 are exactly that and nothing more; the
+     extra columns simply come back undefined for them and textOrNull/normPhone leave them
+     null, the same as an alternate has always worked. */
 async function saveGuarantors(db, loan, user, list) {
   const rows = (list || []).slice(0, 6).map((g, i) => ({
     loan_id: loan.id, customer_id: loan.customer_id, rank: i,
     full_name: textOrNull(g.full_name), phone: normPhone(g.phone), relationship: textOrNull(g.relationship),
-    occupation: textOrNull(g.occupation), national_id: textOrNull(g.national_id),
-    district: textOrNull(g.district), ward: textOrNull(g.ward), created_by: user.name,
+    occupation: textOrNull(g.occupation), id_type: textOrNull(g.id_type), national_id: textOrNull(g.national_id),
+    street: textOrNull(g.street), district: textOrNull(g.district), ward: textOrNull(g.ward),
+    block_number: textOrNull(g.block_number), type_of_residence: textOrNull(g.type_of_residence),
+    residency_capacity: textOrNull(g.residency_capacity),
+    residence_lat: g.residence_lat != null ? Number(g.residence_lat) : null,
+    residence_lng: g.residence_lng != null ? Number(g.residence_lng) : null,
+    residence_verify_photo_url: textOrNull(g.residence_verify_photo_url),
+    local_govt_letter_url: textOrNull(g.local_govt_letter_url),
+    photo_url: textOrNull(g.photo_url), signature_url: textOrNull(g.signature_url), thumbprint_url: textOrNull(g.thumbprint_url),
+    created_by: user.name,
   })).filter(r => r.full_name);
   if (!rows.length) return;
   // Replace this loan's guarantor set whole -- a short list edited in the field is simpler to
-  // resend complete than to diff, and it is at most six rows.
+  // resend complete than to diff, and it is at most six rows. The DRAWER is what guarantees
+  // nothing already saved gets clobbered by this: it opens pre-filled from teamAssessDetail,
+  // so "resend complete" really does mean complete, not blanking out fields the officer never
+  // touched this visit.
   await db.from('guarantors').delete().eq('loan_id', loan.id);
   const { error } = await db.from('guarantors').insert(rows);
   if (error) throw new Error(error.message);
@@ -523,19 +657,33 @@ async function teamSubmit(db, user, { loan_id, decision, reason }) {
 }
 
 /* =====================================================================================
-   4. SENIOR REVIEW -- the tier the wireframes never drew.
+   4. SENIOR REVIEW -- the tier the wireframes never drew, now TWO SIDE NAVS, BOTH MANDATORY.
    =====================================================================================
-   GMO MUST add a recommendation at 3M+; OPM MAY at 6M+. Both happen before credit sees it,
-   and neither BLOCKS the stage machine on their own -- they attach a record to the loan,
-   which credit's screen shows alongside everything else, exactly as described: "add
-   recommendation of their own assessment based on the recommended loan application before
-   the application proceeds to the Credit Analyst." */
-export const GMO_THRESHOLD = 3_000_000;
-export const OPM_THRESHOLD = 6_000_000;
+   "the GMO and OPM review should be Manager and GMO review and all mandatory. Where manager
+   is all loans 1million+ loans, gmo all 6m+ loans (change of policy, I'd been off on followup
+   for a moment)". Both used to be one nav item and one optional tier (OPM MAY at 6M, never
+   blocking); now they are two separate screens, gated on their own tab, and BOTH block credit
+   once a loan crosses their threshold -- Manager at 1M, GMO at 6M, so a loan of 6M+ needs both,
+   a loan of 1M-5,999,999 needs Manager alone, and anything under 1M needs neither.
+
+   THE OLD 'opm' TAB IS GONE -- "so here we'll have two side navs b/se that's the way I
+   distribute operations people login and I give them navigation tabs access at access codes"
+   was answered by reusing the 'manager' tab that already grants Manager·Assign and Disburse,
+   rather than minting a new one: an access code holding 'manager' now also reaches this screen,
+   by the owner's own choice, not an oversight.
+
+   THE STORAGE COLUMNS KEEP THEIR OLD NAME ON PURPOSE. opm_recommend / opm_remarks / opm_by /
+   opm_at are a live table on a live system -- renaming a column is a migration this deploy does
+   not need to make just to relabel what a tier is called. Anything already recorded under the
+   old optional OPM step satisfies the new mandatory Manager step retroactively, which is the
+   right outcome: a loan a senior person already looked at does not need looking at again just
+   because the title on the button changed. */
+export const GMO_THRESHOLD = 6_000_000;
+export const MANAGER_THRESHOLD = 1_000_000;
 
 async function seniorQueue(db, user, { tier }) {
-  requireTab(user, tier === 'opm' ? 'opm' : 'gmo');
-  const min = tier === 'opm' ? OPM_THRESHOLD : GMO_THRESHOLD;
+  requireTab(user, tier === 'manager' ? 'manager' : 'gmo');
+  const min = tier === 'manager' ? MANAGER_THRESHOLD : GMO_THRESHOLD;
   /* Filtered in JS rather than with `.gte()`: PostgREST/Postgres compares this NUMERICALLY,
      which is what a threshold needs, but a couple of the amounts here span different digit
      counts (500,000 vs 3,000,000) and any fake or intermediary that compared the column as a
@@ -545,18 +693,18 @@ async function seniorQueue(db, user, { tier }) {
   const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'pending_approval'));
   const eligible = rows.filter(r => (Number(r.team_recomm) || 0) >= min);
   if (tier === 'gmo') return { rows: eligible.filter(r => !r.gmo_at) };
-  return { rows: eligible.filter(r => !r.opm_at) };
+  return { rows: eligible.filter(r => !r.opm_at) };          // 'manager' tier, opm_* columns underneath
 }
 
 async function seniorRecommend(db, user, { loan_id, tier, amount, remarks }) {
-  requireTab(user, tier === 'opm' ? 'opm' : 'gmo');
+  requireTab(user, tier === 'manager' ? 'manager' : 'gmo');
   const loan = await mustLoan(db, loan_id);
-  const patch = tier === 'opm'
+  const patch = tier === 'manager'
     ? { opm_recommend: Number(amount) || null, opm_remarks: textOrNull(remarks), opm_by: user.name, opm_at: new Date().toISOString() }
     : { gmo_recommend: Number(amount) || null, gmo_remarks: textOrNull(remarks), gmo_by: user.name, gmo_at: new Date().toISOString() };
   const { error } = await db.from('loans').update(patch).eq('id', loan.id);
   if (error) throw new Error(error.message);
-  await logEvent(db, loan.id, loan.stage, loan.stage, user, Number(amount) || 0, (tier === 'opm' ? 'OPM' : 'GMO') + ' recommendation');
+  await logEvent(db, loan.id, loan.stage, loan.stage, user, Number(amount) || 0, (tier === 'manager' ? 'MANAGER' : 'GMO') + ' recommendation');
   return { ok: true };
 }
 
@@ -567,9 +715,24 @@ async function seniorRecommend(db, user, { loan_id, tier, amount, remarks }) {
 async function creditQueue(db, user) {
   requireTab(user, 'credit');
   const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'pending_approval').order('team_recomm', { ascending: false }));
-  // Blocked until the mandatory senior review has happened, for anything above its threshold.
-  return { rows: rows.filter(r => (Number(r.team_recomm) || 0) < GMO_THRESHOLD || r.gmo_at) };
+  // Blocked until EVERY mandatory senior review for this amount has happened -- Manager at 1M,
+  // GMO at 6M, both required once a loan crosses both thresholds (see the section above).
+  return { rows: rows.filter(r => {
+    const amt = Number(r.team_recomm) || 0;
+    if (amt >= MANAGER_THRESHOLD && !r.opm_at) return false;
+    if (amt >= GMO_THRESHOLD && !r.gmo_at) return false;
+    return true;
+  }) };
 }
+
+/** "ADA YA MKOPO (APPLICATION FEES) ... asilimia tano (5%) ya kiasi cha msingi na haitakuwa
+    chini ya Shilingi ................." -- the contract's own 5%-of-principal application fee,
+    separate from the 36% interest/management-fee already in INTEREST_FLAT_RATE. The minimum-
+    shillings floor is a blank in the contract template itself, so it is not hard-coded here --
+    this is only the suggested 5%; credit can raise it by hand on the form when the floor
+    applies. Deducted from what is actually disbursed, per the contract's own "Barua ya Ahadi
+    ya Mkopo": the amount promised is the principal MINUS this fee, not the principal itself. */
+const APPLICATION_FEE_RATE = 0.05;
 
 async function creditApprove(db, user, p) {
   requireTab(user, 'credit');
@@ -577,18 +740,20 @@ async function creditApprove(db, user, p) {
   const granted = Number(p.granted_amount) || 0;
   if (!granted) throw badRequest('A granted amount is required.');
   const previousBalance = Number(p.previous_balance) || 0;
-  const disbursing = Math.max(0, granted - previousBalance);
+  const appFee = p.application_fee != null && p.application_fee !== ''
+    ? Number(p.application_fee) || 0 : Math.round(granted * APPLICATION_FEE_RATE);
+  const disbursing = Math.max(0, granted - previousBalance - appFee);
   const interest = Math.round(granted * INTEREST_FLAT_RATE);
   const total = granted + interest;
   const installment = Math.round(total / INSTALLMENTS);
   await transition(db, loan, 'pending_approval', 'approved', user, {
     principal_amt: granted, previous_balance: previousBalance, net_disbursed: disbursing,
-    interest_amt: interest, loan_amt: total, installment_amt: installment,
+    interest_amt: interest, loan_amt: total, installment_amt: installment, application_fee: appFee,
     installments: INSTALLMENTS, disbursement_type: textOrNull(p.disbursement_mode) || loan.disbursement_type,
     approved_by: user.name, approved_date: todayKey(Date.now()), bank_name: textOrNull(p.bank_name),
     account_no: textOrNull(p.account_no),
   }, 'Granted ' + granted);
-  return { ok: true, interest, total, installment };
+  return { ok: true, interest, total, installment, application_fee: appFee };
 }
 
 async function creditReject(db, user, { loan_id, reason }) {
@@ -737,6 +902,33 @@ async function financeMarkFunded(db, user, { loan_ids, batch }) {
   return { funded: n, batch: batchName };
 }
 
+/** "CreditInfo asks for a Real End Date, which needs a closing event to hang on rather than
+    being inferred from a zero balance" -- this IS that closing event: the payment that finally
+    covers everything owed (loan_amt, principal plus the flat interest/fees). Runs after every
+    import and after a shift lands money on a new ref; touches only 'funded' loans -- nothing
+    still moving through origination, and nothing already closed/rejected/reversed -- and it
+    only ever CLOSES. A shift that moves money away and drops a loan back under full payment
+    does not reopen it automatically; whether a closed contract un-closes is a human call, not
+    something a stray transfer should decide by itself. */
+async function closeIfFullyPaid_(db, user, ref) {
+  if (!ref) return;
+  const loanRows = await allPaged(db, 'loans', b => b.select('*').eq('loan_id', ref));
+  const loan = loanRows[0];
+  if (!loan || loan.stage !== 'funded' || !(Number(loan.loan_amt) > 0)) return;
+  const payments = await allPaged(db, 'payment_imports', b => b.select('amount, paid_at').eq('ref', ref));
+  const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  if (paid < Number(loan.loan_amt)) return;
+  // The Real End Date is when the balance actually reached zero, i.e. the latest payment on
+  // file for this loan -- not today, if this import is finance catching up on a backlog.
+  const lastPaidAt = payments.reduce((max, p) => {
+    const d = p.paid_at ? String(p.paid_at).slice(0, 10) : null;
+    return d && (!max || d > max) ? d : max;
+  }, null);
+  await transition(db, loan, 'funded', 'closed', user, {
+    real_end_date: lastPaidAt || todayKey(Date.now()),
+  }, 'Closed -- fully repaid (' + paid + ' against ' + loan.loan_amt + ')');
+}
+
 async function financeImportPayments(db, user, { rows, batch }) {
   requireTab(user, 'finance');
   const batchName = textOrNull(batch) || ('PAY-' + todayKey(Date.now()));
@@ -748,6 +940,7 @@ async function financeImportPayments(db, user, { rows, batch }) {
   if (!clean.length) throw badRequest('No usable rows -- each needs at least a reference and an amount.');
   const { error } = await db.from('payment_imports').insert(clean);
   if (error) throw new Error(error.message);
+  for (const ref of new Set(clean.map(r => r.ref))) await closeIfFullyPaid_(db, user, ref);
   return { imported: clean.length, batch: batchName };
 }
 
@@ -789,6 +982,9 @@ async function financeShiftPayment(db, user, { payment_id, to_ref, reason }) {
     shifted_at: new Date().toISOString(), shift_reason: reason,
   }).eq('id', p.id);
   if (error) throw new Error(error.message);
+  // The money that just landed on to_ref might be what finally covers it -- same closing
+  // check an import gets. The ref it left is not re-checked: money LEAVING never closes a loan.
+  await closeIfFullyPaid_(db, user, textOrNull(to_ref));
   return { ok: true };
 }
 
@@ -1026,7 +1222,7 @@ async function logEvent(db, loanId, from, to, user, amount, note) {
 const FN = {
   csSearch, csRegister, csComplaint, branchList,
   managerQueue, managerAssign, managerReject,
-  teamQueue, teamAssessmentSave, teamSubmit,
+  teamQueue, teamAssessDetail, teamAssessmentSave, teamSubmit, kycUpload,
   seniorQueue, seniorRecommend,
   creditQueue, creditApprove, creditReject,
   disburseWindowStatus, disburseQueue, managerDisburse, managerDisburseReject, managerReturnToCredit,

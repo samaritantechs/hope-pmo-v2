@@ -335,7 +335,11 @@ test('weekly lays out Mon-Fri with the week totals', async () => {
   assert.equal(fri.recovered, 400);                         // initial 2100 - current 1700, and the
                                                             // same 400 team progress splits 300/100
   assert.equal(fri.received, 1500);
-  assert.equal(d.totals.salesCount, 2);
+  // 3, not 2: l3 (stage 'disbursed', approved 2026-07-20, within Mon-Fri) is a genuine sale
+  // that had already moved past 'approved' by the time this reads it -- "sales ... aint
+  // reflecting okay", the bug SALES_STAGES fixes. l1 and l2 (still at 'approved') count as
+  // before; only l4 (never reached approval) sits out.
+  assert.equal(d.totals.salesCount, 3);
 });
 
 test('team progress pairs initial and current decks per team', async () => {
@@ -482,7 +486,9 @@ test('credit scores analysts on their count 1-6 book and their sales', async () 
   assert.equal(a.cleared, 0); assert.equal(a.bad, 0); assert.equal(a.stat, 0);
   assert.equal(a.success, 100);                             // (cleared + reduced) / count 1-6
   assert.equal(a.recovered, 300);
-  assert.equal(a.sales, 300000);                            // the one approved KONGOWE loan
+  // l1 (approved, 300000) + l3 (disbursed, 100000) -- both are ANALYST A's KONGOWE sales;
+  // l3 does not stop being one just because it has since moved past 'approved' (SALES_STAGES).
+  assert.equal(a.sales, 400000);
   // MBAGALA names no analyst, so its 999 lands on (unassigned) rather than vanishing.
   assert.equal(d.rows.find(r => r.analyst === '(unassigned)').cnt, 1);
   // The portfolio is the daily call list, built from TODAY's deck, not Monday's.
@@ -1582,6 +1588,26 @@ test('roles can be created, edited and safely deleted', async () => {
 
   await assert.rejects(() => portalApi(db, GMO, 'saveRole', { role: 'X', tabs: 'dashboard' }, NOW),
     e => e.status === 403);
+});
+
+test('a role can be ticked into a HOPE Loan tab too, not just HOPE PMO -- both live in the same checkbox list', async () => {
+  // "ticking the nav pannels from all existing whatever the future stage am on because
+  // writing could error" -- saveRole used to filter against ADMIN_TABS alone, so a Loan tab
+  // ticked on the checkbox list this same allTabs feeds was silently dropped on save.
+  const db = fakeDb(tables());
+  await portalApi(db, ADMIN, 'saveRole', { role: 'senior', tabs: 'dashboard, gmo, manager, nonsense' }, NOW);
+  const saved = db._dump('roles').find(r => r.role === 'SENIOR');
+  assert.deepEqual(saved.tabs, ['dashboard', 'gmo', 'manager']);
+
+  // Both screens that offer this checkbox draw from the same combined list.
+  const t = await portalApi(db, ADMIN, 'teams', {}, NOW);
+  const ac = await portalApi(db, ADMIN, 'accessCodes', {}, NOW);
+  for (const list of [t.allTabs, ac.allTabs]) {
+    for (const lt of ['customer_service', 'manager', 'team', 'gmo', 'credit', 'finance', 'gm']) {
+      assert.ok(list.includes(lt), lt + ' is tickable');
+    }
+    assert.ok(list.includes('upload'), 'HOPE PMO tabs are still there too');
+  }
 });
 
 test('leader reports roll teams up under each supervisor, not just per team', async () => {
@@ -3111,28 +3137,29 @@ test('any day of a past week snaps to that week, not to a week starting mid-way'
   }
 });
 
-test('this week, a future week, and no choice at all leave the clock exactly alone', () => {
-  /* The live screen has to be bit-for-bit what it was before the picker existed. A future
-     week is clamped rather than honoured: there is nothing in it, and a dashboard of zeroes
-     reads as a broken system rather than as an empty future. */
-  for (const pick of ['', null, undefined, 'rubbish', '2026-07-20', '2026-07-24', '2026-09-01']) {
+test('this week and no choice at all leave the clock exactly alone', () => {
+  // The live screen has to be bit-for-bit what it was before the picker existed.
+  for (const pick of ['', null, undefined, 'rubbish', '2026-07-20', '2026-07-24']) {
     const a = asOfWeek(NOW, pick);
     assert.equal(a.ms, NOW, String(pick));
     assert.equal(a.past, false, String(pick));
+    assert.equal(a.future, false, String(pick));
     assert.equal(a.weekOf, MON, String(pick));
   }
 });
 
 /* "I tried pressing the date picker to 10th august so that all info start of next week but
-   didn't work". Picked on the Sunday, the 10th is NEXT week -- and the clamp answered with
-   the current week SILENTLY, so the screen redrew with the identical figures and looked
-   broken. The clamp is right; the silence was the bug. */
-test('a week that has not started says so, instead of pretending nothing was pressed', () => {
+   didn't work". Picked on the Sunday, the 10th is NEXT week -- and the clamp used to answer
+   with the current week SILENTLY, so the screen redrew with the identical figures and looked
+   broken. "Dashboard date should be able to slide next week since am uploading next week
+   progress reports too" / "so backward and foward should both work" -- the clamp itself is
+   gone now, not just the silence: a future week reads back as itself. */
+test('a week that has not started yet is shown as itself, not bounced back to this week', () => {
   const a = asOfWeek(NOW, '2026-09-01');            // NOW is Friday 2026-07-24
-  assert.equal(a.future, true, 'the screen has to be able to say the week has not started');
-  assert.equal(a.requested, '2026-08-31', 'and which week was actually asked for, as its Monday');
-  assert.equal(a.weekOf, MON, 'while still showing the live week rather than a screen of zeroes');
-  assert.equal(a.ms, NOW);
+  assert.equal(a.future, true, 'the screen can still say this week is upcoming, not "this week"');
+  assert.equal(a.requested, '2026-08-31', 'which week was actually asked for, as its Monday');
+  assert.equal(a.weekOf, '2026-08-31', 'and that IS what is shown -- no more falling back to today');
+  assert.equal(todayKeyOf(a.ms), '2026-09-04', 'the Friday of the chosen future week, same as a past one');
 });
 
 test('a mid-week date reports the Monday it resolved to, so the snap is explainable', () => {
@@ -3155,7 +3182,7 @@ test('the weekly report carries the week bar its own answer', async () => {
   const d = await portalApi(fakeDb(tables()), ADMIN, 'weekly', { weekOf: '2026-09-01' }, NOW);
   assert.equal(d.weekFuture, true);
   assert.equal(d.weekRequested, '2026-08-31');
-  assert.equal(d.weekOf, MON, 'and still shows the live week');
+  assert.equal(d.weekOf, '2026-08-31', 'the upcoming week itself, not the live one');
 });
 
 test('the dashboard computes a past week from that week, not from today', async () => {
@@ -3185,6 +3212,31 @@ test('the dashboard computes a past week from that week, not from today', async 
   assert.equal(last.cards.recovered, 1000);
   // And this week's screen is untouched by the existence of last week's.
   assert.notEqual(now.cards.curArrears, 4000);
+});
+
+/* "Dashboard date should be able to slide next week since am uploading next week progress
+   reports too" / "so backward and foward should both work" -- the mirror image of the past-
+   week test above: a week not yet lived through, already populated in advance, reads back
+   exactly like any other week instead of being refused. */
+test('the dashboard computes a future week from that week too, once it has been uploaded', async () => {
+  const book = tables();
+  const NEXTMON = '2026-07-27', NEXTFRI = '2026-07-31';
+  book.repayment_snapshots.push(
+    { ...E('NW1', 'KONGOWE', 9000, 'UNPAID', 0, NEXTFRI), upload_batch: 'bnw', created_at: NEXTFRI + 'T04:00:00Z' });
+  book.defaulter_snapshots.push(
+    { ...D('NW1', 'KONGOWE', 5000, 'initial', 45, NEXTFRI, 'FRI'), upload_batch: 'inw', created_at: NEXTFRI + 'T04:00:00Z' },
+    { ...D('NW1', 'KONGOWE', 4000, 'current', 45, NEXTFRI, 'FRI'), upload_batch: 'cnw', created_at: NEXTFRI + 'T04:00:00Z' });
+  const db = fakeDb(book);
+
+  const next = await portalApi(db, ADMIN, 'dashboardFull', { weekOf: NEXTMON }, NOW);
+  assert.equal(next.weekOf, NEXTMON, 'the upcoming week it was asked for, not the live one');
+  assert.equal(next.weekFuture, true);
+  assert.equal(next.pastWeek, false);
+  // Read back the figures actually uploaded for it, the same as any other week -- no zeroing
+  // out, no substitution.
+  assert.equal(next.cards.curArrears, 4000);
+  assert.equal(next.cards.initArrears, 5000);
+  assert.equal(next.cards.recovered, 1000);
 });
 
 test('the recovery trend of a past week lands on that week\'s own days', async () => {
@@ -5023,6 +5075,26 @@ test('a customer in two weekdays\' decks is listed ONCE, from the newer one', as
   assert.equal(Number(hits[0].arrears), 999, 'and it is the newer upload that wins');
 });
 
+test('a customer dropped from a same-day corrected re-upload does not survive on their old batch row', async () => {
+  // "Some customers were texted arrears when I exported the sms file ... yet she aint in the
+  // defaulters file" -- ANASTAZIA JUMBE NGOI, SINGIDA. A team's CURRENT deck corrected with a
+  // same-day re-upload that no longer names a given customer -- because they paid off -- must
+  // not resurrect them from the batch it replaced. pickLatestPerCustomer alone had nothing in
+  // the newer, more complete batch to compare her old row against, so her old row just won.
+  const t = estherBook('TUE');
+  // A LATER upload for GOBA's TUE current deck, same date, that does NOT mention her -- but
+  // does name somebody else, so the fix has to be "her batch loses, not the whole date".
+  t.defaulter_snapshots.push({
+    ref: '9-000-00001', full_name: 'SOMEBODY ELSE', team: 'GOBA', arrears: 400000,
+    status: 'Defaulter', ds: '3-6', snapshot_type: 'current', weekday: 'TUE',
+    snapshot_date: TODAY, upload_batch: 'bg2', created_at: TODAY + 'T06:00:00Z',
+  });
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
+  assert.equal(d.rows.some(r => K2(r.ref) === '2-209-72865'), false,
+    'she is not in the corrected file -- the old batch\'s row must not survive');
+  assert.ok(d.rows.some(r => K2(r.ref) === '9-000-00001'), 'the corrected file\'s own customer is there');
+});
+
 test('and Find customer says exactly where she is and why she cannot be seen', async () => {
   const d = await portalApi(dbWithRpc(estherBook('TUE')), ADMIN, 'findCustomer', { q: 'ESTER' }, NOW);
   // The fixture carries an 'initial' AND a 'current' snapshot for her -- one ref's whole
@@ -5211,8 +5283,16 @@ test('only an admin may rebuild the register', async () => {
 
    Not a few rows -- the whole team. And it is why re-uploading her team changed nothing: her
    deck was landing perfectly and being filtered out by somebody else's more recent upload.
-   ===================================================================================== */
-function twoTeamBook(gobaDate) {
+
+   THAT FIX STILL STANDS -- for 'initial' baselines, and for anything else that reads a deck
+   type teams might genuinely upload on different days. It no longer applies to 'current'
+   defaulters: see the comment on defaulterBook's own 'current' branch in portal-core.js.
+   "the latest current defaulter file is to live until the next one, no limit" -- confirmed
+   after paid-off customers kept resurfacing from a stale deck the exact same shape as GOBA's
+   here. A team missing from today's whole-company CURRENT file is now read as zero, not as
+   "their own latest deck" -- the tests below were rewritten to prove that on purpose, not
+   because the old protection was wrong for what it was built for. */
+function twoTeamBook(gobaDate, type) {
   const t = tables();
   t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
     credit: 'ANALYST A', expected: 'E', bike: 'B' });
@@ -5220,47 +5300,36 @@ function twoTeamBook(gobaDate) {
     credit: 'ANALYST B', expected: 'E2', bike: 'B2' });
   const mk = (ref, team, date, wd) => ({ ref, full_name: ref + ' NAME', team, arrears: 1000,
     status: 'Partial Defaulter', ds: '2-4', dc: 2, disb_date: '2026-07-09',
-    snapshot_type: 'current', weekday: wd, snapshot_date: date,
+    snapshot_type: type || 'current', weekday: wd, snapshot_date: date,
     upload_batch: 'b' + team + date, created_at: date + 'T04:00:00Z' });
   t.defaulter_snapshots.push(mk('ESTHER', 'GOBA', gobaDate, 'TUE'));
   t.defaulter_snapshots.push(mk('OTHER', 'MBEYA', TODAY, 'MON'));
   return t;
 }
 
-test('a team whose deck is older than another team\'s is NOT wiped out', async () => {
-  /* The reported fault, exactly. MBEYA uploaded today, GOBA two days ago -- and GOBA used to
-     disappear completely because the date was resolved for the whole table at once. */
+test('a team missing from today\'s CURRENT file reads as zero, not their own older deck', async () => {
+  /* The policy this session deliberately flipped, aware it reopens the door the OLD version of
+     this test closed. MBEYA uploaded today; GOBA's only CURRENT deck is two days old, and a
+     team quiet since must mean paid off, not "still catching up". */
   const t = twoTeamBook('2026-07-22');             // TODAY is 2026-07-24
   const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
-  assert.ok(d.rows.some(r => r.ref === 'ESTHER'), 'GOBA, on its own older deck');
-  assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'and MBEYA, on today\'s');
+  assert.ok(!d.rows.some(r => r.ref === 'ESTHER'), 'GOBA\'s two-day-old deck no longer counts');
+  assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'MBEYA, on today\'s, still does');
 });
 
-test('each team is read on ITS OWN latest date, not the newest in the table', async () => {
-  const t = twoTeamBook('2026-07-22');
-  // A third, older GOBA deck must lose to GOBA's own newer one -- not to MBEYA's.
-  t.defaulter_snapshots.push({ ...t.defaulter_snapshots.find(r => r.ref === 'ESTHER'),
-    snapshot_date: '2026-07-20', arrears: 999999, upload_batch: 'bold',
-    created_at: '2026-07-20T04:00:00Z' });
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', {}, NOW);
-  const hers = d.rows.filter(r => r.ref === 'ESTHER');
-  assert.equal(hers.length, 1, 'once');
-  assert.equal(Number(hers[0].arrears), 1000, 'from her team\'s own newest deck');
+test('...but an INITIAL baseline still protects a team on an older date -- only CURRENT changed', async () => {
+  const t = twoTeamBook('2026-07-22', 'initial');
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { type: 'initial' }, NOW);
+  assert.ok(d.rows.some(r => r.ref === 'ESTHER'),
+    'a baseline is not re-uploaded on a defaulter\'s cadence -- staying sticky is still right here');
 });
 
-test('the credit analyst gets their customer back too', async () => {
-  const d = await portalApi(dbWithRpc(twoTeamBook('2026-07-22')), ADMIN, 'credit', {}, NOW);
-  const a = d.rows.find(r => r.analyst === 'ANALYST A');
-  assert.ok(a && a.cnt >= 1, 'GOBA\'s analyst can see their count 1-6 customer');
-});
-
-test('rebuilding the register now reaches a team on an older deck', async () => {
-  /* Which is why the rebuild appeared to do nothing: it read the same wiped-out book. */
+test('rebuilding the register no longer reaches into an old CURRENT deck either', async () => {
   const t = twoTeamBook('2026-07-22');
   const db = dbWithRpc(t);
   await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
-  assert.ok(db._dump('followup_status').some(r => r.ref === 'ESTHER'),
-    'she is in the register, so HOPE Calls can show her');
+  assert.ok(!db._dump('followup_status').some(r => r.ref === 'ESTHER'),
+    'the register follows the same current-deck rule everything else now does');
 });
 
 test('an explicit weekday choice is still exactly that', async () => {
