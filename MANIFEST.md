@@ -65,7 +65,6 @@ tested without a browser or a network.
 | `auth.js` | ~135 | Access codes, resolved tabs, `gatedUser` (identity + the open/closed switch), and the API wrapper that turns a thrown error into clean JSON. |
 | `system-gate.js` | ~80 | The open/closed switch. Default closed; **admin checked before the setting is read**. |
 | `assign.js` | ~60 | The rotation engine — which leader owns which defaulter this week. |
-| `credit-dist.js` | ~90 | The credits distribution: the OFF JANA deal stays round-robin fair, but the arrangement rotates with the deck date — A-Z by name, by amount, by days, officers A-Z. Derived from the date, never stored. |
 | `answer-cache.js` | ~60 | "The same question, asked once." |
 | `passcode.js` | ~55 | Field officer passcodes. |
 | `recovery.js` | ~42 | **The Recovery % rule, in one place.** PAID/OVERPAID, UNDERPAID and everything else. Every screen calls this rather than re-deriving it. |

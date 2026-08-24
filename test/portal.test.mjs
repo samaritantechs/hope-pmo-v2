@@ -6333,10 +6333,6 @@ test('recoveryByCredit tracks customers who recovered from 7+ day lockout', asyn
   // The team on the row is the credit officer's own branch (call_users.team), not a
   // deck-derived label -- the branches rule, same as the agent scorecard fix.
   assert.equal(summary[0].team, 'KONGOWE');
-  /* The rotating arrangement (credit-dist.js): every metric row says which arrangement dealt
-     its pile, and the answer for today rides along so the board can announce it. */
-  assert.ok(summary[0].arrangement, 'each row carries the arrangement that dealt it');
-  assert.ok(d.arrangement && d.arrangement.key && d.arrangement.label, 'today\'s arrangement rides along');
 });
 
 test('recoveryByCredit returns empty metrics if no customers locked 7+ days', async () => {
