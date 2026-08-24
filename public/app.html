@@ -4803,8 +4803,15 @@ function presSlides(){
     var callTop = callPool.slice(0, 6).map(function(x){ return { ...x, end:'Busiest' }; });
     var topNames = {};
     callTop.forEach(function(x){ topNames[x.agent] = 1; });
+    /* "the least active should just change just the left 'least active' but continue flowing
+       high to low no of calls in that sense the s/n makes sence" -- callWeekWorst arrives
+       fewest-first, which put the absolute-zero officer at row 7 and the counts RISING down
+       the slide, reversing direction mid-table. The six least active are still the same six
+       people (picked from the worst end); .reverse() only prints them high-to-low, so the
+       whole 12-row slide descends continuously from busiest to quietest and the S/N reads as
+       one ranking. The 'Least active' label in the left column is what marks the second half. */
     var callLow = callPoolWorst.filter(function(x){ return !topNames[x.agent]; })
-      .slice(0, 6).map(function(x){ return { ...x, end:'Least active' }; });
+      .slice(0, 6).reverse().map(function(x){ return { ...x, end:'Least active' }; });
     slides.push({ id:'calls', kind:'table',
       title:'HOPE Calls — busiest and least active this week'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),

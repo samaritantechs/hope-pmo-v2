@@ -60,7 +60,12 @@ a{color:var(--b600)}
 
 /* ---- app shell ---- */
 #scrApp{display:none;flex-direction:column;height:100%}
-header.top{background:var(--b900);color:#fff;padding:14px 16px 12px;flex:0 0 auto}
+/* "The callapp interface is too top that some phones cant click the top buttons" -- this
+   page declares viewport-fit=cover, so on phones with a notch/cutout it runs UNDER the
+   status bar, and the header's own buttons sat beneath it where taps land on the system bar
+   instead. env(safe-area-inset-top) is that phone's actual cutout height and 0 on the phones
+   that were already fine -- the same fix the bottom sheet already uses for the other edge. */
+header.top{background:var(--b900);color:#fff;padding:calc(14px + env(safe-area-inset-top,0px)) 16px 12px;flex:0 0 auto}
 header.top .row1{display:flex;align-items:center;gap:10px}
 header.top .logo{width:30px;height:30px;border-radius:8px;background:#fff;object-fit:cover;display:block}
 header.top a{flex:0 0 auto;line-height:0}
