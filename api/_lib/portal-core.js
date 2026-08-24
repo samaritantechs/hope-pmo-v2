@@ -22,6 +22,7 @@ import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFu
   FU_STATUS_KEY, isCreditRole } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport } from './expdf.js';
+import { distributeToCredits, distStrategyFor } from './credit-dist.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -4642,31 +4643,24 @@ function creditRoster(callUsers) {
 
 /** Customers locked at 7+ days offline on a given date -- OFF JANA for that day.
     Bounded to one date, one snapshot_type, and team scope; filtered to 7+ AT THE DATABASE so
-    the row count is the handful actually locked, not the whole day's defaulter book. */
+    the row count is the handful actually locked, not the whole day's defaulter book.
+    `arrears` rides along for the distribution's by-amount arrangement (credit-dist.js) --
+    one column on a list already bounded to the handful locked, not a new read. */
 async function lockedCustomers(db, teams, onDate) {
   return fetchAll(() => onTeams(
     db.from('defaulter_snapshots')
-      .select('ref, full_name, contact, days_elapsed, team')
+      .select('ref, full_name, contact, days_elapsed, arrears, team')
       .eq('snapshot_type', 'current')
       .eq('snapshot_date', onDate)
       .gte('days_elapsed', 7),
     teams));
 }
 
-/** Round-robin by ref (sorted, so the split is deterministic and reproducible rather than
-    order-of-arrival) -- the same "deal, don't dump the whole book on the first name" fairness
-    rule dealMap uses for the call app's tabs. Nobody's pile differs from anyone else's by more
-    than one. Returns { creditKey -> [customer, ...] }. */
-function assignToCredits(customers, creditUsers) {
-  const assigned = new Map();
-  if (!creditUsers.length) return assigned;
-  const sorted = customers.slice().sort((a, b) => String(a.ref || '').localeCompare(String(b.ref || '')));
-  sorted.forEach((c, i) => {
-    const key = creditUsers[i % creditUsers.length].user_id || creditUsers[i % creditUsers.length].name;
-    (assigned.get(key) || assigned.set(key, []).get(key)).push(c);
-  });
-  return assigned;
-}
+/* The deal itself lives in credit-dist.js -- round-robin fairness as always (nobody's pile
+   differs from anyone else's by more than one), but the ARRANGEMENT the pile is dealt from
+   now rotates with the deck date: A-Z by name, then by amount, then by days, then officers
+   taking turns A-Z. "The credits should always get random customers" -- the same officer no
+   longer catches the same slice of the book every single day. */
 
 /** Recovery metrics per credit officer per day of the week, Monday through Sunday.
 
@@ -4719,8 +4713,12 @@ async function recoveryByCredit(db, user, args = {}, nowMs) {
     const todayByRef = new Map(today.map(r => [r.ref, num(r.days_elapsed)]));
     const recovered = prevLocked.filter(r => { const d = todayByRef.get(r.ref); return d !== undefined && d < 7; });
 
-    const assignedByCredit = assignToCredits(prevLocked, creditUsers);
-    const recoveredByCredit = assignToCredits(recovered, creditUsers);
+    /* BOTH DEALS ARRANGED BY THE SAME DECK'S DATE -- yesterday's, the deck that dealt this
+       pile out. The recovered pile must land on the same officers the assigned pile did, or
+       an officer would be credited with recovering a customer somebody else was dealt. */
+    const dealDate = addDaysKey(mon, i - 1);
+    const { assigned: assignedByCredit, strategy } = distributeToCredits(prevLocked, creditUsers, dealDate);
+    const { assigned: recoveredByCredit } = distributeToCredits(recovered, creditUsers, dealDate);
 
     for (const cu of creditUsers) {
       const key = cu.user_id || cu.name;
@@ -4729,11 +4727,16 @@ async function recoveryByCredit(db, user, args = {}, nowMs) {
       result.push({
         weekday: WD7[i], date: currDate, creditUser: cu.name || key, team: cu.team,
         assigned, recovered: (recoveredByCredit.get(key) || []).length,
+        arrangement: strategy.key,
       });
     }
   }
 
-  return { week: { from: mon, to: sun }, metrics: result };
+  /* Which arrangement TODAY'S deck deals under, so the board can say it out loud -- an officer
+     seeing an unfamiliar pile deserves the one-line reason on the same screen. */
+  const todayStrategy = distStrategyFor(todayKey(nowMs));
+  return { week: { from: mon, to: sun }, metrics: result,
+    arrangement: { key: todayStrategy.key, label: todayStrategy.label } };
 }
 
 /* ------------------------------------------------------------------ dispatch */

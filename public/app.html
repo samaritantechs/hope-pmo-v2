@@ -2402,7 +2402,7 @@ VIEWS.dashboard = function(){
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
                      col('pct','Rec %','pct')], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
-        + creditRecoveryBoard(creditRec && creditRec.metrics)
+        + creditRecoveryBoard(creditRec && creditRec.metrics, creditRec && creditRec.arrangement)
         + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
                     'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
                     [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
@@ -3003,8 +3003,12 @@ function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields
    shape the meeting actually reads: one row per credit officer, one column per weekday, each
    cell "recovered / assigned" exactly as asked for. A day nobody was dealt any OFF JANA
    customers reads as an em dash rather than 0/0, which would look like a bad day rather than
-   an empty one. */
-function creditRecoveryBoard(metrics){
+   an empty one.
+
+   THE ARRANGEMENT IS SAID OUT LOUD. The deal now rotates how the pile is arranged per deck
+   (credit-dist.js: A-Z / by amount / by days / officers A-Z), so an officer looking at an
+   unfamiliar pile gets the one-line reason on the same screen instead of wondering. */
+function creditRecoveryBoard(metrics, arrangement){
   if (!metrics || !metrics.length) return '';
   var byUser = {};
   metrics.forEach(function(m){
@@ -3034,7 +3038,8 @@ function creditRecoveryBoard(metrics){
     .concat(WD7.map(function(wd){ return col(wd, WDFULL[wd]); }))
     .concat([col('week', 'Week')]);
   return board('bCredRec', 'Credits — 7+ day recovery (Mon–Sun)',
-    'OFF JANA = 7+ days offline the day before · each cell reads recovered / assigned',
+    'OFF JANA = 7+ days offline the day before · each cell reads recovered / assigned'
+      + (arrangement && arrangement.label ? ' · leo mgawanyo: ' + arrangement.label : ''),
     rows, cols, totalRow);
 }
 
