@@ -1371,9 +1371,17 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     fetchAll(() => db.from('call_users').select('*')),
     readTeamsAll(db),
     /* Scoped at the database. A leader over one team read every call the whole company made
-       in the window and discarded the rest here -- on the table that grows fastest of all. */
+       in the window and discarded the rest here -- on the table that grows fastest of all.
+       AND ONLY THE COLUMNS THE REPORT READS. "Call reports in system does not load ...
+       the server did not answer within 45 seconds" -- select('*') was carrying the hash id,
+       direction, call_time, match_type, customer and synced_at for every call in the window,
+       none of which any figure below touches. On an all-teams admin over a week that is tens
+       of thousands of rows, and those six dead columns were most of the bytes on the wire --
+       the difference between answering inside the client's 45-second deadline and not. */
     fetchAll(() => {
-      let q = db.from('call_logs').select('*').gte('call_date', fromKey).lte('call_date', toKey);
+      let q = db.from('call_logs')
+        .select('user_id, team, officer, call_date, duration, portfolio, category, outcome, ref, phone')
+        .gte('call_date', fromKey).lte('call_date', toKey);
       if (scopeTeams && Object.keys(scope || {}).length) q = q.in('team', Object.keys(scope));
       return q;
     }),
