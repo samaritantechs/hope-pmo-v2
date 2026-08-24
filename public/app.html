@@ -2455,7 +2455,7 @@ VIEWS.dashboard = function(){
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
                      col('pct','Rec %','pct')], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
-        + creditRecoveryBoard(creditRec && creditRec.metrics)
+        + creditRecoveryBoard(creditRec && creditRec.metrics, creditRec && creditRec.arrangement)
         + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
                     'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
                     [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
@@ -3056,8 +3056,12 @@ function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields
    shape the meeting actually reads: one row per credit officer, one column per weekday, each
    cell "recovered / assigned" exactly as asked for. A day nobody was dealt any OFF JANA
    customers reads as an em dash rather than 0/0, which would look like a bad day rather than
-   an empty one. */
-function creditRecoveryBoard(metrics){
+   an empty one.
+
+   THE ARRANGEMENT IS SAID OUT LOUD. The deal now rotates how the pile is arranged per deck
+   (credit-dist.js: A-Z / by amount / by days / officers A-Z), so an officer looking at an
+   unfamiliar pile gets the one-line reason on the same screen instead of wondering. */
+function creditRecoveryBoard(metrics, arrangement){
   if (!metrics || !metrics.length) return '';
   var byUser = {};
   metrics.forEach(function(m){
@@ -3087,7 +3091,8 @@ function creditRecoveryBoard(metrics){
     .concat(WD7.map(function(wd){ return col(wd, WDFULL[wd]); }))
     .concat([col('week', 'Week')]);
   return board('bCredRec', 'Credits — 7+ day recovery (Mon–Sun)',
-    'OFF JANA = 7+ days offline the day before · each cell reads recovered / assigned',
+    'OFF JANA = 7+ days offline the day before · each cell reads recovered / assigned'
+      + (arrangement && arrangement.label ? ' · leo mgawanyo: ' + arrangement.label : ''),
     rows, cols, totalRow);
 }
 
@@ -5289,6 +5294,10 @@ function lnReasonPrompt_(cb){
   if (reason && reason.trim()) cb(reason.trim());
 }
 
+/* A trio of lnSigPad_ canvas helpers stood here briefly on this branch -- superseded before
+   they ever merged by the KYC capture work's own pads (captureRowPad_/saveCanvasPad_ below),
+   which upload through the storage bucket the moment a capture is taken. */
+
 VIEWS.ln_pipeline = function(){
   return srv('pipelineSummary', {}).then(function(d){
     HEAD = '<div class="kpis">'
@@ -5407,7 +5416,22 @@ var RESIDENCY_CAPACITIES = ['Owner', 'Tenant', 'Living with family'];
    a BRANCH from what actually exists (srv('branchList'), the same list this session's
    2026-08-19-team-branch.sql work put on the teams table), and the team is left for the
    manager to decide from the branch and the landmark -- see lnManagerAssignForm_. */
+/** A returning customer found via csSearch always opens a NEW loan/track when submitted here
+    (see loan.test.mjs: "the next loan for a reversed customer opens on the next track") -- so
+    `existing` truthy is the reliable signal this submission will be a TRACK# 2+ top-up, and is
+    exactly when the top-up fields and the supervisor gate below apply. */
+function lnIsSupervisor_(){
+  return (S.me.tabs||[]).indexOf('customer_service_supervisor') >= 0 || S.me.role === 'ADMIN';
+}
 function lnCsRegisterForm_(existing){
+  if (existing && !lnIsSupervisor_()) {
+    // "at multi loan we allow these customers to double... that's the policy" -- refused here,
+    // before anyone fills in a form the server will reject anyway.
+    drawer('<h3>' + esc(existing.full_name) + '</h3>'
+      + '<div class="note bad">This customer already has a loan on file -- registering another '
+      + '(a multi-loan top-up) needs the CS Supervisor tab. Ask your supervisor to register it.</div>');
+    return;
+  }
   srv('branchList').then(function(bl){
     var regions = bl.regions || [], byRegion = bl.byRegion || {};
     // Which region the branch already on record belongs to, so re-opening a partly-filled
@@ -5418,6 +5442,7 @@ function lnCsRegisterForm_(existing){
     }
     drawer('<h3>' + (existing ? esc(existing.full_name) : 'Mteja mpya / New customer') + '</h3>'
       + '<div class="sub">Loan Application -- requested amount only. KYC (District included) is captured by the team at assessment, not here -- CS stays fast.</div>'
+      + (existing ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">Multi-loan top-up (TRACK# 2+) -- "not more than two installments left" on the current loan.</div>' : '')
       + '<div class="fld"><label>Full name</label><input id="lnFullName" value="' + esc(existing ? existing.full_name : '') + '"' + (existing ? ' readonly' : '') + '></div>'
       // Mobile and Disbursement mode sequenced together on purpose: a Momo disbursement pays
       // OUT to the same number just typed above, so the two belong next to each other, not
@@ -5454,7 +5479,20 @@ function lnCsRegisterForm_(existing){
         + (byRegion[curRegion]||[]).map(function(b){ return '<option' + (existing && existing.branch===b?' selected':'') + '>' + esc(b) + '</option>'; }).join('')
         + '</select></div>'
       + '<div class="fld"><label>Landmark</label><input id="lnLandmark" placeholder="What the manager will assign a team from"></div>'
-      + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>');
+      /* TOP-UP ELIGIBILITY. No repayment tracking exists in the sandbox yet (see loan-core.js's
+         own note on the boundary "deliberately not crossed" past funding), so this is typed in
+         off the customer's real book, the same trust model creditApprove's own "previous
+         balance" field already uses at approval. */
+      + (existing ? '<div class="fld"><label>Instalments left on the current loan</label><input id="lnTopupLeft" type="number" min="0"></div>'
+          + '<div class="fld"><label>Arrears on the current loan (TZS)</label><input id="lnTopupArrears" type="number" min="0" value="0"></div>'
+          + '<div class="fldnote">Deducted from THIS loan\'s disbursement only -- the amount above is what its own instalments are computed from.</div>'
+        : '')
+      + '<button class="btn w" id="lnCsSubmit">Sajili / Register application</button>'
+      + (existing ? '<div class="card" style="padding:12px;margin-top:14px"><b style="font-size:13px">Historia / Notes</b>'
+          + '<div id="lnHist"><div class="sk" style="margin:14px auto"></div></div>'
+          + '<div class="fld" style="margin-top:8px"><textarea id="lnNote" rows="2" placeholder="Ongeza maoni / Add a note"></textarea></div>'
+          + '<button class="btn sm" id="lnNoteSave">Ongeza / Add</button></div>'
+        : ''));
     // Momo no. for a Momo disbursement, Bank name + Account no. for a Bank one -- nothing shown
     // (and nothing required) until a mode is actually chosen.
     function toggleDisbFlds(){
@@ -5472,7 +5510,7 @@ function lnCsRegisterForm_(existing){
         + branches.map(function(b){ return '<option>' + esc(b) + '</option>'; }).join('');
     };
     $('#lnCsSubmit').onclick = function(){
-      lnAct('csRegister', {
+      var args = {
         customer_id: existing ? existing.id : undefined,
         docket: existing ? existing.docket : undefined,
         full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
@@ -5480,8 +5518,42 @@ function lnCsRegisterForm_(existing){
         landmark: $('#lnLandmark').value.trim(), business_type: $('#lnBizType').value.trim(),
         disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
         momo: $('#lnMomoNo').value.trim(), bank_name: $('#lnBankName').value.trim(), account_no: $('#lnAcctNo').value.trim(),
-      }, 'Application registered.');
+      };
+      if (existing) {
+        args.topup_installments_left = $('#lnTopupLeft').value;
+        args.topup_arrears = $('#lnTopupArrears').value;
+      }
+      lnAct('csRegister', args, 'Application registered.');
     };
+    if (existing) {
+      // The panel from the search result: the customer's whole comment trail, no matter which
+      // track it was filed under -- "so that loan followup history can be tracked no matter
+      // the current track no."
+      srv('loanComments', { customer_id: existing.id }).then(function(d){
+        var h = document.getElementById('lnHist'); if (!h) return;
+        h.innerHTML = (d.rows||[]).length ? d.rows.map(function(c){
+          return '<div class="hist"><div class="t"><span>' + esc(c.created_by||'') + '</span>'
+            + '<span>' + esc(String(c.created_at||'').replace('T',' ').slice(0,16)) + '</span></div>' + esc(c.comment||'') + '</div>';
+        }).join('') : '<div style="color:var(--soft);font-size:12.5px;padding:8px 0">Hakuna historia bado. / No notes yet.</div>';
+      }).catch(function(){});
+      document.getElementById('lnNoteSave').onclick = function(){
+        var text = document.getElementById('lnNote').value.trim();
+        if (!text) { toast('Andika maoni kwanza. / Write a note first.', true); return; }
+        var btn = document.getElementById('lnNoteSave'); btn.disabled = true;
+        srv('loanAddComment', { customer_id: existing.id, comment: text }).then(function(){
+          document.getElementById('lnNote').value = '';
+          btn.disabled = false;
+          toast('Imeongezwa. / Added.');
+          srv('loanComments', { customer_id: existing.id }).then(function(d){
+            var h = document.getElementById('lnHist'); if (!h) return;
+            h.innerHTML = (d.rows||[]).map(function(c){
+              return '<div class="hist"><div class="t"><span>' + esc(c.created_by||'') + '</span>'
+                + '<span>' + esc(String(c.created_at||'').replace('T',' ').slice(0,16)) + '</span></div>' + esc(c.comment||'') + '</div>';
+            }).join('');
+          });
+        }).catch(function(e){ btn.disabled = false; toast(String(e.message||e), true); });
+      };
+    }
   }).catch(function(e){ toast(String(e.message||e), true); });
 }
 
