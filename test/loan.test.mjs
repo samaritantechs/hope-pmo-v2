@@ -12,7 +12,6 @@ const { loanApi, mintDocket, refFor, docketFromRef, GMO_THRESHOLD, MANAGER_THRES
         INTEREST_FLAT_RATE, INSTALLMENTS } = await import('../api/_lib/loan-core.js');
 
 const CS = { code: 'CS', name: 'ASHA CS', role: 'CUSTOMER SERVICE', tabs: ['customer_service'] };
-const CSS = { code: 'CSS', name: 'THE CS SUPERVISOR', role: 'CS SUPERVISOR', tabs: ['customer_service', 'customer_service_supervisor'] };
 // MGR already holds 'manager' for Assign and Disburse -- reused for Manager Review too, by the
 // owner's own choice ("so here we'll have two side navs ... I give them navigation tabs access
 // at access codes"), not a new tab minted just for this screen.
@@ -363,11 +362,9 @@ test('a customer\'s DOB is locked from track 2 onward, but still editable on the
   let cust = (await db.from('customers').select('*')).data.find(c => c.id === loan1.customer_id);
   assert.equal(cust.dob, '1985-05-05', 'track 1: editable');
 
-  // Second loan for the SAME customer -- track 2, so it is a top-up: the supervisor tab and an
-  // instalments-left figure are both required (see the multi-loan top-up tests further down).
-  const { loan: loan2 } = await loanApi(db, CSS, 'csRegister', {
+  // Second loan for the SAME customer -- track 2.
+  const { loan: loan2 } = await loanApi(db, CS, 'csRegister', {
     customer_id: loan1.customer_id, full_name: 'REPEAT CUSTOMER', mobile: '0700000003', team: 'MABIBO', amount: 250000,
-    topup_installments_left: 1, topup_arrears: 0,
   });
   assert.equal(loan2.track_no, '2');
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan2.id, section: 'personal', fields: { dob: '1999-09-09', mobile_alt: '0711111111' } });
@@ -386,10 +383,8 @@ test('District is captured at assessment, not registration -- "cs agents are sup
   assert.equal(cust.district, 'Kinondoni', 'the team\'s assessment is what sets it now');
 
   // Not an identity field -- still open on a returning customer's later tracks, unlike DOB.
-  // (A second loan is a top-up, so it goes through the supervisor with the eligibility fields.)
-  const { loan: loan2 } = await loanApi(db, CSS, 'csRegister', {
+  const { loan: loan2 } = await loanApi(db, CS, 'csRegister', {
     customer_id: loan.customer_id, full_name: 'A CUSTOMER', mobile: '0700000004', team: 'MABIBO', amount: 250000,
-    topup_installments_left: 1, topup_arrears: 0,
   });
   await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan2.id, section: 'personal', fields: { district: 'Ilala' } });
   cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
@@ -712,9 +707,8 @@ test('the next loan for a reversed customer opens on the next track, not a reuse
   await loanApi(db, FINANCE, 'reversalFinanceDecide', { id: row.id, approve: true });
   await loanApi(db, GM, 'reversalGmDecide', { id: row.id, approve: true });
 
-  const { loan: loan2 } = await loanApi(db, CSS, 'csRegister', {
+  const { loan: loan2 } = await loanApi(db, CS, 'csRegister', {
     customer_id: loan1.customer_id, full_name: 'REVERSED CUSTOMER', mobile: '0700000009', team: 'MABIBO', amount: 300000,
-    topup_installments_left: 0, topup_arrears: 0,
   });
   assert.equal(loan2.track_no, '2', 'the docket is unchanged; only the track has moved on');
   assert.equal(loan2.docket_no, loan1.docket_no);
@@ -898,107 +892,4 @@ test('pipelineSummary counts every stage and reports the window state', async ()
   assert.equal(s.total, 2);
   assert.equal(s.stages.find(x => x.stage === 'unassigned').count, 2);
   assert.equal(s.windowOpen, false);
-});
-
-/* =====================================================================================
-   MULTI-LOAN TOP-UPS ("doubles") -- CSS-only, and only with 2 or fewer instalments left.
-
-     "at multi loan we allow these customers to double, this is to topup their loans only
-      when they request loans and get registered with not more than two installments left
-      ... that amount will be deducted from the next disbursement amount but will not affect
-      next loan installement as per its amount requested"
-   ===================================================================================== */
-
-test('a TRACK# 2 registration is refused to plain customer_service -- the supervisor tab is required', async () => {
-  const db = fakeDb({});
-  const { loan: loan1 } = await loanApi(db, CS, 'csRegister', { full_name: 'TOPUP CANDIDATE', mobile: '0700000020', team: 'MABIBO', amount: 200000 });
-  await assert.rejects(() => loanApi(db, CS, 'csRegister', {
-    customer_id: loan1.customer_id, full_name: 'TOPUP CANDIDATE', mobile: '0700000020', team: 'MABIBO', amount: 250000,
-    topup_installments_left: 1, topup_arrears: 0,
-  }), /customer_service_supervisor/);
-});
-
-test('a top-up requires instalments-left, and refuses more than 2', async () => {
-  const db = fakeDb({});
-  const { loan: loan1 } = await loanApi(db, CS, 'csRegister', { full_name: 'TOPUP CANDIDATE', mobile: '0700000021', team: 'MABIBO', amount: 200000 });
-  await assert.rejects(() => loanApi(db, CSS, 'csRegister', {
-    customer_id: loan1.customer_id, full_name: 'TOPUP CANDIDATE', mobile: '0700000021', team: 'MABIBO', amount: 250000,
-  }), /Instalments left.*is required/);
-  await assert.rejects(() => loanApi(db, CSS, 'csRegister', {
-    customer_id: loan1.customer_id, full_name: 'TOPUP CANDIDATE', mobile: '0700000021', team: 'MABIBO', amount: 250000,
-    topup_installments_left: 3,
-  }), /3 instalments left.*2 or fewer/);
-});
-
-test('an eligible top-up carries its instalments-left and arrears onto the new loan', async () => {
-  const db = fakeDb({});
-  const { loan: loan1 } = await loanApi(db, CS, 'csRegister', { full_name: 'ELIGIBLE TOPUP', mobile: '0700000022', team: 'MABIBO', amount: 200000 });
-  // "instalment 34,000 has ds 10/12 arreas 50,000 tzs" -- 2 left, arrears 50,000.
-  const { loan: loan2 } = await loanApi(db, CSS, 'csRegister', {
-    customer_id: loan1.customer_id, full_name: 'ELIGIBLE TOPUP', mobile: '0700000022', team: 'MABIBO', amount: 400000,
-    topup_installments_left: 2, topup_arrears: 50000,
-  });
-  assert.equal(loan2.track_no, '2');
-  assert.equal(loan2.topup_installments_left, 2);
-  assert.equal(loan2.topup_arrears, 50000);
-  // THE ARREARS DO NOT TOUCH THE REQUESTED AMOUNT -- what the new instalments are computed
-  // from is exactly what was asked for; only net_disbursed (set later, at credit approval)
-  // carries the deduction.
-  assert.equal(loan2.requested_amt, 400000);
-});
-
-test('track 1 never asks for top-up fields, whoever registers it', async () => {
-  const db = fakeDb({});
-  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'FIRST TIMER', mobile: '0700000023', team: 'MABIBO', amount: 200000 });
-  assert.equal(loan.track_no, '1');
-  assert.equal(loan.topup_installments_left, undefined);
-});
-
-/* Three signature-section tests stood here briefly -- the section they exercised never
-   merged: the KYC capture work (kycUpload + storage bucket, its own tests) landed first and
-   does the same job better. See the note where SECTIONS is defined in loan-core.js. */
-
-/* =====================================================================================
-   COMMENTS FOLLOW THE CUSTOMER, NOT THE TRACK.
-   ===================================================================================== */
-
-test('a comment logged on a customer\'s first loan is visible from their second, and their third', async () => {
-  const db = fakeDb({});
-  const { loan: loan1 } = await loanApi(db, CS, 'csRegister', { full_name: 'CHATTY CUSTOMER', mobile: '0700000040', team: 'MABIBO', amount: 200000 });
-  await loanApi(db, CS, 'loanAddComment', { loan_id: loan1.id, comment: 'Called about the first loan; promised to pay Friday.' });
-
-  const { loan: loan2 } = await loanApi(db, CSS, 'csRegister', {
-    customer_id: loan1.customer_id, full_name: 'CHATTY CUSTOMER', mobile: '0700000040', team: 'MABIBO', amount: 250000,
-    topup_installments_left: 1, topup_arrears: 0,
-  });
-  // A real gap, so the two comments cannot land in the same created_at millisecond -- without
-  // it "newest first" is comparing two equal timestamps, which is exactly the kind of tie
-  // snapshots.js's batchRank exists to warn about (see idx_loan_comments_customer's own note).
-  await new Promise(r => setTimeout(r, 2));
-  await loanApi(db, MGR, 'loanAddComment', { loan_id: loan2.id, comment: 'Assigned the top-up to the branch team.' });
-
-  // Read from EITHER loan -- both resolve to the same customer, so both see the whole trail.
-  const fromLoan1 = await loanApi(db, ADMIN, 'loanComments', { loan_id: loan1.id });
-  const fromLoan2 = await loanApi(db, ADMIN, 'loanComments', { loan_id: loan2.id });
-  assert.equal(fromLoan1.rows.length, 2);
-  assert.equal(fromLoan2.rows.length, 2);
-  assert.deepEqual(fromLoan1.rows.map(r => r.comment).sort(), fromLoan2.rows.map(r => r.comment).sort());
-  // Newest first.
-  assert.equal(fromLoan2.rows[0].comment, 'Assigned the top-up to the branch team.');
-});
-
-test('an empty comment is refused', async () => {
-  const db = fakeDb({});
-  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'QUIET CUSTOMER', mobile: '0700000041', team: 'MABIBO', amount: 200000 });
-  await assert.rejects(() => loanApi(db, CS, 'loanAddComment', { loan_id: loan.id, comment: '  ' }), /comment is required/);
-});
-
-test('a note can be added by customer_id alone -- csSearch results carry no loan_id yet', async () => {
-  const db = fakeDb({});
-  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'FOUND BY SEARCH', mobile: '0700000042', team: 'MABIBO', amount: 200000 });
-  await loanApi(db, CS, 'loanAddComment', { customer_id: loan.customer_id, comment: 'Spoke to them before registering the top-up.' });
-  const d = await loanApi(db, ADMIN, 'loanComments', { customer_id: loan.customer_id });
-  assert.equal(d.rows.length, 1);
-  assert.equal(d.rows[0].docket, loan.docket_no);
-  await assert.rejects(() => loanApi(db, CS, 'loanAddComment', { comment: 'orphaned' }), /loan_id or customer_id/);
 });

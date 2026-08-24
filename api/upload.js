@@ -7,7 +7,6 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
 import { weekdayOfKey } from './_lib/time.js';
-import { distStrategyFor } from './_lib/credit-dist.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
   importFollowup, importComments, commentsDateOrder,
@@ -1180,12 +1179,6 @@ export default withApi(async (req, res) => {
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
       followupRetired ? `\u2713 ${followupRetired} customer(s) this deck no longer names were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
       followupCapped ? `\u26a0\ufe0f NOTHING was taken off the officers' working list, because this file would have retired ${followupCapped} of them -- nearly the whole list. A current-defaulters file is meant to carry the WHOLE book, so that shape usually means the export was cut short or only part of it was selected. Check the file has every team in it and upload it again. Nobody was changed.` : '',
-      /* Which arrangement this deck's credits distribution deals under -- said at upload time,
-         so the person loading the file knows before any officer asks why their pile changed.
-         Derived from the deck date (credit-dist.js), so a same-day corrected re-upload keeps
-         the same arrangement and this line simply repeats itself. */
-      (type === 'defaulters-current' && isLastPart)
-        ? `Mgawanyo wa credits kwa deki hii / credits distribution for this deck: ${distStrategyFor(meta.date).label}.` : '',
     ].filter(Boolean).join(' ') || undefined
   };
 });
