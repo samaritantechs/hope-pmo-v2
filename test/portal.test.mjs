@@ -6201,6 +6201,34 @@ test('staffExport lists every named supervisor per team with the freshest number
   assert.equal(mgr[2], 'BOSS');
 });
 
+test('contactsExport: Google-format contacts off the call-app register, admin only', async () => {
+  // "The GM needs to get all company contacts into hq new phones by importing csv" -- the
+  // header names are Google's own import format, EXACT, because its importer matches on them.
+  const book = tables();
+  book.call_users = [
+    { user_id: 'U1', name: 'FIELD ROBERT ONE', team: 'KONGOWE', role: 'OFFICER', is_leader: false, phone: '712999999' },
+    { user_id: 'U2', name: 'BOSS', team: 'KONGOWE', role: 'LEADER', is_leader: true, leader_teams: ['KONGOWE'], phone: '0755000111' },
+    { user_id: 'U3', name: 'GONE PERSON', team: 'KONGOWE', role: 'OFFICER', is_leader: false, phone: '712000000', active: false },
+  ];
+  const db = fakeDb(book);
+  await assert.rejects(() => portalApi(db, GMO, 'contactsExport', {}, NOW), e => e.status === 403);
+  const d = await portalApi(db, ADMIN, 'contactsExport', {}, NOW);
+  assert.deepEqual(d.headers, ['Name', 'Given Name', 'Additional Name', 'Family Name',
+    'E-mail 1 - Type', 'E-mail 1 - Value', 'Phone 1 - Type', 'Phone 1 - Value',
+    'Organization 1 - Name', 'Organization 1 - Title', 'Notes']);
+  assert.equal(d.count, 2, 'switched-off accounts stay out');
+  const officer = d.rows.find(r => r[0] === 'FIELD ROBERT ONE');
+  assert.deepEqual(officer.slice(1, 4), ['FIELD', 'ROBERT', 'ONE'], 'given / additional / family from the one full name');
+  assert.equal(officer[6], 'Mobile');
+  assert.equal(officer[7], '+255712999999', 'normPhone\'s nine digits come out E.164');
+  assert.equal(officer[8], 'HOPE Microcredit');
+  assert.equal(officer[9], 'Officer', 'not in any teams role column -- the registration default');
+  const boss = d.rows.find(r => r[0] === 'BOSS');
+  assert.equal(boss[7], '+255755000111', 'a stored leading zero still lands E.164');
+  assert.equal(boss[9], 'Manager', 'title from the teams role columns, the one shared definition');
+  assert.ok(boss[10].indexOf('Leads: KONGOWE') >= 0);
+});
+
 test('staffExport carries the collection officers, one row per team on their code', async () => {
   const book = tables();
   book.access_codes.push({ code: 'C9', name: 'CATHERINE', role: 'PMO', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });

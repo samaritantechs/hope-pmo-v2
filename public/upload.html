@@ -272,6 +272,18 @@
          to save it and make sure all clients go with numbers". Hidden until a check against
          the chosen audience finds a team with no number on file for the role it would need. -->
     <div id="smsGapsBox" class="hide" style="margin-top:10px"></div>
+
+    <!-- COMPANY CONTACTS, IN GOOGLE'S OWN IMPORT FORMAT -- "The GM needs to get all company
+         contacts into hq new phones by importing csv ... under exporting sms file add
+         exporting company numbers (using all available info from call app signins)". A real
+         .csv, not a workbook: Google's importer wants CSV with its exact header names. -->
+    <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+      <label style="margin-bottom:4px">Company contacts (Google CSV)</label>
+      <button type="button" id="contactsExportBtn">Pakua contacts za kampuni / Download company contacts</button>
+      <div class="hint">Kila aliyejisajili HOPE Calls — jina, namba (+255), wadhifa na timu.
+        Import at contacts.google.com → Import, or straight on the new phone's Contacts app.
+        Admin only.</div>
+    </div>
   </div>
 
   <div class="card">
@@ -730,6 +742,34 @@ function patchSmsPhones_(exported, byTeam, pmoVal){
   });
   return exported;
 }
+
+/* THE GOOGLE CONTACTS FILE. A plain CSV, deliberately NOT the SheetJS workbook the SMS export
+   uses: Google's importer reads CSV and matches columns by their exact header text, and the
+   server already sends those headers verbatim. Quoting only where a field needs it, CRLF line
+   ends, and a UTF-8 BOM so a name with accents survives whichever program opens it first. */
+function csvCell_(v){
+  v = String(v == null ? '' : v);
+  return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+function saveContactsCsv_(d){
+  var lines = [d.headers].concat(d.rows || []).map(function(r){ return r.map(csvCell_).join(','); });
+  var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'hope-contacts-' + eatToday_() + '.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+}
+$('contactsExportBtn').onclick = function(){
+  var code = $('code').value.trim();
+  if (!code){ alert('Weka msimbo wako kwanza. / Enter your access code first.'); return; }
+  var btn = $('contactsExportBtn'); btn.disabled = true;
+  portalCall_(code, 'contactsExport', {}).then(function(d){
+    btn.disabled = false;
+    if (!d.count){ alert('Hakuna waliojisajili bado. / Nobody has registered on HOPE Calls yet.'); return; }
+    saveContactsCsv_(d);
+  }).catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
+};
 
 $('smsExportBtn').onclick = function(){
   var code = $('code').value.trim();
