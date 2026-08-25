@@ -12,7 +12,9 @@
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   body{margin:0;background:var(--bg);color:var(--ink);
        font-family:-apple-system,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.5}
-  .wrap{max-width:520px;margin:0 auto;padding:18px 16px 48px}
+  /* viewport-fit=cover runs this page under the status bar on cutout phones -- same fix as
+     the portal and call app's headers: pad down by the phone's own cutout height, 0 elsewhere. */
+  .wrap{max-width:520px;margin:0 auto;padding:calc(18px + env(safe-area-inset-top,0px)) 16px 48px}
   .hide{display:none !important}
 
   header{display:flex;align-items:center;gap:11px;margin-bottom:18px}
