@@ -19,7 +19,7 @@ const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(t
 import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY, isCreditRole } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport } from './expdf.js';
 
@@ -4817,7 +4817,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps,
+  auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
@@ -4973,6 +4973,76 @@ async function staffExport(db, user) {
     rows: lines,
     count: lines.length,
   };
+}
+
+/* =======================================================================================
+   GOOGLE CONTACTS IMPORT -- every call-app sign-in as one importable contact.
+
+     "The GM needs to get all company contacts into hq new phones by importing csv. so i
+      googled the google import format and we need under exporting sms file add exporting
+      company numbers (using all available info from call app signins)"
+
+   The column set below is Google's own import format, header names EXACT as given --
+   contacts.google.com (and a new phone's import screen) matches on the header text, so a
+   renamed column is a silently dropped field. One row per registered person, phone-keyed the
+   same way the app's identity is; switched-off accounts stay out, the same rule every board
+   applies. The title is resolved by the ONE definition the whole system uses (teams-table
+   role columns first, registration role otherwise, Officer as the default -- positionOf,
+   shared with the call report), so the contact list can never disagree with the reports about
+   who is a GMO.
+   ======================================================================================= */
+const GOOGLE_CONTACT_HEADERS = ['Name', 'Given Name', 'Additional Name', 'Family Name',
+  'E-mail 1 - Type', 'E-mail 1 - Value', 'Phone 1 - Type', 'Phone 1 - Value',
+  'Organization 1 - Name', 'Organization 1 - Title', 'Notes'];
+/** +255-prefixed, because a contact imported onto a NEW phone with a bare nine-digit local
+    number will not match incoming calls the way an E.164 one does. normPhone stores nine
+    digits with no leading zero; anything unrecognisable passes through untouched rather than
+    being mangled into a number nobody has. */
+function e164Tz_(phone) {
+  const p = String(phone || '').replace(/[^0-9]/g, '');
+  if (/^[67]\d{8}$/.test(p)) return '+255' + p;
+  if (/^0[67]\d{8}$/.test(p)) return '+255' + p.slice(1);
+  if (/^255\d{9}$/.test(p)) return '+' + p;
+  return String(phone || '').trim();
+}
+async function contactsExport(db, user) {
+  // Staff personal numbers, the whole register at once -- admin only, and never through a
+  // view-only code, the same fence teamsExport puts around the team sign-in codes.
+  requireAdmin(user);
+  if (user.readOnly) throw forbidden('Msimbo huu ni wa kuangalia tu — faili hili linabeba namba za wafanyakazi wote. '
+    + '/ This is a view-only code, and this file carries every staff phone number.');
+  const [callRows, teamRows] = await Promise.all([
+    fetchAll(() => db.from('call_users').select('name, phone, team, role, is_leader, leader_teams, active')),
+    fetchAll(() => db.from('teams').select('*')),
+  ]);
+  const { posOf } = buildLeaderMaps(teamRows);
+  const rows = [];
+  const seen = new Set();
+  for (const u of callRows) {
+    if (u.active === false) continue;
+    const name = String(u.name || '').trim();
+    const phone = e164Tz_(u.phone);
+    if (!name || !phone) continue;
+    const key = K(name) + '|' + phone;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const parts = name.split(/\s+/);
+    const title = positionOf(posOf, name, u.role);
+    const held = (u.is_leader && u.leader_teams && u.leader_teams.length) ? upperTeams(u.leader_teams) : [];
+    const notes = ['HOPE Calls sign-in', u.team ? 'Team: ' + u.team : '',
+      held.length ? 'Leads: ' + held.join(', ') : ''].filter(Boolean).join(' · ');
+    rows.push([
+      name,
+      parts[0] || '',
+      parts.length > 2 ? parts.slice(1, -1).join(' ') : '',
+      parts.length > 1 ? parts[parts.length - 1] : '',
+      '', '',                                    // no e-mail on record -- blank, never invented
+      'Mobile', phone,
+      'HOPE Microcredit', title, notes,
+    ]);
+  }
+  rows.sort((a, b) => a[0].localeCompare(b[0]));
+  return { headers: GOOGLE_CONTACT_HEADERS, rows, count: rows.length };
 }
 
 /* STAMPING A WEEK BY HAND.

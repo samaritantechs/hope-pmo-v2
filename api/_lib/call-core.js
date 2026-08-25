@@ -1360,8 +1360,9 @@ const POS_ORDER = ['manager', 'opm', 'gmo', 'credit', 'recovery', 'expected', 'b
 const POS_LABEL = { manager: 'Manager', opm: 'OPM', gmo: 'GMO', credit: 'Credit', recovery: 'Recovery', expected: 'Expected', bike: 'Bike' };
 /** Live leader resolution off the teams table's role columns (same columns as the Leaders
     sheet) -- a reassignment shows up without re-registering, and positions come from the
-    most senior role held. */
-function buildLeaderMaps(teamRows) {
+    most senior role held. Exported for the portal's contacts export, so "what is this
+    person's title" has exactly one definition. */
+export function buildLeaderMaps(teamRows) {
   const teamsOf = {}, posOf = {};
   for (const r of teamRows) {
     for (const col of POS_ORDER) {
@@ -1375,7 +1376,7 @@ function buildLeaderMaps(teamRows) {
   }
   return { teamsOf, posOf };
 }
-function positionOf(posOf, name, role) {
+export function positionOf(posOf, name, role) {
   const held = posOf[K(name)];
   if (held) { for (const p of POS_ORDER) if (held[p]) return POS_LABEL[p]; }
   role = String(role == null ? '' : role).trim();
