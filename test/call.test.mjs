@@ -337,6 +337,27 @@ test('reports are leader-only and live-scoped off the teams role columns', async
   assert.deepEqual(d.byCategory.map(c => c.category), ['EXPECTED', 'DEFAULTER', 'OTHER']);
 });
 
+/* "There is roles expected and pmo expected, recovery and pmo recovery -- which one should be
+ * the one?" Same job, two name sources: a name on the teams sheet's role columns got the clean
+ * label, while a free-typed access-code role like PMO RECOVERY surfaced as its own "Pmo
+ * recovery" group in the Ripoti role picker, splitting one role's people and totals in two.
+ * The owner confirmed they are the same job, so the registration-role fallback folds them in.
+ */
+test('a PMO RECOVERY access code groups under Recovery, not a second role of its own', async () => {
+  const db = await registeredDb();
+  // CAREEN holds a PMO RECOVERY code and is NOT on the teams sheet's role columns.
+  db._dump('access_codes').push({ code: 'REC9', name: 'CAREEN G', role: 'PMO RECOVERY', teams: ['KONGOWE'], tabs: [] });
+  await callApi(db, 'api_callRegister', ['d9', '', '', 'REC9', '0788555666'], NOW);
+  await callApi(db, 'api_callSync', ['d9', [{ ts: T1, dur: 40, dir: 'out', num: '0712000001' }]], NOW);
+  const d = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW);
+  const careen = d.users.find(x => x.name === 'CAREEN G');
+  assert.equal(careen.position, 'Recovery',
+    'the registration role folds into the teams-sheet label -- one Recovery group, not two');
+  // ASHA holds the sheet's recovery column itself: both land in the SAME picker group.
+  const asha = d.users.find(x => x.name === 'ASHA JUMA');
+  assert.equal(asha && asha.position, 'Recovery');
+});
+
 test('Ripoti team dropdown: the list is what you may see, and picking one narrows the report', async () => {
   const db = await registeredDb();
   await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);

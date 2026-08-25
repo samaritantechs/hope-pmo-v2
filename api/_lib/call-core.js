@@ -1400,6 +1400,15 @@ export function positionOf(posOf, name, role) {
   if (held) { for (const p of POS_ORDER) if (held[p]) return POS_LABEL[p]; }
   role = String(role == null ? '' : role).trim();
   if (!role) return 'Officer';
+  /* "PMO RECOVERY" and "PMO EXPECTED" on an access code are THE SAME JOBS as the teams
+     sheet's recovery/expected columns -- confirmed by the owner ("they are the same job").
+     Access-code roles are free-typed, so anyone whose name is not on the teams sheet used to
+     surface in the Ripoti role picker as a second "Pmo recovery" group beside "Recovery",
+     splitting one role's people and totals in two. Fold any role that carries the word into
+     the canonical label; everything else keeps its typed role, capitalised as before. */
+  const up = role.toUpperCase();
+  if (up.indexOf('RECOVERY') >= 0) return POS_LABEL.recovery;
+  if (up.indexOf('EXPECTED') >= 0) return POS_LABEL.expected;
   return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
 }
 const categoryOf = r => (!r.portfolio ? 'OTHER' : (K(r.category) === 'EXPECTED' || K(r.category) === 'DEFAULTER') ? K(r.category) : 'UNCATEGORIZED');
