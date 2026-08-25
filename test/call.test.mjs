@@ -786,6 +786,37 @@ test('a sync carries the data version, so a phone knows when an upload has happe
   assert.notEqual(after.dataVersion, before.dataVersion, 'and it differs, which is the whole signal');
 });
 
+/* NUMBERS FROM "ANA NAMBA NYINGINE" ARE PORTFOLIO CALLS TOO.
+ *
+ * The field pattern is record-then-dial: the officer writes the replacement number and rings
+ * it within the minute. The phone index that classifies the synced call is cached for five
+ * minutes against DATA_VERSION -- which a comment does not move -- so exactly that call used
+ * to land on a stale index, get stamped non-portfolio, and stay that way forever (a synced
+ * log is never reclassified). Recording a number now moves NEW_NUMBER_VERSION, which is part
+ * of the index's cache key, so the very next sync rebuilds and the call counts.
+ */
+test('a call to a just-recorded "Ana namba nyingine" number counts as portfolio', async () => {
+  const db = await registeredDb();
+  // Warm the index with an ordinary sync: an unknown number, correctly non-portfolio.
+  const w = await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0789555444' }]], NOW);
+  assert.equal(w.portfolio, 0);
+  assert.equal(w.nonPortfolio, 1, 'before the number is recorded it is nobody\'s');
+
+  // The officer records the replacement number on defaulter 555...
+  await callApi(db, 'api_callAddComment',
+    ['d1', { ref: '555', fu: 'ANA NAMBA NYINGINE', comment: 'namba mpya', newNo: '0715999888' }], NOW + 60000);
+
+  // ...and dials it a minute later. Well inside the old five-minute cache window on the SAME
+  // warm client -- this is exactly the call that used to be stamped non-portfolio for good.
+  const r = await callApi(db, 'api_callSync', ['d1', [{ ts: T1 + 120000, dur: 45, dir: 'out', num: '0715999888' }]], NOW + 120000);
+  assert.equal(r.portfolio, 1, 'the just-recorded number is portfolio on the very next sync');
+  const log = db._dump('call_logs').find(l => l.phone === pnorm('0715999888'));
+  assert.equal(log.portfolio, true);
+  assert.equal(log.ref, '555');
+  assert.equal(log.match_type, 'CUSTOMER');
+  assert.equal(log.category, 'DEFAULTER');
+});
+
 test('an empty sync stays cheap -- it is asked far more often than any other question', async () => {
   /* This runs every few minutes on every handset in the company, including officers with no
      calls to send at all. If it ever grows a list read it stops being affordable. */

@@ -4466,6 +4466,9 @@ VIEWS.settings = function(){
   return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage'),
       srv('systemOpenGet'), srv('teams')]).then(function(r){
     var st=r[0], ac=r[1], cu=r[2], sg=r[3], so=r[4], tm=r[5];
+    // The HOPE LOAN visibility switch, read off the settings rows already in hand. Unset
+    // means SHOWN -- the switch is newer than every deployment that lacks the row.
+    var hlOn = !/^(no|off|0|false|hapana)$/i.test(String(settingVal(st.rows, 'HOPELOAN_VISIBLE', 'YES') || '').trim());
     S.officers = cu;
     S.teamCount = (tm.rows||[]).length;
     S.roles = ac.roles || [];
@@ -4506,6 +4509,31 @@ VIEWS.settings = function(){
               + ' na seva inakataa hata mtu akijaribu anwani moja kwa moja.'
               + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
               + ' server refuses those addresses even if somebody types them in directly.')
+        + '</div></div></div>'
+      /* THE PRESENTATION SWITCH. HOPE LOAN is being perfected inside this portal before the
+         company has formally received it, so the owner must be able to present HOPE PMO with
+         no trace of it in the sidebar -- and put it back with one press afterwards. Hidden
+         means hidden for every sign-in, this admin's included; nothing is deleted and no data
+         moves either way. The server side of the same rule lives in canSwitchWorkspace(). */
+      + '<div class="card"><div class="card-h">HOPE LOAN kwenye menyu / HOPE LOAN in the sidebar'
+        + '<span class="sub">kuficha hakufuti chochote / hiding deletes nothing</span></div>'
+        + '<div class="cleanbox">'
+        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        + '<span class="chip ' + (hlOn ? 'ok' : 'bad') + '" id="hlState">'
+          + (hlOn ? 'INAONEKANA / SHOWN' : 'IMEFICHWA / HIDDEN') + '</span>'
+        + '<button class="btn sm" id="hlToggle">'
+          + (hlOn ? 'Ficha HOPE LOAN / Hide HOPE LOAN' : 'Onyesha HOPE LOAN / Show HOPE LOAN') + '</button>'
+        + '</div>'
+        + '<div class="note" style="margin-top:10px">'
+        + (hlOn
+            ? 'Ukificha: navs zote za HOPE LOAN zinatoweka kwenye menyu kwa kila mtumiaji, admin pia.'
+              + ' Takwimu na skrini zake zinabaki salama — bonyeza tena kuzirudisha.'
+              + ' / Hidden, every HOPE LOAN nav disappears from the sidebar for every sign-in, admin'
+              + ' included. Its data and screens stay exactly as they are — press again to bring them back.'
+            : 'HOPE LOAN imefichwa: hakuna nav yake inayoonekana kwa yeyote sasa.'
+              + ' Hakuna kilichofutwa — bonyeza kuonyesha tena.'
+              + ' / HOPE LOAN is hidden: none of its navs are visible to anybody right now.'
+              + ' Nothing was deleted — press to show it again.')
         + '</div></div></div>'
       /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
          Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
@@ -6797,6 +6825,31 @@ function wireForms(){
                                    : 'Mfumo umefunguliwa. / The system is open.');
                         render({ force: true }); })
       .catch(function(e){ so.disabled = false; toast(String(e.message || e), true); });
+  };
+  /* The HOPE LOAN visibility switch. No confirm dialog -- hiding is visibility only, deletes
+     nothing, and is undone by the same press. The sidebar is drawn from /api/me, so the same
+     code is asked again afterwards: the navs appear or vanish right here, without asking the
+     presenter to sign out and back in in front of a room. */
+  var hl = document.getElementById('hlToggle');
+  if (hl) hl.onclick = function(){
+    var shown = document.getElementById('hlState').textContent.indexOf('SHOWN') >= 0;
+    hl.disabled = true; hl.textContent = 'Inabadili…';
+    srv('settingSet', { key: 'HOPELOAN_VISIBLE', value: shown ? 'NO' : 'YES' })
+      .then(function(){ return fetch('/api/me?code=' + encodeURIComponent(S.code)).then(readJson_); })
+      .then(function(x){
+        if (x && x.status >= 200 && x.status < 300 && x.body && x.body.ok !== false) {
+          S.me = x.body;
+          buildNav();
+          // Fresh buttons carry no highlight -- put it back on the tab being looked at.
+          Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
+            b.classList.toggle('on', b.getAttribute('data-v') === S.view);
+          });
+        }
+        toast(shown ? 'HOPE LOAN imefichwa. / HOPE LOAN is hidden.'
+                    : 'HOPE LOAN inaonekana. / HOPE LOAN is shown.');
+        render({ force: true });
+      })
+      .catch(function(e){ hl.disabled = false; toast(String(e.message || e), true); });
   };
   var ns = document.getElementById('newSetting');
   if (ns) ns.onclick = function(){ settingForm('', ''); };
