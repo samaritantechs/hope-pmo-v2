@@ -1832,12 +1832,16 @@ function historyHtml(items){
 }
 /** Updates fuStatus on the matching row wherever it's cached (a customer can appear in more than
     one tab) and repaints from local state -- avoids a round trip just to reflect a save we
-    already know the result of, and sidesteps any server-side read-after-write lag entirely. */
+    already know the result of, and sidesteps any server-side read-after-write lag entirely.
+    A COMMENT WITHOUT A STATUS KEEPS THE STATUS -- same rule the server now applies: a bare
+    comment must not blank the chip the card was wearing, here or there. */
 function applyLocalFuUpdate_(ref, fu){
-  Object.keys(S.cache).forEach(function(v){
-    (S.cache[v] || []).forEach(function(row){ if (String(row.ref) === String(ref)) row.fuStatus = fu; });
-  });
-  S.rows.forEach(function(row){ if (String(row.ref) === String(ref)) row.fuStatus = fu; });
+  if (fu) {
+    Object.keys(S.cache).forEach(function(v){
+      (S.cache[v] || []).forEach(function(row){ if (String(row.ref) === String(ref)) row.fuStatus = fu; });
+    });
+    S.rows.forEach(function(row){ if (String(row.ref) === String(ref)) row.fuStatus = fu; });
+  }
   drawList();
 }
 function wireSheetForm(r){

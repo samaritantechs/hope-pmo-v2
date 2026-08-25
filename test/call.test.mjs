@@ -287,6 +287,35 @@ test('follow-up: validations enforced; expected customers get a followup stub fo
   assert.equal(c.items[0].fu, 'ANALIPA LEO');
 });
 
+test('the Expected card wears the last follow-up status, same as a defaulter card', async () => {
+  // "some cards show the latest comment type before opening ... all should. in both expected
+  // and def pannels" -- the expected/kesho branch hard-coded fuStatus: '' and never read
+  // followup_status back, so a status saved against an Expected customer was invisible on
+  // the list and the next officer rang them again.
+  const db = await registeredDb();
+  await callApi(db, 'api_callAddComment', ['d1', { ref: '111', team: 'KONGOWE', name: 'AMINA H', fu: 'ANALIPA LEO', comment: 'atalipa mchana' }], NOW);
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(d.rows.find(r => r.ref === '111').fuStatus, 'ANALIPA LEO');
+  assert.equal(d.rows.find(r => r.ref === '222').fuStatus, '', 'a customer nobody has followed up stays blank');
+});
+
+test('a comment without a status keeps the status -- on the record and on the card', async () => {
+  // "latest comments don't always ferment on the top card as some of them do" -- the form
+  // accepts a status OR a bare comment, and the bare comment used to write fu_status: null
+  // over whatever the card was wearing.
+  const db = await registeredDb();
+  await callApi(db, 'api_callAddComment', ['d1', { ref: '555', team: 'KONGOWE', name: 'DEF GUY', fu: 'ANALIPA LEO', comment: 'first pass' }], NOW);
+  await callApi(db, 'api_callAddComment', ['d1', { ref: '555', team: 'KONGOWE', name: 'DEF GUY', fu: '', comment: 'niliongea na mke wake' }], NOW);
+  const st = db._dump('followup_status').find(s => s.ref === '555');
+  assert.equal(st.fu_status, 'ANALIPA LEO', 'the standing status survives a bare comment');
+  assert.equal(st.last_comment, 'niliongea na mke wake', 'while the comment trail moves on');
+  const d = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.equal(d.rows.find(r => r.ref === '555').fuStatus, 'ANALIPA LEO');
+  // A NEW chosen status still replaces the old one -- keeping is for bare comments only.
+  await callApi(db, 'api_callAddComment', ['d1', { ref: '555', team: 'KONGOWE', name: 'DEF GUY', fu: 'AMETOA AHADI', promiseDate: '2026-07-28' }], NOW);
+  assert.equal(db._dump('followup_status').find(s => s.ref === '555').fu_status, 'AMETOA AHADI');
+});
+
 test('reports are leader-only and live-scoped off the teams role columns', async () => {
   const db = await registeredDb();
   await callApi(db, 'api_callSync', ['d1', [

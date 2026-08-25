@@ -294,6 +294,12 @@ test('follow-up rules are enforced server-side, and a comment updates both table
   assert.equal(st.fu_status, 'ANALIPA LEO');
   assert.equal(st.comment_by, 'THE ADMIN');
   assert.equal(db._dump('followup_comments').filter(c => c.ref === '999').length, 1);
+  // A bare comment keeps the standing status -- same rule as the calls app: writing
+  // fu_status: null over it blanked the chip on the phone's card and got customers re-rung.
+  await portalApi(db, ADMIN, 'addComment', { ref: '999', comment: 'bado anafuatiliwa' }, NOW);
+  const st2 = db._dump('followup_status').find(x => x.ref === '999');
+  assert.equal(st2.fu_status, 'ANALIPA LEO');
+  assert.equal(st2.last_comment, 'bado anafuatiliwa');
 });
 
 test('a GMO cannot comment on another team, and sees only their own rows', async () => {
