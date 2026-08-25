@@ -530,13 +530,9 @@ $('exportBtn').onclick = function(){
       var q = function(v){ return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
       var lines = [d.headers.map(q).join(',')];
       (d.rows || []).forEach(function(r){ lines.push(r.map(q).join(',')); });
-      var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
       // Named by the report's OWN date where it has one -- the deck's date, not today's.
-      a.download = ex.file + '-' + (d.date || new Date().toISOString().slice(0, 10)) + '.csv';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+      saveText_(ex.file + '-' + (d.date || new Date().toISOString().slice(0, 10)) + '.csv',
+        'text/csv;charset=utf-8;', '\ufeff' + lines.join('\r\n'));
       btn.disabled = false;
     })
     .catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
@@ -593,18 +589,53 @@ function fetchSmsExport_(code, audience){
    Phone numbers and Ref No stay whatever type the server sent (string, so a leading zero on a
    Contact No or an alphanumeric docket-style Ref No survives); Arrears is already a JS number
    (roundUp500's own return type), so it lands in the sheet as one too. */
+/* SAVING FROM INSIDE THE APP, NOT ONLY FROM A BROWSER. "it wants me to export via browser and
+   am using app" -- the APK's WebView refuses blob: downloads on purpose (they used to close
+   the app -- see MainActivity's own note), so every download on this page ended at the "open
+   in Chrome" toast for anyone inside the app. The app has had the answer all along:
+   HopeCalls.saveBase64 writes the bytes straight into the phone's Downloads folder, and
+   call.html has saved its own files through it since the blob crash was found. These two
+   helpers do the same here: bridge first when it exists, the ordinary blob link otherwise,
+   so a desktop browser behaves exactly as before. */
+function saveViaBridge_(name, mime, b64){
+  var res = '';
+  try { res = window.HopeCalls.saveBase64(name, mime, b64); } catch (e) { res = 'ERR ' + e; }
+  if (String(res).slice(0, 2) !== 'OK') alert('Imeshindikana kuhifadhi / could not save: ' + res);
+}
+function saveBlob_(name, blob){
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+}
+function saveText_(name, mime, text){
+  if (window.HopeCalls && window.HopeCalls.saveBase64) {
+    // btoa wants latin1; the unescape(encodeURIComponent()) pair turns any name with accents
+    // into the UTF-8 bytes the file should actually carry. Old but universal on purpose --
+    // this page runs in whatever WebView is on a five-year-old handset.
+    saveViaBridge_(name, mime, btoa(unescape(encodeURIComponent(text))));
+    return;
+  }
+  saveBlob_(name, new Blob([text], { type: mime }));
+}
+function saveBytes_(name, mime, u8){
+  if (window.HopeCalls && window.HopeCalls.saveBase64) {
+    var s = '', CH = 0x8000;
+    for (var i = 0; i < u8.length; i += CH) s += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+    saveViaBridge_(name, mime, btoa(s));
+    return;
+  }
+  saveBlob_(name, new Blob([u8], { type: mime }));
+}
 function saveSmsFile_(d){
   var aoa = [d.headers].concat(d.rows || []);
   var ws = XLSX.utils.aoa_to_sheet(aoa);
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
-  var blob = new Blob([XLSX.write(wb, { bookType: 'xlsx', type: 'array' })],
-    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'sms-' + d.audience + '-' + eatToday_() + '.xlsx';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  saveBytes_('sms-' + d.audience + '-' + eatToday_() + '.xlsx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    new Uint8Array(XLSX.write(wb, { bookType: 'xlsx', type: 'array' })));
 }
 
 /* THE GAP FORM. One row per team+role the chosen audience actually needs and does not have a
@@ -753,12 +784,8 @@ function csvCell_(v){
 }
 function saveContactsCsv_(d){
   var lines = [d.headers].concat(d.rows || []).map(function(r){ return r.map(csvCell_).join(','); });
-  var blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'hope-contacts-' + eatToday_() + '.csv';
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  saveText_('hope-contacts-' + eatToday_() + '.csv', 'text/csv;charset=utf-8',
+    '\ufeff' + lines.join('\r\n'));
 }
 $('contactsExportBtn').onclick = function(){
   var code = $('code').value.trim();
