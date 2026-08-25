@@ -4802,15 +4802,24 @@ function presSlides(){
        slide in a meeting reads as a broken system; a full one reads as "nobody is labelled",
        which is a thing somebody can go and fix. */
     var PMO_UNITS = { EXPECTED:1, COLLECTION:1, RECOVERY:1 };
-    var callPool = (b.callWeek || []).filter(function(x){ return PMO_UNITS[x.unit]; });
-    var callPoolWorst = (b.callWeekWorst || []).filter(function(x){ return PMO_UNITS[x.unit]; });
+    /* TODAY'S CALLS ONLY. "the hope calls selection at presentation should only count today's
+       calls" -- this board was built from callWeek (Mon-Sun), so Monday's hard morning still
+       carried somebody through Thursday's slide, and a quiet Monday buried a busy Thursday.
+       The server has always computed callToday alongside the week (same shape, same units,
+       same sort); the slide simply never used it. Worst end derived by .reverse() of the same
+       list, exactly as callWeekWorst is derived from callWeek server-side -- one calculation,
+       two directions, never two answers. */
+    var callDayAll = b.callToday || [];
+    var callDayAllWorst = callDayAll.slice().reverse();
+    var callPool = callDayAll.filter(function(x){ return PMO_UNITS[x.unit]; });
+    var callPoolWorst = callDayAllWorst.filter(function(x){ return PMO_UNITS[x.unit]; });
     var unitOnly = callPool.length > 0;
-    if (!unitOnly) { callPool = b.callWeek || []; callPoolWorst = b.callWeekWorst || []; }
+    if (!unitOnly) { callPool = callDayAll; callPoolWorst = callDayAllWorst; }
     var callTop = callPool.slice(0, 6).map(function(x){ return { ...x, end:'Busiest' }; });
     var topNames = {};
     callTop.forEach(function(x){ topNames[x.agent] = 1; });
     /* "the least active should just change just the left 'least active' but continue flowing
-       high to low no of calls in that sense the s/n makes sence" -- callWeekWorst arrives
+       high to low no of calls in that sense the s/n makes sence" -- the worst list arrives
        fewest-first, which put the absolute-zero officer at row 7 and the counts RISING down
        the slide, reversing direction mid-table. The six least active are still the same six
        people (picked from the worst end); .reverse() only prints them high-to-low, so the
@@ -4819,7 +4828,7 @@ function presSlides(){
     var callLow = callPoolWorst.filter(function(x){ return !topNames[x.agent]; })
       .slice(0, 6).reverse().map(function(x){ return { ...x, end:'Least active' }; });
     slides.push({ id:'calls', kind:'table',
-      title:'HOPE Calls — busiest and least active this week'
+      title:'HOPE Calls — busiest and least active leo / today'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),
       rows: callTop.concat(callLow),
       cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest'?'good':'bad'; } },
