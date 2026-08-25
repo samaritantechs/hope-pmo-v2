@@ -558,7 +558,7 @@ var DEV = deviceId();
 // date to todays date unles the dates altered". Only the DEFAULT moved; repFrom/repTo are
 // still two independent boxes an officer can widen back out to a week (or any range) at will,
 // and once touched they stay exactly what was typed -- see the onchange handlers below.
-var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:todayKeyLocal_(), repTo:todayKeyLocal_(), repTeam:'', repLeader:'', syncEverySec:300, permOk:null,
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:todayKeyLocal_(), repTo:todayKeyLocal_(), repTeam:'', repLeader:'', repRole:'', syncEverySec:300, permOk:null,
           /* ALWAYS BOOTS TO THE REAL BOOK. Never remembered across a page load: the sandbox has
              to be chosen deliberately, on this visit, and the code that authorises it is held
              in memory only -- never in localStorage, where a shared handset would keep an
@@ -1915,10 +1915,49 @@ function repTh_(key, label, cls){
     + esc(label) + repSortArrow_(key) + '</th>';
 }
 function drawReports(){
-  var d = S.repData, t = d.totals || {calls:0,duration:0,portfolio:0,nonPortfolio:0,ratio:0};
+  var d = S.repData;
   var body = $('#body');
   var scopeTxt = d.debugScope === 'ALL' ? 'Timu zote / All teams' : (Array.isArray(d.debugScope) ? d.debugScope.join(', ') : String(d.debugScope||''));
-  var cats = (d.byCategory || []).filter(function(c){ return c.category === 'EXPECTED' || c.category === 'DEFAULTER'; });
+  /* GROUPED BY ROLE, NOT BY NAME.
+     "grouping viongozi should be by roles not by names.. so we group all system user types
+      officers inclusive" -- the picker used to list individual leaders (Catherine \u00B7 Recovery \u00B7
+     11 timu), which answers "how is this person's book doing" but cannot answer "how are the
+     GMOs doing" without picking them out one at a time -- and plain officers, the largest user
+     type of all, were not in it at anything. Every report row already carries the position the
+     server resolved for it (teams-table role columns first, their registration role otherwise,
+     Officer as the default), so the picker is now those TYPES: choose one and the table, the
+     KPIs above it and the totals all narrow to everybody holding that role, officers included.
+     Pure client-side -- the rows are already in hand, so switching roles costs no request. */
+  var usersAll = d.users || [];
+  var roleCount = {}, roleLabel = {};
+  usersAll.forEach(function(u){
+    var p = String(u.position || 'Officer');
+    var k = K_(p);
+    roleCount[k] = (roleCount[k] || 0) + 1;
+    if (!roleLabel[k]) roleLabel[k] = p;
+  });
+  var ROLE_ORDER_ = ['MANAGER','OPM','GMO','CREDIT','RECOVERY','EXPECTED','BIKE','OFFICER'];
+  var roleKeys = Object.keys(roleCount).sort(function(a, b){
+    var ia = ROLE_ORDER_.indexOf(a), ib = ROLE_ORDER_.indexOf(b);
+    if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+    return ia !== ib ? ia - ib : a.localeCompare(b);
+  });
+  var role = S.repRole || '';
+  if (role && !roleCount[role]) role = '';               // a role that vanished with a new range resets quietly
+  var users = role ? usersAll.filter(function(u){ return K_(String(u.position || 'Officer')) === role; }) : usersAll;
+  // Totals follow the group: server totals for everybody, recomputed in hand for one role.
+  var t = d.totals || {calls:0,duration:0,portfolio:0,nonPortfolio:0,ratio:0};
+  if (role) {
+    t = users.reduce(function(a, u){
+      a.calls += u.calls || 0; a.duration += u.duration || 0;
+      a.portfolio += u.portfolio || 0; a.nonPortfolio += u.nonPortfolio || 0;
+      return a;
+    }, { calls: 0, duration: 0, portfolio: 0, nonPortfolio: 0 });
+    t.ratio = t.calls ? t.portfolio / t.calls : 0;
+  }
+  // The category chips are the SCOPE's aggregates; shown only for the whole scope, where they
+  // are true, never beside a one-role table they were not computed from.
+  var cats = role ? [] : (d.byCategory || []).filter(function(c){ return c.category === 'EXPECTED' || c.category === 'DEFAULTER'; });
   body.innerHTML =
     '<div class="hint" style="color:var(--soft);font-size:11px;margin-bottom:8px">Wigo / Scope: ' + esc(scopeTxt) + ' \u00B7 Timu yako / Your team: ' + esc(d.debugHomeTeam||'\u2014') + '</div>'
     + '<div class="rangebar"><input type="date" id="repFrom" value="' + S.repFrom + '"><input type="date" id="repTo" value="' + S.repTo + '">'
@@ -1926,18 +1965,10 @@ function drawReports(){
     + (d.teamChoices || []).map(function(tm){
         return '<option value="' + esc(tm) + '"' + (K_(tm) === K_(d.team) ? ' selected' : '') + '>' + esc(tm) + '</option>';
       }).join('') + '</select>'
-    /* THE LEADER PICKER, AFTER THE TEAM ONE.
-       "if I choose leader from a dropdown of present system leaders eg Catherine then the below
-        calls appear of catherine's teams and leaders too"
-       A leader holds several teams, so naming one answers "how is this person's book doing"
-       without picking their teams out of the list one at a time. The count beside each name is
-       how many teams they hold, because two people can share a first name and the number is the
-       fastest way to tell which book you are about to open. */
-    + '<select id="repLeader"><option value="">Viongozi wote / All leaders</option>'
-    + (d.leaderChoices || []).map(function(L){
-        return '<option value="' + esc(L.name) + '"' + (K_(L.name) === K_(d.leader) ? ' selected' : '') + '>'
-          + esc(L.name) + (L.position ? ' \u00B7 ' + esc(L.position) : '')
-          + ' (' + money(L.teams) + ')</option>';
+    + '<select id="repRole"><option value="">Aina zote / All user types</option>'
+    + roleKeys.map(function(k){
+        return '<option value="' + esc(k) + '"' + (k === role ? ' selected' : '') + '>'
+          + esc(roleLabel[k]) + ' (' + money(roleCount[k]) + ')</option>';
       }).join('') + '</select></div>'
     + '<div class="kpis">'
     + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
@@ -1961,7 +1992,7 @@ function drawReports(){
     + repTh_('expected', 'COL', 'r') + repTh_('defaulter', 'REC', 'r')
     + repTh_('nonPortfolio', 'Nje ya pf', 'r') + repTh_('ratio', '% pf', 'r') + '<th></th>'
     + '</tr></thead><tbody>'
-    + sortReportRows_(d.users).map(function(u){
+    + sortReportRows_(users).map(function(u){
         var oHref = telHref(u.phone);
         return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
           + '<td class="r">' + money(u.calls) + '</td><td class="r">' + fmtDur(u.duration) + '</td>'
@@ -1973,10 +2004,8 @@ function drawReports(){
   $('#repFrom').onchange = function(){ S.repFrom = this.value; renderReports(); };
   $('#repTo').onchange = function(){ S.repTo = this.value; renderReports(); };
   $('#repTeam').onchange = function(){ S.repTeam = this.value; renderReports(); };
-  /* Choosing a leader clears the team, because a team from the previous leader's list is either
-     already inside the new one -- in which case nothing is lost -- or outside it, where keeping
-     it would silently answer for a team the chosen leader does not hold. */
-  $('#repLeader').onchange = function(){ S.repLeader = this.value; S.repTeam = ''; renderReports(); };
+  // A role is a client-side narrowing of rows already in hand -- redraw, never refetch.
+  $('#repRole').onchange = function(){ S.repRole = this.value; drawReports(); };
   Array.prototype.forEach.call(body.querySelectorAll('th[data-sort-key]'), function(th){
     th.onclick = function(){ toggleReportSort_(th.getAttribute('data-sort-key')); };
   });
