@@ -183,6 +183,34 @@ test('the switch is offered to an admin, or a code holding a HOPE Loan tab, and 
   });
 });
 
+/* THE PRESENTATION SWITCH -- Settings' "HOPE LOAN in the sidebar" card writes HOPELOAN_VISIBLE,
+   and hidden must mean hidden for EVERYONE: the whole point is presenting HOPE PMO with no
+   trace of HOPE LOAN in the presenter's OWN admin sidebar. The fetch mock answers the two
+   reads apart by URL: the HOPELOAN_VISIBLE settings read, and the sandbox probe. */
+test('the Settings visibility switch hides HOPE LOAN from everybody, the admin included', async () => {
+  const { clearHopeLoanProbe } = await import('../api/_lib/workspace.js');
+  const real = globalThis.fetch;
+  const answer = visible => async url => String(url).indexOf('HOPELOAN_VISIBLE') >= 0
+    ? new Response(JSON.stringify({ key: 'HOPELOAN_VISIBLE', value: visible }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } })
+    : new Response('[{"key":"WORKSPACE"}]',
+        { status: 200, headers: { 'Content-Type': 'application/json' } });
+  try {
+    await withLoanConfigured(async () => {
+      globalThis.fetch = answer('NO');
+      clearHopeLoanProbe();
+      assert.equal(await canSwitchWorkspace(ADMIN), false, 'hidden means hidden for the admin too');
+
+      globalThis.fetch = answer('YES');
+      clearHopeLoanProbe();
+      assert.equal(await canSwitchWorkspace(ADMIN), true, 'one press brings it back');
+    });
+  } finally {
+    globalThis.fetch = real;
+    clearHopeLoanProbe();
+  }
+});
+
 /* dbFor is the last line rather than the first: resolveWorkspace is what decides, and a caller
    that skipped it must not be able to reach the sandbox by passing a string straight through. */
 test('dbFor hands back production for anything it does not recognise', () => {

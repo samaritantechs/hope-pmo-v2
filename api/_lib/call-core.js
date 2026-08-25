@@ -1112,11 +1112,16 @@ async function summaryCompute(db, user, nowMs) {
    upload path), so an unset key degrades to "rebuild every 5 minutes" rather than "cache
    forever".
 
-   THE COST, STATED PLAINLY. A replacement number an officer records in a comment is not in
-   the index until it rebuilds -- at most five minutes, sooner if anything is uploaded. Their
-   call is still logged, still named and still theirs; it can only be marked non-portfolio for
-   those few minutes. Against a database too busy to accept the day's upload, that is not a
-   close call.
+   THE COST THIS CACHE USED TO CARRY -- AND NO LONGER DOES. A replacement number an officer
+   records in a comment was not in the index until it rebuilt: at most five minutes, sooner if
+   anything was uploaded. That read as a fair price until the field showed what officers
+   actually do with "Ana namba nyingine" -- they record the number and DIAL IT, within the
+   minute, and a synced call is never reclassified. So exactly the calls the status exists to
+   enable were stamped non-portfolio, permanently. NEW_NUMBER_VERSION is the answer, and it is
+   the same shape as DATA_VERSION on purpose: addComment moves it whenever a comment carries a
+   number, it rides in the index's cache key, and every warm lambda rebuilds on its next sync
+   instead of serving out the stale tail of its five minutes. Rebuilds are paid per recorded
+   number -- a handful a day -- not per sync, which keeps the arithmetic above intact.
 
    Held against the DATABASE CLIENT like every other cache here, so a test's fake cannot hand
    its answer to the next test. In production that is one long-lived client per warm lambda,
@@ -1124,10 +1129,10 @@ async function summaryCompute(db, user, nowMs) {
 const PHONE_INDEX_TTL_MS = 300000;
 const phoneIndexCache = new WeakMap();          // db -> { key, at, value }
 
-/** `version` is DATA_VERSION, which the caller has ALREADY read -- sync sends it to the phone
-    on every request so the handset knows when its figures went stale. Passing it in rather
-    than re-reading it here keeps the cache free on a hit: a served index costs zero queries,
-    not one. */
+/** `version` is DATA_VERSION plus NEW_NUMBER_VERSION, which the caller has ALREADY read --
+    sync fetches both in one trip anyway (DATA_VERSION goes to the phone on every request so
+    the handset knows when its figures went stale). Passing them in rather than re-reading
+    them here keeps the cache free on a hit: a served index costs zero queries, not one. */
 async function phoneIndex(db, nowMs, version) {
   const today = todayKey(nowMs);
   const key = today + '|' + String(version == null ? '' : version);
@@ -1214,9 +1219,13 @@ async function sync(db, [dev, calls], nowMs) {
      already talking to us every few minutes; it compares this against the one it holds and
      asks for new figures only when it has actually changed.
      One read of one row by primary key, on a request that was happening anyway. */
-  const dataVersion = (await settingGet(db, 'DATA_VERSION')) || '';
+  /* NEW_NUMBER_VERSION rides in the same round trip: recording an "Ana namba nyingine"
+     number moves it, and it is part of the phone index's cache key below, so the index is
+     never stale for the call the officer makes the minute after recording the number. */
+  const vs = await settingsMany(db, ['DATA_VERSION', 'NEW_NUMBER_VERSION']);
+  const dataVersion = vs('DATA_VERSION') || '';
   if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
-  const byNum = await phoneIndex(db, nowMs, dataVersion);
+  const byNum = await phoneIndex(db, nowMs, dataVersion + '|' + (vs('NEW_NUMBER_VERSION') || ''));
   const records = [];
   const seenBatch = {};
   let pf = 0, npf = 0, batchDup = 0;
@@ -1352,6 +1361,16 @@ async function addComment(db, [dev, p], nowMs) {
   }
   const { error: uErr } = await db.from('followup_status').update(patch).eq('ref', ref);
   if (uErr) throw new Error(uErr.message);
+  /* RECORDING A REPLACEMENT NUMBER MOVES THE PHONE INDEX. The officer who has just written
+     an "Ana namba nyingine" dials that number within the minute, and an index cached before
+     this comment would stamp the call non-portfolio -- permanently, because a synced log is
+     never reclassified. The stamp is part of the index's cache key (see phoneIndex), so every
+     warm lambda rebuilds on its next sync. Allowed to fail quietly: the comment is saved
+     either way, and a missed stamp only means the old five-minute window, not a lost note. */
+  if (p.newNo) {
+    await runQuery(() => db.from('settings')
+      .upsert({ key: 'NEW_NUMBER_VERSION', value: String(nowMs) }, { onConflict: 'key' }));
+  }
   return { ok: true, ref, savedAt: now };
 }
 

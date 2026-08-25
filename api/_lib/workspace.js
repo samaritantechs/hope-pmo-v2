@@ -287,5 +287,25 @@ export function hopeLoanNotReadyMessage() {
     whole deployment rather than once per sign-in. */
 export async function canSwitchWorkspace(user) {
   if (!mayUseHopeLoan(user)) return false;
+  /* THE PRESENTATION SWITCH -- Settings' "HOPE LOAN in the sidebar" card. HOPE LOAN is being
+     perfected inside this portal before the company has formally received it, so its owner
+     must be able to present HOPE PMO with no trace of it in anybody's sidebar -- their own
+     admin sign-in included, which is why this check comes before every entitlement: hidden
+     means hidden for EVERYONE, not "for everyone except the person presenting". Visibility
+     only -- no data moves, and flipping it back is one press on the same card. */
+  if (!(await hopeLoanShown())) return false;
   return hopeLoanReady();
+}
+
+/** HOPELOAN_VISIBLE, read fresh each time /api/me asks -- sign-ins are rare enough that a
+    cache would only add a window where the presenter flips the switch and still sees the
+    navs. Unset means SHOWN (the switch is new; every deployment predates it), and a failed
+    read means shown too: a database hiccup must never hide the section by accident. */
+async function hopeLoanShown() {
+  try {
+    const { data } = await supabase.from('settings')
+      .select('value').eq('key', 'HOPELOAN_VISIBLE').maybeSingle();
+    const v = String((data && data.value) == null ? '' : data.value).trim().toUpperCase();
+    return !(v === 'NO' || v === 'OFF' || v === '0' || v === 'FALSE' || v === 'HAPANA');
+  } catch { return true; }
 }

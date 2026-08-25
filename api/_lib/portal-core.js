@@ -935,6 +935,14 @@ async function addComment(db, user, p, nowMs) {
   }
   const { error: uErr } = await db.from('followup_status').update(patch).eq('ref', ref);
   if (uErr) throw new Error(uErr.message);
+  /* Recording a replacement number moves the calls app's phone index (see call-core's
+     addComment for the full story): the officer dials the new number within the minute, and
+     an index cached before this comment would stamp that call non-portfolio for good. Quiet
+     on failure -- the comment is saved, and a missed stamp only widens a cache window. */
+  if (p.newNumber) {
+    await runQuery(() => db.from('settings')
+      .upsert({ key: 'NEW_NUMBER_VERSION', value: String(nowMs) }, { onConflict: 'key' }));
+  }
   return { ref, savedAt: now };
 }
 
