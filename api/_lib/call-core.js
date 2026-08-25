@@ -848,9 +848,25 @@ async function list(db, [dev, which, which2], nowMs) {
        Falling back is right (an old list beats no list); doing it silently is not. */
     asOf = snap.date || null;
     stale = !!(asOf && wantDate && String(asOf) !== String(wantDate));
+    /* THE EXPECTED CARD WEARS THE LAST FOLLOW-UP TOO. "some cards show the latest comment
+       type before opening ... all should. in both expected and def pannels" -- a comment on
+       an Expected customer already lands in followup_status (the stub upsert in addComment
+       exists exactly so it can), but this branch hard-coded fuStatus: '' and never read it
+       back. So a defaulter card showed "Ametoa Ahadi" on its face while the same save on an
+       Expected card was invisible until the card was opened -- and the officer, seeing
+       nothing, rang the customer again. One narrow two-column read, scoped to the officer's
+       teams like everything else here. */
+    const fuChip = {};
+    const fuRows = await fetchAll(() => {
+      let q = db.from('followup_status').select('ref, fu_status');
+      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      return q;
+    });
+    for (const f of fuRows) if (f.fu_status) fuChip[String(f.ref)] = f.fu_status;
     rows = snap.rows.filter(r => teamAllowed(user, r.team)).map(r => ({
       ref: r.ref, name: r.full_name, contact: r.contact, gName: r.guarantor_name, gContact: r.guarantor_contact,
-      amt: num(r.arrears), installment: num(r.payment_expected), custStatus: r.todays_status || '', fuStatus: '',
+      amt: num(r.arrears), installment: num(r.payment_expected), custStatus: r.todays_status || '',
+      fuStatus: fuChip[String(r.ref)] || '',
       ds: dsFmt(r.due_summary), days: '', team: r.team,
       called: hit(r.contact, r.guarantor_contact),
     }));
@@ -1321,10 +1337,20 @@ async function addComment(db, [dev, p], nowMs) {
     new_number: p.newNo ? pnorm(p.newNo) : null, created_by: cu.name, created_at: now,
   });
   if (cErr) throw new Error(cErr.message);
-  const { error: uErr } = await db.from('followup_status').update({
-    fu_status: fu || null, promise_date: p.promiseDate || null, promise_amt: p.promiseAmt || null,
-    last_comment: p.comment || null, comment_by: cu.name, comment_at: now, updated_at: now,
-  }).eq('ref', ref);
+  /* A COMMENT WITHOUT A STATUS KEEPS THE STATUS. The form accepts either a status or a bare
+     comment ("Chagua hali au andika maoni") -- but this update wrote fu_status: fu || null,
+     so a plain comment ERASED the chip the card was wearing. That is the "latest comments
+     don't always ferment on the top card as some of them do": a customer marked Ametoa Ahadi
+     went blank on the list the moment anyone added a note, and the next officer, seeing
+     nothing on the card, rang them again. Only a chosen status now replaces the status (and
+     its promise fields, which belong to it); a bare comment updates the comment trail alone. */
+  const patch = { last_comment: p.comment || null, comment_by: cu.name, comment_at: now, updated_at: now };
+  if (fu) {
+    patch.fu_status = fu;
+    patch.promise_date = p.promiseDate || null;
+    patch.promise_amt = p.promiseAmt || null;
+  }
+  const { error: uErr } = await db.from('followup_status').update(patch).eq('ref', ref);
   if (uErr) throw new Error(uErr.message);
   return { ok: true, ref, savedAt: now };
 }

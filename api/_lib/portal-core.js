@@ -922,10 +922,18 @@ async function addComment(db, user, p, nowMs) {
     promise_amt: p.promiseAmt || null, new_number: p.newNumber || null, created_by: user.name, created_at: now,
   });
   if (cErr) throw new Error(cErr.message);
-  const { error: uErr } = await db.from('followup_status').update({
-    fu_status: fu || null, promise_date: p.promiseDate || null, promise_amt: p.promiseAmt || null,
-    last_comment: p.comment || null, comment_by: user.name, comment_at: now, updated_at: now,
-  }).eq('ref', ref);
+  /* A COMMENT WITHOUT A STATUS KEEPS THE STATUS -- the same rule the calls app's addComment
+     applies, fixed in both places at once: writing fu_status: fu || null meant a bare comment
+     ERASED the chip a card was wearing on the phone's Expected/Def lists, so the next officer
+     saw nothing, assumed nobody had touched the customer, and rang them again. Only a chosen
+     status replaces the status (and its promise fields, which belong to it). */
+  const patch = { last_comment: p.comment || null, comment_by: user.name, comment_at: now, updated_at: now };
+  if (fu) {
+    patch.fu_status = fu;
+    patch.promise_date = p.promiseDate || null;
+    patch.promise_amt = p.promiseAmt || null;
+  }
+  const { error: uErr } = await db.from('followup_status').update(patch).eq('ref', ref);
   if (uErr) throw new Error(uErr.message);
   return { ref, savedAt: now };
 }
