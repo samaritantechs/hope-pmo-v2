@@ -3855,11 +3855,11 @@ VIEWS.abnormal = function(){
          is what reconciles a payment against the carrier's own record -- but neither is read
          on this screen, and a column nobody reads is a column in the way of the ones they do.
          They remain in the Excel download, where a reconciliation actually happens. */
-      col('sender_name','SENDER NAME'),
-      /* Uploaded or worked out. Two different kinds of truth, and never worth confusing. */
-      {key:'source', label:'CHANZO / SOURCE', kind:'chip',
-       chip:function(r){ return r.source==='upload' ? 'ok' : 'warn'; },
-       get:function(r){ return r.source==='upload' ? 'Imepakiwa / uploaded' : 'Mfumo / rule'; }}];
+      /* CHANZO / SOURCE is no longer a column -- "remove the source/chanzo column in abnormal
+         payments". The distinction (uploaded sheet vs the ABNORMAL_STEP rule) still exists in
+         the data and still rides the Excel download; the screen just stops spending a column
+         on it. */
+      col('sender_name','SENDER NAME')];
     ONROW = null;
     S.foot = 'Total flagged: TZS ' + money(amt);
   });

@@ -242,6 +242,11 @@ create table if not exists followup_comments (
   created_at timestamptz not null default now()
 );
 create index if not exists idx_fu_comments_ref on followup_comments(ref, created_at desc);
+-- The phones' number index rebuild asks for the few hundred comments carrying a replacement
+-- number out of the whole history; the partial index holds only those rows. The predicate
+-- matches the query's own filters exactly, which is what lets the planner use it.
+create index if not exists idx_fu_comments_new_number on followup_comments(new_number)
+  where new_number is not null and new_number <> '';
 
 -- =====================================================================================
 -- OPERATIONAL TABLES -- payments, complaints, restructuring, demand notices
@@ -261,6 +266,9 @@ create table if not exists received_payments (
   created_at timestamptz not null default now()
 );
 create index if not exists idx_received_ref on received_payments(ref_no);
+-- The money table is read by paid_at RANGE on every dashboard weekly strip, the Received
+-- export, abnormal payments and the upload dup-check -- without this, each was a full scan.
+create index if not exists idx_received_paid_at on received_payments(paid_at);
 
 create table if not exists abnormal_payments (
   id uuid primary key default gen_random_uuid(),
@@ -285,6 +293,10 @@ create table if not exists complaints (
   resolved_by text, resolved_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+-- The calls app reads a customer's complaints on EVERY card open (an officer must see an
+-- open complaint before dialling), and the portal reads them by ref too.
+create index if not exists idx_complaints_ref on complaints(ref, created_at desc);
 
 create table if not exists complaint_log (
   id uuid primary key default gen_random_uuid(),
