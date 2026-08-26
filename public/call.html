@@ -728,6 +728,42 @@ var CACHE_LS_KEY = 'hcListCache_v1';
    only thing standing between the officer and their work was asking the server who they are,
    which it had already answered that morning. */
 var BOOT_LS_KEY = 'hcBoot_v1';
+/* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
+   during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
+   -- and the reload landed them on Leo at the top, looking like a fresh sign-in: tab gone,
+   search gone, the customer they had just rung gone. The PLACE is remembered on the device at
+   every step (and again the instant the app goes to the background, which is the last breath
+   before a kill), and enterApp walks back to it. Only the place -- the data is refetched as
+   always, signing out burns it with everything else, and it goes stale after six hours so
+   Monday morning does not reopen Friday's customer. */
+var UI_LS_KEY = 'hcUi_v1';
+var RESTORE_ = null;
+function saveUi_(){
+  if (!S.entered) return;
+  try {
+    localStorage.setItem(UI_LS_KEY, JSON.stringify({
+      view: S.view, q: S.q || '',
+      ref: $('#sheet').style.display === 'flex' ? S.curRef : null,
+      y: window.scrollY || document.documentElement.scrollTop || 0,
+      at: Date.now(),
+    }));
+  } catch(e){}
+}
+window.addEventListener('pagehide', saveUi_);
+function tryRestoreUi_(){
+  var r = RESTORE_;
+  if (!r) return;
+  if (r.view !== S.view){ RESTORE_ = null; return; }   // the officer has moved on -- stop chasing
+  if (r.ref){
+    // The list can paint once from an empty cache before the server answers -- wait it out.
+    if (!S.rows.length && ++r.tries < 5) return;
+    RESTORE_ = null;
+    openSheet(r.ref);              // silently a no-op if the customer has left the book
+    return;
+  }
+  RESTORE_ = null;
+  if (r.y) window.scrollTo(0, r.y);
+}
 function loadCacheFromDevice_(){
   try {
     var raw = localStorage.getItem(CACHE_LS_KEY);
@@ -829,8 +865,10 @@ function boot(){
     // officer left. Whatever we let them see a moment ago has to go. Clearing what we remember
     // and starting over lands them on the sign-in screen by the ordinary path, with no second
     // way in to keep correct: the next launch finds nothing saved, so this cannot loop.
-    try { localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); } catch(e){}
-    if (S.entered){ try { localStorage.removeItem(CACHE_LS_KEY); } catch(e2){} location.reload(); return; }
+    try { localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); localStorage.removeItem(UI_LS_KEY); } catch(e){}
+    // entered goes false FIRST: reload fires pagehide -> saveUi_, which must not write back
+    // the place of an officer this handset no longer belongs to.
+    if (S.entered){ S.entered = false; try { localStorage.removeItem(CACHE_LS_KEY); } catch(e2){} location.reload(); return; }
     // Not registered yet, OR logged out on this device -> show sign-in. The team list is no
     // longer sent to this screen: publishing every team name to an unauthenticated device was
     // half of what made self-registration possible.
@@ -867,7 +905,7 @@ function doLogout(){
   var _ds = $('#dayStrip'); if (_ds) { _ds.classList.add('hide'); _ds.classList.remove('stale'); }
   ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
-  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); } catch(e){}
+  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); localStorage.removeItem(UI_LS_KEY); } catch(e){}
   sheetHide();
   $('#confirmModal').style.display = 'none';
   $('#bgPrompt').style.display = 'none';
@@ -1047,7 +1085,28 @@ function enterApp(d){
   bellRefresh();
 
   $all('#tabs button').forEach(function(b){ b.onclick = function(){ exitSearch_(); setView(b.getAttribute('data-v')); }; });
-  setView('today');
+  /* Back to where the officer was -- see UI_LS_KEY. The remembered tab is honoured only if
+     this sign-in still holds it (a demoted leader's Ripoti must not resurrect), the search box
+     gets its text back, and once the list has painted, tryRestoreUi_ reopens the customer card
+     that was up when the page went away. */
+  var ui = null;
+  try { ui = JSON.parse(localStorage.getItem(UI_LS_KEY) || 'null'); } catch(e){}
+  var v0 = 'today';
+  if (ui && ui.at && (Date.now() - ui.at) < 6 * 3600 * 1000 && ui.view){
+    var tb = document.querySelector('#tabs button[data-v="' + ui.view + '"]');
+    if (tb && !tb.classList.contains('hide')) v0 = ui.view;
+    RESTORE_ = { view: v0, ref: v0 === ui.view ? ui.ref : null, y: ui.y || 0, tries: 0 };
+    if (ui.q){ S.q = ui.q; var lq = $('#listQ'); if (lq) lq.value = ui.q; }
+  }
+  setView(v0);
+  if (S.q.trim()){
+    // The remembered search needs every source in hand, exactly as typing it would.
+    ensureAllSources_().then(function(){
+      if ($('#listQ').value !== S.q) return;
+      S.rows = globalSearchRows_(S.q);
+      drawList();
+    });
+  }
   /* Draw the strip from the handset BEFORE anything is asked of the network, so it is on screen
      the instant the app is -- including on the cheap handsets Android throws away after every
      call. Then ask for fresh figures over the top. */
@@ -1067,7 +1126,10 @@ function enterApp(d){
     loadDaySummary(true);
   };
   document.addEventListener('visibilitychange', function(){
-    if (document.hidden || !S.boot) return;
+    // Going dark is the last moment before Android may kill the page -- an officer switching
+    // to the dialler passes through here, so this is where their place gets written down.
+    if (document.hidden){ saveUi_(); return; }
+    if (!S.boot) return;
     /* ASK THE CHEAP QUESTION, NOT THE THROTTLED ONE. This used to call loadDaySummary(false),
        which does nothing for a quarter of an hour after the last refresh -- so an officer who
        put the phone down, waited for an upload and came back saw the same figures and had no
@@ -1466,6 +1528,7 @@ function exitSearch_(){
 function setView(v){
   S.view = v;
   $all('#tabs button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v')===v); });
+  saveUi_();
   if (v === 'reports') { renderReports(); return; }
   var src = LIST_SOURCE[v];
   if (!src) return;
@@ -1511,6 +1574,7 @@ function fetchSource_(src, showSpinner){
 }
 $('#listQ').addEventListener('input', function(){
   S.q = this.value;
+  saveUi_();
   if (!S.q.trim()) { setView(S.view); return; }
   var haveAny = S.cache.today || S.cache.tomorrow || S.cache.defaulters;
   if (!haveAny) $('#body').innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
@@ -1636,6 +1700,7 @@ function drawList(){
      somebody in blank space below the end. */
   LAST_DRAW = drawKey;
   if (keepY) window.scrollTo(0, keepY);
+  tryRestoreUi_();               // a reloaded page walks back to the customer it was on
 }
 function rowHtml(r, showSeg){
   var href = telHref(r.contact);
@@ -1684,6 +1749,7 @@ function sheetHide(fromBack){
   BELL_OPEN = false;            // stop the bell redrawing into a sheet nobody is looking at
   if (SHEET_STATE && !fromBack){ SHEET_STATE = false; try { history.back(); } catch(e){} }
   else SHEET_STATE = false;
+  saveUi_();                    // a deliberately closed card must not reopen on the next launch
 }
 window.addEventListener('popstate', function(){ if (SHEET_STATE) sheetHide(true); });
 /* Bound at LOAD, not at sign-in. The sheet is part of the page from the first byte, so its way
@@ -1747,6 +1813,7 @@ function openSheet(ref){
   sb.innerHTML = sheetSkeleton(r) ;
   sheetShow();
   wireSheetForm(r);
+  saveUi_();                     // dialling happens from this card -- remember it NOW
   srv('api_callComments', DEV, r.ref).then(function(d){
     S.comments = (d && d.items) || [];
     var h = $('#histBox'); if (h) h.innerHTML = historyHtml(S.comments);
