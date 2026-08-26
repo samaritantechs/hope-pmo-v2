@@ -2167,9 +2167,7 @@ function drawReports(){
     + roleKeys.map(function(k){
         return '<option value="' + esc(k) + '"' + (k === role ? ' selected' : '') + '>'
           + esc(roleLabel[k]) + ' (' + money(roleCount[k]) + ')</option>';
-      }).join('') + '</select>'
-    // The WhatsApp-accountability button: the report exactly as filtered, as one picture.
-    + '<button type="button" class="btn" id="repJpg" style="padding:10px 14px">📸 JPG</button></div>'
+      }).join('') + '</select></div>'
     + '<div class="kpis">'
     + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Muda / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
@@ -2190,7 +2188,12 @@ function drawReports(){
     + '<table class="otable"><thead><tr>'
     + repTh_('name', 'Afisa') + repTh_('calls', 'Simu', 'r') + repTh_('duration', 'Muda', 'r')
     + repTh_('expected', 'COL', 'r') + repTh_('defaulter', 'REC', 'r')
-    + repTh_('nonPortfolio', 'Nje ya pf', 'r') + repTh_('ratio', '% pf', 'r') + '<th></th>'
+    /* The WhatsApp-accountability button lives in the header cell above the call column --
+       right of % pf, exactly where the owner asked for it, and the pickers row stays as it
+       was. The exporter strips every <button> from the clone, so the picture never shows it. */
+    + repTh_('nonPortfolio', 'Nje ya pf', 'r') + repTh_('ratio', '% pf', 'r')
+    + '<th class="r"><button type="button" id="repJpg" title="Pakua ripoti kama picha / Download this report as a picture"'
+      + ' style="border:0;background:none;cursor:pointer;font-size:12px;font-weight:800;color:var(--b600);padding:2px 4px">📸 JPG</button></th>'
     + '</tr></thead><tbody>'
     + sortReportRows_(users).map(function(u){
         var oHref = telHref(u.phone);
