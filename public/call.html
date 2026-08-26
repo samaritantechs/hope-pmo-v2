@@ -1994,6 +1994,124 @@ function repTh_(key, label, cls){
   return '<th' + (cls ? ' class="' + cls + '"' : '') + ' data-sort-key="' + key + '" style="cursor:pointer;user-select:none" title="Bofya kupanga / Click to sort">'
     + esc(label) + repSortArrow_(key) + '</th>';
 }
+/* ================= Ripoti -> JPG =================
+   "Enable the JPG downloading button since we need to download and ask responsibility in
+   whatsapp groups." A compact port of the portal's exporter, which already fought and won
+   every battle this needs: the clone is UNCLIPPED and measured from where the ink actually
+   lands (scrollWidth lies once overflow is visible), tables take their own column widths,
+   the picture is 1:1 so it opens whole, and inside the APK the bytes go through the
+   HopeCalls.saveBase64 bridge -- a blob: download in the WebView used to crash the app. */
+var RJPG_CSS = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;max-width:none !important;}'
+  + '.jpgshot table{width:-moz-max-content !important;width:max-content !important;table-layout:auto !important;}'
+  + '.jpgshot td,.jpgshot th{padding:5px 8px !important;white-space:nowrap !important;}'
+  + '.jpgshot th{white-space:normal !important;}'
+  + '.jpgshot .kpis{display:flex !important;flex-direction:row !important;flex-wrap:wrap !important;gap:8px !important;}'
+  + '.jpgshot .kpi{width:auto !important;min-width:130px !important;flex:0 0 auto !important;}';
+function saveJpgBlob_(b, name){
+  var nb = window.HopeCalls;
+  if (nb && nb.getDeviceId) {
+    if (!nb.saveBase64) {
+      toast('Pakua kwa Chrome — toleo hili la app haliwezi kuhifadhi. / This app build cannot save; open in Chrome.', true);
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function(){
+      var s = String(fr.result), i = s.indexOf(',');
+      try {
+        var msg = nb.saveBase64(name, 'image/jpeg', s.slice(i + 1));
+        var ok = msg && String(msg).indexOf('OK') === 0;
+        toast(ok ? 'Imehifadhiwa Downloads. / Saved to Downloads.'
+                 : ('Imeshindikana kuhifadhi. / Could not save. ' + (msg || '')), !ok);
+      } catch (e) { toast('Imeshindikana kuhifadhi: ' + (e.message || e), true); }
+    };
+    fr.onerror = function(){ toast('Imeshindikana kusoma picha. / Could not read the picture.', true); };
+    fr.readAsDataURL(b);
+    return;
+  }
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+function ripotiJpg_(){
+  var el = $('#body');
+  if (!el || S.view !== 'reports'){ toast('Hakuna ripoti ya kupakua. / No report to download.', true); return; }
+  var probe = null;
+  try {
+    var clone = el.cloneNode(true);
+    // Pickers and buttons type into the LIVE screen; in a picture they are empty furniture.
+    ['.rangebar', 'button', '.hint'].forEach(function(sel){
+      Array.prototype.forEach.call(clone.querySelectorAll(sel), function(n){ n.remove(); });
+    });
+    clone.classList.add('jpgshot');
+    // The caption says what this picture IS -- the WhatsApp group has no pickers to look at.
+    var teamSel = $('#repTeam'), roleSel = $('#repRole');
+    var capBits = ['Ripoti ' + S.repFrom + (S.repTo !== S.repFrom ? ' → ' + S.repTo : '')];
+    if (teamSel && teamSel.value) capBits.push(teamSel.selectedOptions[0].textContent);
+    if (roleSel && roleSel.value) capBits.push(roleSel.selectedOptions[0].textContent);
+    var cap = document.createElement('div');
+    cap.style.cssText = 'font-weight:800;font-size:15px;margin:0 0 10px';
+    cap.textContent = ((S.boot && S.boot.brand) || 'HOPE') + ' Calls · ' + capBits.join(' · ');
+    clone.insertBefore(cap, clone.firstChild);
+
+    // Laid out for real at the report's on-screen width, then measured from the painted ink.
+    probe = document.createElement('div');
+    var onScreen = Math.max(Math.round(el.getBoundingClientRect().width), 320);
+    probe.setAttribute('style', 'position:fixed;left:-99999px;top:0;visibility:hidden;'
+      + 'width:' + onScreen + 'px;height:auto;overflow:visible;pointer-events:none;z-index:-1');
+    var pstyle = document.createElement('style');
+    pstyle.textContent = RJPG_CSS;
+    probe.appendChild(pstyle);
+    probe.appendChild(clone);
+    document.body.appendChild(probe);
+    var origin = clone.getBoundingClientRect();
+    var maxR = origin.right, maxB = origin.bottom;
+    var kids = clone.querySelectorAll('*');
+    for (var ki = 0; ki < kids.length; ki++) {
+      var kr = kids[ki].getBoundingClientRect();
+      if (!kr.width && !kr.height) continue;
+      if (kr.right > maxR) maxR = kr.right;
+      if (kr.bottom > maxB) maxB = kr.bottom;
+    }
+    var w = Math.min(Math.max(Math.ceil(maxR - origin.left), onScreen, 320) + 4, 8000);
+    var h = Math.min(Math.max(Math.ceil(maxB - origin.top), 120) + 4, 20000);
+    document.body.removeChild(probe); probe = null;
+
+    var css = '';
+    Array.prototype.forEach.call(document.styleSheets, function(sh){
+      try { Array.prototype.forEach.call(sh.cssRules, function(r){ css += r.cssText; }); } catch(e){}
+    });
+    var bgCol = getComputedStyle(document.body).backgroundColor || '#F6F8FC';
+    var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="' + document.body.className + '">'
+      + '<style>' + css + '</style><style>' + RJPG_CSS + '</style>'
+      + '<div style="background:' + bgCol + ';padding:10px;box-sizing:content-box;width:' + w + 'px">'
+      + clone.outerHTML + '</div></div>';
+    var W = w + 20, H = h + 20;
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '"'
+      + ' viewBox="0 0 ' + W + ' ' + H + '"><foreignObject width="' + W + '" height="' + H + '">'
+      + html + '</foreignObject></svg>';
+    var img = new Image();
+    img.onload = function(){
+      var cv = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      var ctx = cv.getContext('2d');
+      ctx.fillStyle = bgCol;
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.drawImage(img, 0, 0);
+      cv.toBlob(function(b){
+        if (!b){ toast('Imeshindikana kutengeneza picha. / Could not build the picture.', true); return; }
+        var name = 'ripoti-' + S.repFrom + (S.repTo !== S.repFrom ? '_' + S.repTo : '')
+          + (S.repRole ? '-' + S.repRole.toLowerCase().replace(/[^a-z0-9]+/g, '') : '') + '.jpg';
+        saveJpgBlob_(b, name);
+      }, 'image/jpeg', 0.94);
+    };
+    img.onerror = function(){ toast('Imeshindikana kutengeneza picha. / Could not build the picture.', true); };
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  } catch(e){
+    if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+    toast('Imeshindikana kutengeneza picha. / Could not build the picture.', true);
+  }
+}
 function drawReports(){
   var d = S.repData;
   var body = $('#body');
@@ -2049,7 +2167,9 @@ function drawReports(){
     + roleKeys.map(function(k){
         return '<option value="' + esc(k) + '"' + (k === role ? ' selected' : '') + '>'
           + esc(roleLabel[k]) + ' (' + money(roleCount[k]) + ')</option>';
-      }).join('') + '</select></div>'
+      }).join('') + '</select>'
+    // The WhatsApp-accountability button: the report exactly as filtered, as one picture.
+    + '<button type="button" class="btn" id="repJpg" style="padding:10px 14px">📸 JPG</button></div>'
     + '<div class="kpis">'
     + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Muda / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
@@ -2086,6 +2206,7 @@ function drawReports(){
   $('#repTeam').onchange = function(){ S.repTeam = this.value; renderReports(); };
   // A role is a client-side narrowing of rows already in hand -- redraw, never refetch.
   $('#repRole').onchange = function(){ S.repRole = this.value; drawReports(); };
+  $('#repJpg').onclick = ripotiJpg_;
   Array.prototype.forEach.call(body.querySelectorAll('th[data-sort-key]'), function(th){
     th.onclick = function(){ toggleReportSort_(th.getAttribute('data-sort-key')); };
   });
