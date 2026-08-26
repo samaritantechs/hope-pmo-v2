@@ -6417,6 +6417,7 @@ function drawer(html){
 function closeDrawer(){
   $('#drawerBg').style.display='none';
   $('#drawerBg').style.height = ''; $('#drawerBg').style.top = '';
+  $('#drawer').style.maxHeight = '';
 }
 $('#drawerBg').onclick = function(e){ if (e.target===$('#drawerBg')) closeDrawer(); };
 /* THE DRAWER DID NOT RISE ABOVE THE KEYBOARD.
@@ -6443,6 +6444,17 @@ function fitPanelToKeyboard_(bgId){
   if (!bg) return;
   bg.style.height = vv.height + 'px';
   bg.style.top = vv.offsetTop + 'px';
+  /* THE INNER PANEL MUST FIT THE PINNED BOX TOO -- "the commenting panels still covered by
+     the keyboard ... for some phones". The drawer's own max-height is 90vh, and vh is
+     measured against the FULL page: on a phone where only the visual viewport shrinks for
+     the keyboard, the drawer could stand TALLER than the box it was pinned inside, and how
+     that overflow lands varies by WebView -- on some, the bottom edge (the comment field and
+     Save) ended up behind the keyboard anyway. Capping the panel to what is actually visible
+     removes the guesswork: everything scrolls INSIDE the visible box, on every phone. */
+  if (bgId === 'drawerBg'){
+    var d = document.getElementById('drawer');
+    if (d) d.style.maxHeight = Math.max(200, vv.height - 10) + 'px';
+  }
 }
 /* THE LOGIN BOX IS THE SAME SHAPE AS THE DRAWER, AND HAD THE SAME FAULT.
    "login page doesnt slide app visibility of writting field: refer this challenge to what i
@@ -6463,6 +6475,9 @@ function fitPanelToKeyboard_(bgId){
   }
   vv.addEventListener('resize', refit);
   vv.addEventListener('scroll', refit);
+  // Some WebViews announce the keyboard through the WINDOW's resize rather than the visual
+  // viewport's -- listen to both, refit is idempotent either way.
+  window.addEventListener('resize', refit);
 })();
 /* Belt-and-suspenders for a WebView slow to fire visualViewport's resize: once the keyboard's
    own open animation has had time to run, bring the field being typed into back into its
@@ -6476,6 +6491,9 @@ function fitPanelToKeyboard_(bgId){
     var t = e.target;
     if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
     setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+    // And once more after the slowest keyboards have finished animating -- the 300ms nudge
+    // lands mid-animation on some phones and the field drifts back under.
+    setTimeout(function(){ t.scrollIntoView({ block: 'center' }); }, 850);
   });
 });
 

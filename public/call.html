@@ -1746,6 +1746,7 @@ function sheetShow(){
 function sheetHide(fromBack){
   $('#sheet').style.display = 'none';
   $('#sheet').style.height = ''; $('#sheet').style.top = '';
+  var sp = $('#sheet').querySelector('.sheet-panel'); if (sp) sp.style.maxHeight = '';
   BELL_OPEN = false;            // stop the bell redrawing into a sheet nobody is looking at
   if (SHEET_STATE && !fromBack){ SHEET_STATE = false; try { history.back(); } catch(e){} }
   else SHEET_STATE = false;
@@ -1786,6 +1787,12 @@ function fitSheetToKeyboard_(){
   if (!bg) return;
   bg.style.height = vv.height + 'px';
   bg.style.top = vv.offsetTop + 'px';
+  /* The panel inside must fit the pinned box too: its max-height is 88vh of the FULL page,
+     so on a phone where only the visual viewport shrinks it could stand taller than the box
+     -- and how that overflow lands varies by WebView; on some, the form at its bottom ended
+     up behind the keyboard anyway. Capped, everything scrolls INSIDE the visible box. */
+  var p = bg.querySelector('.sheet-panel');
+  if (p) p.style.maxHeight = Math.max(200, vv.height - 10) + 'px';
 }
 (function(){
   var vv = window.visualViewport;
@@ -1793,6 +1800,9 @@ function fitSheetToKeyboard_(){
   function refit(){ if ($('#sheet').style.display !== 'none') fitSheetToKeyboard_(); }
   vv.addEventListener('resize', refit);
   vv.addEventListener('scroll', refit);
+  // Some WebViews announce the keyboard through the WINDOW's resize rather than the visual
+  // viewport's -- listen to both, refit is idempotent either way.
+  window.addEventListener('resize', refit);
 })();
 /* Belt-and-suspenders for a WebView slow to fire visualViewport's resize: once the keyboard's
    own open animation has had time to run, bring the field the officer is actually typing into
@@ -1802,6 +1812,9 @@ $('#sheet').addEventListener('focusin', function(e){
   var t = e.target;
   if (!/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
   setTimeout(function(){ t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 300);
+  // And once more after the slowest keyboards have finished animating -- the 300ms nudge
+  // lands mid-animation on some phones and the field drifts back under.
+  setTimeout(function(){ t.scrollIntoView({ block: 'center' }); }, 850);
 });
 
 function openSheet(ref){
