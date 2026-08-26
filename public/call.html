@@ -2192,8 +2192,9 @@ function drawReports(){
        right of % pf, exactly where the owner asked for it, and the pickers row stays as it
        was. The exporter strips every <button> from the clone, so the picture never shows it. */
     + repTh_('nonPortfolio', 'Nje ya pf', 'r') + repTh_('ratio', '% pf', 'r')
+    // "Just an icon is enough" -- the camera alone, the title says the rest.
     + '<th class="r"><button type="button" id="repJpg" title="Pakua ripoti kama picha / Download this report as a picture"'
-      + ' style="border:0;background:none;cursor:pointer;font-size:12px;font-weight:800;color:var(--b600);padding:2px 4px">📸 JPG</button></th>'
+      + ' style="border:0;background:none;cursor:pointer;font-size:15px;padding:2px 4px">📸</button></th>'
     + '</tr></thead><tbody>'
     + sortReportRows_(users).map(function(u){
         var oHref = telHref(u.phone);
