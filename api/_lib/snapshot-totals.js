@@ -311,41 +311,35 @@ export async function expectedTotalsInRange(db, { type = null, from, to, teams =
   return sums.length ? lists.concat(sums) : lists;
 }
 
-/* --------------------------------------------------- wide totals for the dashboard's month */
-/* THE READ THAT TOOK THE DASHBOARD PAST 45 SECONDS, AND WHAT IT TAUGHT.
-   The month cards widened expectedTotalsInRange from a week to a month -- safe where the
-   aggregating function answers (the database sums per team per batch), and catastrophic where
-   it does not: the fallback reads RAW CUSTOMER ROWS for the whole window, and a month of the
-   whole book is exactly the read that does not come back on a live database. The migration is
-   pasted by hand (db/migrations/RUN-ME-2026-08-09.sql), so a deployment without it is not a
-   corner case -- it is the state production was in.
+/* --------------------------------------------------- agg-only totals for the dashboard's month */
+/* THE READ THAT TOOK THE DASHBOARD PAST 45 SECONDS, TWICE, AND WHAT IT TAUGHT.
+   The month cards first widened the plain range reads -- and where the totals function is
+   missing, the fallback read a MONTH of raw customer rows: the read that does not come back.
+   The "fix" then offered the wide window only to the aggregating function -- and the dashboard
+   STILL timed out, because a month-wide aggregate over a big enough book is slow on a small
+   database instance even when the database does the summing.
 
-   So the wide window is offered ONLY to the aggregating function. Where it is missing, the
-   raw fallback reads the NARROW window the dashboard has always read, and `monthOk: false`
-   tells the caller its month figures cannot be computed -- the cards stand down and say which
-   migration lights them up, instead of guessing a month from a week of data. Summaries are
-   always read wide: that table holds a handful of rows per upload, never the book. */
-export async function expectedTotalsWide(db, { type = null, wideFrom, from, to, teams = null } = {}) {
+   So the month is now a strictly AGG-ONLY question: no raw fallback exists on this path at
+   all (null where the function is not installed), and the dashboard holds these reads to a
+   time budget besides -- see MONTH_BUDGET_MS in dashboardFull. Whatever is slow about a given
+   deployment's month, the dashboard answers on time and the month cards stand down. */
+export async function expectedTotalsAggOnly(db, { type = null, from, to, teams = null } = {}) {
   const [agg, sums] = await Promise.all([
     callTotals(db, EXPECTED_TOTALS_FN,
-      { p_from: wideFrom, p_to: to, p_type: type, p_teams: teamsArg(teams) }),
-    summaryRows(db, 'expected', { from: wideFrom, to, type, teams }),
+      { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams) }),
+    summaryRows(db, 'expected', { from, to, type, teams }),
   ]);
-  const lists = agg || foldExpected(await snapshotsInRange(db, 'repayment_snapshots',
-    type ? { snapshot_type: type } : {}, from, to, teams, EXP_FOLD_COLS));
-  return { rows: sums.length ? lists.concat(sums) : lists, monthOk: !!agg };
+  if (!agg) return null;
+  return sums.length ? agg.concat(sums) : agg;
 }
-export async function defaulterTotalsWide(db, { type = null, weekday = null, wideFrom, from, to, teams = null } = {}) {
+export async function defaulterTotalsAggOnly(db, { type = null, weekday = null, from, to, teams = null } = {}) {
   const [agg, sums] = await Promise.all([
     callTotals(db, DEFAULTER_TOTALS_FN,
-      { p_from: wideFrom, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday }),
-    summaryRows(db, 'defaulter', { from: wideFrom, to, type, weekday, teams }),
+      { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday }),
+    summaryRows(db, 'defaulter', { from, to, type, weekday, teams }),
   ]);
-  const filters = {};
-  if (type) filters.snapshot_type = type;
-  if (weekday) filters.weekday = weekday;
-  const lists = agg || foldDefaulter(await snapshotsInRange(db, 'defaulter_snapshots', filters, from, to, teams, DEF_FOLD_COLS));
-  return { rows: sums.length ? lists.concat(sums) : lists, monthOk: !!agg };
+  if (!agg) return null;
+  return sums.length ? agg.concat(sums) : agg;
 }
 
 /** The latest Expected snapshot of one type, batch-resolved -- the totals twin of
