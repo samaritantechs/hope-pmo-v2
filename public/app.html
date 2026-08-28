@@ -145,6 +145,12 @@
   .tcell .tl{font-size:12.5px;line-height:1.5}
   .tcell .mutl{color:var(--mut);font-size:11px}
   .tcell .badl{color:var(--bad);font-size:11px}
+  /* The month report's week tiles: the live week wears a ring, and a thin collection bar
+     under each week says at a glance how much of the month's line was met. */
+  .tcell.now{border-color:var(--b700);box-shadow:inset 0 0 0 1.5px var(--b700)}
+  .tcell .mrbar{display:block;height:4px;border-radius:3px;background:var(--line);margin-top:7px;overflow:hidden}
+  .tcell .mrbar i{display:block;height:100%;border-radius:3px;background:var(--ok)}
+  .tcell.tot .mrbar{background:rgba(255,255,255,.22)}
   /* pipeline funnel */
   .fun{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12.5px}
   .fun .fl{width:150px;color:var(--mut);text-transform:capitalize}
@@ -2553,26 +2559,79 @@ VIEWS.dashboard = function(){
 VIEWS.monthreport = function(){
   return srv('monthReport', { weekOf: S.args.weekOf || '' }).then(function(d){
     var t = d.totals || {};
+    var rows = d.rows || [];
+    /* WASTANI / AVERAGE, over the weeks that have actually happened -- an average that
+       divides by weeks still in the future would flatter nobody and mislead everybody. */
+    var started = rows.filter(function(r){ return r.started; });
+    var nWk = Math.max(started.length, 1);
+    var avgOf = function(k){ return Math.round(started.reduce(function(s,r){ return s + (Number(r[k])||0); }, 0) / nWk); };
+    /* The movement, drawn small beside the figure it belongs to -- green up, red down, the
+       direction a WhatsApp picture is scanned for. */
+    var mv = function(v, isPct){
+      if (v == null || !v) return '';
+      return ' <span class="' + (v>0?'good':'bad') + '" style="font-size:10px;font-weight:700">'
+        + (v>0?'▲':'▼') + (isPct ? Math.abs(v)+'%' : money(Math.abs(v))) + '</span>';
+    };
+    var mmdd = function(k){ return k.slice(8) + '/' + k.slice(5,7); };
+    var cells = rows.map(function(r){
+      var head = 'WIKI ' + r.week + ' · ' + mmdd(r.from) + '–' + mmdd(r.to);
+      if (!r.started) return tcell(head, [['—','mutl'],['bado / not yet','mutl']], 'pend');
+      var live = r.from <= d.asOfDate && d.asOfDate <= r.to;
+      return tcell(head + (live ? ' · SASA' : ''), [
+        ['<b>TZS ' + money(r.sales) + '</b>' + mv(r.dSales)],
+        [money(r.loans) + ' loans', 'mutl'],
+        [r.expected != null
+            ? 'Col TZS ' + money(r.collected) + ' · <b>' + pct(r.colPct) + '</b>' + mv(r.dColPct, true)
+            : 'Col — bado', r.expected != null ? '' : 'mutl'],
+        [r.recovered != null
+            ? 'Rec TZS ' + money(r.recovered) + ' · <b>' + pct(r.recPct) + '</b>' + mv(r.dRecPct, true)
+            : 'Rec — bado', r.recovered != null ? '' : 'mutl'],
+        ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, r.colPct||0)) + '%"></i></span>'],
+      ], live ? 'now' : '');
+    });
+    var totCell = tcell('JUMLA / TOTAL', [
+      ['<b>TZS ' + money(t.sales) + '</b>'],
+      [money(t.loans) + ' loans' + (t.monthTarget>0 ? ' · ' + pct(t.salesPct) + ' ya lengo' : ''), 'mutl'],
+      [t.collected != null ? 'Col TZS ' + money(t.collected) + ' · <b>' + pct(t.colPct) + '</b>' : 'Col —', 'mutl'],
+      [t.recovered != null ? 'Rec TZS ' + money(t.recovered) + ' · <b>' + pct(t.recPct) + '</b>' : 'Rec —', 'mutl'],
+      ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, t.colPct||0)) + '%"></i></span>'],
+    ], 'tot');
+    var avgCell = tcell('WASTANI / AVERAGE', [
+      ['<b>TZS ' + money(avgOf('sales')) + '</b> / wiki'],
+      [(Math.round((Number(t.loans)||0) / nWk * 10) / 10) + ' loans / wiki', 'mutl'],
+      [d.ledgerReady ? 'Col TZS ' + money(avgOf('collected')) + ' / wiki' : 'Col —', 'mutl'],
+      [d.ledgerReady ? 'Rec TZS ' + money(avgOf('recovered')) + ' / wiki' : 'Rec —', 'mutl'],
+    ], 'tot');
     HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf" style="margin-left:8px">← Dashibodi / Dashboard</button>')
       + '<div class="kpis">'
       + kpi('Mwezi / Month', esc(d.month), esc(d.monthStart)+' → '+esc(d.monthEnd)+' · hadi / so far: '+esc(d.asOfDate))
       + kpi('Sales this month', money(t.sales),
-            (t.monthTarget>0 ? pct(t.salesPct)+' of '+money(t.monthTarget)+' · ' : '') + money(t.loans)+' loans', 'good')
+            (t.monthTarget>0 ? pct(t.salesPct)+' of '+money(t.monthTarget)+' · ' : '') + money(t.loans)
+              + ' loans · wastani TZS '+money(avgOf('sales'))+'/wiki', 'good')
       /* Null carries the same meaning it does on the dashboard tiles: the server could not
          compute the month (ledger still filling, or the totals functions are not installed)
          -- a dash, never a month of zeros. */
       + (t.expected != null
           ? kpi('Collection this month', money(t.collected),
-                'of '+money(t.expected)+' expected'+(t.colPct!=null?' · '+pct(t.colPct):''), 'good')
+                'of '+money(t.expected)+' expected'+(t.colPct!=null?' · '+pct(t.colPct):'')
+                  + ' · wastani TZS '+money(avgOf('collected'))+'/wiki', 'good')
           : kpi('Collection this month', '—', 'haipatikani bado / not available yet'))
       + (t.recovered != null
           ? kpi('Recovery this month', money(t.recovered),
-                'of '+money(t.uncollected)+' uncollected'+(t.recPct!=null?' · '+pct(t.recPct):''), 'good')
+                'of '+money(t.uncollected)+' uncollected'+(t.recPct!=null?' · '+pct(t.recPct):'')
+                  + ' · wastani TZS '+money(avgOf('recovered'))+'/wiki', 'good')
           : kpi('Recovery this month', '—', 'haipatikani bado / not available yet'))
       + '</div>'
       + (d.ledgerReady ? '' : '<div class="note">Hesabu za makusanyo na urejeshaji bado zinajazwa'
           + ' — fungua tena baada ya dakika moja. / The collection & recovery ledger is still'
-          + ' filling — open this again in a minute; sales are already exact.</div>');
+          + ' filling — open this again in a minute; sales are already exact.</div>')
+      /* THE PICTURE FOR THE GROUPS: week 1 to the last as tiles, the live week ringed, the
+         month's TOTAL and the per-week AVERAGE closing the grid -- with trendGrid's own JPG
+         button on the card, so this one card is the download. The full sortable table stays
+         below for search, Excel and the row-by-row detail. */
+      + trendGrid('Wiki kwa wiki / Week by week · ' + d.month,
+          'sales · collection · recovery kwa kila wiki · ▲▼ dhidi ya wiki iliyopita / vs the week before',
+          'gMonth', cells, totCell + avgCell);
     /* The movement column: this week against the LAST week that had figures. Green up, red
        down -- the direction somebody scans a WhatsApp picture for. */
     var dcol = function(key, label, fmt){ return { key:key, label:label, kind:'text',
@@ -2601,7 +2660,9 @@ VIEWS.monthreport = function(){
       + (t.collected!=null ? ' · Collected TZS '+money(t.collected)+' of '+money(t.expected)
           +(t.colPct!=null?' ('+pct(t.colPct)+')':'') : '')
       + (t.recovered!=null ? ' · Recovered TZS '+money(t.recovered)
-          +(t.recPct!=null?' ('+pct(t.recPct)+')':'') : '');
+          +(t.recPct!=null?' ('+pct(t.recPct)+')':'') : '')
+      + ' — WASTANI/wiki: Sales TZS '+money(avgOf('sales'))
+      + (d.ledgerReady ? ', Col TZS '+money(avgOf('collected'))+', Rec TZS '+money(avgOf('recovered')) : '');
   });
 };
 
