@@ -4820,7 +4820,7 @@ const FN = {
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
-  dashboardFull, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
+  dashboardFull, monthReport, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
@@ -5389,7 +5389,11 @@ function monthDayCell_(d, expRows, defRows) {
   for (const T in t) t[T].p = paired;
   return t;
 }
-async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
+/* The ledger's day map itself -- every team's cells for every day of the month so far, or
+   null while the store is still filling. The dashboard's month cards and the month report
+   are two readers of this one map; they must never each keep their own copy of the
+   arithmetic, or the chip would disagree with the tiles it sits beside. */
+async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs }) {
   const deadline = Date.now() + budgetMs;
   const key = MONTH_LEDGER_PREFIX + monthStart.slice(0, 7);
   let ledger = null;
@@ -5430,10 +5434,13 @@ async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
       .upsert({ key, value: JSON.stringify(ledger) }, { onConflict: 'key' }));
   }
   for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) if (!ledger.days[d]) return null;
-
+  return ledger.days;
+}
+/** One stretch of ledger days summed for one viewer -- the shape the month cards read. */
+function ledgerSum_(days, user, from, to) {
   let colE = 0, colC = 0, recR = 0, recU = 0;
-  for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) {
-    const cellMap = ledger.days[d];
+  for (let d = from; d <= to; d = addDaysKey(d, 1)) {
+    const cellMap = days[d] || {};
     for (const T in cellMap) {
       if (!teamAllowed(user, T)) continue;
       const s = cellMap[T];
@@ -5442,6 +5449,117 @@ async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
     }
   }
   return { colE, colC, recU, recR };
+}
+async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
+  const days = await monthLedgerDays_(db, { monthStart, today, mon, budgetMs });
+  if (!days) return null;
+  return ledgerSum_(days, user, monthStart, today);
+}
+
+/* ---- THE MONTH REPORT: the three month tiles opened up into their weeks. ----
+   "i wish like a chip to open a monthly report that shows the 4 weeks summaries progress
+    and summary"
+
+   Same ledger, same rules, different cut: where the tiles say what the month adds up to,
+   this says how it got there -- each week of the CALENDAR month on its own row, with the
+   movement against the week before, and the month's total under them.
+
+   The weeks are the ISO weeks the rest of the system lives by, CLIPPED to the month --
+   "some months happen to start or end in the same month with the others" -- so a month that
+   opens on a Thursday gets a short first week rather than borrowing four days from the
+   month before, and the last week stops at the month's final day. Nothing is counted twice
+   and nothing leaks across a month boundary, which is what lets the TOTAL row here agree to
+   the shilling with the tiles on the dashboard.
+
+   Degrades exactly as the tiles do: sales come from the loans table and always answer;
+   collection and recovery come from the ledger, and while it is still filling (or the totals
+   functions are not installed) those columns say null -- "not yet", never a month of zeros.
+   A week that has not started yet is null across the board. */
+async function monthReport(db, user, args, nowMs) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  return cachedAnswer(db, 'monthReport|' + asOf.weekOf, user, nowMs,
+    () => monthReportCompute_(db, user, asOf));
+}
+async function monthReportCompute_(db, user, asOf) {
+  const nowMs = asOf.ms;
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs);
+  const monthStart = String(today).slice(0, 7) + '-01';
+  const [yy, mm] = monthStart.split('-').map(Number);
+  // Date.UTC month is 0-based, so day 0 of month index mm is the LAST day of this month.
+  const monthEnd = todayKey(Date.UTC(yy, mm, 0, 12));
+
+  // Same store, same budget the dashboard gives it; a failure costs columns, not the screen.
+  const days = await monthLedgerDays_(db, { monthStart, today, mon, budgetMs: 8000 })
+    .catch(() => null);
+  const [loansRaw, teamRows] = await Promise.all([
+    fetchAll(() => onTeams(db.from('loans')
+      .select('team, stage, principal_amt, loan_amt, approved_date')
+      .gte('approved_date', monthStart).lte('approved_date', today), user.teams)),
+    readTeamsAll(db),
+  ]);
+  const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
+  const amtOf = l => num(l.principal_amt) || num(l.loan_amt);
+  const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+
+  const rows = [];
+  let n = 0;
+  for (let from = monthStart; from <= monthEnd; ) {
+    const sun = addDaysKey(weekMondayKey(Date.parse(from + 'T12:00:00Z')), 6);
+    const to = sun < monthEnd ? sun : monthEnd;   // clipped to the month, both ends
+    n += 1;
+    const started = from <= today;
+    const done = to <= today ? to : today;        // the stretch that has actually happened
+    const wk = sales.filter(l => {
+      const d = String(l.approved_date || '').slice(0, 10);
+      return d >= from && d <= done;
+    });
+    const s = (days && started) ? ledgerSum_(days, user, from, done) : null;
+    rows.push({
+      week: n, from, to, started,
+      sales: started ? wk.reduce((t, l) => t + amtOf(l), 0) : null,
+      loans: started ? wk.length : null,
+      expected: s ? s.colE : null, collected: s ? s.colC : null,
+      colPct: s ? pct(s.colC, s.colE) : null,
+      uncollected: s ? s.recU : null, recovered: s ? s.recR : null,
+      recPct: s ? pct(s.recR, s.recU) : null,
+    });
+    from = addDaysKey(to, 1);
+  }
+  /* Progress: each week against the LAST STARTED week before it -- a future week must not
+     reset the comparison, and the first week has nothing to be compared to. */
+  let prev = null;
+  for (const r of rows) {
+    r.dSales = (prev && r.sales != null && prev.sales != null) ? r.sales - prev.sales : null;
+    r.dColPct = (prev && r.colPct != null && prev.colPct != null)
+      ? Math.round((r.colPct - prev.colPct) * 10) / 10 : null;
+    r.dRecPct = (prev && r.recPct != null && prev.recPct != null)
+      ? Math.round((r.recPct - prev.recPct) * 10) / 10 : null;
+    if (r.started) prev = r;
+  }
+
+  const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
+  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY',
+    await settingNum(db, 'SALES_TARGET', 100000000));
+  // The same convention the dashboard's month target uses: weekly x 4, across the teams seen.
+  const monthTarget = weeklyTarget * 4 * Math.max(myTeams.length, 1);
+  const total = days ? ledgerSum_(days, user, monthStart, today) : null;
+  const salesTotal = sales.reduce((t, l) => t + amtOf(l), 0);
+  return {
+    month: monthStart.slice(0, 7), monthStart, monthEnd,
+    // The week-bar fields, same names the dashboard sends, so the client's one week bar
+    // works here unchanged and stepping it across a month boundary changes the month.
+    weekOf: mon, weekEnd: addDaysKey(mon, 6),
+    asOfDate: today, pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future,
+    ledgerReady: !!days,
+    rows,
+    totals: {
+      sales: salesTotal, loans: sales.length, monthTarget, salesPct: pct(salesTotal, monthTarget),
+      expected: total ? total.colE : null, collected: total ? total.colC : null,
+      colPct: total ? pct(total.colC, total.colE) : null,
+      uncollected: total ? total.recU : null, recovered: total ? total.recR : null,
+      recPct: total ? pct(total.recR, total.recU) : null,
+    },
+  };
 }
 
 /* CACHED LIKE THE OFFICER BOARDS, and for the same reason: this is the most expensive answer
