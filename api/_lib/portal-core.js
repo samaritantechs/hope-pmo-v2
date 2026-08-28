@@ -5390,9 +5390,9 @@ function monthDayCell_(d, expRows, defRows) {
   return t;
 }
 /* The ledger's day map itself -- every team's cells for every day of the month so far, or
-   null while the store is still filling. The dashboard's month cards and the month report
-   are two readers of this one map; they must never each keep their own copy of the
-   arithmetic, or the chip would disagree with the tiles it sits beside. */
+   null while the store is still filling. The month report is its one reader now (the
+   dashboard's month tiles were retired to the chip), but the store keeps its shape: one
+   shared unscoped ledger, summed per viewer by ledgerSum_ below. */
 async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs }) {
   const deadline = Date.now() + budgetMs;
   const key = MONTH_LEDGER_PREFIX + monthStart.slice(0, 7);
@@ -5450,28 +5450,23 @@ function ledgerSum_(days, user, from, to) {
   }
   return { colE, colC, recU, recR };
 }
-async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
-  const days = await monthLedgerDays_(db, { monthStart, today, mon, budgetMs });
-  if (!days) return null;
-  return ledgerSum_(days, user, monthStart, today);
-}
-
-/* ---- THE MONTH REPORT: the three month tiles opened up into their weeks. ----
+/* ---- THE MONTH REPORT: the ONLY place the month is shown. ----
    "i wish like a chip to open a monthly report that shows the 4 weeks summaries progress
     and summary"
 
-   Same ledger, same rules, different cut: where the tiles say what the month adds up to,
-   this says how it got there -- each week of the CALENDAR month on its own row, with the
-   movement against the week before, and the month's total under them.
+   And then, one round later: "the directors hate exposing data so keep monthly in the chip"
+   -- so the dashboard's three month tiles were retired and this report is now the ONLY
+   screen that says what the month adds up to and how it got there: each week of the
+   CALENDAR month on its own row, the movement against the week before, and the month's
+   total and per-week average under them. The dashboard pays nothing for the month.
 
    The weeks are the ISO weeks the rest of the system lives by, CLIPPED to the month --
    "some months happen to start or end in the same month with the others" -- so a month that
    opens on a Thursday gets a short first week rather than borrowing four days from the
    month before, and the last week stops at the month's final day. Nothing is counted twice
-   and nothing leaks across a month boundary, which is what lets the TOTAL row here agree to
-   the shilling with the tiles on the dashboard.
+   and nothing leaks across a month boundary.
 
-   Degrades exactly as the tiles do: sales come from the loans table and always answer;
+   Degrades gracefully: sales come from the loans table and always answer;
    collection and recovery come from the ledger, and while it is still filling (or the totals
    functions are not installed) those columns say null -- "not yet", never a month of zeros.
    A week that has not started yet is null across the board. */
@@ -5488,7 +5483,8 @@ async function monthReportCompute_(db, user, asOf) {
   // Date.UTC month is 0-based, so day 0 of month index mm is the LAST day of this month.
   const monthEnd = todayKey(Date.UTC(yy, mm, 0, 12));
 
-  // Same store, same budget the dashboard gives it; a failure costs columns, not the screen.
+  // The ledger fills here, on demand, under a hard budget; a failure costs columns, never
+  // the screen -- and the dashboard no longer pays for any of this on its own loads.
   const days = await monthLedgerDays_(db, { monthStart, today, mon, budgetMs: 8000 })
     .catch(() => null);
   const [loansRaw, teamRows] = await Promise.all([
@@ -5601,19 +5597,13 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const monthStart0 = String(today).slice(0, 7) + '-01';
   const loanFloor = monthStart0 < mon ? monthStart0 : mon;
   const abnWin = abnormalWindow(nowMs, args);
-  /* THE MONTH MUST NEVER BE ABLE TO TAKE THE DASHBOARD DOWN, and it has managed it twice:
-     once through the raw fallback reading a month of customer rows, and once through the
-     month-wide AGGREGATE itself being slow on the live instance even with the database doing
-     the summing. So the week reads below are the backbone, exactly the shape they were before
-     the month cards existed, and the month walks itself in week-sized slices of the aggregate
-     beside them (monthTotalsChunked) -- the question size the weekly reads prove fast on
-     every load -- under a hard time budget, cached for the minute the dashboard's other
-     answers live so only the first viewer pays. Any month failure of ANY kind costs the two
-     tiles a dash, never the screen -- hence the .catch. */
-  const MONTH_BUDGET_MS = 8000;
-  const monthPromise = cachedAnswer(db, 'monthCards|' + monthStart0, user, nowMs, () =>
-    monthLedger_(db, user, { monthStart: monthStart0, today, mon, budgetMs: MONTH_BUDGET_MS })
-      .catch(() => null));
+  /* THE MONTH IS NOT READ HERE ANY MORE. It took the dashboard down twice (a month of raw
+     customer rows, then the month-wide aggregate itself), and then the directors' answer was
+     simpler than any budget: month figures are shown only when somebody OPENS the month
+     report -- "the directors hate exposing data so keep monthly in the chip". So the ledger
+     work lives entirely in monthReport, the dashboard pays nothing for the month on any
+     load, and the loans read below keeps its month window only because the TEAM BOARD is
+     ranked on monthly sales. */
   const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
@@ -5649,10 +5639,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       .select('team, amount_paid, transaction_id')
       .gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)),
   ]);
-  const month = await monthPromise;
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
-  const monthOk = !!month;
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
@@ -5755,17 +5743,6 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
   });
-
-  /* ---- THE MONTH, DAY BY DAY, UNDER THE SAME RULES AS THE WEEK ----
-     Each day is batch-resolved on its own (a report uploaded twice must not double a month),
-     collection sums the latest deck per day, and recovery pairs each day's initial against
-     its current ON THE SAME WEEKDAY -- the exact rule recTrend fought for, because pairing
-     two different weekdays' decks reports the gap between two populations as recovery. */
-  // The month ledger already did the day-by-day arithmetic -- see monthLedger_ above.
-  const colMonthExpected = monthOk ? month.colE : 0;
-  const colMonthCollected = monthOk ? month.colC : 0;
-  const recMonthRecovered = monthOk ? month.recR : 0;
-  const recMonthUncollected = monthOk ? month.recU : 0;
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
@@ -5888,8 +5865,6 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     // What was ASKED for, so the week bar can say when a choice was overruled and why.
     weekRequested: asOf.requested, weekFuture: asOf.future,
     weeklyTarget: weeklyTarget * Math.max(myTeams.length, 1), teamCount: myTeams.length,
-    // The month's company-wide target, same convention the per-team salesPct uses: weekly x 4.
-    monthTarget: monthTarget * Math.max(myTeams.length, 1),
     cards: {
       curArrears: teams.reduce((s, t) => s + t.curArrears, 0),
       initArrears: teams.reduce((s, t) => s + t.initArrears, 0),
@@ -5899,17 +5874,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       cleared: Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
       salesLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
-      /* The three month cards -- sales, collection and recovery month-to-date. */
-      salesMonth: teams.reduce((s, t) => s + t.salesMonth, 0),
-      salesMonthLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= monthStart && String(l.approved_date || '').slice(0, 10) <= today).length,
-      /* null (not zero) where the totals function is not installed: a month the server could
-         not compute must read as "not available", never as a month of zero collection. */
-      colMonthExpected: monthOk ? colMonthExpected : null,
-      colMonthCollected: monthOk ? colMonthCollected : null,
-      colMonthPct: monthOk && colMonthExpected > 0 ? Math.round((colMonthCollected / colMonthExpected) * 1000) / 10 : null,
-      recMonthRecovered: monthOk ? recMonthRecovered : null,
-      recMonthUncollected: monthOk ? recMonthUncollected : null,
-      recMonthPct: monthOk && recMonthUncollected > 0 ? Math.round((recMonthRecovered / recMonthUncollected) * 1000) / 10 : null,
+      /* NO MONTH FIGURES HERE. They lived in three tiles on this row for exactly one week of
+         production before the directors' rule landed: month totals show only when somebody
+         opens the month report chip. monthReport carries them; per-team salesMonth stays in
+         teamPerf below because the RANKING has always been read on the month. */
       abnormal: myAbn.length,
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),
