@@ -5444,7 +5444,18 @@ async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
   return { colE, colC, recU, recR };
 }
 
+/* CACHED LIKE THE OFFICER BOARDS, and for the same reason: this is the most expensive answer
+   in the system and the most re-asked -- opened on sign-in, re-opened between tabs, asked
+   again by the presentation moments after the dashboard asked it, and asked once per week
+   while somebody slides the week bar back and forth. Keyed by the RESOLVED week plus the raw
+   request (two requests resolving to the same week can carry different overruled-choice
+   notes), scoped per team-set, held for the same one minute every other answer lives. */
 async function dashboardFull(db, user, args, nowMs) {
+  const asOf0 = asOfWeek(nowMs, args && args.weekOf);
+  return cachedAnswer(db, 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
+    user, nowMs, () => dashboardFullCompute_(db, user, args, nowMs));
+}
+async function dashboardFullCompute_(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   nowMs = asOf.ms;
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
