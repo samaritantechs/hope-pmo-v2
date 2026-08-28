@@ -668,12 +668,17 @@ var NAV = [
      entry was removed on request. `hidden` keeps it out of the drawn nav while go() and the
      title lookup still know it. */
   { id:'findcust',    label:'Tafuta mteja / Find customer', hidden: true,
-    ic:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>' }
+    ic:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>' },
+  /* Reached from the chip on the dashboard's week bar, not from the drawer -- the report IS
+     the dashboard's three month tiles opened up into their weeks, so it lives beside them
+     rather than as one more tab in a drawer that is already long. */
+  { id:'monthreport', label:'Ripoti ya Mwezi / Month Report', hidden: true,
+    ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>' }
 ];
 /* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
    visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
    the gate that matters is upload/settings, which are checked on the server too. */
-var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust'];
+var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust','monthreport'];
 
 /* =====================================================================================
    HOPE LOAN'S OWN NAV -- one screen per stage, gated on the HOPE LOAN TAB, not the role name.
@@ -771,9 +776,11 @@ function buildNav(){
   }
   NAV.forEach(function(n){ if (allowed(n.id) && !n.hidden) drawItem(n); });
 }
-function go(view){
+function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
-  S.args={}; S.filters={}; S.foot='';
+  /* args is only ever passed by a [data-go] button that CARRIES something across the switch
+     (the month-report chip carries the chosen week); everything else still starts clean. */
+  S.args = args || {}; S.filters={}; S.foot='';
   /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
      mode left over from whatever was open before. Every request from here rides S.workspace to
      the server (see srv() below), which resolves it for real against this code's own tabs --
@@ -1716,6 +1723,18 @@ function wireBar(){
     }
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
+  /* A button that OPENS ANOTHER TAB. data-carry names the args that ride along -- the
+     month-report chip carries the dashboard's chosen week, so a past week opens THAT month's
+     report -- because go() clears S.args on purpose for every ordinary switch. */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-go]'), function(el){
+    el.onclick = function(){
+      var a = {};
+      (el.getAttribute('data-carry')||'').split(',').forEach(function(k){
+        if (k && S.args[k]) a[k] = S.args[k];
+      });
+      go(el.getAttribute('data-go'), a);
+    };
+  });
   wireWeekBar();
   var fcGo = document.getElementById('fcGo'), fcQ = document.getElementById('fcQ');
   if (fcGo && fcQ) {
@@ -2360,7 +2379,11 @@ function wireWeekBar(){
 VIEWS.dashboard = function(){
   return srv('dashboardFull', { weekOf: S.args.weekOf || '' }).then(function(d){
     var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
-    HEAD = weekBar(d) + '<div class="kpis">'
+    /* The chip beside the week bar opens the month report -- the three month tiles below,
+       opened up week by week -- and CARRIES the chosen week, so a dashboard slid back to
+       July opens July's report. */
+    HEAD = weekBar(d, '<button class="pill" data-go="monthreport" data-carry="weekOf" style="margin-left:8px">📅 Ripoti ya mwezi / Month report</button>')
+      + '<div class="kpis">'
       + kpi('Current arrears', money(c.curArrears), 'initial upload: ' + money(c.initArrears))
       + kpi('Recovered', money(c.recovered), 'initial − current · ' + money(c.cleared) + ' cleared', 'good')
       + kpi('Defaulters', money(c.defaulters), 'of ' + money(c.defaultersInitial) + ' on the initial list')
@@ -2516,6 +2539,69 @@ VIEWS.dashboard = function(){
     ONROW = null;
     S.foot = 'Teams: '+money(d.teamCount)+' · Recovered: TZS '+money(c.recovered)
       + ' · Sales: TZS '+money(c.salesWeek)+' · Uncollected today: TZS '+money(c.uncollectedToday);
+  });
+};
+
+/* =====================================================================================
+   THE MONTH REPORT -- "i wish like a chip to open a monthly report that shows the 4 weeks
+   summaries progress and summary".
+   One row per week of the CALENDAR month (a month opening midweek gets a short first week
+   rather than borrowing days from the month before), sales / collection / recovery on each,
+   the movement against the week before beside each figure, and the month's totals in the
+   cards and the footer. The table engine gives search, sort, Excel and JPG for free, which
+   is the point -- this is the report that goes to the WhatsApp groups. */
+VIEWS.monthreport = function(){
+  return srv('monthReport', { weekOf: S.args.weekOf || '' }).then(function(d){
+    var t = d.totals || {};
+    HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf" style="margin-left:8px">← Dashibodi / Dashboard</button>')
+      + '<div class="kpis">'
+      + kpi('Mwezi / Month', esc(d.month), esc(d.monthStart)+' → '+esc(d.monthEnd)+' · hadi / so far: '+esc(d.asOfDate))
+      + kpi('Sales this month', money(t.sales),
+            (t.monthTarget>0 ? pct(t.salesPct)+' of '+money(t.monthTarget)+' · ' : '') + money(t.loans)+' loans', 'good')
+      /* Null carries the same meaning it does on the dashboard tiles: the server could not
+         compute the month (ledger still filling, or the totals functions are not installed)
+         -- a dash, never a month of zeros. */
+      + (t.expected != null
+          ? kpi('Collection this month', money(t.collected),
+                'of '+money(t.expected)+' expected'+(t.colPct!=null?' · '+pct(t.colPct):''), 'good')
+          : kpi('Collection this month', '—', 'haipatikani bado / not available yet'))
+      + (t.recovered != null
+          ? kpi('Recovery this month', money(t.recovered),
+                'of '+money(t.uncollected)+' uncollected'+(t.recPct!=null?' · '+pct(t.recPct):''), 'good')
+          : kpi('Recovery this month', '—', 'haipatikani bado / not available yet'))
+      + '</div>'
+      + (d.ledgerReady ? '' : '<div class="note">Hesabu za makusanyo na urejeshaji bado zinajazwa'
+          + ' — fungua tena baada ya dakika moja. / The collection & recovery ledger is still'
+          + ' filling — open this again in a minute; sales are already exact.</div>');
+    /* The movement column: this week against the LAST week that had figures. Green up, red
+       down -- the direction somebody scans a WhatsApp picture for. */
+    var dcol = function(key, label, fmt){ return { key:key, label:label, kind:'text',
+      get: function(r){ var v = r[key]; if (v==null) return '';
+        return v ? (v>0 ? '▲ +' : '▼ −') + fmt(Math.abs(v)) : '0'; },
+      cls: function(r){ var v = r[key]; return v>0 ? 'good' : (v<0 ? 'bad' : ''); } }; };
+    S.rows = d.rows || [];
+    S.cols = [
+      col('week','Wiki','num'),
+      col('from','Kuanzia / From','date'),
+      col('to','Hadi / To','date'),
+      col('sales','Sales','money'),
+      col('loans','Loans','num'),
+      dcol('dSales','± Sales', function(v){ return money(v); }),
+      col('expected','Expected','money'),
+      col('collected','Collected','money'),
+      col('colPct','Col %','pct'),
+      dcol('dColPct','± Col %', function(v){ return v+'%'; }),
+      col('uncollected','Uncollected','money'),
+      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+      col('recPct','Rec %','pct'),
+      dcol('dRecPct','± Rec %', function(v){ return v+'%'; }),
+    ];
+    ONROW = null;
+    S.foot = 'JUMLA / TOTAL · Sales TZS '+money(t.sales)+' ('+money(t.loans)+' loans)'
+      + (t.collected!=null ? ' · Collected TZS '+money(t.collected)+' of '+money(t.expected)
+          +(t.colPct!=null?' ('+pct(t.colPct)+')':'') : '')
+      + (t.recovered!=null ? ' · Recovered TZS '+money(t.recovered)
+          +(t.recPct!=null?' ('+pct(t.recPct)+')':'') : '');
   });
 };
 

@@ -2591,6 +2591,69 @@ test('the dashboard carries the month in three cards: sales, collection, recover
   assert.equal(bare.recMonthRecovered, null, 'null means "not available", never zero');
 });
 
+/* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
+   progress and summary". The three month cards opened up into their weeks: calendar weeks
+   CLIPPED to the month ("some months happen to start or end in the same month with the
+   others"), the movement against the week before beside each figure, and a TOTAL row that
+   must agree with the dashboard's cards to the shilling -- it is the same ledger. */
+test('the month report cuts the month into clipped weeks and agrees with the cards', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
+    { id: 'm2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
+    { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
+  ];
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0),
+    E('333', 'MBAGALA', 1000, 'PAID', 0),
+  ];
+  const db = dbWithRpc(t);
+  const d = await run('monthReport', {}, ADMIN, db);
+  assert.equal(d.month, '2026-07');
+  assert.equal(d.ledgerReady, true);
+  // July 2026 opens on a Wednesday and closes on a Friday: five clipped weeks, nothing
+  // borrowed from June or August, and no gap between one week's end and the next's start.
+  assert.deepEqual(d.rows.map(r => [r.from, r.to]), [
+    ['2026-07-01', '2026-07-05'], ['2026-07-06', '2026-07-12'], ['2026-07-13', '2026-07-19'],
+    ['2026-07-20', '2026-07-26'], ['2026-07-27', '2026-07-31'],
+  ]);
+  const wk = d.rows[3];                                       // the week TODAY sits in
+  assert.equal(wk.sales, 500, 'approved 400 + disbursed 100; June excluded');
+  assert.equal(wk.loans, 2);
+  assert.equal(wk.dSales, 500, 'movement against the quiet week before');
+  assert.equal(wk.expected, 2000);
+  assert.equal(wk.collected, 1000);
+  assert.equal(wk.colPct, 50);
+  assert.equal(wk.recovered, 400, 'the same shared decks the cards read');
+  assert.equal(wk.recPct, 40);
+  const future = d.rows[4];
+  assert.equal(future.started, false);
+  assert.equal(future.sales, null, 'a week that has not happened says nothing');
+  assert.equal(future.expected, null);
+
+  // The TOTAL and the dashboard's month cards are one set of figures, not two computations.
+  const c = (await run('dashboardFull', {}, ADMIN, db)).cards;
+  assert.equal(d.totals.sales, c.salesMonth);
+  assert.equal(d.totals.loans, c.salesMonthLoans);
+  assert.equal(d.totals.expected, c.colMonthExpected);
+  assert.equal(d.totals.collected, c.colMonthCollected);
+  assert.equal(d.totals.colPct, c.colMonthPct);
+  assert.equal(d.totals.recovered, c.recMonthRecovered);
+  assert.equal(d.totals.uncollected, c.recMonthUncollected);
+  assert.equal(d.totals.recPct, c.recMonthPct);
+  assert.ok(d.totals.monthTarget > 0);
+
+  // Without the totals function: sales still exact (they read loans, not snapshots), and the
+  // ledger columns stand down rather than print a month of zeros.
+  const bare2 = await run('monthReport', {}, ADMIN, fakeDb(t));
+  assert.equal(bare2.ledgerReady, false);
+  assert.equal(bare2.totals.sales, 500);
+  assert.equal(bare2.totals.expected, null);
+  assert.equal(bare2.rows[3].sales, 500);
+  assert.equal(bare2.rows[3].expected, null, 'null means "not available", never zero');
+});
+
 test('recovery % is shown against all three denominators', async () => {
   const t = tables();
   t.repayment_snapshots = [
