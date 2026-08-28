@@ -2568,7 +2568,9 @@ test('the dashboard carries the month in three cards: sales, collection, recover
     E('111', 'KONGOWE', 1000, 'UNPAID', 0),
     E('333', 'MBAGALA', 1000, 'PAID', 0),
   ];
-  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  // The month needs the totals FUNCTION -- a month of raw customer rows is the read that
+  // took production past 45 seconds, so without the migration the cards read null, not zero.
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
   const c = d.cards;
   assert.equal(c.salesMonth, 500, 'approved 400 + disbursed 100; June excluded');
   assert.equal(c.salesMonthLoans, 2);
@@ -2580,6 +2582,13 @@ test('the dashboard carries the month in three cards: sales, collection, recover
   assert.equal(c.recMonthUncollected, 1000, 'the UNPAID row is the month\'s uncollected');
   assert.equal(c.recMonthPct, 40);
   assert.ok(d.monthTarget > 0, 'weekly target x 4 x teams rides along for the tile');
+
+  // And WITHOUT the totals function: sales still counts (it reads loans, not snapshots),
+  // while collection and recovery stand down rather than guess a month from a week of data.
+  const bare = (await run('dashboardFull', {}, ADMIN, fakeDb(t))).cards;
+  assert.equal(bare.salesMonth, 500);
+  assert.equal(bare.colMonthExpected, null);
+  assert.equal(bare.recMonthRecovered, null, 'null means "not available", never zero');
 });
 
 test('recovery % is shown against all three denominators', async () => {

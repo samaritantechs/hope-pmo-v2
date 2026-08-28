@@ -154,6 +154,18 @@ for (const [label, fn, args] of SCREENS) {
       test(`${label}: identical ${when} ${who}, database sums vs rows in memory`, async () => {
         const fromDb = await portalApi(withMigration(), user, fn, args, nowMs);
         const inMemory = await portalApi(withoutMigration(), user, fn, args, nowMs);
+        if (fn === 'dashboardFull') {
+          /* THE ONE SANCTIONED DIVERGENCE. The month cards exist ONLY where the database can
+             sum a month -- the raw fallback reading a month of customer rows is the read that
+             took production past 45 seconds -- so without the migration they are null by
+             design: "not available", never a month guessed from a week of data. They are
+             asserted null here and then removed so every OTHER figure still has to match. */
+          for (const k of ['colMonthExpected', 'colMonthCollected', 'colMonthPct',
+                           'recMonthRecovered', 'recMonthUncollected', 'recMonthPct']) {
+            assert.equal(inMemory.cards[k], null, k + ' must read "not available" without the migration');
+            delete fromDb.cards[k]; delete inMemory.cards[k];
+          }
+        }
         assert.deepEqual(fromDb, inMemory,
           `${label} answered differently when the database did the adding up.\n` +
           '  Every figure on this screen must be identical either way -- the migration is run by\n' +

@@ -311,6 +311,43 @@ export async function expectedTotalsInRange(db, { type = null, from, to, teams =
   return sums.length ? lists.concat(sums) : lists;
 }
 
+/* --------------------------------------------------- wide totals for the dashboard's month */
+/* THE READ THAT TOOK THE DASHBOARD PAST 45 SECONDS, AND WHAT IT TAUGHT.
+   The month cards widened expectedTotalsInRange from a week to a month -- safe where the
+   aggregating function answers (the database sums per team per batch), and catastrophic where
+   it does not: the fallback reads RAW CUSTOMER ROWS for the whole window, and a month of the
+   whole book is exactly the read that does not come back on a live database. The migration is
+   pasted by hand (db/migrations/RUN-ME-2026-08-09.sql), so a deployment without it is not a
+   corner case -- it is the state production was in.
+
+   So the wide window is offered ONLY to the aggregating function. Where it is missing, the
+   raw fallback reads the NARROW window the dashboard has always read, and `monthOk: false`
+   tells the caller its month figures cannot be computed -- the cards stand down and say which
+   migration lights them up, instead of guessing a month from a week of data. Summaries are
+   always read wide: that table holds a handful of rows per upload, never the book. */
+export async function expectedTotalsWide(db, { type = null, wideFrom, from, to, teams = null } = {}) {
+  const [agg, sums] = await Promise.all([
+    callTotals(db, EXPECTED_TOTALS_FN,
+      { p_from: wideFrom, p_to: to, p_type: type, p_teams: teamsArg(teams) }),
+    summaryRows(db, 'expected', { from: wideFrom, to, type, teams }),
+  ]);
+  const lists = agg || foldExpected(await snapshotsInRange(db, 'repayment_snapshots',
+    type ? { snapshot_type: type } : {}, from, to, teams, EXP_FOLD_COLS));
+  return { rows: sums.length ? lists.concat(sums) : lists, monthOk: !!agg };
+}
+export async function defaulterTotalsWide(db, { type = null, weekday = null, wideFrom, from, to, teams = null } = {}) {
+  const [agg, sums] = await Promise.all([
+    callTotals(db, DEFAULTER_TOTALS_FN,
+      { p_from: wideFrom, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday }),
+    summaryRows(db, 'defaulter', { from: wideFrom, to, type, weekday, teams }),
+  ]);
+  const filters = {};
+  if (type) filters.snapshot_type = type;
+  if (weekday) filters.weekday = weekday;
+  const lists = agg || foldDefaulter(await snapshotsInRange(db, 'defaulter_snapshots', filters, from, to, teams, DEF_FOLD_COLS));
+  return { rows: sums.length ? lists.concat(sums) : lists, monthOk: !!agg };
+}
+
 /** The latest Expected snapshot of one type, batch-resolved -- the totals twin of
     latestSnapshot, and the same { rows, date, batch } answer so callers can still say exactly
     which snapshot a figure came from. */
