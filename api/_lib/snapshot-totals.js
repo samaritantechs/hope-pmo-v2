@@ -323,23 +323,37 @@ export async function expectedTotalsInRange(db, { type = null, from, to, teams =
    all (null where the function is not installed), and the dashboard holds these reads to a
    time budget besides -- see MONTH_BUDGET_MS in dashboardFull. Whatever is slow about a given
    deployment's month, the dashboard answers on time and the month cards stand down. */
-export async function expectedTotalsAggOnly(db, { type = null, from, to, teams = null } = {}) {
-  const [agg, sums] = await Promise.all([
-    callTotals(db, EXPECTED_TOTALS_FN,
-      { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams) }),
-    summaryRows(db, 'expected', { from, to, type, teams }),
+/* THE MONTH, ASKED IN WEEK-SIZED SLICES -- "these should auto average the monthly dates".
+   The whole-month aggregate did not answer inside the budget on the live instance even with
+   the database doing the summing. But week-sized questions demonstrably do: the weekly reads
+   answer one on every single dashboard load. So the month walks itself in sequential <=7-day
+   slices of the same aggregate (sequential on purpose -- a wave of concurrent requests is the
+   shape that once took this system down; see the note in supabase.js), sums the answers in
+   hand, and gives up cleanly the moment a slice finds the function missing or the deadline
+   passed. Summaries ride in one whole-month read each: that table holds a handful of rows per
+   upload, never the book. Returns { exp, def } in the same row shape the range totals speak,
+   or null -- and null must always mean "the cards stand down", never an error. */
+export async function monthTotalsChunked(db, { expType = 'today', from, to, teams = null, budgetMs = 8000 } = {}) {
+  const deadline = Date.now() + budgetMs;
+  const [sumE, sumF] = await Promise.all([
+    summaryRows(db, 'expected', { from, to, type: expType, teams }),
+    summaryRows(db, 'defaulter', { from, to, teams }),
   ]);
-  if (!agg) return null;
-  return sums.length ? agg.concat(sums) : agg;
-}
-export async function defaulterTotalsAggOnly(db, { type = null, weekday = null, from, to, teams = null } = {}) {
-  const [agg, sums] = await Promise.all([
-    callTotals(db, DEFAULTER_TOTALS_FN,
-      { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday }),
-    summaryRows(db, 'defaulter', { from, to, type, weekday, teams }),
-  ]);
-  if (!agg) return null;
-  return sums.length ? agg.concat(sums) : agg;
+  const exp = [], def = [];
+  for (let d = from; d <= to; d = addDaysKey(d, 7)) {
+    if (Date.now() > deadline) return null;
+    const sliceTo = addDaysKey(d, 6) < to ? addDaysKey(d, 6) : to;
+    const [e, f] = await Promise.all([
+      callTotals(db, EXPECTED_TOTALS_FN,
+        { p_from: d, p_to: sliceTo, p_type: expType, p_teams: teamsArg(teams) }),
+      callTotals(db, DEFAULTER_TOTALS_FN,
+        { p_from: d, p_to: sliceTo, p_type: null, p_teams: teamsArg(teams), p_weekday: null }),
+    ]);
+    if (!e || !f) return null;               // the totals function is not installed here
+    for (const r of e) exp.push(r);
+    for (const r of f) def.push(r);
+  }
+  return { exp: exp.concat(sumE), def: def.concat(sumF) };
 }
 
 /** The latest Expected snapshot of one type, batch-resolved -- the totals twin of

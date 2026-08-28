@@ -4,7 +4,7 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
-  expectedTotalsAggOnly, defaulterTotalsAggOnly,
+  monthTotalsChunked,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
@@ -5380,20 +5380,20 @@ async function dashboardFull(db, user, args, nowMs) {
   const monthStart0 = String(today).slice(0, 7) + '-01';
   const loanFloor = monthStart0 < mon ? monthStart0 : mon;
   const abnWin = abnormalWindow(nowMs, args);
-  /* THE MONTH MUST NEVER BE ABLE TO TAKE THE DASHBOARD DOWN, and it has now managed it twice:
+  /* THE MONTH MUST NEVER BE ABLE TO TAKE THE DASHBOARD DOWN, and it has managed it twice:
      once through the raw fallback reading a month of customer rows, and once through the
      month-wide AGGREGATE itself being slow on the live instance even with the database doing
      the summing. So the week reads below are the backbone, exactly the shape they were before
-     the month cards existed, and the month rides beside them as two strictly agg-only reads
-     under a hard time budget: answer inside it or the cards stand down (null, a dash on the
-     tile). `.catch(null)` for the same reason -- no month failure of ANY kind may surface as
-     "Seva haijibu ndani ya sekunde 45". */
+     the month cards existed, and the month walks itself in week-sized slices of the aggregate
+     beside them (monthTotalsChunked) -- the question size the weekly reads prove fast on
+     every load -- under a hard time budget, cached for the minute the dashboard's other
+     answers live so only the first viewer pays. Any month failure of ANY kind costs the two
+     tiles a dash, never the screen -- hence the .catch. */
   const MONTH_BUDGET_MS = 8000;
-  const orNull_ = (p, ms) => Promise.race([
-    p.catch(() => null),
-    new Promise(res => setTimeout(res, ms, null)),
-  ]);
-  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid, expMonth, defMonth] = await Promise.all([
+  const monthPromise = cachedAnswer(db, 'monthCards|' + monthStart0, user, nowMs, () =>
+    monthTotalsChunked(db, { from: monthStart0, to: today, teams: user.teams, budgetMs: MONTH_BUDGET_MS })
+      .catch(() => null));
+  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
@@ -5427,15 +5427,14 @@ async function dashboardFull(db, user, args, nowMs) {
     fetchAll(() => onTeams(db.from('received_payments')
       .select('team, amount_paid, transaction_id')
       .gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)),
-    orNull_(expectedTotalsAggOnly(db, { type: 'today', from: monthStart0, to: today, teams: user.teams }), MONTH_BUDGET_MS),
-    orNull_(defaulterTotalsAggOnly(db, { from: monthStart0, to: today, teams: user.teams }), MONTH_BUDGET_MS),
   ]);
+  const month = await monthPromise;
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
-  const monthOk = !!(expMonth && defMonth);
+  const monthOk = !!month;
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
-  const myExpMonth = monthOk ? scoped(user, expMonth) : [];
-  const myDefMonth = monthOk ? scoped(user, defMonth) : [];
+  const myExpMonth = monthOk ? scoped(user, month.exp) : [];
+  const myDefMonth = monthOk ? scoped(user, month.def) : [];
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
