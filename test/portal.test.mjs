@@ -2550,45 +2550,36 @@ test('teams are ranked on the average of sales and collection, best first', asyn
   assert.equal(d.teamPerf[0].sn, 1, 'and numbered after ranking, not before');
 });
 
-/* THE MONTH IN THREE CARDS -- "we need the monthly widgets for sales, collection and recovery
-   there". Sales counts every SALES_STAGES loan approved this month (a disbursed loan is still
-   the sale it was); collection and recovery sum the month day by day under the same
-   batch-resolution and same-weekday pairing rules the weekly trends use. */
-test('the dashboard carries the month in three cards: sales, collection, recovery', async () => {
+/* THE MONTH IS NOT ON THE DASHBOARD. The three month tiles lived on the KPI row for one week
+   of production and were then retired on request -- "the directors hate exposing data so keep
+   monthly in the chip" -- so the dashboard answer must carry NO month figure at all (absent,
+   not null: null was "could not compute", absence is "not asked"), and must not spend a
+   single read producing one. The one survivor is teamPerf's per-team salesMonth, because the
+   ranking has always been read on the month. */
+test('the dashboard carries no month figures -- the month lives only in the month report', async () => {
   const t = tables();
   t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
   t.loans = [
     { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
-    // Disbursed is STILL a sale -- the stage moved forward, the sale did not unhappen.
     { id: 'm2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
-    // Last month is a different month.
     { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
   ];
   t.repayment_snapshots = [
     E('111', 'KONGOWE', 1000, 'UNPAID', 0),
     E('333', 'MBAGALA', 1000, 'PAID', 0),
   ];
-  // The month needs the totals FUNCTION -- a month of raw customer rows is the read that
-  // took production past 45 seconds, so without the migration the cards read null, not zero.
   const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
   const c = d.cards;
-  assert.equal(c.salesMonth, 500, 'approved 400 + disbursed 100; June excluded');
-  assert.equal(c.salesMonthLoans, 2);
-  assert.equal(c.colMonthExpected, 2000);
-  assert.equal(c.colMonthCollected, 1000);
-  assert.equal(c.colMonthPct, 50);
-  // The shared decks: initial 500+700+900 minus current 300+600+800 = 400 recovered today.
-  assert.equal(c.recMonthRecovered, 400);
-  assert.equal(c.recMonthUncollected, 1000, 'the UNPAID row is the month\'s uncollected');
-  assert.equal(c.recMonthPct, 40);
-  assert.ok(d.monthTarget > 0, 'weekly target x 4 x teams rides along for the tile');
-
-  // And WITHOUT the totals function: sales still counts (it reads loans, not snapshots),
-  // while collection and recovery stand down rather than guess a month from a week of data.
-  const bare = (await run('dashboardFull', {}, ADMIN, fakeDb(t))).cards;
-  assert.equal(bare.salesMonth, 500);
-  assert.equal(bare.colMonthExpected, null);
-  assert.equal(bare.recMonthRecovered, null, 'null means "not available", never zero');
+  for (const k of ['salesMonth', 'salesMonthLoans', 'colMonthExpected', 'colMonthCollected',
+                   'colMonthPct', 'recMonthRecovered', 'recMonthUncollected', 'recMonthPct']) {
+    assert.equal(k in c, false, k + ' must not appear on the dashboard at all');
+  }
+  assert.equal('monthTarget' in d, false, 'the month target rode along for the tile; the tile is gone');
+  // The weekly cards are untouched by the retirement.
+  assert.equal(c.salesWeek, 500, 'approved 400 + disbursed 100 this week; June excluded');
+  assert.equal(c.salesLoans, 2);
+  // The ranking still reads the month per team, as it always has.
+  assert.equal(d.teamPerf.find(r => r.team === 'KONGOWE').salesMonth, 400);
 });
 
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
@@ -2632,17 +2623,17 @@ test('the month report cuts the month into clipped weeks and agrees with the car
   assert.equal(future.sales, null, 'a week that has not happened says nothing');
   assert.equal(future.expected, null);
 
-  // The TOTAL and the dashboard's month cards are one set of figures, not two computations.
-  const c = (await run('dashboardFull', {}, ADMIN, db)).cards;
-  assert.equal(d.totals.sales, c.salesMonth);
-  assert.equal(d.totals.loans, c.salesMonthLoans);
-  assert.equal(d.totals.expected, c.colMonthExpected);
-  assert.equal(d.totals.collected, c.colMonthCollected);
-  assert.equal(d.totals.colPct, c.colMonthPct);
-  assert.equal(d.totals.recovered, c.recMonthRecovered);
-  assert.equal(d.totals.uncollected, c.recMonthUncollected);
-  assert.equal(d.totals.recPct, c.recMonthPct);
-  assert.ok(d.totals.monthTarget > 0);
+  // The TOTAL row: the whole month summed under the same ledger the weeks came from.
+  assert.equal(d.totals.sales, 500);
+  assert.equal(d.totals.loans, 2);
+  assert.equal(d.totals.expected, 2000);
+  assert.equal(d.totals.collected, 1000);
+  assert.equal(d.totals.colPct, 50);
+  // The shared decks: initial 500+700+900 minus current 300+600+800 = 400 recovered today.
+  assert.equal(d.totals.recovered, 400);
+  assert.equal(d.totals.uncollected, 1000, 'the UNPAID row is the month\'s uncollected');
+  assert.equal(d.totals.recPct, 40);
+  assert.ok(d.totals.monthTarget > 0, 'weekly target x 4 x teams, for the sales card');
 
   // Without the totals function: sales still exact (they read loans, not snapshots), and the
   // ledger columns stand down rather than print a month of zeros.

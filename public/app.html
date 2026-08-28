@@ -2396,21 +2396,9 @@ VIEWS.dashboard = function(){
       + kpi('Sales this week', money(c.salesWeek),
             (d.weeklyTarget>0 ? Math.round(1000*c.salesWeek/d.weeklyTarget)/10+'% of '+money(d.weeklyTarget)
               +' weekly ('+d.teamCount+' teams) · ' : '') + money(c.salesLoans)+' loans this week')
-      /* The month, in three tiles -- sales, collection and recovery month-to-date, ahead of
-         Abnormal Payments. A month is the period the targets are actually set over. */
-      + kpi('Sales this month', money(c.salesMonth),
-            (d.monthTarget>0 ? Math.round(1000*c.salesMonth/d.monthTarget)/10+'% of '+money(d.monthTarget)+' · ' : '')
-              + money(c.salesMonthLoans)+' loans', 'good')
-      /* Null means the server COULD NOT compute the month (the totals function is not
-         installed there) -- a dash with the fix named, never a month of zero. */
-      + (c.colMonthExpected != null
-          ? kpi('Collection this month', money(c.colMonthCollected),
-                'of '+money(c.colMonthExpected)+' expected'+(c.colMonthPct!=null?' · '+pct(c.colMonthPct):''), 'good')
-          : kpi('Collection this month', '—', 'haipatikani kwenye seva hii bado / not available on this server yet'))
-      + (c.recMonthRecovered != null
-          ? kpi('Recovery this month', money(c.recMonthRecovered),
-                'of '+money(c.recMonthUncollected)+' uncollected'+(c.recMonthPct!=null?' · '+pct(c.recMonthPct):''), 'good')
-          : kpi('Recovery this month', '—', 'haipatikani kwenye seva hii bado / not available on this server yet'))
+      /* NO MONTH TILES HERE -- they lived on this row for one week and were then retired on
+         request: "the directors hate exposing data so keep monthly in the chip". The month
+         lives behind the 📅 chip on the week bar and nowhere else on this screen. */
       + kpi('Abnormal payments', money(c.abnormal), 'TZS ' + money(c.abnormalAmount) + ' flagged', 'bad')
       + '</div>'
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
