@@ -4,6 +4,7 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
+  expectedTotalsWide, defaulterTotalsWide,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
@@ -5379,14 +5380,16 @@ async function dashboardFull(db, user, args, nowMs) {
   const monthStart0 = String(today).slice(0, 7) + '-01';
   const loanFloor = monthStart0 < mon ? monthStart0 : mon;
   const abnWin = abnormalWindow(nowMs, args);
-  /* THE SAME TWO READS NOW CARRY THE MONTH. The month cards need totals from the 1st, and two
-     extra round trips for them tripped the speed guard -- rightly. The totals are aggregated
-     per team per batch in the database, so widening the window from Monday back to the month
-     start costs rows, not trips, and every weekly consumer below filters by explicit dates
-     anyway: the week's figures cannot change by the range having more days in it. */
-  const [expAll, defAll, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
-    expectedTotalsInRange(db, { type: 'today', from: loanFloor, to: sun, teams: user.teams }),
-    defaulterTotalsInRange(db, { from: loanFloor, to: sun, teams: user.teams }),
+  /* THE SAME TWO READS CARRY THE MONTH -- BUT ONLY WHERE THE DATABASE CAN SUM IT. The first
+     version widened the plain range reads, and on a deployment without the totals function
+     the fallback read a MONTH of raw customer rows: the dashboard stopped answering inside
+     45 seconds, in production. The wide window is now offered only to the aggregating
+     function; without it the raw fallback stays on the week the dashboard has always read,
+     and monthOk tells the month cards to stand down. Trips are unchanged either way -- the
+     speed guard's 22 budget holds. */
+  const [expAllRes, defAllRes, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
+    expectedTotalsWide(db, { type: 'today', wideFrom: loanFloor, from: mon, to: sun, teams: user.teams }),
+    defaulterTotalsWide(db, { wideFrom: loanFloor, from: mon, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
       /* upload_date rides along because it is the day the admin CHOSE for the report, and a
@@ -5421,7 +5424,8 @@ async function dashboardFull(db, user, args, nowMs) {
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
-  const myExpWeek = scoped(user, expAll), myDefWeek = scoped(user, defAll);
+  const monthOk = expAllRes.monthOk && defAllRes.monthOk;
+  const myExpWeek = scoped(user, expAllRes.rows), myDefWeek = scoped(user, defAllRes.rows);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -5530,7 +5534,7 @@ async function dashboardFull(db, user, args, nowMs) {
      its current ON THE SAME WEEKDAY -- the exact rule recTrend fought for, because pairing
      two different weekdays' decks reports the gap between two populations as recovery. */
   let colMonthExpected = 0, colMonthCollected = 0, recMonthRecovered = 0, recMonthUncollected = 0;
-  for (let d = monthStart0; d <= today; d = addDaysKey(d, 1)) {
+  if (monthOk) for (let d = monthStart0; d <= today; d = addDaysKey(d, 1)) {
     const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
     colMonthExpected += tExpected(rows);
     colMonthCollected += tCollected(rows);
@@ -5676,10 +5680,14 @@ async function dashboardFull(db, user, args, nowMs) {
       /* The three month cards -- sales, collection and recovery month-to-date. */
       salesMonth: teams.reduce((s, t) => s + t.salesMonth, 0),
       salesMonthLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= monthStart && String(l.approved_date || '').slice(0, 10) <= today).length,
-      colMonthExpected, colMonthCollected,
-      colMonthPct: colMonthExpected > 0 ? Math.round((colMonthCollected / colMonthExpected) * 1000) / 10 : null,
-      recMonthRecovered, recMonthUncollected,
-      recMonthPct: recMonthUncollected > 0 ? Math.round((recMonthRecovered / recMonthUncollected) * 1000) / 10 : null,
+      /* null (not zero) where the totals function is not installed: a month the server could
+         not compute must read as "not available", never as a month of zero collection. */
+      colMonthExpected: monthOk ? colMonthExpected : null,
+      colMonthCollected: monthOk ? colMonthCollected : null,
+      colMonthPct: monthOk && colMonthExpected > 0 ? Math.round((colMonthCollected / colMonthExpected) * 1000) / 10 : null,
+      recMonthRecovered: monthOk ? recMonthRecovered : null,
+      recMonthUncollected: monthOk ? recMonthUncollected : null,
+      recMonthPct: monthOk && recMonthUncollected > 0 ? Math.round((recMonthRecovered / recMonthUncollected) * 1000) / 10 : null,
       abnormal: myAbn.length,
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),

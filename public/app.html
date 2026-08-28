@@ -2372,10 +2372,16 @@ VIEWS.dashboard = function(){
       + kpi('Sales this month', money(c.salesMonth),
             (d.monthTarget>0 ? Math.round(1000*c.salesMonth/d.monthTarget)/10+'% of '+money(d.monthTarget)+' · ' : '')
               + money(c.salesMonthLoans)+' loans', 'good')
-      + kpi('Collection this month', money(c.colMonthCollected),
-            'of '+money(c.colMonthExpected)+' expected'+(c.colMonthPct!=null?' · '+pct(c.colMonthPct):''), 'good')
-      + kpi('Recovery this month', money(c.recMonthRecovered),
-            'of '+money(c.recMonthUncollected)+' uncollected'+(c.recMonthPct!=null?' · '+pct(c.recMonthPct):''), 'good')
+      /* Null means the server COULD NOT compute the month (the totals function is not
+         installed there) -- a dash with the fix named, never a month of zero. */
+      + (c.colMonthExpected != null
+          ? kpi('Collection this month', money(c.colMonthCollected),
+                'of '+money(c.colMonthExpected)+' expected'+(c.colMonthPct!=null?' · '+pct(c.colMonthPct):''), 'good')
+          : kpi('Collection this month', '—', 'run db/migrations/RUN-ME-2026-08-09.sql (totals fn)'))
+      + (c.recMonthRecovered != null
+          ? kpi('Recovery this month', money(c.recMonthRecovered),
+                'of '+money(c.recMonthUncollected)+' uncollected'+(c.recMonthPct!=null?' · '+pct(c.recMonthPct):''), 'good')
+          : kpi('Recovery this month', '—', 'run db/migrations/RUN-ME-2026-08-09.sql (totals fn)'))
       + kpi('Abnormal payments', money(c.abnormal), 'TZS ' + money(c.abnormalAmount) + ' flagged', 'bad')
       + '</div>'
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
