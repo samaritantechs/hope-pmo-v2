@@ -4,7 +4,7 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
-  monthTotalsChunked,
+  totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
@@ -5352,6 +5352,98 @@ export function asOfWeek(nowMs, weekOf) {
   return { ms: asOfMs, weekOf: pickedMon, past: true, requested: pickedMon, future: false };
 }
 
+/* =======================================================================================
+   THE MONTH LEDGER -- the month cards remember their own progress.
+
+   Every attempt at computing the month inside one request has failed on the live instance:
+   raw rows for a month do not come back; one month-wide aggregate does not come back; and
+   even week-sized aggregate slices -- ten sequential calls -- do not all fit a time budget
+   there. What DOES hold is that one week-sized call answers, every dashboard load proves it.
+
+   So the month is assembled once and REMEMBERED, in the one table every deployment has:
+   settings. One row per month, per-team per-day sums, written by whoever computes them.
+   Each compute does the live week's slice first (those days keep changing under uploads),
+   then as many missing earlier slices as fit the budget, stores its progress, and answers
+   only when every day of the month is in hand -- so a cold ledger fills across two or three
+   loads and the tiles show a dash meanwhile, never a wrong number. Once the earlier weeks
+   are frozen in the ledger, every later load costs one settings read and one live-week
+   slice. Days before the current week freeze as computed: a re-upload of a date that old is
+   rare, and the clean-reports screen exists for history surgery.
+
+   The per-day cell keeps each TEAM separately, so a scoped officer sums their own teams out
+   of the same ledger an admin filled. Recovery pairs each day's initial against its current
+   deck (the day's own weekday, as everywhere), and the day's paired flag gates the sum --
+   never a gap between two different populations. */
+const MONTH_LEDGER_PREFIX = 'MONTH_LEDGER_';
+function monthDayCell_(d, expRows, defRows) {
+  const rows = pickLatestBatchRows(expRows.filter(r => String(r.snapshot_date) === d));
+  const dwd = WD7[isoWeekday(Date.parse(d + 'T12:00:00Z')) - 1];
+  const ini = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
+  const cur = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
+  const t = {};
+  const cell = T => (t[T] = t[T] || { e: 0, c: 0, u: 0, ri: 0, rc: 0, p: 0 });
+  for (const r of rows) { const s = cell(K(r.team)); s.e += num(r.expected_amt); s.c += num(r.collected_amt); s.u += num(r.uncollected_amt); }
+  const paired = (ini.length && cur.length) ? 1 : 0;
+  for (const r of ini) cell(K(r.team)).ri += num(r.arrears_amt);
+  for (const r of cur) cell(K(r.team)).rc += num(r.arrears_amt);
+  for (const T in t) t[T].p = paired;
+  return t;
+}
+async function monthLedger_(db, user, { monthStart, today, mon, budgetMs }) {
+  const deadline = Date.now() + budgetMs;
+  const key = MONTH_LEDGER_PREFIX + monthStart.slice(0, 7);
+  let ledger = null;
+  try { ledger = JSON.parse((await settingGet(db, key)) || 'null'); } catch (e) {}
+  if (!ledger || typeof ledger !== 'object' || !ledger.days) ledger = { days: {} };
+
+  const [sumE, sumF] = await Promise.all([
+    monthSummaryRows(db, 'expected', { from: monthStart, to: today }),
+    monthSummaryRows(db, 'defaulter', { from: monthStart, to: today }),
+  ]);
+
+  /* The live week first -- its days keep changing under uploads -- then only the frozen
+     slices still missing. One slice is the call size this database answers; the deadline
+     decides how many fit today, and the store carries the rest to the next load. */
+  const weekFloor = mon > monthStart ? mon : monthStart;
+  const jobs = [];
+  if (weekFloor <= today) jobs.push([weekFloor, today]);
+  for (let d = monthStart; d < weekFloor; d = addDaysKey(d, 7)) {
+    const to0 = addDaysKey(d, 6) < weekFloor ? addDaysKey(d, 6) : addDaysKey(weekFloor, -1);
+    let missing = false;
+    for (let x = d; x <= to0; x = addDaysKey(x, 1)) if (!ledger.days[x]) { missing = true; break; }
+    if (missing) jobs.push([d, to0]);
+  }
+  let changed = false;
+  for (const [f, t0] of jobs) {
+    if (Date.now() > deadline) break;         // stored progress resumes on the next load
+    const slice = await totalsAggSlice(db, { from: f, to: t0 });
+    if (!slice) return null;                  // the totals functions are not installed here
+    const expAll = slice.exp.concat(sumE), defAll = slice.def.concat(sumF);
+    for (let x = f; x <= t0; x = addDaysKey(x, 1)) {
+      ledger.days[x] = monthDayCell_(x, expAll, defAll);
+      changed = true;
+    }
+  }
+  if (changed) {
+    // Best-effort: a lost write only means the next load recomputes what this one just did.
+    await runQuery(() => db.from('settings')
+      .upsert({ key, value: JSON.stringify(ledger) }, { onConflict: 'key' }));
+  }
+  for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) if (!ledger.days[d]) return null;
+
+  let colE = 0, colC = 0, recR = 0, recU = 0;
+  for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) {
+    const cellMap = ledger.days[d];
+    for (const T in cellMap) {
+      if (!teamAllowed(user, T)) continue;
+      const s = cellMap[T];
+      colE += s.e; colC += s.c; recU += s.u;
+      if (s.p) recR += s.ri - s.rc;
+    }
+  }
+  return { colE, colC, recU, recR };
+}
+
 async function dashboardFull(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   nowMs = asOf.ms;
@@ -5391,7 +5483,7 @@ async function dashboardFull(db, user, args, nowMs) {
      tiles a dash, never the screen -- hence the .catch. */
   const MONTH_BUDGET_MS = 8000;
   const monthPromise = cachedAnswer(db, 'monthCards|' + monthStart0, user, nowMs, () =>
-    monthTotalsChunked(db, { from: monthStart0, to: today, teams: user.teams, budgetMs: MONTH_BUDGET_MS })
+    monthLedger_(db, user, { monthStart: monthStart0, today, mon, budgetMs: MONTH_BUDGET_MS })
       .catch(() => null));
   const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
@@ -5433,8 +5525,6 @@ async function dashboardFull(db, user, args, nowMs) {
 
   const monthOk = !!month;
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
-  const myExpMonth = monthOk ? scoped(user, month.exp) : [];
-  const myDefMonth = monthOk ? scoped(user, month.def) : [];
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -5542,17 +5632,11 @@ async function dashboardFull(db, user, args, nowMs) {
      collection sums the latest deck per day, and recovery pairs each day's initial against
      its current ON THE SAME WEEKDAY -- the exact rule recTrend fought for, because pairing
      two different weekdays' decks reports the gap between two populations as recovery. */
-  let colMonthExpected = 0, colMonthCollected = 0, recMonthRecovered = 0, recMonthUncollected = 0;
-  if (monthOk) for (let d = monthStart0; d <= today; d = addDaysKey(d, 1)) {
-    const rows = pickLatestBatchRows(dayRows(myExpMonth, d));
-    colMonthExpected += tExpected(rows);
-    colMonthCollected += tCollected(rows);
-    recMonthUncollected += tUncollected(rows);
-    const dwd = WD7[isoWeekday(Date.parse(d + 'T12:00:00Z')) - 1];
-    const ini = pickLatestBatchRows(myDefMonth.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
-    const cur = pickLatestBatchRows(myDefMonth.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
-    if (ini.length && cur.length) recMonthRecovered += tArrears(ini) - tArrears(cur);
-  }
+  // The month ledger already did the day-by-day arithmetic -- see monthLedger_ above.
+  const colMonthExpected = monthOk ? month.colE : 0;
+  const colMonthCollected = monthOk ? month.colC : 0;
+  const recMonthRecovered = monthOk ? month.recR : 0;
+  const recMonthUncollected = monthOk ? month.recU : 0;
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));

@@ -120,13 +120,15 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
 
    screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  /* 22 -> 32 trips and 5,000 -> 5,200 rows: the month cards. The month is asked in WEEK-SIZED
-     slices of the aggregate (a whole-month aggregate did not answer inside the budget on the
-     live instance), so up to five slices x two functions plus two whole-month summary reads
-     ride along -- every one an aggregate answering totals rows, never customer rows, held to
-     a time budget, and cached for a minute so only the first viewer per scope pays. */
+  /* 22 -> 32 trips, 5,000 -> 5,200 rows (all teams) and 400 -> 1,200 rows (one team): the
+     month ledger. The month is asked in week-sized slices of the aggregate and REMEMBERED in
+     settings, so this cold-cache worst case -- every slice computed in one call -- happens
+     once per month per deployment; warm loads cost one settings read and the live week's
+     slice. The slices are deliberately UNSCOPED (one shared ledger serves every viewer,
+     which is why the one-team row count rises), and every row is a per-team-per-day TOTAL,
+     never a customer row. */
   ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  32,  5200],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  32,   400],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  32,  1200],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
