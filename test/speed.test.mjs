@@ -120,8 +120,13 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
 
    screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  22,  5000],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  22,   400],
+  /* 22 -> 24 trips and 5,000 -> 5,200 rows: the month cards' two agg-only reads (plus their
+     summary rows). The extra rows are per-team-per-day TOTALS, never customer rows; the
+     database does the month's summing and the dashboard holds the reads to a time budget
+     besides -- the alternative, folding the month into the week reads, is what took
+     production past 45 seconds. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  24,  5200],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  24,   400],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],

@@ -4,7 +4,7 @@ import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
-  expectedTotalsWide, defaulterTotalsWide,
+  expectedTotalsAggOnly, defaulterTotalsAggOnly,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
 import { cachedAnswer } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
@@ -5380,16 +5380,22 @@ async function dashboardFull(db, user, args, nowMs) {
   const monthStart0 = String(today).slice(0, 7) + '-01';
   const loanFloor = monthStart0 < mon ? monthStart0 : mon;
   const abnWin = abnormalWindow(nowMs, args);
-  /* THE SAME TWO READS CARRY THE MONTH -- BUT ONLY WHERE THE DATABASE CAN SUM IT. The first
-     version widened the plain range reads, and on a deployment without the totals function
-     the fallback read a MONTH of raw customer rows: the dashboard stopped answering inside
-     45 seconds, in production. The wide window is now offered only to the aggregating
-     function; without it the raw fallback stays on the week the dashboard has always read,
-     and monthOk tells the month cards to stand down. Trips are unchanged either way -- the
-     speed guard's 22 budget holds. */
-  const [expAllRes, defAllRes, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
-    expectedTotalsWide(db, { type: 'today', wideFrom: loanFloor, from: mon, to: sun, teams: user.teams }),
-    defaulterTotalsWide(db, { wideFrom: loanFloor, from: mon, to: sun, teams: user.teams }),
+  /* THE MONTH MUST NEVER BE ABLE TO TAKE THE DASHBOARD DOWN, and it has now managed it twice:
+     once through the raw fallback reading a month of customer rows, and once through the
+     month-wide AGGREGATE itself being slow on the live instance even with the database doing
+     the summing. So the week reads below are the backbone, exactly the shape they were before
+     the month cards existed, and the month rides beside them as two strictly agg-only reads
+     under a hard time budget: answer inside it or the cards stand down (null, a dash on the
+     tile). `.catch(null)` for the same reason -- no month failure of ANY kind may surface as
+     "Seva haijibu ndani ya sekunde 45". */
+  const MONTH_BUDGET_MS = 8000;
+  const orNull_ = (p, ms) => Promise.race([
+    p.catch(() => null),
+    new Promise(res => setTimeout(res, ms, null)),
+  ]);
+  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid, expMonth, defMonth] = await Promise.all([
+    expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
+    defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
       /* upload_date rides along because it is the day the admin CHOSE for the report, and a
@@ -5421,11 +5427,15 @@ async function dashboardFull(db, user, args, nowMs) {
     fetchAll(() => onTeams(db.from('received_payments')
       .select('team, amount_paid, transaction_id')
       .gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)),
+    orNull_(expectedTotalsAggOnly(db, { type: 'today', from: monthStart0, to: today, teams: user.teams }), MONTH_BUDGET_MS),
+    orNull_(defaulterTotalsAggOnly(db, { from: monthStart0, to: today, teams: user.teams }), MONTH_BUDGET_MS),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
-  const monthOk = expAllRes.monthOk && defAllRes.monthOk;
-  const myExpWeek = scoped(user, expAllRes.rows), myDefWeek = scoped(user, defAllRes.rows);
+  const monthOk = !!(expMonth && defMonth);
+  const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
+  const myExpMonth = monthOk ? scoped(user, expMonth) : [];
+  const myDefMonth = monthOk ? scoped(user, defMonth) : [];
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -5535,13 +5545,13 @@ async function dashboardFull(db, user, args, nowMs) {
      two different weekdays' decks reports the gap between two populations as recovery. */
   let colMonthExpected = 0, colMonthCollected = 0, recMonthRecovered = 0, recMonthUncollected = 0;
   if (monthOk) for (let d = monthStart0; d <= today; d = addDaysKey(d, 1)) {
-    const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
+    const rows = pickLatestBatchRows(dayRows(myExpMonth, d));
     colMonthExpected += tExpected(rows);
     colMonthCollected += tCollected(rows);
     recMonthUncollected += tUncollected(rows);
     const dwd = WD7[isoWeekday(Date.parse(d + 'T12:00:00Z')) - 1];
-    const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
-    const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
+    const ini = pickLatestBatchRows(myDefMonth.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
+    const cur = pickLatestBatchRows(myDefMonth.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
     if (ini.length && cur.length) recMonthRecovered += tArrears(ini) - tArrears(cur);
   }
 
