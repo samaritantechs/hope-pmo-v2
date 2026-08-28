@@ -5379,9 +5379,14 @@ async function dashboardFull(db, user, args, nowMs) {
   const monthStart0 = String(today).slice(0, 7) + '-01';
   const loanFloor = monthStart0 < mon ? monthStart0 : mon;
   const abnWin = abnormalWindow(nowMs, args);
-  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
-    expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
-    defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
+  /* THE SAME TWO READS NOW CARRY THE MONTH. The month cards need totals from the 1st, and two
+     extra round trips for them tripped the speed guard -- rightly. The totals are aggregated
+     per team per batch in the database, so widening the window from Monday back to the month
+     start costs rows, not trips, and every weekly consumer below filters by explicit dates
+     anyway: the week's figures cannot change by the range having more days in it. */
+  const [expAll, defAll, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
+    expectedTotalsInRange(db, { type: 'today', from: loanFloor, to: sun, teams: user.teams }),
+    defaulterTotalsInRange(db, { from: loanFloor, to: sun, teams: user.teams }),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
       /* upload_date rides along because it is the day the admin CHOSE for the report, and a
@@ -5416,7 +5421,7 @@ async function dashboardFull(db, user, args, nowMs) {
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
-  const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
+  const myExpWeek = scoped(user, expAll), myDefWeek = scoped(user, defAll);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -5519,6 +5524,23 @@ async function dashboardFull(db, user, args, nowMs) {
       full: i >= 5 && rec > 0 };
   });
 
+  /* ---- THE MONTH, DAY BY DAY, UNDER THE SAME RULES AS THE WEEK ----
+     Each day is batch-resolved on its own (a report uploaded twice must not double a month),
+     collection sums the latest deck per day, and recovery pairs each day's initial against
+     its current ON THE SAME WEEKDAY -- the exact rule recTrend fought for, because pairing
+     two different weekdays' decks reports the gap between two populations as recovery. */
+  let colMonthExpected = 0, colMonthCollected = 0, recMonthRecovered = 0, recMonthUncollected = 0;
+  for (let d = monthStart0; d <= today; d = addDaysKey(d, 1)) {
+    const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
+    colMonthExpected += tExpected(rows);
+    colMonthCollected += tCollected(rows);
+    recMonthUncollected += tUncollected(rows);
+    const dwd = WD7[isoWeekday(Date.parse(d + 'T12:00:00Z')) - 1];
+    const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
+    const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
+    if (ini.length && cur.length) recMonthRecovered += tArrears(ini) - tArrears(cur);
+  }
+
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
 
@@ -5582,7 +5604,11 @@ async function dashboardFull(db, user, args, nowMs) {
      read on, because a month is the period a sales target is actually set over. */
   const monthStart = String(today).slice(0, 7) + '-01';
   for (const l of myLoans) {
-    if (l.stage !== 'approved') continue;
+    /* SALES_STAGES, not 'approved' alone -- the rest of the system already counts a disbursed
+       or funded loan as the sale it still is (the stage moved forward; the sale did not
+       unhappen), and this loop was the last place still counting approved-only, so "Sales
+       this week" quietly shrank as the week's approvals were disbursed. */
+    if (!SALES_STAGES.includes(l.stage)) continue;
     const d = String(l.approved_date || '').slice(0, 10);
     const amt = num(l.principal_amt) || num(l.loan_amt);
     if (d >= mon && d <= sun) slot(l.team).sales += amt;
@@ -5636,6 +5662,8 @@ async function dashboardFull(db, user, args, nowMs) {
     // What was ASKED for, so the week bar can say when a choice was overruled and why.
     weekRequested: asOf.requested, weekFuture: asOf.future,
     weeklyTarget: weeklyTarget * Math.max(myTeams.length, 1), teamCount: myTeams.length,
+    // The month's company-wide target, same convention the per-team salesPct uses: weekly x 4.
+    monthTarget: monthTarget * Math.max(myTeams.length, 1),
     cards: {
       curArrears: teams.reduce((s, t) => s + t.curArrears, 0),
       initArrears: teams.reduce((s, t) => s + t.initArrears, 0),
@@ -5645,6 +5673,13 @@ async function dashboardFull(db, user, args, nowMs) {
       cleared: Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
       salesLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
+      /* The three month cards -- sales, collection and recovery month-to-date. */
+      salesMonth: teams.reduce((s, t) => s + t.salesMonth, 0),
+      salesMonthLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= monthStart && String(l.approved_date || '').slice(0, 10) <= today).length,
+      colMonthExpected, colMonthCollected,
+      colMonthPct: colMonthExpected > 0 ? Math.round((colMonthCollected / colMonthExpected) * 1000) / 10 : null,
+      recMonthRecovered, recMonthUncollected,
+      recMonthPct: recMonthUncollected > 0 ? Math.round((recMonthRecovered / recMonthUncollected) * 1000) / 10 : null,
       abnormal: myAbn.length,
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),
