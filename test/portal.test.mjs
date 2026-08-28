@@ -2550,6 +2550,38 @@ test('teams are ranked on the average of sales and collection, best first', asyn
   assert.equal(d.teamPerf[0].sn, 1, 'and numbered after ranking, not before');
 });
 
+/* THE MONTH IN THREE CARDS -- "we need the monthly widgets for sales, collection and recovery
+   there". Sales counts every SALES_STAGES loan approved this month (a disbursed loan is still
+   the sale it was); collection and recovery sum the month day by day under the same
+   batch-resolution and same-weekday pairing rules the weekly trends use. */
+test('the dashboard carries the month in three cards: sales, collection, recovery', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
+    // Disbursed is STILL a sale -- the stage moved forward, the sale did not unhappen.
+    { id: 'm2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
+    // Last month is a different month.
+    { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
+  ];
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0),
+    E('333', 'MBAGALA', 1000, 'PAID', 0),
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  const c = d.cards;
+  assert.equal(c.salesMonth, 500, 'approved 400 + disbursed 100; June excluded');
+  assert.equal(c.salesMonthLoans, 2);
+  assert.equal(c.colMonthExpected, 2000);
+  assert.equal(c.colMonthCollected, 1000);
+  assert.equal(c.colMonthPct, 50);
+  // The shared decks: initial 500+700+900 minus current 300+600+800 = 400 recovered today.
+  assert.equal(c.recMonthRecovered, 400);
+  assert.equal(c.recMonthUncollected, 1000, 'the UNPAID row is the month\'s uncollected');
+  assert.equal(c.recMonthPct, 40);
+  assert.ok(d.monthTarget > 0, 'weekly target x 4 x teams rides along for the tile');
+});
+
 test('recovery % is shown against all three denominators', async () => {
   const t = tables();
   t.repayment_snapshots = [
