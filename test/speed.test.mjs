@@ -120,13 +120,13 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
 
    screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  /* 22 -> 24 trips and 5,000 -> 5,200 rows: the month cards' two agg-only reads (plus their
-     summary rows). The extra rows are per-team-per-day TOTALS, never customer rows; the
-     database does the month's summing and the dashboard holds the reads to a time budget
-     besides -- the alternative, folding the month into the week reads, is what took
-     production past 45 seconds. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  24,  5200],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  24,   400],
+  /* 22 -> 32 trips and 5,000 -> 5,200 rows: the month cards. The month is asked in WEEK-SIZED
+     slices of the aggregate (a whole-month aggregate did not answer inside the budget on the
+     live instance), so up to five slices x two functions plus two whole-month summary reads
+     ride along -- every one an aggregate answering totals rows, never customer rows, held to
+     a time budget, and cached for a minute so only the first viewer per scope pays. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  32,  5200],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  32,   400],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
