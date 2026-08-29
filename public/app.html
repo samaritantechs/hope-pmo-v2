@@ -151,6 +151,13 @@
   .tcell .mrbar{display:block;height:4px;border-radius:3px;background:var(--line);margin-top:7px;overflow:hidden}
   .tcell .mrbar i{display:block;height:100%;border-radius:3px;background:var(--ok)}
   .tcell.tot .mrbar{background:rgba(255,255,255,.22)}
+  /* The unlabeled month-report dot -- "the directors hate exposing data so keep monthly in
+     the chip ... remove it's naming and just put a dot like the blinking synchronization at
+     phone calls". No name, no tooltip: a quiet pulse beside the week bar. The GM knows
+     where it lives; anyone who does not is on their own, by design. */
+  .syncdot{width:13px;height:13px;border-radius:50%;border:0;padding:0;margin-left:10px;
+    background:var(--b700);cursor:pointer;flex:0 0 auto;animation:syncpulse 1.5s ease-in-out infinite}
+  @keyframes syncpulse{0%,100%{opacity:.25}50%{opacity:1}}
   /* pipeline funnel */
   .fun{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12.5px}
   .fun .fl{width:150px;color:var(--mut);text-transform:capitalize}
@@ -1615,6 +1622,19 @@ function kpi(l, v, s, cls, id){ return '<div class="kpi"><div class="l">'+esc(l)
   + '<div class="v'+(cls?' '+cls:'')+'"'+(id?' id="'+id+'"':'')+'>'+v+'</div>'
   + (s?'<div class="s"'+(id?' id="'+id+'S"':'')+'>'+esc(s)+'</div>':'') + '</div>'; }
 function bar(html){ return '<div class="bar">'+html+'</div>'; }
+/* The rising / steady / dropping mark on the performance strip -- movement against the
+   previous period. Null means there WAS no previous period to compare with: no arrow at
+   all, never a fake "rising from nothing". */
+function trendArrow(dv){
+  if (dv == null) return '';
+  if (dv > 0) return ' <span class="good" style="font-size:14px">▲</span>';
+  if (dv < 0) return ' <span class="bad" style="font-size:14px">▼</span>';
+  return ' <span style="color:var(--soft);font-size:14px">▬</span>';
+}
+function trendSub(dv, label){
+  return dv == null ? 'hakuna kipindi kilichopita / no previous period'
+    : ((dv > 0 ? '+' : '') + dv + '% ' + (label || 'dhidi ya wiki iliyopita / vs last week'));
+}
 
 /* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
 var HEAD = '', ONROW = null;
@@ -2385,10 +2405,10 @@ function wireWeekBar(){
 VIEWS.dashboard = function(){
   return srv('dashboardFull', { weekOf: S.args.weekOf || '' }).then(function(d){
     var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
-    /* The chip beside the week bar opens the month report -- the three month tiles below,
-       opened up week by week -- and CARRIES the chosen week, so a dashboard slid back to
-       July opens July's report. */
-    HEAD = weekBar(d, '<button class="pill" data-go="monthreport" data-carry="weekOf" style="margin-left:8px">📅 Ripoti ya mwezi / Month report</button>')
+    /* The unlabeled dot beside the week bar opens the month report and CARRIES the chosen
+       week, so a dashboard slid back to July opens July's report. Deliberately nameless --
+       see the .syncdot note in the stylesheet. */
+    HEAD = weekBar(d, '<button class="syncdot" data-go="monthreport" data-carry="weekOf"></button>')
       + '<div class="kpis">'
       + kpi('Current arrears', money(c.curArrears), 'initial upload: ' + money(c.initArrears))
       + kpi('Recovered', money(c.recovered), 'initial − current · ' + money(c.cleared) + ' cleared', 'good')
@@ -2401,6 +2421,17 @@ VIEWS.dashboard = function(){
          lives behind the 📅 chip on the week bar and nowhere else on this screen. */
       + kpi('Abnormal payments', money(c.abnormal), 'TZS ' + money(c.abnormalAmount) + ' flagged', 'bad')
       + '</div>'
+      /* THE PERFORMANCE STRIP -- "show average of sales%, col% and recovery% performance
+         where in each one and the average have the rising constant or dropping arrow symbol
+         to know progress". This week's three percentages and their average, each carrying
+         last week's movement: ▲ rising, ▬ constant, ▼ dropping, nothing when there was no
+         last week to compare against. */
+      + (function(){ var p = d.perf || {}; return '<div class="kpis sm" style="margin-top:8px">'
+          + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), trendSub(p.dSales))
+          + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), trendSub(p.dCol))
+          + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), trendSub(p.dRec))
+          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), trendSub(p.dAvg))
+          + '</div>'; })()
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
       + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
           d.appsTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
@@ -2553,6 +2584,8 @@ VIEWS.monthreport = function(){
     var started = rows.filter(function(r){ return r.started; });
     var nWk = Math.max(started.length, 1);
     var avgOf = function(k){ return Math.round(started.reduce(function(s,r){ return s + (Number(r[k])||0); }, 0) / nWk); };
+    // The latest week that has actually happened -- its deltas are the month's direction.
+    var last = started.length ? started[started.length - 1] : null;
     /* The movement, drawn small beside the figure it belongs to -- green up, red down, the
        direction a WhatsApp picture is scanned for. */
     var mv = function(v, isPct){
@@ -2574,6 +2607,7 @@ VIEWS.monthreport = function(){
         [r.recovered != null
             ? 'Rec TZS ' + money(r.recovered) + ' · <b>' + pct(r.recPct) + '</b>' + mv(r.dRecPct, true)
             : 'Rec — bado', r.recovered != null ? '' : 'mutl'],
+        ['Perf <b>' + pct(r.perf) + '</b>' + mv(r.dPerf, true), 'mutl'],
         ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, r.colPct||0)) + '%"></i></span>'],
       ], live ? 'now' : '');
     });
@@ -2582,6 +2616,7 @@ VIEWS.monthreport = function(){
       [money(t.loans) + ' loans' + (t.monthTarget>0 ? ' · ' + pct(t.salesPct) + ' ya lengo' : ''), 'mutl'],
       [t.collected != null ? 'Col TZS ' + money(t.collected) + ' · <b>' + pct(t.colPct) + '</b>' : 'Col —', 'mutl'],
       [t.recovered != null ? 'Rec TZS ' + money(t.recovered) + ' · <b>' + pct(t.recPct) + '</b>' : 'Rec —', 'mutl'],
+      ['Perf <b>' + pct(t.perfPct) + '</b>', 'mutl'],
       ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, t.colPct||0)) + '%"></i></span>'],
     ], 'tot');
     var avgCell = tcell('WASTANI / AVERAGE', [
@@ -2589,6 +2624,7 @@ VIEWS.monthreport = function(){
       [(Math.round((Number(t.loans)||0) / nWk * 10) / 10) + ' loans / wiki', 'mutl'],
       [d.ledgerReady ? 'Col TZS ' + money(avgOf('collected')) + ' / wiki' : 'Col —', 'mutl'],
       [d.ledgerReady ? 'Rec TZS ' + money(avgOf('recovered')) + ' / wiki' : 'Rec —', 'mutl'],
+      ['Perf ~' + pct(avgOf('perf')) + ' / wiki', 'mutl'],
     ], 'tot');
     HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf" style="margin-left:8px">← Dashibodi / Dashboard</button>')
       + '<div class="kpis">'
@@ -2609,6 +2645,15 @@ VIEWS.monthreport = function(){
                 'of '+money(t.uncollected)+' uncollected'+(t.recPct!=null?' · '+pct(t.recPct):'')
                   + ' · wastani TZS '+money(avgOf('recovered'))+'/wiki', 'good')
           : kpi('Recovery this month', '—', 'haipatikani bado / not available yet'))
+      + '</div>'
+      /* The month's own performance strip: the same three percentages and their average,
+         with the arrows reading the LATEST week against the one before it -- the direction
+         the month is moving right now. */
+      + '<div class="kpis sm" style="margin-top:8px">'
+      + kpi('Sales %', pct(t.salesPct) + trendArrow(last && last.dSalesPct), trendSub(last && last.dSalesPct, 'wiki 2 za mwisho / last two weeks'))
+      + kpi('Collection %', pct(t.colPct) + trendArrow(last && last.dColPct), trendSub(last && last.dColPct, 'wiki 2 za mwisho / last two weeks'))
+      + kpi('Recovery %', pct(t.recPct) + trendArrow(last && last.dRecPct), trendSub(last && last.dRecPct, 'wiki 2 za mwisho / last two weeks'))
+      + kpi('Performance · wastani', pct(t.perfPct) + trendArrow(last && last.dPerf), trendSub(last && last.dPerf, 'wiki 2 za mwisho / last two weeks'))
       + '</div>'
       + (d.ledgerReady ? '' : '<div class="note">Hesabu za makusanyo na urejeshaji bado zinajazwa'
           + ' — fungua tena baada ya dakika moja. / The collection & recovery ledger is still'
@@ -2633,6 +2678,7 @@ VIEWS.monthreport = function(){
       col('to','Hadi / To','date'),
       col('sales','Sales','money'),
       col('loans','Loans','num'),
+      col('salesPct','Sales %','pct'),
       dcol('dSales','± Sales', function(v){ return money(v); }),
       col('expected','Expected','money'),
       col('collected','Collected','money'),
@@ -2642,6 +2688,8 @@ VIEWS.monthreport = function(){
       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
       col('recPct','Rec %','pct'),
       dcol('dRecPct','± Rec %', function(v){ return v+'%'; }),
+      col('perf','Perf %','pct'),
+      dcol('dPerf','± Perf', function(v){ return v+'%'; }),
     ];
     ONROW = null;
     S.foot = 'JUMLA / TOTAL · Sales TZS '+money(t.sales)+' ('+money(t.loans)+' loans)'

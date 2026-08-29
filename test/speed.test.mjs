@@ -120,12 +120,14 @@ const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], ta
 
    screen, portal function, args, who, TRIPS, ROWS, TRIPS(migrated), ROWS(migrated) */
 const BUDGETS = [
-  /* Back DOWN from the month-ledger raise (32 trips, 5,200 / 1,200 rows): the month was
-     retired from the dashboard -- "keep monthly in the chip" -- so the ledger's slices,
-     summaries and settings reads now run only inside monthReport, and the dashboard budget
-     returns to the week-only shape it had before the month cards existed. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  22,  5000],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  22,   400],
+  /* Back DOWN from the month-ledger raise (32 trips, 5,200 / 1,200 rows) when the month was
+     retired to the chip, then 22 -> 24 trips for the PERFORMANCE STRIP: two more week-sized
+     totals reads, because every percentage on the strip says which way it moved and movement
+     needs LAST week. Week-sized aggregate calls are the question shape this database answers
+     fastest; the row budgets stay at their week-only values because a totals week is a
+     handful of per-team-per-day rows, never customers. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  24,  5000],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  24,   400],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
