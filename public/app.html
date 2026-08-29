@@ -547,7 +547,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-b';
+var BUILD = '2026-08-29-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2760,10 +2760,19 @@ VIEWS.expected = function(){
       + kpi('Uncollected', money(t.uncollected), money(t.unpaid)+' unpaid · '+money(t.underpaid)+' underpaid', 'bad')
       + kpi('Collection', pct(t.pct), money(t.paid) + ' paid/overpaid')
       + '</div>'
-      + '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">Leo ni <b>'
-        + esc(d.todayWeekday) + '</b>. Wakusanyaji wa mapema (early collection) wanapimwa kwa orodha ya <b>kesho</b>.'
-        + (d.fellBack ? ' <span class="bad">Orodha ya '+esc(d.weekday)+' haijapakiwa bado — inaonyesha ya '+esc(d.date||'—')+'.</span>' : '')
-        + '</div>'
+      /* ONE SLIM RED LINE, AND ONLY WHEN THE LIST IS NOT TODAY'S.
+         "i missed the banner ... the banner is always too long just pass a single slim red row"
+         It used to be a paragraph of standing advice in calm blue, with the warning tacked on
+         the end of it as one more sentence -- so the one line that mattered was the easiest
+         thing on the screen to skim past, which is exactly what happened. And it only spoke
+         when the requested weekday had no sheet: on a Saturday, showing Friday, it said
+         nothing at all. Now the test is the honest one -- is this today's list? -- and the
+         answer, when it is no, is a single red row and nothing else. */
+      + (d.isToday ? '' :
+          '<div class="note bad" style="padding:6px 10px;font-size:12px;line-height:1.35">'
+          + 'Expected ya <b>' + esc(d.date || '—') + '</b>'
+          + (d.weekday ? ' (' + esc(d.weekday) + ')' : '') + ' &middot; leo hakuna'
+          + '</div>')
       + '<div class="pills">' + d.weekdays.map(function(w){
           return '<button class="pill'+(w===d.weekday?' on':'')+'" data-wd="'+w+'">'+w
             + (w===d.todayWeekday?' · leo':'') + '</button>'; }).join('')
