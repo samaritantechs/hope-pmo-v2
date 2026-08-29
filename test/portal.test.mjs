@@ -330,6 +330,34 @@ test('PAR bands customers by days in arrears', async () => {
   assert.equal(d.totals.arrears, 1700);
 });
 
+/* THE WEEKLY REPORT WAS HANDING OUT EVERY TEAM'S SIGN-IN CODE.
+   `teamRows` went out as readTeamsAll() returns it: every team in the company, every column,
+   to anybody who could open the report. The scope alone was wrong -- no other screen shows an
+   officer another team's leaders -- but `team_code` is the real fault. That is the credential a
+   field officer types to register a handset onto a team, and the Teams screen says in as many
+   words to change it the moment it leaks. Inside an ordinary weekly report, any officer could
+   read every other team's code out of the response and enrol a phone on that team, which hands
+   them that team's entire customer book. The report only ever needed the leader NAMES. */
+test('the weekly report never ships another team\'s leaders, and never ships a sign-in code', async () => {
+  const t = tables();
+  // Give both teams a sign-in code, so its absence below is a real assertion.
+  for (const row of t.teams) row.team_code = 'CODE-' + row.team;
+
+  const mine = await portalApi(fakeDb(t), GMO, 'weekly', {}, NOW);   // GMO holds KONGOWE only
+  assert.ok(mine.teamRows.length, 'the leader columns are still there to stamp');
+  assert.ok(mine.teamRows.every(r => r.team === 'KONGOWE'), 'and only for the team they hold');
+  for (const r of mine.teamRows) {
+    assert.equal(r.team_code, undefined, 'the sign-in code must never travel in a report');
+  }
+
+  // An admin sees every team -- and still gets no codes, because no report needs one.
+  const all = await portalApi(fakeDb(t), ADMIN, 'weekly', {}, NOW);
+  assert.ok(all.teamRows.length > mine.teamRows.length, 'an admin sees more teams');
+  for (const r of all.teamRows) assert.equal(r.team_code, undefined);
+  // The whole point of teamRows survives: the leader names are what a hand-stamp records.
+  assert.ok(all.teamRows.some(r => r.gmo || r.manager || r.bike), 'leader names still present');
+});
+
 test('weekly lays out Mon-Fri with the week totals', async () => {
   const d = await run('weekly', {});
   assert.equal(d.weekOf, MON);

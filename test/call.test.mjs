@@ -82,6 +82,27 @@ test('boot on an unknown device gives branding only, never the team list', async
   assert.ok(d.brand, 'branding still loads so the sign-in screen is recognisable');
 });
 
+/* AND A REGISTERED HANDSET DOES NOT GET THE WHOLE LIST EITHER.
+   The test above closed the unauthenticated door. The registered branch went on sending every
+   team name in the company to all two hundred handsets -- and nothing on the phone ever read
+   it: call.html draws its header from `team` and `leaderTeams`. So it was a standing
+   disclosure of exactly the enrolment surface the test above exists to protect, paid for on
+   every boot, in exchange for nothing. */
+test('a registered officer boots with their own team only, not the company list', async () => {
+  const t = makeTables();
+  // A second team the officer has nothing to do with.
+  t.teams.push({ team: 'MBAGALA', team_code: 'MBA999', gmo: 'G2', manager: 'M2', bike: 'B2' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+
+  const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
+  assert.equal(d.ok, true);
+  assert.deepEqual(d.teams, ['KONGOWE'], 'their own team, and no other');
+  // The sign-in code of ANY team must never ride along on a boot.
+  assert.ok(!JSON.stringify(d).includes('MBA999'), 'no other team\'s sign-in code');
+  assert.ok(!JSON.stringify(d).includes('KON123'), 'not even their own');
+});
+
 test('officer registration: boot resolves the device to the user', async () => {
   const db = await registeredDb();
   const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
