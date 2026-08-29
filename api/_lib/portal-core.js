@@ -6082,8 +6082,16 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
   const st = {};
   for (const r of rows) { const k = K(r.todays_status) || '(BLANK)'; st[k] = (st[k] || 0) + 1; }
   const teamsSeen = [...new Set(rows.map(r => r.team).filter(Boolean))].sort();
+  /* IS WHAT IS ON SCREEN ACTUALLY TODAY'S LIST?
+     `fellBack` answers a NARROWER question -- "the weekday I asked for had no sheet, so I went
+     looking" -- and on a Saturday it is false: the tab asks for Friday, Friday exists, nothing
+     fell back. Correct, and it left the screen with no notice at all while showing a list that
+     was not today's. The person reading it has one question, and this is it. */
+  const todayK = todayKey(nowMs);
   return {
     weekday: wd, date: snap.date, requestedDate: date, fellBack, type,
+    today: todayK,
+    isToday: !!snap.date && String(snap.date) === String(todayK),
     weekdays: WD5, todayWeekday: currentWeekday(nowMs),
     rows, count: rows.length, teams: teamsSeen,
     totals: { expected: exp, collected: col, uncollected: uncollectedOf(rows),

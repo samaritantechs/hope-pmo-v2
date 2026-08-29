@@ -3619,6 +3619,31 @@ test('the per-weekday Expected read is scoped and complete too', async () => {
   }
 });
 
+/* THE RED LINE ON THE EXPECTED TAB.
+   "i missed the banner" -- and it was not there to miss. The old notice fired on `fellBack`,
+   which asks the narrower question "the weekday I asked for had no sheet". On a Saturday the
+   tab asks for FRIDAY and Friday exists, so nothing fell back and the screen said nothing at
+   all while showing a list that was not today's. `isToday` asks the question the reader
+   actually has. */
+test('the Expected tab says plainly when the list on screen is not today\'s', async () => {
+  // NOW is Friday 2026-07-24 and the fixture's sheet is dated that day: this IS today's list.
+  const today = await portalApi(fakeDb(tables()), ADMIN, 'expectedDay', {}, NOW);
+  assert.equal(today.date, TODAY);
+  assert.equal(today.isToday, true, 'Friday, showing Friday: no red line');
+  assert.equal(today.today, TODAY);
+
+  // The same book read on SATURDAY. The tab lands on Friday -- the last working day that has a
+  // list -- so fellBack stays false, and the old notice therefore said nothing. isToday is what
+  // catches it.
+  const SAT = Date.parse('2026-07-25T09:00:00Z');
+  const sat = await portalApi(fakeDb(tables()), ADMIN, 'expectedDay', {}, SAT);
+  assert.equal(sat.weekday, 'FRI', 'a weekend lands on Friday');
+  assert.equal(sat.date, TODAY, 'and shows Friday\'s sheet');
+  assert.equal(sat.fellBack, false, 'nothing fell back -- which is why the old notice was silent');
+  assert.equal(sat.isToday, false, 'but it is NOT today\'s list, and the red line says so');
+  assert.equal(sat.today, '2026-07-25');
+});
+
 test('the Defaulters tab is scoped to the officer\'s teams as well', async () => {
   const officer = await portalApi(fakeDb(tables()), GMO, 'defaulters', {}, NOW);
   assert.ok(officer.rows.length > 0);
