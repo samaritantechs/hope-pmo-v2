@@ -5514,7 +5514,22 @@ async function monthReportCompute_(db, user, asOf) {
   const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
   /* One PERFORMANCE number wherever three percentages sit together -- the average, under
      the team-ranking convention: a missing percentage counts as nothing, never skipped. */
-  const perfOf = (a, b, c) => Math.round(((a || 0) + (b || 0) + (c || 0)) / 3 * 10) / 10;
+  /* THE AVERAGE IS OF THE PERCENTAGES THAT WERE ACTUALLY MEASURED.
+     "average of sales col and rec is by percentage not amounts since all the 3 have %"
+     It always was a percentage average -- three percentages over three, never amounts. What
+     was wrong was the divisor: a percentage that is NULL means the question could not be
+     asked (no defaulter deck was paired that week, so recovery was not measured), and
+     counting that as 0% while still dividing by three printed an average that contradicted
+     the very numbers beside it -- Sales 80%, Collection 92%, Recovery "—", average 57.3%.
+     A director reading that is right to distrust the screen. So a missing percentage leaves
+     BOTH the sum and the divisor, and `perfN` says how many of the three the average covers
+     so the strip can disclose it rather than quietly flatter a week with no decks. */
+  const measured_ = (...v) => v.filter(x => x != null);
+  const perfOf = (a, b, c) => {
+    const m = measured_(a, b, c);
+    return m.length ? Math.round((m.reduce((s, x) => s + x, 0) / m.length) * 10) / 10 : null;
+  };
+  const perfN = (a, b, c) => measured_(a, b, c).length;
 
   const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY',
@@ -5550,6 +5565,7 @@ async function monthReportCompute_(db, user, asOf) {
       uncollected: s ? s.recU : null, recovered: s ? s.recR : null,
       recPct,
       perf: started ? perfOf(salesPct, colPct, recPct) : null,
+      perfOn: started ? perfN(salesPct, colPct, recPct) : null,
     });
     from = addDaysKey(to, 1);
   }
@@ -5586,6 +5602,7 @@ async function monthReportCompute_(db, user, asOf) {
       uncollected: total ? total.recU : null, recovered: total ? total.recR : null,
       recPct: totRecPct,
       perfPct: perfOf(totSalesPct, totColPct, totRecPct),
+      perfOn: perfN(totSalesPct, totColPct, totRecPct),
     },
   };
 }
@@ -5822,8 +5839,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     // A week nobody paired a single deck in is a week recovery was NOT MEASURED -- null,
     // never 0% -- the same rule recTrend applies to a single day.
     const recPct = measured ? p_(rec, u) : null;
+    /* Averaged over the percentages that were MEASURED -- see perfOf in monthReport for why a
+       null must leave the divisor as well as the sum. */
+    const meas = [salesPct, colPct, recPct].filter(v => v != null);
     return { salesPct, colPct, recPct,
-      avgPct: Math.round(((salesPct || 0) + (colPct || 0) + (recPct || 0)) / 3 * 10) / 10,
+      avgPct: meas.length ? Math.round((meas.reduce((s, v) => s + v, 0) / meas.length) * 10) / 10 : null,
+      avgOn: meas.length,
       hasData: e > 0 || u > 0 || salesAmt > 0 };
   };
   const wkNow = weekPcts_(myExpWeek, myDefWeek, mon, sun);
@@ -5831,10 +5852,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const move_ = (a, b) => (a == null || b == null || !wkPrev.hasData) ? null : Math.round((a - b) * 10) / 10;
   const perf = {
     salesPct: wkNow.salesPct, colPct: wkNow.colPct, recPct: wkNow.recPct, avgPct: wkNow.avgPct,
+    avgOn: wkNow.avgOn,
     dSales: move_(wkNow.salesPct, wkPrev.salesPct),
     dCol: move_(wkNow.colPct, wkPrev.colPct),
     dRec: move_(wkNow.recPct, wkPrev.recPct),
-    dAvg: wkPrev.hasData ? Math.round((wkNow.avgPct - wkPrev.avgPct) * 10) / 10 : null,
+    dAvg: move_(wkNow.avgPct, wkPrev.avgPct),
   };
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
