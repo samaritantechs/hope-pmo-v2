@@ -2260,7 +2260,22 @@ async function weekly(db, user, { weekOf }, nowMs) {
     teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
     // The leader columns as they stand, so a hand-stamp records the same names the automatic
     // one does rather than reading the table a second time and possibly a moment later.
-    teamRows,
+    /* THE LEADER COLUMNS -- FOR THE TEAMS THIS PERSON MAY SEE, AND WITHOUT THE SIGN-IN CODE.
+       This sent readTeamsAll() out whole: every team in the company, every column, to anybody
+       who could open the weekly report. Two separate faults in one line.
+
+       The lesser one is scope -- a KONGOWE officer was handed MBAGALA's leader names, which
+       every other screen is careful never to do.
+
+       The serious one is `team_code`. That is the credential a field officer types to register
+       a handset onto a team ("change it the moment it leaks"), so shipping it inside an
+       ordinary report meant any officer could read every other team's code out of the response
+       and enrol a phone on that team -- which hands them that team's whole customer book. The
+       report only ever needed the leader NAMES, so the code has no business travelling with
+       them. */
+    teamRows: teamRows
+      .filter(t => teamAllowed(user, t.team))
+      .map(({ team_code, ...rest }) => rest),
     leadCols: TEAM_ROLE_COLS.slice(),
     hasMonday: myMonIni.length > 0, hasWeekEnd: myEndCur.length > 0, weekEndDate: endCur.date,
     totals: {

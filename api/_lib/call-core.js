@@ -252,7 +252,20 @@ async function boot(db, [dev], nowMs) {
     expdfLeader: true,
     expdfOwner,
     leaderTeams: cu.is_leader ? (!cu.leader_teams || !cu.leader_teams.length ? 'ALL' : cu.leader_teams.join(',')) : '',
-    teams,
+    /* THE TEAM LIST, NARROWED TO WHAT THIS HANDSET MAY SEE.
+       The unauthenticated branch above stopped publishing every team name years ago, and says
+       why: "half of what made self-registration work: pick a team off the list, get its book."
+       The REGISTERED branch went on sending the whole company's list to all two hundred
+       handsets -- and nothing on the phone has ever read it (call.html draws the header from
+       `team` and `leaderTeams`). So it was a standing disclosure of the enrolment surface,
+       paid for on every boot, in exchange for nothing.
+       A leader over named teams gets those; an all-teams leader legitimately gets all; an
+       ordinary officer gets their own and no other. */
+    teams: (cu.is_leader && (!cu.leader_teams || !cu.leader_teams.length))
+      ? teams
+      : (cu.is_leader
+          ? teams.filter(t => (cu.leader_teams || []).some(x => K(x) === K(t)))
+          : teams.filter(t => K(t) === K(cu.team))),
     watermark: num(cu.last_ts),
     // From the same settings query as everything else above, not a sixth journey.
     ...fuStatusShape(parseFuStatuses(setting(FU_STATUS_KEY))),
