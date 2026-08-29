@@ -6,11 +6,21 @@
 -- leans on. It contains everything RUN-ME-008 and RUN-ME-010 contained, so if those were
 -- never run it does not matter: run THIS once and the war is over.
 --
--- HOW TO RUN. Paste the WHOLE file into the Supabase SQL editor and run once, best when
--- nobody is uploading (plain CREATE INDEX pauses writes briefly -- seconds at this size).
+-- ⚠ HOW TO RUN -- ONE NUMBERED SECTION AT A TIME. DO NOT PASTE THE WHOLE FILE.
+--
+-- This was originally written as a single paste, and that took the live system down: the
+-- Supabase SQL editor wraps a paste in ONE transaction, so all 41 index builds plus the
+-- ANALYZE ran as one long lock on the busiest tables. Uploads queued behind it, the queue
+-- used up the connection pool, and then even signing in timed out with a 504.
+--
+-- So: copy ONE section (1, then 2, then 3 ...), run it, wait for it to finish, then the
+-- next. Each section is seconds of work on its own. Run it when nobody is uploading, and
+-- stop for the day if any section takes more than a minute -- there is no harm in
+-- finishing tomorrow, and every section is independent.
+--
 -- Safe to re-run: every statement is IF NOT EXISTS / CREATE OR REPLACE, and the pieces
--- that depend on optional columns or tables check first, so the paste can never abort
--- halfway through.
+-- that depend on optional columns or tables check first, so a section can never abort
+-- halfway through. If the system ever slows during this, run db/FIX-NOW-unblock-database.sql.
 --
 -- NOT TOUCHED, ON PURPOSE: the HOPE LOAN book lives in its own schema with its own
 -- RUN-ME series (db/hopeloan/RUN-ME-000..006). This file is the HOPE PMO book.
