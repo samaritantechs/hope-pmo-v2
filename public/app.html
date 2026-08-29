@@ -3228,6 +3228,7 @@ function fillPctTotals(t, rows, cols){
          amount and target on the team board, while the month report has neither field on it.
          Returning here left those cells BLANK beside a row of real figures, which is the very
          thing this function exists to stop. Fall through to the average instead. */
+    }
     // Rows that have no value at all are left out of the average rather than counted as zero,
     // which would drag every board with a blank row towards nothing. Same rule the performance
     // strip's average follows: not measured is not the same as zero.
