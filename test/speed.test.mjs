@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -156,6 +156,14 @@ const BUDGETS = [
   ['SMS export (defaulters)',   'smsExport', { audience: 'defaulters' }, ADMIN, 8, 2000, 6, 2000],
   ['SMS export (portfolio)',    'smsExport', { audience: 'portfolio' }, ADMIN, 10, 15000, 8, 15000],
   ['SMS gaps (portfolio)',      'smsGaps',   { audience: 'portfolio' }, ADMIN, 10, 15000, 8, 15000],
+  /* THE READ THAT HUNG THE SETTINGS TAB AND, ON A BAD NIGHT, THE DATABASE UNDER IT. The old
+     fallback downloaded every row of eleven tables just to count them -- on this fixture alone
+     that was ~45,000 rows for one click of Settings, and on the live book it was the click that
+     kept a throttled instance pinned down. Now: with the function, one grouped call; without
+     it, eleven HEAD counts that move NO rows. The row budgets are the whole point here.
+     (Migrated world is more than one trip because a source with no rows at all answers the
+     function with silence, and silence gets one HEAD count to confirm empty-vs-unknown.) */
+  ['Storage panel (Settings)',  'storageUsage', {}, ADMIN, 14, 100, 8, 800],
 ];
 
 /* Both worlds, every screen. `rpc: undefined` is a database where the migration has not been
@@ -166,7 +174,7 @@ const WORLDS = [
   /* The migrated world means EVERY migration, not just the totals: the pipeline funnel's eight
      counts collapse into one grouped call the same way the team-day sums do, and a budget that
      leaves that out is measuring a deployment nobody is running. */
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC } }, 6, 7],
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {

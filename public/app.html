@@ -547,7 +547,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-18-d';
+var BUILD = '2026-08-29-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4660,10 +4660,76 @@ VIEWS.audit = function(){
   });
 };
 
+/* The storage half of the Settings screen, drawn twice: once as a placeholder so the tab can
+   PAINT, and again when the counting comes back. It was part of the blocking Promise.all, and
+   on the night the database was struggling that meant the whole Settings tab sat on a spinner
+   waiting for the slowest, least urgent number on the page. The switch an admin comes here for
+   in an emergency -- open/close the system -- must never queue behind a row count. */
+function sgKpis_(sg){
+  return kpi('Stored rows', sg ? money(sg.totalRows) : '…',
+      sg ? ((sg.oldest||'—')+' → '+(sg.newest||'—')) : 'inahesabu / counting…', null, 'sgRowsK')
+    + kpi('Database used', sg ? mb(sg.bytes) : '…',
+      sg ? (mb(sg.perMonth)+' / month at this rate') : 'inahesabu / counting…', null, 'sgBytesK');
+}
+function sgPlanNote_(sg){
+  if (!sg) return 'Nafasi inahesabiwa nyuma ya pazia — ukurasa huu uko tayari.'
+    + ' / Storage is being counted in the background — the rest of this page is ready now.';
+  return 'Supabase Free ni <b>500 MB</b>, Pro ni <b>8 GB</b>.'
+    + ' / Free tier holds 500 MB, Pro holds 8 GB. Kwa kasi ya sasa (' + mb(sg.perDay) + ' kwa siku),'
+    + ' 8 GB inatosha takriban <b>' + (sg.perMonth>0 ? Math.floor(8*1024*1024*1024/sg.perMonth) : '∞')
+    + ' miezi</b> bila kusafisha. / at the current rate, 8 GB lasts about that many months with no cleanup.'
+    + ' Ukisafisha tarehe za zamani hapa chini, haitajaa kamwe. / Clean old dates below and it never fills.'
+    /* The server says when the day-by-day board is partial (the counting function is not in
+       the database yet) -- said here, or the board below quietly shows fewer dates than the
+       totals imply and somebody "cleans" guessing at what is there. */
+    + (sg.undated && sg.undated.length
+        ? '<br><b>Angalizo / Note:</b> mgawanyo kwa tarehe haupo kwa: ' + esc(sg.undated.join(', '))
+          + '. Endesha db/RUN-ME-012 (DOSE 1) kuurudisha. / The day-by-day split is missing for those'
+          + ' reports until db/RUN-ME-012 DOSE 1 is run — totals above are still exact.'
+        : '');
+}
+function sgDatesBoard_(sg){
+  var dates = sg ? sg.dates : [];
+  return board('sgDates','Kilichohifadhiwa kwa tarehe / What is stored, by date',
+      sg ? 'row counts per report type — delete a date and that day’s history goes with it'
+         : 'inahesabu nyuma ya pazia / still counting in the background',
+      dates, [col('date','Date','date')].concat(CLEAN_TYPES.map(function(t){
+        return col(t.key, t.label, 'num'); })).concat([col('total','Total','num')]),
+      sumRow(dates, CLEAN_TYPES.map(function(t){ return t.key; }).concat(['total'])));
+}
+function sgFill_(sg){
+  // The person may have moved on while this counted; a patch must never paint another tab.
+  if (S.view !== 'settings' || !$('#sgRowsK')) return;
+  $('#sgRowsK').innerHTML = money(sg.totalRows);
+  var s1 = $('#sgRowsKS'); if (s1) s1.textContent = (sg.oldest||'—')+' → '+(sg.newest||'—');
+  $('#sgBytesK').innerHTML = mb(sg.bytes);
+  var s2 = $('#sgBytesKS'); if (s2) s2.textContent = mb(sg.perMonth)+' / month at this rate';
+  var pn = $('#sgPlanNote'); if (pn) pn.innerHTML = sgPlanNote_(sg);
+  var dt = $('#clDate'); if (dt && !dt.value) dt.value = sg.oldest || '';
+  var b = $('#sgDates');
+  if (b){
+    var tmp = document.createElement('div');
+    tmp.innerHTML = sgDatesBoard_(sg);
+    b.parentNode.replaceChild(tmp.firstChild, b);
+  }
+}
 VIEWS.settings = function(){
-  return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'), srv('storageUsage'),
+  return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'),
       srv('systemOpenGet'), srv('teams')]).then(function(r){
-    var st=r[0], ac=r[1], cu=r[2], sg=r[3], so=r[4], tm=r[5];
+    var st=r[0], ac=r[1], cu=r[2], so=r[3], tm=r[4];
+    var sg = S.storage || null;
+    if (!sg){
+      /* Fired, not awaited: the tab paints now and this fills the storage panel when it
+         lands. A failure writes itself into the note instead of taking the tab down --
+         storage arithmetic is the one part of Settings worth having late or not at all. */
+      srv('storageUsage').then(function(d){ S.storage = d; sgFill_(d); })
+        .catch(function(e){
+          var pn = $('#sgPlanNote');
+          if (pn && S.view === 'settings') pn.innerHTML =
+            'Hesabu ya nafasi imeshindikana kwa sasa / storage count failed for now — '
+            + esc(String((e && e.message) || e));
+        });
+    }
     // The HOPE LOAN visibility switch, read off the settings rows already in hand. Unset
     // means SHOWN -- the switch is newer than every deployment that lacks the row.
     var hlOn = !/^(no|off|0|false|hapana)$/i.test(String(settingVal(st.rows, 'HOPELOAN_VISIBLE', 'YES') || '').trim());
@@ -4673,19 +4739,13 @@ VIEWS.settings = function(){
     // Feeds codeForm's tab checkboxes -- HOPE PMO and HOPE Loan together, same list roleForm
     // already draws from, so "Extra tabs" stops being a box where a typo grants nothing.
     S.allTabs = ac.allTabs || [];
-    S.storage = sg;
     // Two registers live here because they answer the same question -- who may use this
     // system: an access code is a PORTAL login, a call user is a PHONE registration.
     HEAD = '<div class="kpis">' + kpi('Settings', money(st.rows.length))
         + kpi('Access codes', money(ac.count)) + kpi('Phone users', money(cu.count))
-        + kpi('Stored rows', money(sg.totalRows), (sg.oldest||'—')+' → '+(sg.newest||'—'))
-        + kpi('Database used', mb(sg.bytes), mb(sg.perMonth)+' / month at this rate')
+        + sgKpis_(sg)
         + '</div>'
-        + '<div class="note">Supabase Free ni <b>500 MB</b>, Pro ni <b>8 GB</b>.'
-        + ' / Free tier holds 500 MB, Pro holds 8 GB. Kwa kasi ya sasa (' + mb(sg.perDay) + ' kwa siku),'
-        + ' 8 GB inatosha takriban <b>' + (sg.perMonth>0 ? Math.floor(8*1024*1024*1024/sg.perMonth) : '∞')
-        + ' miezi</b> bila kusafisha. / at the current rate, 8 GB lasts about that many months with no cleanup.'
-        + ' Ukisafisha tarehe za zamani hapa chini, haitajaa kamwe. / Clean old dates below and it never fills.</div>'
+        + '<div class="note" id="sgPlanNote">' + sgPlanNote_(sg) + '</div>'
       /* THE MASTER SWITCH, first on the page because it is the one that decides whether anybody
          else can see any of the rest. Closed, the whole company has HOPE Calls and nothing
          else: no portal, no HOPE Live, and no button offering either. The admin is never shut
@@ -4739,7 +4799,7 @@ VIEWS.settings = function(){
       + '<div class="card"><div class="card-h">Kusafisha ripoti za zamani / Clean old reports'
         + '<span class="sub">chagua tarehe na aina za ripoti / pick a date and the report types</span></div>'
         + '<div class="cleanbox">'
-        + '<div class="fld"><label>Tarehe / Date</label><input type="date" id="clDate" value="'+esc(sg.oldest||'')+'"></div>'
+        + '<div class="fld"><label>Tarehe / Date</label><input type="date" id="clDate" value="'+esc((sg && sg.oldest)||'')+'"></div>'
         + '<div class="fld"><label>Aina za ripoti / Report types</label><div class="checks">'
         + CLEAN_TYPES.map(function(t){
             return '<label><input type="checkbox" class="clType" value="'+t.key+'"> '+esc(t.label)
@@ -4756,11 +4816,7 @@ VIEWS.settings = function(){
         + ' <button class="btn sm danger" id="clRun">Futa / Clean</button></div>'
         + '<div id="clOut" class="note" style="display:none"></div>'
         + '</div></div>'
-      + board('sgDates','Kilichohifadhiwa kwa tarehe / What is stored, by date',
-          'row counts per report type — delete a date and that day’s history goes with it',
-          sg.dates, [col('date','Date','date')].concat(CLEAN_TYPES.map(function(t){
-            return col(t.key, t.label, 'num'); })).concat([col('total','Total','num')]),
-          sumRow(sg.dates, CLEAN_TYPES.map(function(t){ return t.key; }).concat(['total'])))
+      + sgDatesBoard_(sg)
 
 
       /* THE FOLLOW-UP STATUS LIST. Editable, one per line. The BEHAVIOURS are not editable and

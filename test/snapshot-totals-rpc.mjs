@@ -174,6 +174,38 @@ export const UPLOAD_STATUS_RPC = {
   },
 };
 
+/** storage_usage_by_date() -- the Settings tab's counting function, transcribed from
+    db/RUN-ME-012-postgres-ww4.sql DOSE 11: one grouped count per source per day, for all
+    eleven sources. Without it the app HEAD-counts each table (a number, no rows) -- it never
+    again downloads a table to measure it, so both worlds must stay cheap and agree on totals. */
+export const STORAGE_USAGE_RPC = {
+  storage_usage_by_date(store) {
+    const src = [
+      ['expected', 'repayment_snapshots', 'snapshot_date'],
+      ['defaulters', 'defaulter_snapshots', 'snapshot_date'],
+      ['received', 'received_payments', 'paid_at'],
+      ['abnormal', 'abnormal_payments', 'created_at'],
+      ['calls', 'call_logs', 'call_date'],
+      ['loans', 'loans', 'upload_date'],
+      ['comments', 'followup_comments', 'created_at'],
+      ['complaints', 'complaints', 'created_at'],
+      ['restructures', 'restructures', 'created_at'],
+      ['demand_notices', 'demand_notices', 'created_at'],
+      ['followup', 'followup_status', 'updated_at'],
+    ];
+    const out = [];
+    for (const [source, table, col] of src) {
+      const n = new Map();
+      for (const r of tbl(store[table])) {
+        const d = day10(r[col]);
+        n.set(d, (n.get(d) || 0) + 1);
+      }
+      for (const [day, count] of n.entries()) out.push({ source, day, n: count });
+    }
+    return out;
+  },
+};
+
 /** loan_stage_counts(p_teams) -- the pipeline funnel's eight integers in one journey.
     Transcribed from db/migrations/2026-08-11-loan-stage-counts.sql, clause for clause, so the
     system can be exercised against a database that HAS the migration and one that has not. */

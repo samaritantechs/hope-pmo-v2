@@ -1,4 +1,9 @@
 -- =====================================================================================
+-- ⛔ SUPERSEDED -- do not run this file. Use db/RUN-ME-012-postgres-ww4.sql instead.
+--    WW4 contains everything in here, split into small doses that each carry a
+--    lock_timeout so no dose can ever queue the live system behind it. This file stays
+--    only as the record of what the WW3 run attempted.
+-- =====================================================================================
 -- RUN-ME-011 -- POSTGRES WW3: the WHOLE system, one paste.
 --
 -- This file is the result of auditing EVERY query the portal, the call app and the upload
