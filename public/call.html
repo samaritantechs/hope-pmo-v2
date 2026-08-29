@@ -340,6 +340,11 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       <span>Exp.Def <b id="dsExpdf">&mdash;</b></span>
       <span class="ds-dot">&middot;</span>
       <span>Rec <b id="dsRec">&mdash;</b></span>
+      <!-- REC LEO. Shown only when the Rec beside it is a WEEK total (weekends), because on a
+           weekday Rec already is today and two identical figures teach nothing. The label is
+           written by the script, not fixed here: on Saturday this is Friday's money and it
+           says so. -->
+      <span class="hide" id="dsRecTodayWrap"><span id="dsRecTodayLbl">Rec leo</span> <b id="dsRecToday">&mdash;</b></span>
     </div>
     <!-- SANDBOX BANNER. A figure read off a sandbox screen must never be quotable as the book,
          and on a phone the header icon alone is too easy to miss. -->
@@ -903,7 +908,10 @@ function doLogout(){
      the same handset. */
   _sumAt = 0; _sumVer = null;
   var _ds = $('#dayStrip'); if (_ds) { _ds.classList.add('hide'); _ds.classList.remove('stale'); }
-  ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
+  ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec','#dsRecToday'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
+  // Rec leo is weekend-only, so signing out must put it back to hidden and not merely blank --
+  // otherwise the next sign-in on a weekday inherits an empty label sitting on the strip.
+  var _rt = $('#dsRecTodayWrap'); if (_rt) _rt.classList.add('hide');
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
   try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); localStorage.removeItem(UI_LS_KEY); } catch(e){}
   sheetHide();
@@ -1207,6 +1215,9 @@ function hhmm_(ms){
   var t = new Date(ms), p = function(n){ return ('0' + n).slice(-2); };
   return p(t.getHours()) + ':' + p(t.getMinutes());
 }
+/* The short Swahili day names the portal already uses (app.html's SWDAY), so a day named on the
+   phone reads the same as the same day named on the dashboard. */
+var SWDAY_ = { MON:'J3', TUE:'J4', WED:'J5', THU:'AL', FRI:'IJ', SAT:'J1', SUN:'J2' };
 function drawSummary_(d, stale, atMs){
   /* THE TAG SAYS WHEN. "I don't know if it even does" is a fair thing to say about a row of
      percentages that never visibly changes -- most uploads move none of them by a whole point,
@@ -1225,6 +1236,22 @@ function drawSummary_(d, stale, atMs){
   var amt_ = function(x){ return (x && Number(x.num) > 0) ? ' · ' + mc_(x.num) : ''; };
   $('#dsExpdf').textContent = pctW_(d.expdf && d.expdf.pct) + amt_(d.expdf);
   $('#dsRec').textContent = pctW_(d.recovery && d.recovery.pct) + amt_(d.recovery);
+  /* REC LEO -- the newest deck day's money on its own, beside a Rec that is the whole week.
+     Only on weekends: on a weekday Rec IS today, and printing the same figure twice under two
+     labels invites somebody to add them together. The label names the day whenever it is not
+     actually today, because on Saturday this is Friday's money and calling it "leo" would be
+     a lie on the one screen an officer reads at the door. */
+  var rt = d.recToday, wrap = $('#dsRecTodayWrap');
+  if (wrap){
+    var showIt = !!(rt && d.period === 'week');
+    wrap.classList.toggle('hide', !showIt);
+    if (showIt){
+      $('#dsRecTodayLbl').textContent = rt.isToday ? 'Rec leo' : ('Rec ' + (SWDAY_[rt.day] || rt.day || ''));
+      // Shillings, not a percentage: "how much came in" is the question, and this day has no
+      // denominator of its own that would not be borrowed from the week.
+      $('#dsRecToday').textContent = Number(rt.num) ? mc_(rt.num) : '—';
+    }
+  }
   /* Figures kept from another day are still shown -- they are the last true thing the officer
      was told -- but never as today's. The tag is the only honest place to say so. */
   $('#dayStrip').classList.toggle('stale', !!stale);

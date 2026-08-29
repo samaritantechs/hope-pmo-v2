@@ -275,6 +275,46 @@ test('sales is month-to-date on the WEEKEND too, and defaults to 100m a team', a
   assert.equal(d.sales.den, 100000000);                         // 5m x 5 days x 4 weeks, one team
 });
 
+/* REC LEO. On a weekend the strip's Rec is the whole week Mon-Fri, because decks are per
+   weekday and there is no Saturday or Sunday one to read. That total is the right thing to
+   chase and it cannot answer the question an officer asks at the door: what did the LAST day
+   actually bring in? A steady week and a week carried entirely by Friday print the same Rec. */
+test('Rec leo: the weekend strip carries the newest deck day beside the week total', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  /* A SECOND DECK DAY, so the week and the latest day are DIFFERENT numbers. A fixture where
+     they coincide would pass whether or not the code distinguishes them, which is no test. */
+  t.defaulter_snapshots.push(
+    { ref: '556', team: 'KONGOWE', arrears: 300, snapshot_type: 'initial', weekday: 'THU', snapshot_date: '2026-07-23', upload_batch: 'ti', created_at: '2026-07-23T04:00:00Z' },
+    { ref: '556', team: 'KONGOWE', arrears: 250, snapshot_type: 'current', weekday: 'THU', snapshot_date: '2026-07-23', upload_batch: 'tc', created_at: '2026-07-23T04:00:00Z' },
+  );
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dRT', 'JUMA ISSA', '', '', '0712999777', 'KON123'], NOW);
+  const sat = Date.parse('2026-07-25T09:00:00Z');            // Saturday: no deck of its own
+  const d = await callApi(db, 'api_callDailySummary', ['dRT'], sat);
+
+  assert.equal(d.period, 'week');
+  assert.equal(d.recovery.num, 200, 'the week: THU 300-250 = 50, plus FRI 500-350 = 150');
+  assert.ok(d.recToday, 'the newest paired day travels beside the week');
+  assert.equal(d.recToday.num, 150, 'Friday ALONE -- not the week, and not the sum');
+  assert.equal(d.recToday.day, 'FRI');
+  assert.equal(d.recToday.date, '2026-07-24');
+  /* THE LABEL MUST NOT SAY "LEO". Saturday has no deck, so this is Friday's money; a figure
+     printed as today's when it is not is the one mistake this whole strip cannot afford. */
+  assert.equal(d.recToday.isToday, false);
+
+  // On a WEEKDAY the latest day IS today, and it agrees with Rec to the shilling -- the phone
+  // hides the tile there rather than printing one number twice under two labels.
+  _clearSummaryCache(); _clearWidgetCache();
+  const db2 = fakeDb(makeTables());
+  await callApi(db2, 'api_callRegister', ['dRT2', 'JUMA ISSA', '', '', '0712999778', 'KON123'], NOW);
+  const fri = await callApi(db2, 'api_callDailySummary', ['dRT2'], NOW);
+  assert.equal(fri.period, 'day');
+  assert.equal(fri.recToday.isToday, true);
+  assert.equal(fri.recToday.num, fri.recovery.num);
+});
+
 test('follow-up: validations enforced; expected customers get a followup stub for the FK', async () => {
   const db = await registeredDb();
   await assert.rejects(() => callApi(db, 'api_callAddComment', ['d1', { ref: '111', fu: 'AMETOA AHADI' }], NOW), /promise date/i);

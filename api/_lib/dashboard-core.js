@@ -86,16 +86,30 @@ async function buildDashboardUncached(db, user, nowMs) {
   const sal = scoped(sal0);
   const rcv = scoped(rcv0);
   const defCurRows = scoped(decks.currentRows);
-  const deckPairs = decks.pairs.map(p => ({ ini: scoped(p.ini), cur: scoped(p.cur) }));
+  const deckPairs = decks.pairs.map(p => ({ ...p, ini: scoped(p.ini), cur: scoped(p.cur) }));
 
   // ---- Recovered: initial arrears minus current arrears, STRICTLY paired decks only.
   // A missing side yields 0 with a note, never +/- the whole book (initial with no current
   // would read as "everything recovered"; current with no initial as the negative of it).
   let recovered = 0;
   const recoveredByTeam = {};
+  /* AND HOW MUCH OF THAT WAS TODAY?
+     On a weekend `recovered` is the whole week Mon-Fri added together, because there is no
+     Saturday or Sunday deck to read -- decks are per weekday, MON..FRI. That total is the
+     right thing to chase, and it is also the reason an officer opening the app on Saturday
+     cannot tell what the LATEST day actually brought in: a flat week and a week carried
+     entirely by Friday show the same figure.
+     So the newest paired day is kept beside the total, with the day it belongs to. It is
+     named rather than assumed to be today, because on a weekend it is Friday's -- a number
+     labelled "leo" that is really Friday's is worse than no number. */
+  let latest = null;
   for (const p of deckPairs) {
-    for (const r of p.ini) { recovered += num(r.arrears_amt); bump(recoveredByTeam, r.team, num(r.arrears_amt)); }
-    for (const r of p.cur) { recovered -= num(r.arrears_amt); bump(recoveredByTeam, r.team, -num(r.arrears_amt)); }
+    let dayRec = 0;
+    for (const r of p.ini) { recovered += num(r.arrears_amt); dayRec += num(r.arrears_amt); bump(recoveredByTeam, r.team, num(r.arrears_amt)); }
+    for (const r of p.cur) { recovered -= num(r.arrears_amt); dayRec -= num(r.arrears_amt); bump(recoveredByTeam, r.team, -num(r.arrears_amt)); }
+    if (p.date && (!latest || String(p.date) > String(latest.date))) {
+      latest = { day: p.day || null, date: p.date, recovered: dayRec };
+    }
   }
 
   // ---- Recovery denominator, per the basis rule ----
@@ -143,6 +157,13 @@ async function buildDashboardUncached(db, user, nowMs) {
       pct: recDen > 0 ? Math.round((recovered / recDen) * 1000) / 10 : null,
       basis: basis.kind,
       basisLabel: basis.label,
+      /* The newest paired day on its own, so a screen showing a week total can also show what
+         the last day contributed. Null when no deck pairs at all -- never 0, which would read
+         as "nothing came in" rather than "nobody uploaded". */
+      latest: latest
+        ? { recovered: latest.recovered, day: latest.day, date: latest.date,
+            isToday: String(latest.date) === String(today) }
+        : null,
       ...(yesterdaySource ? { yesterdaySource } : {}),
       ...(decks.note ? { note: decks.note } : {}),
     },
@@ -211,7 +232,9 @@ async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
     out.currentRows = cur.rows;
     out.dates[wd] = cur.date;
     const ini = await defaulterTotalsLatest(db, { type: 'initial', weekday: wd, onDate: cur.date, teams });
-    if (ini.rows.length) out.pairs.push({ ini: ini.rows, cur: cur.rows });
+    // The day a pair belongs to travels WITH it. Recovered is a sum over pairs, and a sum that
+    // has forgotten which days made it cannot answer "and how much of that was today?".
+    if (ini.rows.length) out.pairs.push({ day: wd, date: cur.date, ini: ini.rows, cur: cur.rows });
     else out.note = `No initial ${wd} deck dated ${cur.date} -- Recovered is 0 rather than a whole-book figure.`;
     return out;
   }
@@ -228,7 +251,7 @@ async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
     out.currentRows = out.currentRows.concat(c.rows);
     out.dates[d] = c.date;
     const i = iniPer.get(d);
-    if (i && i.rows.length && String(i.date) === String(c.date)) out.pairs.push({ ini: i.rows, cur: c.rows });
+    if (i && i.rows.length && String(i.date) === String(c.date)) out.pairs.push({ day: d, date: c.date, ini: i.rows, cur: c.rows });
     else unpaired.push(d);
   }
   if (unpaired.length) out.note = `No matching initial deck for ${unpaired.join(', ')} -- those day(s) contribute 0 to Recovered rather than a whole-book figure.`;
