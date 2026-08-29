@@ -13,6 +13,15 @@ const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(t
 import { recoveryBasis, num } from './recovery.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
+/* SATURDAY IS A WORKING DAY HERE, AND THE WEEKEND VIEW WAS THROWING IT AWAY.
+   The weekend aggregation walked Mon-Fri and read a Mon-Fri date range, on the assumption
+   that a weekend has no decks. It does: a Saturday deck is filed under weekday SAT and dated
+   that Saturday -- 18,224 initial and 18,150 current rows on 2026-08-29 alone. Both were
+   outside the range AND outside the loop, so an entire day of recovery work was invisible in
+   the week's total and the phone's Rec fell back to Friday.
+   Sunday is included for the same reason: whether it is worked is a question for the data,
+   not for a constant. A day nobody uploads a deck for simply has no rows and costs nothing. */
+const WEEKDAYS_ALL = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 /** "sales in the app interface report summary bar aint reflecting okay" -- every sales query in
     this codebase filtered on stage === 'approved', which is a CURRENT-STATE check being asked
@@ -238,14 +247,18 @@ async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
     else out.note = `No initial ${wd} deck dated ${cur.date} -- Recovered is 0 rather than a whole-book figure.`;
     return out;
   }
+  /* TO TODAY, NOT TO FRIDAY. On a Saturday `weekFri` is yesterday, so a deck uploaded this
+     morning sat outside the window and could not be seen however the loop below was written.
+     `today` is never before weekFri on a weekend, so this only ever widens. */
+  const rangeTo = today > weekFri ? today : weekFri;
   const [curAll, iniAll] = await Promise.all([
-    defaulterTotalsInRange(db, { type: 'current', from: weekMon, to: weekFri, teams }),
-    defaulterTotalsInRange(db, { type: 'initial', from: weekMon, to: weekFri, teams }),
+    defaulterTotalsInRange(db, { type: 'current', from: weekMon, to: rangeTo, teams }),
+    defaulterTotalsInRange(db, { type: 'initial', from: weekMon, to: rangeTo, teams }),
   ]);
   const curPer = resolveLatestPerKey(curAll, r => r.weekday);
   const iniPer = resolveLatestPerKey(iniAll, r => r.weekday);
   const unpaired = [];
-  for (const d of WEEKDAYS) {
+  for (const d of WEEKDAYS_ALL) {
     const c = curPer.get(d);
     if (!c || !c.rows.length) continue;                       // no deck at all that day
     out.currentRows = out.currentRows.concat(c.rows);

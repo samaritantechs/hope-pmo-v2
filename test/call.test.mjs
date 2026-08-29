@@ -336,6 +336,34 @@ test('Rec leo: the weekend strip carries the newest deck day beside the week tot
   assert.equal(fri.recToday.num, fri.recovery.num);
 });
 
+/* SATURDAY IS A WORKING DAY, AND THE WEEKEND VIEW WAS THROWING IT AWAY.
+   The weekend aggregation walked MON..FRI over a MON..FRI date range, on the assumption that a
+   weekend has no decks. This operation uploads one: on 2026-08-29 the live book held 18,224
+   initial and 18,150 current rows filed under weekday SAT. Both were outside the range AND
+   outside the loop, so a whole day of recovery work was missing from the week's total and the
+   phone's Rec quietly fell back to Friday's money. */
+test('a Saturday deck counts: the week includes it and Rec leo is Saturday\'s own', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  const SATDAY = '2026-07-25';                       // the Saturday after the fixture's Friday
+  t.defaulter_snapshots.push(
+    { ref: '557', team: 'KONGOWE', arrears: 900, snapshot_type: 'initial', weekday: 'SAT', snapshot_date: SATDAY, upload_batch: 'si', created_at: SATDAY + 'T04:00:00Z' },
+    { ref: '557', team: 'KONGOWE', arrears: 600, snapshot_type: 'current', weekday: 'SAT', snapshot_date: SATDAY, upload_batch: 'sc', created_at: SATDAY + 'T04:00:00Z' },
+  );
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dSAT', 'JUMA ISSA', '', '', '0712999776', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callDailySummary', ['dSAT'], Date.parse(SATDAY + 'T09:00:00Z'));
+
+  assert.equal(d.period, 'week');
+  // FRI 500-350 = 150, SAT 900-600 = 300. Before the fix the week read 150 and Saturday's 300
+  // was nowhere -- not in the total, not on the strip.
+  assert.equal(d.recovery.num, 450, 'Saturday\'s recovery counts towards the week');
+  assert.equal(d.recToday.day, 'SAT', 'and it is the newest deck day');
+  assert.equal(d.recToday.num, 300, 'Saturday alone, not the week');
+  assert.equal(d.recToday.isToday, true, 'so the phone says "Rec leo", not another day\'s name');
+});
+
 test('follow-up: validations enforced; expected customers get a followup stub for the FK', async () => {
   const db = await registeredDb();
   await assert.rejects(() => callApi(db, 'api_callAddComment', ['d1', { ref: '111', fu: 'AMETOA AHADI' }], NOW), /promise date/i);
