@@ -87,7 +87,29 @@ public class MainActivity extends Activity {
                     startActivity(new Intent(Intent.ACTION_VIEW, u));
                     return true;
                 }
-                return false;                   // the portal itself stays inside the app
+                /* ONLY OUR OWN SERVER MAY LOAD IN HERE, because this WebView carries the
+                 * bridge -- and on Android a @JavascriptInterface is offered to WHATEVER page
+                 * the WebView is showing, not just the one that was loaded first. Any other
+                 * site reached from a link would therefore be able to call HopeCalls.getCalls()
+                 * and read the officer's call log, HopeCalls.getDeviceId(), and
+                 * HopeCalls.setStartUrl() to point this app permanently at a server of its own.
+                 *
+                 * The configured host is read from startUrl(), not from a constant, so the
+                 * built-in "save a different server" screen keeps working exactly as before: it
+                 * writes the new URL to preferences BEFORE loading it, so by the time this runs
+                 * the new server IS the configured one. A changed domain still never bricks an
+                 * installed app and still never needs an APK rebuild.
+                 *
+                 * Anything else opens in the phone's browser, where there is no bridge. */
+                String host = u.getHost() == null ? "" : u.getHost();
+                Uri mine = Uri.parse(startUrl());
+                String mineHost = mine.getHost() == null ? "" : mine.getHost();
+                if (!mineHost.isEmpty() && !mineHost.equalsIgnoreCase(host)) {
+                    try { startActivity(new Intent(Intent.ACTION_VIEW, u)); }
+                    catch (Exception ignored) { /* no browser -- refusing to load it is still right */ }
+                    return true;
+                }
+                return false;                   // our own portal stays inside the app
             }
 
             @Override
@@ -288,7 +310,13 @@ public class MainActivity extends Activity {
 
     void setStartUrlFromBridge(String url) {
         String u = url == null ? "" : url.trim();
-        if (!u.startsWith("http")) u = "https://" + u;
+        /* A REAL http(s) ADDRESS, OR NOTHING. `startsWith("http")` also accepted "httpfoo:" and
+         * anything else beginning with those four letters, and this value is PERSISTED as the
+         * server every future launch loads. It decides where an officer's registration and
+         * their customers' details are sent, so it is worth being exact about. */
+        if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u;
+        Uri parsed = Uri.parse(u);
+        if (parsed.getHost() == null || parsed.getHost().isEmpty()) return;   // not an address
         prefs.edit().putString("startUrl", u).putInt("startUrlVersion", BuildConfig.VERSION_CODE).apply();
         final String go = u;
         runOnUiThread(() -> web.loadUrl(go));
