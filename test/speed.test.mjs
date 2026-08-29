@@ -164,6 +164,20 @@ const BUDGETS = [
      (Migrated world is more than one trip because a source with no rows at all answers the
      function with silence, and silence gets one HEAD count to confirm empty-vs-unknown.) */
   ['Storage panel (Settings)',  'storageUsage', {}, ADMIN, 14, 100, 8, 800],
+  /* THE FOUR HEAVIEST SCREENS, WHICH HAD NO GUARD AT ALL UNTIL COMMISSION STOPPED OPENING.
+     Measured on a live-scale book -- 18,000 defaulter rows per deck-date, the real figure --
+     commission pulled 127,644 customer rows in 24 trips and blew the client's 45-second
+     deadline. Nothing in this file was watching it, so it grew until a person reported it.
+
+     These budgets are set a little above what each costs TODAY, so they are a ceiling that
+     catches growth rather than a target. Commission's is deliberately generous and still far
+     too high to be comfortable: it is here to stop the bleeding while the real fix (moving the
+     per-customer arrears comparison into the database, the way the team-day totals already
+     went) is decided. Lowering this number is the goal, not raising it. */
+  ['Commission',              'commission',     {}, ADMIN, 30, 140000, 30, 140000],
+  ['Promise to Pay (report)', 'promises',       {}, ADMIN, 16, 100000, 16, 100000],
+  ['Follow-up report (big)',  'followupReport', {}, ADMIN, 14,  85000, 14,  85000],
+  ['Credit book',             'credit',         {}, ADMIN, 16,  80000, 16,  80000],
 ];
 
 /* Both worlds, every screen. `rpc: undefined` is a database where the migration has not been

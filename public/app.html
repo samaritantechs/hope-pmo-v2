@@ -552,7 +552,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-d';
+var BUILD = '2026-08-29-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2506,15 +2506,34 @@ VIEWS.dashboard = function(){
         }).join('') + '</div></div>';
     // The officer boards load after the headline numbers so the page paints immediately --
     // one execution never waits on all of it, which is what made v1's dashboard time out.
-    Promise.all([srv('officerBoards'), srv('callAgents').catch(function(){ return null; }),
+    /* ONE FAILURE USED TO TAKE ALL OF THEM. callAgents and recoveryByCredit each caught their
+       own errors and carried on as null; officerBoards did not, so the moment it timed out the
+       whole Promise.all rejected and EVERY board disappeared behind one generic sentence --
+       including the two that had loaded perfectly well.
+       It now fails the same way its neighbours do: the boards it can draw are drawn, and the
+       one that failed says so IN ITS OWN PLACE, with the reason. "Officer boards could not
+       load" told nobody whether the server was slow, the session had expired, or the screen was
+       broken -- and the reason is the only part anybody can act on. */
+    var boardsWhy = '';
+    Promise.all([srv('officerBoards').catch(function(e){ boardsWhy = String((e && e.message) || e); return null; }),
+                 srv('callAgents').catch(function(){ return null; }),
                  srv('recoveryByCredit', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; })])
       .then(function(r){
-      var b = r[0];
+      /* An empty shape rather than null, so every board below draws its (empty) self instead of
+         throwing on the first property access and taking the rest down with it a second time. */
+      var b = r[0] || { earlyToday:[], earlyWeek:[], recToday:[], recWeek:[],
+                        creditToday:[], creditWeek:[], teamPerf:[] };
       S.csAgents = r[1];
       var creditRec = r[2];
       var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
       var extra =
-          (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
+          (boardsWhy
+            ? '<div class="note bad">Bodi za maafisa hazikupakia / the officer boards did not load'
+              + ' &mdash; ' + esc(boardsWhy)
+              + '<br><span style="font-size:11.5px">Bodi zilizo hapa chini ni zile zilizofanikiwa.'
+              + ' / What is below is whatever else did load. Press the tab again to retry.</span></div>'
+            : '')
+        + (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
         /* The paid / overpaid counts are what the COMMISSION is worked out from -- so many
            shillings per PAID client, so many per OVERPAID -- and they belong on the commission
            panel beside the money they produce, not on the dashboard where they read as a
