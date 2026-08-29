@@ -777,11 +777,27 @@ function loadCacheFromDevice_(){
     // The Exp.Def summary travels WITH its rows. Left out, a restart restored the rows from
     // the device and left the strip null -- so the tab had no totals and, when the list was
     // empty, could not say which of the four reasons it was empty for.
-    if (saved && typeof saved === 'object'){ S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {}; S.expdf = saved.expdf || null; S.dataVersion = saved.dataVersion || ''; }
+    /* THE DATE TRAVELS WITH THE LIST IT DESCRIBES, and so do the two counts that describe it.
+       This is why nobody had ever seen the stale banner. Lists are kept on the device for an
+       hour and shown instantly, without asking the server -- but asOf was NOT saved with them,
+       so on every restart, and on every open inside that hour, the app held a full list of
+       customers and no idea which day they came from. listNote_ (and staleNote_ before it)
+       therefore rendered nothing at all: not a wrong date, no line whatsoever, on exactly the
+       opens where the officer most needed telling. A list and the day it belongs to are one
+       fact and must be stored as one. */
+    if (saved && typeof saved === 'object'){
+      S.cache = saved.cache || {}; S.cacheAt = saved.cacheAt || {};
+      S.expdf = saved.expdf || null; S.dataVersion = saved.dataVersion || '';
+      S.asOf = saved.asOf || {}; S.narrowed = saved.narrowed || {}; S.singles = saved.singles || {};
+    }
   } catch (e) { /* corrupt or unavailable storage -- start empty, not fatal */ }
 }
 function saveCacheToDevice_(){
-  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt, expdf: S.expdf, dataVersion: S.dataVersion || '' })); }
+  try { localStorage.setItem(CACHE_LS_KEY, JSON.stringify({ cache: S.cache, cacheAt: S.cacheAt,
+    expdf: S.expdf, dataVersion: S.dataVersion || '',
+    // Saved WITH the rows -- see loadCacheFromDevice_. Without these the restored list has no
+    // day, no "filtered 40 of 120" and no near-win count, and the line above it disappears.
+    asOf: S.asOf || {}, narrowed: S.narrowed || {}, singles: S.singles || {} })); }
   catch (e) { /* quota or storage unavailable -- app still works, just without persistence this session */ }
 }
 function sourceFresh_(src){
