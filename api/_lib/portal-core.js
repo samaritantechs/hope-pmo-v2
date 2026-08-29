@@ -5496,6 +5496,15 @@ async function monthReportCompute_(db, user, asOf) {
   const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
   const amtOf = l => num(l.principal_amt) || num(l.loan_amt);
   const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+  /* One PERFORMANCE number wherever three percentages sit together -- the average, under
+     the team-ranking convention: a missing percentage counts as nothing, never skipped. */
+  const perfOf = (a, b, c) => Math.round(((a || 0) + (b || 0) + (c || 0)) / 3 * 10) / 10;
+
+  const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
+  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY',
+    await settingNum(db, 'SALES_TARGET', 100000000));
+  // The same convention the dashboard's month target uses: weekly x 4, across the teams seen.
+  const monthTarget = weeklyTarget * 4 * Math.max(myTeams.length, 1);
 
   const rows = [];
   let n = 0;
@@ -5510,36 +5519,42 @@ async function monthReportCompute_(db, user, asOf) {
       return d >= from && d <= done;
     });
     const s = (days && started) ? ledgerSum_(days, user, from, done) : null;
+    const salesAmt = started ? wk.reduce((t, l) => t + amtOf(l), 0) : null;
+    // A week's sales are judged against a quarter of the month's target.
+    const salesPct = started ? pct(salesAmt, monthTarget / 4) : null;
+    const colPct = s ? pct(s.colC, s.colE) : null;
+    const recPct = s ? pct(s.recR, s.recU) : null;
     rows.push({
       week: n, from, to, started,
-      sales: started ? wk.reduce((t, l) => t + amtOf(l), 0) : null,
+      sales: salesAmt,
       loans: started ? wk.length : null,
+      salesPct,
       expected: s ? s.colE : null, collected: s ? s.colC : null,
-      colPct: s ? pct(s.colC, s.colE) : null,
+      colPct,
       uncollected: s ? s.recU : null, recovered: s ? s.recR : null,
-      recPct: s ? pct(s.recR, s.recU) : null,
+      recPct,
+      perf: started ? perfOf(salesPct, colPct, recPct) : null,
     });
     from = addDaysKey(to, 1);
   }
   /* Progress: each week against the LAST STARTED week before it -- a future week must not
      reset the comparison, and the first week has nothing to be compared to. */
+  const dP_ = (a, b) => (a != null && b != null) ? Math.round((a - b) * 10) / 10 : null;
   let prev = null;
   for (const r of rows) {
     r.dSales = (prev && r.sales != null && prev.sales != null) ? r.sales - prev.sales : null;
-    r.dColPct = (prev && r.colPct != null && prev.colPct != null)
-      ? Math.round((r.colPct - prev.colPct) * 10) / 10 : null;
-    r.dRecPct = (prev && r.recPct != null && prev.recPct != null)
-      ? Math.round((r.recPct - prev.recPct) * 10) / 10 : null;
+    r.dSalesPct = dP_(r.salesPct, prev && prev.salesPct);
+    r.dColPct = dP_(r.colPct, prev && prev.colPct);
+    r.dRecPct = dP_(r.recPct, prev && prev.recPct);
+    r.dPerf = dP_(r.perf, prev && prev.perf);
     if (r.started) prev = r;
   }
 
-  const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
-  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY',
-    await settingNum(db, 'SALES_TARGET', 100000000));
-  // The same convention the dashboard's month target uses: weekly x 4, across the teams seen.
-  const monthTarget = weeklyTarget * 4 * Math.max(myTeams.length, 1);
   const total = days ? ledgerSum_(days, user, monthStart, today) : null;
   const salesTotal = sales.reduce((t, l) => t + amtOf(l), 0);
+  const totSalesPct = pct(salesTotal, monthTarget);
+  const totColPct = total ? pct(total.colC, total.colE) : null;
+  const totRecPct = total ? pct(total.recR, total.recU) : null;
   return {
     month: monthStart.slice(0, 7), monthStart, monthEnd,
     // The week-bar fields, same names the dashboard sends, so the client's one week bar
@@ -5549,11 +5564,12 @@ async function monthReportCompute_(db, user, asOf) {
     ledgerReady: !!days,
     rows,
     totals: {
-      sales: salesTotal, loans: sales.length, monthTarget, salesPct: pct(salesTotal, monthTarget),
+      sales: salesTotal, loans: sales.length, monthTarget, salesPct: totSalesPct,
       expected: total ? total.colE : null, collected: total ? total.colC : null,
-      colPct: total ? pct(total.colC, total.colE) : null,
+      colPct: totColPct,
       uncollected: total ? total.recU : null, recovered: total ? total.recR : null,
-      recPct: total ? pct(total.recR, total.recU) : null,
+      recPct: totRecPct,
+      perfPct: perfOf(totSalesPct, totColPct, totRecPct),
     },
   };
 }
@@ -5595,7 +5611,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      from June. A loan with neither is excluded, which is right: every figure below skips a row
      whose date falls outside its window anyway. */
   const monthStart0 = String(today).slice(0, 7) + '-01';
-  const loanFloor = monthStart0 < mon ? monthStart0 : mon;
+  const prevMon = addDaysKey(mon, -7), prevSun = addDaysKey(mon, -1);
+  // The loans window reaches back to LAST week's Monday too, because the performance strip
+  // compares this week's sales percentage against last week's.
+  const floors = [monthStart0, mon, prevMon];
+  const loanFloor = floors.sort()[0];
   const abnWin = abnormalWindow(nowMs, args);
   /* THE MONTH IS NOT READ HERE ANY MORE. It took the dashboard down twice (a month of raw
      customer rows, then the month-wide aggregate itself), and then the directors' answer was
@@ -5603,10 +5623,16 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      report -- "the directors hate exposing data so keep monthly in the chip". So the ledger
      work lives entirely in monthReport, the dashboard pays nothing for the month on any
      load, and the loans read below keeps its month window only because the TEAM BOARD is
-     ranked on monthly sales. */
-  const [expWeek, defWeek, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
+     ranked on monthly sales.
+
+     LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
+     this database answers fastest -- because every percentage on the performance strip has
+     to say which way it is MOVING, and movement needs the week before. */
+  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
+    expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevSun, teams: user.teams }),
+    defaulterTotalsInRange(db, { from: prevMon, to: prevSun, teams: user.teams }),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
       /* upload_date rides along because it is the day the admin CHOSE for the report, and a
@@ -5642,6 +5668,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
+  const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -5743,6 +5770,56 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
   });
+
+  /* ---- THE PERFORMANCE STRIP: three percentages, their average, and which way each moves.
+     "weekly and monthly dashboard should all show average of sales%, col% and recovery%
+      performance where in each one and the average have the rising constant or dropping
+      arrow symbol to know progress"
+     One rule for any week: sales over the weekly target, the week's collected over its
+     expected (each day batch-resolved on its own), and the week's recovered -- initial vs
+     current paired ON THE SAME WEEKDAY per day, the rule recTrend fought for -- over its
+     uncollected. Run for THIS week and for LAST week from the same shapes of read, so the
+     arrows compare like with like; the average follows the team-ranking convention (a
+     missing percentage counts as nothing rather than being skipped). A week with no
+     uploads at all yields null deltas -- no arrow, never a fake "rising from zero". */
+  const weeklyTargetTotal = weeklyTarget * Math.max(myTeams.length, 1);
+  const weekPcts_ = (expRows, defRows, from, to) => {
+    let e = 0, c = 0, u = 0, rec = 0;
+    const salesAmt = myLoans.reduce((s, l) => {
+      if (!SALES_STAGES.includes(l.stage)) return s;
+      const d0 = String(l.approved_date || '').slice(0, 10);
+      return (d0 >= from && d0 <= to) ? s + (num(l.principal_amt) || num(l.loan_amt)) : s;
+    }, 0);
+    for (let i = 0; i < 5; i++) {
+      const rows = pickLatestBatchRows(expRows.filter(r => String(r.snapshot_date) === addDaysKey(from, i)));
+      e += tExpected(rows); c += tCollected(rows); u += tUncollected(rows);
+    }
+    let measured = false;
+    for (let i = 0; i < 7; i++) {
+      const d0 = addDaysKey(from, i), dwd = WD7[i];
+      const ini = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d0 && r.snapshot_type === 'initial' && r.weekday === dwd));
+      const cur = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d0 && r.snapshot_type === 'current' && r.weekday === dwd));
+      if (ini.length && cur.length) { rec += tArrears(ini) - tArrears(cur); measured = true; }
+    }
+    const p_ = (n, dn) => (dn > 0 ? Math.round((n / dn) * 1000) / 10 : null);
+    const salesPct = p_(salesAmt, weeklyTargetTotal), colPct = p_(c, e);
+    // A week nobody paired a single deck in is a week recovery was NOT MEASURED -- null,
+    // never 0% -- the same rule recTrend applies to a single day.
+    const recPct = measured ? p_(rec, u) : null;
+    return { salesPct, colPct, recPct,
+      avgPct: Math.round(((salesPct || 0) + (colPct || 0) + (recPct || 0)) / 3 * 10) / 10,
+      hasData: e > 0 || u > 0 || salesAmt > 0 };
+  };
+  const wkNow = weekPcts_(myExpWeek, myDefWeek, mon, sun);
+  const wkPrev = weekPcts_(myExpPrev, myDefPrev, prevMon, prevSun);
+  const move_ = (a, b) => (a == null || b == null || !wkPrev.hasData) ? null : Math.round((a - b) * 10) / 10;
+  const perf = {
+    salesPct: wkNow.salesPct, colPct: wkNow.colPct, recPct: wkNow.recPct, avgPct: wkNow.avgPct,
+    dSales: move_(wkNow.salesPct, wkPrev.salesPct),
+    dCol: move_(wkNow.colPct, wkPrev.colPct),
+    dRec: move_(wkNow.recPct, wkPrev.recPct),
+    dAvg: wkPrev.hasData ? Math.round((wkNow.avgPct - wkPrev.avgPct) * 10) / 10 : null,
+  };
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
@@ -5864,7 +5941,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     asOfDate: today, pastWeek: asOf.past,
     // What was ASKED for, so the week bar can say when a choice was overruled and why.
     weekRequested: asOf.requested, weekFuture: asOf.future,
-    weeklyTarget: weeklyTarget * Math.max(myTeams.length, 1), teamCount: myTeams.length,
+    weeklyTarget: weeklyTargetTotal, teamCount: myTeams.length,
+    /* The strip: this week's three percentages and their average, with last week's movement
+       beside each -- null movement means last week had nothing to compare against. */
+    perf,
     cards: {
       curArrears: teams.reduce((s, t) => s + t.curArrears, 0),
       initArrears: teams.reduce((s, t) => s + t.initArrears, 0),

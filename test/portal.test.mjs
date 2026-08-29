@@ -2582,6 +2582,52 @@ test('the dashboard carries no month figures -- the month lives only in the mont
   assert.equal(d.teamPerf.find(r => r.team === 'KONGOWE').salesMonth, 400);
 });
 
+/* THE PERFORMANCE STRIP -- "show average of sales%, col% and recovery% performance where in
+   each one and the average have the rising constant or dropping arrow symbol to know
+   progress". Three percentages and their average for THIS week, each with last week's
+   movement beside it; a last week with no uploads at all yields null movement -- no arrow,
+   never a fake "rising from nothing". */
+test('the dashboard performance strip carries the three percentages, their average, and the movement', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 'p1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
+    { id: 'p2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
+    // LAST week (Mon 2026-07-13): 200 sold, so this week's sales movement is +15 points.
+    { id: 'p3', team: 'KONGOWE', stage: 'approved', principal_amt: 200, approved_date: '2026-07-15' },
+  ];
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0),
+    E('333', 'MBAGALA', 1000, 'PAID', 0),
+    // Last week collected nothing of 1,000 -- so collection moved up by 50 points.
+    E('444', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-15'),
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
+  const p = d.perf;
+  // Target 1,000 x 2 teams = 2,000/week. This week: sales 500 -> 25%; col 1,000/2,000 -> 50%;
+  // recovery 400 of 1,000 -> 40%; average (25+50+40)/3 = 38.3.
+  assert.equal(p.salesPct, 25);
+  assert.equal(p.colPct, 50);
+  assert.equal(p.recPct, 40);
+  assert.equal(p.avgPct, 38.3);
+  // Movement against last week: sales 10% -> 25% (+15), collection 0% -> 50% (+50),
+  // recovery had no decks last week (null -- no arrow), average 3.3 -> 38.3 (+35).
+  assert.equal(p.dSales, 15);
+  assert.equal(p.dCol, 50);
+  assert.equal(p.dRec, null, 'no defaulter decks last week: no arrow, not a fake rise');
+  assert.equal(p.dAvg, 35);
+
+  // A truly empty last week silences every arrow.
+  const t2 = tables();
+  t2.settings = t2.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t2.loans = [{ id: 'q1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY }];
+  t2.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'UNPAID', 0)];
+  const p2 = (await run('dashboardFull', {}, ADMIN, dbWithRpc(t2))).perf;
+  assert.equal(p2.dSales, null);
+  assert.equal(p2.dCol, null);
+  assert.equal(p2.dAvg, null);
+});
+
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
    progress and summary". The three month cards opened up into their weeks: calendar weeks
    CLIPPED to the month ("some months happen to start or end in the same month with the
@@ -2623,6 +2669,14 @@ test('the month report cuts the month into clipped weeks and agrees with the car
   assert.equal(future.sales, null, 'a week that has not happened says nothing');
   assert.equal(future.expected, null);
 
+  /* The per-week performance: sales against a quarter of the month's target (8,000/4 =
+     2,000), and perf = average of the three percentages. Week 4: sales 25%, col 50%,
+     rec 40% -> perf 38.3, moving up from week 3's 0. */
+  assert.equal(wk.salesPct, 25);
+  assert.equal(wk.perf, 38.3);
+  assert.equal(wk.dPerf, 38.3, 'week 3 had figures worth 0; the movement says so');
+  assert.equal(wk.dSalesPct, 25);
+
   // The TOTAL row: the whole month summed under the same ledger the weeks came from.
   assert.equal(d.totals.sales, 500);
   assert.equal(d.totals.loans, 2);
@@ -2634,6 +2688,9 @@ test('the month report cuts the month into clipped weeks and agrees with the car
   assert.equal(d.totals.uncollected, 1000, 'the UNPAID row is the month\'s uncollected');
   assert.equal(d.totals.recPct, 40);
   assert.ok(d.totals.monthTarget > 0, 'weekly target x 4 x teams, for the sales card');
+  // Month performance: (6.3 + 50 + 40) / 3 -- sales 500 of an 8,000 month target.
+  assert.equal(d.totals.salesPct, 6.3);
+  assert.equal(d.totals.perfPct, 32.1);
 
   // Without the totals function: sales still exact (they read loans, not snapshots), and the
   // ledger columns stand down rather than print a month of zeros.
