@@ -1064,6 +1064,15 @@ async function summaryCompute(db, user, nowMs) {
     sales: { pct: rat(salesNum, salesDen), num: salesNum, den: salesDen, teams: teamCount, basis: 'month' },
     expdf,
     recovery: { pct: rat(rec.recovered, rec.denominator), num: rec.recovered, den: rec.denominator, basis: rec.basis },
+    /* REC LEO -- the newest paired deck day on its own, in shillings.
+       On a weekend the Rec figure beside it is the whole week Mon-Fri, because there is no
+       weekend deck to read, and a week total cannot tell an officer what the last day brought
+       in: a steady week and a week carried entirely by Friday print the same number. This is
+       that day by itself. It carries the DAY it belongs to, so the phone can say "leo" only
+       when it really is today and name the day otherwise. */
+    recToday: rec.latest
+      ? { num: rec.latest.recovered, day: rec.latest.day, date: rec.latest.date, isToday: rec.latest.isToday }
+      : null,
     /* WHICH UPLOAD THESE FIGURES ARE. The phone keeps the strip on screen across restarts, so
        it has to know what it is holding: it stores this beside the numbers and asks again only
        when a sync reports a different one. Sent by the figures themselves rather than assumed
