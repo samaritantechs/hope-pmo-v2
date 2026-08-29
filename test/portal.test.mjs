@@ -812,75 +812,88 @@ test('teams list is scoped too', async () => {
   assert.deepEqual((await run('teams', {}, GMO)).rows.map(r => r.team), ['KONGOWE']);
 });
 
+/* Stands in for storage_usage_by_date(): the same GROUP BY, done in JavaScript over the fake.
+   `countFnOver` takes the list of sources the simulated function KNOWS, because a live database
+   can be running any vintage of it -- the current one that answers for everything, or an older
+   one that has never heard of the loan pipeline. */
+const STORAGE_SRC_ALL = [
+  ['expected', 'repayment_snapshots', 'snapshot_date'],
+  ['defaulters', 'defaulter_snapshots', 'snapshot_date'],
+  ['received', 'received_payments', 'paid_at'],
+  ['abnormal', 'abnormal_payments', 'created_at'],
+  ['calls', 'call_logs', 'call_date'],
+  ['loans', 'loans', 'upload_date'],
+  ['comments', 'followup_comments', 'created_at'],
+  ['complaints', 'complaints', 'created_at'],
+  ['restructures', 'restructures', 'created_at'],
+  ['demand_notices', 'demand_notices', 'created_at'],
+  ['followup', 'followup_status', 'updated_at'],
+];
+const countFnOver = (src) => (store) => {
+  const out = [];
+  for (const [key, table, col] of src) {
+    const n = {};
+    for (const r of (store[table] ? store[table].rows : [])) {
+      const d = String(r[col] == null ? '' : r[col]).slice(0, 10) || null;
+      n[d] = (n[d] || 0) + 1;
+    }
+    for (const [day, count] of Object.entries(n)) out.push({ source: key, day: day === 'null' ? null : day, n: count });
+  }
+  return out;
+};
+const storageDb = (t, fn) => fakeDb(t || tables(), { rpc: { storage_usage_by_date: fn } });
+
 test('storage usage reports what each date costs, per report type', async () => {
-  const d = await run('storageUsage');
+  const d = await portalApi(storageDb(null, countFnOver(STORAGE_SRC_ALL)), ADMIN, 'storageUsage', {}, NOW);
   assert.ok(d.totalRows > 0);
   const today = d.dates.find(x => x.date === TODAY);
   assert.equal(today.expected, 3);            // 3 rows uploaded for today
   assert.equal(today.defaulters, 6);          // 3 initial + 3 current
   assert.equal(d.newest, TODAY);
+  assert.equal(d.undated, undefined);         // the function answered for everything
   // Only an admin may see (or act on) the storage picture.
   await assert.rejects(() => run('storageUsage', {}, GMO), e => e.status === 403);
 });
 
-/* The Settings tab used to download every row of five tables just to count them -- millions of
-   rows, over the internet, to work out a number Postgres already knew. It now asks the database
-   to count, and falls back to the old way while the migration has not been run by hand yet.
-   Both roads have to arrive at the same place, or the tab tells a different story depending on
-   whether somebody remembered to run some SQL. */
-test('storage counts: asking the database and counting by hand agree exactly', async () => {
-  /* Stands in for storage_usage_by_date(): the same GROUP BY, done in JavaScript over the fake.
-     It deliberately knows only the ORIGINAL FIVE reports, which makes this the upgrade path as
-     well: a live database still running the earlier version of that function answers for five,
-     and the app must count the other five itself and arrive at exactly the same totals. Do not
-     "fix" this list to match the code -- that is the thing being tested. */
-  const COUNT_FN = (store) => {
-    const src = [
-      ['expected', 'repayment_snapshots', 'snapshot_date'],
-      ['defaulters', 'defaulter_snapshots', 'snapshot_date'],
-      ['received', 'received_payments', 'paid_at'],
-      ['abnormal', 'abnormal_payments', 'created_at'],
-      ['calls', 'call_logs', 'call_date'],
-    ];
-    const out = [];
-    for (const [key, table, col] of src) {
-      const n = {};
-      for (const r of (store[table] ? store[table].rows : [])) {
-        const d = String(r[col] == null ? '' : r[col]).slice(0, 10) || null;
-        n[d] = (n[d] || 0) + 1;
-      }
-      for (const [day, count] of Object.entries(n)) out.push({ source: key, day: day === 'null' ? null : day, n: count });
-    }
-    return out;
-  };
+/* The Settings tab used to download every row of ten tables just to count them -- millions of
+   rows, over the internet, to work out a number Postgres already knew. On the night the
+   database was already struggling, that fallback was itself a large part of the struggle: one
+   open of Settings re-downloaded the very tables it was measuring. So the old way is GONE.
+   Where the function is missing or behind, the app asks each table for its count alone -- a
+   HEAD request, a number and no rows -- and says plainly which reports have no day-by-day
+   split rather than showing a quieter board than the totals imply. */
+test('storage counts: sources the function does not answer for are head-counted, never fetched', async () => {
+  /* An OLDER vintage of the function: knows the original five reports only. The app must
+     head-count the other six and arrive at the same totals the full function reports. */
+  const fast = await portalApi(storageDb(null, countFnOver(STORAGE_SRC_ALL)), ADMIN, 'storageUsage', {}, NOW);
+  const older = await portalApi(storageDb(null, countFnOver(STORAGE_SRC_ALL.slice(0, 5))), ADMIN, 'storageUsage', {}, NOW);
 
-  const slow = await portalApi(fakeDb(tables()), ADMIN, 'storageUsage', {}, NOW);
-  const fast = await portalApi(fakeDb(tables(), { rpc: { storage_usage_by_date: COUNT_FN } }),
-    ADMIN, 'storageUsage', {}, NOW);
+  assert.equal(older.totalRows, fast.totalRows);
+  assert.equal(older.bytes, fast.bytes);
+  assert.deepEqual(older.sources, fast.sources);
+  // What the head-count road cannot know is the dates, and it must SAY so, per source.
+  for (const [key] of STORAGE_SRC_ALL.slice(5)) assert.ok(older.undated.includes(key), key + ' reported undated');
+  for (const [key] of STORAGE_SRC_ALL.slice(0, 5)) assert.ok(!older.undated.includes(key), key + ' has its dates');
+  // The five answered sources still carry their full day-by-day picture.
+  const today = older.dates.find(x => x.date === TODAY);
+  assert.equal(today.expected, 3);
+  assert.equal(today.defaulters, 6);
 
-  assert.equal(fast.totalRows, slow.totalRows);
-  assert.equal(fast.bytes, slow.bytes);
-  assert.equal(fast.oldest, slow.oldest);
-  assert.equal(fast.newest, slow.newest);
-  assert.equal(fast.perDay, slow.perDay);
-  assert.deepEqual(fast.dates, slow.dates);
-  assert.deepEqual(fast.sources, slow.sources);
-
-  // A database where the function has not been created must NOT error -- that is every live
-  // database between a deploy and someone running the migration.
-  const notYet = await portalApi(fakeDb(tables(), { rpc: { storage_usage_by_date: null } }),
-    ADMIN, 'storageUsage', {}, NOW);
-  assert.deepEqual(notYet.dates, slow.dates);
+  // A database where the function has not been created AT ALL must not error -- that is every
+  // live database between a deploy and someone running the migration. Totals stay exact.
+  const notYet = await portalApi(storageDb(null, null), ADMIN, 'storageUsage', {}, NOW);
+  assert.equal(notYet.totalRows, fast.totalRows);
+  assert.equal(notYet.bytes, fast.bytes);
+  assert.deepEqual(notYet.dates, []);
+  assert.equal(notYet.oldest, null);
 
   // Rows with no date of their own still count towards the size, they just belong to no day --
   // otherwise the disk figure would understate what is actually stored.
   const t = tables();
   t.abnormal_payments = (t.abnormal_payments || []).concat([{ id: 'x1', created_at: null }]);
-  const withNull = await portalApi(fakeDb(t, { rpc: { storage_usage_by_date: COUNT_FN } }),
-    ADMIN, 'storageUsage', {}, NOW);
-  const plain = await portalApi(fakeDb(t), ADMIN, 'storageUsage', {}, NOW);
-  assert.equal(withNull.totalRows, plain.totalRows);
-  assert.deepEqual(withNull.dates, plain.dates);
+  const withNull = await portalApi(storageDb(t, countFnOver(STORAGE_SRC_ALL)), ADMIN, 'storageUsage', {}, NOW);
+  const headOnly = await portalApi(storageDb(t, null), ADMIN, 'storageUsage', {}, NOW);
+  assert.equal(withNull.totalRows, headOnly.totalRows);
 });
 
 test('cleanup deletes only the chosen types for the chosen date', async () => {

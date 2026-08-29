@@ -4250,9 +4250,12 @@ const dayOf = v => String(v == null ? '' : v).slice(0, 10);
    storage_usage_by_date() does the same counting in one query, over indexes, and sends back a
    few hundred rows. See db/migrations/2026-08-01-storage-counts.sql.
 
-   The old way is kept as a fallback, and this is not tidiness: the migration is run by hand,
-   so between a deploy and that being done, the function does not exist. Falling back means
-   the Settings tab keeps working -- slowly, as it always did -- instead of breaking. */
+   A fallback is still needed -- the migration is run by hand, so between a deploy and that
+   being done the function does not exist -- but the fallback may NOT be the old way. On the
+   night of the WW3 run the old fallback was what kept the instance pinned down: every open of
+   Settings re-downloaded the tables it was trying to measure. The fallback is now a HEAD
+   count per table (a number, no rows), which keeps the totals honest at the price of the
+   per-date breakdown until the function is installed. */
 async function countsByDate(db) {
   let rows = [];
   try {
@@ -4262,21 +4265,29 @@ async function countsByDate(db) {
     if (Array.isArray(data)) rows = data;
   } catch (e) { /* function not created yet -- everything falls back below */ }
 
-  /* Whatever the database function did not answer for is counted the old way, source by
-     source. This matters because the list of reports grows: a database still running an
-     earlier version of the function knows nothing about, say, the loan pipeline, and the
-     alternative to filling that gap here would be a Settings tab that quietly under-reports
-     until somebody remembers to run some SQL. A source that is genuinely empty costs one
-     query returning nothing. */
+  /* Whatever the database function did not answer for is counted with a HEAD request: the
+     database counts and sends back one number, no rows. The old fallback fetched every row
+     of every unanswered table just to count them here, and at live scale that one Settings
+     click pulled hundreds of thousands of rows through PostgREST -- it hung the tab AND
+     dragged the whole instance down with it, which is how "Settings is just loading" and
+     "everything is abnormal" turned out to be the same fault.
+
+     The price of the cheap count is the per-date breakdown: only the database function knows
+     the dates. So a source answered this way is reported as one undated total, and `undated`
+     names it, so the tab can say "run the migration for the day-by-day picture" instead of
+     silently showing an emptier board than yesterday. A source whose table errors (an old
+     database that has not got it yet) is skipped -- absent, not zero. */
   const answered = new Set(rows.map(r => r.source));
+  const undated = [];
   for (const [key, src] of Object.entries(SNAPSHOT_SOURCES)) {
     if (answered.has(key)) continue;
-    const all = await fetchAll(() => db.from(src.table).select(src.dateCol));
-    const n = {};
-    for (const r of all) { const d = dayOf(r[src.dateCol]); n[d] = (n[d] || 0) + 1; }
-    for (const [day, count] of Object.entries(n)) rows.push({ source: key, day, n: count });
+    const { count, error } = await runQuery(() =>
+      db.from(src.table).select(src.dateCol, { count: 'exact', head: true }));
+    if (error) continue;
+    undated.push(key);
+    if (count) rows.push({ source: key, day: null, n: count });
   }
-  return rows;
+  return { rows, undated };
 }
 
 /* ---------------------------------------------- CLEAN THE FOLLOW-UP LIST, WITHOUT WAITING.
@@ -4391,7 +4402,8 @@ async function storageUsage(db, user) {
   for (const [key, src] of Object.entries(SNAPSHOT_SOURCES)) {
     out[key] = { key, label: src.label, table: src.table, rows: 0 };
   }
-  for (const row of await countsByDate(db)) {
+  const counted = await countsByDate(db);
+  for (const row of counted.rows) {
     const key = row.source;
     if (!out[key]) continue;                      // a source the app no longer knows about
     const n = Number(row.n) || 0;
@@ -4414,9 +4426,13 @@ async function storageUsage(db, user) {
     ? Math.max(1, Math.round((Date.parse(dates[0].date) - Date.parse(dates[dates.length - 1].date)) / 86400000) + 1)
     : 1;
   const perDay = Math.round(bytes / span);
+  /* `undated` travels with the answer so the tab can SAY the day-by-day board is partial
+     rather than quietly showing fewer dates than the totals imply. It is only ever non-empty
+     while storage_usage_by_date() is missing from the database. */
   return { sources: Object.values(out), dates,
     totalRows: Object.values(out).reduce((s, x) => s + x.rows, 0),
     bytes, perDay, perMonth: perDay * 30, days: span,
+    undated: counted.undated.length ? counted.undated : undefined,
     oldest: dates.length ? dates[dates.length - 1].date : null,
     newest: dates.length ? dates[0].date : null };
 }
