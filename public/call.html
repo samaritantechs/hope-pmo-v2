@@ -1521,11 +1521,17 @@ function staleNote_(){
       + esc(a.date) + '</b>.<br><span style="font-size:11.5px">These figures were last refreshed on '
       + esc(a.date) + '. A customer stays on this list until their weekday\u2019s deck is uploaded '
       + 'again without them, so somebody here may already have cleared.</span>');
-  var what = S.view === 'tomorrow' ? 'KESHO' : 'LEO';
-  return box('<b>Angalia / Note:</b> orodha ya ' + what + ' haijapakiwa leo. '
-    + 'Hii ni ya <b>' + esc(a.date) + '</b>.<br>'
-    + '<span style="font-size:11.5px">This list was not uploaded for today — you are seeing '
-    + esc(a.date) + '. Tell your PMO officer before working it.</span>');
+  /* ONE SLIM RED LINE, THE SAME ONE THE PORTAL'S EXPECTED TAB SHOWS.
+     "the banner is always too long just pass a single slim red row saying
+      [expected ya - date - leo hakuna]"
+     This was two bilingual sentences in a calm amber box, and an officer at a customer's gate
+     reads the first three words or nothing. It says one thing -- the list on your screen is
+     not today's, here is the day it IS -- so it is one line, and red, and the same words on
+     the phone as on the portal so nobody has to learn two ways of being told. */
+  var what = S.view === 'tomorrow' ? 'kesho' : 'leo';
+  return '<div class="empty" style="background:#FEE2E2;border:1px solid #FCA5A5;color:#991B1B;'
+    + 'text-align:left;padding:6px 10px;margin-bottom:8px;border-radius:8px;font-size:12px;line-height:1.35">'
+    + 'Expected ya <b>' + esc(a.date) + '</b> &middot; ' + what + ' hakuna</div>';
 }
 
 function emptyWhy_(v){
