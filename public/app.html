@@ -547,7 +547,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-a';
+var BUILD = '2026-08-29-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1635,6 +1635,17 @@ function trendSub(dv, label){
   return dv == null ? 'hakuna kipindi kilichopita / no previous period'
     : ((dv > 0 ? '+' : '') + dv + '% ' + (label || 'dhidi ya wiki iliyopita / vs last week'));
 }
+/* WHAT THE AVERAGE COVERED. The strip's average is the mean of the three percentages that were
+   actually MEASURED -- a week where no defaulter deck was paired has no recovery figure, and
+   counting that absence as 0% printed an average that contradicted the two real numbers next
+   to it. Left out of the sum it must also leave the divisor, and then the tile has to SAY so,
+   or a two-of-three average silently flatters a week with no decks. */
+function avgSub(dv, on, label){
+  var s = trendSub(dv, label);
+  return (on != null && on < 3)
+    ? (s + ' · wastani wa ' + on + ' kati ya 3 / average of the ' + on + ' measured')
+    : s;
+}
 
 /* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
 var HEAD = '', ONROW = null;
@@ -2430,7 +2441,7 @@ VIEWS.dashboard = function(){
           + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), trendSub(p.dSales))
           + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), trendSub(p.dCol))
           + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), trendSub(p.dRec))
-          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), trendSub(p.dAvg))
+          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), avgSub(p.dAvg, p.avgOn))
           + '</div>'; })()
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
       + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
@@ -2653,7 +2664,7 @@ VIEWS.monthreport = function(){
       + kpi('Sales %', pct(t.salesPct) + trendArrow(last && last.dSalesPct), trendSub(last && last.dSalesPct, 'wiki 2 za mwisho / last two weeks'))
       + kpi('Collection %', pct(t.colPct) + trendArrow(last && last.dColPct), trendSub(last && last.dColPct, 'wiki 2 za mwisho / last two weeks'))
       + kpi('Recovery %', pct(t.recPct) + trendArrow(last && last.dRecPct), trendSub(last && last.dRecPct, 'wiki 2 za mwisho / last two weeks'))
-      + kpi('Performance · wastani', pct(t.perfPct) + trendArrow(last && last.dPerf), trendSub(last && last.dPerf, 'wiki 2 za mwisho / last two weeks'))
+      + kpi('Performance · wastani', pct(t.perfPct) + trendArrow(last && last.dPerf), avgSub(last && last.dPerf, t.perfOn, 'wiki 2 za mwisho / last two weeks'))
       + '</div>'
       + (d.ledgerReady ? '' : '<div class="note">Hesabu za makusanyo na urejeshaji bado zinajazwa'
           + ' — fungua tena baada ya dakika moja. / The collection & recovery ledger is still'
@@ -3174,7 +3185,64 @@ var PCT_FROM = {   // percentage column -> [numerator field, denominator field]
   recPctMon: ['recovered', 'uncolMon'], recPctYest: ['recovered', 'uncolYest'],
   recPctWeek: ['recovered', 'uncolWeek'], collPct: ['colBasis', 'expBasis'],
   collPctWeek: ['colWeek', 'expWeek'],
+  /* THE MONTH REPORT'S OWN THREE. "total col i think the expected amount then % of col not
+     collected" -- exactly right, and they were missing from this list, so the bottom line was
+     averaging the four weekly percentages instead of asking the only question that has one
+     true answer: of everything expected this month, how much came in. A month of 20m expected
+     and 12m collected is 60%, whether the four weeks were 60/60/60/60 or 90/90/30/30 -- and
+     those two months are not equally good, which is why the average was misleading. */
+  colPct: ['collected', 'expected'], recPct: ['recovered', 'uncollected'],
 };
+/* THE PERCENTAGE CELLS OF A GRAND TOTAL BAR, filled into whatever total row a board already
+   has -- worked out here once so that EVERY board gets them, not only the ones that let
+   autoTotals do all the work.
+
+   "all reports in all navs - mostly of them had grand totals but you didnt put average of the
+    end column where it is % it needs average where numbers total"
+
+   A percentage cannot be added up. Where the two columns that MADE it are both on the table,
+   the honest answer is to work it out again from their totals -- 12m collected of 20m expected
+   is 60%, whatever the individual teams did. That is what PCT_FROM is for, and it is exact.
+
+   Where those parts are not on the table there was nowhere to go, so the bar simply left the
+   cell empty -- and on a projector, beside a row of real figures, an empty cell reads as zero
+   or as a fault. The honest summary there is the AVERAGE of the rows, marked with a leading ~
+   so nobody mistakes it for the recomputed ratio beside it: an average of percentages is not
+   the percentage of the totals, and a slide must not pretend otherwise.
+
+   A cell the caller filled itself is never overwritten -- a board that knows its own answer
+   knows better than this does. Returns whether it filled anything. */
+function fillPctTotals(t, rows, cols){
+  if (!t || !rows || !rows.length || !cols) return false;
+  var did = false;
+  cols.forEach(function(c){
+    if (c.kind !== 'pct') return;
+    if (t[c.key] !== undefined && t[c.key] !== null && t[c.key] !== '') return;
+    var src = PCT_FROM[c.key];
+    if (src){
+      var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
+      var d = rows.reduce(function(s, r){ return s + (Number(r[src[1]]) || 0); }, 0);
+      if (d > 0){ t[c.key] = Math.round((n / d) * 1000) / 10; did = true; return; }
+      /* NO `return` WHEN THE PARTS ARE NOT THERE. The same column key appears on boards that
+         carry its two source columns and on boards that do not -- Sales % is worked out from
+         amount and target on the team board, while the month report has neither field on it.
+         Returning here left those cells BLANK beside a row of real figures, which is the very
+         thing this function exists to stop. Fall through to the average instead. */
+    // Rows that have no value at all are left out of the average rather than counted as zero,
+    // which would drag every board with a blank row towards nothing. Same rule the performance
+    // strip's average follows: not measured is not the same as zero.
+    var vals = [];
+    rows.forEach(function(r){
+      var v = c.get ? c.get(r) : r[c.key];
+      if (v !== null && v !== undefined && v !== '' && !isNaN(Number(v))) vals.push(Number(v));
+    });
+    if (!vals.length) return;
+    var avg = vals.reduce(function(s, v){ return s + v; }, 0) / vals.length;
+    t[c.key] = '~' + (Math.round(avg * 10) / 10) + '%';
+    did = true;
+  });
+  return did;
+}
 function autoTotals(rows, cols){
   if (!rows || !rows.length || !cols || !cols.length) return null;
   var t = {}, any = false;
@@ -3187,42 +3255,11 @@ function autoTotals(rows, cols){
       any = true;
     }
   });
+  // PERCENTAGES LAST, so the totals they are built from are already in place. A board whose
+  // only summarisable columns ARE percentages still earns a total row -- checking `any` before
+  // this ran is what left those boards with no bottom line at all.
+  if (fillPctTotals(t, rows, cols)) any = true;
   if (!any) return null;
-  /* PERCENTAGES LAST, so the totals they are built from are already in place.
-
-     "The grand total bars in reports and presentations should have averages where applicable
-      not leave data unsummarized."
-
-     A percentage cannot be added up, so the right answer is to work it out AGAIN from the
-     summed parts -- 12m collected of 20m expected is 60%, whatever the individual teams did.
-     That is what PCT_FROM is for and it is exact.
-
-     But a percentage whose two parts are not both on the table had nowhere to go, so the grand
-     total simply left that cell empty -- on a projector, next to a row of real figures, an
-     empty cell reads as zero or as a fault. Where the parts are missing the honest summary is
-     the AVERAGE of the rows, and it is marked with a leading ~ so nobody reads it as the
-     recomputed ratio beside it. An average of percentages is not the percentage of the totals,
-     and a slide should not pretend otherwise. */
-  cols.forEach(function(c){
-    if (c.kind !== 'pct') return;
-    var src = PCT_FROM[c.key];
-    if (src){
-      var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
-      var d = rows.reduce(function(s, r){ return s + (Number(r[src[1]]) || 0); }, 0);
-      if (d > 0) t[c.key] = Math.round((n / d) * 1000) / 10;
-      return;
-    }
-    // Rows that have no value at all are left out of the average rather than counted as zero,
-    // which would drag every board with a blank row towards nothing.
-    var vals = [];
-    rows.forEach(function(r){
-      var v = c.get ? c.get(r) : r[c.key];
-      if (v !== null && v !== undefined && v !== '' && !isNaN(Number(v))) vals.push(Number(v));
-    });
-    if (!vals.length) return;
-    var avg = vals.reduce(function(s, v){ return s + v; }, 0) / vals.length;
-    t[c.key] = '~' + (Math.round(avg * 10) / 10) + '%';
-  });
   return t;
 }
 /** Every board is its own card with its OWN Excel and JPG buttons -- exports belong to the
@@ -3233,8 +3270,18 @@ var BOARDS = {};
    genuinely has nothing to total. Omitting it gets the automatic one. */
 function board(id, title, sub, rows, cols, totalRow){
   BOARDS[id] = { title: title, rows: rows, cols: cols };
-  if (totalRow === undefined) totalRow = autoTotals(rows, cols);
-  if (totalRow === false) totalRow = null;
+  if (totalRow === undefined) {
+    totalRow = autoTotals(rows, cols);           // already carries its percentage cells
+  } else if (totalRow === false) {
+    totalRow = null;
+  } else {
+    /* AN EXPLICIT TOTAL ROW NAMES THE FIELDS TO ADD UP -- and a percentage is never one of
+       them, because adding percentages is nonsense. So every board that passed its own list
+       has been printing an EMPTY cell under its % column while the columns beside it carried
+       real figures. Seventeen boards do that, the month report's Perf column among them.
+       They get the same treatment autoTotals gives, from the same function. */
+    fillPctTotals(totalRow, rows, cols);
+  }
   return '<div class="card" id="'+id+'"><div class="card-h">'+esc(title)
     + (sub ? '<span style="font-weight:400;color:var(--mut);font-size:12px">'+esc(sub)+'</span>' : '')
     + '<span class="sub"><button class="btn sm ghost" data-xls="'+id+'">Excel</button>'

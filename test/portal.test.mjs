@@ -2623,22 +2623,45 @@ test('the dashboard performance strip carries the three percentages, their avera
   assert.equal(p.colPct, 50);
   assert.equal(p.recPct, 40);
   assert.equal(p.avgPct, 38.3);
+  assert.equal(p.avgOn, 3, 'all three were measured this week');
   // Movement against last week: sales 10% -> 25% (+15), collection 0% -> 50% (+50),
-  // recovery had no decks last week (null -- no arrow), average 3.3 -> 38.3 (+35).
+  // recovery had no decks last week (null -- no arrow).
   assert.equal(p.dSales, 15);
   assert.equal(p.dCol, 50);
   assert.equal(p.dRec, null, 'no defaulter decks last week: no arrow, not a fake rise');
-  assert.equal(p.dAvg, 35);
+  /* THE AVERAGE IS OVER WHAT WAS MEASURED, AND THAT IS WHY THIS IS 33.3 AND NOT 35.
+     Last week had sales 10% and collection 0%, and NO defaulter deck at all -- so recovery was
+     not measured, which is not the same as being zero. Averaging over three counted that
+     absence as 0% and put last week at 3.3, flattering this week's rise by nearly two points.
+     Over the two that were measured last week stands at 5.0, and the movement is 38.3 - 5.0.
+     The same rule is why a strip showing "Recovery —" can never print an average lower than
+     both figures printed beside it. */
+  assert.equal(p.dAvg, 33.3);
 
   // A truly empty last week silences every arrow.
   const t2 = tables();
   t2.settings = t2.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
   t2.loans = [{ id: 'q1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY }];
-  t2.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'UNPAID', 0)];
+  t2.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'UNPAID', 0), E('333', 'MBAGALA', 1000, 'PAID', 0)];
+  // NOT ONE DEFAULTER DECK. The base fixture ships with decks, so it has to be emptied on
+  // purpose -- an unmeasured recovery is the whole point of the rule below.
+  t2.defaulter_snapshots = [];
   const p2 = (await run('dashboardFull', {}, ADMIN, dbWithRpc(t2))).perf;
   assert.equal(p2.dSales, null);
   assert.equal(p2.dCol, null);
   assert.equal(p2.dAvg, null);
+
+  /* AN AVERAGE OVER A PERCENTAGE NOBODY COULD MEASURE IS NOT AN AVERAGE.
+     t2 has sales and expected rows but not one defaulter deck, so recovery is genuinely not
+     measured -- null, never 0%. Dividing by three regardless printed 23.3 under a strip
+     reading "Sales 20%, Collection 50%, Recovery —", and a month of good collection read as a
+     bad one purely because the decks had not been uploaded. Over the two that were measured it
+     is 35, and avgOn carries the "2 of 3" the tile discloses. */
+  assert.equal(p2.recPct, null, 'no decks at all: recovery was not measured');
+  assert.equal(p2.salesPct, 20);
+  assert.equal(p2.colPct, 50);
+  assert.equal(p2.avgPct, 35, 'the mean of the two measured, not of three (the old rule said 23.3)');
+  assert.equal(p2.avgOn, 2, 'and the strip is told it covered two of the three');
 });
 
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
