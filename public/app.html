@@ -272,6 +272,11 @@
   .bar select:focus,.bar input:focus{outline:none;border-color:var(--b500)}
   .note{padding:10px 13px;border:1px solid var(--warnline);background:var(--warnbg);color:var(--warn);border-radius:10px;font-size:12.5px;margin-bottom:12px}
   .note.bad{border-color:var(--badline);background:var(--badbg);color:var(--bad)}
+  /* A note that REPORTS rather than warns -- the Expected tab's date line, on screen every
+     time, turning red only when the list is not today's. Without this it wore the warning
+     colours with green text laid over them, which reads as a fault dressed up as good news.
+     Both themes already carry the ok palette. */
+  .note.good{border-color:var(--okline);background:var(--okbg);color:var(--ok)}
 
   /* commission rate editor + report cleanup: forms that live INSIDE a card, not a drawer,
      because typing a rate and watching the numbers move is the whole point of both. */
@@ -547,7 +552,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-c';
+var BUILD = '2026-08-29-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2768,11 +2773,16 @@ VIEWS.expected = function(){
          when the requested weekday had no sheet: on a Saturday, showing Friday, it said
          nothing at all. Now the test is the honest one -- is this today's list? -- and the
          answer, when it is no, is a single red row and nothing else. */
-      + (d.isToday ? '' :
-          '<div class="note bad" style="padding:6px 10px;font-size:12px;line-height:1.35">'
-          + 'Expected ya <b>' + esc(d.date || '—') + '</b>'
-          + (d.weekday ? ' (' + esc(d.weekday) + ')' : '') + ' &middot; leo hakuna'
-          + '</div>')
+      /* Same rule as the phone: the date is ALWAYS on screen and the colour says whether it is
+         the right one. Green means the list is today's; red means it is not, and names the day
+         it actually is. A notice that only appears when something is wrong cannot be told apart
+         from a notice that has stopped working. */
+      + '<div class="note ' + (d.isToday ? 'good' : 'bad') + '" '
+        + 'style="padding:6px 10px;font-size:12px;line-height:1.35">'
+        + 'Expected ya <b>' + esc(d.date || '—') + '</b>'
+        + (d.weekday ? ' (' + esc(d.weekday) + ')' : '')
+        + (d.isToday ? '' : ' &middot; leo hakuna')
+        + '</div>'
       + '<div class="pills">' + d.weekdays.map(function(w){
           return '<button class="pill'+(w===d.weekday?' on':'')+'" data-wd="'+w+'">'+w
             + (w===d.todayWeekday?' · leo':'') + '</button>'; }).join('')
