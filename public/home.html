@@ -82,13 +82,16 @@ function renderSignIn(err){
     + (err ? '<div class="err">' + esc(err) + '</div>' : '')
     + '</div>'
     + '<div class="sep">au / or</div>'
-    // Three doors, and only one of them wants a code. An officer has a team code and taps
-    // HOPE Calls; a customer has a reference number and taps Mkopo Wangu; a leader types the
-    // code above. Somebody who does not know which one they are should be able to work it out
-    // by reading the screen, not by being told.
+    /* TWO DOORS NOW, AND ONLY ONE OF THEM WANTS A CODE. An officer has a team code and taps
+       HOPE Calls; a leader types the code above.
+
+       MKOPO WANGU IS NO LONGER OFFERED HERE. The customer self-service door was the only tile
+       on this screen aimed at somebody who is not staff, and putting it beside the staff
+       sign-in invited exactly the confusion it was meant to prevent. The page at /mkopo still
+       answers for anyone holding its address -- a link in a message, a printed slip -- so
+       nothing that was working stops working; it is simply not advertised on the way in. */
     + '<div class="tiles">'
       + tile('/call', '&#128222;', 'HOPE Calls', 'Maafisa wa timu &middot; hauhitaji msimbo / officers, no code needed')
-      + tile('/mkopo', '&#128100;', 'Mkopo Wangu / My loan', 'Wateja: weka namba yako ya kumbukumbu / customers: your reference number')
     + '</div>'
     + '<div class="hint">Maafisa wa simu hawahitaji msimbo &mdash; bofya HOPE Calls.<br>Field officers do not need a code &mdash; tap HOPE Calls.</div>';
   // The form is rebuilt on every error, so the masking is re-applied with it.
@@ -203,7 +206,10 @@ function renderHome(me){
       tile('/call', '&#128222;', 'HOPE Calls', 'Orodha za simu, ufuatiliaji, ripoti / call lists & follow-ups')
     + (open ? tile('/dashboard', '&#128202;', 'Mfumo / System', 'Dashboard, followup, PAR, ripoti zote / the full portal') : '')
     + (open && me.can.upload ? tile('/upload', '&#128228;', 'Pakia faili / Upload', 'Expected, Defaulters, Received, mikopo / loan files') : '')
-    + (open ? tile('/live', '&#128225;', 'HOPE Live', 'Ufaulu wa timu, unajisasisha wenyewe / live figures, updates itself') : '')
+    /* HOPE LIVE IS NO LONGER A TILE. It is a wall display, not a door anybody signs in to use,
+       and offering it in the staff menu sent people to a screen with no controls that then had
+       no way back. The address still serves it, so the office TV pointed at /live -- and the
+       `/?menu=1` note above, which exists for that TV -- keep working untouched. */
     + (me.can.admin ? tile('/upload?admin=1', '&#128273;', 'Misimbo / Access codes', 'Pakia Access Codes na User Roles / manage who signs in') : '');
   // Said plainly, once, so nobody spends the morning deciding whether it is broken.
   var closedNote = open ? '' :
