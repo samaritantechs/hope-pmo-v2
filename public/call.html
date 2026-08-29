@@ -1484,55 +1484,50 @@ function drawExpdfStrip_(){
     than the one on the next desk is a list somebody stops trusting, and then works around. It
     says what was applied and how many it left out, so the narrowing is a decision somebody can
     see rather than a discrepancy they have to explain. */
-function narrowNote_(){
-  var src = LIST_SOURCE[S.view], n = S.narrowed && S.narrowed[src];
+/* ONE LINE ABOVE THE LIST. NEVER TWO, NEVER THREE.
+   "the red banner should be single line bro : my intention was killing those 3 text rows"
+
+   There were three separate boxes stacked here -- the stale-list warning, the "your list is
+   filtered" hint and the "near-wins appended at the bottom" hint -- each its own paragraph,
+   each pushing the actual customers further down a small screen. An officer standing at a gate
+   scrolls past all of it, which means the ONE that matters (you are working the wrong day's
+   list) was buried in the two that do not.
+
+   So it is one row, and everything true about the list is a short piece of it, separated by
+   dots. Red when the list is not the day it claims to be -- the only condition that should
+   stop somebody working -- and quiet grey otherwise. */
+function listNote_(){
+  var src = LIST_SOURCE[S.view], a = src && S.asOf[src];
+  var n = S.narrowed && S.narrowed[src];
   var sc = (S.singles && S.singles[src]) || 0;
-  var out = '';
-  if (n && n.of) {
-    var label = n.role === 'CREDIT' ? 'hawajavuka awamu ya 5 / not past the 5th instalment'
-      : 'wako nyuma kidogo tu / only slightly behind';
-    out += '<div class="hint" style="color:var(--mut);font-size:11.5px;margin-bottom:8px">'
-      + 'Orodha yako imechujwa: ' + n.shown + ' kati ya ' + n.of + ' \u00B7 ' + esc(label) + '</div>';
+  var bits = [], stale = !!(a && a.stale && a.date);
+  /* THE DATE IS ALWAYS ON SCREEN, AND THE COLOUR SAYS WHETHER IT IS THE RIGHT ONE.
+     A warning that appears only when something is wrong teaches an officer nothing on the days
+     it stays away -- they cannot tell "this list is today's" from "the warning is broken
+     again", which is exactly the doubt that had them asking. So the line is always there with
+     the day it is showing: GREEN when that is the day it should be, RED when it is not. On a
+     Saturday, Kesho reads Monday's date in green -- correct, and visibly so. */
+  if (a && a.date) {
+    // The defaulter lists age differently -- a customer stays until their own weekday's deck is
+    // re-sent without them -- so the date IS the whole story, and needs no paragraph.
+    bits.push((S.view === 'def' || S.view === 'exp' || S.view === 'chr')
+      ? 'Deck ya <b>' + esc(a.date) + '</b>'
+      : 'Expected ya <b>' + esc(a.date) + '</b>'
+        + (stale ? (' \u00B7 ' + (S.view === 'tomorrow' ? 'kesho' : 'leo') + ' hakuna') : ''));
   }
-  /* The near-wins appended at the bottom: defaulters one count from done. The whole reason
-     they are here is to be FINISHED -- a customer pushed from 3-7 to 6-7 shows nothing, the
-     last push shows everything -- so the note sells them as exactly that. */
-  if (sc && (S.view === 'today' || S.view === 'tomorrow')) {
-    out += '<div class="hint" style="color:var(--mut);font-size:11.5px;margin-bottom:8px">'
-      + '+ ' + sc + ' wadaiwa hatua MOJA kumaliza wameongezwa mwisho wa orodha \u2014 wamalize, ndipo ukusanyaji wako unapanda.'
-      + ' / ' + sc + ' defaulter(s) ONE count from done are added at the end \u2014 finishing them is what lifts your collection.</div>';
-  }
-  return out;
+  if (n && n.of) bits.push('imechujwa ' + n.shown + '/' + n.of);
+  if (sc && (S.view === 'today' || S.view === 'tomorrow')) bits.push('+' + sc + ' hatua moja mwishoni');
+  if (!bits.length) return '';
+  var style = stale
+    ? 'background:#FEE2E2;border:1px solid #FCA5A5;color:#991B1B'
+    : (a && a.date
+        ? 'background:#DCFCE7;border:1px solid #86EFAC;color:#166534'
+        : 'background:transparent;border:0;color:var(--mut)');
+  return '<div style="' + style + ';text-align:left;padding:5px 10px;margin-bottom:8px;'
+    + 'border-radius:8px;font-size:12px;line-height:1.3;white-space:nowrap;overflow:hidden;'
+    + 'text-overflow:ellipsis">' + bits.join(' \u00B7 ') + '</div>';
 }
 
-/** Says so, loudly, when the list on screen is not the day it claims to be. */
-function staleNote_(){
-  var src = LIST_SOURCE[S.view], a = src && S.asOf[src];
-  if (!a || !a.stale || !a.date) return '';
-  var box = function(html){ return '<div class="empty" style="background:#FEF3C7;border:1px solid #FCD34D;'
-    + 'color:#92400E;text-align:left;padding:10px 12px;margin-bottom:8px;border-radius:10px">' + html + '</div>'; };
-  /* The defaulter list ages differently from the Expected ones. A customer stays on it until
-     THEIR weekday's deck is uploaded again without them, so a deck nobody has re-sent for a
-     fortnight leaves people on the list who may already have cleared. Saying so is the
-     difference between an officer trusting the list and an officer ringing somebody who has
-     paid. */
-  if (S.view === 'def' || S.view === 'exp' || S.view === 'chr')
-    return box('<b>Angalia / Note:</b> takwimu hizi zilisasishwa mara ya mwisho tarehe <b>'
-      + esc(a.date) + '</b>.<br><span style="font-size:11.5px">These figures were last refreshed on '
-      + esc(a.date) + '. A customer stays on this list until their weekday\u2019s deck is uploaded '
-      + 'again without them, so somebody here may already have cleared.</span>');
-  /* ONE SLIM RED LINE, THE SAME ONE THE PORTAL'S EXPECTED TAB SHOWS.
-     "the banner is always too long just pass a single slim red row saying
-      [expected ya - date - leo hakuna]"
-     This was two bilingual sentences in a calm amber box, and an officer at a customer's gate
-     reads the first three words or nothing. It says one thing -- the list on your screen is
-     not today's, here is the day it IS -- so it is one line, and red, and the same words on
-     the phone as on the portal so nobody has to learn two ways of being told. */
-  var what = S.view === 'tomorrow' ? 'kesho' : 'leo';
-  return '<div class="empty" style="background:#FEE2E2;border:1px solid #FCA5A5;color:#991B1B;'
-    + 'text-align:left;padding:6px 10px;margin-bottom:8px;border-radius:8px;font-size:12px;line-height:1.35">'
-    + 'Expected ya <b>' + esc(a.date) + '</b> &middot; ' + what + ' hakuna</div>';
-}
 
 function emptyWhy_(v){
   if (v === 'tomorrow') return 'Ratiba ya kesho haijapakiwa bado \u2014 pakia laha ya Expected ya tarehe ya KESHO.';
@@ -1712,8 +1707,7 @@ function drawList(){
   var searching = !!S.q.trim();
   body.innerHTML = banner
     + (searching ? '<div class="hint" style="color:var(--mut);font-size:12px;margin-bottom:8px">Matokeo ya utafutaji \u2014 orodha zote / results across every list</div>' : '')
-    + staleNote_()
-    + narrowNote_()
+    + listNote_()
     + '<div id="listRows">' + (S.rows.length ? S.rows.map(function(r){ return rowHtml(r, searching); }).join('') : '<div class="empty"><b>Hakuna wateja.</b>' + (searching ? 'Hakuna aliyepatikana.' : emptyWhy_(S.view)) + '</div>') + '</div>'
     /* HOW OLD IS THE APP YOU ARE HOLDING? Three rounds of "it still isn't fixed" could each
        have been the phone running yesterday's page, and there was no way for anybody -- in the
