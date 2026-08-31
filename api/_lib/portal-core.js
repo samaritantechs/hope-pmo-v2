@@ -298,8 +298,7 @@ const FU_REPAIR_CHUNK = 400;
    the kind of read this system has spent days removing. The screen says which it used. */
 const DECK_LOOKBACK_DAYS = 45;
 
-async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns,
-    perBook = false, lookbackDays, pairs } = {}) {
+async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns } = {}) {
   /* A PINNED DATE IS ALREADY THE ANSWER. The Monday baseline asks for one specific day, so
      there is no "which date does each team have" question to ask -- resolving per team would
      only be a way of quietly reading a different day than the one requested. */
@@ -327,30 +326,13 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
      that calls this) still take the per-team path below, unchanged -- a customer's baseline
      arrears is not re-uploaded on the same cadence a defaulter list is, and staying sticky
      there is still the safer failure. */
-  /* `perBook` opts OUT of the whole-table pin below: the COMMISSION baseline needs each
-     team-and-weekday book brought forward by ITS OWN last current deck, however long ago
-     that was -- pinning to the table's newest date handed every book except the
-     last-uploaded weekday's an empty baseline, and the recovery board read zero while 532
-     customers had genuinely dropped. The working list's rule ("the latest current file
-     lives until the next one") is untouched: every caller that does not pass perBook
-     behaves exactly as before. */
-  if (type === 'current' && !perBook) {
+  if (type === 'current') {
     const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
       { notAfter: to, teams: user.teams, columns });
     return { ...snap, perTeam: false };
   }
-  const from = addDaysKey(to, -(lookbackDays || DECK_LOOKBACK_DAYS));
+  const from = addDaysKey(to, -DECK_LOOKBACK_DAYS);
   const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });
-  /* `pairs` narrows the read to the team-and-weekday books the caller will actually use.
-     The commission walk only attributes drops for decks OBSERVED in its range, so fetching
-     the whole company's baselines -- every book, one date-read at a time -- was pure cost:
-     on the live book it was the difference between a screen and a 45-second timeout. A
-     pairs filter that leaves nothing returns nothing, deliberately: the whole-book fallback
-     read is exactly the cost this parameter exists to avoid. */
-  if (pairs && dates) {
-    for (const key of [...dates.keys()]) if (!pairs.has(key)) dates.delete(key);
-    if (!dates.size) return { rows: [], perTeam: true };
-  }
   if (!dates || !dates.size) {
     // No migration, or nothing in the window -- the previous behaviour, unchanged.
     const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
@@ -2522,6 +2504,35 @@ function cmsRateFor(cfg, row) {
   if (cfg.yearRates[y] != null) return cfg.yearRates[y];
   return cfg.yearRates['*'] || 0;
 }
+/* THE COMMISSION BASELINE, READ THE WAY THE DECKS ARE ACTUALLY UPLOADED. A deck is a
+   whole-company file per weekday ("the latest current defaulter file is to live until the
+   next one"), so the baseline for a weekday's book is simply that weekday's LATEST file at
+   or before the cut-off: one indexed date probe (order desc, limit 1 -- idx_def_snap_lookup
+   leads on type, weekday, date) and one date-read, per weekday the range actually observed.
+
+   Two earlier shapes of this read both failed live: the whole-table pin returned only the
+   last-uploaded weekday's file (every other book got an empty baseline and the board read
+   zero over 532 real drops), and the per-team resolution ran the totals GROUP BY over a
+   YEAR of deck rows, which is the 45-second timeout. This shape reads no aggregate at all
+   and touches only the files the walk will compare against. */
+async function deckByWeekday(db, user, { type, notAfter, weekdays, columns }) {
+  const out = [];
+  for (const wd of weekdays) {
+    const { data, error } = await runQuery(() => onTeams(db.from('defaulter_snapshots')
+      .select('snapshot_date').eq('snapshot_type', type).eq('weekday', wd)
+      .lte('snapshot_date', notAfter)
+      .order('snapshot_date', { ascending: false }).limit(1), user.teams));
+    if (error) throw new Error(error.message);
+    const d = data && data[0] ? String(data[0].snapshot_date) : null;
+    if (!d) continue;
+    const rows = await fetchAll(() => onTeams(db.from('defaulter_snapshots')
+      .select(withBatchKeys(columns)).eq('snapshot_type', type).eq('weekday', wd)
+      .eq('snapshot_date', d), user.teams));
+    out.push(...pickLatestBatchRows(rows));
+  }
+  return { rows: out };
+}
+
 async function commission(db, user, args = {}, nowMs) {
   /* TWO SCOPES, ONE COMPUTATION. scope 'week' is the screen; scope 'month' is the record
      behind the blinking dot -- the SAME walk from the month's first day, so the month can
@@ -2599,18 +2610,14 @@ async function commission(db, user, args = {}, nowMs) {
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
   /* THE BASELINES, READ SECOND AND READ NARROW. The walk only attributes drops for decks
-     OBSERVED in the range, so only those books need a baseline: the initial book however
-     old (a cycle start is months back -- the 45-day default silently dropped whole books),
-     and each book's OWN last current before the range began (the table-wide newest date is
-     the working list's rule, not a baseline's). Unscoped, this fetched every book in the
-     company one date-read at a time and turned the screen into a 45-second timeout. */
-  const wantedPairs = new Set(myDef.map(r => deckKey(r.team, r.weekday)));
+     OBSERVED in the range, so only those weekdays' books need a baseline: the latest
+     INITIAL file per weekday however old, and the last CURRENT file per weekday from
+     before the range began. See deckByWeekday for why this exact shape. */
+  const wantedWds = [...new Set(myDef.map(r => K(r.weekday)).filter(Boolean))];
   const [iniBook, preBook] = await Promise.all([
-    defaulterBook(db, user, { type: 'initial', notAfter: today, perBook: true, lookbackDays: 366,
-      pairs: wantedPairs,
+    deckByWeekday(db, user, { type: 'initial', notAfter: today, weekdays: wantedWds,
       columns: 'ref, team, weekday, arrears, status, disb_date, snapshot_date, upload_batch, created_at' }),
-    defaulterBook(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), perBook: true, lookbackDays: 60,
-      pairs: wantedPairs,
+    deckByWeekday(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), weekdays: wantedWds,
       columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
   ]);
   const myExpInit = scoped(user, expInit);
