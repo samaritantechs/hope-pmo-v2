@@ -4836,6 +4836,11 @@ VIEWS.findcust = function(){
 
 VIEWS.audit = function(){
   var a = S.args || {};
+  /* First open shows TODAY's acts, not the whole history -- the question this screen usually
+     answers is "what just happened", and 300 rows of last week buries it. Only truly unset
+     dates get the default: a field the reader has cleared on purpose (undefined vs '') stays
+     cleared, so the full log is still one erase away. */
+  if (a.from === undefined && a.to === undefined) { a.from = today(); a.to = today(); S.args = a; }
   return srv('auditLog', { limit: 300, actor: a.actor || '', action: a.action || '',
                            from: a.from || '', to: a.to || '' }).then(function(d){
     var bad = (d.rows || []).filter(function(r){ return !r.ok; }).length;
