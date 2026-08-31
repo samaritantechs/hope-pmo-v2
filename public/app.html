@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-c';
+var BUILD = '2026-08-31-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -821,7 +821,7 @@ function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   /* args is only ever passed by a [data-go] button that CARRIES something across the switch
      (the month-report chip carries the chosen week); everything else still starts clean. */
-  S.args = args || {}; S.filters={}; S.foot='';
+  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain='';
   /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
      mode left over from whatever was open before. Every request from here rides S.workspace to
      the server (see srv() below), which resolves it for real against this code's own tabs --
@@ -1717,7 +1717,7 @@ function wireTableSearch(){
 }
 function paint(){
   var rows = sorted(filtered());
-  $('#view').innerHTML = HEAD + '<div class="card" id="mainCard">'
+  var main = '<div class="card" id="mainCard">'
     + '<div class="card-h">Orodha / List<span class="sub">' + rows.length + ' / ' + S.rows.length
     + ' <button class="btn sm ghost" data-xls="mainCard">Excel</button>'
     + ' <button class="btn sm ghost" data-jpg="mainCard">JPG</button>'
@@ -1726,6 +1726,12 @@ function paint(){
     + tableHtml(rows, S.cols, ONROW)
     + (S.foot ? '<div class="tblfoot">Showing '+rows.length+' of '+S.rows.length+' · '+esc(S.foot)+'</div>' : '')
     + '</div>';
+  /* A view that sets S.foldMain gets its whole Orodha / List behind the same open/close chip
+     the Settings sections use -- for the screens where the boards are the read and the raw
+     log is the occasional dig. Cleared in go(), so no other tab inherits the fold. */
+  $('#view').innerHTML = HEAD + (S.foldMain
+    ? fold_(S.foldMain, 'Orodha / List', rows.length + ' / ' + S.rows.length, main)
+    : main);
   wireTable(rows, ONROW);
   wireTableSearch();
   wireBar();
@@ -3177,8 +3183,18 @@ VIEWS.promises = function(){
 };
 
 VIEWS.fureport = function(){
-  var from = S.args.from || addDays(today(), -7), to = S.args.to || today();
+  /* "dates default of today unless altered" -- the report opens on TODAY's follow-ups, like
+     the audit log. Only truly unset dates get the default; a field cleared on purpose stays
+     cleared, and the server then answers with its own last-7-days window. */
+  var from = S.args.from !== undefined ? S.args.from : today();
+  var to = S.args.to !== undefined ? S.args.to : today();
   return srv('followupReport', {from:from, to:to}).then(function(d){
+    /* "add totals before arrears": the three categories added up, seated where the eye lands
+       just before the money -- kept as a row field so the JUMLA row and exports carry it. */
+    var byStatus = (d.byStatus||[]).map(function(r){
+      return Object.assign({}, r, { total: (Number(r.defaulters)||0) + (Number(r.expired)||0) + (Number(r.chronic)||0) });
+    });
+    S.foldMain = 'frlist';
     HEAD = '<div class="kpis">'
       + kpi('Customers', money(d.totals.customers))
       + kpi('Touched', money(d.totals.touched), d.totals.customers? Math.round(100*d.totals.touched/d.totals.customers)+'%':'')
@@ -3187,24 +3203,31 @@ VIEWS.fureport = function(){
       /* The report a supervisor actually reads is a MATRIX — one row per officer, one column
          per follow-up status — so "who is logging what" is answerable at a glance instead of
          by cross-referencing two summary tables. */
-      + board('frMatrix','Takwimu za ufuatiliaji kwa afisa / Followup stats by officer',
-          'counts & types per user across your teams · '+d.byOfficerStatus.length
-            + ' officer'+(d.byOfficerStatus.length===1?'':'s'),
-          d.byOfficerStatus,
-          [col('officer','Officer'), col('total','Total','num')].concat(
-            (d.statuses||[]).map(function(s){ return col(s, s, 'num'); })),
-          sumRow(d.byOfficerStatus, ['total'].concat(d.statuses||[])))
+      /* The three chipped boards -- "Chip Takwimu... chip Kwa afisa too" -- open and close
+         exactly like the Settings sections, remembered per device. */
+      + fold_('frmatrix', 'Takwimu za ufuatiliaji kwa afisa / Followup stats by officer',
+          d.byOfficerStatus.length + ' officer' + (d.byOfficerStatus.length===1?'':'s'),
+          board('frMatrix','Takwimu za ufuatiliaji kwa afisa / Followup stats by officer',
+            'counts & types per user across your teams · '+d.byOfficerStatus.length
+              + ' officer'+(d.byOfficerStatus.length===1?'':'s'),
+            d.byOfficerStatus,
+            [col('officer','Officer'), col('total','Total','num')].concat(
+              (d.statuses||[]).map(function(s){ return col(s, s, 'num'); })),
+            sumRow(d.byOfficerStatus, ['total'].concat(d.statuses||[]))))
       + board('frStatus','Kwa hali / By follow-up status',
           'wateja wote watatu / all three categories: ' + money(d.totals.defaulters) + ' defaulters · '
             + money(d.totals.expired) + ' expired · ' + money(d.totals.chronic) + ' chronic',
-          d.byStatus,
+          byStatus,
           [col('status','Status'), col('customers','Customers','num'),
            col('defaulters','Defaulters','num'), col('expired','Expired','num'), col('chronic','Chronic','num'),
+           col('total','Jumla / Total','num'),
            col('arrears','Arrears','money')],
-          sumRow(d.byStatus, ['customers','defaulters','expired','chronic','arrears']))
-      + board('frOfficer','Kwa afisa / By officer', null, d.byOfficer,
-          [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')],
-          sumRow(d.byOfficer, ['comments','customers']))
+          sumRow(byStatus, ['customers','defaulters','expired','chronic','total','arrears']))
+      + fold_('frofficer', 'Kwa afisa / By officer',
+          d.byOfficer.length + ' officer' + (d.byOfficer.length===1?'':'s'),
+          board('frOfficer','Kwa afisa / By officer', null, d.byOfficer,
+            [col('officer','Officer'), col('comments','Comments','num'), col('customers','Customers','num')],
+            sumRow(d.byOfficer, ['comments','customers'])))
       + board('frTeam','Kwa timu / By team', null, d.byTeam,
           [col('branch','Branch'), col('team','Team'), col('customers','Customers','num'), col('touched','Touched','num'), col('arrears','Arrears','money')],
           sumRow(d.byTeam, ['customers','touched','arrears']))
@@ -5561,6 +5584,7 @@ function viewKey_(){
 }
 function snapTake_(){
   return { at:Date.now(), head:HEAD, onrow:ONROW, rows:S.rows, cols:S.cols, foot:S.foot,
+           foldMain:S.foldMain || '',
            args:JSON.parse(JSON.stringify(S.args || {})),
            // The team/status dropdowns live inside the remembered HEAD, already ticked. Bring
            // the choice back with them, or you return to a tab showing "Team KONGOWE" in the
@@ -5569,7 +5593,7 @@ function snapTake_(){
 }
 function snapPut_(s){
   HEAD = s.head; ONROW = s.onrow;
-  S.rows = s.rows; S.cols = s.cols; S.foot = s.foot;
+  S.rows = s.rows; S.cols = s.cols; S.foot = s.foot; S.foldMain = s.foldMain || '';
   S.args = JSON.parse(JSON.stringify(s.args || {}));
   S.filters = JSON.parse(JSON.stringify(s.filters || {}));
 }
