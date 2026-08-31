@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-k';
+var BUILD = '2026-08-31-l';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3849,8 +3849,10 @@ VIEWS.commission = function(){
               sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
                   return a.concat(['n'+k]); }, ['weekN','weekCommission'])))
           : '<div class="card"><div class="card-h">Early Collection — wiki hii / this week</div>'
-            + '<div class="note" style="margin:10px 14px">Hakuna Expected ya wiki hii bado — pakia karatasi ya leo na bodi hii hujaa yenyewe. '
-            + '/ No Expected sheet has landed in this range yet; upload today’s sheet and this board fills itself.</div></div>')
+            + '<div class="note" style="margin:10px 14px">Hakuna faili la <b>INITIAL expected</b> la wiki hii — '
+            + 'bodi hii inasoma faili la INITIAL pekee, hakuna mbadala. Pakia la leo na hujaa yenyewe. '
+            + '/ No <b>INITIAL expected</b> file has landed in this range — this board reads the INITIAL file '
+            + 'only, no fallback. Upload today’s initial file and it fills itself.</div></div>')
       /* PMO COLLECTION. Paid on the percentage and nothing else -- not team count, not customer
          count, not amount. This is the ONE screen the money appears on: the presentation shows
          the same officers with the shillings deliberately left out. */

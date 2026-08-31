@@ -394,9 +394,10 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.equal(juma.recovered, 300); assert.equal(juma.recComm, 30);
   // MBAGALA names no recovery officer, so its 100 recovered is still counted, unassigned.
   assert.equal(d.day.find(r => r.officer === '(unassigned)').recovered, 100);
-  // Early collection: one PAID client on KONGOWE's expected list at TZS 1,000 flat.
-  const early = d.day.find(r => r.officer === 'EARLY E');
-  assert.equal(early.paid, 1); assert.equal(early.over, 0); assert.equal(early.colComm, 1000);
+  /* Early collection: the fixture has only a TODAY sheet, and the early scheme reads the
+     INITIAL file ONLY -- "its initial file only no other fallback". No initial, no pay. */
+  assert.equal(d.day.find(r => r.officer === 'EARLY E'), undefined,
+    'no INITIAL file means no early pay -- the today sheet is never a fallback');
   assert.equal(d.totals.recovered, 400);
 
   /* THE INDEPENDENT BOARDS. "early col and rec should also be independent tables" -- the
@@ -408,17 +409,12 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.equal(recJuma.weekCommission, 30);
   assert.ok(Array.isArray(recJuma.days) && recJuma.days.length >= 1, 'day-by-day record rides along');
   assert.equal(recJuma.days.reduce((s, x) => s + x.recovered, 0), 300, 'the days add up to the week');
-  const colEarly = d.colBoard.find(r => r.officer === 'EARLY E');
-  assert.ok(colEarly, 'the early-collection officer has their own board row');
-  assert.equal(colEarly.weekN, 1, 'PAID+OVERPAID counted');
-  assert.equal(colEarly.weekCommission, 1000);
-  assert.ok(colEarly.weekPct == null || typeof colEarly.weekPct === 'number',
-    'col % is a number or an honest null, never NaN');
+  assert.equal(d.colBoard.find(r => r.officer === 'EARLY E'), undefined,
+    'the early board stays empty without the initial file -- never filled off the today sheet');
 
-  /* "early collection aint reading from initial file on commissions" -- where a day HAS an
-     INITIAL expected sheet, the early scheme is judged on IT: initial col % and the
-     PAID+OVERPAID counted there, not on the today sheet. (The run above had no initial
-     sheet, which is the fallback: the today sheet still pays.) */
+  /* "early collection aint reading from initial file on commissions ... its initial file
+     only no other fallback" -- the early scheme is judged on the day's INITIAL expected
+     sheet and on nothing else: initial col % and the PAID+OVERPAID counted there. */
   const t2 = tables();
   t2.repayment_snapshots.push(
     E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
