@@ -2579,12 +2579,12 @@ async function commission(db, user, args = {}, nowMs) {
        what they still owe, and a team total cannot answer that. */
     expectedTotalsInRange(db, { type: 'today', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
-    /* THE INITIAL BOOK, for the EARLY scheme. "early collection aint reading from initial
-       file" -- the early officer is judged against the day's INITIAL expected book (initial
-       col %, PAID+OVERPAID counted there), not the today sheet. Read as team-day totals like
-       the rest; a day with no initial sheet falls back to its today sheet below, so a
-       deployment that uploads only today-sheets keeps working. PMO Collection stays on the
-       today sheet, unchanged. */
+    /* THE INITIAL BOOK, for the EARLY scheme -- AND NOTHING ELSE. "its initial file only no
+       other fallback": the early officer is judged against the day's INITIAL expected book
+       (initial col %, PAID+OVERPAID counted there). A day with no initial sheet pays the
+       early scheme NOTHING, and the screen says to upload the initial file -- a today-sheet
+       fallback was tried and refused, because paying off the wrong book quietly is worse
+       than paying nothing loudly. PMO Collection stays on the today sheet, unchanged. */
     expectedTotalsInRange(db, { type: 'initial', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
@@ -2598,9 +2598,8 @@ async function commission(db, user, args = {}, nowMs) {
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
   const myExpInit = scoped(user, expInit);
-  /* The early scheme's rows for one day: the INITIAL book where it exists, the today sheet
-     where it does not. */
-  const colRows = d => { const r = onDate(myExpInit, d); return r.length ? r : onDate(myExp, d); };
+  // The early scheme's rows for one day: the INITIAL book, only ever the initial book.
+  const colRows = d => onDate(myExpInit, d);
   /* WHAT THE WALK ACTUALLY SAW, said out loud. "I uploaded. recovery still [empty]" -- an
      empty board has three different truths behind it (no deck in the range; a deck in the
      range but dated outside it; a deck observed with nothing newly dropped), and the screen
