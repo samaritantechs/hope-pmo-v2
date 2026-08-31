@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-d';
+var BUILD = '2026-08-31-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3246,6 +3246,14 @@ VIEWS.fureport = function(){
     S.rows = d.rows;
     S.cols = [col('at','When','dt'), col('by','Officer'), col('branch','Branch'), col('team','Team'), col('ref','REF#'),
       col('full_name','Fullname'),
+      /* "the objective of some comments eg HAPATIKANI is to filter all those unreachable
+         customers with no new no" -- the number that was dialled, and the replacement if one
+         was ever given. An empty New No on a HAPATIKANI row is the customer nobody can reach
+         yet, which is exactly what the status filter above hunts for. */
+      col('contact','Namba / Customer No'),
+      {key:'new_no', label:'Namba mpya / New No', kind:'text',
+       get:function(r){ return r.new_no || '—'; },
+       cls:function(r){ return r.new_no ? 'good' : ''; }},
       {key:'fu_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
       {key:'promise_date', label:'Promise', kind:'text', get:function(r){
         return r.promise_date ? (String(r.promise_date).slice(0,10) + (r.promise_amt ? ' · '+money(r.promise_amt) : '')) : ''; }},

@@ -1010,15 +1010,40 @@ async function promises(db, user, { from, to } = {}, nowMs) {
 async function followupReport(db, user, { from, to }, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : addDaysKey(todayKey(nowMs), -7);
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : todayKey(nowMs);
-  const [fu, cm] = await Promise.all([
+  const [fu, cm, nn] = await Promise.all([
+    /* `contact` rides along so the log can print the number the officer actually dialled --
+       the whole point of a HAPATIKANI filter is deciding which number to try next. */
     fetchAll(() => onTeams(db.from('followup_status')
-      .select('ref, team, full_name, status, arrears, fu_status'), user.teams)),
+      .select('ref, team, full_name, contact, status, arrears, fu_status'), user.teams)),
+    /* full_name / promise / new_number were never selected here, so the log's Fullname and
+       Promise columns printed blank while the code confidently mapped them. */
     fetchAll(() => onTeams(db.from('followup_comments')
-      .select('ref, team, fu_status, comment, created_by, created_at')
+      .select('ref, team, full_name, fu_status, comment, promise_date, promise_amt, new_number, created_by, created_at')
       .gte('created_at', fromKey).lte('created_at', toKey + 'T23:59:59.999Z'), user.teams)),
+    /* Every replacement number ever given, not just the ones inside the date window -- a new
+       number logged last month still makes the customer reachable today. Same partial-index
+       read the followup screen uses: only the few hundred comments that carry one. */
+    fetchAll(() => onTeams(db.from('followup_comments').select('ref, new_number, created_at')
+      .not('new_number', 'is', null).neq('new_number', ''), user.teams)),
   ]);
-  const mineFu = scoped(user, fu).filter(r => !(r.status == null && r.arrears == null));
+  const scopedFu = scoped(user, fu);
+  const mineFu = scopedFu.filter(r => !(r.status == null && r.arrears == null));
   const mineCm = scoped(user, cm);
+  // The customer's own number, by ref -- stubs included, since a comment can reference one.
+  const contactBy = {};
+  for (const r of scopedFu) {
+    const c = String(r.contact == null ? '' : r.contact).trim();
+    if (c) contactBy[String(r.ref)] = c;
+  }
+  // Newest replacement number per customer, same rule as the followup screen.
+  const newNo = {};
+  for (const c of nn) {
+    const n = String(c.new_number == null ? '' : c.new_number).trim();
+    if (!n) continue;
+    const k = String(c.ref);
+    const at = String(c.created_at || '');
+    if (!newNo[k] || at > newNo[k].at) newNo[k] = { at, n };
+  }
   /* "Kwa hali / By follow-up status - should pick all 3 defaulter categories (defaulters
       expired and chronic) the whole Followup Report"
 
@@ -1070,7 +1095,14 @@ async function followupReport(db, user, { from, to }, nowMs) {
     .map(c => ({ at: c.created_at, by: c.created_by || '(unknown)', team: c.team,
       branch: teamBranch.get(K(c.team)) || null, ref: c.ref,
       full_name: c.full_name, fu_status: c.fu_status, promise_date: c.promise_date,
-      promise_amt: num(c.promise_amt), comment: c.comment }));
+      promise_amt: num(c.promise_amt),
+      contact: contactBy[String(c.ref)] || null,
+      /* The comment's own replacement number when it brought one; otherwise the customer's
+         newest from any date. Null means genuinely no new number exists -- which is exactly
+         the row a HAPATIKANI filter is hunting for. */
+      new_no: (String(c.new_number == null ? '' : c.new_number).trim())
+        || (newNo[String(c.ref)] || {}).n || null,
+      comment: c.comment }));
 
   return {
     from: fromKey, to: toKey,
