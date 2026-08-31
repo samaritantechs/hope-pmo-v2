@@ -1173,19 +1173,24 @@ async function phoneIndexCompute(db, nowMs, today) {
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today }),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
-    /* THE TWO-WEEK WINDOW. "sometimes they call customers not in these batches like expected
-       of two next days b/se they have their numbers and i have not yet uploaded but last week
-       has that number so any customer number within these 2 weeks is portfolio call."
-       Every expected sheet dated in the last two weeks -- and any sheet already uploaded for
-       a FUTURE date (no upper bound, deliberately) -- so a customer the officer knows from
-       last week's list, or from a sheet two days ahead, still counts as their book. Read once
-       per upload thanks to the DATA_VERSION cache, never per sync. The defaulter decks need
-       no read of their own: every current-deck upload rebuilds followup_status with contacts
-       and guarantors, and fu above is that whole register. */
-    fetchAll(() => db.from('repayment_snapshots')
-      .select('ref, full_name, contact, guarantor_name, guarantor_contact, team')
-      .in('snapshot_type', ['today', 'tomorrow'])
-      .gte('snapshot_date', addDaysKey(today, -13))),
+    /* THE TWO-WEEK WINDOW, AS ONE DATABASE TRIP. "sometimes they call customers not in these
+       batches like expected of two next days b/se they have their numbers and i have not yet
+       uploaded but last week has that number so any customer number within these 2 weeks is
+       portfolio call." Every expected sheet dated in the last two weeks -- and any sheet
+       already uploaded for a FUTURE date (no upper bound, deliberately).
+
+       The first cut of this read the RAW SHEETS over REST: fourteen days of rows, thirty-plus
+       pages per index rebuild -- and the rebuild is per warm lambda, so with three hundred
+       handsets syncing that put enough read load on the database to slow SIGN-IN for
+       everybody within the hour it shipped. The window is really DISTINCT CUSTOMERS, which is
+       exactly what the database itself should collapse: expected_phone_window
+       (db/RUN-ME-017) returns one row per distinct customer -- a few thousand rows, one or
+       two pages. Where the function is not installed yet, the index falls back to the
+       coverage it always had (today, tomorrow, the register) -- narrower, never heavier.
+       The defaulter decks need no read of their own: every current-deck upload rebuilds
+       followup_status with contacts and guarantors, and fu above is that whole register. */
+    rpcAll(db, 'expected_phone_window', { p_from: addDaysKey(today, -13) })
+      .then(r => (r.error || !Array.isArray(r.data)) ? [] : r.data),
     /* ONLY the comments that carry a replacement phone number. This read every comment ever
        written -- after the v1 history import, hundreds of thousands of rows -- to find the few
        hundred with a number on them. The portal's copy of this was fixed weeks ago and the

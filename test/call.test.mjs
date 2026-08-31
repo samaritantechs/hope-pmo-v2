@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { CALL_REPORT_RPC } from './snapshot-totals-rpc.mjs';
+import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -251,7 +251,9 @@ test('sync: the two-week window counts future sheets and last week\'s numbers, o
   );
   const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearWidgetCache();
-  const db = fakeDb(t);
+  /* The window rides the expected_phone_window DATABASE function (RUN-ME-017) -- the first
+     cut read the raw sheets over REST and the load slowed sign-in for the whole company. */
+  const db = fakeDb(t, { rpc: EXPECTED_PHONE_WINDOW_RPC });
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   const r = await callApi(db, 'api_callSync', ['d1', [
     { ts: T1, dur: 40, dir: 'out', num: '0716000001' },              // expected, two days ahead
@@ -278,6 +280,26 @@ test('sync: the two-week window counts future sheets and last week\'s numbers, o
   assert.equal(logs.find(l => l.phone === pnorm('0716000005')).portfolio, false);
   assert.equal(logs.find(l => l.phone === pnorm('0712999999')).portfolio, false,
     'officers\' and leaders\' own numbers are not portfolio until further notice');
+});
+
+/* A database WITHOUT the RUN-ME-017 function must fall back to the coverage the index always
+   had -- today, tomorrow, the register -- NARROWER, NEVER HEAVIER. The heavy fallback (reading
+   the raw sheets over REST) is the thing that slowed sign-in for the whole company; this pins
+   it out of existence. */
+test('sync without the window function: old coverage stands, the wide read never comes back', async () => {
+  const t = makeTables();
+  t.repayment_snapshots.push(
+    { ref: '662', full_name: 'WIKI ILIYOPITA', contact: '0716000003', guarantor_name: '', guarantor_contact: '', team: 'KONGOWE', payment_expected: 500, arrears: 0, todays_status: 'PAID', due_summary: '', snapshot_type: 'today', snapshot_date: '2026-07-17', upload_batch: 'bw', created_at: '2026-07-17T04:00:00Z' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);                       // no rpc: the function is not installed
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const r = await callApi(db, 'api_callSync', ['d1', [
+    { ts: T1, dur: 40, dir: 'out', num: '0712000001' },              // today's sheet -- always covered
+    { ts: T1 + 1000, dur: 40, dir: 'out', num: '0716000003' },       // last week only -- needs the function
+  ]], NOW);
+  assert.equal(r.portfolio, 1, 'today\'s sheet still matches without the function');
+  assert.equal(r.nonPortfolio, 1, 'the window number waits for RUN-ME-017 -- never a heavy REST fallback');
 });
 
 test('after a sync, the called-today tick shows on the list', async () => {
