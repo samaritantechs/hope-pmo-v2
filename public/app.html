@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-i';
+var BUILD = '2026-08-31-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3800,38 +3800,43 @@ VIEWS.commission = function(){
       + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
           + esc(d.payText) + '</div>' : '')
       /* THE TWO INDEPENDENT BOARDS -- "early col and rec should also be independent tables".
-         Recovery and early collection are different people on different rules; each gets its
-         own today board and its own day-by-day week board, like the PMO pair below. */
-      + board('cmRecDay','Recovery — leo / today',
-          'kilichorejeshwa leo na kilicholipwa kwake / each customer’s recovered amount × their rate',
-          d.recBoard, [col('officer','Recovery officer'),
-            col('recovered','Recovered leo','money'), col('commission','Leo TZS','money')],
-          sumRow(d.recBoard, ['recovered','commission']))
-      + board('cmRecWeek','Recovery — wiki hii / this week',
-          'kilichorejeshwa na kilicholipwa kwa KILA siku / recovered amount and what it earned, day by day',
-          d.recBoard, [col('officer','Recovery officer')]
-            .concat(['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
-              return a.concat([col('rec'+k, k, 'money'), col('tzs'+k, k+' TZS', 'money')]); }, []))
-            .concat([col('weekRecovered','Wiki / Week rec','money'),
-              col('weekCommission','Wiki / Week TZS','money')]),
-          sumRow(d.recBoard, ['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
-              return a.concat(['rec'+k,'tzs'+k]); }, ['weekRecovered','weekCommission'])))
-      + board('cmColDay','Early Collection — leo / today',
-          'asilimia dhidi ya kitabu cha initial expected cha leo, na idadi ya PAID+OVERPAID'
-            + ' / today’s col % against the initial expected book, and the PAID+OVERPAID count',
-          d.colBoard, [col('officer','Early col officer'), col('pct','Col %','pct'),
-            col('paid','Paid','num'), col('over','Overpaid','num'), col('n','Paid+Over','num'),
-            col('commission','Leo TZS','money')],
-          sumRow(d.colBoard, ['paid','over','n','commission']))
-      + board('cmColWeek','Early Collection — wiki hii / this week',
-          'asilimia na idadi kwa KILA siku / the col % and the PAID+OVERPAID count, day by day',
-          d.colBoard, [col('officer','Early col officer')]
-            .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
-              return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num')]); }, []))
-            .concat([col('weekPct','Wiki %','pct'), col('weekN','Wiki P+O','num'),
-              col('weekCommission','Wiki / Week TZS','money')]),
-          sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
-              return a.concat(['n'+k]); }, ['weekN','weekCommission'])))
+         Recovery and early collection are different people on different rules; each gets a
+         day-by-day week board like the PMO pair below. No separate "leo" board -- "having
+         weekly by day should kill the today only": today is simply the newest column. */
+      + (!(d.recBoard||[]).length
+          ? '<div class="card"><div class="card-h">Recovery — wiki hii / this week</div>'
+            + '<div class="note" style="margin:10px 14px">Hakuna deki la CURRENT lililotua katika wiki hii bado — '
+            + 'urejeshaji hupimwa pale deki la current linapopakiwa na kulinganishwa na kitabu. '
+            + 'Wiki mpya huanza Jumatatu ikiwa tupu mpaka deki la kwanza lifike. '
+            + '/ No CURRENT deck has landed in this range yet — recovery is measured when a '
+            + 'current deck is uploaded and compared against the book. A new week starts Monday '
+            + 'empty until the first deck arrives.</div></div>'
+          : '')
+      + ((d.recBoard||[]).length
+          ? board('cmRecWeek','Recovery — wiki hii / this week',
+              'kilichorejeshwa na kilicholipwa kwa KILA siku · leo ni safu mpya zaidi / recovered amount and what it earned, day by day — today is the newest column',
+              d.recBoard, [col('officer','Recovery officer')]
+                .concat(['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
+                  return a.concat([col('rec'+k, k, 'money'), col('tzs'+k, k+' TZS', 'money')]); }, []))
+                .concat([col('weekRecovered','Wiki / Week rec','money'),
+                  col('weekCommission','Wiki / Week TZS','money')]),
+              sumRow(d.recBoard, ['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
+                  return a.concat(['rec'+k,'tzs'+k]); }, ['weekRecovered','weekCommission'])))
+          : '')
+      + ((d.colBoard||[]).length
+          ? board('cmColWeek','Early Collection — wiki hii / this week',
+              'asilimia dhidi ya kitabu cha initial expected na idadi ya PAID+OVERPAID kwa KILA siku'
+                + ' / the col % against the initial expected book and the PAID+OVERPAID count, day by day',
+              d.colBoard, [col('officer','Early col officer')]
+                .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
+                  return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num')]); }, []))
+                .concat([col('weekPct','Wiki %','pct'), col('weekN','Wiki P+O','num'),
+                  col('weekCommission','Wiki / Week TZS','money')]),
+              sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
+                  return a.concat(['n'+k]); }, ['weekN','weekCommission'])))
+          : '<div class="card"><div class="card-h">Early Collection — wiki hii / this week</div>'
+            + '<div class="note" style="margin:10px 14px">Hakuna Expected ya wiki hii bado — pakia karatasi ya leo na bodi hii hujaa yenyewe. '
+            + '/ No Expected sheet has landed in this range yet; upload today’s sheet and this board fills itself.</div></div>')
       /* PMO COLLECTION. Paid on the percentage and nothing else -- not team count, not customer
          count, not amount. This is the ONE screen the money appears on: the presentation shows
          the same officers with the shillings deliberately left out. */
@@ -3903,6 +3908,9 @@ VIEWS.commission = function(){
         col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]));
     S.rows = d.week;
     S.cols = CMS_COLS;
+    // "chip the last AIO" -- the combined all-in-one Orodha folds behind a chip; the
+    // independent boards above are the read, the AIO is the occasional export.
+    S.foldMain = 'cmlist';
     ONROW = null;
     S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week)
       + ((d.pmo && d.pmo.length) ? ' · PMO Collection: TZS ' + money(d.pmoTotals.week) : '');
@@ -3950,6 +3958,7 @@ VIEWS.cmmonth = function(){
             col('weekPct','Col %','pct'), col('weekCommission','Month TZS','money')]) : '');
     S.rows = d.week || [];
     S.cols = CMS_COLS;
+    S.foldMain = 'cmlist';
     ONROW = null;
     S.foot = 'Mwezi / month to date (' + esc(d.from||'') + ' → ' + esc(d.to||'') + '): TZS '
       + money(d.totals.week)
