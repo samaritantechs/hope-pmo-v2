@@ -394,6 +394,15 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.equal(juma.recovered, 300); assert.equal(juma.recComm, 30);
   // MBAGALA names no recovery officer, so its 100 recovered is still counted, unassigned.
   assert.equal(d.day.find(r => r.officer === '(unassigned)').recovered, 100);
+  /* TODAY BY BAND -- "how much each person earned from each disb year band in that days
+     rec". Status mode here, so the band is the status; both of today's drops are Defaulter
+     rows, so one DEFAULTER column carries the whole day. */
+  assert.deepEqual(d.recBands.bands, ['DEFAULTER']);
+  const jb = d.recBands.rows.find(r => r.officer === 'JUMA G');
+  assert.equal(jb.rec_DEFAULTER, 300, 'the band carries today\'s recovered amount');
+  assert.equal(jb.tzs_DEFAULTER, 30, 'and what it earned at that band\'s rate');
+  assert.equal(jb.total, 30);
+
   /* Early collection: the fixture has only a TODAY sheet, and the early scheme reads the
      INITIAL file ONLY -- "its initial file only no other fallback". No initial, no pay. */
   assert.equal(d.day.find(r => r.officer === 'EARLY E'), undefined,
