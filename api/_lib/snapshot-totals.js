@@ -38,7 +38,7 @@
  */
 
 import { runQuery, fetchAll , rpcAll } from './supabase.js';
-import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch } from './snapshots.js';
+import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch, teamMatchList } from './snapshots.js';
 import { todayKey, addDaysKey } from './time.js';
 import { collectedOf, num } from './recovery.js';
 
@@ -163,7 +163,9 @@ async function callTotals(db, fn, args) {
     must not be handed forty. null means "sees everything", matching the access-code convention
     everywhere else in the system. */
 function teamsArg(teams) {
-  const t = upperTeams(teams);
+  /* Both spellings, because the SQL side compares `team = any(p_teams)` EXACTLY -- see
+     teamMatchList in snapshots.js for the Tunduru blackout this ended. */
+  const t = teamMatchList(teams);
   return t.length ? t : null;
 }
 

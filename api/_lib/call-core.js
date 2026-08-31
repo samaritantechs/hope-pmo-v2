@@ -1,7 +1,7 @@
 import { fetchAll, runQuery, rpcAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams, teamMatchList } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, tCustomers, tExpected, tCollected } from './snapshot-totals.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
@@ -801,7 +801,7 @@ async function list(db, [dev, which, which2], nowMs) {
     const fu = await fetchAll(() => {
       let q = db.from('followup_status').select(
         'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team, updated_at');
-      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
       return q;
     });
     // Skip pure FK stubs (created so an EXPECTED customer's comment can reference
@@ -872,7 +872,7 @@ async function list(db, [dev, which, which2], nowMs) {
     const fuChip = {};
     const fuRows = await fetchAll(() => {
       let q = db.from('followup_status').select('ref, fu_status');
-      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
       return q;
     });
     for (const f of fuRows) if (f.fu_status) fuChip[String(f.ref)] = f.fu_status;
@@ -921,7 +921,7 @@ async function list(db, [dev, which, which2], nowMs) {
       const fu = await fetchAll(() => {
         let q = db.from('followup_status').select(
           'ref, full_name, contact, guarantor_name, guarantor_contact, arrears, rejesho, status, fu_status, ds, days_elapsed, team');
-        if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+        if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
         return q;
       });
       const have = new Set(rows.map(r => String(r.ref)));

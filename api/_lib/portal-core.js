@@ -2,7 +2,7 @@ import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
@@ -16,7 +16,7 @@ import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.j
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
     stopped working must not become a data leak -- but by then there is little left to drop. */
-const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
+const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
 import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
@@ -372,7 +372,7 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
        genuinely have a deck on it, not a week of everything. */
     const rows = await fetchAll(() => {
       let q = db.from('defaulter_snapshots').select(withBatchKeys(columns))
-        .eq('snapshot_type', type).eq('snapshot_date', d).in('team', upperTeams([...g.teams]));
+        .eq('snapshot_type', type).eq('snapshot_date', d).in('team', teamMatchList([...g.teams]));
       const wds = [...g.weekdays].filter(Boolean);
       // Only when every resolved deck on this date names a weekday -- a null weekday is a real
       // stored value and an .in() list can never match it.
@@ -2252,7 +2252,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
      attention -- which are the weeks worth having. This report is opened constantly, so every
      time it is, the week, month and year it falls in are stamped with what they look like now,
      copying each leader's NAME AND POSITION as text. See api/_lib/performance.js. */
-  recordPerformance(db, teamsOut, teamRows, mon, nowMs);
+  recordPerformance(db, teamsOut, teamRows, mon, nowMs, perTarget);
 
   return { weekOf: mon, weekEnd: fri, days,
     // What was ASKED for, so the week bar can say when a choice was overruled and why.
@@ -4899,13 +4899,25 @@ async function adjustmentRecord(db, user, p = {}) {
   if (!Number.isFinite(amount) || !amount) throw badRequest('Weka kiasi kisicho sifuri — chanya huongeza, hasi hupunguza. / A non-zero amount is required: positive adds, negative reduces.');
   if (!ADJ_TARGETS.includes(p.target)) throw badRequest('Chagua aina ya ripoti. / target must be one of: ' + ADJ_TARGETS.join(', '));
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(p.date || ''))) throw badRequest('Chagua tarehe. / A date is required.');
+  /* THE TEAM IS THE REGISTER'S SPELLING, LETTER FOR LETTER. Team names are strict-case now
+     ("we should never auto capitalize team names"), so a typed team is resolved against the
+     teams table and stored exactly as registered -- Tunduru stays Tunduru. A name the
+     register does not know is refused, because an adjustment against a team that does not
+     exist would sit in the book matching nothing forever. */
+  let team = null;
+  if (p.team) {
+    const reg = await readTeamsAll(db);
+    const hit = reg.find(t => K(t.team) === K(p.team));
+    if (!hit) throw badRequest(`Timu "${String(p.team).trim()}" haipo kwenye orodha. / That team is not in the register.`);
+    team = hit.team;
+  }
   const { data, error } = await db.from('pmo_adjustments').insert({
     // App-side id, so the row that comes back can be deleted without a second read -- the
     // database default still covers rows inserted straight through SQL.
     id: (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
         : 'adj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10),
     adj_date: p.date, target: p.target,
-    team: p.team ? normTeamName(p.team) : null,
+    team,
     amount,
     reason: String(p.reason || '').trim() || null,
     ref: String(p.ref || '').trim() || null,
@@ -5190,8 +5202,8 @@ async function stampWeek(db, user, args, nowMs) {
   const w = await weekly(db, user, { weekOf: args && args.weekOf }, nowMs);
   const leadBy = {};
   for (const t of (w.teamRows || [])) leadBy[K(t.team)] = t;
-  const rows = recordsFor(w.teams || [], leadBy, w.weekOf);
-  recordPerformance(db, w.teams || [], w.teamRows || [], w.weekOf, nowMs);
+  const rows = recordsFor(w.teams || [], leadBy, w.weekOf, w.perTarget);
+  recordPerformance(db, w.teams || [], w.teamRows || [], w.weekOf, nowMs, w.perTarget);
   return {
     weekOf: w.weekOf, weekEnd: w.weekEnd,
     teams: (w.teams || []).length,
@@ -6521,7 +6533,11 @@ async function deleteTeam(db, user, p) {
   if (error) throw new Error(error.message);
   return { team, released: (released || []).length };
 }
-function normTeamName(v) { return String(v == null ? '' : v).trim().toUpperCase(); }
+/* TRIM, AND NOTHING ELSE. This used to uppercase, which is how an admin who typed the team
+   correctly still created TUNDURU: "we should never auto capitalize team names ... some are
+   registered so". A team's name is exactly what was registered, letter for letter -- the OG
+   book has Tunduru and the system must carry it as written. */
+function normTeamName(v) { return String(v == null ? '' : v).trim(); }
 
 /** Tips, from the Hints sheet: tab-scoped, bilingual, admin-editable without a deploy.
 

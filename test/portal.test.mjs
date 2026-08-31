@@ -6847,3 +6847,36 @@ test('Iliyonasia: the register records signed amounts per book, gated on the adj
   assert.equal(after.rows.length, 2);
   assert.equal(after.totals['expected-current'], 250000);
 });
+
+/* THE TUNDURU BLACKOUT. JavaScript compares team names through K() -- trim + uppercase -- so
+   'Tunduru' and 'TUNDURU' were always one team on the server. Postgres compares EXACTLY, and
+   every database filter uppercased the officer's team list first. So an officer scoped to the
+   one mixed-case team in the company asked every table for TUNDURU, their rows sat there as
+   Tunduru, and they signed in to NOTHING: empty lists, an empty dashboard, no error anywhere.
+   teamMatchList sends both spellings, which is exact-case-invisible for every other team and
+   the difference between a book and a blank page for this one. */
+test('an officer on a mixed-case team sees their rows under either spelling', async () => {
+  const t = tables();
+  t.teams.push({ team: 'Tunduru', team_code: 'DH6E47' });
+  t.followup_status.push(
+    { ref: 'TN1', team: 'Tunduru', full_name: 'MTEJA WA TUNDURU', contact: '0710000001', arrears: 5000, status: 'Defaulter', fu_status: '', ds: '3-6', days_elapsed: 9 },
+    { ref: 'TN2', team: 'TUNDURU', full_name: 'MTEJA WA PILI', contact: '0710000002', arrears: 3000, status: 'Defaulter', fu_status: '', ds: '3-6', days_elapsed: 9 },
+  );
+  t.repayment_snapshots.push(
+    { ref: 'TN1', team: 'Tunduru', full_name: 'MTEJA WA TUNDURU', payment_expected: 1000, todays_status: 'UNPAID',
+      arrears: 0, snapshot_type: 'today', snapshot_date: TODAY, upload_batch: 'tb', created_at: TODAY + 'T04:00:00Z' },
+  );
+  const OFF = { code: 'T', name: 'AFISA', role: 'GMO', teams: ['Tunduru'], tabs: [] };
+
+  const fu = await portalApi(fakeDb(t), OFF, 'followup', {}, NOW);
+  assert.equal(fu.rows.length, 2, 'both spellings of their own team, nothing hidden');
+  assert.ok(fu.rows.some(r => r.ref === 'TN1') && fu.rows.some(r => r.ref === 'TN2'));
+
+  const exp = await portalApi(fakeDb(t), OFF, 'expectedDay', {}, NOW);
+  assert.equal(exp.rows.length, 1, 'the Expected list reaches the mixed-case rows too');
+  assert.equal(exp.rows[0].ref, 'TN1');
+
+  // And they still see nothing of anybody else's book -- both spellings widen the match to
+  // THEIR OWN team only, never sideways.
+  assert.ok(fu.rows.every(r => ['Tunduru', 'TUNDURU'].includes(r.team)));
+});
