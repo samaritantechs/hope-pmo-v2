@@ -263,3 +263,27 @@ export const LOAN_STAGE_RPC = {
     return [...n.entries()].map(([stage, count]) => ({ stage, n: count }));
   },
 };
+
+/* db/RUN-ME-017-expected-phone-window.sql, transcribed. One row per DISTINCT customer on any
+   today/tomorrow expected sheet dated on or after p_from -- the two-week window the phone
+   index reads as ONE trip instead of fourteen days of raw sheet pages. */
+export const EXPECTED_PHONE_WINDOW_RPC = {
+  expected_phone_window(store, a = {}) {
+    const from = day10(a.p_from);
+    const seen = new Set(); const out = [];
+    for (const r of tbl(store.repayment_snapshots)) {
+      if (!['today', 'tomorrow'].includes(String(r.snapshot_type || ''))) continue;
+      const d = day10(r.snapshot_date);
+      if (!d || (from && d < from)) continue;
+      const key = [r.ref, r.full_name, r.contact, r.guarantor_name, r.guarantor_contact, r.team]
+        .map(v => String(v == null ? '' : v)).join('|');
+      if (seen.has(key)) continue; seen.add(key);
+      out.push({ ref: r.ref == null ? null : r.ref, full_name: r.full_name == null ? null : r.full_name,
+        contact: r.contact == null ? null : r.contact,
+        guarantor_name: r.guarantor_name == null ? null : r.guarantor_name,
+        guarantor_contact: r.guarantor_contact == null ? null : r.guarantor_contact,
+        team: r.team == null ? null : r.team });
+    }
+    return out;
+  },
+};
