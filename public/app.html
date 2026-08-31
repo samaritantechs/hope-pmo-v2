@@ -553,7 +553,7 @@ var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
   // vice versa; both live under one cache key scheme, so both lists matter equally.
   csSearch:1, managerQueue:1, teamQueue:1, seniorQueue:1, creditQueue:1, disburseQueue:1,
   disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1,
-  reversalsList:1, paymentsList:1, complaintsList:1 };
+  reversalsList:1, paymentsList:1, complaintsList:1, adjustments:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
 // the key you would work out from the state afterwards -- keep the real one, or later touches
@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-g';
+var BUILD = '2026-08-29-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -679,6 +679,9 @@ var NAV = [
   { id:'fureport',    label:'Followup Report', ic:'<path d="M9 2h6a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2z"/><path d="M9 11h6M9 15h6"/>' },
   { id:'calls',       label:'Call Reports', ic:'<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H3v-7a9 9 0 0 1 18 0v7h-3a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>' },
   { id:'abnormal',    label:'Abnormal Payments', ic:'<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
+  /* Granted like `audit`, never assumed: admins hold it from the start, the PMO-Data person
+     gets it when the tab is ticked on their code. */
+  { id:'adjust',      label:'Iliyonasia / Adjustments', ic:'<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>' },
   { id:'legal',       label:'Legal / Demand Notices', ic:'<path d="M3 6l9-3 9 3"/><path d="M6 9v7a6 6 0 0 0 12 0V9"/><path d="M3 6l3 3M21 6l-3 3"/>' },
   { id:'restructure', label:'Loan Restructuring', ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
   { id:'credit',      label:'Credit Analysts', ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
@@ -4113,6 +4116,76 @@ function printHtml(html){
   setTimeout(function(){ if (!fired){ fired = true; go(); } }, 2500);
 }
 
+/* ILIYONASIA -- the manual, signed, attributable adjustment. Pick the report date, pick which
+   of the four books it belongs to, put a positive amount to add or a negative one to reduce,
+   and the register keeps who/when/why forever. The reason the reports can be made right in
+   the SYSTEM instead of patched in somebody's Excel. */
+var ADJ_TARGET_LABELS = {
+  'expected-initial':  'Expected — Initial',
+  'expected-current':  'Expected — Current',
+  'defaulter-initial': 'Defaulter — Initial',
+  'defaulter-current': 'Defaulter — Current',
+};
+VIEWS.adjust = function(){
+  return Promise.all([srv('adjustments', { from: S.args.from || '', to: S.args.to || '' }),
+                      srv('teams').catch(function(){ return { rows: [] }; })]).then(function(r){
+    var d = r[0], tm = r[1];
+    var tg = d.totals || {};
+    HEAD = '<div class="kpis">'
+      + kpi('Marekebisho / Adjustments', money((d.rows||[]).length))
+      + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net', (tg['expected-initial']||0) < 0 ? 'bad' : '')
+      + kpi('Expected — Current', money(tg['expected-current'] || 0), 'jumla / net', (tg['expected-current']||0) < 0 ? 'bad' : '')
+      + kpi('Defaulter — Initial', money(tg['defaulter-initial'] || 0), 'jumla / net', (tg['defaulter-initial']||0) < 0 ? 'bad' : '')
+      + kpi('Defaulter — Current', money(tg['defaulter-current'] || 0), 'jumla / net', (tg['defaulter-current']||0) < 0 ? 'bad' : '')
+      + '</div>'
+      + (d.ready === false ? '<div class="note bad">' + esc(d.note || '') + '</div>' : '')
+      /* The entry form, on the page rather than behind a drawer: this tab exists to be typed
+         into, and the person doing it is entering a dozen corrections off a reconciliation. */
+      + '<div class="card"><div class="card-h">Rekebisha / New adjustment'
+        + '<span class="sub">chanya huongeza &middot; hasi hupunguza / positive adds &middot; negative reduces</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="fld"><label>Tarehe ya ripoti / Report date</label><input type="date" id="adjDate"></div>'
+        + '<div class="fld"><label>Aina ya ripoti / Report type</label><select id="adjTarget">'
+          + Object.keys(ADJ_TARGET_LABELS).map(function(k){
+              return '<option value="'+k+'">'+esc(ADJ_TARGET_LABELS[k])+'</option>'; }).join('')
+          + '</select></div>'
+        + '<div class="fld"><label>Timu / Team (hiari / optional)</label><select id="adjTeam">'
+          + '<option value="">— kitabu chote / whole book —</option>'
+          + (tm.rows||[]).map(function(t){ return '<option>'+esc(t.team)+'</option>'; }).join('')
+          + '</select></div>'
+        + '<div class="fld"><label>Kiasi / Amount (TZS, + au −)</label><input type="number" id="adjAmt" step="any" placeholder="mf. -250000"></div>'
+        + '<div class="fld"><label>REF (hiari / optional)</label><input id="adjRef"></div>'
+        + '<div class="fld" style="grid-column:1/-1"><label>Sababu / Reason</label><input id="adjReason" placeholder="kwa nini inarekebishwa / why this is being adjusted"></div>'
+        + '<div class="clact"><button class="btn sm" id="adjSave">Hifadhi / Save</button></div>'
+        + '<div id="adjOut" class="note" style="display:none"></div>'
+        + '</div></div>'
+      + bar('<input type="date" data-arg="from" value="'+esc(S.args.from||'')+'">'
+          + '<input type="date" data-arg="to" value="'+esc(S.args.to||'')+'">');
+    S.adjRows = d.rows || [];
+    S.rows = d.rows || [];
+    S.cols = [col('adj_date','Tarehe / Date','date'),
+      {key:'target', label:'Ripoti / Report', get:function(r){ return ADJ_TARGET_LABELS[r.target] || r.target; }},
+      col('team','Team'),
+      {key:'amount', label:'Kiasi / Amount', kind:'money',
+       cls:function(r){ return num(r.amount) < 0 ? 'bad' : 'good'; }},
+      col('ref','REF'), col('reason','Sababu / Reason'),
+      col('created_by','Aliyerekebisha / By'), col('created_at','Lini / When','dt')];
+    // A tap on a row offers to remove it -- the one edit an attributable register allows.
+    // Correcting a wrong adjustment is delete-and-re-enter, so the register never holds a
+    // number whose author is not the person who last decided it.
+    ONROW = function(r){
+      if (!confirm('Futa rekebisho hili? / Delete this adjustment?\n\n'
+          + (ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + r.adj_date
+          + ' · TZS ' + money(num(r.amount)) + (r.reason ? '\n' + r.reason : ''))) return;
+      srv('adjustmentDelete', { id: r.id })
+        .then(function(){ render({ force: true }); })
+        .catch(function(e){ alert(String(e.message || e)); });
+    };
+    S.foot = 'Jumla / Net across everything shown: TZS ' + money(d.net || 0)
+      + ' · bofya mstari kufuta / tap a row to delete';
+  });
+};
+
 VIEWS.abnormal = function(){
   return srv('abnormal').then(function(d){
     var amt = d.rows.reduce(function(s,r){ return s+(Number(r.paid)||0); }, 0);
@@ -7256,6 +7329,21 @@ function wireForms(){
   if (ns) ns.onclick = function(){ settingForm('', ''); };
   var nk = document.getElementById('newCode');
   if (nk) nk.onclick = function(){ codeForm(null); };
+  // Iliyonasia: the new-adjustment form saves and the tab redraws with the row on the board.
+  var asv = document.getElementById('adjSave');
+  if (asv) asv.onclick = function(){
+    var say = function(html, bad){ var o = document.getElementById('adjOut');
+      o.style.display = 'block'; o.className = 'note' + (bad ? ' bad' : ''); o.innerHTML = html; };
+    srv('adjustmentRecord', {
+      date: document.getElementById('adjDate').value,
+      target: document.getElementById('adjTarget').value,
+      team: document.getElementById('adjTeam').value,
+      amount: document.getElementById('adjAmt').value,
+      ref: document.getElementById('adjRef').value,
+      reason: document.getElementById('adjReason').value,
+    }).then(function(){ render({ force: true }); })
+      .catch(function(e){ say(esc(String(e.message || e)), true); });
+  };
   // The folded settings-values list keeps the old main table's tap-a-row-to-edit.
   Array.prototype.forEach.call(document.querySelectorAll('[data-skey]'), function(tr){
     tr.onclick = function(){

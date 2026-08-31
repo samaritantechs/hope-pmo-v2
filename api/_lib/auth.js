@@ -65,10 +65,14 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
 /* `audit` is deliberately NOT in USER_TABS: it starts admin-only, and is opened to a role the
    ordinary way -- tick it on that role in Teams & Staff and both the nav item and the function
    follow. One mechanism, the same one every other tab uses. */
-export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit']);
+/* `adjust` (Iliyonasia -- the manual, signed, attributable adjustment) is granted the same
+   way `audit` is: admins hold it from the start, and the PMO-Data person gets it when the
+   tab is ticked on their role or code. It writes numbers that reports will one day lean on,
+   which is exactly the kind of tab that must never be assumed. */
+export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust']);
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
-export const EXTRA_TABS = ['upload', 'settings', 'audit'];
+export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set

@@ -4838,6 +4838,90 @@ async function recoveryByCredit(db, user, args = {}, nowMs) {
 /* ------------------------------------------------------------------ dispatch */
 function badRequest(m) { const e = new Error(m); e.status = 400; return e; }
 function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
+
+/* =====================================================================================
+   ILIYONASIA -- the manual, signed, attributable adjustment (HOPE PMO's own register).
+
+     "on manual adjustment we have to select date and report type on expected ini/curr or
+      def in/cur and put positive or negative amount"
+
+   Mirrored from HOPE LOAN's manual_adjustments (loan-core.js section 11), with the four PMO
+   report targets instead of two. It exists so a figure the reports got wrong -- a
+   transaction made and verified that still did not land -- is corrected IN THE SYSTEM,
+   with who/when/why attached, instead of in somebody's Excel where the correction is
+   invisible and the system stays wrong.
+
+   Gated on its own `adjust` tab (granted like `audit`: admins from the start, the PMO-Data
+   person by ticking it on their code). Writing numbers reports lean on is not a default
+   power. */
+const ADJ_TARGETS = ['expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current'];
+function requireAdjust(user) {
+  const t = (user && user.tabs) || [];
+  if (!t.includes('adjust') && !t.includes('settings')) {
+    throw forbidden('Iliyonasia inahitaji ruhusa ya adjust. / The adjust permission is required.');
+  }
+}
+async function adjustments(db, user, p = {}) {
+  requireAdjust(user);
+  let rows = [];
+  try {
+    rows = await fetchAll(() => {
+      let q = db.from('pmo_adjustments').select('*').order('adj_date', { ascending: false });
+      if (p.from) q = q.gte('adj_date', p.from);
+      if (p.to) q = q.lte('adj_date', p.to);
+      if (p.target && ADJ_TARGETS.includes(p.target)) q = q.eq('target', p.target);
+      if (p.team) q = q.eq('team', normTeamName(p.team));
+      return q;
+    });
+  } catch (e) {
+    // The table arrives by hand (db/RUN-ME-015). Between deploy and paste the tab must say
+    // what to do, not die.
+    if (/does not exist|42P01|PGRST20/i.test(String((e && e.message) || e))) {
+      return { rows: [], totals: {}, net: 0, ready: false,
+        note: 'Jedwali halijajengwa bado — endesha db/RUN-ME-015-iliyonasia-adjustments.sql. '
+            + '/ The table is not there yet: run db/RUN-ME-015 in the SQL editor once.' };
+    }
+    throw e;
+  }
+  // Net per target, so the tab answers "how much is riding on adjustments" at a glance.
+  const totals = {};
+  let net = 0;
+  for (const r of rows) {
+    const a = num(r.amount);
+    totals[r.target] = (totals[r.target] || 0) + a;
+    net += a;
+  }
+  return { rows, totals, net, ready: true, targets: ADJ_TARGETS.slice() };
+}
+async function adjustmentRecord(db, user, p = {}) {
+  requireAdjust(user);
+  const amount = Number(p.amount);
+  if (!Number.isFinite(amount) || !amount) throw badRequest('Weka kiasi kisicho sifuri — chanya huongeza, hasi hupunguza. / A non-zero amount is required: positive adds, negative reduces.');
+  if (!ADJ_TARGETS.includes(p.target)) throw badRequest('Chagua aina ya ripoti. / target must be one of: ' + ADJ_TARGETS.join(', '));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(p.date || ''))) throw badRequest('Chagua tarehe. / A date is required.');
+  const { data, error } = await db.from('pmo_adjustments').insert({
+    // App-side id, so the row that comes back can be deleted without a second read -- the
+    // database default still covers rows inserted straight through SQL.
+    id: (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : 'adj-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10),
+    adj_date: p.date, target: p.target,
+    team: p.team ? normTeamName(p.team) : null,
+    amount,
+    reason: String(p.reason || '').trim() || null,
+    ref: String(p.ref || '').trim() || null,
+    created_by: user.name || user.code,
+  }).select('*').maybeSingle();
+  if (error) throw new Error(error.message);
+  return { row: data };
+}
+async function adjustmentDelete(db, user, p = {}) {
+  requireAdjust(user);
+  const id = String(p.id || '').trim();
+  if (!id) throw badRequest('id is required');
+  const { error } = await db.from('pmo_adjustments').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+  return { id, deleted: true };
+}
 /** Managing who can sign in is the one thing gated harder than team scope. */
 function requireAdmin(user) {
   if (!(user.tabs || []).includes('settings')) throw forbidden('Settings (admin) permission required.');
@@ -4857,6 +4941,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
+  adjustments, adjustmentRecord, adjustmentDelete,
   auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,

@@ -6798,3 +6798,52 @@ test('the customer-care board still names the agent who RECEIVED the application
   assert.ok(row, 'the customer-care agent belongs on the customer-care board');
   assert.equal(row.brought, 1);
 });
+
+/* ILIYONASIA -- the manual, signed, attributable adjustment register.
+   "on manual adjustment we have to select date and report type on expected ini/curr or def
+    in/cur and put positive or negative amount". A signed figure against one report date and
+   one of the four books, never anonymous: who and why survive beside the number. Gated on
+   its own granted tab (like audit), because writing numbers reports lean on is not a
+   default power. */
+test('Iliyonasia: the register records signed amounts per book, gated on the adjust tab', async () => {
+  const db = fakeDb(tables());
+  // No adjust tab and not an admin: the door is shut.
+  await assert.rejects(() => portalApi(db, GMO, 'adjustments', {}, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, GMO, 'adjustmentRecord',
+    { date: TODAY, target: 'expected-current', amount: 5 }, NOW), e => e.status === 403);
+
+  // The PMO-Data person: an ordinary code with the tab ticked.
+  const DATA = { code: 'PD', name: 'PMO DATA', role: 'GMO', teams: null, tabs: ['adjust'] };
+
+  // The three refusals that keep the register honest: no amount, no such book, no date.
+  await assert.rejects(() => portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'expected-initial', amount: 0 }, NOW), /non-zero/i);
+  await assert.rejects(() => portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'expected-today', amount: 100 }, NOW), /target/i);
+  await assert.rejects(() => portalApi(db, DATA, 'adjustmentRecord',
+    { target: 'expected-initial', amount: 100 }, NOW), /date|tarehe/i);
+
+  await portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'expected-current', team: 'kongowe', amount: 250000, reason: 'muamala ulionasa' }, NOW);
+  await portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'expected-current', amount: -50000 }, NOW);
+  await portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'defaulter-current', amount: -100000, ref: '5215609147' }, NOW);
+
+  const d = await portalApi(db, ADMIN, 'adjustments', {}, NOW);   // admins hold the tab from the start
+  assert.equal(d.ready, true);
+  assert.equal(d.rows.length, 3);
+  assert.equal(d.totals['expected-current'], 200000, 'signed amounts net out per book');
+  assert.equal(d.totals['defaulter-current'], -100000);
+  assert.equal(d.net, 100000);
+  const first = d.rows.find(r => Number(r.amount) === 250000);
+  assert.equal(first.created_by, 'PMO DATA', 'never anonymous');
+  assert.equal(first.team, 'KONGOWE', 'team is normalised like everywhere else');
+
+  // Deleting is the one edit an attributable register allows -- correct by re-entering.
+  const gone = d.rows.find(r => Number(r.amount) === -50000);
+  await portalApi(db, DATA, 'adjustmentDelete', { id: gone.id }, NOW);
+  const after = await portalApi(db, DATA, 'adjustments', {}, NOW);
+  assert.equal(after.rows.length, 2);
+  assert.equal(after.totals['expected-current'], 250000);
+});

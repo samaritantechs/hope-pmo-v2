@@ -282,6 +282,23 @@ create table if not exists abnormal_payments (
   created_at timestamptz not null default now()
 );
 
+/* ILIYONASIA -- the manual, signed, attributable adjustment against one report date and
+   type. A table rather than an editable cell, because an adjustment that cannot say who,
+   when and why is indistinguishable from an error. See db/RUN-ME-015. */
+create table if not exists pmo_adjustments (
+  id uuid primary key default gen_random_uuid(),
+  adj_date date not null,
+  target text not null check (target in
+    ('expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current')),
+  team text,
+  amount numeric(14,2) not null,               -- SIGNED: positive adds, negative reduces
+  reason text,
+  ref text,
+  created_by text,
+  created_at timestamptz not null default now()
+);
+create index if not exists idx_pmo_adj on pmo_adjustments(adj_date, target);
+
 create table if not exists complaints (
   id uuid primary key default gen_random_uuid(),
   ref text, team text,
