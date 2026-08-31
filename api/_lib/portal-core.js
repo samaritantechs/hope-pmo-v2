@@ -2558,7 +2558,7 @@ async function commission(db, user, args = {}, nowMs) {
      that uploaded nothing that day is simply unobserved, never "all recovered". A customer
      who slips back keeps the commission of the day they recovered, exactly as promised.
      ===================================================================================== */
-  const [cfg, teamRows, defWeek, iniBook, preBook, expWeek, codeRows, pmoCfg, prevExp] = await Promise.all([
+  const [cfg, teamRows, defWeek, iniBook, preBook, expWeek, expInit, codeRows, pmoCfg, prevExp] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
     /* The week's current decks, per customer -- ref to pair, weekday to know which book,
@@ -2579,6 +2579,14 @@ async function commission(db, user, args = {}, nowMs) {
        what they still owe, and a team total cannot answer that. */
     expectedTotalsInRange(db, { type: 'today', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
+    /* THE INITIAL BOOK, for the EARLY scheme. "early collection aint reading from initial
+       file" -- the early officer is judged against the day's INITIAL expected book (initial
+       col %, PAID+OVERPAID counted there), not the today sheet. Read as team-day totals like
+       the rest; a day with no initial sheet falls back to its today sheet below, so a
+       deployment that uploads only today-sheets keeps working. PMO Collection stays on the
+       today sheet, unchanged. */
+    expectedTotalsInRange(db, { type: 'initial', from: mon,
+      to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
@@ -2589,6 +2597,10 @@ async function commission(db, user, args = {}, nowMs) {
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
+  const myExpInit = scoped(user, expInit);
+  /* The early scheme's rows for one day: the INITIAL book where it exists, the today sheet
+     where it does not. */
+  const colRows = d => { const r = onDate(myExpInit, d); return r.length ? r : onDate(myExp, d); };
   /* WHAT THE WALK ACTUALLY SAW, said out loud. "I uploaded. recovery still [empty]" -- an
      empty board has three different truths behind it (no deck in the range; a deck in the
      range but dated outside it; a deck observed with nothing newly dropped), and the screen
@@ -2664,7 +2676,7 @@ async function commission(db, user, args = {}, nowMs) {
   }
 
   function colDay(dateKey, acc) {
-    for (const r of onDate(myExp, dateKey)) {
+    for (const r of colRows(dateKey)) {
       const paid = num(r.paid_n), over = num(r.over_n);
       if (!paid && !over) continue;
       const b = bucket(acc, officerOf(teamBy, r.team, 'expected'), blank);
@@ -2731,7 +2743,7 @@ async function commission(db, user, args = {}, nowMs) {
 
   const colOff = new Map();                                // officer -> date -> sums
   for (const d of colDays) {
-    for (const r of onDate(myExp, d)) {
+    for (const r of colRows(d)) {
       const name = officerOf(teamBy, r.team, 'expected');
       if (!seesOfficer(name)) continue;
       const per = colOff.get(name) || colOff.set(name, new Map()).get(name);
