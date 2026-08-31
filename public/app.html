@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-j';
+var BUILD = '2026-08-31-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -765,8 +765,12 @@ function allowed(id){
     var need = Array.isArray(n.tab) ? n.tab : [n.tab];
     return need.some(function(t){ return (S.me.tabs||[]).indexOf(t) >= 0; });
   }
-  if (id==='upload' || id==='settings') return (S.me.tabs||[]).indexOf(id)>=0;
-  return ALWAYS.indexOf(id)>=0;
+  /* Anything in ALWAYS is drawn for everyone; anything NOT in ALWAYS is a granted tab and
+     shows only when /api/me handed it over. Naming upload/settings here one by one was the
+     bug that hid `audit` and `adjust` from every drawer, admins included -- the server
+     granted them, the drawer never asked. */
+  if (ALWAYS.indexOf(id)>=0) return true;
+  return (S.me.tabs||[]).indexOf(id)>=0;
 }
 /* ONE SIDEBAR, NOT TWO -- "i thout we killing the sandbox shotcut and having one flow from now
    on". HOPE Loan's items are appended after HOPE PMO's own, gated exactly like every other
