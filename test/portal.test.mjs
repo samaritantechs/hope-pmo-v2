@@ -6840,12 +6840,32 @@ test('Iliyonasia: the register records signed amounts per book, gated on the adj
   assert.equal(first.created_by, 'PMO DATA', 'never anonymous');
   assert.equal(first.team, 'KONGOWE', 'team is normalised like everywhere else');
 
-  // Deleting is the one edit an attributable register allows -- correct by re-entering.
+  // Deleting stays available -- and the row is gone from the totals with it.
   const gone = d.rows.find(r => Number(r.amount) === -50000);
   await portalApi(db, DATA, 'adjustmentDelete', { id: gone.id }, NOW);
   const after = await portalApi(db, DATA, 'adjustments', {}, NOW);
   assert.equal(after.rows.length, 2);
   assert.equal(after.totals['expected-current'], 250000);
+
+  /* "some issues are sorted midday": the AMOUNT of a recorded adjustment can be re-typed.
+     Everything else stands -- date, book, team, reason -- and the row is re-signed by
+     whoever last decided the number, so the register stays attributable. */
+  const kept = after.rows.find(r => Number(r.amount) === 250000);
+  await assert.rejects(() => portalApi(db, GMO, 'adjustmentAmend',
+    { id: kept.id, amount: 5 }, NOW), e => e.status === 403, 'same gate as recording');
+  await assert.rejects(() => portalApi(db, DATA, 'adjustmentAmend',
+    { id: kept.id, amount: 0 }, NOW), /non-zero/i);
+  await assert.rejects(() => portalApi(db, DATA, 'adjustmentAmend',
+    { id: 'no-such-row', amount: 5 }, NOW), /halipo|exists/i);
+  const amended = await portalApi(db, DATA, 'adjustmentAmend', { id: kept.id, amount: 300000 }, NOW);
+  assert.equal(amended.previousAmount, 250000, 'the old figure is echoed back');
+  const final = await portalApi(db, ADMIN, 'adjustments', {}, NOW);
+  assert.equal(final.totals['expected-current'], 300000, 'the register carries the new amount');
+  const row = final.rows.find(r => r.id === kept.id);
+  assert.equal(row.target, 'expected-current', 'the book stands');
+  assert.equal(row.team, 'KONGOWE', 'the team stands');
+  assert.equal(row.adj_date, TODAY, 'the report date stands');
+  assert.equal(row.created_by, 'PMO DATA', 're-signed by the person who last decided it');
 });
 
 /* THE TUNDURU BLACKOUT. JavaScript compares team names through K() -- trim + uppercase -- so

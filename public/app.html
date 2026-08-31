@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-f';
+var BUILD = '2026-08-31-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4227,19 +4227,39 @@ VIEWS.adjust = function(){
        cls:function(r){ return num(r.amount) < 0 ? 'bad' : 'good'; }},
       col('ref','REF'), col('reason','Sababu / Reason'),
       col('created_by','Aliyerekebisha / By'), col('created_at','Lini / When','dt')];
-    // A tap on a row offers to remove it -- the one edit an attributable register allows.
-    // Correcting a wrong adjustment is delete-and-re-enter, so the register never holds a
-    // number whose author is not the person who last decided it.
+    /* A tap on a row opens it: the AMOUNT can be re-typed ("some issues are sorted midday"),
+       or the row deleted. Only the amount moves -- date, book, team and reason stand -- and
+       the register's rule holds because the server re-signs the row with whoever last
+       decided the number. */
     ONROW = function(r){
-      if (!confirm('Futa rekebisho hili? / Delete this adjustment?\n\n'
-          + (ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + r.adj_date
-          + ' · TZS ' + money(num(r.amount)) + (r.reason ? '\n' + r.reason : ''))) return;
-      srv('adjustmentDelete', { id: r.id })
-        .then(function(){ render({ force: true }); })
-        .catch(function(e){ alert(String(e.message || e)); });
+      drawer('<h3>Rekebisho / Adjustment</h3>'
+        + '<div class="sub">' + esc(ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + esc(r.adj_date)
+          + (r.team ? ' · ' + esc(r.team) : ' · kitabu chote / whole book') + '</div>'
+        + (r.reason ? '<div class="frow"><span>Sababu / Reason</span>' + esc(r.reason) + '</div>' : '')
+        + (r.ref ? '<div class="frow"><span>REF</span>' + esc(r.ref) + '</div>' : '')
+        + '<div class="frow"><span>Aliyeweka / By</span>' + esc(r.created_by || '') + '</div>'
+        + '<div class="fld" style="margin-top:10px"><label>Kiasi kipya / New amount (TZS, + au −)</label>'
+          + '<input type="number" id="adjEditAmt" step="any" value="' + esc(String(num(r.amount))) + '"></div>'
+        + '<button class="btn w" id="adjEditSave">Hifadhi kiasi kipya / Save new amount</button>'
+        + '<button class="btn w ghost" id="adjEditDel" style="margin-top:8px">Futa rekebisho / Delete this adjustment</button>');
+      $('#adjEditSave').onclick = function(){
+        var v = Number($('#adjEditAmt').value);
+        if (!isFinite(v) || !v) { toast('Weka kiasi kisicho sifuri. / A non-zero amount is required.', true); return; }
+        srv('adjustmentAmend', { id: r.id, amount: v })
+          .then(function(){ closeDrawer(); toast('Kiasi kimebadilishwa. / Amount updated.'); render({ force: true }); })
+          .catch(function(e){ toast(String(e.message || e), true); });
+      };
+      $('#adjEditDel').onclick = function(){
+        if (!confirm('Futa rekebisho hili? / Delete this adjustment?\n\n'
+            + (ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + r.adj_date
+            + ' · TZS ' + money(num(r.amount)))) return;
+        srv('adjustmentDelete', { id: r.id })
+          .then(function(){ closeDrawer(); render({ force: true }); })
+          .catch(function(e){ toast(String(e.message || e), true); });
+      };
     };
     S.foot = 'Jumla / Net across everything shown: TZS ' + money(d.net || 0)
-      + ' · bofya mstari kufuta / tap a row to delete';
+      + ' · bofya mstari kuhariri kiasi au kufuta / tap a row to edit the amount or delete';
   });
 };
 

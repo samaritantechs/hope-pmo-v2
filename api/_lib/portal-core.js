@@ -4958,6 +4958,27 @@ async function adjustmentRecord(db, user, p = {}) {
   if (error) throw new Error(error.message);
   return { row: data };
 }
+/* "some issues are sorted midday" -- an adjustment entered in the morning can be re-sized
+   once the real figure lands, without deleting the row and losing its date, book, team and
+   reason. Only the AMOUNT moves; the register's rule stands, so the row is re-signed by the
+   person who last decided the number, and the old figure is echoed back so the caller can
+   say what changed. */
+async function adjustmentAmend(db, user, p = {}) {
+  requireAdjust(user);
+  const id = String(p.id || '').trim();
+  if (!id) throw badRequest('id is required');
+  const amount = Number(p.amount);
+  if (!Number.isFinite(amount) || !amount) throw badRequest('Weka kiasi kisicho sifuri — chanya huongeza, hasi hupunguza. / A non-zero amount is required: positive adds, negative reduces.');
+  const { data: before, error: readErr } = await db.from('pmo_adjustments')
+    .select('*').eq('id', id).maybeSingle();
+  if (readErr) throw new Error(readErr.message);
+  if (!before) throw badRequest('Rekebisho halipo — huenda limefutwa. / That adjustment no longer exists.');
+  const { data, error } = await db.from('pmo_adjustments')
+    .update({ amount, created_by: user.name || user.code, created_at: new Date().toISOString() })
+    .eq('id', id).select('*').maybeSingle();
+  if (error) throw new Error(error.message);
+  return { row: data, previousAmount: num(before.amount) };
+}
 async function adjustmentDelete(db, user, p = {}) {
   requireAdjust(user);
   const id = String(p.id || '').trim();
@@ -4985,7 +5006,7 @@ const FN = {
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
-  adjustments, adjustmentRecord, adjustmentDelete,
+  adjustments, adjustmentRecord, adjustmentAmend, adjustmentDelete,
   auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
   announceSave, notifications, notifSeen, customerSearch,
   expdfMine, expdfReport, emailWeeklyExpdf,
