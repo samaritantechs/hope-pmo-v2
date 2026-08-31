@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-j';
+var BUILD = '2026-08-31-k';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3803,14 +3803,28 @@ VIEWS.commission = function(){
          Recovery and early collection are different people on different rules; each gets a
          day-by-day week board like the PMO pair below. No separate "leo" board -- "having
          weekly by day should kill the today only": today is simply the newest column. */
+      /* An empty recovery board has THREE different truths behind it, and the note says
+         which -- guessing sent somebody to upload the same file a fourth time. */
       + (!(d.recBoard||[]).length
           ? '<div class="card"><div class="card-h">Recovery — wiki hii / this week</div>'
-            + '<div class="note" style="margin:10px 14px">Hakuna deki la CURRENT lililotua katika wiki hii bado — '
-            + 'urejeshaji hupimwa pale deki la current linapopakiwa na kulinganishwa na kitabu. '
-            + 'Wiki mpya huanza Jumatatu ikiwa tupu mpaka deki la kwanza lifike. '
-            + '/ No CURRENT deck has landed in this range yet — recovery is measured when a '
-            + 'current deck is uploaded and compared against the book. A new week starts Monday '
-            + 'empty until the first deck arrives.</div></div>'
+            + '<div class="note" style="margin:10px 14px">'
+            + ((d.recDiag && d.recDiag.inRange && d.recDiag.inRange.length)
+                ? 'Deki la CURRENT <b>limetua</b> wiki hii ('
+                  + d.recDiag.inRange.map(function(x){ return esc(x.date)+' · '+money(x.rows)+' rows'; }).join(', ')
+                  + ') lakini hakuna aliyeshuka dhidi ya kitabu bado — kamisheni hulipa MADONDOSHO MAPYA ya wiki hii tu;'
+                  + ' yaliyorejeshwa wiki iliyopita yalilipwa wiki iliyopita.'
+                  + ' / A current deck <b>has landed</b> this week (see the dates above) but nothing has newly dropped'
+                  + ' against the book yet — this board pays THIS week’s fresh drops only; last week’s recovery was'
+                  + ' last week’s pay. The cumulative initial-vs-current figure lives on the dashboard.'
+                : 'Hakuna deki la CURRENT lenye tarehe ya wiki hii ('+esc((d.recDiag&&d.recDiag.from)||'')+' → '+esc((d.recDiag&&d.recDiag.to)||'')+').'
+                  + (d.recDiag && d.recDiag.preMax
+                      ? ' Deki jipya zaidi kwenye kitabu lina tarehe <b>'+esc(d.recDiag.preMax)+'</b> — kabla ya wiki hii.'
+                        + ' / No current deck is DATED inside this week; the newest current deck in the book is dated'
+                        + ' <b>'+esc(d.recDiag.preMax)+'</b>, before the week began. If you uploaded today, check the'
+                        + ' file’s own date column — the deck lands on the date it carries, not the date it was uploaded.'
+                      : ' / No current deck is dated inside this week, and the book holds no earlier current deck either'
+                        + ' — upload the initial and current decks and this board fills itself.'))
+            + '</div></div>'
           : '')
       + ((d.recBoard||[]).length
           ? board('cmRecWeek','Recovery — wiki hii / this week',
