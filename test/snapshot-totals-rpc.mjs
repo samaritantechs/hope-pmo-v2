@@ -174,6 +174,45 @@ export const UPLOAD_STATUS_RPC = {
   },
 };
 
+/** call_report_rollup(p_from, p_to, p_teams) -- the Call Reports counting, transcribed from
+    db/RUN-ME-014-call-report-rollup.sql clause for clause. 'g' rows are per (day, officer,
+    category, outcome, portfolio) counts with talk time; 'u' rows are each officer's DISTINCT
+    portfolio customers, which no grouped count can reproduce. The category and outcome rules
+    are the same ones categoryOf/outcomeOf apply in call-core.js -- that is the thing the
+    agreement test exists to hold together. */
+const KU = v => String(v == null ? '' : v).trim().toUpperCase();
+export const CALL_REPORT_RPC = {
+  call_report_rollup(store, a = {}) {
+    const from = day10(a.p_from), to = day10(a.p_to);
+    const teams = a.p_teams || null;
+    const want = teams ? teams.map(KU) : null;
+    const inScope = r => {
+      const d = day10(r.call_date);
+      if (!d || d < from || d > to) return false;
+      return !want || want.includes(KU(r.team));
+    };
+    const g = new Map(), u = new Map();
+    for (const r of tbl(store.call_logs)) {
+      if (!inScope(r)) continue;
+      const pf = !!r.portfolio;
+      const cat = !pf ? 'OTHER' : (['EXPECTED', 'DEFAULTER'].includes(KU(r.category)) ? KU(r.category) : 'UNCATEGORIZED');
+      const out = ['MISSED', 'REJECTED', 'BLOCKED'].includes(KU(r.outcome)) ? KU(r.outcome) : 'CONNECTED';
+      const uid = r.user_id == null ? null : String(r.user_id);
+      const k = [day10(r.call_date), uid, r.team, cat, out, pf].join(' ');
+      let row = g.get(k);
+      if (!row) g.set(k, row = { kind: 'g', day: day10(r.call_date), user_id: uid, team: r.team == null ? null : String(r.team), category: cat, outcome: out, portfolio: pf, calls: 0, dur: 0, uniq: null });
+      row.calls += 1; row.dur += Number(r.duration) || 0;
+      if (pf) {
+        let set = u.get(uid);
+        if (!set) u.set(uid, set = new Set());
+        set.add(String((r.ref != null && String(r.ref) !== '') ? r.ref : (r.phone == null ? '' : r.phone)));
+      }
+    }
+    return [...g.values()].concat([...u.entries()].map(([uid, set]) =>
+      ({ kind: 'u', day: null, user_id: uid, team: null, category: null, outcome: null, portfolio: null, calls: 0, dur: 0, uniq: set.size })));
+  },
+};
+
 /** storage_usage_by_date() -- the Settings tab's counting function, transcribed from
     db/RUN-ME-012-postgres-ww4.sql DOSE 11: one grouped count per source per day, for all
     eleven sources. Without it the app HEAD-counts each table (a number, no rows) -- it never

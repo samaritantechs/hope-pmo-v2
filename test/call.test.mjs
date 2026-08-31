@@ -7,10 +7,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
+import { CALL_REPORT_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
-const { callApi, pnorm, dsFmt } = await import('../api/_lib/call-core.js');
+const { callApi, pnorm, dsFmt, reportCoreForPortal } = await import('../api/_lib/call-core.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');   // Friday noon EAT
 const T1 = Date.parse('2026-07-24T05:00:00Z');    // this morning EAT -- calls synced below
@@ -1913,4 +1914,54 @@ test('the history items carry the recorded replacement number', async () => {
   assert.equal(withNo.newNo, '788123456', 'normalised like every phone in the system');
   // Comments without one stay clean -- no empty field noise.
   assert.ok(d.items.every(i => typeof i.newNo === 'string'));
+});
+
+/* THE TWO ROADS TO THE CALL REPORT MUST LAND ON IDENTICAL FIGURES.
+   "call reports in site is failing to load ... the server did not answer within 45 seconds."
+   The report used to read every call row in its window -- six figures of rows for a week of
+   321 officers -- and add them up in JavaScript. call_report_rollup (db/RUN-ME-014) now does
+   that grouping in the database, and the row read stays as the fallback for a deployment
+   that has not run the paste yet. Two roads to one report is only safe while something holds
+   them to the same answer, so this compares the ENTIRE response, field for field, on a
+   fixture that exercises every category, every outcome, both portfolio kinds, several days,
+   two teams, an officer who moved team after her calls synced, and an officer who made no
+   calls at all. */
+test('Ripoti: the database rollup and the row read produce the same report, field for field', async () => {
+  const t = makeTables();
+  t.teams.push({ team: 'MBAGALA', team_code: 'MBA1' });
+  t.call_users = [
+    { user_id: 'u1', name: 'ASHA K', team: 'KONGOWE', phone: '0711000001', role: 'OFFICER', active: true },
+    { user_id: 'u2', name: 'BEN M', team: 'MBAGALA', phone: '0711000002', role: 'OFFICER', active: true },
+    // Moved to MBAGALA AFTER her calls synced under KONGOWE -- the report must follow her.
+    { user_id: 'u3', name: 'CECI T', team: 'MBAGALA', phone: '0711000003', role: 'OFFICER', active: true },
+    // Never called all week: the report exists to show this name at zero.
+    { user_id: 'u4', name: 'DENIS P', team: 'KONGOWE', phone: '0711000004', role: 'OFFICER', active: true },
+  ];
+  const L = (id, uid, team, date, dur, pf, cat, out, ref, phone) =>
+    ({ id, user_id: uid, officer: 'OLD NAME', team, call_date: date, duration: dur,
+       portfolio: pf, category: cat, outcome: out, ref, phone });
+  t.call_logs = [
+    L('c1', 'u1', 'KONGOWE', '2026-07-20', 60, true,  'EXPECTED',  'CONNECTED', 'R1', '0700000001'),
+    L('c2', 'u1', 'KONGOWE', '2026-07-20', 30, true,  'DEFAULTER', 'MISSED',    'R2', '0700000002'),
+    L('c3', 'u1', 'KONGOWE', '2026-07-22', 45, true,  'EXPECTED',  'CONNECTED', 'R1', '0700000001'), // same customer twice: uniq = 2, not 3
+    L('c4', 'u1', 'KONGOWE', '2026-07-22', 10, false, null,        'REJECTED',  '',   '0700000009'),
+    L('c5', 'u2', 'MBAGALA', '2026-07-21', 90, true,  null,        'BLOCKED',   '',   '0700000003'), // portfolio, no category: UNCATEGORIZED
+    L('c6', 'u2', 'MBAGALA', '2026-07-23', 20, false, null,        null,        '',   '0700000004'), // no outcome: CONNECTED
+    L('c7', 'u3', 'KONGOWE', '2026-07-21', 75, true,  'DEFAULTER', 'CONNECTED', 'R7', '0700000005'), // synced under her OLD team
+  ];
+  const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] };
+  const GMO = { code: 'G', name: 'G', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+
+  const slow = await reportCoreForPortal(fakeDb(t), ADMIN, {}, NOW);
+  const fast = await reportCoreForPortal(fakeDb(t, { rpc: CALL_REPORT_RPC }), ADMIN, {}, NOW);
+  assert.deepEqual(fast, slow, 'admin over every team: every field identical');
+  assert.equal(fast.totals.calls, 7);
+  assert.equal(fast.users.find(u => u.name === 'ASHA K').uniqCustomers, 2, 'the same customer twice counts once');
+  assert.equal(fast.users.find(u => u.name === 'CECI T').team, 'MBAGALA', 'reported under her CURRENT team');
+  assert.equal(fast.users.find(u => u.name === 'DENIS P').calls, 0, 'the zero-call officer is on the board');
+
+  // And scoped: a one-team leader gets the same narrowed report on both roads.
+  const slowG = await reportCoreForPortal(fakeDb(t), GMO, {}, NOW);
+  const fastG = await reportCoreForPortal(fakeDb(t, { rpc: CALL_REPORT_RPC }), GMO, {}, NOW);
+  assert.deepEqual(fastG, slowG, 'team scoping agrees on both roads');
 });

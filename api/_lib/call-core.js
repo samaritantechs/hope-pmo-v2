@@ -1,4 +1,4 @@
-import { fetchAll, runQuery } from './supabase.js';
+import { fetchAll, runQuery, rpcAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams } from './snapshots.js';
@@ -1444,25 +1444,41 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     scope = {};
     (Array.isArray(scopeTeams) ? scopeTeams : String(scopeTeams).split(',')).forEach(t => { const k = K(t); if (k) scope[k] = 1; });
   }
-  const [users0, teamRows, logs] = await Promise.all([
+  /* THE COUNTING IS THE DATABASE'S JOB -- the second time this report has been saved from the
+     same symptom. The first rescue narrowed select('*') to ten columns, and that bought a
+     year; 321 officers calling all week is six figures of rows, and no column diet survives
+     that. Every figure below is a count or a sum grouped by day, officer, category and
+     outcome, so call_report_rollup (db/RUN-ME-014) does the grouping where the rows live and
+     a week crosses the wire as a few thousand grouped rows instead of ~100,000 call rows.
+
+     The row read stays as the fallback, because migrations here are run by hand and the tab
+     has to keep working -- limping, as it does today -- between the deploy and the paste. */
+  const scopeKeys = scopeTeams && Object.keys(scope || {}).length ? Object.keys(scope) : null;
+  let rollup = null;
+  const [users0, teamRows] = await Promise.all([
     fetchAll(() => db.from('call_users').select('*')),
     readTeamsAll(db),
+    (async () => {
+      const { data, error } = await rpcAll(db, 'call_report_rollup',
+        { p_from: fromKey, p_to: toKey, p_teams: scopeKeys });
+      // [] is a real answer (a quiet window); only an ERROR means the function is not there.
+      if (!error && Array.isArray(data)) rollup = data;
+    })(),
+  ]);
+  let logs = [];
+  if (!rollup) {
     /* Scoped at the database. A leader over one team read every call the whole company made
        in the window and discarded the rest here -- on the table that grows fastest of all.
-       AND ONLY THE COLUMNS THE REPORT READS. "Call reports in system does not load ...
-       the server did not answer within 45 seconds" -- select('*') was carrying the hash id,
-       direction, call_time, match_type, customer and synced_at for every call in the window,
-       none of which any figure below touches. On an all-teams admin over a week that is tens
-       of thousands of rows, and those six dead columns were most of the bytes on the wire --
-       the difference between answering inside the client's 45-second deadline and not. */
-    fetchAll(() => {
+       AND ONLY THE COLUMNS THE REPORT READS: the hash id, direction, call_time, match_type,
+       customer and synced_at were most of the bytes on the wire and no figure touches them. */
+    logs = await fetchAll(() => {
       let q = db.from('call_logs')
         .select('user_id, team, officer, call_date, duration, portfolio, category, outcome, ref, phone')
         .gte('call_date', fromKey).lte('call_date', toKey);
-      if (scopeTeams && Object.keys(scope || {}).length) q = q.in('team', Object.keys(scope));
+      if (scopeKeys) q = q.in('team', scopeKeys);
       return q;
-    }),
-  ]);
+    });
+  }
   // Report by each officer's CURRENT team/name, not the snapshot taken when the call synced --
   // a reassignment must not strand old calls under a team nobody is scoped to see anymore.
   const curTeam = {}, curName = {}, curRole = {}, curPhone = {};
@@ -1498,6 +1514,45 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     if (!byOutcome[outc]) byOutcome[outc] = { outcome: outc, calls: 0, dur: 0 };
     byOutcome[outc].calls++; byOutcome[outc].dur += dur;
   }
+  /* THE SAME AGGREGATION FROM GROUPED ROWS. Each 'g' row is (day, officer, category, outcome,
+     portfolio) with its count and talk time already added up by the database; this walks them
+     with the same current-team remap and the same scope rule the per-call loop above applies,
+     so the two roads land on identical figures -- the agreement test holds them to it. The
+     'u' rows carry each officer's distinct portfolio customers, which no grouped count can
+     reproduce (the same customer rung twice must count once). */
+  const rollTot = { calls: 0, duration: 0, portfolio: 0, nonPortfolio: 0 };
+  if (rollup) for (const g of rollup) {
+    if (g.kind !== 'g') continue;
+    const uid = String(g.user_id);
+    const team = Object.prototype.hasOwnProperty.call(curTeam, uid) ? curTeam[uid] : (g.team || '');
+    if (scope && !scope[K(team)] && uid !== alwaysUid) continue;
+    const day = String(g.day).slice(0, 10);
+    const officer = curName[uid] || '';
+    const n = num(g.calls), dur = num(g.dur), isPf = !!g.portfolio;
+    const cat = g.category, outc = g.outcome;
+    rollTot.calls += n; rollTot.duration += dur; isPf ? rollTot.portfolio += n : rollTot.nonPortfolio += n;
+    const dk = day + '|' + uid;
+    if (!byDayUser[dk]) byDayUser[dk] = { day, officer, team, calls: 0, dur: 0, pf: 0, npf: 0 };
+    const bd = byDayUser[dk];
+    bd.calls += n; bd.dur += dur; isPf ? bd.pf += n : bd.npf += n;
+    if (!users[uid]) users[uid] = { name: officer, team, role: curRole[uid] || '', phone: curPhone[uid] || '', calls: 0, dur: 0, pf: 0, npf: 0, days: {}, uniq: {}, uniqN: 0, expected: 0, defaulter: 0, connected: 0 };
+    const u = users[uid];
+    u.calls += n; u.dur += dur; u.days[day] = 1;
+    isPf ? u.pf += n : u.npf += n;
+    if (cat === 'EXPECTED') u.expected += n; else if (cat === 'DEFAULTER') u.defaulter += n;
+    if (outc === 'CONNECTED') u.connected += n;
+    if (!teams[team]) teams[team] = { team, calls: 0, dur: 0, pf: 0, npf: 0 };
+    teams[team].calls += n; teams[team].dur += dur; isPf ? teams[team].pf += n : teams[team].npf += n;
+    if (!byCategory[cat]) byCategory[cat] = { category: cat, calls: 0, dur: 0, connected: 0 };
+    byCategory[cat].calls += n; byCategory[cat].dur += dur; if (outc === 'CONNECTED') byCategory[cat].connected += n;
+    if (!byOutcome[outc]) byOutcome[outc] = { outcome: outc, calls: 0, dur: 0 };
+    byOutcome[outc].calls += n; byOutcome[outc].dur += dur;
+  }
+  if (rollup) for (const g of rollup) {
+    if (g.kind !== 'u') continue;
+    const uid = String(g.user_id);
+    if (users[uid]) users[uid].uniqN = num(g.uniq);
+  }
   /* AN OFFICER WHO MADE NO CALLS IS THE POINT OF THIS REPORT.
 
      Everything above is built from the call log, so somebody who never opened the app all week
@@ -1520,8 +1575,8 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
 
   const CAT_ORDER = { EXPECTED: 1, DEFAULTER: 2, UNCATEGORIZED: 3, OTHER: 4 };
   const OUT_ORDER = { CONNECTED: 1, MISSED: 2, REJECTED: 3, BLOCKED: 4 };
-  const totals = { calls: rows.length, duration: 0, portfolio: 0, nonPortfolio: 0 };
-  rows.forEach(r => { totals.duration += num(r.duration); r.portfolio ? totals.portfolio++ : totals.nonPortfolio++; });
+  const totals = rollup ? rollTot : { calls: rows.length, duration: 0, portfolio: 0, nonPortfolio: 0 };
+  if (!rollup) rows.forEach(r => { totals.duration += num(r.duration); r.portfolio ? totals.portfolio++ : totals.nonPortfolio++; });
   totals.ratio = totals.calls ? totals.portfolio / totals.calls : 0;
   return {
     from: fromKey, to: toKey,
@@ -1532,7 +1587,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
          at zero can also ring that name -- the whole reason a supervisor is looking at it. */
       return { name: u.name, team: u.team, branch: teamBranch.get(K(u.team)) || null, position: positionOf(posOf, u.name, u.role), phone: u.phone || '', calls: u.calls, duration: u.dur,
         portfolio: u.pf, nonPortfolio: u.npf, ratio: u.calls ? u.pf / u.calls : 0,
-        uniqCustomers: Object.keys(u.uniq).length, days: Object.keys(u.days).length,
+        uniqCustomers: u.uniqN != null ? u.uniqN : Object.keys(u.uniq).length, days: Object.keys(u.days).length,
         expected: u.expected, defaulter: u.defaulter, connected: u.connected, connectRatio: u.calls ? u.connected / u.calls : 0 };
     }),
     teams: Object.keys(teams).sort().map(k => { const t = teams[k]; return { team: t.team, branch: teamBranch.get(K(t.team)) || null, calls: t.calls, duration: t.dur, portfolio: t.pf, nonPortfolio: t.npf, ratio: t.calls ? t.pf / t.calls : 0 }; }),

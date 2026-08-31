@@ -277,6 +277,16 @@
      colours with green text laid over them, which reads as a fault dressed up as good news.
      Both themes already carry the ok palette. */
   .note.good{border-color:var(--okline);background:var(--okbg);color:var(--ok)}
+  /* the open/close chip for the long Settings sections */
+  details.fold{margin:14px 0}
+  details.fold>summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:8px;
+    padding:7px 14px;border:1.5px solid var(--line);border-radius:20px;font-weight:700;font-size:12.5px;
+    background:var(--card);user-select:none}
+  details.fold>summary::-webkit-details-marker{display:none}
+  details.fold>summary .arr::after{content:'▸'}
+  details.fold[open]>summary .arr::after{content:'▾'}
+  details.fold>summary .fsub{font-weight:400;color:var(--mut)}
+  details.fold[open]>summary{margin-bottom:10px}
 
   /* commission rate editor + report cleanup: forms that live INSIDE a card, not a drawer,
      because typing a rate and watching the numbers move is the whole point of both. */
@@ -552,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-f';
+var BUILD = '2026-08-29-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1632,6 +1642,20 @@ function kpi(l, v, s, cls, id){ return '<div class="kpi"><div class="l">'+esc(l)
   + '<div class="v'+(cls?' '+cls:'')+'"'+(id?' id="'+id+'"':'')+'>'+v+'</div>'
   + (s?'<div class="s"'+(id?' id="'+id+'S"':'')+'>'+esc(s)+'</div>':'') + '</div>'; }
 function bar(html){ return '<div class="bar">'+html+'</div>'; }
+/* A SECTION THAT OPENS AND CLOSES ON A CHIP -- for the Settings screens that grew past a
+   screenful. "should have chip to open and close in settings, its becoming too long."
+   Native <details>, so there is no state machine to break on a redraw; whether each fold is
+   open is remembered on the device, per section, because how somebody arranges their own
+   Settings screen is their business and should survive a reload. Closed by default: the
+   section that matters on an ordinary visit is the switch at the top, not a year of dates. */
+function fold_(key, label, sub, inner){
+  var open = ''; try { open = localStorage.getItem('fold_' + key) === '1' ? ' open' : ''; } catch(e){}
+  return '<details class="fold"' + open
+    + ' ontoggle="try{localStorage.setItem(&quot;fold_' + key + '&quot;, this.open ? &quot;1&quot; : &quot;&quot;)}catch(e){}">'
+    + '<summary><span class="arr"></span>' + esc(label)
+    + (sub ? ' <span class="fsub">' + esc(sub) + '</span>' : '') + '</summary>'
+    + inner + '</details>';
+}
 /* The rising / steady / dropping mark on the performance strip -- movement against the
    previous period. Null means there WAS no previous period to compare with: no arrow at
    all, never a fake "rising from nothing". */
@@ -4907,7 +4931,8 @@ VIEWS.settings = function(){
         + ' <button class="btn sm danger" id="clRun">Futa / Clean</button></div>'
         + '<div id="clOut" class="note" style="display:none"></div>'
         + '</div></div>'
-      + sgDatesBoard_(sg)
+      + fold_('sgdates', 'Kilichohifadhiwa kwa tarehe / What is stored, by date',
+              'bofya kufungua / tap to open', sgDatesBoard_(sg))
 
 
       /* THE FOLLOW-UP STATUS LIST. Editable, one per line. The BEHAVIOURS are not editable and
@@ -4986,7 +5011,9 @@ VIEWS.settings = function(){
       /* Field officers cannot create their own accounts any more. An admin issues one against
          the officer's phone number with a passcode, and can switch it off or re-issue the
          passcode at any moment -- both of which release the handset immediately. */
-      + '<div class="card"><div class="card-h">Akaunti za maafisa / Field officer accounts'
+      + fold_('officers', 'Akaunti za maafisa / Field officer accounts',
+              cu.count + ' akaunti / accounts',
+        '<div class="card"><div class="card-h">Akaunti za maafisa / Field officer accounts'
         + '<span class="sub"><button class="btn sm" id="newOfficer">+ Afisa mpya / New officer</button></span></div>'
       + (cu.withoutPasscode
           ? '<div class="note bad" style="margin:10px 14px"><b>'+money(cu.withoutPasscode)+'</b> akaunti bado zinatumia usajili wa zamani bila nenosiri.'
@@ -5006,7 +5033,7 @@ VIEWS.settings = function(){
             + '<td class="r">'+money(u.calls)+'</td>'
             + '<td class="r"><button class="btn sm ghost" data-user="'+esc(u.user_id)+'">Simamia / Manage</button></td></tr>';
         }).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--mut);padding:20px">Hakuna akaunti bado. / No accounts yet.</td></tr>')
-      + '</tbody></table></div></div>'
+      + '</tbody></table></div></div>')
       + '<div class="card"><div class="card-h">Tangazo / Announcement'
         + '<span class="sub">huonekana kwenye kila skrini, hata ya kuingia / shows on every screen, including sign-in</span></div>'
         + '<div class="fld"><label>Maandishi / Text (max 500)</label>'
@@ -5022,11 +5049,22 @@ VIEWS.settings = function(){
           + ' / Everyone sees it at once and it stays until each person closes it.'
           + ' It is NOT private: anyone who can reach the site can read it.</div>'
         + '</div>'
-      + bar('<button class="btn sm" id="newSetting">+ Badili thamani / Set a value</button>');
-    S.acRows = ac.rows; S.cuRows = cu.rows;
-    S.rows = st.rows;
-    S.cols = [col('key','Key'), col('value','Value')];
-    ONROW = function(r){ settingForm(r.key, r.value); };
+      /* THE RAW KEY/VALUE LIST, FOLDED. It used to be the tab's main table, permanently open
+         below everything else -- a hundred-odd rows of internals that made the whole screen
+         scroll forever, when the honest use of it is "find one key, change it". Same rows,
+         same tap-a-row-to-edit, behind a chip like its two long neighbours. */
+      + fold_('setvals', 'Orodha ya thamani / Settings values',
+              st.rows.length + ' &middot; bofya mstari kubadili / tap a row to edit',
+        '<div class="card">'
+        + bar('<button class="btn sm" id="newSetting">+ Badili thamani / Set a value</button>')
+        + '<div class="scroll"><table><thead><tr><th>Key</th><th>Value</th></tr></thead><tbody>'
+        + st.rows.map(function(r){
+            return '<tr data-skey="'+esc(r.key)+'" style="cursor:pointer"><td><code>'+esc(r.key)+'</code></td>'
+              + '<td>'+esc(r.value == null ? '' : String(r.value))+'</td></tr>'; }).join('')
+        + '</tbody></table></div></div>');
+    S.acRows = ac.rows; S.cuRows = cu.rows; S.setRows = st.rows;
+    S.rows = []; S.cols = null;
+    ONROW = null;
   });
 };
 
@@ -7218,6 +7256,14 @@ function wireForms(){
   if (ns) ns.onclick = function(){ settingForm('', ''); };
   var nk = document.getElementById('newCode');
   if (nk) nk.onclick = function(){ codeForm(null); };
+  // The folded settings-values list keeps the old main table's tap-a-row-to-edit.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-skey]'), function(tr){
+    tr.onclick = function(){
+      var k = tr.getAttribute('data-skey');
+      var row = (S.setRows||[]).filter(function(x){ return String(x.key)===k; })[0];
+      if (row) settingForm(row.key, row.value);
+    };
+  });
   Array.prototype.forEach.call(document.querySelectorAll('[data-code]'), function(b){
     b.onclick = function(){
       var c = b.getAttribute('data-code');
