@@ -2578,6 +2578,19 @@ async function commission(db, user, args = {}, nowMs) {
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
+  /* WHAT THE WALK ACTUALLY SAW, said out loud. "I uploaded. recovery still [empty]" -- an
+     empty board has three different truths behind it (no deck in the range; a deck in the
+     range but dated outside it; a deck observed with nothing newly dropped), and the screen
+     must say WHICH, or the person uploads the same file a fourth time. */
+  const seenDates = {};
+  for (const r of myDef) { const dd = String(r.snapshot_date || ''); if (dd) seenDates[dd] = (seenDates[dd] || 0) + 1; }
+  const recDiag = {
+    from: mon, to: sun,
+    inRange: Object.entries(seenDates).sort().map(([date, rows]) => ({ date, rows })),
+    // The newest current deck the BOOK holds from before this range began.
+    preMax: (preBook.rows || []).reduce((m, r) => {
+      const dd = String(r.snapshot_date || ''); return dd > m ? dd : m; }, '') || null,
+  };
   const onDate = (rows, d, type) => pickLatestBatchRows(rows.filter(r =>
     String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
 
@@ -2809,7 +2822,7 @@ async function commission(db, user, args = {}, nowMs) {
 
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
     scope, from: mon, to: scope === 'month' ? today : sun,
-    recBoard, colBoard,
+    recBoard, colBoard, recDiag,
     pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
       leader: leader ? leader.officer : null,
