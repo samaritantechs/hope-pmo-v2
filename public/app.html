@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-29-h';
+var BUILD = '2026-08-29-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4383,7 +4383,9 @@ VIEWS.teams = function(){
          It also shows the COLLECTION OFFICERS, whose teams live on their access code rather
          than on the teams table -- so they were not on this screen at all. */
       + (S.me.can.admin && S.staff
-          ? '<div class="card" id="staffCard"><div class="card-h">Wafanyakazi / Staff &mdash; by person'
+          ? fold_('staff', 'Wafanyakazi / Staff — by person',
+              ((S.staff.staff||[]).length) + ' watu / people',
+            '<div class="card" id="staffCard"><div class="card-h">Wafanyakazi / Staff &mdash; by person'
             + '<span class="sub"><button class="btn sm ghost" id="staffXl">\u2b07 Excel &mdash; namba zote / all numbers</button>'
             + ' <button class="btn sm" id="newStaff">+ Mpya / New</button></span></div>'
             + '<div class="note" style="margin:10px 14px">Bofya mtu kubadili timu zake zote kwa mara moja.'
@@ -4403,7 +4405,7 @@ VIEWS.teams = function(){
                   + esc((x.teams||[]).join(', ') || '—')+'</td>'
                   + '<td class="r"><button class="btn sm ghost" data-staff="'+esc(key)+'">Badili / Edit</button></td></tr>';
               }).join('')
-            + '</tbody></table></div></div>'
+            + '</tbody></table></div></div>')
           : '')
       // A role's tab list was readable but not editable anywhere, so onboarding a new kind of
       // officer meant a trip to the SQL editor.
@@ -4721,15 +4723,23 @@ VIEWS.perf = function(){
   var a = S.args || {};
   var period = a.period || 'week';
   return srv('perfHistory', { period: period, metric: a.metric || '', scope: a.scope || '' }).then(function(d){
+    /* THE BEST IS A PERCENTAGE, NOT A PURSE. "Positions and performance at best of record
+       should show be perfomance % and not amounts" -- the amount crowned whoever held the
+       biggest book; the percentage crowns whoever did most with theirs. The shillings ride
+       along underneath as context, never as the headline. */
     var best = function(scope, metric){
       var top = (d.rows||[]).filter(function(r){ return r.scope===scope && r.metric===metric; })[0];
-      return top ? (top.name + ' · TZS ' + money(top.value)) : '—';
+      return top ? ((top.pct != null ? pct(top.pct) : 'TZS ' + money(top.value)) + ' · ' + top.name) : '—';
+    };
+    var bestSub = function(scope, metric){
+      var top = (d.rows||[]).filter(function(r){ return r.scope===scope && r.metric===metric; })[0];
+      return top ? ('TZS ' + money(top.value) + (top.basis ? ' / ' + money(top.basis) : '')) : 'best leader, newest period';
     };
     HEAD = '<div class="kpis">'
       + kpi('Rekodi / Records', money(d.count), d.available ? (d.periods||[]).length + ' periods' : 'not set up yet')
-      + kpi('Mauzo / Sales', best('leader','sales'), 'best leader in the newest period')
-      + kpi('Makusanyo / Collection', best('leader','collection'), null, 'good')
-      + kpi('Urejeshaji / Recovery', best('leader','recovery'), null, 'good')
+      + kpi('Sales %', best('leader','sales'), bestSub('leader','sales'))
+      + kpi('Collection %', best('leader','collection'), bestSub('leader','collection'), 'good')
+      + kpi('Recovery %', best('leader','recovery'), bestSub('leader','recovery'), 'good')
       + '</div>'
       + (d.available ? '' : '<div class="note bad">' + esc(d.note) + '</div>')
       + '<div class="note" style="display:block">Majina hapa ni ya WAKATI ULE. Ukibadilisha viongozi kesho, '
@@ -4751,7 +4761,9 @@ VIEWS.perf = function(){
         return r.metric==='recovery'?'ok':(r.metric==='sales'?'warn':'mut'); }},
       {key:'scope', label:'Team or leader', kind:'chip', chip:function(r){ return r.scope==='leader'?'ok':'mut'; }},
       col('name','Name'), col('position','Position then'),
-      col('value','Value','money'), col('basis','Out of','money'), col('pct','%','pct'),
+      // The percentage is the record; the amounts explain it. Order says so.
+      col('pct','Perf %','pct'),
+      col('value','Value','money'), col('basis','Out of','money'),
       col('recorded_at','Recorded','dt')];
     S.foot = 'Imehifadhiwa wakati ripoti ya wiki ilipofunguliwa. / Written when the weekly report is opened.';
   });

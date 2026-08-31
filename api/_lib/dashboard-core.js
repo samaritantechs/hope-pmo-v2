@@ -1,7 +1,7 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { todayKey, currentWeekday, isoWeekday, addDaysKey, weekMondayKey } from './time.js';
-import { resolveLatestPerKey, upperTeams } from './snapshots.js';
+import { resolveLatestPerKey, upperTeams , teamMatchList } from './snapshots.js';
 import { cachedAnswer } from './answer-cache.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, defaulterTotalsLatest,
   tCustomers, tExpected, tCollected, tUncollected, tArrears } from './snapshot-totals.js';
@@ -9,7 +9,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, de
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
     looking rather than by remembering. */
-const onTeams = (q, teams) => (teams && teams.length ? q.in('team', upperTeams(teams)) : q);
+const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
 import { recoveryBasis, num } from './recovery.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];

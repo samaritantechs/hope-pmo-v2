@@ -46,7 +46,7 @@ begin
     'repayment_snapshots', 'defaulter_snapshots', 'followup_status', 'followup_comments',
     'loans', 'received_payments', 'abnormal_payments', 'complaints', 'complaint_log',
     'restructures', 'demand_notices', 'call_logs', 'call_users', 'snapshot_summaries',
-    'audit_log', 'performance_records'
+    'audit_log', 'performance_records', 'pmo_adjustments'
   ] loop
     if exists (select 1 from information_schema.columns
                where table_schema = 'public' and table_name = t and column_name = 'team') then

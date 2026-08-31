@@ -46,8 +46,12 @@ export function periodsOf(dateKey) {
 /* The metrics, and where each one's two numbers live on a weekly team row. Named here rather
    than inline so "what is collection measured as" has one answer -- the same one the Weekly
    report prints, since these ARE its rows. */
+/* Sales' basis is the TARGET, handed in by the caller -- it lives in settings, not on the
+   team row, and without it Sales was the one metric with no percentage: an amount in a list
+   of ratios, unrankable against them. "Positions and performance at best of record should
+   show be perfomance % and not amounts." */
 const METRICS = [
-  { metric: 'sales', value: r => num(r.sales), basis: () => null },
+  { metric: 'sales', value: r => num(r.sales), basis: (r, salesTarget) => num(salesTarget) || null },
   { metric: 'collection', value: r => num(r.collected), basis: r => num(r.expected) },
   { metric: 'recovery', value: r => num(r.recovered), basis: r => num(r.uncollected) },
 ];
@@ -58,7 +62,7 @@ const LEADER_COL = { sales: 'gmo', collection: 'manager', recovery: 'recovery' }
 
 /** Build the rows a period should hold, from the weekly report's own team rows. Pure, so the
     shape of a record can be checked without a database. */
-export function recordsFor(teams, leadBy, dateKey) {
+export function recordsFor(teams, leadBy, dateKey, salesTarget) {
   const out = [];
   for (const p of periodsOf(dateKey)) {
     for (const m of METRICS) {
@@ -66,7 +70,7 @@ export function recordsFor(teams, leadBy, dateKey) {
       for (const t of teams) {
         const v = m.value(t);
         if (!v) continue;                       // a zero is not an achievement worth a row
-        const b = m.basis(t);
+        const b = m.basis(t, salesTarget);
         out.push({ ...p, metric: m.metric, scope: 'team', name: t.team, position: null,
           value: v, basis: b, pct: b > 0 ? Math.round((v / b) * 10000) / 100 : null });
       }
@@ -78,7 +82,7 @@ export function recordsFor(teams, leadBy, dateKey) {
         const k = K(lead);
         if (!by[k]) by[k] = { name: String(lead).trim(), value: 0, basis: 0 };
         by[k].value += m.value(t);
-        by[k].basis += num(m.basis(t) || 0);
+        by[k].basis += num(m.basis(t, salesTarget) || 0);
       }
       for (const b of Object.values(by)) {
         if (!b.value) continue;
@@ -94,11 +98,11 @@ export function recordsFor(teams, leadBy, dateKey) {
 }
 
 /** Stamp the week, month and year that `dateKey` falls in. Fire and forget. */
-export function recordPerformance(db, teams, teamRows, dateKey, nowMs = Date.now()) {
+export function recordPerformance(db, teams, teamRows, dateKey, nowMs = Date.now(), salesTarget = null) {
   try {
     const leadBy = {};
     for (const t of teamRows || []) leadBy[K(t.team)] = t;
-    const rows = recordsFor(teams || [], leadBy, dateKey || todayKey(nowMs));
+    const rows = recordsFor(teams || [], leadBy, dateKey || todayKey(nowMs), salesTarget);
     if (!rows.length) return;
     const stamped = rows.map(r => ({ ...r, recorded_at: new Date(nowMs).toISOString() }));
     /* onConflict on the natural key, so a period in progress is UPDATED as it runs rather than
@@ -130,9 +134,15 @@ export async function performanceHistory(db, { period = 'week', metric = null, s
     available = false;
   }
   // Best first within each period, which is the only order this table is ever read in.
+  /* BEST MEANS THE BEST PERCENTAGE. Ranking on the amount crowned whoever held the biggest
+     book: a leader collecting 40m of 80m outranked one collecting 30m of 31m, which is the
+     opposite of what a record of PERFORMANCE is for. The percentage ranks; the amount rides
+     along as context. A row with no percentage (an old record from before Sales had a basis)
+     sorts after every row that has one, never in among them. */
   rows = rows.slice().sort((a, b) =>
     String(b.period_start).localeCompare(String(a.period_start))
     || String(a.metric).localeCompare(String(b.metric))
+    || ((b.pct == null ? -1 : num(b.pct)) - (a.pct == null ? -1 : num(a.pct)))
     || num(b.value) - num(a.value));
   return {
     period: per, rows, count: rows.length, available,
