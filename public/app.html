@@ -7329,7 +7329,6 @@ function wireForms(){
   if (ns) ns.onclick = function(){ settingForm('', ''); };
   var nk = document.getElementById('newCode');
   if (nk) nk.onclick = function(){ codeForm(null); };
-<<<<<<< HEAD
   // Iliyonasia: the new-adjustment form saves and the tab redraws with the row on the board.
   var asv = document.getElementById('adjSave');
   if (asv) asv.onclick = function(){
@@ -7345,8 +7344,6 @@ function wireForms(){
     }).then(function(){ render({ force: true }); })
       .catch(function(e){ say(esc(String(e.message || e)), true); });
   };
-=======
->>>>>>> origin/main
   // The folded settings-values list keeps the old main table's tap-a-row-to-edit.
   Array.prototype.forEach.call(document.querySelectorAll('[data-skey]'), function(tr){
     tr.onclick = function(){
