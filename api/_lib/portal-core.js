@@ -299,7 +299,7 @@ const FU_REPAIR_CHUNK = 400;
 const DECK_LOOKBACK_DAYS = 45;
 
 async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns,
-    perBook = false, lookbackDays } = {}) {
+    perBook = false, lookbackDays, pairs } = {}) {
   /* A PINNED DATE IS ALREADY THE ANSWER. The Monday baseline asks for one specific day, so
      there is no "which date does each team have" question to ask -- resolving per team would
      only be a way of quietly reading a different day than the one requested. */
@@ -341,6 +341,16 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
   }
   const from = addDaysKey(to, -(lookbackDays || DECK_LOOKBACK_DAYS));
   const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });
+  /* `pairs` narrows the read to the team-and-weekday books the caller will actually use.
+     The commission walk only attributes drops for decks OBSERVED in its range, so fetching
+     the whole company's baselines -- every book, one date-read at a time -- was pure cost:
+     on the live book it was the difference between a screen and a 45-second timeout. A
+     pairs filter that leaves nothing returns nothing, deliberately: the whole-book fallback
+     read is exactly the cost this parameter exists to avoid. */
+  if (pairs && dates) {
+    for (const key of [...dates.keys()]) if (!pairs.has(key)) dates.delete(key);
+    if (!dates.size) return { rows: [], perTeam: true };
+  }
   if (!dates || !dates.size) {
     // No migration, or nothing in the window -- the previous behaviour, unchanged.
     const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
@@ -2558,22 +2568,13 @@ async function commission(db, user, args = {}, nowMs) {
      that uploaded nothing that day is simply unobserved, never "all recovered". A customer
      who slips back keeps the commission of the day they recovered, exactly as promised.
      ===================================================================================== */
-  const [cfg, teamRows, defWeek, iniBook, preBook, expWeek, expInit, codeRows, pmoCfg, prevExp] = await Promise.all([
+  const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
     /* The week's current decks, per customer -- ref to pair, weekday to know which book,
        status and disb_date so a NEW customer first seen mid-week can still be rated. */
     snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, mon, sun, user.teams,
       WEEK_DEF_COLS + ', ref, status, disb_date'),
-    /* The initial book: every team-and-weekday deck at its own date, however old -- a book's
-       initial is drawn up at cycle start and can be months old, so the default 45-day
-       lookback silently dropped whole books from the baseline (and their recovery with it). */
-    defaulterBook(db, user, { type: 'initial', notAfter: today, perBook: true, lookbackDays: 366,
-      columns: 'ref, team, weekday, arrears, status, disb_date, snapshot_date, upload_batch, created_at' }),
-    /* Where EACH book already stood when this range began -- its own last current deck, not
-       the table-wide newest date (which is the working list's rule, not a baseline's). */
-    defaulterBook(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), perBook: true, lookbackDays: 60,
-      columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
        board. The recovery side above cannot: it works out what each CUSTOMER owed against
        what they still owe, and a team total cannot answer that. */
@@ -2597,6 +2598,21 @@ async function commission(db, user, args = {}, nowMs) {
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
+  /* THE BASELINES, READ SECOND AND READ NARROW. The walk only attributes drops for decks
+     OBSERVED in the range, so only those books need a baseline: the initial book however
+     old (a cycle start is months back -- the 45-day default silently dropped whole books),
+     and each book's OWN last current before the range began (the table-wide newest date is
+     the working list's rule, not a baseline's). Unscoped, this fetched every book in the
+     company one date-read at a time and turned the screen into a 45-second timeout. */
+  const wantedPairs = new Set(myDef.map(r => deckKey(r.team, r.weekday)));
+  const [iniBook, preBook] = await Promise.all([
+    defaulterBook(db, user, { type: 'initial', notAfter: today, perBook: true, lookbackDays: 366,
+      pairs: wantedPairs,
+      columns: 'ref, team, weekday, arrears, status, disb_date, snapshot_date, upload_batch, created_at' }),
+    defaulterBook(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), perBook: true, lookbackDays: 60,
+      pairs: wantedPairs,
+      columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
+  ]);
   const myExpInit = scoped(user, expInit);
   // The early scheme's rows for one day: the INITIAL book, only ever the initial book.
   const colRows = d => onDate(myExpInit, d);
