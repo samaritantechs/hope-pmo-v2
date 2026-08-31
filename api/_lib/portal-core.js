@@ -298,7 +298,8 @@ const FU_REPAIR_CHUNK = 400;
    the kind of read this system has spent days removing. The screen says which it used. */
 const DECK_LOOKBACK_DAYS = 45;
 
-async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns } = {}) {
+async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns,
+    perBook = false, lookbackDays } = {}) {
   /* A PINNED DATE IS ALREADY THE ANSWER. The Monday baseline asks for one specific day, so
      there is no "which date does each team have" question to ask -- resolving per team would
      only be a way of quietly reading a different day than the one requested. */
@@ -326,12 +327,19 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
      that calls this) still take the per-team path below, unchanged -- a customer's baseline
      arrears is not re-uploaded on the same cadence a defaulter list is, and staying sticky
      there is still the safer failure. */
-  if (type === 'current') {
+  /* `perBook` opts OUT of the whole-table pin below: the COMMISSION baseline needs each
+     team-and-weekday book brought forward by ITS OWN last current deck, however long ago
+     that was -- pinning to the table's newest date handed every book except the
+     last-uploaded weekday's an empty baseline, and the recovery board read zero while 532
+     customers had genuinely dropped. The working list's rule ("the latest current file
+     lives until the next one") is untouched: every caller that does not pass perBook
+     behaves exactly as before. */
+  if (type === 'current' && !perBook) {
     const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
       { notAfter: to, teams: user.teams, columns });
     return { ...snap, perTeam: false };
   }
-  const from = addDaysKey(to, -DECK_LOOKBACK_DAYS);
+  const from = addDaysKey(to, -(lookbackDays || DECK_LOOKBACK_DAYS));
   const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });
   if (!dates || !dates.size) {
     // No migration, or nothing in the window -- the previous behaviour, unchanged.
@@ -2557,11 +2565,14 @@ async function commission(db, user, args = {}, nowMs) {
        status and disb_date so a NEW customer first seen mid-week can still be rated. */
     snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, mon, sun, user.teams,
       WEEK_DEF_COLS + ', ref, status, disb_date'),
-    /* The initial book: every team-and-weekday deck at its own date, however old. */
-    defaulterBook(db, user, { type: 'initial', notAfter: today,
+    /* The initial book: every team-and-weekday deck at its own date, however old -- a book's
+       initial is drawn up at cycle start and can be months old, so the default 45-day
+       lookback silently dropped whole books from the baseline (and their recovery with it). */
+    defaulterBook(db, user, { type: 'initial', notAfter: today, perBook: true, lookbackDays: 366,
       columns: 'ref, team, weekday, arrears, status, disb_date, snapshot_date, upload_batch, created_at' }),
-    /* Where each book already stood when this week began. */
-    defaulterBook(db, user, { type: 'current', notAfter: addDaysKey(mon, -1),
+    /* Where EACH book already stood when this range began -- its own last current deck, not
+       the table-wide newest date (which is the working list's rule, not a baseline's). */
+    defaulterBook(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), perBook: true, lookbackDays: 60,
       columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
        board. The recovery side above cannot: it works out what each CUSTOMER owed against

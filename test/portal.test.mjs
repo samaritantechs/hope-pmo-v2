@@ -426,6 +426,39 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.ok(m.totals.week >= d.totals.week, 'month-to-date pay is never less than this week\'s');
 });
 
+/* THE ZERO-RECOVERY MONDAY. Live, with 532 customers genuinely dropped: the board read zero.
+   Two causes, either alone enough: the 'current' baseline used the working list's whole-table
+   pin (only the last-uploaded weekday's deck came back, every other book got an empty
+   baseline), and the initial book's 45-day lookback silently dropped books whose initial deck
+   is older -- which is most of them, since an initial is drawn up at cycle start. The
+   commission walk now asks for perBook baselines: each team-and-weekday book brought forward
+   by ITS OWN last current, over a lookback long enough for real cycles. */
+test('commission baseline: each book is brought forward by its own last current, however old the initial', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(
+    // The MON book: initial drawn up 100+ days ago -- outside the old 45-day window.
+    { ref: 'M1', team: 'KONGOWE', full_name: 'MON GUY', arrears: 1000, status: 'Defaulter', disb_date: '2024-05-01',
+      snapshot_type: 'initial', weekday: 'MON', snapshot_date: '2026-04-06', upload_batch: 'im', created_at: '2026-04-06T04:00:00Z' },
+    // Its own last current: LAST week's Monday, 800 still owed.
+    { ref: 'M1', team: 'KONGOWE', arrears: 800,
+      snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-13', upload_batch: 'cm1', created_at: '2026-07-13T04:00:00Z' },
+    // The table-wide NEWEST current before this week is a different weekday's deck -- the
+    // whole-table pin returned only this and starved every other book's baseline.
+    { ref: 'S1', team: 'KONGOWE', arrears: 50,
+      snapshot_type: 'current', weekday: 'SUN', snapshot_date: '2026-07-19', upload_batch: 'cs', created_at: '2026-07-19T04:00:00Z' },
+    // THIS week's Monday deck: M1 dropped 800 -> 500.
+    { ref: 'M1', team: 'KONGOWE', full_name: 'MON GUY', arrears: 500, status: 'Defaulter', disb_date: '2024-05-01',
+      snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-20', upload_batch: 'cm2', created_at: '2026-07-20T04:00:00Z' },
+  );
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  const juma = d.recBoard.find(r => r.officer === 'JUMA G');
+  assert.ok(juma, 'the recovery officer appears on the board');
+  const monday = (juma.days || []).find(x => x.date === '2026-07-20');
+  assert.ok(monday, 'Monday was observed');
+  assert.equal(monday.recovered, 300,
+    '800 -> 500 against the book\'s OWN last current pays 300 -- not zero (starved baseline) and not 500 (initial-based)');
+});
+
 test('commission rates save, and a malformed rate saves nothing', async () => {
   const db = fakeDb(tables());
   await portalApi(db, ADMIN, 'commissionSave', { mode: 'year', yearRates: '2024:5, 2025:2.5', paidTzs: 800 }, NOW);
