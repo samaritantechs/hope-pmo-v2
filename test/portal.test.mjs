@@ -415,6 +415,23 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.ok(colEarly.weekPct == null || typeof colEarly.weekPct === 'number',
     'col % is a number or an honest null, never NaN');
 
+  /* "early collection aint reading from initial file on commissions" -- where a day HAS an
+     INITIAL expected sheet, the early scheme is judged on IT: initial col % and the
+     PAID+OVERPAID counted there, not on the today sheet. (The run above had no initial
+     sheet, which is the fallback: the today sheet still pays.) */
+  const t2 = tables();
+  t2.repayment_snapshots.push(
+    E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('882', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('883', 'KONGOWE', 1000, 'OVERPAID', 0, TODAY, 'initial'),
+    E('884', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial'),
+  );
+  const d2 = await portalApi(dbWithRpc(t2), ADMIN, 'commission', {}, NOW);
+  const e2 = d2.colBoard.find(r => r.officer === 'EARLY E');
+  assert.ok(e2, 'the early officer is on the board');
+  assert.equal(e2.weekN, 3, 'PAID+OVERPAID counted from the INITIAL sheet (2 paid + 1 over), not the today sheet\'s 1');
+  assert.equal(e2.weekCommission, 2 * 1000 + 1 * 1500, 'paid at the flat rates off the initial counts');
+
   /* THE MONTH RECORD behind the blinking dot: the same walk from the month's first day.
      NOW's week sits inside its own month here, so the month figures must carry at least the
      week's -- and the scope must say what range it covered. */
