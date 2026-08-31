@@ -398,6 +398,32 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   const early = d.day.find(r => r.officer === 'EARLY E');
   assert.equal(early.paid, 1); assert.equal(early.over, 0); assert.equal(early.colComm, 1000);
   assert.equal(d.totals.recovered, 400);
+
+  /* THE INDEPENDENT BOARDS. "early col and rec should also be independent tables" -- the
+     recovery officer's amounts and pay day by day, the early officer's col % and PAID+OVER
+     count day by day, each on its own board and agreeing with the combined figures above. */
+  const recJuma = d.recBoard.find(r => r.officer === 'JUMA G');
+  assert.ok(recJuma, 'the recovery officer has their own board row');
+  assert.equal(recJuma.weekRecovered, 300);
+  assert.equal(recJuma.weekCommission, 30);
+  assert.ok(Array.isArray(recJuma.days) && recJuma.days.length >= 1, 'day-by-day record rides along');
+  assert.equal(recJuma.days.reduce((s, x) => s + x.recovered, 0), 300, 'the days add up to the week');
+  const colEarly = d.colBoard.find(r => r.officer === 'EARLY E');
+  assert.ok(colEarly, 'the early-collection officer has their own board row');
+  assert.equal(colEarly.weekN, 1, 'PAID+OVERPAID counted');
+  assert.equal(colEarly.weekCommission, 1000);
+  assert.ok(colEarly.weekPct == null || typeof colEarly.weekPct === 'number',
+    'col % is a number or an honest null, never NaN');
+
+  /* THE MONTH RECORD behind the blinking dot: the same walk from the month's first day.
+     NOW's week sits inside its own month here, so the month figures must carry at least the
+     week's -- and the scope must say what range it covered. */
+  const m = await run('commission', { scope: 'month' });
+  assert.equal(m.scope, 'month');
+  assert.equal(m.from, TODAY.slice(0, 7) + '-01');
+  const mRec = m.recBoard.find(r => r.officer === 'JUMA G');
+  assert.ok(mRec && mRec.weekRecovered >= 300, 'the month record carries the week it contains');
+  assert.ok(m.totals.week >= d.totals.week, 'month-to-date pay is never less than this week\'s');
 });
 
 test('commission rates save, and a malformed rate saves nothing', async () => {

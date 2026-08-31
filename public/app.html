@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-h';
+var BUILD = '2026-08-31-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -715,12 +715,16 @@ var NAV = [
      the dashboard's three month tiles opened up into their weeks, so it lives beside them
      rather than as one more tab in a drawer that is already long. */
   { id:'monthreport', label:'Ripoti ya Mwezi / Month Report', hidden: true,
-    ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>' }
+    ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>' },
+  /* Reached from the blinking dot on My Commission, exactly the way the month report is
+     reached from the dashboard's -- the month's commission record, not one more drawer item. */
+  { id:'cmmonth', label:'Kamisheni ya Mwezi / Month Commission', hidden: true,
+    ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' }
 ];
 /* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
    visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
    the gate that matters is upload/settings, which are checked on the server too. */
-var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust','monthreport'];
+var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust','monthreport','cmmonth'];
 
 /* =====================================================================================
    HOPE LOAN'S OWN NAV -- one screen per stage, gated on the HOPE LOAN TAB, not the role name.
@@ -3738,7 +3742,12 @@ var CMS_COLS = [col('officer','Officer'), col('recovered','Recovered','money'),
 VIEWS.commission = function(){
   return srv('commission').then(function(d){
     var noRates = !d.paidTzs && !d.overTzs;
-    HEAD = '<div class="kpis">'
+    /* THE BLINKING DOT, exactly as the dashboard's: a quiet pulse that opens the MONTH
+       record. "each commission has daily and weekly record with a blinking dot for monthly
+       record as the dot in dashboard". */
+    HEAD = bar('<span class="chip mut">Wiki hii / this week &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
+        + '<button class="syncdot" data-go="cmmonth" title=""></button>')
+      + '<div class="kpis">'
       /* THE SPLIT, BESIDE THE TOTAL. Three schemes pay three different people here --
          recovery on a percentage, early collection per PAID/OVERPAID, and PMO collection on a
          band -- and the headline used to add up only the first two, leaving a whole board out.
@@ -3790,8 +3799,39 @@ VIEWS.commission = function(){
       // next, and without this they ask a person instead of the screen.
       + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
           + esc(d.payText) + '</div>' : '')
-      + board('cmDay','Leo / Today','recovery: each customer’s recovered amount × their rate · early collection: PAID/OVERPAID counts',
-          d.day, CMS_COLS, sumRow(d.day, ['recovered','recComm','paid','over','colComm','total']))
+      /* THE TWO INDEPENDENT BOARDS -- "early col and rec should also be independent tables".
+         Recovery and early collection are different people on different rules; each gets its
+         own today board and its own day-by-day week board, like the PMO pair below. */
+      + board('cmRecDay','Recovery — leo / today',
+          'kilichorejeshwa leo na kilicholipwa kwake / each customer’s recovered amount × their rate',
+          d.recBoard, [col('officer','Recovery officer'),
+            col('recovered','Recovered leo','money'), col('commission','Leo TZS','money')],
+          sumRow(d.recBoard, ['recovered','commission']))
+      + board('cmRecWeek','Recovery — wiki hii / this week',
+          'kilichorejeshwa na kilicholipwa kwa KILA siku / recovered amount and what it earned, day by day',
+          d.recBoard, [col('officer','Recovery officer')]
+            .concat(['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
+              return a.concat([col('rec'+k, k, 'money'), col('tzs'+k, k+' TZS', 'money')]); }, []))
+            .concat([col('weekRecovered','Wiki / Week rec','money'),
+              col('weekCommission','Wiki / Week TZS','money')]),
+          sumRow(d.recBoard, ['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
+              return a.concat(['rec'+k,'tzs'+k]); }, ['weekRecovered','weekCommission'])))
+      + board('cmColDay','Early Collection — leo / today',
+          'asilimia dhidi ya kitabu cha initial expected cha leo, na idadi ya PAID+OVERPAID'
+            + ' / today’s col % against the initial expected book, and the PAID+OVERPAID count',
+          d.colBoard, [col('officer','Early col officer'), col('pct','Col %','pct'),
+            col('paid','Paid','num'), col('over','Overpaid','num'), col('n','Paid+Over','num'),
+            col('commission','Leo TZS','money')],
+          sumRow(d.colBoard, ['paid','over','n','commission']))
+      + board('cmColWeek','Early Collection — wiki hii / this week',
+          'asilimia na idadi kwa KILA siku / the col % and the PAID+OVERPAID count, day by day',
+          d.colBoard, [col('officer','Early col officer')]
+            .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
+              return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num')]); }, []))
+            .concat([col('weekPct','Wiki %','pct'), col('weekN','Wiki P+O','num'),
+              col('weekCommission','Wiki / Week TZS','money')]),
+          sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
+              return a.concat(['n'+k]); }, ['weekN','weekCommission'])))
       /* PMO COLLECTION. Paid on the percentage and nothing else -- not team count, not customer
          count, not amount. This is the ONE screen the money appears on: the presentation shows
          the same officers with the shillings deliberately left out. */
@@ -3866,6 +3906,54 @@ VIEWS.commission = function(){
     ONROW = null;
     S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week)
       + ((d.pmo && d.pmo.length) ? ' · PMO Collection: TZS ' + money(d.pmoTotals.week) : '');
+  });
+};
+
+/* THE MONTH RECORD, behind the commission screen's blinking dot. The SAME computation from
+   the month's first day -- the walk that pays the weeks pays the month, so the two can never
+   disagree -- with each scheme's board reduced to its month totals per officer: thirty-one
+   day columns is not a table anybody reads. The weekly bonus is a weekly rule and is
+   deliberately absent here. */
+VIEWS.cmmonth = function(){
+  return srv('commission', { scope: 'month' }).then(function(d){
+    var sp = d.totals.split || {};
+    HEAD = bar('<button class="pill" data-go="commission">&larr; Kamisheni / Commission</button>'
+        + '<span class="chip mut">Mwezi / month &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>')
+      + '<div class="kpis">'
+      + kpi(d.isAdmin ? 'Company total — month to date' : 'My commission — month to date',
+          money(d.totals.week),
+          'rec ' + money(sp.recWeek||0) + ' · early ' + money(sp.colWeek||0) + ' · PMO ' + money(sp.pmoWeek||0),
+          d.totals.week ? 'good' : '')
+      + kpi('Recovery — mwezi', money(sp.recWeek||0),
+          money((d.recBoard||[]).length) + ' officer(s)')
+      + kpi('Early Collection — mwezi', money(sp.colWeek||0),
+          money((d.colBoard||[]).length) + ' officer(s)')
+      + kpi('PMO Collection — mwezi', money(sp.pmoWeek||0),
+          'bonasi ni ya wiki, haimo hapa / the weekly bonus is not in this figure')
+      + '</div>'
+      + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
+          + esc(d.payText) + '</div>' : '')
+      + board('cmMRec','Recovery — mwezi / month to date', null, d.recBoard,
+          [col('officer','Recovery officer'), col('weekRecovered','Recovered','money'),
+           col('weekCommission','Month TZS','money')],
+          sumRow(d.recBoard||[], ['weekRecovered','weekCommission']))
+      + board('cmMCol','Early Collection — mwezi / month to date',
+          'asilimia ni ya mwezi mzima dhidi ya kitabu cha initial / the month’s ratio of sums, never an average of days',
+          d.colBoard,
+          [col('officer','Early col officer'), col('weekPct','Col %','pct'),
+           col('weekPaid','Paid','num'), col('weekOver','Overpaid','num'),
+           col('weekCommission','Month TZS','money')],
+          sumRow(d.colBoard||[], ['weekPaid','weekOver','weekCommission']))
+      + ((d.pmo && d.pmo.length) ? board('cmMPmo','PMO Collection — mwezi / month to date',
+          'kila siku kwa kundi lake, zimejumlishwa / each day banded on its own percentage, added up',
+          d.pmo, [col('officer','PMO'), col('weekUncollected','Uncollected','money'),
+            col('weekPct','Col %','pct'), col('weekCommission','Month TZS','money')]) : '');
+    S.rows = d.week || [];
+    S.cols = CMS_COLS;
+    ONROW = null;
+    S.foot = 'Mwezi / month to date (' + esc(d.from||'') + ' → ' + esc(d.to||'') + '): TZS '
+      + money(d.totals.week)
+      + ((d.pmo && d.pmo.length) ? ' · PMO: TZS ' + money(d.pmoTotals.week) : '');
   });
 };
 

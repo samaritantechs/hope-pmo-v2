@@ -2504,9 +2504,24 @@ function cmsRateFor(cfg, row) {
   if (cfg.yearRates[y] != null) return cfg.yearRates[y];
   return cfg.yearRates['*'] || 0;
 }
-async function commission(db, user, _args, nowMs) {
-  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6), fri = addDaysKey(mon, 4);
-  const prevMon = addDaysKey(mon, -7), prevFri = addDaysKey(prevMon, 4);
+async function commission(db, user, args = {}, nowMs) {
+  /* TWO SCOPES, ONE COMPUTATION. scope 'week' is the screen; scope 'month' is the record
+     behind the blinking dot -- the SAME walk from the month's first day, so the month can
+     never disagree with the weeks it is made of. The month range is month-start..today. */
+  const scope = args && args.scope === 'month' ? 'month' : 'week';
+  const today = todayKey(nowMs), wkMon = weekMondayKey(nowMs);
+  const mon = scope === 'month' ? today.slice(0, 7) + '-01' : wkMon;
+  const sun = scope === 'month' ? today : addDaysKey(mon, 6);
+  const fri = addDaysKey(wkMon, 4);
+  const prevMon = addDaysKey(wkMon, -7), prevFri = addDaysKey(prevMon, 4);
+  /* The collection days of the range: Monday to Friday, week or month alike. */
+  const colDays = [];
+  for (let i = 0; ; i++) {
+    const d = addDaysKey(mon, i);
+    if (d > (scope === 'month' ? today : fri)) break;
+    const dow = new Date(d + 'T12:00:00Z').getUTCDay();
+    if (dow >= 1 && dow <= 5) colDays.push(d);
+  }
   /* =====================================================================================
      RECOVERY COMMISSION, ON THE DECK RULE AT LAST.
 
@@ -2551,7 +2566,8 @@ async function commission(db, user, _args, nowMs) {
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
        board. The recovery side above cannot: it works out what each CUSTOMER owed against
        what they still owe, and a team total cannot answer that. */
-    expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
+    expectedTotalsInRange(db, { type: 'today', from: mon,
+      to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
@@ -2590,9 +2606,9 @@ async function commission(db, user, _args, nowMs) {
   /* Walk the week's current decks in date order. Drops land on the date of the deck that
      showed them, which is what makes "today" a real figure rather than a week share. */
   const recByDay = new Map();                              // date -> officer -> {recovered, recComm}
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; ; i++) {
     const d = addDaysKey(mon, i);
-    if (d > today) break;
+    if (d > today || d > sun) break;
     /* Resolved per WEEKDAY then per team (inside pickLatestBatch) -- two different weekday
        decks of the same team can land on the same date in two batches, and picking across
        them would throw one whole deck away. Same order every deck reader uses. */
@@ -2639,7 +2655,7 @@ async function commission(db, user, _args, nowMs) {
   foldRec(dayAcc, recByDay.get(today));
   for (const [, src] of recByDay) foldRec(weekAcc, src);
   colDay(today, dayAcc);
-  for (let i = 0; i < 5; i++) colDay(addDaysKey(mon, i), weekAcc);
+  for (const d of colDays) colDay(d, weekAcc);
 
   const isAdmin = (user.tabs || []).includes('upload') || (user.tabs || []).includes('settings');
   const pack = acc => Object.values(acc)
@@ -2651,6 +2667,89 @@ async function commission(db, user, _args, nowMs) {
 
   const day = pack(dayAcc), week = pack(weekAcc);
 
+  /* =====================================================================================
+     THE TWO INDEPENDENT BOARDS -- "early col and rec should also be independent tables".
+
+     Recovery and early collection are different people paid on different rules, and one
+     combined row per officer buried both stories. Each board now stands alone, day by day
+     across the range like the PMO board: the recovery officer's recovered amount and what
+     it earned PER DAY; the early-collection officer's collection percentage against the
+     day's initial expected book and their PAID+OVERPAID count PER DAY. Built from the
+     figures already computed above -- no new reads. On the week scope the days are also
+     flattened onto the row (recJ3/tzsJ3 ... like the PMO board's pctJ3), so the boards
+     and any export cannot disagree about which day is which; the month record keeps the
+     totals only, because thirty-one columns is not a table anybody reads. */
+  const dayKey7 = ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2'];
+  const seesOfficer = name => isAdmin || K(name) === K(user.name);
+  const wdOf = d => (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7;   // MON=0 .. SUN=6
+  const recDates = [...recByDay.keys()].sort();
+  const recNames = [...new Set(recDates.flatMap(d => Object.keys(recByDay.get(d) || {})))]
+    .filter(seesOfficer);
+  const recBoard = recNames.map(name => {
+    const days = recDates.map(d => {
+      const v = (recByDay.get(d) || {})[name];
+      return { date: d, recovered: v ? v.recovered : 0, tzs: v ? Math.round(v.recComm) : 0 };
+    });
+    const t = (recByDay.get(today) || {})[name];
+    const row = {
+      officer: name,
+      recovered: t ? t.recovered : 0, commission: t ? Math.round(t.recComm) : 0,
+      weekRecovered: days.reduce((s, x) => s + x.recovered, 0),
+      weekCommission: days.reduce((s, x) => s + x.tzs, 0),
+      days,
+    };
+    if (scope === 'week') for (const x of days) {
+      const k = dayKey7[wdOf(x.date)];
+      if (k) { row['rec' + k] = x.recovered; row['tzs' + k] = x.tzs; }
+    }
+    return row;
+  }).sort((a, b) => b.weekCommission - a.weekCommission || b.weekRecovered - a.weekRecovered);
+
+  const colOff = new Map();                                // officer -> date -> sums
+  for (const d of colDays) {
+    for (const r of onDate(myExp, d)) {
+      const name = officerOf(teamBy, r.team, 'expected');
+      if (!seesOfficer(name)) continue;
+      const per = colOff.get(name) || colOff.set(name, new Map()).get(name);
+      const b = per.get(d) || per.set(d, { expected: 0, collected: 0, paid: 0, over: 0 }).get(d);
+      b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
+      b.paid += num(r.paid_n); b.over += num(r.over_n);
+    }
+  }
+  const pctOfDay = b => (b && b.expected > 0)
+    ? Math.round((b.collected / b.expected) * 1000) / 10 : null;
+  const colBoard = [...colOff.entries()].map(([name, per]) => {
+    const days = colDays.map(d => {
+      const b = per.get(d);
+      return { date: d, pct: pctOfDay(b), n: b ? b.paid + b.over : 0,
+        paid: b ? b.paid : 0, over: b ? b.over : 0,
+        tzs: b ? Math.round(b.paid * cfg.paidTzs + b.over * cfg.overTzs) : 0 };
+    });
+    const tot = { expected: 0, collected: 0, paid: 0, over: 0 };
+    for (const b of per.values()) {
+      tot.expected += b.expected; tot.collected += b.collected;
+      tot.paid += b.paid; tot.over += b.over;
+    }
+    const tb = per.get(today);
+    const row = {
+      officer: name,
+      pct: pctOfDay(tb), paid: tb ? tb.paid : 0, over: tb ? tb.over : 0,
+      n: tb ? tb.paid + tb.over : 0,
+      commission: tb ? Math.round(tb.paid * cfg.paidTzs + tb.over * cfg.overTzs) : 0,
+      // Ratio of sums across the range, never an average of the days' percentages.
+      weekPct: pctOfDay(tot), weekPaid: tot.paid, weekOver: tot.over,
+      weekN: tot.paid + tot.over,
+      weekCommission: Math.round(tot.paid * cfg.paidTzs + tot.over * cfg.overTzs),
+      days,
+    };
+    if (scope === 'week') for (const x of days) {
+      const k = dayKey7[wdOf(x.date)];
+      if (k) { row['pct' + k] = x.pct; row['n' + k] = x.n; row['ctzs' + k] = x.tzs; }
+    }
+    return row;
+  }).sort((a, b) => b.weekCommission - a.weekCommission
+    || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct));
+
   /* ---- PMO COLLECTION: paid on the percentage, and nothing else ---- */
   const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const bonusTzs = pmoCfg.num(PMO_BONUS_KEY, 0);
@@ -2659,7 +2758,7 @@ async function commission(db, user, _args, nowMs) {
     .filter(c => c.teams && c.teams.length)
     .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
     .map(c => ({ name: c.name, teams: c.teams }));
-  const pmoDays = WD5.map((_w, i) => addDaysKey(mon, i));
+  const pmoDays = colDays;
   const byDay = new Map();
   for (const d of pmoDays) byDay.set(d, onDate(myExp, d));
   byDay.set(today, onDate(myExp, today));
@@ -2683,7 +2782,8 @@ async function commission(db, user, _args, nowMs) {
   const ranked = pmoRows.filter(r => r.weekPct != null);
   const leader = ranked.length ? ranked[0] : null;
   const leaderPrev = leader ? prevPct[K(leader.officer)] : null;
-  const bonusWon = !!(leader && leaderPrev != null && leader.weekPct > leaderPrev);
+  /* The bonus is a WEEKLY rule; the month record shows the days' pay without it. */
+  const bonusWon = scope === 'week' && !!(leader && leaderPrev != null && leader.weekPct > leaderPrev);
   const pmo = pmoRows.map(r => ({ ...r,
     prevWeekPct: prevPct[K(r.officer)] == null ? null : prevPct[K(r.officer)],
     isLeader: !!(leader && K(r.officer) === K(leader.officer)),
@@ -2708,6 +2808,8 @@ async function commission(db, user, _args, nowMs) {
   const pmoWeek = pmo.reduce((s, r) => s + num(r.weekCommission) + num(r.bonus), 0);
 
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
+    scope, from: mon, to: scope === 'month' ? today : sun,
+    recBoard, colBoard,
     pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
       leader: leader ? leader.officer : null,
