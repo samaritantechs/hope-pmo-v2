@@ -1168,11 +1168,24 @@ async function phoneIndex(db, nowMs, version) {
 }
 
 async function phoneIndexCompute(db, nowMs, today) {
-  const [fu, eT, eM, cm] = await Promise.all([
+  const [fu, eT, eM, eWin, cm] = await Promise.all([
     // The phone index needs names and numbers, nothing else.
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today }),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
+    /* THE TWO-WEEK WINDOW. "sometimes they call customers not in these batches like expected
+       of two next days b/se they have their numbers and i have not yet uploaded but last week
+       has that number so any customer number within these 2 weeks is portfolio call."
+       Every expected sheet dated in the last two weeks -- and any sheet already uploaded for
+       a FUTURE date (no upper bound, deliberately) -- so a customer the officer knows from
+       last week's list, or from a sheet two days ahead, still counts as their book. Read once
+       per upload thanks to the DATA_VERSION cache, never per sync. The defaulter decks need
+       no read of their own: every current-deck upload rebuilds followup_status with contacts
+       and guarantors, and fu above is that whole register. */
+    fetchAll(() => db.from('repayment_snapshots')
+      .select('ref, full_name, contact, guarantor_name, guarantor_contact, team')
+      .in('snapshot_type', ['today', 'tomorrow'])
+      .gte('snapshot_date', addDaysKey(today, -13))),
     /* ONLY the comments that carry a replacement phone number. This read every comment ever
        written -- after the v1 history import, hundreds of thousands of rows -- to find the few
        hundred with a number on them. The portal's copy of this was fixed weeks ago and the
@@ -1212,6 +1225,11 @@ async function phoneIndexCompute(db, nowMs, today) {
   eT.rows.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'EXP'));
   eM.rows.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'EXP'));
   fu.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'DEF'));
+  /* AFTER the register, on purpose: a standing defaulter who also sat on last week's sheet is
+     still being chased as a defaulter -- only TODAY's and tomorrow's sheets outrank the
+     register (the CATHERINE rule above). A customer known ONLY from the window -- last week's
+     sheet, or one uploaded early for two days ahead -- lands here as EXPECTED. */
+  eWin.forEach(r => add(r.contact, r.full_name, r.ref, r.team, 'C', 'EXP'));
   const refName = {}, refTeam = {}, refSrc = {};
   Object.values(byNum).forEach(o => { if (o.R) { refName[o.R] = o.N; refTeam[o.R] = o.T; refSrc[o.R] = o.S; } });
   cm.forEach(r => {
@@ -1223,6 +1241,7 @@ async function phoneIndexCompute(db, nowMs, today) {
   eT.rows.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'EXP'));
   eM.rows.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'EXP'));
   fu.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'DEF'));
+  eWin.forEach(r => add(r.guarantor_contact, r.guarantor_name, r.ref, r.team, 'G', 'EXP'));
   return byNum;
 }
 const OUTCOMES = { CONNECTED: 1, MISSED: 1, REJECTED: 1, BLOCKED: 1 };

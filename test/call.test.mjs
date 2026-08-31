@@ -232,6 +232,54 @@ test('sync: portfolio matching + in-batch dedup + watermark', async () => {
   assert.equal(db._dump('call_logs').length, 3);
 });
 
+/* THE TWO-WEEK WINDOW. "any customer number within these 2 weeks is portfolio call,
+   guarantors inclusive too ... sometimes they call customers not in these batches like
+   expected of two next days b/se they have their numbers and i have not yet uploaded but
+   last week has that number." Officers' and leaders' own numbers stay OUT until further
+   notice. */
+test('sync: the two-week window counts future sheets and last week\'s numbers, officers\' own stay out', async () => {
+  const t = makeTables();
+  t.repayment_snapshots.push(
+    // Uploaded EARLY for two days ahead -- on nobody's today or tomorrow list yet.
+    { ref: '661', full_name: 'BAADAYE B', contact: '0716000001', guarantor_name: 'G BAADAYE', guarantor_contact: '0716000002', team: 'KONGOWE', payment_expected: 900, arrears: 0, todays_status: '', due_summary: '', snapshot_type: 'today', snapshot_date: '2026-07-26', upload_batch: 'bf', created_at: '2026-07-24T05:00:00Z' },
+    // Last week's sheet -- the customer is on no current list, but the number is known.
+    { ref: '662', full_name: 'WIKI ILIYOPITA', contact: '0716000003', guarantor_name: '', guarantor_contact: '', team: 'KONGOWE', payment_expected: 500, arrears: 0, todays_status: 'PAID', due_summary: '', snapshot_type: 'today', snapshot_date: '2026-07-17', upload_batch: 'bw', created_at: '2026-07-17T04:00:00Z' },
+    // FIFTEEN days old -- outside the two weeks, must not count.
+    { ref: '663', full_name: 'ZAMANI SANA', contact: '0716000005', guarantor_name: '', guarantor_contact: '', team: 'KONGOWE', payment_expected: 500, arrears: 0, todays_status: 'PAID', due_summary: '', snapshot_type: 'today', snapshot_date: '2026-07-09', upload_batch: 'bo', created_at: '2026-07-09T04:00:00Z' },
+    // The standing defaulter also sat on an old sheet -- the register must still win.
+    { ref: '555', full_name: 'DEF GUY', contact: '0714000001', guarantor_name: '', guarantor_contact: '', team: 'KONGOWE', payment_expected: 300, arrears: 0, todays_status: 'UNPAID', due_summary: '', snapshot_type: 'today', snapshot_date: '2026-07-18', upload_batch: 'bw2', created_at: '2026-07-18T04:00:00Z' },
+  );
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const r = await callApi(db, 'api_callSync', ['d1', [
+    { ts: T1, dur: 40, dir: 'out', num: '0716000001' },              // expected, two days ahead
+    { ts: T1 + 1000, dur: 40, dir: 'out', num: '0716000002' },       // that customer's guarantor
+    { ts: T1 + 2000, dur: 40, dir: 'out', num: '0716000003' },       // last week's number
+    { ts: T1 + 3000, dur: 40, dir: 'out', num: '0714000001' },       // register customer, also on an old sheet
+    { ts: T1 + 4000, dur: 40, dir: 'out', num: '0716000005' },       // fifteen days old -- outside
+    { ts: T1 + 5000, dur: 40, dir: 'out', num: '0712999999' },       // the officer's own number
+  ]], NOW);
+  assert.equal(r.portfolio, 4, 'future sheet, its guarantor, last week\'s number, and the register customer');
+  assert.equal(r.nonPortfolio, 2, 'the 15-day-old sheet and the officer\'s own number stay outside');
+  const logs = db._dump('call_logs');
+  const ahead = logs.find(l => l.phone === pnorm('0716000001'));
+  assert.equal(ahead.match_type, 'CUSTOMER');
+  assert.equal(ahead.category, 'EXPECTED');
+  const g = logs.find(l => l.phone === pnorm('0716000002'));
+  assert.equal(g.match_type, 'GUARANTOR');
+  assert.equal(g.portfolio, true, 'guarantors inclusive too');
+  const lastWeek = logs.find(l => l.phone === pnorm('0716000003'));
+  assert.equal(lastWeek.portfolio, true);
+  assert.equal(lastWeek.category, 'EXPECTED');
+  const def = logs.find(l => l.phone === pnorm('0714000001'));
+  assert.equal(def.category, 'DEFAULTER', 'the standing register still outranks an old sheet');
+  assert.equal(logs.find(l => l.phone === pnorm('0716000005')).portfolio, false);
+  assert.equal(logs.find(l => l.phone === pnorm('0712999999')).portfolio, false,
+    'officers\' and leaders\' own numbers are not portfolio until further notice');
+});
+
 test('after a sync, the called-today tick shows on the list', async () => {
   const db = await registeredDb();
   await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
