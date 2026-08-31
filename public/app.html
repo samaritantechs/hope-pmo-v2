@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-e';
+var BUILD = '2026-08-31-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4199,7 +4199,9 @@ VIEWS.adjust = function(){
       + '<div class="card"><div class="card-h">Rekebisha / New adjustment'
         + '<span class="sub">chanya huongeza &middot; hasi hupunguza / positive adds &middot; negative reduces</span></div>'
         + '<div class="cleanbox">'
-        + '<div class="fld"><label>Tarehe ya ripoti / Report date</label><input type="date" id="adjDate"></div>'
+        /* Opens on TODAY -- most corrections are for the report on the desk right now, and a
+           date typed for a back-dated one simply overtypes it. */
+        + '<div class="fld"><label>Tarehe ya ripoti / Report date</label><input type="date" id="adjDate" value="'+esc(today())+'"></div>'
         + '<div class="fld"><label>Aina ya ripoti / Report type</label><select id="adjTarget">'
           + Object.keys(ADJ_TARGET_LABELS).map(function(k){
               return '<option value="'+k+'">'+esc(ADJ_TARGET_LABELS[k])+'</option>'; }).join('')
