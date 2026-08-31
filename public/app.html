@@ -500,6 +500,11 @@ var $ = function(s){ return document.querySelector(s); };
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
+/* The server's own num(), mirrored here. The Iliyonasia screen used it out of server habit
+   with no definition on this page, and the first REAL adjustment row killed the whole tab
+   with "num is not defined" -- a ReferenceError no parse guard can see. Defined once, the
+   habit is safe on either side of the wire. */
+function num(v){ v = Number(v); return isFinite(v) ? v : 0; }
 /* A percentage, or a string that is ALREADY one. The grand-total row hands back "~62.5%" for
    a column it could only average rather than recompute -- the ~ is the whole point of it, so
    this has to let a formatted string through instead of running it past isNaN and printing a
@@ -562,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-g';
+var BUILD = '2026-08-31-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
