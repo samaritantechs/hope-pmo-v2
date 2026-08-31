@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-l';
+var BUILD = '2026-08-31-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3803,8 +3803,25 @@ VIEWS.commission = function(){
          Recovery and early collection are different people on different rules; each gets a
          day-by-day week board like the PMO pair below. No separate "leo" board -- "having
          weekly by day should kill the today only": today is simply the newest column. */
+      /* TODAY'S RECOVERY BY BAND -- "how much each person earned from each disb year band in
+         that days rec". One column pair per band that actually earned today: the year (or
+         status) that priced the drop, the amount, and the TZS. Sits where the today table
+         stood. */
+      + ((d.recBands && d.recBands.rows && d.recBands.rows.length)
+          ? board('cmRecBands',
+              'Recovery — leo kwa ' + (d.recBands.mode === 'status' ? 'hali / today by status band' : 'mwaka wa disb / today by disbursement year'),
+              'kilichorejeshwa leo na kilicholipwa, kwa kila kundi la kiwango / today’s recovery and its pay, split by the band that priced it',
+              d.recBands.rows,
+              [col('officer','Recovery officer')]
+                .concat((d.recBands.bands||[]).reduce(function(a,l){
+                  return a.concat([col('rec_'+l, l, 'money'), col('tzs_'+l, l+' TZS', 'money')]); }, []))
+                .concat([col('totalRec','Leo rec','money'), col('total','Leo TZS','money')]),
+              sumRow(d.recBands.rows, (d.recBands.bands||[]).reduce(function(a,l){
+                  return a.concat(['rec_'+l,'tzs_'+l]); }, ['totalRec','total'])))
+          : '')
       /* An empty recovery board has THREE different truths behind it, and the note says
-         which -- guessing sent somebody to upload the same file a fourth time. */
+         which -- guessing sent somebody to upload the same file a fourth time. The baseline
+         counts ride along so a zero can be traced to its stage at a glance. */
       + (!(d.recBoard||[]).length
           ? '<div class="card"><div class="card-h">Recovery — wiki hii / this week</div>'
             + '<div class="note" style="margin:10px 14px">'
@@ -3824,11 +3841,19 @@ VIEWS.commission = function(){
                         + ' file’s own date column — the deck lands on the date it carries, not the date it was uploaded.'
                       : ' / No current deck is dated inside this week, and the book holds no earlier current deck either'
                         + ' — upload the initial and current decks and this board fills itself.'))
+            + ((d.recDiag && d.recDiag.iniRows != null)
+                ? '<br><span style="color:var(--mut)">kitabu / baseline: ' + money(d.recDiag.iniRows) + ' initial · '
+                  + money(d.recDiag.bookEntries||0) + ' entries · madondosho yaliyoonekana / drops seen: '
+                  + money(d.recDiag.dropsSeen||0) + '</span>'
+                : '')
             + '</div></div>'
           : '')
       + ((d.recBoard||[]).length
           ? board('cmRecWeek','Recovery — wiki hii / this week',
-              'kilichorejeshwa na kilicholipwa kwa KILA siku · leo ni safu mpya zaidi / recovered amount and what it earned, day by day — today is the newest column',
+              'kilichorejeshwa na kilicholipwa kwa KILA siku · leo ni safu mpya zaidi / recovered amount and what it earned, day by day — today is the newest column'
+                + ((d.recDiag && d.recDiag.iniRows != null)
+                    ? ' · kitabu: ' + money(d.recDiag.bookEntries||0) + ' entries, drops ' + money(d.recDiag.dropsSeen||0)
+                    : ''),
               d.recBoard, [col('officer','Recovery officer')]
                 .concat(['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
                   return a.concat([col('rec'+k, k, 'money'), col('tzs'+k, k+' TZS', 'money')]); }, []))

@@ -2631,16 +2631,27 @@ async function commission(db, user, args = {}, nowMs) {
   for (const r of scoped(user, iniBook.rows || [])) {
     if (r.ref && r.team) running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
   }
+  recDiag.iniRows = running.size;
   for (const r of scoped(user, preBook.rows || [])) {
     if (!r.ref || !r.team) continue;
     const got = running.get(bkey(r));
     if (got) got.arr = num(r.arrears);
     else running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
   }
+  recDiag.bookEntries = running.size;
 
   /* Walk the week's current decks in date order. Drops land on the date of the deck that
      showed them, which is what makes "today" a real figure rather than a week share. */
   const recByDay = new Map();                              // date -> officer -> {recovered, recComm}
+  /* TODAY'S RECOVERY, SPLIT BY THE BAND THAT PRICED IT -- "how much each person earned from
+     each disb year band in that days rec". The band is whatever cmsRateFor rates by: the
+     disbursement year in year mode, the status in status mode. */
+  const bandAcc = {};                                      // officer -> { key, bands: {label: {recovered, tzs}} }
+  const bandOf = r => cfg.mode === 'status'
+    ? (K(r && r.status).includes('CHRON') ? 'CHRONIC'
+      : K(r && r.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER')
+    : (String((r && r.disb_date) || '').slice(0, 4) || '*');
+  recDiag.dropsSeen = 0;
   for (let i = 0; ; i++) {
     const d = addDaysKey(mon, i);
     if (d > today || d > sun) break;
@@ -2664,9 +2675,18 @@ async function commission(db, user, args = {}, nowMs) {
       const drop = st.arr - cur;
       st.arr = cur;
       if (drop <= 0) continue;
-      const b = bucket(acc, officerOf(teamBy, st.team, 'recovery'), blank);
+      recDiag.dropsSeen++;
+      const who = officerOf(teamBy, st.team, 'recovery');
+      const b = bucket(acc, who, blank);
       b.recovered += drop;
       b.recComm += drop * cmsRateFor(cfg, st.rate) / 100;
+      if (d === today) {
+        const bb = bucket(bandAcc, who, { bands: {} });
+        const label = bandOf(st.rate);
+        const cell = bb.bands[label] || (bb.bands[label] = { recovered: 0, tzs: 0 });
+        cell.recovered += drop;
+        cell.tzs += drop * cmsRateFor(cfg, st.rate) / 100;
+      }
     }
     // First seen mid-week (no initial ever uploaded): enters the book, nothing attributed yet.
     for (const r of rowsD) {
@@ -2739,6 +2759,29 @@ async function commission(db, user, args = {}, nowMs) {
     }
     return row;
   }).sort((a, b) => b.weekCommission - a.weekCommission || b.weekRecovered - a.weekRecovered);
+
+  /* The band board: one row per officer, one column pair per band that actually earned
+     today. Labels are dynamic -- the disbursement years (or statuses) present in today's
+     drops -- so the screen never draws a column for a band nobody earned in. */
+  const bandLabels = [...new Set(Object.values(bandAcc)
+    .flatMap(b => Object.keys(b.bands)))].sort();
+  const recBands = {
+    mode: cfg.mode, bands: bandLabels,
+    rows: Object.values(bandAcc)
+      .filter(b => seesOfficer(b.key))
+      .map(b => {
+        const row = { officer: b.key, total: 0, totalRec: 0 };
+        for (const label of bandLabels) {
+          const c = b.bands[label] || { recovered: 0, tzs: 0 };
+          row['rec_' + label] = c.recovered;
+          row['tzs_' + label] = Math.round(c.tzs);
+          row.totalRec += c.recovered;
+          row.total += Math.round(c.tzs);
+        }
+        return row;
+      })
+      .sort((a, b) => b.total - a.total || b.totalRec - a.totalRec),
+  };
 
   const colOff = new Map();                                // officer -> date -> sums
   for (const d of colDays) {
@@ -2844,7 +2887,7 @@ async function commission(db, user, args = {}, nowMs) {
 
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
     scope, from: mon, to: scope === 'month' ? today : sun,
-    recBoard, colBoard, recDiag,
+    recBoard, colBoard, recDiag, recBands,
     pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
       leader: leader ? leader.officer : null,
