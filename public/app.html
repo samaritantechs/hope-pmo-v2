@@ -562,7 +562,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-08-31-b';
+var BUILD = '2026-08-31-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2691,12 +2691,28 @@ VIEWS.monthreport = function(){
       ['Perf <b>' + pct(t.perfPct) + '</b>', 'mutl'],
       ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, t.colPct||0)) + '%"></i></span>'],
     ], 'tot');
+    /* The average of a percentage only counts the weeks that HAVE one -- a week whose ledger
+       is still empty would drag the average toward zero and read as a collapse. */
+    var avgPctOf = function(k){
+      var xs = started.map(function(r){ return r[k]; }).filter(function(v){ return v != null; });
+      if (!xs.length) return null;
+      return Math.round(xs.reduce(function(s, v){ return s + Number(v); }, 0) / xs.length);
+    };
+    var aSales = avgPctOf('salesPct'), aCol = avgPctOf('colPct'), aRec = avgPctOf('recPct');
+    /* "still has no percentages": the SAME card shape as every week's -- amount, then the
+       percentage in bold, then the bar -- so the month summary reads exactly like the week
+       summaries beside it. */
     var avgCell = tcell('WASTANI / AVERAGE', [
-      ['<b>TZS ' + money(avgOf('sales')) + '</b> / wiki'],
+      ['<b>TZS ' + money(avgOf('sales')) + '</b> / wiki' + (aSales != null ? ' · <b>' + pct(aSales) + '</b>' : '')],
       [(Math.round((Number(t.loans)||0) / nWk * 10) / 10) + ' loans / wiki', 'mutl'],
-      [d.ledgerReady ? 'Col TZS ' + money(avgOf('collected')) + ' / wiki' : 'Col —', 'mutl'],
-      [d.ledgerReady ? 'Rec TZS ' + money(avgOf('recovered')) + ' / wiki' : 'Rec —', 'mutl'],
-      ['Perf ~' + pct(avgOf('perf')) + ' / wiki', 'mutl'],
+      [d.ledgerReady
+          ? 'Col TZS ' + money(avgOf('collected')) + ' / wiki' + (aCol != null ? ' · <b>' + pct(aCol) + '</b>' : '')
+          : 'Col —', 'mutl'],
+      [d.ledgerReady
+          ? 'Rec TZS ' + money(avgOf('recovered')) + ' / wiki' + (aRec != null ? ' · <b>' + pct(aRec) + '</b>' : '')
+          : 'Rec —', 'mutl'],
+      ['Perf ~<b>' + pct(avgOf('perf')) + '</b> / wiki', 'mutl'],
+      ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, aCol||0)) + '%"></i></span>'],
     ], 'tot');
     HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf" style="margin-left:8px">← Dashibodi / Dashboard</button>')
       + '<div class="kpis">'
@@ -2769,8 +2785,11 @@ VIEWS.monthreport = function(){
           +(t.colPct!=null?' ('+pct(t.colPct)+')':'') : '')
       + (t.recovered!=null ? ' · Recovered TZS '+money(t.recovered)
           +(t.recPct!=null?' ('+pct(t.recPct)+')':'') : '')
-      + ' — WASTANI/wiki: Sales TZS '+money(avgOf('sales'))
-      + (d.ledgerReady ? ', Col TZS '+money(avgOf('collected'))+', Rec TZS '+money(avgOf('recovered')) : '');
+      + ' — WASTANI/wiki: Sales TZS '+money(avgOf('sales'))+(aSales!=null?' ('+pct(aSales)+')':'')
+      + (d.ledgerReady
+          ? ', Col TZS '+money(avgOf('collected'))+(aCol!=null?' ('+pct(aCol)+')':'')
+            +', Rec TZS '+money(avgOf('recovered'))+(aRec!=null?' ('+pct(aRec)+')':'')
+          : '');
   });
 };
 
