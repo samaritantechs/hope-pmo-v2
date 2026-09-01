@@ -2913,7 +2913,14 @@ test('the collection column means today on a weekday and the week at the weekend
    report reads and stands down (null, never 0%) where the totals functions are absent. */
 test('the Orodha carries today beside the month for sales, early col, col and rec, per team', async () => {
   const t = tables();
+  /* The sheet names a collection officer on KONGOWE; a PMO COLLECTION access code holds
+     KONGOWE too. "PMO today col officers didn't appear": the code is where these people
+     live, so it wins; MBAGALA, held by no code, falls back to its sheet column. */
   t.teams[0].collection = 'COL C';
+  t.teams[1].collection = 'SHEET S';
+  t.access_codes = t.access_codes.concat([
+    { code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] },
+  ]);
   t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
   // Today: 100 approved -> 50% of the team's daily target (1000 / 5); the month: 100 of 4000.
   t.loans = [{ id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 100, approved_date: TODAY }];
@@ -2942,8 +2949,9 @@ test('the Orodha carries today beside the month for sales, early col, col and re
   // The four officers, off the teams table.
   assert.equal(k.credit, 'ANALYST A');
   assert.equal(k.expected, 'EARLY E');
-  assert.equal(k.collection, 'COL C');
+  assert.equal(k.collection, 'CATHERINE', 'the PMO collection officer, off her access code');
   assert.equal(k.recovery, 'JUMA G');
+  assert.equal(d.teamPerf.find(r => r.team === 'MBAGALA').collection, 'SHEET S', 'no code holds it: the sheet');
   // 1 & 2
   assert.equal(k.tSalesPct, 50, '100 of a 200 daily target');
   assert.equal(k.mSalesPct, 2.5, '100 of the 4000 month target');

@@ -6134,7 +6134,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
      to say which way it is MOVING, and movement needs the week before. */
-  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid] = await Promise.all([
+  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevSun, teams: user.teams }),
@@ -6171,6 +6171,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     fetchAll(() => onTeams(db.from('received_payments')
       .select('team, amount_paid, transaction_id')
       .gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)),
+    /* THE COLLECTION OFFICERS' NAMES. "PMO today col officers didn't appear" -- because a
+       collection officer's teams live on their ACCESS CODE, not on the sheet: one person
+       holds thirty teams, and the sheet's own collection column is for the teams whose
+       officer is not an app user. So the Orodha's Col column is resolved the way the
+       commission board and the staff roster resolve it -- codes with the collection role,
+       by the teams they hold -- with the sheet's column as the fallback. */
+    fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
+    settingsMany(db, [PMO_ROLE_KEY]),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   /* The month ledger, for the Orodha's M. columns -- AFTER the wave above, never inside it,
@@ -6374,6 +6382,25 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     s.recovery = t.recovery || null; s.gmo = t.gmo || null; s.manager = t.manager || null;
     s.opm = t.opm || null; s.bike = t.bike || null; s.branch = t.branch || null;
     s.credit = t.credit || null; s.expected = t.expected || null; s.collection = t.collection || null;
+  }
+  /* The PMO collection officers, by the teams on their codes -- the code wins over the
+     sheet, because the code is where these people are actually maintained (Teams & Staff
+     writes it). Two officers on one team are both named, so a handover shows as such. */
+  const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const colByTeam = new Map();
+  for (const cd of codeRows) {
+    if (!isPmoRole(cd.role, pmoRoleName) || !cd.teams || !cd.teams.length) continue;
+    const name = String(cd.name || cd.code || '').trim();
+    if (!name) continue;
+    for (const tm of cd.teams) {
+      const k = K(tm);
+      if (!colByTeam.has(k)) colByTeam.set(k, []);
+      if (!colByTeam.get(k).includes(name)) colByTeam.get(k).push(name);
+    }
+  }
+  for (const t of myTeams) {
+    const held = colByTeam.get(K(t.team));
+    if (held && held.length) slot(t.team).collection = held.join(' / ');
   }
   for (const r of iniToday) slot(r.team).initArrears += num(r.arrears_amt);
   for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears_amt); s.defaulters += num(r.customers); }
