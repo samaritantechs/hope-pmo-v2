@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-e';
+var BUILD = '2026-09-01-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1232,13 +1232,6 @@ function tableHtml(rows, cols, onRow){
     var tip = c.title ? ' title="'+esc(c.title)+'"' : '';
     return '<th class="'+(isNum(c)?'r':'')+'" data-sort="'+esc(c.key)+'"'+tip+'>'+esc(c.label)+arrow+'</th>';
   }).join('');
-  var body = rows.map(function(r, i){
-    return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
-      + '<td class="sn">'+(i+1)+'</td>'
-      + cols.map(function(c){
-          return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>';
-        }).join('') + '</tr>';
-  }).join('');
   /* THE GRAND TOTAL ON THE MAIN LIST TOO. Every card board and every projected slide grew one,
      and this table -- the biggest on every tab, and the one the commission week is read from --
      did not. Same rule as everywhere else, so the figure at the bottom of a card and the figure
@@ -1248,6 +1241,28 @@ function tableHtml(rows, cols, onRow){
      only reading that makes sense under a filter, and a total that ignored the filter would be
      read as the filtered one by everybody. */
   var tot = autoTotals(rows, cols);
+  /* BELOW THE LINE, IN RED. "always format red to those values below the underneath grand
+     average": a column that opts in (lowBad) paints every percentage that falls short of the
+     JUMLA row's own figure red, so the eye lands on the teams pulling the company down without
+     reading forty numbers against one. Opt-in, because on some boards a low percentage is the
+     good news (a defaulter share, a PAR) and red there would say the opposite of the truth.
+     The floor is whatever the total row shows -- the recomputed ratio where the parts are on
+     the table, the average of the measured otherwise -- so screen and rule cannot disagree. */
+  var floors = {};
+  cols.forEach(function(c){
+    if (!c.lowBad || !tot || tot[c.key] == null || tot[c.key] === '') return;
+    var n = Number(String(tot[c.key]).replace(/[~%\s,]/g, ''));
+    if (!isNaN(n)) floors[c.key] = n;
+  });
+  var body = rows.map(function(r, i){
+    return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
+      + '<td class="sn">'+(i+1)+'</td>'
+      + cols.map(function(c){
+          var v = c.get ? c.get(r) : r[c.key];
+          var low = floors[c.key] != null && v != null && v !== '' && !isNaN(Number(v)) && Number(v) < floors[c.key];
+          return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(low?' bad':'')+'">'+cellHtml(r,c)+'</td>';
+        }).join('') + '</tr>';
+  }).join('');
   if (tot) body += '<tr class="totrow"><td class="sn"></td>' + cols.map(function(c, i){
     return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>';
   return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -1511,7 +1526,7 @@ function saveJpg(el){
   var probe = null;
   try {
     var clone = el.cloneNode(true);
-    Array.prototype.forEach.call(clone.querySelectorAll('button'), function(b){ b.remove(); });
+    Array.prototype.forEach.call(clone.querySelectorAll('button, .tblsearch'), function(b){ b.remove(); });
     clone.classList.add('jpgshot');
 
     /* MEASURED FROM THE UNCLIPPED CLONE, not from the window onto it. Attached off-screen so
@@ -1572,15 +1587,29 @@ function saveJpg(el){
     Array.prototype.forEach.call(document.styleSheets, function(sh){
       try { Array.prototype.forEach.call(sh.cssRules, function(r){ css += r.cssText; }); } catch(e){}
     });
+    /* THE DRAWING IS XML, AND HTML IS NOT.
+
+         "downloading jpg in the app says could not build the picture"
+
+       An SVG data: URI is parsed as XML, strictly. `outerHTML` serialises the clone as HTML --
+       `<input ...>` with no closing slash -- and the day the per-list search box (an <input>)
+       went into every Orodha card, every JPG of every list became malformed XML, the image
+       refused to load, and the button said "could not build the picture" from then on. The
+       search box is dropped above (it is not part of the report), and the clone is serialised
+       by the XML serialiser, which closes every void element and escapes every entity --
+       so a <br>, an <img> or a stray & anywhere in a report can never do this again. The
+       copied stylesheet is escaped the same way: CSS text is free to contain & and <, and
+       inside an XML <style> those must be entities. */
+    var xmlText = function(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
     var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="'+document.body.className+'">'
       // The override goes AFTER the copied stylesheet, so it wins inside the drawing too.
-      + '<style>'+css+'</style><style>'+JPG_UNCLIP+'</style>'
+      + '<style>'+xmlText(css)+'</style><style>'+xmlText(JPG_UNCLIP)+'</style>'
       /* box-sizing:content-box ON PURPOSE. The copied stylesheet sets `*{box-sizing:border-box}`,
          so `width:w` here gave the content w MINUS the 20px of padding -- twenty pixels of the
          report pushed outside the picture on every single export, which is "the current are
          even cutting info" in one line of CSS. */
       + '<div style="background:var(--bg);padding:10px;box-sizing:content-box;width:'+w+'px">'
-      + clone.outerHTML + '</div></div>';
+      + new XMLSerializer().serializeToString(clone) + '</div></div>';
     /* SCALED BY THE viewBox, WHICH IS WHAT SVG IS FOR -- not by `zoom`.
 
        `zoom` scales the LAYOUT: the box becomes (w+20) x sc and the picture is exactly that
@@ -2657,7 +2686,8 @@ VIEWS.dashboard = function(){
        like T and M": seventeen columns have to fit one screen, so the header is the
        abbreviation and the full name is the tooltip. T. = leo / today, M. = mwezi huu /
        month to date. Percentages only; the amounts live on the slide and the boards. */
-    var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title }; };
+    // lowBad: a percentage under the JUMLA row's figure is painted red (see tableHtml).
+    var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title, lowBad:true }; };
     var ttl = function(c, t){ c.title = t; return c; };
     // "officers columns before team column" -- the people first, then the team they hold.
     S.cols = [
