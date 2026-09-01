@@ -394,6 +394,12 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.equal(juma.recovered, 300); assert.equal(juma.recComm, 30);
   // MBAGALA names no recovery officer, so its 100 recovered is still counted, unassigned.
   assert.equal(d.day.find(r => r.officer === '(unassigned)').recovered, 100);
+  /* THE WEEKLY % ON THE COMBINED TABLE -- "have a last colomn of their weekly performance
+     percentage". JUMA's observed books entered the week holding 500 + 700 = 1,200 and he
+     recovered 300: rec % = 25. */
+  const juWeek = d.week.find(r => r.officer === 'JUMA G');
+  assert.equal(juWeek.pct, 25, 'rec % = recovered over what the observed books held entering the range');
+
   /* TODAY BY BAND -- "how much each person earned from each disb year band in that days
      rec". Status mode here, so the band is the status; both of today's drops are Defaulter
      rows, so one DEFAULTER column carries the whole day. */
@@ -4978,6 +4984,8 @@ test('a collection officer whose code says COLLECTION now reaches the PMO board'
   const board = d.pmo.find(r => String(r.officer).toUpperCase() === 'CATHERINE');
   assert.equal(cat.pmoComm, Math.round((board.weekCommission || 0) + (board.bonus || 0)),
     'the Orodha carries the same pay the PMO board computed');
+  assert.equal(cat.pct == null ? null : cat.pct, board.weekPct == null ? null : board.weekPct,
+    'and her weekly % is the PMO board\'s own week percentage');
 });
 
 /* =====================================================================================
