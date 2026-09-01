@@ -148,17 +148,49 @@ const SCREENS = [
   ['Commission, including the PMO board', 'commission', {}],
 ];
 
+/* ONE SANCTIONED DIVERGENCE, and it is the same one as before: the month. The dashboard's
+   month cards were null without the migration, then the month was retired to the chip and
+   the two paths agreed on everything; now the Orodha carries the month back as PERCENTAGES
+   per team ("so that we always see today's performance and monthly progress"), read off the
+   month ledger -- which is agg-only BY DESIGN, because a month of raw rows is the read that
+   took the dashboard down. So without the migration those columns are null and the screen
+   says the ledger is not ready, and that -- nothing else -- may differ. */
+const LEDGER_KEYS = ['mEColPct', 'mColPct', 'mRecPct', 'mAvg'];
+function withoutLedger(d) {
+  if (!d || !Array.isArray(d.teamPerf)) return d;
+  const { monthReady, ...rest } = d;
+  return { ...rest, teamPerf: d.teamPerf.map(t => {
+    const c = { ...t };
+    for (const k of LEDGER_KEYS) delete c[k];
+    return c;
+  }) };
+}
+
 for (const [label, fn, args] of SCREENS) {
   for (const [when, nowMs] of [['on a weekday', FRIDAY], ['at the weekend', SUNDAY]]) {
     for (const [who, user] of [['for an admin', ADMIN], ['for one officer', OFFICER]]) {
       test(`${label}: identical ${when} ${who}, database sums vs rows in memory`, async () => {
-        const fromDb = await portalApi(withMigration(), user, fn, args, nowMs);
-        const inMemory = await portalApi(withoutMigration(), user, fn, args, nowMs);
-        /* There used to be one sanctioned divergence here -- the dashboard's month cards,
-           null without the migration -- but the month was retired from the dashboard
-           entirely ("keep monthly in the chip"), so the two paths must now agree on every
-           figure with no exceptions. */
-        assert.deepEqual(fromDb, inMemory,
+        const dbA = withMigration(), dbB = withoutMigration();
+        /* The dashboard fills at most two ledger slices per load, and this July is four, so
+           the month report -- unlimited under its own budget -- fills the shared store first,
+           the way the first open of the chip does on a cold month. Both worlds get the same
+           warm-up so the comparison stays like for like. */
+        if (fn === 'dashboardFull') {
+          await portalApi(dbA, user, 'monthReport', args, nowMs);
+          await portalApi(dbB, user, 'monthReport', args, nowMs);
+        }
+        const fromDb = await portalApi(dbA, user, fn, args, nowMs);
+        const inMemory = await portalApi(dbB, user, fn, args, nowMs);
+        if (fn === 'dashboardFull') {
+          assert.equal(fromDb.monthReady, true, 'with the migration the ledger fills');
+          assert.equal(inMemory.monthReady, false, 'without it the ledger stands down');
+          for (const t of inMemory.teamPerf) {
+            for (const k of ['mEColPct', 'mColPct', 'mRecPct']) {
+              assert.equal(t[k], null, `${t.team}.${k}: null means "not yet", never a figure`);
+            }
+          }
+        }
+        assert.deepEqual(withoutLedger(fromDb), withoutLedger(inMemory),
           `${label} answered differently when the database did the adding up.\n` +
           '  Every figure on this screen must be identical either way -- the migration is run by\n' +
           '  hand, so BOTH paths are live at once across the estate.');

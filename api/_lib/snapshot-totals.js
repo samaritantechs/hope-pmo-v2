@@ -336,14 +336,23 @@ export async function expectedTotalsInRange(db, { type = null, from, to, teams =
    upload, never the book. Returns { exp, def } in the same row shape the range totals speak,
    or null -- and null must always mean "the cards stand down", never an error. */
 export async function totalsAggSlice(db, { from, to } = {}) {
-  const [e, f] = await Promise.all([
+  const [all, f] = await Promise.all([
+    /* EVERY TYPE IN ONE CALL, split here. The dashboard's Orodha carries a month-to-date
+       early col % per team beside the day's, and that month is nothing but the INITIAL
+       sheets of the month summed. The function groups by type anyway, so asking for today
+       and initial together is one trip where two would be -- and two trips per slice, over
+       the four or five slices of a cold month, is the difference the speed guard measures. */
     callTotals(db, EXPECTED_TOTALS_FN,
-      { p_from: from, p_to: to, p_type: 'today', p_teams: null }),
+      { p_from: from, p_to: to, p_type: null, p_teams: null }),
     callTotals(db, DEFAULTER_TOTALS_FN,
       { p_from: from, p_to: to, p_type: null, p_teams: null, p_weekday: null }),
   ]);
-  if (!e || !f) return null;                 // the totals functions are not installed here
-  return { exp: e, def: f };
+  if (!all || !f) return null;               // the totals functions are not installed here
+  return {
+    exp: all.filter(r => String(r.snapshot_type) === 'today'),
+    def: f,
+    ini: all.filter(r => String(r.snapshot_type) === 'initial'),
+  };
 }
 /** The summary uploads over a range, both kinds -- a handful of rows per upload, never the
     book, in the same row shape the totals speak. */
