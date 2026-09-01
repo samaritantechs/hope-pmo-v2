@@ -537,6 +537,7 @@ function wdLabel(w){ return SWDAY[String(w||'').toUpperCase()] || w; }
 var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'', sort:null, asc:true,
           sort2:null, asc2:false,
           args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0,
+          targets:{},                       // the three % targets, from hints (see the colour rule)
           /* ALWAYS BOOTS TO 'hopepmo', NEVER REMEMBERED. Only an admin ever sees the switch at
              all, and even for them a page load lands on the real book by default every time --
              the sandbox has to be chosen on purpose, on this visit, never carried in from a
@@ -567,7 +568,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-f';
+var BUILD = '2026-09-01-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1031,6 +1032,15 @@ var SETTINGS_GROUPS = [
         note:'Dashibodi na ripoti ya wiki: hii ÷ 5 × idadi ya timu = lengo la kampuni kwa siku. / The Dashboard and weekly report divide this by 5 and multiply by the number of teams for the whole-company daily figure.' },
       { key:'SALES_TARGET_MONTHLY', label:'Kwa mwezi / Per month, TZS', type:'number', dflt:'400000000',
         note:'HOPE Calls scorecard pekee. / HOPE Calls scorecard only -- a separate board from the two above.' },
+      /* THE THREE PERCENTAGE TARGETS. Every table on every screen -- the Orodha, the officer
+         boards, the deck on the wall -- turns a percentage GREEN once it reaches its target and
+         RED when it is under the JUMLA line; a blank target means nothing turns green. */
+      { key:'TARGET_EARLY_COL_PCT', label:'Lengo la Early Col % / Early collection % target', type:'number', dflt:'',
+        note:'Asilimia ya karatasi ya awali (initial). Wazi = hakuna kijani. / Initial-sheet collection %. Blank = nothing turns green.' },
+      { key:'TARGET_COL_PCT', label:'Lengo la Col % / Collection % target', type:'number', dflt:'',
+        note:'Ukusanyaji wa siku na wa PMO Collection. / Day collection and PMO Collection %.' },
+      { key:'TARGET_REC_PCT', label:'Lengo la Rec % / Recovery % target', type:'number', dflt:'',
+        note:'Kilichorejeshwa ÷ kisichokusanywa. Mauzo: 100% ya lengo ni kijani. / Recovered ÷ uncollected. Sales: 100% of target is green.' },
     ] },
   { id:'rotation', title:'Mzunguko wa kufuatilia wadaiwa / Recycling rotation',
     sub:'nani anamiliki mdaiwa wiki hii / who owns a defaulter this week', fields:[
@@ -1138,6 +1148,83 @@ function cellHtml(r, c){
 }
 function isNum(c){ return c.kind==='money'||c.kind==='num'||c.kind==='pct'||c.kind==='dur'; }
 
+/* =====================================================================================
+   THE COLOUR RULE -- one rule, every table, the deck included.
+
+     "at setting sales target I need to set early col, col and rec % targets so that those
+      who hit targets the % turns green, those below average are red the rest stay black
+      and team names column or officers names column below gen average should be on red"
+     "current settings to apply everywhere so even reports in every pane presentations
+      inclusive I'll find the red values"
+
+   A percentage cell:  at or above its TARGET -> green;  under the JUMLA row's own figure for
+   that column -> red;  otherwise black.  The targets are the three set beside the sales
+   target in Settings (sales itself is measured against its target already, so 100% IS the
+   target there); a column with no target only ever goes red.  Which target a column answers
+   to is read off its key -- tEColPct, collPctEarly, mColPct, recPct, salesPct name
+   themselves -- or is named outright (`target`) where the key is a bare `pct`.
+
+   A NAME cell (team, officer, analyst, the four officers on the Orodha) goes red when the
+   row's GENERAL AVERAGE is red -- the first average-like percentage on the table (T.Avg
+   first, then M.Avg, the strip's avg, Perf, a lone %), or the one the column names
+   (`avgKey`).  So the eye lands on WHO is under the line, not only on which figure.
+
+   OPT-OUT, never opt-in: `lowGood` marks the few columns where a low percentage is the good
+   news (a defaulter's share of the book, PAR), and those are left alone -- red there would
+   say the opposite of the truth.
+
+   The floor is whatever the total row shows, so screen and rule cannot disagree; a column
+   with no total row has no floor and nothing goes red under it. */
+var NAME_KEYS = { team:1, officer:1, analyst:1, name:1, creditUser:1, credit:1, expected:1,
+  collection:1, recovery:1, gmo:1, manager:1, opm:1, bike:1 };
+var AVG_KEYS = ['tAvg', 'mAvg', 'avgPct', 'perf', 'score', 'overall', 'weekPct', 'pct'];
+function targetOf_(c){
+  var t = c.target;
+  if (!t){
+    var k = String(c.key || '');
+    if (/ecol|early/i.test(k)) t = 'ecol';
+    else if (/sales/i.test(k)) t = 'sales';
+    else if (/rec/i.test(k)) t = 'rec';
+    else if (/col/i.test(k)) t = 'col';
+  }
+  if (!t) return null;
+  if (t === 'sales') return 100;
+  var v = S.targets ? S.targets[t] : null;
+  return (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
+}
+/* Everything the per-cell rule needs, worked out ONCE per table rather than per cell. */
+function colourCtx_(cols, tot){
+  var ctx = { floors: {}, avgCol: null };
+  (cols || []).forEach(function(c){
+    if (c.kind !== 'pct' || c.lowGood || !tot) return;
+    var v = tot[c.key];
+    if (v == null || v === '') return;
+    var n = Number(String(v).replace(/[~%\s,]/g, ''));
+    if (!isNaN(n)) ctx.floors[c.key] = n;
+  });
+  var named = (cols || []).filter(function(c){ return c.avgKey; })[0];
+  var want = named ? [named.avgKey] : AVG_KEYS;
+  for (var i = 0; i < want.length && !ctx.avgCol; i++){
+    ctx.avgCol = (cols || []).filter(function(c){ return c.key === want[i] && c.kind === 'pct'; })[0] || null;
+  }
+  return ctx;
+}
+function pctClass_(r, c, ctx){
+  if (c.kind !== 'pct' || c.lowGood) return '';
+  var v = c.get ? c.get(r) : r[c.key];
+  if (v == null || v === '' || isNaN(Number(v))) return '';
+  v = Number(v);
+  var tg = targetOf_(c);
+  if (tg != null && v >= tg) return 'good';
+  if (ctx.floors[c.key] != null && v < ctx.floors[c.key]) return 'bad';
+  return '';
+}
+function cellCls_(r, c, ctx){
+  if (c.kind === 'pct') return pctClass_(r, c, ctx);
+  if ((NAME_KEYS[c.key] || c.nameCol) && ctx.avgCol) return pctClass_(r, ctx.avgCol, ctx) === 'bad' ? 'bad' : '';
+  return '';
+}
+
 function filtered(){
   var rows = S.rows;
   // Dropdown filters (team / status) narrow BEFORE the text search, so the footer totals and
@@ -1241,26 +1328,14 @@ function tableHtml(rows, cols, onRow){
      only reading that makes sense under a filter, and a total that ignored the filter would be
      read as the filtered one by everybody. */
   var tot = autoTotals(rows, cols);
-  /* BELOW THE LINE, IN RED. "always format red to those values below the underneath grand
-     average": a column that opts in (lowBad) paints every percentage that falls short of the
-     JUMLA row's own figure red, so the eye lands on the teams pulling the company down without
-     reading forty numbers against one. Opt-in, because on some boards a low percentage is the
-     good news (a defaulter share, a PAR) and red there would say the opposite of the truth.
-     The floor is whatever the total row shows -- the recomputed ratio where the parts are on
-     the table, the average of the measured otherwise -- so screen and rule cannot disagree. */
-  var floors = {};
-  cols.forEach(function(c){
-    if (!c.lowBad || !tot || tot[c.key] == null || tot[c.key] === '') return;
-    var n = Number(String(tot[c.key]).replace(/[~%\s,]/g, ''));
-    if (!isNaN(n)) floors[c.key] = n;
-  });
+  // Green at target, red under the JUMLA line, names red with their row's average -- see cellCls_.
+  var ctx = colourCtx_(cols, tot);
   var body = rows.map(function(r, i){
     return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
       + '<td class="sn">'+(i+1)+'</td>'
       + cols.map(function(c){
-          var v = c.get ? c.get(r) : r[c.key];
-          var low = floors[c.key] != null && v != null && v !== '' && !isNaN(Number(v)) && Number(v) < floors[c.key];
-          return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(low?' bad':'')+'">'+cellHtml(r,c)+'</td>';
+          var k = cellCls_(r, c, ctx);
+          return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>';
         }).join('') + '</tr>';
   }).join('');
   if (tot) body += '<tr class="totrow"><td class="sn"></td>' + cols.map(function(c, i){
@@ -1272,7 +1347,7 @@ function wireTable(rows, onRow){
     th.onclick = function(){
       var k = th.getAttribute('data-sort');
       if (S.sort===k) S.asc = !S.asc; else { S.sort=k; S.asc=false; }
-      paint();
+      paint(true);                                   // in place: the page must not move
     };
   });
   if (onRow) Array.prototype.forEach.call(document.querySelectorAll('tbody tr[data-i]'), function(tr){
@@ -1677,6 +1752,10 @@ function tipShow(){
 function tipsStart(){
   srv('hints').then(function(h){
     S.tips = h.tips || {};
+    /* The percentage targets every table colours itself by (see the colour rule). If a list
+       is already on screen it is redrawn in place so the greens do not wait for a click. */
+    S.targets = h.targets || {};
+    if (document.getElementById('mainCard')) paint(true);
     // These used to just be a fallback nothing ever overrode -- see hints() in portal-core.js.
     S.hintEverySec = h.everySec; S.hintHoldSec = h.holdSec;
     clearInterval(S.tipTimer);
@@ -1754,12 +1833,28 @@ function wireTableSearch(){
     // back, the box would lose focus after every single keystroke.
     var pos = box.selectionStart;
     S.q = box.value;
-    paint();
+    paint(true);
     var b2 = document.getElementById('tblQ');
     if (b2) { b2.focus(); try { b2.setSelectionRange(pos, pos); } catch(e){} }
   };
 }
-function paint(){
+/* `keep` -- a re-sort, a filter or a keystroke in the search box redraws the list IN PLACE:
+     "sorting action should not move the page"
+   #view is rebuilt whole, and a rebuilt scroller starts at the top, so every click on a
+   header threw the reader back to the head of the page and the table scrolled back to its
+   first column. The two positions are read before the redraw and put back after it. Only on
+   a redraw of the SAME list -- a new tab still opens at the top, as it should. */
+function paint(keep){
+  var bodyEl = keep ? document.querySelector('.body') : null;
+  var scEl = keep ? document.querySelector('#mainCard .scroll') : null;
+  var top = bodyEl ? bodyEl.scrollTop : 0, left = scEl ? scEl.scrollLeft : 0, wy = keep ? window.scrollY : 0;
+  paintNow_();
+  if (!keep) return;
+  var b2 = document.querySelector('.body'); if (b2) b2.scrollTop = top;
+  var s2 = document.querySelector('#mainCard .scroll'); if (s2) s2.scrollLeft = left;
+  if (wy) window.scrollTo(0, wy);
+}
+function paintNow_(){
   var rows = sorted(filtered());
   var main = '<div class="card" id="mainCard">'
     + '<div class="card-h">Orodha / List<span class="sub">' + rows.length + ' / ' + S.rows.length
@@ -1901,7 +1996,7 @@ function wireBar(){
       // Narrowing the list needs no trip to the server -- but remember the choice with the
       // screen, so coming back to this tab shows the same box ticked and the same rows.
       if (VC.store[VC.key]) VC.store[VC.key].filters = JSON.parse(JSON.stringify(S.filters));
-      paint();
+      paint(true);
     };
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-jpg]'), function(el){
@@ -2629,7 +2724,8 @@ VIEWS.dashboard = function(){
         + boardPair('bEarlyT','Early collection by officer — today','teams · uncollected · collection %', b.earlyToday,
                     'bEarlyW','Early collection — this week','Mon–Fri', b.earlyWeek,
                     [col('officer','Officer'), col('teams','Teams','num'),
-                     col('uncollected','Uncollected','money'), col('pct','Collection %','pct')],
+                     col('uncollected','Uncollected','money'),
+                     {key:'pct', label:'Collection %', kind:'pct', target:'ecol'}],
                     ['teams','uncollected'])
         // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
         // a customer does not fall into default between breakfast and lunch.
@@ -2640,12 +2736,12 @@ VIEWS.dashboard = function(){
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
                      col('yUncollected','Uncol jana','money'),
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     col('pct','Rec %','pct')], sumRow(b.recToday, ['initial','current','yUncollected','recovered']))
+                     {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recToday, ['initial','current','yUncollected','recovered']))
         + board('bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     col('pct','Rec %','pct')], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
+                     {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
         + creditRecoveryBoard(creditRec && creditRec.metrics)
         + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
                     'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
@@ -2666,7 +2762,7 @@ VIEWS.dashboard = function(){
                   ? Object.assign({ id:'', names:'' }, S.csAgents.totals) : null)
         + board('bFu','Follow-up status — all defaulters', money(b.fuTotal)+' customers', b.fuStatus,
                 [col('status','Status'), col('customers','Customers','num'),
-                 col('pct','% of book','pct'), col('arrears','Arrears','money')],
+                 {key:'pct', label:'% of book', kind:'pct', lowGood:true}, col('arrears','Arrears','money')],
                 sumRow(b.fuStatus, ['customers','arrears']));
       var host = document.getElementById('boards');
       if (host) { host.innerHTML = extra; wireBar(); }
@@ -2686,8 +2782,8 @@ VIEWS.dashboard = function(){
        like T and M": seventeen columns have to fit one screen, so the header is the
        abbreviation and the full name is the tooltip. T. = leo / today, M. = mwezi huu /
        month to date. Percentages only; the amounts live on the slide and the boards. */
-    // lowBad: a percentage under the JUMLA row's figure is painted red (see tableHtml).
-    var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title, lowBad:true }; };
+    // Coloured by the one rule every table follows: green at target, red under the JUMLA line.
+    var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title }; };
     var ttl = function(c, t){ c.title = t; return c; };
     // "officers columns before team column" -- the people first, then the team they hold.
     S.cols = [
@@ -3337,8 +3433,10 @@ VIEWS.fureport = function(){
 /* Small static tables inside a head block (no search/sort -- those belong to the main table). */
 function tableSimple(rows, cols, totalRow){
   if (!rows || !rows.length) return '<div class="msg">—</div>';
+  var ctx = colourCtx_(cols, totalRow);         // the same colour rule as the main list
   var body = rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
-        return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
+        var k = cellCls_(r, c, ctx);
+        return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
   // A TOTAL row is not decoration on these boards -- it is the number read out in the meeting.
   if (totalRow) body += '<tr class="totrow"><td class="sn"></td>'+cols.map(function(c,i){
       return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
@@ -3556,7 +3654,7 @@ VIEWS.par = function(){
       + board('pBand','Kwa ukubwa wa mkopo / By principal band','where the overdue money sits by loan size', d.byBand,
           [col('band','Band (principal)'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
            {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
-           col('balance','Balance','money'), col('par','PAR %','pct'), col('share','Share of arrears','pct')],
+           col('balance','Balance','money'), {key:'par', label:'PAR %', kind:'pct', lowGood:true}, {key:'share', label:'Share of arrears', kind:'pct', lowGood:true}],
           {customers:t.customers, arrears:t.arrears, balance:t.balance, avgLoan:t.avgLoan, par:t.par, share:100})
       + board('pAge','Kwa muda / By days in arrears','how long each customer has been overdue', d.bands,
           [col('band','Days'), col('customers','Customers','num'), col('arrears','Arrears','money')],
@@ -3567,7 +3665,7 @@ VIEWS.par = function(){
     S.rows = d.byTeam;
     S.cols = [col('branch','Branch'), col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
       {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
-      col('balance','Balance','money'), col('par','PAR %','pct')];
+      col('balance','Balance','money'), {key:'par', label:'PAR %', kind:'pct', lowGood:true}];
     ONROW = null;
     S.foot = 'Defaulters: '+money(t.customers)+' · Arrears: TZS '+money(t.arrears)+' · PAR: '+pct(t.par);
   });
@@ -3937,7 +4035,7 @@ VIEWS.commission = function(){
               d.colBoard, [col('officer','Early col officer')]
                 .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
                   return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num')]); }, []))
-                .concat([col('weekPct','Wiki %','pct'), col('weekN','Wiki P+O','num'),
+                .concat([{key:'weekPct', label:'Wiki %', kind:'pct', target:'ecol'}, col('weekN','Wiki P+O','num'),
                   col('weekCommission','Wiki / Week TZS','money')]),
               sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
                   return a.concat(['n'+k]); }, ['weekN','weekCommission'])))
@@ -3998,7 +4096,7 @@ VIEWS.commission = function(){
              column between them and the two that matter. */
           d.pmo, [col('officer','PMO'), col('teams','Teams','num'), col('customers','Customers','num'),
             col('uncollected','Uncollected','money'),
-            col('pct','Collection %','pct'), col('band','Band'), col('commission','Today TZS','money')]) : '');
+            {key:'pct', label:'Collection %', kind:'pct', target:'col'}, col('band','Band'), col('commission','Today TZS','money')]) : '');
     /* The week's PMO board is a board of its own rather than the main table, because the main
        table is the recovery/early-collection week and the two are different people paid on
        different things. */
@@ -4012,8 +4110,9 @@ VIEWS.commission = function(){
          is why it sits AFTER them and not in front. */
       d.pmo, [col('officer','PMO'), col('teams','Teams','num'),
         col('weekUncollected','Uncollected','money')]
-        .concat(['J3','J4','J5','AL','IJ'].map(function(k){ return col('pct'+k, k, 'pct'); }))
-        .concat([col('weekPct','Wiki %','pct'), col('prevWeekPct','Last week %','pct'),
+        .concat(['J3','J4','J5','AL','IJ'].map(function(k){ return {key:'pct'+k, label:k, kind:'pct', target:'col'}; }))
+        .concat([{key:'weekPct', label:'Wiki %', kind:'pct', target:'col'},
+        {key:'prevWeekPct', label:'Last week %', kind:'pct', target:'col'},
         col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]));
     S.rows = d.week;
     S.cols = CMS_COLS;
@@ -4062,14 +4161,14 @@ VIEWS.cmmonth = function(){
       + board('cmMCol','Early Collection — mwezi / month to date',
           'asilimia ni ya mwezi mzima dhidi ya kitabu cha initial / the month’s ratio of sums, never an average of days',
           d.colBoard,
-          [col('officer','Early col officer'), col('weekPct','Col %','pct'),
+          [col('officer','Early col officer'), {key:'weekPct', label:'Col %', kind:'pct', target:'ecol'},
            col('weekPaid','Paid','num'), col('weekOver','Overpaid','num'),
            col('weekCommission','Month TZS','money')],
           sumRow(d.colBoard||[], ['weekPaid','weekOver','weekCommission']))
       + ((d.pmo && d.pmo.length) ? board('cmMPmo','PMO Collection — mwezi / month to date',
           'kila siku kwa kundi lake, zimejumlishwa / each day banded on its own percentage, added up',
           d.pmo, [col('officer','PMO'), col('weekUncollected','Uncollected','money'),
-            col('weekPct','Col %','pct'), col('weekCommission','Month TZS','money')]) : '');
+            {key:'weekPct', label:'Col %', kind:'pct', target:'ecol'}, col('weekCommission','Month TZS','money')]) : '');
     S.rows = d.week || [];
     S.cols = CMS_COLS;
     S.foldMain = 'cmlist';
@@ -5518,9 +5617,9 @@ function presSlides(){
       rows: recRows.slice(0,12),
       cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
         col('tUncollected', recUncolLabel, 'money'),
-        col('tRecovered','Recovered today','money'), col('tPct','Rec % (today)','pct'),
+        col('tRecovered','Recovered today','money'), {key:'tPct', label:'Rec % (today)', kind:'pct', target:'rec'},
         col('uncollected','Uncollected (week)','money'),
-        col('recovered','Recovered (week)','money'), col('pct','Rec % (week)','pct')] });
+        col('recovered','Recovered (week)','money'), {key:'pct', label:'Rec % (week)', kind:'pct', target:'rec'}] });
     /* Read the same way as PMO Collection, because it answers the same question about a
        different set of officers: how many teams, what is still out, and what share came in.
        The paid/overpaid counts are what the commission is worked out FROM, so they belong on
@@ -5538,8 +5637,8 @@ function presSlides(){
       title:'Early collection — today and this week' + (b.earlySource === 'tomorrow' ? ' (kesho)' : ''),
       rows: earlyRows.slice(0,12),
       cols:[col('officer','Officer'), col('teams','Teams','num'),
-        col('uncollected','Uncollected (today)','money'), col('pct','Coll % (today)','pct'),
-        col('wUncollected','Uncollected (week)','money'), col('wPct','Coll % (week)','pct')] });
+        col('uncollected','Uncollected (today)','money'), {key:'pct', label:'Coll % (today)', kind:'pct', target:'ecol'},
+        col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}] });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
        "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
@@ -5565,9 +5664,10 @@ function presSlides(){
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
       rows:(b.pmo||[]).slice(0,12),
       cols:[col('officer','PMO'), col('teams','Teams','num'),
-        col('pctJ3','J3','pct'), col('pctJ4','J4','pct'), col('pctJ5','J5','pct'),
-        col('pctAL','AL','pct'), col('pctIJ','IJ','pct'),
-        col('weekUncollected','Uncollected (week)','money'), col('weekPct','Coll % (week)','pct')] });
+        {key:'pctJ3', label:'J3', kind:'pct', target:'col'}, {key:'pctJ4', label:'J4', kind:'pct', target:'col'},
+        {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},
+        {key:'pctIJ', label:'IJ', kind:'pct', target:'col'},
+        col('weekUncollected','Uncollected (week)','money'), {key:'weekPct', label:'Coll % (week)', kind:'pct', target:'col'}] });
     /* "the callagents/customer service reports of assigned and unassigned at presentation i
         need it to always be sum of weekly from mon to sun"
        csWeek is already the Mon-Sun sum -- the title said neither which days nor that it was a
@@ -5634,9 +5734,9 @@ function presSlides(){
         col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
     slides.push({ id:'coltrend', kind:'table', title:'Weekly collection trend', rows:d.colTrend,
       cols:[col('weekday','Day'), col('expected','Expected','money'), col('collected','Collected','money'),
-        col('uncollected','Uncollected','money'), col('pct','Coll %','pct')] });
+        col('uncollected','Uncollected','money'), {key:'pct', label:'Coll %', kind:'pct', target:'col'}] });
     slides.push({ id:'fu', kind:'table', title:'Follow-up status — all defaulters', rows:b.fuStatus.slice(0,12),
-      cols:[col('status','Status'), col('customers','Customers','num'), col('pct','% of book','pct'),
+      cols:[col('status','Status'), col('customers','Customers','num'), {key:'pct', label:'% of book', kind:'pct', lowGood:true},
         col('arrears','Arrears','money')] });
     return slides;
 }
@@ -5729,12 +5829,15 @@ function presDraw(){
        still up. Same rule as everywhere else: counts, money and talk time add up; percentages
        are worked out again from the totals that made them, never summed. */
     var tot = autoTotals(s.rows, s.cols);
+    // The wall gets the same colours as the tab: green at target, red under the line.
+    var ctx = colourCtx_(s.cols, tot);
     /* Wrapped, so a board still wider than the screen scrolls inside its own box rather than
        pushing the whole slide sideways and taking the navigation arrows off the edge with it. */
     body = '<div class="pscroll"><table class="ptable"><thead><tr><th>#</th>' + s.cols.map(function(c){
         return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('') + '</tr></thead><tbody>'
       + s.rows.map(function(r,i){ return '<tr><td>'+(i+1)+'</td>'+s.cols.map(function(c){
-          return '<td class="'+(isNum(c)?'r':'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
+          var k = cellCls_(r, c, ctx);
+          return '<td class="'+(isNum(c)?'r':'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
       + (tot ? '<tr class="ptot"><td></td>' + s.cols.map(function(c,i){
           return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>' : '')
       + '</tbody></table></div>';

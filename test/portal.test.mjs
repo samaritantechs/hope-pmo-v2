@@ -2986,6 +2986,23 @@ test('the Orodha carries today beside the month for sales, early col, col and re
   assert.equal(kb.mAvg, 2.5, 'the average of the one month figure that was measured');
 });
 
+/* "at setting sales target I need to set early col, col and rec % targets so that those who
+   hit targets the % turns green". The targets travel on the hints call every screen makes at
+   sign-in; unset means null, so nothing turns green by accident. */
+test('the percentage targets ride on hints: numbers when set, null when not', async () => {
+  const t = tables();
+  t.hints = [];
+  const bare = await run('hints', {}, ADMIN, fakeDb(t));
+  assert.deepEqual(bare.targets, { ecol: null, col: null, rec: null });
+  t.settings = t.settings.concat([
+    { key: 'TARGET_EARLY_COL_PCT', value: '85' },
+    { key: 'TARGET_COL_PCT', value: '90%' },          // a typed percent sign is forgiven
+    { key: 'TARGET_REC_PCT', value: ' 30 ' },
+  ]);
+  const set = await run('hints', {}, GMO, fakeDb(t));   // any signed-in user, not only admins
+  assert.deepEqual(set.targets, { ecol: 85, col: 90, rec: 30 });
+});
+
 test('a month with no deck paired on any day has not measured recovery: null, not 0%', async () => {
   const t = tables();
   t.defaulter_snapshots = [];                                     // no decks at all this month
