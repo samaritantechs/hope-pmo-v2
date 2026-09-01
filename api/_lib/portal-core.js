@@ -7003,7 +7003,25 @@ async function hints(db, user) {
   }
   const everySec = await settingNum(db, 'HINT_EVERY_SEC', 240);
   const holdSec = await settingNum(db, 'HINT_HOLD_SEC', 7);
-  return { tips: { en, sw }, everySec, holdSec };
+  /* THE PERCENTAGE TARGETS RIDE ALONG. "at setting sales target I need to set early col, col
+     and rec % targets so that those who hit targets the % turns green" -- every table on
+     every screen colours itself by these, so they travel on the one call every screen
+     already makes at sign-in rather than on a request of their own. Null when unset: no
+     target means nothing turns green, never a target of zero that everybody hits. */
+  return { tips: { en, sw }, everySec, holdSec, targets: await pctTargets(db) };
+}
+/** The three percentage targets, as numbers or null. Settings keys named beside the sales
+    target on the Settings screen (SETTINGS_GROUPS in app.html). */
+export const PCT_TARGET_KEYS = { ecol: 'TARGET_EARLY_COL_PCT', col: 'TARGET_COL_PCT', rec: 'TARGET_REC_PCT' };
+async function pctTargets(db) {
+  const cfg = await settingsMany(db, Object.values(PCT_TARGET_KEYS));
+  const out = {};
+  for (const k in PCT_TARGET_KEYS) {
+    const raw = String(cfg.get(PCT_TARGET_KEYS[k], '')).replace(/[%\s,]/g, '');
+    const n = raw === '' ? NaN : Number(raw);
+    out[k] = isFinite(n) ? n : null;
+  }
+  return out;
 }
 
 /* =======================================================================================
