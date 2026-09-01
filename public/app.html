@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-a';
+var BUILD = '2026-09-01-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -830,7 +830,7 @@ function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   /* args is only ever passed by a [data-go] button that CARRIES something across the switch
      (the month-report chip carries the chosen week); everything else still starts clean. */
-  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain='';
+  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot='';
   /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
      mode left over from whatever was open before. Every request from here rides S.workspace to
      the server (see srv() below), which resolves it for real against this code's own tabs --
@@ -1665,12 +1665,15 @@ function bar(html){ return '<div class="bar">'+html+'</div>'; }
    open is remembered on the device, per section, because how somebody arranges their own
    Settings screen is their business and should survive a reload. Closed by default: the
    section that matters on an ordinary visit is the switch at the top, not a year of dates. */
-function fold_(key, label, sub, inner){
+function fold_(key, label, sub, inner, extra){
   var open = ''; try { open = localStorage.getItem('fold_' + key) === '1' ? ' open' : ''; } catch(e){}
   return '<details class="fold"' + open
     + ' ontoggle="try{localStorage.setItem(&quot;fold_' + key + '&quot;, this.open ? &quot;1&quot; : &quot;&quot;)}catch(e){}">'
     + '<summary><span class="arr"></span>' + esc(label)
-    + (sub ? ' <span class="fsub">' + esc(sub) + '</span>' : '') + '</summary>'
+    + (sub ? ' <span class="fsub">' + esc(sub) + '</span>' : '')
+    /* A control living ON the chip -- the commission Orodha's blinking month dot. Raw HTML
+       by design; callers pass markup they built themselves, never user text. */
+    + (extra || '') + '</summary>'
     + inner + '</details>';
 }
 /* The rising / steady / dropping mark on the performance strip -- movement against the
@@ -1739,7 +1742,7 @@ function paint(){
      the Settings sections use -- for the screens where the boards are the read and the raw
      log is the occasional dig. Cleared in go(), so no other tab inherits the fold. */
   $('#view').innerHTML = HEAD + (S.foldMain
-    ? fold_(S.foldMain, 'Orodha / List', rows.length + ' / ' + S.rows.length, main)
+    ? fold_(S.foldMain, S.foldLabel || 'Orodha / List', rows.length + ' / ' + S.rows.length, main, S.foldDot || '')
     : main);
   wireTable(rows, ONROW);
   wireTableSearch();
@@ -3953,8 +3956,13 @@ VIEWS.commission = function(){
     S.rows = d.week;
     S.cols = CMS_COLS;
     // "chip the last AIO" -- the combined all-in-one Orodha folds behind a chip; the
-    // independent boards above are the read, the AIO is the occasional export.
+    // independent boards above are the read, the AIO is the occasional export. It is
+    // ALWAYS the weekly progress, and its chip carries its own blinking dot to the
+    // month record -- "orodha should always be weekly progress with a blinking dot to
+    // show monthly".
     S.foldMain = 'cmlist';
+    S.foldLabel = 'Orodha / List — wiki hii / weekly progress';
+    S.foldDot = '<button class="syncdot" data-go="cmmonth" title=""></button>';
     ONROW = null;
     S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week)
       + ((d.pmo && d.pmo.length) ? ' · PMO Collection: TZS ' + money(d.pmoTotals.week) : '');
@@ -4003,6 +4011,7 @@ VIEWS.cmmonth = function(){
     S.rows = d.week || [];
     S.cols = CMS_COLS;
     S.foldMain = 'cmlist';
+    S.foldLabel = 'Orodha / List — mwezi / month to date';
     ONROW = null;
     S.foot = 'Mwezi / month to date (' + esc(d.from||'') + ' → ' + esc(d.to||'') + '): TZS '
       + money(d.totals.week)
@@ -5760,7 +5769,7 @@ function viewKey_(){
 }
 function snapTake_(){
   return { at:Date.now(), head:HEAD, onrow:ONROW, rows:S.rows, cols:S.cols, foot:S.foot,
-           foldMain:S.foldMain || '',
+           foldMain:S.foldMain || '', foldLabel:S.foldLabel || '', foldDot:S.foldDot || '',
            args:JSON.parse(JSON.stringify(S.args || {})),
            // The team/status dropdowns live inside the remembered HEAD, already ticked. Bring
            // the choice back with them, or you return to a tab showing "Team KONGOWE" in the
@@ -5770,6 +5779,7 @@ function snapTake_(){
 function snapPut_(s){
   HEAD = s.head; ONROW = s.onrow;
   S.rows = s.rows; S.cols = s.cols; S.foot = s.foot; S.foldMain = s.foldMain || '';
+  S.foldLabel = s.foldLabel || ''; S.foldDot = s.foldDot || '';
   S.args = JSON.parse(JSON.stringify(s.args || {}));
   S.filters = JSON.parse(JSON.stringify(s.filters || {}));
 }
