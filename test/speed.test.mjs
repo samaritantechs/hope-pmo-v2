@@ -132,7 +132,8 @@ const BUDGETS = [
      slices, two trips each. The dashboard fills at most two slices per load (the live week
      and one frozen week -- DASH_MONTH_SLICES), so a cold month costs it four aggregate trips
      plus the ledger write, and a warm month two plus the write; this fixture is a cold July
-     of four slices, measured at 29 / 28 trips. The rows move with it -- 5,000 -> 5,500 and
+     of four slices, measured at 29 / 28 trips -- 30 / 29 once the Orodha's Col column
+     read the collection officers off their access codes, one small read. The rows move with it -- 5,000 -> 5,500 and
      400 -> 900 -- because the ledger is ONE SHARED STORE, filled unscoped by whoever loads
      first so that an admin and a one-team officer read the same month: a slice is every
      team's per-day totals (~180 aggregate rows on this 40-team book), never a customer row,

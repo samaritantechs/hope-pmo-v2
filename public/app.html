@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-d';
+var BUILD = '2026-09-01-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2659,9 +2659,11 @@ VIEWS.dashboard = function(){
        month to date. Percentages only; the amounts live on the slide and the boards. */
     var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title }; };
     var ttl = function(c, t){ c.title = t; return c; };
-    S.cols = [col('team','Team'),
+    // "officers columns before team column" -- the people first, then the team they hold.
+    S.cols = [
       ttl(col('credit','C.Anl'), 'Credit analyst'), ttl(col('expected','E.Col'), 'Early collection officer'),
-      ttl(col('collection','Col'), 'Collection officer'), ttl(col('recovery','Rec'), 'Recovery officer'),
+      ttl(col('collection','Col'), 'Collection officer (PMO)'), ttl(col('recovery','Rec'), 'Recovery officer'),
+      col('team','Team'),
       pc('tSalesPct','T.Sales','Sales % leo / today, of the team’s daily target'),
       pc('mSalesPct','M.Sales','Sales % mwezi huu / month to date, of the monthly target'),
       pc('tEColPct','T.ECol','Early collection % leo / today (initial sheet)'),
