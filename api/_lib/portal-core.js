@@ -2720,7 +2720,11 @@ async function commission(db, user, args = {}, nowMs) {
   function colDay(dateKey, acc) {
     for (const r of colRows(dateKey)) {
       const paid = num(r.paid_n), over = num(r.over_n);
-      if (!paid && !over) continue;
+      /* An officer whose INITIAL book was expected on this day belongs on the combined
+         table even before a single PAID lands -- "aint seeing todays col expected people
+         on orodha". A zero row is a person working, not noise; only a row with nothing
+         expected AND nothing paid carries no one. */
+      if (!paid && !over && !num(r.expected_amt)) continue;
       const b = bucket(acc, officerOf(teamBy, r.team, 'expected'), blank);
       b.paid += paid; b.over += over;
       b.colComm += paid * cfg.paidTzs + over * cfg.overTzs;
