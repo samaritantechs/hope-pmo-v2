@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-b';
+var BUILD = '2026-09-01-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3744,7 +3744,10 @@ var CMS_COLS = [col('officer','Officer'), col('recovered','Recovered','money'),
   /* "orodha has no these people [PMO Collection]" -- the combined table carries all THREE
      schemes, PMO's pay in its own column. */
   col('pmoComm','PMO comm.','money'),
-  {key:'total', label:'Total', kind:'money', cls:function(r){ return r.total>0?'good':''; }}];
+  {key:'total', label:'Total', kind:'money', cls:function(r){ return r.total>0?'good':''; }},
+  /* "have a last colomn of their weekly performance percentage" -- scheme-aware: rec % for
+     recovery officers, initial col % for early, week % for PMO. Sortable like every header. */
+  col('pct','Wiki % / Weekly %','pct')];
 VIEWS.commission = function(){
   return srv('commission').then(function(d){
     var noRates = !d.paidTzs && !d.overTzs;

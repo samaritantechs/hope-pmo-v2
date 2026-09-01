@@ -2675,6 +2675,7 @@ async function commission(db, user, args = {}, nowMs) {
       : K(r && r.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER')
     : (String((r && r.disb_date) || '').slice(0, 4) || '*');
   recDiag.dropsSeen = 0;
+  const recBase = {}, recBaseSeen = new Set();
   for (let i = 0; ; i++) {
     const d = addDaysKey(mon, i);
     if (d > today || d > sun) break;
@@ -2695,11 +2696,18 @@ async function commission(db, user, args = {}, nowMs) {
       const wd = k.slice(0, k.indexOf('|'));
       if (!decksHere.has(wd + '|' + K(st.team))) continue;      // this book was not observed today
       const cur = nowArr.has(k) ? nowArr.get(k) : 0;            // gone from the deck = recovered
-      const drop = st.arr - cur;
+      const before = st.arr;
+      const drop = before - cur;
       st.arr = cur;
+      const who = officerOf(teamBy, st.team, 'recovery');
+      /* The rec % denominator: what each observed book held when the range FIRST saw it --
+         the amount that was there to recover. Captured once per book, drop or no drop. */
+      if (!recBaseSeen.has(k)) {
+        recBaseSeen.add(k);
+        recBase[K(who)] = (recBase[K(who)] || 0) + before;
+      }
       if (drop <= 0) continue;
       recDiag.dropsSeen++;
-      const who = officerOf(teamBy, st.team, 'recovery');
       const b = bucket(acc, who, blank);
       b.recovered += drop;
       b.recComm += drop * cmsRateFor(cfg, st.rate) / 100;
@@ -2916,6 +2924,25 @@ async function commission(db, user, args = {}, nowMs) {
      Collection]". PMO officers are folded into the display rows with their own column;
      the company totals are computed from the ORIGINAL rec+col rows plus the pmo sums, so
      nothing is counted twice. */
+  /* THE WEEKLY PERFORMANCE %, ON EVERY ORODHA ROW -- "using early col%, col% and rec%,
+     because we need to always see that too". Scheme-aware: a recovery officer's rec %
+     (the week's recovered against what their observed books held entering the range), an
+     early officer's initial col %, a PMO officer's week %. Precedence follows the money on
+     the row; an officer with no percentage keeps an honest null, never a zero. */
+  const recPctBy = {}, colPctBy = {}, pmoPctBy = {};
+  for (const [name, v] of Object.entries(weekAcc)) {
+    recPctBy[K(name)] = pctOf(v.recovered, recBase[K(name)] || 0);
+  }
+  for (const r of colBoard) colPctBy[K(r.officer)] = r.weekPct == null ? null : r.weekPct;
+  for (const r of pmo) pmoPctBy[K(r.officer)] = r.weekPct == null ? null : r.weekPct;
+  const pctFor = r => {
+    const k = K(r.officer);
+    if ((r.recovered || r.recComm) && recPctBy[k] != null) return recPctBy[k];
+    if ((r.paid || r.over || r.colComm) && colPctBy[k] != null) return colPctBy[k];
+    if (pmoPctBy[k] != null) return pmoPctBy[k];
+    if (recPctBy[k] != null) return recPctBy[k];
+    return colPctBy[k] == null ? null : colPctBy[k];
+  };
   const withPmo = (rows, amtOf) => {
     const out = rows.map(r => ({ ...r, pmoComm: 0 }));
     for (const r of pmo) {
@@ -2928,6 +2955,7 @@ async function commission(db, user, args = {}, nowMs) {
       hit.pmoComm += amt;
       hit.total += amt;
     }
+    for (const r of out) r.pct = pctFor(r);
     return out.sort((a, b) => b.total - a.total);
   };
 
