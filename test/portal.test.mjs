@@ -437,6 +437,15 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.equal(e2.weekN, 3, 'PAID+OVERPAID counted from the INITIAL sheet (2 paid + 1 over), not the today sheet\'s 1');
   assert.equal(e2.weekCommission, 2 * 1000 + 1 * 1500, 'paid at the flat rates off the initial counts');
 
+  /* "aint seeing todays col expected people on orodha" -- an officer whose initial book was
+     EXPECTED today sits on the combined table even before a single PAID lands. */
+  const t3 = tables();
+  t3.repayment_snapshots.push(E('885', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial'));
+  const d3 = await portalApi(dbWithRpc(t3), ADMIN, 'commission', {}, NOW);
+  const e3 = d3.week.find(r => r.officer === 'EARLY E');
+  assert.ok(e3, 'expected-but-unpaid still puts the officer on the combined table');
+  assert.equal(e3.colComm, 0, 'with zero pay until a PAID lands');
+
   /* THE MONTH RECORD behind the blinking dot: the same walk from the month's first day.
      NOW's week sits inside its own month here, so the month figures must carry at least the
      week's -- and the scope must say what range it covered. */
