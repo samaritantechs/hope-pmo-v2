@@ -567,7 +567,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-c';
+var BUILD = '2026-09-01-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1228,7 +1228,9 @@ function tableHtml(rows, cols, onRow){
   if (!rows.length) return '<div class="msg">Hakuna taarifa. / Nothing here yet.</div>';
   var head = '<th class="sn">S/N</th>' + cols.map(function(c){
     var arrow = S.sort===c.key ? (S.asc?' ↑':' ↓') : '';
-    return '<th class="'+(isNum(c)?'r':'')+'" data-sort="'+esc(c.key)+'">'+esc(c.label)+arrow+'</th>';
+    // An abbreviated header carries its full name as the tooltip (see the dashboard Orodha).
+    var tip = c.title ? ' title="'+esc(c.title)+'"' : '';
+    return '<th class="'+(isNum(c)?'r':'')+'" data-sort="'+esc(c.key)+'"'+tip+'>'+esc(c.label)+arrow+'</th>';
   }).join('');
   var body = rows.map(function(r, i){
     return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
@@ -1327,7 +1329,8 @@ function exportXls(){
     + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
     + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
     + '</head><body><table><thead><tr><th>S/N</th>'
-    + S.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')
+    // A sheet has room the screen does not: an abbreviated header exports under its full name.
+    + S.cols.map(function(c){ return '<th>'+esc(c.title || c.label)+'</th>'; }).join('')
     + '</tr></thead><tbody>'
     + rows.map(function(r,i){
         return '<tr>'+cell(i+1,true)+S.cols.map(function(c){
@@ -2644,16 +2647,40 @@ VIEWS.dashboard = function(){
     });
     HEAD += '<div id="boards"><div class="sk"></div></div>';
     S.rows = d.teamPerf || [];
-    S.cols = [col('branch','Branch'), col('team','Team'), col('recovery','Recovery'), col('gmo','GMO'),
-      col('initArrears','Init arrears','money'), col('curArrears','Current','money'),
-      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-      col('sales','Sales','money'), col('salesPct','Sales %','pct'),
-      col('collPctToday','Coll % today','pct'), col('collPctEarly','Coll % early','pct'),
-      col('defaulters','Defaulters','num'),
-      {key:'abnormal', label:'ABN', kind:'num', cls:function(r){ return r.abnormal>0?'bad':''; }}];
+    /* THE ORODHA: the team, its four officers, then TODAY beside the MONTH for each of the
+       four things a team is judged on, the two averages, and the two counts.
+         "remove the 1st branch column, have officers columns --> credit analyst, early col,
+          Col and rec. then performance columns of 1&2 (today sales%, monthly sales%), 3&4
+          (today early col%, monthly early col), 5&6 (today col%, monthly col%), 7&8 (today
+          rec%, monthly rec%) and gen avrg of all today & monthly. lastly no of def and abn"
+       SHORT HEADERS ON PURPOSE -- "so we must find a way headers don't kill column width
+       like T and M": seventeen columns have to fit one screen, so the header is the
+       abbreviation and the full name is the tooltip. T. = leo / today, M. = mwezi huu /
+       month to date. Percentages only; the amounts live on the slide and the boards. */
+    var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title }; };
+    var ttl = function(c, t){ c.title = t; return c; };
+    S.cols = [col('team','Team'),
+      ttl(col('credit','C.Anl'), 'Credit analyst'), ttl(col('expected','E.Col'), 'Early collection officer'),
+      ttl(col('collection','Col'), 'Collection officer'), ttl(col('recovery','Rec'), 'Recovery officer'),
+      pc('tSalesPct','T.Sales','Sales % leo / today, of the team’s daily target'),
+      pc('mSalesPct','M.Sales','Sales % mwezi huu / month to date, of the monthly target'),
+      pc('tEColPct','T.ECol','Early collection % leo / today (initial sheet)'),
+      pc('mEColPct','M.ECol','Early collection % mwezi huu / month to date'),
+      pc('tColPct','T.Col','Collection % leo / today (the week at the weekend)'),
+      pc('mColPct','M.Col','Collection % mwezi huu / month to date'),
+      pc('tRecPct','T.Rec','Recovery % leo / today (Mon ÷ Monday, Tue–Fri ÷ jana, weekend ÷ week)'),
+      pc('mRecPct','M.Rec','Recovery % mwezi huu / month to date'),
+      pc('tAvg','T.Avg','Wastani leo / average of today’s four'),
+      pc('mAvg','M.Avg','Wastani wa mwezi / average of the month’s four'),
+      ttl(col('defaulters','Def','num'), 'Number of defaulters'),
+      {key:'abnormal', label:'Abn', kind:'num', title:'Abnormal payments', cls:function(r){ return r.abnormal>0?'bad':''; }}];
     ONROW = null;
     S.foot = 'Teams: '+money(d.teamCount)+' · Recovered: TZS '+money(c.recovered)
-      + ' · Sales: TZS '+money(c.salesWeek)+' · Uncollected today: TZS '+money(c.uncollectedToday);
+      + ' · Sales: TZS '+money(c.salesWeek)+' · Uncollected today: TZS '+money(c.uncollectedToday)
+      + ' · T. = leo / today · M. = mwezi huu / month to date'
+      + (d.monthReady === false
+          ? ' · M. bado zinajaza / month columns still filling — fungua tena / open again shortly'
+          : '');
   });
 };
 

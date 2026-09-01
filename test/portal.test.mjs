@@ -2905,6 +2905,93 @@ test('the collection column means today on a weekday and the week at the weekend
   assert.equal(ks.expBasis, 2000);
 });
 
+/* THE ORODHA IN PAIRS -- "performance columns of 1&2 (today sales%, monthly sales%), 3&4
+   (today early col%, monthly early col), 5&6 (today col%, monthly col%), 7&8 (today rec%,
+   monthly rec%) and gen avrg of all today & monthly ... so that we always see today's
+   performance and monthly progress". Each team carries its four officers and eight
+   percentages plus the two averages; the month side comes off the same ledger the month
+   report reads and stands down (null, never 0%) where the totals functions are absent. */
+test('the Orodha carries today beside the month for sales, early col, col and rec, per team', async () => {
+  const t = tables();
+  t.teams[0].collection = 'COL C';
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  // Today: 100 approved -> 50% of the team's daily target (1000 / 5); the month: 100 of 4000.
+  t.loans = [{ id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 100, approved_date: TODAY }];
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0),                       // today: 1000 of 2000 collected
+    E('222', 'KONGOWE', 1000, 'PAID', 0),
+    E('111', 'KONGOWE', 400, 'UNPAID', 0, YEST),                  // jana: 400 uncollected
+    E('333', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),       // the early sheet: 50%
+    E('444', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial'),
+  ];
+  const db = dbWithRpc(t);
+  /* A COLD MONTH FILLS ACROSS LOADS. July has four week slices and the dashboard fills at
+     most two per load (the live week and one frozen week -- DASH_MONTH_SLICES), so its first
+     load on a ledger nobody has filled says "not yet" rather than spending the budget of the
+     most-opened screen on the whole month. The month report fills the rest under its own
+     budget, and the next dashboard load -- a minute on, past the answer cache -- reads the
+     whole month off the shared store. In production only ONE frozen week is ever missing
+     (the one that just ended), so the dashboard is whole on its first load of the week. */
+  const cold = await run('dashboardFull', {}, ADMIN, db);
+  assert.equal(cold.monthReady, false, 'two of four slices on the first load: still filling');
+  assert.equal(cold.teamPerf.find(r => r.team === 'KONGOWE').mColPct, null, 'and no figure is guessed');
+  await run('monthReport', {}, ADMIN, db);
+  const d = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW + 61000);
+  assert.equal(d.monthReady, true);
+  const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+  // The four officers, off the teams table.
+  assert.equal(k.credit, 'ANALYST A');
+  assert.equal(k.expected, 'EARLY E');
+  assert.equal(k.collection, 'COL C');
+  assert.equal(k.recovery, 'JUMA G');
+  // 1 & 2
+  assert.equal(k.tSalesPct, 50, '100 of a 200 daily target');
+  assert.equal(k.mSalesPct, 2.5, '100 of the 4000 month target');
+  // 3 & 4 -- the initial sheet, today and the month (one sheet so far this month).
+  assert.equal(k.tEColPct, 50);
+  assert.equal(k.mEColPct, 50);
+  // 5 & 6
+  assert.equal(k.tColPct, 50, 'today is a weekday: today\'s own sheet');
+  assert.equal(k.mColPct, 41.7, 'the month: 1000 collected of 2400 expected (jana expected 400 and collected none)');
+  // 7 & 8 -- Friday divides by jana's uncollected; the month by all its uncollected.
+  assert.equal(k.recBasis, 'yest');
+  assert.equal(k.recovered, 300, 'initial 1200 minus current 900, the shared decks');
+  assert.equal(k.tRecPct, 75, '300 of jana\'s 400');
+  assert.equal(k.mRecPct, 21.4, '300 of the month\'s 1400 uncollected');
+  // The averages, over what was measured.
+  assert.equal(k.tAvg, 56.3, '(50 + 50 + 50 + 75) / 4');
+  assert.equal(k.mAvg, 28.9, '(2.5 + 50 + 41.7 + 21.4) / 4');
+  // The cards still carry no month figure -- the directors' rule on amounts stands.
+  for (const key of ['salesMonth', 'colMonthPct', 'recMonthPct']) assert.equal(key in d.cards, false);
+  assert.equal('monthTarget' in d, false);
+
+  // Without the totals functions the month side stands down; today's side is unaffected.
+  const bare = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  assert.equal(bare.monthReady, false);
+  const kb = bare.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(kb.tSalesPct, 50);
+  assert.equal(kb.tColPct, 50);
+  assert.equal(kb.mColPct, null, 'null means "not yet", never 0%');
+  assert.equal(kb.mEColPct, null);
+  assert.equal(kb.mRecPct, null);
+  assert.equal(kb.mSalesPct, 2.5, 'sales read the loans table and always answer');
+  assert.equal(kb.mAvg, 2.5, 'the average of the one month figure that was measured');
+});
+
+test('a month with no deck paired on any day has not measured recovery: null, not 0%', async () => {
+  const t = tables();
+  t.defaulter_snapshots = [];                                     // no decks at all this month
+  t.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'UNPAID', 0)];
+  const db = dbWithRpc(t);
+  await run('monthReport', {}, ADMIN, db);                        // fills the shared ledger whole
+  const d = await run('dashboardFull', {}, ADMIN, db);
+  assert.equal(d.monthReady, true);
+  const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(k.mRecPct, null);
+  assert.equal(k.tRecPct, null);
+  assert.equal(k.mColPct, 0, 'collection WAS measured: 0 of 1000');
+});
+
 
 /* Eight tests of syncFollowupFromDeck stood here. The function they tested is gone -- it was
    dead in production (writeFollowupFromDeck + retireFollowupAfterDeck replaced it after the

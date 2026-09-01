@@ -5700,6 +5700,12 @@ const SETTINGS_TTL_MS = 20000;
 const settingsCache = new WeakMap();
 
 export function noteSettingsWritten(db) { settingsCache.delete(db); }
+/** One value this process just wrote, folded into the memo instead of dropping it -- for a
+    write made in the MIDDLE of a request that goes on to read other settings. */
+function settingsCachePut_(db, key, value) {
+  const hit = settingsCache.get(db);
+  if (hit) hit.by[String(key)] = value;
+}
 
 async function readSettings(db, nowMs) {
   const at = nowMs || Date.now();
@@ -5811,14 +5817,22 @@ export function asOfWeek(nowMs, weekOf) {
    deck (the day's own weekday, as everywhere), and the day's paired flag gates the sum --
    never a gap between two different populations. */
 const MONTH_LEDGER_PREFIX = 'MONTH_LEDGER_';
-function monthDayCell_(d, expRows, defRows) {
+/* The cell SHAPE, versioned. A stored ledger written by an older shape is thrown away and
+   refilled rather than read with holes in it -- v2 added the initial sheet (ie / ic) for the
+   dashboard's month-to-date early col %, and a cell without those would print an early
+   collection month of nothing under a real one. */
+const MONTH_LEDGER_V = 2;
+function monthDayCell_(d, expRows, defRows, iniRows) {
   const rows = pickLatestBatchRows(expRows.filter(r => String(r.snapshot_date) === d));
+  const early = pickLatestBatchRows((iniRows || []).filter(r => String(r.snapshot_date) === d));
   const dwd = WD7[isoWeekday(Date.parse(d + 'T12:00:00Z')) - 1];
   const ini = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
   const cur = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
   const t = {};
-  const cell = T => (t[T] = t[T] || { e: 0, c: 0, u: 0, ri: 0, rc: 0, p: 0 });
+  const cell = T => (t[T] = t[T] || { e: 0, c: 0, u: 0, ri: 0, rc: 0, p: 0, ie: 0, ic: 0 });
   for (const r of rows) { const s = cell(K(r.team)); s.e += num(r.expected_amt); s.c += num(r.collected_amt); s.u += num(r.uncollected_amt); }
+  // The day's INITIAL sheet -- what early collection was given and what it brought in.
+  for (const r of early) { const s = cell(K(r.team)); s.ie += num(r.expected_amt); s.ic += num(r.collected_amt); }
   const paired = (ini.length && cur.length) ? 1 : 0;
   for (const r of ini) cell(K(r.team)).ri += num(r.arrears_amt);
   for (const r of cur) cell(K(r.team)).rc += num(r.arrears_amt);
@@ -5826,15 +5840,17 @@ function monthDayCell_(d, expRows, defRows) {
   return t;
 }
 /* The ledger's day map itself -- every team's cells for every day of the month so far, or
-   null while the store is still filling. The month report is its one reader now (the
-   dashboard's month tiles were retired to the chip), but the store keeps its shape: one
-   shared unscoped ledger, summed per viewer by ledgerSum_ below. */
-async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs }) {
+   null while the store is still filling. Two readers: the month report (ledgerSum_, per
+   viewer) and the dashboard's Orodha (ledgerByTeam_, per team, percentages only). One
+   shared unscoped ledger either way, so whichever screen fills it first pays for both. */
+async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs, maxJobs = Infinity }) {
   const deadline = Date.now() + budgetMs;
   const key = MONTH_LEDGER_PREFIX + monthStart.slice(0, 7);
   let ledger = null;
   try { ledger = JSON.parse((await settingGet(db, key)) || 'null'); } catch (e) {}
-  if (!ledger || typeof ledger !== 'object' || !ledger.days) ledger = { days: {} };
+  if (!ledger || typeof ledger !== 'object' || !ledger.days || ledger.v !== MONTH_LEDGER_V) {
+    ledger = { v: MONTH_LEDGER_V, days: {} };
+  }
 
   const [sumE, sumF] = await Promise.all([
     monthSummaryRows(db, 'expected', { from: monthStart, to: today }),
@@ -5854,13 +5870,16 @@ async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs }) {
     if (missing) jobs.push([d, to0]);
   }
   let changed = false;
-  for (const [f, t0] of jobs) {
+  /* `maxJobs` is the dashboard's cap -- the live week plus ONE frozen slice per load -- so a
+     cold month costs the most-opened screen a bounded number of trips each time and still
+     fills within a few opens; the month report leaves it unlimited under its own budget. */
+  for (const [f, t0] of jobs.slice(0, maxJobs)) {
     if (Date.now() > deadline) break;         // stored progress resumes on the next load
     const slice = await totalsAggSlice(db, { from: f, to: t0 });
     if (!slice) return null;                  // the totals functions are not installed here
     const expAll = slice.exp.concat(sumE), defAll = slice.def.concat(sumF);
     for (let x = f; x <= t0; x = addDaysKey(x, 1)) {
-      ledger.days[x] = monthDayCell_(x, expAll, defAll);
+      ledger.days[x] = monthDayCell_(x, expAll, defAll, slice.ini);
       changed = true;
     }
   }
@@ -5868,6 +5887,9 @@ async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs }) {
     // Best-effort: a lost write only means the next load recomputes what this one just did.
     await runQuery(() => db.from('settings')
       .upsert({ key, value: JSON.stringify(ledger) }, { onConflict: 'key' }));
+    // So the next load reads the progress just stored rather than a memo from before it --
+    // folded into the memo, not dropped from it, so this request's later setting reads stay free.
+    settingsCachePut_(db, key, JSON.stringify(ledger));
   }
   for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) if (!ledger.days[d]) return null;
   return ledger.days;
@@ -5886,15 +5908,35 @@ function ledgerSum_(days, user, from, to) {
   }
   return { colE, colC, recU, recR };
 }
-/* ---- THE MONTH REPORT: the ONLY place the month is shown. ----
+/** The same stretch of ledger days, kept PER TEAM -- what the dashboard's Orodha reads its
+    month-to-date columns from. One entry per team key: the month's expected / collected /
+    uncollected, the initial sheet's expected / collected, the recovered sum over the days
+    that were paired, and how many such days there were (none means recovery was not
+    measured this month -- null on the screen, never 0%). */
+function ledgerByTeam_(days, from, to) {
+  const out = {};
+  for (let d = from; d <= to; d = addDaysKey(d, 1)) {
+    const cellMap = days[d] || {};
+    for (const T in cellMap) {
+      const s = cellMap[T];
+      const m = out[T] = out[T] || { e: 0, c: 0, u: 0, ie: 0, ic: 0, rec: 0, pairedDays: 0 };
+      m.e += num(s.e); m.c += num(s.c); m.u += num(s.u); m.ie += num(s.ie); m.ic += num(s.ic);
+      if (s.p) { m.rec += num(s.ri) - num(s.rc); m.pairedDays += 1; }
+    }
+  }
+  return out;
+}
+/* ---- THE MONTH REPORT: the ONLY place the month's AMOUNTS are shown. ----
    "i wish like a chip to open a monthly report that shows the 4 weeks summaries progress
     and summary"
 
    And then, one round later: "the directors hate exposing data so keep monthly in the chip"
-   -- so the dashboard's three month tiles were retired and this report is now the ONLY
-   screen that says what the month adds up to and how it got there: each week of the
+   -- so the dashboard's three month tiles were retired and this report is the ONLY screen
+   that says what the month adds up to in shillings and how it got there: each week of the
    CALENDAR month on its own row, the movement against the week before, and the month's
-   total and per-week average under them. The dashboard pays nothing for the month.
+   total and per-week average under them. (The dashboard's Orodha later took the month back
+   as PERCENTAGES per team beside today's -- "so that we always see today's performance and
+   monthly progress" -- off the same ledger; no month total lives on that screen.)
 
    The weeks are the ISO weeks the rest of the system lives by, CLIPPED to the month --
    "some months happen to start or end in the same month with the others" -- so a month that
@@ -6038,6 +6080,15 @@ async function dashboardFull(db, user, args, nowMs) {
   return cachedAnswer(db, 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
     user, nowMs, () => dashboardFullCompute_(db, user, args, nowMs));
 }
+/* How long the dashboard will spend on the month ledger per load -- deliberately well under
+   the month report's 8s. The live week's slice is one call and always fits; a cold month's
+   earlier weeks fill one or two slices per load and are remembered, so the columns arrive
+   within a few opens and the screen never waits on them. */
+const DASH_MONTH_BUDGET_MS = 3000;
+/* And at most this many ledger slices per load: the live week and one frozen week. Two
+   aggregate trips each, so a cold month costs a dashboard load four trips and a warm one two
+   -- see test/speed.test.mjs, where that cost is written down. */
+const DASH_MONTH_SLICES = 2;
 async function dashboardFullCompute_(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   nowMs = asOf.ms;
@@ -6070,13 +6121,15 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const floors = [monthStart0, mon, prevMon];
   const loanFloor = floors.sort()[0];
   const abnWin = abnormalWindow(nowMs, args);
-  /* THE MONTH IS NOT READ HERE ANY MORE. It took the dashboard down twice (a month of raw
-     customer rows, then the month-wide aggregate itself), and then the directors' answer was
-     simpler than any budget: month figures are shown only when somebody OPENS the month
-     report -- "the directors hate exposing data so keep monthly in the chip". So the ledger
-     work lives entirely in monthReport, the dashboard pays nothing for the month on any
-     load, and the loans read below keeps its month window only because the TEAM BOARD is
-     ranked on monthly sales.
+  /* THE MONTH, ON THIS SCREEN, IS PERCENTAGES PER TEAM AND NOTHING ELSE. It took the
+     dashboard down twice (a month of raw customer rows, then the month-wide aggregate
+     itself), and the directors' rule after that kept every month TOTAL in the chip -- "the
+     directors hate exposing data so keep monthly in the chip". The cards below still carry
+     no month figure. What the Orodha now carries beside each team's TODAY percentages is
+     the same team's MONTH-TO-DATE percentages -- "so that we always see today's performance
+     and monthly progress" -- read from the month LEDGER further down under a short budget:
+     the week-sized, remembered shape that has held on the live instance, never the raw
+     month. While the ledger is still filling those columns say null, never a wrong number.
 
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
@@ -6099,7 +6152,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        screen does not change; the amount of table that has to move to produce it does. */
     fetchAll(() => {
       let q = db.from('abnormal_payments').select('team, paid, transaction_id');
-      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      // Both spellings, as every other team filter sends -- see teamMatchList for Tunduru.
+      if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
       return q;
     }),
     readTeamsAll(db),
@@ -6119,6 +6173,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       .gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+  /* The month ledger, for the Orodha's M. columns -- AFTER the wave above, never inside it,
+     and under a budget a third of the month report's: on a cold month the ledger fills
+     across loads (the report or this screen, whichever opens first) and the columns stand
+     down meanwhile. A failure costs the M. columns, never the dashboard. */
+  const ledgerDays = await monthLedgerDays_(db, { monthStart: monthStart0, today, mon,
+    budgetMs: DASH_MONTH_BUDGET_MS, maxJobs: DASH_MONTH_SLICES })
+    .catch(() => null);
+  const monthByTeam = ledgerDays ? ledgerByTeam_(ledgerDays, monthStart0, today) : null;
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
@@ -6297,7 +6359,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const slot = t => {
     const k = t || '(no team)';
     if (!T[k]) T[k] = { team: k, branch: null, recovery: null, gmo: null, manager: null, opm: null, bike: null,
-      initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesMonth: 0, salesPct: null,
+      /* The three the Orodha names beside the recovery officer -- "officers columns -->
+         credit analyst, early col, Col and rec" -- straight off the teams table. */
+      credit: null, expected: null, collection: null,
+      initArrears: 0, curArrears: 0, recovered: 0, sales: 0, salesToday: 0, salesMonth: 0, salesPct: null,
       expToday: 0, colToday: 0, collPctToday: null, expEarly: 0, colEarly: 0, collPctEarly: null,
       expWeek: 0, colWeek: 0, collPctWeek: null,
       uncolMon: 0, uncolYest: 0, uncolWeek: 0,
@@ -6308,6 +6373,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const s = slot(t.team);
     s.recovery = t.recovery || null; s.gmo = t.gmo || null; s.manager = t.manager || null;
     s.opm = t.opm || null; s.bike = t.bike || null; s.branch = t.branch || null;
+    s.credit = t.credit || null; s.expected = t.expected || null; s.collection = t.collection || null;
   }
   for (const r of iniToday) slot(r.team).initArrears += num(r.arrears_amt);
   for (const r of curToday) { const s = slot(r.team); s.curArrears += num(r.arrears_amt); s.defaulters += num(r.customers); }
@@ -6351,11 +6417,21 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const amt = num(l.principal_amt) || num(l.loan_amt);
     if (d >= mon && d <= sun) slot(l.team).sales += amt;
     if (d >= monthStart && d <= today) slot(l.team).salesMonth += amt;
+    if (d === today) slot(l.team).salesToday += amt;
   }
   for (const a of myAbn) slot(a.team).abnormal += 1;
 
   const weekend = isoWeekday(nowMs) >= 6;
   const monthTarget = weeklyTarget * 4;
+  // One team's share of a day: the weekly target is per team, over the five collection days.
+  const dailyTargetTeam = weeklyTarget / 5;
+  /* Which recovery denominator TODAY's rule picks -- Monday by Monday, Tuesday to Friday by
+     yesterday, the weekend by the week -- the same rule the slide states beside the figure. */
+  const recBasis = weekend ? 'week' : (wdToday === 'MON' ? 'mon' : 'yest');
+  const meanOf_ = vals => {
+    const meas = vals.filter(v => v != null);
+    return meas.length ? Math.round((meas.reduce((s, v) => s + v, 0) / meas.length) * 10) / 10 : null;
+  };
   const teams = Object.values(T).map(s => {
     const recovered = pairedToday ? s.initArrears - s.curArrears : 0;
     const pctOf_ = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
@@ -6364,10 +6440,30 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        and the week at the weekend -- the same rule the recovery denominator follows, so the
        two columns on the slide are never measuring different stretches of time. */
     const collPct = weekend ? pctOf_(s.colWeek, s.expWeek) : pctOf_(s.colToday, s.expToday);
+    const collPctEarly = pctOf_(s.colEarly, s.expEarly);
+    const recPctMon = pctOf_(recovered, s.uncolMon);
+    const recPctYest = pctOf_(recovered, s.uncolYest);
+    const recPctWeek = pctOf_(recovered, s.uncolWeek);
+    /* ---- THE ORODHA'S EIGHT, IN PAIRS: today beside the month, for each of the four things
+       a team is judged on -- "1&2 (today sales%, monthly sales%), 3&4 (today early col%,
+       monthly early col), 5&6 (today col%, monthly col%), 7&8 (today rec%, monthly rec%)
+       and gen avrg of all today & monthly". Percentages only; the amounts stay where they
+       were. The T. side is what this screen already knew; the M. side is the team's own
+       cells of the month ledger, null while it is still filling. */
+    const m = monthByTeam ? (monthByTeam[K(s.team)] || null) : null;
+    const tSalesPct = pctOf_(s.salesToday, dailyTargetTeam);
+    const tEColPct = collPctEarly;
+    const tColPct = collPct;
+    const tRecPct = recBasis === 'week' ? recPctWeek : recBasis === 'mon' ? recPctMon : recPctYest;
+    const mSalesPct = salesPct;
+    const mEColPct = m ? pctOf_(m.ic, m.ie) : null;
+    const mColPct = m ? pctOf_(m.c, m.e) : null;
+    // A month with no deck paired on any day has not measured recovery -- null, never 0%.
+    const mRecPct = (m && m.pairedDays > 0) ? pctOf_(m.rec, m.u) : null;
     return {
       ...s, recovered, salesPct,
       collPctToday: pctOf_(s.colToday, s.expToday),
-      collPctEarly: pctOf_(s.colEarly, s.expEarly),
+      collPctEarly,
       collPctWeek: pctOf_(s.colWeek, s.expWeek),
       uncolToday: Math.max(0, s.expToday - s.colToday),
       basis: weekend ? 'week' : 'today',
@@ -6378,9 +6474,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       colBasis: weekend ? s.colWeek : s.colToday,
       expBasis: weekend ? s.expWeek : s.expToday,
       collPct,
-      recPctMon: pctOf_(recovered, s.uncolMon),
-      recPctYest: pctOf_(recovered, s.uncolYest),
-      recPctWeek: pctOf_(recovered, s.uncolWeek),
+      recPctMon, recPctYest, recPctWeek,
+      recBasis,
+      tSalesPct, mSalesPct, tEColPct, mEColPct, tColPct, mColPct, tRecPct, mRecPct,
+      /* The general average, over the percentages that were MEASURED -- the strip's rule,
+         not the ranking's: a team whose early sheet has not been uploaded is not a team at
+         0% early collection. */
+      tAvg: meanOf_([tSalesPct, tEColPct, tColPct, tRecPct]),
+      mAvg: meanOf_([mSalesPct, mEColPct, mColPct, mRecPct]),
       /* THE RANKING: sales and collection carry equal weight, because a team that sells well
          and collects badly is not a good team and neither is the reverse. A missing percentage
          counts as nothing rather than being skipped -- skipping it would let a team with no
@@ -6423,6 +6524,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     appsTrend, salesTrend, colTrend, recTrend, funnel,
     teamPerf: teams,
     paired: pairedToday,
+    /* Whether the M. columns on the Orodha are real this load, or still filling. The screen
+       says which, so a column of dashes is read as "not yet" and not as "nothing happened". */
+    monthReady: !!monthByTeam,
   };
 }
 /** How many applications sit at each of the eight stages, RIGHT NOW -- the pipeline funnel.

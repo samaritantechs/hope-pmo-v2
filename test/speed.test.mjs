@@ -126,8 +126,20 @@ const BUDGETS = [
      needs LAST week. Week-sized aggregate calls are the question shape this database answers
      fastest; the row budgets stay at their week-only values because a totals week is a
      handful of per-team-per-day rows, never customers. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  24,  5000],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  24,   400],
+  /* 24 -> 30 for the ORODHA'S MONTH COLUMNS -- "so that we always see today's performance
+     and monthly progress". The month came back to the dashboard as percentages per team, off
+     the same remembered ledger the month report fills: one settings row, week-sized aggregate
+     slices, two trips each. The dashboard fills at most two slices per load (the live week
+     and one frozen week -- DASH_MONTH_SLICES), so a cold month costs it four aggregate trips
+     plus the ledger write, and a warm month two plus the write; this fixture is a cold July
+     of four slices, measured at 29 / 28 trips. The rows move with it -- 5,000 -> 5,500 and
+     400 -> 900 -- because the ledger is ONE SHARED STORE, filled unscoped by whoever loads
+     first so that an admin and a one-team officer read the same month: a slice is every
+     team's per-day totals (~180 aggregate rows on this 40-team book), never a customer row,
+     and the officer's screen pays for the company's slice the same as the admin's does.
+     Measured at 5,072 / 753. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  30,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  30,   900],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
