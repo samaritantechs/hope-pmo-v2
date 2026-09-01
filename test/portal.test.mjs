@@ -4971,6 +4971,13 @@ test('a collection officer whose code says COLLECTION now reaches the PMO board'
   assert.ok(d.pmoDiag.withRole >= 1, 'the code is recognised as carrying the collection role');
   assert.ok(d.pmo.some(r => String(r.officer).toUpperCase() === 'CATHERINE'),
     'and she appears on the PMO board that pays her');
+  /* "orodha has no these people" -- a PMO officer sits on the combined table too, with
+     their pay in its own column, agreeing with the board it came from. */
+  const cat = d.week.find(r => String(r.officer).toUpperCase() === 'CATHERINE');
+  assert.ok(cat, 'she sits on the combined Orodha as well');
+  const board = d.pmo.find(r => String(r.officer).toUpperCase() === 'CATHERINE');
+  assert.equal(cat.pmoComm, Math.round((board.weekCommission || 0) + (board.bonus || 0)),
+    'the Orodha carries the same pay the PMO board computed');
 });
 
 /* =====================================================================================

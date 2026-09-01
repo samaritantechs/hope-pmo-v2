@@ -2912,6 +2912,25 @@ async function commission(db, user, args = {}, nowMs) {
   const pmoDay = pmo.reduce((s, r) => s + num(r.commission), 0);
   const pmoWeek = pmo.reduce((s, r) => s + num(r.weekCommission) + num(r.bonus), 0);
 
+  /* THE COMBINED ORODHA CARRIES ALL THREE SCHEMES -- "orodha has no these people [PMO
+     Collection]". PMO officers are folded into the display rows with their own column;
+     the company totals are computed from the ORIGINAL rec+col rows plus the pmo sums, so
+     nothing is counted twice. */
+  const withPmo = (rows, amtOf) => {
+    const out = rows.map(r => ({ ...r, pmoComm: 0 }));
+    for (const r of pmo) {
+      const amt = Math.round(num(amtOf(r)));
+      let hit = out.find(x => K(x.officer) === K(r.officer));
+      if (!hit) {
+        hit = { officer: r.officer, recovered: 0, recComm: 0, paid: 0, over: 0, colComm: 0, pmoComm: 0, total: 0 };
+        out.push(hit);
+      }
+      hit.pmoComm += amt;
+      hit.total += amt;
+    }
+    return out.sort((a, b) => b.total - a.total);
+  };
+
   return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
     scope, from: mon, to: scope === 'month' ? today : sun,
     recBoard, colBoard, recDiag, recBands,
@@ -2926,7 +2945,8 @@ async function commission(db, user, args = {}, nowMs) {
       week: pmo.reduce((s, r) => s + r.weekCommission + r.bonus, 0) },
     paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText, isAdmin, me: user.name,
     weekday: currentWeekday(nowMs), date: today, weekOf: mon,
-    day, week,
+    day: withPmo(day, r => r.commission),
+    week: withPmo(week, r => num(r.weekCommission) + num(r.bonus)),
     /* THE COMPANY TOTAL HAD A WHOLE BOARD MISSING FROM IT.
 
          "the total collected commissions aint computing for several roles"
