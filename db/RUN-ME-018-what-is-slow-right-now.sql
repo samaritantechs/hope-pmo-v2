@@ -11,6 +11,10 @@
 -- yours to decide on.
 --
 -- Sections 1-3 are the ones that matter on a bad morning. Start there.
+--
+-- RUN ONE SECTION AT A TIME: select the section's text and press Run. The SQL editor shows
+-- only the LAST statement's result of whatever was selected, and stops at the first error --
+-- so running the whole file at once shows one table and hides the rest.
 -- =====================================================================================
 
 
@@ -68,8 +72,10 @@ where relname in ('repayment_snapshots', 'defaulter_snapshots', 'received_paymen
                   'followup_status', 'followup_comments', 'call_logs', 'settings', 'snapshot_summaries')
 order by n_dead_tup desc;
 
-select pid, now() - query_start as age, phase, heap_blks_scanned, heap_blks_total
-from pg_stat_progress_vacuum;
+-- (the progress view carries no start time of its own; the age comes from pg_stat_activity)
+select v.pid, now() - a.query_start as age, v.phase, v.heap_blks_scanned, v.heap_blks_total
+from pg_stat_progress_vacuum v
+left join pg_stat_activity a on a.pid = v.pid;
 
 
 -- 5. THE INDEXES THE DASHBOARD'S READS DEPEND ON.
