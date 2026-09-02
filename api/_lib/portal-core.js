@@ -6162,7 +6162,12 @@ async function dashboardFull(db, user, args, nowMs) {
    reads the dashboard makes, one after another, each timed on its own and each cut off at a
    few seconds, so the answer is a list with the slow one in red rather than a shrug. It is
    read-only, changes nothing, and is only ever called by a failure. */
-const PROBE_STEP_MS = 6000, PROBE_TOTAL_MS = 36000;
+/* Four seconds a read and thirty in all, so the worst morning -- every read past its cap --
+   still hands back its list inside the client's 45 seconds. The first probe did not: at six
+   and thirty-six it could run to forty-two, and "the diagnosis itself did not answer" is the
+   one outcome a diagnosis must never have. A baseline ping goes first, so the list also says
+   whether the database is slow at ALL or only on the heavy reads. */
+const PROBE_STEP_MS = 4000, PROBE_TOTAL_MS = 30000;
 async function dashboardProbe(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   nowMs = asOf.ms;
@@ -6185,6 +6190,8 @@ async function dashboardProbe(db, user, args, nowMs) {
     else if (r.e) steps.push({ name, ms, rows: null, error: String((r.e && r.e.message) || r.e).slice(0, 160) });
     else steps.push({ name, ms, rows: Array.isArray(r.v) ? r.v.length : (r.v && Array.isArray(r.v.rows)) ? r.v.rows.length : null });
   };
+  await probe('ping · usomaji mdogo kabisa / the smallest read there is',
+    () => db.from('settings').select('key', { count: 'exact', head: true }).then(r => (r && r.error ? Promise.reject(new Error(r.error.message)) : [])));
   await probe('settings', () => readSettings(db));
   await probe('teams', () => readTeamsAll(db));
   await probe('expected totals · wiki hii / this week', () => expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }));
