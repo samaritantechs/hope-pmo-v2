@@ -3003,6 +3003,33 @@ test('the percentage targets ride on hints: numbers when set, null when not', as
   assert.deepEqual(set.targets, { ecol: 85, col: 90, rec: 30 });
 });
 
+/* "dashboard [Imeshindikana / Could not load. Seva haijibu ndani ya sekunde 45]" -- the ledger
+   slice in flight ran as long as the database took, and the whole screen waited on it. The
+   dashboard now races the ledger against its budget: a stalled slice costs the M. columns,
+   never the dashboard. */
+test('a stalled ledger slice cannot hold the dashboard past its budget', async () => {
+  const t = tables();
+  t.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'PAID', 0), E('222', 'KONGOWE', 1000, 'UNPAID', 0)];
+  const slow = { ...SNAPSHOT_TOTALS_RPC,
+    // Only the ledger asks for every type at once; the dashboard's own week reads say 'today'.
+    async expected_snapshot_totals(store, a) {
+      if (a.p_type == null) await new Promise(r => setTimeout(r, 1200));
+      return SNAPSHOT_TOTALS_RPC.expected_snapshot_totals(store, a);
+    } };
+  // The race allows the budget plus half a second; a 20ms budget answers at ~520ms.
+  process.env.DASH_MONTH_BUDGET_MS = '20';
+  try {
+    const t0 = Date.now();
+    const d = await run('dashboardFull', {}, ADMIN, fakeDb(t, { rpc: slow }));
+    const took = Date.now() - t0;
+    assert.ok(took < 1000, `the dashboard answered in ${took}ms, before the stalled slice did`);
+    assert.equal(d.monthReady, false, 'the M. columns stand down');
+    const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+    assert.equal(k.tColPct, 50, 'and today\'s side is whole');
+    assert.equal(k.mColPct, null);
+  } finally { delete process.env.DASH_MONTH_BUDGET_MS; }
+});
+
 test('a month with no deck paired on any day has not measured recovery: null, not 0%', async () => {
   const t = tables();
   t.defaulter_snapshots = [];                                     // no decks at all this month

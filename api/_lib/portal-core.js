@@ -6085,10 +6085,29 @@ async function dashboardFull(db, user, args, nowMs) {
    earlier weeks fill one or two slices per load and are remembered, so the columns arrive
    within a few opens and the screen never waits on them. */
 const DASH_MONTH_BUDGET_MS = 3000;
+// Overridable so a test can prove the race below with a stalled fake in milliseconds.
+const dashMonthBudget_ = () => Number(process.env.DASH_MONTH_BUDGET_MS) || DASH_MONTH_BUDGET_MS;
 /* And at most this many ledger slices per load: the live week and one frozen week. Two
    aggregate trips each, so a cold month costs a dashboard load four trips and a warm one two
    -- see test/speed.test.mjs, where that cost is written down. */
 const DASH_MONTH_SLICES = 2;
+/* THE MONTH MAY NOT HOLD THE DASHBOARD.
+
+     "dashboard [Imeshindikana / Could not load. Seva haijibu ndani ya sekunde 45 / the
+      server did not answer within 45 seconds]"
+
+   The ledger's budget was checked only BETWEEN slices; the slice already in flight ran as
+   long as the database took, and on an upload morning that was long enough to put the
+   most-opened screen past the client's 45 seconds. So the dashboard now RACES the ledger
+   against its budget: whatever has not answered by then is answered null -- the M. columns
+   say "still filling" and the rest of the screen is drawn on time -- while the ledger call
+   runs on and stores whatever progress it makes for the next load. The timer never keeps
+   the process alive on its own. */
+function ledgerWithin_(p, ms) {
+  let t = null;
+  const late = new Promise(res => { t = setTimeout(() => res(null), ms); if (t.unref) t.unref(); });
+  return Promise.race([p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return null; }), late]);
+}
 async function dashboardFullCompute_(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   nowMs = asOf.ms;
@@ -6185,9 +6204,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      and under a budget a third of the month report's: on a cold month the ledger fills
      across loads (the report or this screen, whichever opens first) and the columns stand
      down meanwhile. A failure costs the M. columns, never the dashboard. */
-  const ledgerDays = await monthLedgerDays_(db, { monthStart: monthStart0, today, mon,
-    budgetMs: DASH_MONTH_BUDGET_MS, maxJobs: DASH_MONTH_SLICES })
-    .catch(() => null);
+  const monthBudget = dashMonthBudget_();
+  const ledgerDays = await ledgerWithin_(
+    monthLedgerDays_(db, { monthStart: monthStart0, today, mon, budgetMs: monthBudget, maxJobs: DASH_MONTH_SLICES }),
+    monthBudget + 500);
   const monthByTeam = ledgerDays ? ledgerByTeam_(ledgerDays, monthStart0, today) : null;
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
