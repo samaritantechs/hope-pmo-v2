@@ -2847,7 +2847,11 @@ test('the month report cuts the month into clipped weeks and agrees with the car
     { id: 'm2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
     { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
     // An application brought in this month, not yet a sale -- the loan-apps card counts it.
-    { id: 'a1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 50, created_at: TODAY + 'T08:00:00Z' },
+    { id: 'a1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 50, created_at: TODAY + 'T08:00:00Z', created_by: 'CS1', track_no: '1' },
+    // Brought in this month by the same agent and moved on past assignment: still this month's app.
+    { id: 'a2', team: 'KONGOWE', stage: 'pending_approval', requested_amt: 70, created_at: TODAY + 'T09:00:00Z', created_by: 'CS1', track_no: '1' },
+    // A repeat customer (TRACK# 2) is not a new win, as on the dashboard board.
+    { id: 'a3', team: 'KONGOWE', stage: 'unassigned', requested_amt: 90, created_at: TODAY + 'T09:30:00Z', created_by: 'CS1', track_no: '2' },
   ];
   t.repayment_snapshots = [
     E('111', 'KONGOWE', 1000, 'UNPAID', 0),
@@ -2919,8 +2923,18 @@ test('the month report cuts the month into clipped weeks and agrees with the car
   assert.ok(d.leaders.every((r, i) => i === 0 || (d.leaders[i - 1].avgPct ?? -1) >= (r.avgPct ?? -1)), 'best first');
   assert.equal(d.leaders[0].sn, 1);
   // The cards: applications brought in this month, and the company's early col.
-  assert.equal(d.cards.apps, 1, 'one application created this month');
+  assert.equal(d.cards.apps, 3, 'three applications created this month');
   assert.equal(d.cards.ecolPct, null);
+  /* "monthly loan application report before the all leaders chip": by agent, TRACK# 1 only,
+     by the day the report was brought in, whatever stage each has reached since. */
+  const cs = d.agents.rows.find(r => r.id === 'CS1');
+  assert.equal(cs.names, 'NEEMA CS');
+  assert.equal(cs.total, 2, 'a1 and a2; the TRACK# 2 repeat is not a new win');
+  assert.equal(cs.unassigned, 1);
+  assert.equal(cs.assigned, 0);
+  assert.equal(cs.advanced, 1, 'a2 has moved on since -- still this month\'s application');
+  assert.equal(cs.amount, 120, 'requested 50 + 70');
+  assert.equal(d.agents.totals.total, 2);
 
   // Without the totals function: sales still exact (they read loans, not snapshots), and the
   // ledger columns stand down rather than print a month of zeros.

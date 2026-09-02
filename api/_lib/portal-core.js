@@ -5979,7 +5979,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   // the screen -- and the dashboard no longer pays for any of this on its own loads.
   const days = await monthLedgerDays_(db, { monthStart, today, mon: liveMon, budgetMs: 8000 })
     .catch(() => null);
-  const [loansRaw, teamRows, appsRaw, codeRows, pmoCfg] = await Promise.all([
+  const [loansRaw, teamRows, appsRaw, codeRows, pmoCfg, agentRows] = await Promise.all([
     fetchAll(() => onTeams(db.from('loans')
       .select('team, stage, principal_amt, loan_amt, approved_date')
       .gte('approved_date', monthStart).lte('approved_date', today), user.teams)),
@@ -5987,17 +5987,45 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
     /* The month's APPLICATIONS -- what the call agents brought in -- by the day the admin
        chose for the report, created_at where the stamp predates that column. */
     fetchAll(() => onTeams(db.from('loans')
-      .select('team, stage, created_at, upload_date')
+      .select('team, stage, created_at, upload_date, created_by, track_no, requested_amt, principal_amt')
       .or(`created_at.gte.${monthStart},upload_date.gte.${monthStart}`), user.teams)),
     // The collection officers live on their access codes, as on the Orodha.
     fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY]),
+    fetchAll(() => db.from('call_agents').select('user_id, names')),
   ]);
   const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
-  const apps = scoped(user, appsRaw).filter(l => {
+  const appRows = scoped(user, appsRaw).filter(l => {
     const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
     return d0 >= monthStart && d0 <= today;
-  }).length;
+  });
+  const apps = appRows.length;
+  /* ---- THE MONTH'S LOAN APPLICATIONS, BY AGENT.
+       "monthly loan application report before the all leaders chip"
+     The dashboard's board counts what is IN the pipeline now; a month is a history question,
+     so this counts everything brought in this month whatever stage it has reached since, and
+     says how many have moved on. TRACK# 1 only, as on the dashboard: a repeat customer is not
+     a new win. */
+  const agentNames = {};
+  for (const a of agentRows) agentNames[K(a.user_id)] = a.names || '';
+  const agentBy = {};
+  for (const l of appRows) {
+    if (!isTrack1(l)) continue;
+    const id = String(l.created_by || '').trim() || '—';
+    const b = bucket(agentBy, K(id), { id, unassigned: 0, assigned: 0, advanced: 0, amount: 0 });
+    if (l.stage === 'unassigned') b.unassigned += 1;
+    else if (l.stage === 'assigned') b.assigned += 1;
+    else b.advanced += 1;
+    b.amount += num(l.requested_amt) || num(l.principal_amt);
+  }
+  const agentRowsOut = Object.values(agentBy).map(b => ({ id: b.id, names: agentNames[b.key] || '',
+    unassigned: b.unassigned, assigned: b.assigned, advanced: b.advanced,
+    total: b.unassigned + b.assigned + b.advanced, amount: b.amount }))
+    .sort((a, b) => b.total - a.total || a.id.localeCompare(b.id));
+  const agentSum = f => agentRowsOut.reduce((s, r) => s + r[f], 0);
+  const agents = { rows: agentRowsOut, total: agentSum('total'),
+    totals: { unassigned: agentSum('unassigned'), assigned: agentSum('assigned'),
+      advanced: agentSum('advanced'), total: agentSum('total'), amount: agentSum('amount') } };
   const amtOf = l => num(l.principal_amt) || num(l.loan_amt);
   const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
   /* One PERFORMANCE number wherever three percentages sit together -- the average, under
@@ -6133,6 +6161,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   return {
     /* "the monthly cards for csagents loan apps, credit analysts, early col, col and rec" */
     cards: { apps, ecolPct: monthByTeam ? pct(icAll, ieAll) : null },
+    agents,
     leaders,
     leaderRoles: Object.values(ROLE_LABEL),
     month: monthStart.slice(0, 7), monthStart, monthEnd,

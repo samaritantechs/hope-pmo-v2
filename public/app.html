@@ -580,7 +580,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-02-b';
+var BUILD = '2026-09-02-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3037,7 +3037,26 @@ VIEWS.monthreport = function(){
       col('perf','Perf %','pct'),
       dcol('dPerf','± Perf', function(v){ return Math.round(v)+'%'; }),
     ];
-    HEAD += board('mrWeeks', 'Wiki kwa wiki / Week by week — jedwali / table', d.month, rows, weekCols, false)
+    /* "2026-08 has no grand totals" -- the week table's JUMLA row is the MONTH's own figures,
+       the exact ones the cards carry, not a sum of week rows (a percentage cannot be summed and
+       a month's target is not four quarters added back up). */
+    var weekTot = { week: null, sales: t.sales, loans: t.loans, salesPct: t.salesPct,
+      expected: t.expected, collected: t.collected, colPct: t.colPct,
+      uncollected: t.uncollected, recovered: t.recovered, recPct: t.recPct, perf: t.perfPct };
+    /* "monthly loan application report before the all leaders chip" -- what the call agents
+       brought in this month, by the day the admin chose for each report, whatever stage each
+       application has reached since. */
+    var ag = d.agents || {};
+    HEAD += board('mrWeeks', 'Wiki kwa wiki / Week by week — jedwali / table', d.month, rows, weekCols, weekTot)
+      + board('mrAgents', 'Maombi ya mikopo / Loan applications — mwezi huu / this month',
+          'CS agents · TRACK# 1 only · kwa siku ya ripoti / by the report\'s day · ' + money(ag.total || 0) + ' apps',
+          ag.rows || [],
+          [{key:'id', label:'Agent'},
+           {key:'names', label:'Who', cls:function(r){ return r.names?'':'bad'; },
+            get:function(r){ return r.names || 'not named — add in Teams & Staff'; }},
+           col('total','Apps','num'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
+           col('advanced','Approved+','num'), col('amount','Requested','money')],
+          ag.totals ? Object.assign({ id:'', names:'' }, ag.totals) : undefined)
       /* The role filter narrows the leaders list below, the same way a team filter narrows
          any other list. */
       + bar('<select data-filter="role"><option value="">Nafasi zote / All roles</option>'
