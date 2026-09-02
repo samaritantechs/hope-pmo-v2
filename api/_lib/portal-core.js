@@ -5255,7 +5255,7 @@ const FN = {
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
-  dashboardFull, monthReport, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
+  dashboardFull, dashboardProbe, monthReport, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
@@ -5965,13 +5965,25 @@ async function monthReportCompute_(db, user, asOf) {
   // the screen -- and the dashboard no longer pays for any of this on its own loads.
   const days = await monthLedgerDays_(db, { monthStart, today, mon, budgetMs: 8000 })
     .catch(() => null);
-  const [loansRaw, teamRows] = await Promise.all([
+  const [loansRaw, teamRows, appsRaw, codeRows, pmoCfg] = await Promise.all([
     fetchAll(() => onTeams(db.from('loans')
       .select('team, stage, principal_amt, loan_amt, approved_date')
       .gte('approved_date', monthStart).lte('approved_date', today), user.teams)),
     readTeamsAll(db),
+    /* The month's APPLICATIONS -- what the call agents brought in -- by the day the admin
+       chose for the report, created_at where the stamp predates that column. */
+    fetchAll(() => onTeams(db.from('loans')
+      .select('team, stage, created_at, upload_date')
+      .or(`created_at.gte.${monthStart},upload_date.gte.${monthStart}`), user.teams)),
+    // The collection officers live on their access codes, as on the Orodha.
+    fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
+    settingsMany(db, [PMO_ROLE_KEY]),
   ]);
   const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
+  const apps = scoped(user, appsRaw).filter(l => {
+    const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
+    return d0 >= monthStart && d0 <= today;
+  }).length;
   const amtOf = l => num(l.principal_amt) || num(l.loan_amt);
   const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
   /* One PERFORMANCE number wherever three percentages sit together -- the average, under
@@ -6049,7 +6061,66 @@ async function monthReportCompute_(db, user, asOf) {
   const totSalesPct = pct(salesTotal, monthTarget);
   const totColPct = total ? pct(total.colC, total.colE) : null;
   const totRecPct = total ? pct(total.recR, total.recU) : null;
+
+  /* ---- EVERY LEADER IN THE SYSTEM, ON THE MONTH.
+       "then list of leaders and columns of sales, early col, col, rec and avrg performance
+        where average performance gives the best one by auto sort largest to smallest averg %
+        ... role column, name, sales, early col, col, rec and avrg performance. This is a
+        chipped list of all leaders in the system"
+     A leader is anybody named in a role on the teams sheet -- credit analyst, early
+     collection, recovery, GMO, manager, OPM, bike, legal -- plus the collection officers,
+     whose teams live on their access codes. Each is judged on the teams they hold: the
+     month's sales against weekly x 4 per team, and the ledger's month-to-date early col,
+     col and rec summed over those teams. The average is of what was measured, and the list
+     is best first. One person in two roles is two rows, because the two are judged on
+     different teams. */
+  const ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection (PMO)',
+    recovery: 'Recovery', gmo: 'GMO', manager: 'Manager', opm: 'OPM', bike: 'Bike', legal: 'Legal' };
+  const monthByTeam = days ? ledgerByTeam_(days, monthStart, today) : null;
+  const salesByTeam = {};
+  for (const l of sales) salesByTeam[K(l.team)] = (salesByTeam[K(l.team)] || 0) + amtOf(l);
+  const held = new Map();
+  const hold = (role, name, team) => {
+    const nm = String(name || '').trim();
+    if (!nm) return;
+    const key = role + '|' + K(nm);
+    if (!held.has(key)) held.set(key, { role, name: nm, teams: new Set() });
+    held.get(key).teams.add(K(team));
+  };
+  for (const t of myTeams) for (const role in ROLE_LABEL) if (t[role]) hold(role, t[role], t.team);
+  const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  for (const cd of codeRows) {
+    if (!isPmoRole(cd.role, pmoRoleName) || !cd.teams || !cd.teams.length) continue;
+    for (const tm of cd.teams) if (teamAllowed(user, tm)) hold('collection', cd.name || cd.code, tm);
+  }
+  const leaders = [...held.values()].map(h => {
+    let salesAmt = 0, e = 0, c = 0, u = 0, ie = 0, ic = 0, rec = 0, paired = 0;
+    for (const T of h.teams) {
+      salesAmt += salesByTeam[T] || 0;
+      const m = monthByTeam && monthByTeam[T];
+      if (m) { e += m.e; c += m.c; u += m.u; ie += m.ie; ic += m.ic; rec += m.rec; paired += m.pairedDays; }
+    }
+    const salesPct = pct(salesAmt, weeklyTarget * 4 * h.teams.size);
+    const ecolPct = monthByTeam ? pct(ic, ie) : null;
+    const colPct = monthByTeam ? pct(c, e) : null;
+    const recPct = (monthByTeam && paired > 0) ? pct(rec, u) : null;
+    const m4 = measured_(salesPct, ecolPct, colPct, recPct);
+    return { role: ROLE_LABEL[h.role], roleKey: h.role, name: h.name, teams: h.teams.size, sales: salesAmt,
+      salesPct, ecolPct, colPct, recPct,
+      avgPct: m4.length ? Math.round((m4.reduce((s, v) => s + v, 0) / m4.length) * 10) / 10 : null,
+      avgOn: m4.length };
+  }).sort((a, b) => (b.avgPct == null ? -1 : b.avgPct) - (a.avgPct == null ? -1 : a.avgPct) || a.name.localeCompare(b.name))
+    .map((r, i) => ({ sn: i + 1, ...r }));
+
+  // The company's month-to-date early col, for the card: the initial sheets summed.
+  let ieAll = 0, icAll = 0;
+  if (monthByTeam) for (const T in monthByTeam) if (teamAllowed(user, T)) { ieAll += monthByTeam[T].ie; icAll += monthByTeam[T].ic; }
+
   return {
+    /* "the monthly cards for csagents loan apps, credit analysts, early col, col and rec" */
+    cards: { apps, ecolPct: monthByTeam ? pct(icAll, ieAll) : null },
+    leaders,
+    leaderRoles: Object.values(ROLE_LABEL),
     month: monthStart.slice(0, 7), monthStart, monthEnd,
     // The week-bar fields, same names the dashboard sends, so the client's one week bar
     // works here unchanged and stepping it across a month boundary changes the month.
@@ -6079,6 +6150,62 @@ async function dashboardFull(db, user, args, nowMs) {
   const asOf0 = asOfWeek(nowMs, args && args.weekOf);
   return cachedAnswer(db, 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
     user, nowMs, () => dashboardFullCompute_(db, user, args, nowMs));
+}
+/* THE DASHBOARD'S OWN DIAGNOSIS.
+
+     "dashboard [Imeshindikana / Could not load. Seva haijibu ndani ya sekunde 45]"
+     -- and, after the ledger was fenced off --  "hasnt loaded yet."
+
+   A screen that times out says only that it timed out, and nobody watching the live
+   database from outside can tell WHICH of its dozen reads is the one that stopped
+   answering. So when the dashboard fails to arrive the page asks for this instead: the same
+   reads the dashboard makes, one after another, each timed on its own and each cut off at a
+   few seconds, so the answer is a list with the slow one in red rather than a shrug. It is
+   read-only, changes nothing, and is only ever called by a failure. */
+const PROBE_STEP_MS = 6000, PROBE_TOTAL_MS = 36000;
+async function dashboardProbe(db, user, args, nowMs) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  nowMs = asOf.ms;
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
+  const prevMon = addDaysKey(mon, -7), prevSun = addDaysKey(mon, -1);
+  const monthStart = String(today).slice(0, 7) + '-01';
+  const loanFloor = [monthStart, mon, prevMon].sort()[0];
+  const abnWin = abnormalWindow(nowMs, args);
+  const t0 = Date.now();
+  const steps = [];
+  const probe = async (name, fn) => {
+    if (Date.now() - t0 > PROBE_TOTAL_MS) { steps.push({ name, ms: null, rows: null, skipped: true }); return; }
+    const at = Date.now();
+    let timer = null;
+    const late = new Promise(res => { timer = setTimeout(() => res({ capped: true }), PROBE_STEP_MS); if (timer.unref) timer.unref(); });
+    const r = await Promise.race([fn().then(v => ({ v }), e => ({ e })), late]);
+    clearTimeout(timer);
+    const ms = Date.now() - at;
+    if (r.capped) steps.push({ name, ms, rows: null, capped: true });
+    else if (r.e) steps.push({ name, ms, rows: null, error: String((r.e && r.e.message) || r.e).slice(0, 160) });
+    else steps.push({ name, ms, rows: Array.isArray(r.v) ? r.v.length : (r.v && Array.isArray(r.v.rows)) ? r.v.rows.length : null });
+  };
+  await probe('settings', () => readSettings(db));
+  await probe('teams', () => readTeamsAll(db));
+  await probe('expected totals · wiki hii / this week', () => expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }));
+  await probe('defaulter totals · wiki hii / this week', () => defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }));
+  await probe('expected totals · wiki iliyopita / last week', () => expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevSun, teams: user.teams }));
+  await probe('defaulter totals · wiki iliyopita / last week', () => defaulterTotalsInRange(db, { from: prevMon, to: prevSun, teams: user.teams }));
+  await probe('loan stage counts (8 counts)', () => stageCounts(db, user.teams));
+  await probe('loans · dirisha la mwezi na wiki / month + weeks window', () => fetchAll(() => onTeams(db.from('loans')
+    .select('id, stage, team, created_at, upload_date, approved_date')
+    .or(`created_at.gte.${loanFloor},approved_date.gte.${loanFloor},upload_date.gte.${loanFloor}`), user.teams)));
+  await probe('abnormal payments', () => fetchAll(() => {
+    let q = db.from('abnormal_payments').select('team, paid, transaction_id');
+    if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
+    return q;
+  }));
+  await probe('received payments · dirisha / window', () => fetchAll(() => onTeams(db.from('received_payments')
+    .select('team, amount_paid, transaction_id').gte('paid_at', abnWin.from).lte('paid_at', abnWin.to), user.teams)));
+  await probe('access codes', () => fetchAll(() => db.from('access_codes').select('name, code, role, teams')));
+  await probe('early list · karatasi ya awali / initial sheet', () => earlyList(db, { today, teams: user.teams }));
+  await probe('month ledger slice · wiki hii / live week', () => totalsAggSlice(db, { from: mon > monthStart ? mon : monthStart, to: today }));
+  return { steps, total: Date.now() - t0, stepCapMs: PROBE_STEP_MS, weekOf: mon, asOfDate: today };
 }
 /* How long the dashboard will spend on the month ledger per load -- deliberately well under
    the month report's 8s. The live week's slice is one call and always fits; a cold month's
