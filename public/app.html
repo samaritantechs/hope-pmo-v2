@@ -514,9 +514,16 @@ function num(v){ v = Number(v); return isFinite(v) ? v : 0; }
    a column it could only average rather than recompute -- the ~ is the whole point of it, so
    this has to let a formatted string through instead of running it past isNaN and printing a
    dash where a real summary was worked out. */
+/* WHOLE NUMBERS, EVERYWHERE. "approximate all percentages like 96.7 = 97 everywhere not only
+   dashboards but everywhere at commissions inclusive". The server still carries a decimal so
+   ranking and the colour rule stay exact; the SCREEN says 97. A string that already ends in
+   % (the total row's "~56.7%") is rounded the same way rather than passed through. */
 function pct(v){
-  if (typeof v === 'string' && v.charAt(v.length-1) === '%') return v;
-  return (v==null||isNaN(v)) ? '\u2014' : v + '%';
+  if (typeof v === 'string' && v.charAt(v.length-1) === '%') {
+    var n = parseFloat(v.replace(/[~%\s,]/g, ''));
+    return isNaN(n) ? v : (v.charAt(0) === '~' ? '~' : '') + Math.round(n) + '%';
+  }
+  return (v==null||isNaN(v)) ? '\u2014' : Math.round(Number(v)) + '%';
 }
 function mb(b){ b = Number(b)||0;
   if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
@@ -573,7 +580,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-02-a';
+var BUILD = '2026-09-02-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1430,7 +1437,8 @@ function exportXls(){
     + rows.map(function(r,i){
         return '<tr>'+cell(i+1,true)+S.cols.map(function(c){
           var raw = c.get ? c.get(r) : r[c.key];
-          return isNum(c) ? cell(Number(raw)||0, true) : cell(cellText(r,c), false);
+          // A percentage exports as the whole number the screen shows, never a hidden decimal.
+          return isNum(c) ? cell(c.kind==='pct' ? Math.round(Number(raw)||0) : (Number(raw)||0), true) : cell(cellText(r,c), false);
         }).join('')+'</tr>';
       }).join('')
     + '</tbody></table>' + (S.foot ? '<p>'+esc(S.foot)+'</p>' : '') + '</body></html>';
@@ -1830,7 +1838,7 @@ function trendArrow(dv){
 }
 function trendSub(dv, label){
   return dv == null ? 'hakuna kipindi kilichopita / no previous period'
-    : ((dv > 0 ? '+' : '') + dv + '% ' + (label || 'dhidi ya wiki iliyopita / vs last week'));
+    : ((dv > 0 ? '+' : '') + Math.round(dv) + '% ' + (label || 'dhidi ya wiki iliyopita / vs last week'));
 }
 /* WHAT THE AVERAGE COVERED. The strip's average is the mean of the three percentages that were
    actually MEASURED -- a week where no defaulter deck was paired has no recovery figure, and
@@ -2504,7 +2512,7 @@ function exportBoard(id, kind){
     + b.rows.map(function(r,i){
         return '<tr><td>'+(i+1)+'</td>'+b.cols.map(function(c){
           var raw = c.get ? c.get(r) : r[c.key];
-          return isNum(c) ? '<td x:num>'+(Number(raw)||0)+'</td>' : '<td>'+esc(cellText(r,c))+'</td>';
+          return isNum(c) ? '<td x:num>'+(c.kind==='pct' ? Math.round(Number(raw)||0) : (Number(raw)||0))+'</td>' : '<td>'+esc(cellText(r,c))+'</td>';
         }).join('')+'</tr>'; }).join('')
     + '</tbody></table></body></html>';
   download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), name+'.xls');
@@ -2853,17 +2861,21 @@ VIEWS.dashboard = function(){
     // Coloured by the one rule every table follows: green at target, red under the JUMLA line.
     var pc = function(k, label, title){ return { key:k, label:label, kind:'pct', title:title }; };
     var ttl = function(c, t){ c.title = t; return c; };
-    // "officers columns before team column" -- the people first, then the team they hold.
+    /* "remove Credit analysts, ealy col, col and rec officers on dashboard orodha team
+       performance just start with team name. add Uncollected Amount as [Uncollected] before
+       T.col% and Recovered amount as [recovered] before T.Rec%" -- the officer columns went
+       back out (they live on the month report's leaders list); the two amounts the
+       percentages are made from sit before them. */
     S.cols = [
-      ttl(col('credit','C.Anl'), 'Credit analyst'), ttl(col('expected','E.Col'), 'Early collection officer'),
-      ttl(col('collection','Col'), 'Collection officer (PMO)'), ttl(col('recovery','Rec'), 'Recovery officer'),
       col('team','Team'),
       pc('tSalesPct','T.Sales','Sales % leo / today, of the team’s daily target'),
       pc('mSalesPct','M.Sales','Sales % mwezi huu / month to date, of the monthly target'),
       pc('tEColPct','T.ECol','Early collection % leo / today (initial sheet)'),
       pc('mEColPct','M.ECol','Early collection % mwezi huu / month to date'),
+      ttl(col('uncollected','Uncollected','money'), 'Uncollected TZS leo / today (the week at the weekend)'),
       pc('tColPct','T.Col','Collection % leo / today (the week at the weekend)'),
       pc('mColPct','M.Col','Collection % mwezi huu / month to date'),
+      {key:'recovered', label:'Recovered', kind:'money', title:'Recovered TZS leo / today (initial − current)', cls:function(r){ return r.recovered>0?'good':''; }},
       pc('tRecPct','T.Rec','Recovery % leo / today (Mon ÷ Monday, Tue–Fri ÷ jana, weekend ÷ week)'),
       pc('mRecPct','M.Rec','Recovery % mwezi huu / month to date'),
       pc('tAvg','T.Avg','Wastani leo / average of today’s four'),
@@ -2904,7 +2916,7 @@ VIEWS.monthreport = function(){
     var mv = function(v, isPct){
       if (v == null || !v) return '';
       return ' <span class="' + (v>0?'good':'bad') + '" style="font-size:10px;font-weight:700">'
-        + (v>0?'▲':'▼') + (isPct ? Math.abs(v)+'%' : money(Math.abs(v))) + '</span>';
+        + (v>0?'▲':'▼') + (isPct ? Math.round(Math.abs(v))+'%' : money(Math.abs(v))) + '</span>';
     };
     var mmdd = function(k){ return k.slice(8) + '/' + k.slice(5,7); };
     var cells = rows.map(function(r){
@@ -3017,13 +3029,13 @@ VIEWS.monthreport = function(){
       col('expected','Expected','money'),
       col('collected','Collected','money'),
       col('colPct','Col %','pct'),
-      dcol('dColPct','± Col %', function(v){ return v+'%'; }),
+      dcol('dColPct','± Col %', function(v){ return Math.round(v)+'%'; }),
       col('uncollected','Uncollected','money'),
       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
       col('recPct','Rec %','pct'),
-      dcol('dRecPct','± Rec %', function(v){ return v+'%'; }),
+      dcol('dRecPct','± Rec %', function(v){ return Math.round(v)+'%'; }),
       col('perf','Perf %','pct'),
-      dcol('dPerf','± Perf', function(v){ return v+'%'; }),
+      dcol('dPerf','± Perf', function(v){ return Math.round(v)+'%'; }),
     ];
     HEAD += board('mrWeeks', 'Wiki kwa wiki / Week by week — jedwali / table', d.month, rows, weekCols, false)
       /* The role filter narrows the leaders list below, the same way a team filter narrows
@@ -3631,7 +3643,7 @@ function fillPctTotals(t, rows, cols){
     });
     if (!vals.length) return;
     var avg = vals.reduce(function(s, v){ return s + v; }, 0) / vals.length;
-    t[c.key] = '~' + (Math.round(avg * 10) / 10) + '%';
+    t[c.key] = '~' + Math.round(avg) + '%';
     did = true;
   });
   return did;
@@ -3775,7 +3787,7 @@ VIEWS.weekly = function(){
     var t=d.totals;
     HEAD = '<div class="kpis">'
       + kpi('Expected', money(t.expected), d.weekOf+' → '+d.weekEnd)
-      + kpi('Collected', money(t.collected), t.expected? Math.round(1000*t.collected/t.expected)/10+'%':'', 'good')
+      + kpi('Collected', money(t.collected), t.expected? Math.round(100*t.collected/t.expected)+'%':'', 'good')
       + kpi('Uncollected', money(t.uncollected), null, 'bad')
       /* RECOVERY %, which this tile never printed: recovered over the uncollected it was chased
          against. A figure with no denominator beside it is a number nobody can judge -- 45m is
@@ -4182,8 +4194,8 @@ VIEWS.commission = function(){
                 + ' as <code>PMO_WEEKLY_BONUS</code> and it starts paying.'
               : d.pmoBonus.won
                 ? '<b>Bonasi ya wiki: ' + money(d.pmoBonus.tzs) + '</b> &rarr; ' + esc(d.pmoBonus.leader||'')
-                  + ' (' + (d.pmoBonus.leaderPct==null?'—':d.pmoBonus.leaderPct+'%') + ' dhidi ya '
-                  + (d.pmoBonus.leaderPrevPct==null?'—':d.pmoBonus.leaderPrevPct+'%') + ' wiki iliyopita)'
+                  + ' (' + pct(d.pmoBonus.leaderPct) + ' dhidi ya '
+                  + pct(d.pmoBonus.leaderPrevPct) + ' wiki iliyopita)'
                 : '<b>Bonasi ya wiki haijashindwa bado.</b> ' + esc(d.pmoBonus.why||''))
           + '</div></div></div>')
         : '')

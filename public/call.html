@@ -414,7 +414,8 @@ function eatDt_(v){
 /* Team names are typed by hand in several places, so 'Kariakoo' and ' KARIAKOO ' are the same
    team. Compare the tidied-up form, the way the server does, or the dropdown loses its tick. */
 function K_(s){ return String(s==null?'':s).trim().toUpperCase(); }
-function pct(x){ if (x===''||x==null||isNaN(x)||!isFinite(x)) return '\u2014'; return (100*x).toFixed(1)+'%'; }
+// Whole numbers, as everywhere else in the system now: 96.7 reads 97.
+function pct(x){ if (x===''||x==null||isNaN(x)||!isFinite(x)) return '\u2014'; return Math.round(100*x)+'%'; }
 function digits_(v){ return String(v==null?'':v).replace(/\D/g,''); }
 function telHref(v){ var d = digits_(v); if (!d) return '#'; return d.indexOf('255')===0 ? '+'+d : '+255'+d.replace(/^0+/,''); }
 function fmtDur(sec){ sec = Math.max(0, Math.round(Number(sec)||0)); var h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
@@ -1443,7 +1444,7 @@ function drawExpdfStrip_(){
     + '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
     + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
     + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
-    + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : t.pct + '%') + '</b></div>'
+    + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : Math.round(t.pct) + '%') + '</b></div>'
     + (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
     + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '')
     + (byCycle.length
@@ -1454,7 +1455,7 @@ function drawExpdfStrip_(){
     + ((S.expdf.scope==='team' && byLeader.length)
         ? '<div class="xcyc">' + byLeader.map(function(x){
             return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers + ' \u00B7 ' + m(x.recovered)
-              + (x.pct==null?'':' \u00B7 '+x.pct+'%') + '</span>'; }).join('') + '</div>'
+              + (x.pct==null?'':' \u00B7 '+Math.round(x.pct)+'%') + '</span>'; }).join('') + '</div>'
         : ''));
   $all('#expdfStrip [data-xtog]').forEach(function(b){
     b.onclick = function(){
