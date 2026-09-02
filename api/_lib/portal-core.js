@@ -5951,19 +5951,33 @@ function ledgerByTeam_(days, from, to) {
 async function monthReport(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   return cachedAnswer(db, 'monthReport|' + asOf.weekOf, user, nowMs,
-    () => monthReportCompute_(db, user, asOf));
+    () => monthReportCompute_(db, user, asOf, nowMs));
 }
-async function monthReportCompute_(db, user, asOf) {
-  const nowMs = asOf.ms;
-  const today = todayKey(nowMs), mon = weekMondayKey(nowMs);
-  const monthStart = String(today).slice(0, 7) + '-01';
+async function monthReportCompute_(db, user, asOf, realNowMs) {
+  /* WHICH MONTH, AND HOW MUCH OF IT.
+
+       "this week ended on 30th but we need to view monlthly report from there."
+
+     The week bar picks the month: a week in August opens August's report. But the week bar
+     also used to pick how far into the month the report looked -- a past week is read as of
+     its own Friday, so August opened from the week of the 24th stopped at the 28th, and
+     Monday the 31st (a day of August that sits in September's ISO week) showed "not yet"
+     forever. A finished month is read to its last day; the live month to today. */
+  const asOfToday = todayKey(asOf.ms);
+  const monthStart = String(asOfToday).slice(0, 7) + '-01';
   const [yy, mm] = monthStart.split('-').map(Number);
   // Date.UTC month is 0-based, so day 0 of month index mm is the LAST day of this month.
   const monthEnd = todayKey(Date.UTC(yy, mm, 0, 12));
+  const realToday = todayKey(realNowMs == null ? asOf.ms : realNowMs);
+  const today = realToday < monthStart ? monthStart : (realToday > monthEnd ? monthEnd : realToday);
+  // The bar keeps the chosen week; the ledger's live-week floor is the REAL week.
+  const mon = weekMondayKey(asOf.ms);
+  const liveMon = weekMondayKey(realNowMs == null ? asOf.ms : realNowMs);
+  const nowMs = asOf.ms;
 
   // The ledger fills here, on demand, under a hard budget; a failure costs columns, never
   // the screen -- and the dashboard no longer pays for any of this on its own loads.
-  const days = await monthLedgerDays_(db, { monthStart, today, mon, budgetMs: 8000 })
+  const days = await monthLedgerDays_(db, { monthStart, today, mon: liveMon, budgetMs: 8000 })
     .catch(() => null);
   const [loansRaw, teamRows, appsRaw, codeRows, pmoCfg] = await Promise.all([
     fetchAll(() => onTeams(db.from('loans')

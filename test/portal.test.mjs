@@ -2738,6 +2738,33 @@ test('the dashboard carries no month figures -- the month lives only in the mont
   assert.equal(d.teamPerf.find(r => r.team === 'KONGOWE').salesMonth, 400);
 });
 
+/* "this week ended on 30th but we need to view monlthly report from there." A finished month
+   is read to its LAST day, however the week bar reached it -- the week of the 24th no longer
+   stops August at its own Friday and leaves the 31st "not yet". */
+test('a finished month opened from one of its weeks is read to its last day', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
+    // A sale on the last day of July -- a Friday, in the week that closes the month.
+    { id: 'm4', team: 'KONGOWE', stage: 'approved', principal_amt: 250, approved_date: '2026-07-31' },
+  ];
+  // Now is a Wednesday in August; the bar is on the week of the 20th of July.
+  const AUG = Date.parse('2026-08-05T09:00:00Z');
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'monthReport', { weekOf: '2026-07-20' }, AUG);
+  assert.equal(d.month, '2026-07');
+  assert.equal(d.asOfDate, '2026-07-31', 'read to the month\'s last day, not the chosen week\'s Friday');
+  assert.equal(d.weekOf, '2026-07-20', 'the bar stays on the week that was chosen');
+  const last = d.rows[d.rows.length - 1];
+  assert.deepEqual([last.from, last.to], ['2026-07-27', '2026-07-31']);
+  assert.equal(last.started, true, 'the closing week has happened');
+  assert.equal(last.sales, 250, 'and the 31st\'s sale is in it');
+  assert.equal(d.totals.sales, 650);
+  // The live month is still read to today.
+  const live = await portalApi(dbWithRpc(t), ADMIN, 'monthReport', {}, NOW);
+  assert.equal(live.asOfDate, TODAY);
+});
+
 /* THE PERFORMANCE STRIP -- "show average of sales%, col% and recovery% performance where in
    each one and the average have the rising constant or dropping arrow symbol to know
    progress". Three percentages and their average for THIS week, each with last week's
