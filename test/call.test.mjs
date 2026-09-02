@@ -339,6 +339,78 @@ test('the called-today tick needs a real conversation, not a dial attempt', asyn
   assert.equal((await callApi(db3, 'api_callList', ['d1', 'today'], NOW)).rows.find(r => r.ref === '111').called, false);
 });
 
+/* THE BURST. pg_stat_activity on the morning the dashboard would not load: 27 queries active
+   at once, nearly all the totals functions, nothing old, nothing blocked -- three hundred
+   handsets re-asking for the strip after an upload, every one of them running buildDashboard
+   side by side. One computation per scope now, a few at a time, and the last known strip
+   served while the line is long. */
+test('a burst of handsets on one team computes the strip once', async () => {
+  const { _clearSummaryCache } = await import('../api/_lib/call-core.js');
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['b1', 'JUMA ISSA', '', '', '0712999701', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['b2', 'ASHA', '', '', '0712999702', 'KON123'], NOW);
+  let reads = 0;
+  const from0 = db.from.bind(db), rpc0 = db.rpc.bind(db);
+  db.from = (...a) => { reads += 1; return from0(...a); };
+  db.rpc = (...a) => { reads += 1; return rpc0(...a); };
+  _clearSummaryCache();
+  await callApi(db, 'api_callDailySummary', ['b1'], NOW);
+  const alone = reads;
+  _clearSummaryCache(); reads = 0;
+  const [x, y] = await Promise.all([
+    callApi(db, 'api_callDailySummary', ['b1'], NOW),
+    callApi(db, 'api_callDailySummary', ['b2'], NOW),
+  ]);
+  // Two handsets at once cost one strip plus two device lookups, not two strips.
+  assert.ok(reads <= alone + 4, `two handsets at once cost ${reads} reads; one alone cost ${alone}`);
+  assert.equal(x.col.pct, y.col.pct);
+  assert.equal(x.cached, false);
+  assert.equal(y.cached, false, 'shared, not served from a cache that did not exist yet');
+});
+
+test('while the line is full, a handset whose scope has a strip gets the last one at once', async () => {
+  const { _clearSummaryCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache();
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['sA', 'MBAGALA OFFICER', '', '', '0712999721', 'MBA456'], NOW);
+  await callApi(db, 'api_callRegister', ['sB', 'JUMA ISSA', '', '', '0712999722', 'KON123'], NOW);
+  // KONGOWE has a strip from earlier; two minutes on it is past its TTL.
+  const first = await callApi(db, 'api_callDailySummary', ['sB'], NOW);
+  assert.equal(first.cached, false);
+  const later = NOW + 130000;
+  // One slot only, and MBAGALA's computation is slow enough to hold it.
+  process.env.CALL_SUMMARY_MAX_INFLIGHT = '1';
+  const from0 = db.from.bind(db);
+  let slow = true;
+  db.from = (...a) => {
+    const q = from0(...a);
+    if (!slow) return q;
+    const then0 = q.then.bind(q);
+    q.then = (ok, bad) => new Promise(r => setTimeout(r, 120)).then(() => then0(ok, bad));
+    return q;
+  };
+  try {
+    const a = callApi(db, 'api_callDailySummary', ['sA'], later);     // holds the one slot
+    let aDone = false;
+    a.then(() => { aDone = true; }, () => { aDone = true; });
+    await new Promise(r => setTimeout(r, 10));
+    const b = await callApi(db, 'api_callDailySummary', ['sB'], later);
+    assert.equal(aDone, false, 'MBAGALA was still holding the slot when KONGOWE was answered');
+    assert.equal(b.cached, true);
+    assert.equal(b.stale, true, 'the last strip, marked stale, not a wait in the line');
+    assert.equal(b.computedAt, NOW);
+    slow = false;
+    const ra = await a;
+    assert.equal(ra.cached, false);
+    // The refresh that joined the line lands afterwards: KONGOWE is fresh again.
+    await new Promise(r => setTimeout(r, 150));
+    const b2 = await callApi(db, 'api_callDailySummary', ['sB'], later + 1);
+    assert.equal(b2.cached, true);
+    assert.equal(b2.stale, undefined);
+    assert.equal(b2.computedAt, later);
+  } finally { delete process.env.CALL_SUMMARY_MAX_INFLIGHT; }
+});
+
 test('daily summary strip reconciles with the dashboard rule (Friday = yesterday basis)', async () => {
   const db = await registeredDb();
   const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
