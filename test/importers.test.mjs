@@ -908,6 +908,25 @@ test('the order the file was read in is reported, not silently chosen', async ()
   assert.equal(loansDateOrder([LOAN_H, loanRow('8/6/2026', 1)]), null, 'one date, undecidable');
 });
 
+/* ONE DAY'S REPORT, EVERY VALUE THE SAME, NOTHING OVER TWELVE. No evidence, no span -- and
+   the fall-through read 9/1/2026 as the ninth of January, so a Tuesday's approvals vanished
+   from September. The day the file is uploaded decides: a report uploaded on the second of
+   September is about the first of September. */
+test('a single-day file with no evidence reads the way that lands nearest its upload day', async () => {
+  const { loansDateOrder, importLoans } = await import('../api/_lib/importers.js');
+  // "9/1/2026" uploaded on 2 September: month-first puts it a day away, day-first eight months.
+  assert.equal(loansDateOrder([LOAN_H, loanRow('9/1/2026', 1), loanRow('9/1/2026', 2)], '2026-09-02'), false);
+  const out = importLoans([LOAN_H, loanRow('9/1/2026', 1), loanRow('9/1/2026', 2)], 'approved',
+    loansDateOrder([LOAN_H, loanRow('9/1/2026', 1), loanRow('9/1/2026', 2)], '2026-09-02'));
+  assert.deepEqual(out.map(o => o.approved_date), ['2026-09-01', '2026-09-01']);
+  // The same file written day-first, "1/9/2026", uploaded the same day: day-first wins.
+  assert.equal(loansDateOrder([LOAN_H, loanRow('1/9/2026', 1)], '2026-09-02'), true);
+  // Evidence still outranks the upload day: 8/31 can only be month-first whatever the day.
+  assert.equal(loansDateOrder([LOAN_H, loanRow('8/31/2026', 1)], '2026-01-15'), false);
+  // And without an upload day to lean on, an undecidable file stays undecided, as before.
+  assert.equal(loansDateOrder([LOAN_H, loanRow('9/1/2026', 1)]), null);
+});
+
 /* =====================================================================================
    THE LEADERS SHEET MUST NOT ERASE WHAT IT DOES NOT MENTION.
    =====================================================================================

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst } from './parse.js';
+import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst, nearestToDayIsDayFirst } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -283,7 +283,7 @@ export function loanId(o) {
 /** Which way round this file writes its dates, decided over the WHOLE date column rather than
     one value at a time. Exported so the upload can say what it decided -- reading a date column
     the wrong way round moves history by months and looks entirely reasonable in the result. */
-export function loansDateOrder(csvRows) {
+export function loansDateOrder(csvRows, nearDate) {
   const objs = rowsToObjects(csvRows);
   const vals = [];
   for (const { raw: r, h } of objs) {
@@ -293,9 +293,14 @@ export function loansDateOrder(csvRows) {
     }
   }
   /* Evidence first -- a 22 in the first component can only be a day, and that settles it. Only
-     when a file offers no evidence at all does the shape of the result get a say. */
+     when a file offers no evidence at all does the shape of the result get a say; and when the
+     shape cannot tell either (one day's report, every value alike), the day it was uploaded
+     does -- see nearestToDayIsDayFirst. */
   const byEvidence = inferDayFirst(vals);
-  return byEvidence === null ? tightestSpanIsDayFirst(vals) : byEvidence;
+  if (byEvidence !== null) return byEvidence;
+  const bySpan = tightestSpanIsDayFirst(vals);
+  if (bySpan !== null) return bySpan;
+  return nearDate ? nearestToDayIsDayFirst(vals, nearDate) : null;
 }
 
 /* THE APPROVED DATE DECIDES WHICH MONTH A SALE BELONGS TO, and it was being read one value at

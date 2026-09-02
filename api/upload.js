@@ -545,7 +545,14 @@ export default withApi(async (req, res) => {
       /* The whole APPROVED DATE column decides its own order, once, and the answer is reported
          below -- reading a date column the wrong way round moves a report by months and looks
          entirely reasonable in the result. */
-      loansOrder = loansDateOrder(rows);
+      /* And when the column offers no evidence at all -- one day's report, every value the
+         same "9/1/2026" -- the day it is being uploaded decides which way round it reads:
+         a report uploaded on the second of September is about the first of September, not
+         the ninth of January. See nearestToDayIsDayFirst. */
+      loansOrder = loansDateOrder(rows,
+        /^\d{4}-\d{2}-\d{2}$/.test(String(meta.uploadDate || ''))
+          ? String(meta.uploadDate)
+          : new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10));
       records = importLoans(rows, meta.stage, loansOrder);
       /* A loan whose paperwork grew a LOAN ID since its last upload must UPDATE its row, not
          sit beside it as a twin -- see reconcileLoanIds above. */

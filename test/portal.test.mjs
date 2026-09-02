@@ -2687,6 +2687,25 @@ test('teams are ranked on the average of sales and collection, best first', asyn
   assert.equal(d.teamPerf[0].sn, 1, 'and numbered after ranking, not before');
 });
 
+/* "Sales of 31st aug are not counting at dashboard": Monday's approvals were uploaded again on
+   Tuesday as the pending-disbursement list, which moved every one of them to a stage the sales
+   rule did not know -- the fault SALES_STAGES was made to end, one stage over. */
+test('a sale that moved on to pending disbursement is still a sale', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 'p1', team: 'KONGOWE', stage: 'pending_disb', principal_amt: 400, approved_date: MON },
+    { id: 'p2', team: 'KONGOWE', stage: 'approved', principal_amt: 100, approved_date: TODAY },
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
+  assert.equal(d.cards.salesWeek, 500, 'Monday\'s 400, now pending disbursement, plus today\'s 100');
+  assert.equal(d.cards.salesLoans, 2);
+  assert.equal(d.salesTrend.find(x => x.date === MON).amount, 400, 'and it sits under Monday on the trend');
+  const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+  assert.equal(k.sales, 500);
+  assert.equal(k.salesMonth, 500);
+});
+
 /* THE MONTH IS NOT ON THE DASHBOARD. The three month tiles lived on the KPI row for one week
    of production and were then retired on request -- "the directors hate exposing data so keep
    monthly in the chip" -- so the dashboard answer must carry NO month figure at all (absent,
