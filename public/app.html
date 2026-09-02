@@ -554,7 +554,7 @@ var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'',
    numbers on any other, so it is never safe to keep showing what we had.
    Fails safe on purpose: a name nobody listed here is assumed to write, so the worst a
    forgotten entry can do is bring back the old behaviour of always asking the server. */
-var READ_FNS = { dashboardFull:1, officerBoards:1, expectedDay:1, expdfReport:1,
+var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay:1, expdfReport:1,
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
@@ -573,7 +573,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-h';
+var BUILD = '2026-09-02-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2523,6 +2523,42 @@ function failed(e){
     : raw;
   $('#view').innerHTML = '<div class="msg bad"><b>Imeshindikana / Could not load.</b><br>' + esc(msg) + '</div>';
   if (looksLikeData && window.console) console.error('[hope] raw failure:', raw.slice(0, 2000));
+  /* THE DASHBOARD DIAGNOSES ITSELF. A timeout says only that it timed out; the probe times
+     each of the dashboard's reads on its own and lists them, slowest in red, so the picture of
+     this card says WHICH read is holding the screen -- see dashboardProbe in portal-core.js. */
+  if (S.view === 'dashboard' && /45|sekunde|second|abort|timeout|504/i.test(raw)) dashProbe_();
+}
+function dashProbe_(){
+  var host = document.createElement('div');
+  host.className = 'card'; host.id = 'dashProbe';
+  host.innerHTML = '<div class="card-h">Uchunguzi / Diagnosis<span class="sub">inapima kila usomaji peke yake / timing each read on its own…</span></div><div class="sk"></div>';
+  $('#view').appendChild(host);
+  srv('dashboardProbe', { weekOf: S.args.weekOf || '' }).then(function(p){
+    var steps = p.steps || [];
+    var worst = null;
+    steps.forEach(function(s){ if (s.ms != null && (!worst || s.ms > worst.ms)) worst = s; });
+    host.innerHTML = '<div class="card-h">Uchunguzi / Diagnosis<span class="sub">' + money(p.total)
+      + ' ms jumla / total · kila usomaji peke yake / each read on its own'
+      + ' <button class="btn sm ghost" data-jpg="dashProbe">JPG</button></span></div>'
+      + '<div class="scroll"><table><thead><tr><th class="sn">#</th><th>Usomaji / Read</th><th class="r">ms</th>'
+      + '<th class="r">Rows</th><th>Hali / State</th></tr></thead><tbody>'
+      + steps.map(function(s, i){
+          var cls = (s.capped || s.error) ? 'bad' : (s === worst && s.ms > 3000) ? 'bad' : (s.ms > 1500 ? 'warnc' : '');
+          var state = s.capped ? 'HAIKUJIBU ndani ya ' + money(p.stepCapMs) + ' ms / did not answer'
+            : s.error ? esc(s.error)
+            : s.skipped ? 'haikupimwa, muda uliisha / not probed, time ran out' : 'sawa / ok';
+          return '<tr><td class="sn">' + (i + 1) + '</td><td class="' + cls + '">' + esc(s.name) + '</td>'
+            + '<td class="r ' + cls + '">' + (s.ms == null ? '—' : money(s.ms)) + '</td>'
+            + '<td class="r">' + (s.rows == null ? '—' : money(s.rows)) + '</td>'
+            + '<td class="' + cls + '">' + state + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+      + '<div class="tblfoot">Usomaji uliochelewa zaidi ndio unaozuia dashibodi — tuma picha ya kadi hii.'
+      + ' / The slowest read is what holds the dashboard — send a picture of this card.</div>';
+    wireBar();
+  }).catch(function(e){
+    host.innerHTML = '<div class="card-h">Uchunguzi / Diagnosis</div><div class="msg bad">'
+      + 'Uchunguzi nao haukujibu / the diagnosis itself did not answer: ' + esc(String((e && e.message) || e)) + '</div>';
+  });
 }
 
 /* ----------------------------------------------------------- per-tab renderers */
@@ -2919,25 +2955,29 @@ VIEWS.monthreport = function(){
       ['Perf ~<b>' + pct(avgOf('perf')) + '</b> / wiki', 'mutl'],
       ['<span class="mrbar"><i style="width:' + Math.max(0, Math.min(100, aCol||0)) + '%"></i></span>'],
     ], 'tot');
+    var c = d.cards || {};
+    /* THE MONTHLY CARDS -- "the monthly cards for csagents loan apps, credit analysts, early
+       col, col and rec": what the call agents brought in, what the analysts sold, and the
+       three collection percentages, month to date. Null carries the same meaning it does on
+       the dashboard tiles: the ledger is still filling -- a dash, never a month of zeros. */
     HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf" style="margin-left:8px">← Dashibodi / Dashboard</button>')
       + '<div class="kpis">'
       + kpi('Mwezi / Month', esc(d.month), esc(d.monthStart)+' → '+esc(d.monthEnd)+' · hadi / so far: '+esc(d.asOfDate))
-      + kpi('Sales this month', money(t.sales),
+      + kpi('Maombi ya mikopo / Loan apps', money(c.apps), 'CS agents · yaliyoletwa mwezi huu / brought in this month')
+      + kpi('Credit analysts · Sales', money(t.sales),
             (t.monthTarget>0 ? pct(t.salesPct)+' of '+money(t.monthTarget)+' · ' : '') + money(t.loans)
               + ' loans · wastani TZS '+money(avgOf('sales'))+'/wiki', 'good')
-      /* Null carries the same meaning it does on the dashboard tiles: the server could not
-         compute the month (ledger still filling, or the totals functions are not installed)
-         -- a dash, never a month of zeros. */
+      + (c.ecolPct != null
+          ? kpi('Early col % · mwezi', pct(c.ecolPct), 'karatasi ya awali / the initial sheets, month to date')
+          : kpi('Early col % · mwezi', '—', 'haipatikani bado / not available yet'))
       + (t.expected != null
-          ? kpi('Collection this month', money(t.collected),
-                'of '+money(t.expected)+' expected'+(t.colPct!=null?' · '+pct(t.colPct):'')
-                  + ' · wastani TZS '+money(avgOf('collected'))+'/wiki', 'good')
-          : kpi('Collection this month', '—', 'haipatikani bado / not available yet'))
+          ? kpi('Col % · mwezi', pct(t.colPct),
+                'TZS '+money(t.collected)+' of '+money(t.expected)+' · wastani TZS '+money(avgOf('collected'))+'/wiki', 'good')
+          : kpi('Col % · mwezi', '—', 'haipatikani bado / not available yet'))
       + (t.recovered != null
-          ? kpi('Recovery this month', money(t.recovered),
-                'of '+money(t.uncollected)+' uncollected'+(t.recPct!=null?' · '+pct(t.recPct):'')
-                  + ' · wastani TZS '+money(avgOf('recovered'))+'/wiki', 'good')
-          : kpi('Recovery this month', '—', 'haipatikani bado / not available yet'))
+          ? kpi('Rec % · mwezi', pct(t.recPct),
+                'TZS '+money(t.recovered)+' of '+money(t.uncollected)+' uncollected · wastani TZS '+money(avgOf('recovered'))+'/wiki', 'good')
+          : kpi('Rec % · mwezi', '—', 'haipatikani bado / not available yet'))
       + '</div>'
       /* The month's own performance strip: the same three percentages and their average,
          with the arrows reading the LATEST week against the one before it -- the direction
@@ -2964,8 +3004,9 @@ VIEWS.monthreport = function(){
       get: function(r){ var v = r[key]; if (v==null) return '';
         return v ? (v>0 ? '▲ +' : '▼ −') + fmt(Math.abs(v)) : '0'; },
       cls: function(r){ var v = r[key]; return v>0 ? 'good' : (v<0 ? 'bad' : ''); } }; };
-    S.rows = d.rows || [];
-    S.cols = [
+    /* The week-by-week table is a board of its own now (with its Excel and JPG), because the
+       main list below became the leaders. */
+    var weekCols = [
       col('week','Wiki','num'),
       col('from','Kuanzia / From','date'),
       col('to','Hadi / To','date'),
@@ -2984,6 +3025,31 @@ VIEWS.monthreport = function(){
       col('perf','Perf %','pct'),
       dcol('dPerf','± Perf', function(v){ return v+'%'; }),
     ];
+    HEAD += board('mrWeeks', 'Wiki kwa wiki / Week by week — jedwali / table', d.month, rows, weekCols, false)
+      /* The role filter narrows the leaders list below, the same way a team filter narrows
+         any other list. */
+      + bar('<select data-filter="role"><option value="">Nafasi zote / All roles</option>'
+          + (d.leaderRoles||[]).map(function(x){
+              return '<option'+(S.filters.role===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+          + '<span class="chip">'+money((d.leaders||[]).length)+' viongozi / leaders</span>');
+    /* THE LEADERS, CHIPPED. "then list of leaders and columns of sales, early col, col, rec and
+       avrg performance where average performance gives the best one by auto sort largest to
+       smallest averg % ... role column, name ... This is a chipped list of all leaders in the
+       system". Best first from the server; the headers still sort; the colour rule paints a
+       name red when its average is under the line. */
+    S.rows = d.leaders || [];
+    S.cols = [
+      col('role','Nafasi / Role'),
+      col('name','Jina / Name'),
+      col('teams','Timu / Teams','num'),
+      {key:'salesPct', label:'Sales %', kind:'pct', title:'Mauzo ya mwezi ÷ lengo (wiki × 4 kwa kila timu) / month sales ÷ weekly target × 4 per team'},
+      {key:'ecolPct', label:'Early col %', kind:'pct', title:'Karatasi ya awali, mwezi huu / initial sheets, month to date'},
+      {key:'colPct', label:'Col %', kind:'pct', title:'Makusanyo ya siku, mwezi huu / day collection, month to date'},
+      {key:'recPct', label:'Rec %', kind:'pct', title:'Kilichorejeshwa ÷ kisichokusanywa, mwezi huu / recovered ÷ uncollected, month to date'},
+      {key:'avgPct', label:'Wastani / Avg %', kind:'pct', title:'Wastani wa asilimia zilizopimwa / average of the percentages measured'},
+    ];
+    S.foldMain = 'mrleaders';
+    S.foldLabel = 'Viongozi wote / All leaders — mwezi huu / this month, best first';
     ONROW = null;
     S.foot = 'JUMLA / TOTAL · Sales TZS '+money(t.sales)+' ('+money(t.loans)+' loans)'
       + (t.collected!=null ? ' · Collected TZS '+money(t.collected)+' of '+money(t.expected)
@@ -2994,7 +3060,7 @@ VIEWS.monthreport = function(){
       + (d.ledgerReady
           ? ', Col TZS '+money(avgOf('collected'))+(aCol!=null?' ('+pct(aCol)+')':'')
             +', Rec TZS '+money(avgOf('recovered'))+(aRec!=null?' ('+pct(aRec)+')':'')
-          : '');
+          : ' · M. bado zinajaza / month columns still filling');
   });
 };
 

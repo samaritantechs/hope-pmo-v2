@@ -2800,6 +2800,8 @@ test('the month report cuts the month into clipped weeks and agrees with the car
     { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
     { id: 'm2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
     { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
+    // An application brought in this month, not yet a sale -- the loan-apps card counts it.
+    { id: 'a1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 50, created_at: TODAY + 'T08:00:00Z' },
   ];
   t.repayment_snapshots = [
     E('111', 'KONGOWE', 1000, 'UNPAID', 0),
@@ -2852,9 +2854,33 @@ test('the month report cuts the month into clipped weeks and agrees with the car
   assert.equal(d.totals.salesPct, 6.3);
   assert.equal(d.totals.perfPct, 32.1);
 
+  /* THE LEADERS, EVERY ONE, BEST FIRST. KONGOWE's four named people each hold that one team,
+     so they share its month: sales 400 of 4,000 (10%), col 0 of 1,000 (0%), rec 300 of 1,000
+     (30%), early col unmeasured (no initial sheet) -> average 13.3 over the three measured.
+     MBAGALA names nobody, so its figures belong to no leader. */
+  assert.ok(Array.isArray(d.leaders));
+  const juma = d.leaders.find(r => r.name === 'JUMA G');
+  assert.equal(juma.role, 'Recovery');
+  assert.equal(juma.teams, 1);
+  assert.equal(juma.salesPct, 10);
+  assert.equal(juma.ecolPct, null, 'no initial sheet this month: not measured, never 0%');
+  assert.equal(juma.colPct, 0);
+  assert.equal(juma.recPct, 30);
+  assert.equal(juma.avgPct, 13.3);
+  assert.equal(juma.avgOn, 3);
+  assert.deepEqual(d.leaders.map(r => r.role + ':' + r.name).sort(),
+    ['Credit Analyst:ANALYST A', 'Early Collection:EARLY E', 'Manager:BOSS', 'Recovery:JUMA G']);
+  assert.ok(d.leaders.every((r, i) => i === 0 || (d.leaders[i - 1].avgPct ?? -1) >= (r.avgPct ?? -1)), 'best first');
+  assert.equal(d.leaders[0].sn, 1);
+  // The cards: applications brought in this month, and the company's early col.
+  assert.equal(d.cards.apps, 1, 'one application created this month');
+  assert.equal(d.cards.ecolPct, null);
+
   // Without the totals function: sales still exact (they read loans, not snapshots), and the
   // ledger columns stand down rather than print a month of zeros.
   const bare2 = await run('monthReport', {}, ADMIN, fakeDb(t));
+  assert.equal(bare2.leaders.find(r => r.name === 'JUMA G').colPct, null, 'the ledger side stands down');
+  assert.equal(bare2.leaders.find(r => r.name === 'JUMA G').salesPct, 10, 'sales still answer');
   assert.equal(bare2.ledgerReady, false);
   assert.equal(bare2.totals.sales, 500);
   assert.equal(bare2.totals.expected, null);
@@ -3028,6 +3054,21 @@ test('a stalled ledger slice cannot hold the dashboard past its budget', async (
     assert.equal(k.tColPct, 50, 'and today\'s side is whole');
     assert.equal(k.mColPct, null);
   } finally { delete process.env.DASH_MONTH_BUDGET_MS; }
+});
+
+/* The dashboard's own diagnosis: every read the dashboard makes, timed on its own, so a
+   timeout on the live instance says WHICH read rather than only that one did. */
+test('the dashboard probe times each read on its own and names them', async () => {
+  const p = await run('dashboardProbe', {}, ADMIN, dbWithRpc(tables()));
+  assert.ok(p.steps.length >= 12);
+  for (const s of p.steps) {
+    assert.ok(typeof s.name === 'string' && s.name.length);
+    assert.ok(typeof s.ms === 'number' && s.ms >= 0, s.name + ' is timed');
+    assert.equal(!!s.capped, false, s.name + ' answered');
+    assert.equal(s.error, undefined, s.name + ' had no error');
+  }
+  assert.ok(p.steps.some(s => /expected totals/.test(s.name) && s.rows > 0));
+  assert.ok(typeof p.total === 'number');
 });
 
 test('a month with no deck paired on any day has not measured recovery: null, not 0%', async () => {
