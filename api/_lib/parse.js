@@ -167,6 +167,45 @@ export function tightestSpanIsDayFirst(values) {
   return dSpan < mSpan;
 }
 
+/** WHICH READING LANDS NEAREST THE DAY THE FILE WAS UPLOADED, for the file the two rules
+    above both give up on: ONE day's report, every value the same date, both components under
+    thirteen.
+
+      "Sales of 31st aug are not counting at dashboard" -- and, checked on the way, the day
+      after it: a Tuesday approvals file of nothing but "9/1/2026".
+
+    No component is over twelve, so there is no evidence; every value is the same day, so both
+    readings span zero days and the tighter-span rule cannot choose either. It fell through to
+    day-first -- and 9/1/2026 read day-first is the ninth of January. A report uploaded on the
+    second of September is about days near the second of September: the reading that puts the
+    file's dates closest to the upload day is the one meant. Null when the two are equally
+    near, which for a real report they never are. */
+export function nearestToDayIsDayFirst(values, nearKey) {
+  const m0 = String(nearKey == null ? '' : nearKey).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m0) return null;
+  const near = Date.UTC(Number(m0[1]), Number(m0[2]) - 1, Number(m0[3]));
+  const farthest = first => {
+    let worst = null;
+    for (const v of (values || [])) {
+      const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+      if (!m) continue;
+      const d = first ? Number(m[1]) : Number(m[2]);
+      const mo = first ? Number(m[2]) : Number(m[1]);
+      let y = Number(m[3]); if (y < 100) y += 2000;
+      if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;      // not a real date this way round
+      const gap = Math.abs(Date.UTC(y, mo - 1, d) - near);
+      if (worst === null || gap > worst) worst = gap;
+    }
+    return worst;
+  };
+  const dGap = farthest(true), mGap = farthest(false);
+  if (dGap === null && mGap === null) return null;
+  if (dGap === null) return false;
+  if (mGap === null) return true;
+  if (dGap === mGap) return null;
+  return dGap < mGap;
+}
+
 /** A full moment -- date AND clock -- as an ISO timestamp, for a log whose ORDER matters.
 
     dateOrNull deliberately throws the time away: a due date has no clock. A comment log is the

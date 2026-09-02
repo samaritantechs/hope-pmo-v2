@@ -31,8 +31,14 @@ const WEEKDAYS_ALL = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
     sale for the rest of the month, understating every sales figure on the system (dashboard,
     the call app's own strip, the GM's weekly report, the sales trend widgets). A sale that was
     approved and later disbursed/funded/closed is still a sale; only 'rejected' (undone before
-    it ever went out) and 'reversed' (money never moved) genuinely were not one. */
-export const SALES_STAGES = ['approved', 'disbursed', 'funded', 'closed'];
+    it ever went out) and 'reversed' (money never moved) genuinely were not one.
+
+    "Sales of 31st aug are not counting at dashboard" -- PENDING DISBURSEMENT is the stage
+    between approved and disbursed in this pipeline (see STAGES / the loan_stage enum), and it
+    was missing from this list. The Monday approvals were uploaded again on Tuesday as the
+    pending-disbursement list, every one of them moved to that stage, and Monday's sales
+    vanished from the week -- the identical fault this list was made to end, one stage over. */
+export const SALES_STAGES = ['approved', 'pending_disb', 'disbursed', 'funded', 'closed'];
 
 /* THE DASHBOARD NEVER READS A CUSTOMER ROW ANY MORE. Every figure it returns is a sum or a
    count -- no name, phone or balance appears anywhere on it -- and it used to fetch every
