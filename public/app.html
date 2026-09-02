@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>HOPE PMO — Portal</title>
 <style>
-  :root{--b950:#081C4A;--b900:#0B2A6B;--b800:#10357F;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
+  :root{--zebra:#F3F6FB;--b950:#081C4A;--b900:#0B2A6B;--b800:#10357F;--b700:#1D4ED8;--b600:#2563EB;--b500:#3B82F6;--b300:#93C5FD;--b100:#DBEAFE;--b50:#EFF6FF;
         --bg:#F6F8FC;--card:#FFF;--ink:#0F172A;--mut:#64748B;--soft:#94A3B8;--line:#E2E8F0;
         --ok:#067647;--okbg:#E7F6EE;--okline:#CFEADD;--warn:#92400E;--warnbg:#FEF3DC;--warnline:#F6E3BC;
         --bad:#B42318;--badbg:#FDECEA;--badline:#F6CFCB;--rad:14px}
@@ -129,7 +129,12 @@
     border-bottom:1px solid var(--line);white-space:nowrap;background:var(--b50);cursor:pointer;user-select:none}
   td{padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
   tr:last-child td{border-bottom:0}
-  tbody tr:hover{background:var(--b50)}
+  /* ZEBRA. "no zebra stripping" -- 84 teams across seventeen columns is a table the eye loses
+     its row in, on the screen and worse in the posted picture where there is no hover to
+     help. Every second row sits on a faint wash; the total row keeps its own. On the cells,
+     not the row, so the picture (which copies this stylesheet) gets it too. */
+  tbody tr:nth-child(even):not(.totrow) td{background:var(--zebra)}
+  tbody tr:hover:not(.totrow) td{background:var(--b50)}
   .r{text-align:right}
   th.sn,td.sn{width:1%;text-align:right;color:var(--soft);font-variant-numeric:tabular-nums;padding-right:6px}
   td.sn{font-size:11.5px}
@@ -174,7 +179,7 @@
   a.tel{color:var(--b600);text-decoration:none}
 
   /* dark mode -- one class on <body>, every colour comes from the variables above */
-  body.dark{--bg:#0B1120;--card:#131C2E;--line:#22304A;--ink:#E5EAF2;--mut:#8B9AB3;--soft:#64748B;
+  body.dark{--zebra:#0F1828;--bg:#0B1120;--card:#131C2E;--line:#22304A;--ink:#E5EAF2;--mut:#8B9AB3;--soft:#64748B;
     --b50:#16233C;--b100:#22304A;--b900:#060D1C;--b950:#040914;
     --okbg:#12301F;--okline:#1D5136;--warnbg:#33260C;--warnline:#5C4517;--badbg:#3A1512;--badline:#6B2620}
   body.dark input,body.dark select,body.dark textarea,body.dark .btn.ghost,body.dark .tcell{background:#0F1830;color:var(--ink)}
@@ -568,7 +573,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-01-g';
+var BUILD = '2026-09-01-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1510,7 +1515,19 @@ function exportXls(){
    handset at 2x or 3x the file is two or three times the report, and a viewer opening it at
    actual size shows a corner of it. 1:1 is the only setting where every report, at every width,
    opens whole -- and whole is worth more than sharp. */
-var JPG_SCALE = 1;
+/* AND BACK TO 2, FOR A DIFFERENT REASON THAN THE FIRST TIME.
+
+     "we want to start regular posting the jpg from orodha at dashboard and move from our old
+      excel reports now the quality downloaded is too low"
+
+   The picture is now something POSTED -- to the groups, in place of the Excel -- and a posted
+   picture is opened fit-to-screen and pinched into, not viewed at actual size. At 1x an
+   84-team Orodha is soft the moment anybody zooms; at 2x it is the same layout with four
+   times the pixels, and stays sharp under the zoom. The cut that 2x once got blamed for was
+   never the scale's doing -- it was the font mismatch fixed in saveJpg below -- so the two
+   reasons for 1x are both gone. The canvas ceiling still drops it to 1x for a picture that
+   would not fit at 2x. */
+var JPG_SCALE = 2;
 var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;'
   + 'max-width:none !important;}'
   + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}'
@@ -1676,7 +1693,22 @@ function saveJpg(el){
        copied stylesheet is escaped the same way: CSS text is free to contain & and <, and
        inside an XML <style> those must be entities. */
     var xmlText = function(s){ return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
-    var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="'+document.body.className+'">'
+    /* THE PICTURE'S FONT IS THE PAGE'S FONT, SAID OUTRIGHT.
+
+         "the quality downloaded is too low ... and not all columns fitted"
+
+       The page's font lives on `html,body{font-family:...}`, and inside the drawing there is
+       no body -- the root is this div -- so that rule matched nothing and the picture fell
+       back to the browser's default serif. The clone was MEASURED in the page's font (the
+       probe sits inside the real body) and DRAWN in another: wider glyphs pushed the last
+       columns past the right edge, a different line height pushed the last rows past the
+       bottom, and 84 teams came out as 78 with T.Avg half gone. Proven by giving the page a
+       wide serif and watching the picture ignore it. The body's computed font, size, line
+       height and colour go on the root of the drawing, so the two layouts are one layout. */
+    var bs = getComputedStyle(document.body);
+    var fontCss = 'font-family:' + bs.fontFamily + ';font-size:' + bs.fontSize + ';line-height:' + bs.lineHeight
+      + ';color:' + bs.color + ';letter-spacing:' + bs.letterSpacing + ';font-weight:' + bs.fontWeight + ';';
+    var html = '<div xmlns="http://www.w3.org/1999/xhtml" class="'+document.body.className+'" style="'+esc(fontCss)+'">'
       // The override goes AFTER the copied stylesheet, so it wins inside the drawing too.
       + '<style>'+xmlText(css)+'</style><style>'+xmlText(JPG_UNCLIP)+'</style>'
       /* box-sizing:content-box ON PURPOSE. The copied stylesheet sets `*{box-sizing:border-box}`,
