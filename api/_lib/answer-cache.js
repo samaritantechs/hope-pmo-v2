@@ -52,8 +52,26 @@ export async function cachedAnswer(db, name, user, nowMs, compute) {
   const hit = bucket.get(key);
   // hit.at <= nowMs guards a clock that jumps backwards, which would otherwise make a stale
   // answer look brand new for as long as the clock stayed behind.
-  if (hit && hit.at <= nowMs && (nowMs - hit.at) < ANSWER_TTL_MS) return hit.value;
-  const value = await compute();
-  bucket.set(key, { at: nowMs, value });
-  return value;
+  if (hit && hit.value !== undefined && hit.at <= nowMs && (nowMs - hit.at) < ANSWER_TTL_MS) return hit.value;
+  /* THE QUESTION IN FLIGHT IS SHARED TOO.
+
+       "Seva haijibu ndani ya sekunde 45" -- and then again, and again, as people pressed the
+       tab.
+
+     Only a FINISHED answer was remembered, so on a slow morning every retry of the dashboard
+     started a second full computation beside the first -- a dozen reads each -- against a
+     database that was already the reason for the retry. The pile-up is the storm. Now the
+     pending computation itself is handed to everyone who asks the same question while it
+     runs: one computation per scope, however many people press the tab. A computation that
+     fails is forgotten at once, so the next press asks afresh. */
+  if (hit && hit.pending) return hit.pending;
+  const pending = compute().then(value => {
+    bucket.set(key, { at: nowMs, value });
+    return value;
+  }, e => {
+    if (bucket.get(key) && bucket.get(key).pending === pending) bucket.delete(key);
+    throw e;
+  });
+  bucket.set(key, { at: nowMs, pending });
+  return pending;
 }
