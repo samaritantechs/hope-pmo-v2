@@ -989,21 +989,82 @@ async function dailySummary(db, [dev], nowMs) {
  * team ask the identical question, so the first one pays and the rest are free for two minutes.
  * Nothing about the figures changes -- one derivation still, just not one per handset.
  */
+/* THE BURST, AND WHAT pg_stat_activity SHOWED OF IT.
+
+     27 queries active at the same instant, nearly all of them the totals functions, none
+     older than three seconds, nothing blocked -- on a morning the dashboard could not load.
+
+   That is this strip. Every upload moves DATA_VERSION, every handset re-asks for its strip on
+   its next sync, and the cache below only helped once the first answer had LANDED: during the
+   burst itself, every handset on a scope ran buildDashboard side by side, and forty-odd scopes
+   did that at once. A Small instance's CPU saturates under it, every query slows, and the
+   dashboard's dozen reads queue behind three hundred phones.
+
+   Three rules now, in this order:
+
+     the question in flight is shared     one computation per scope, however many ask
+     a few computations at a time         per lambda, the rest wait in line for a slot
+     while the line is long, the last     a handset whose scope HAS a strip gets it at once,
+       known strip is served                marked stale, and a refresh joins the line
+
+   The phone already asks again when a sync reports a newer version, so a stale strip costs
+   nobody anything but a minute; a burst that used to be sixty whole-book reads at once is now
+   three at a time, and the uploads and the dashboard get the database back. */
 const SUMMARY_TTL_MS = 120000;
+const SUMMARY_MAX_INFLIGHT = 3;
+const summaryMaxInflight_ = () => Number(process.env.CALL_SUMMARY_MAX_INFLIGHT) || SUMMARY_MAX_INFLIGHT;
 const summaryCache = new Map();
+let summaryInflight = 0;
+const summaryQueue = [];
+function summarySlot_() {
+  if (summaryInflight < summaryMaxInflight_()) { summaryInflight += 1; return Promise.resolve(); }
+  return new Promise(res => summaryQueue.push(res)).then(() => { summaryInflight += 1; });
+}
+function summaryRelease_() {
+  summaryInflight -= 1;
+  const next = summaryQueue.shift();
+  if (next) next();
+}
 function summaryKey_(user) {
   return (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL');
 }
 export function _clearSummaryCache() { summaryCache.clear(); }   // tests only
 async function summaryFor(db, user, nowMs) {
   const key = summaryKey_(user);
-  const hit = summaryCache.get(key);
-  if (hit && (nowMs - hit.at) < SUMMARY_TTL_MS && hit.at <= nowMs) {
-    return { ...hit.value, cached: true, computedAt: hit.at };
+  const hit = summaryCache.get(key) || {};
+  const fresh = hit.value && hit.at <= nowMs && (nowMs - hit.at) < SUMMARY_TTL_MS;
+  if (fresh) return { ...hit.value, cached: true, computedAt: hit.at };
+  if (hit.pending) {
+    // Somebody on this scope is already computing it: share the answer, or serve the last one.
+    if (hit.value) return { ...hit.value, cached: true, stale: true, computedAt: hit.at };
+    return hit.pending;
   }
-  const value = await summaryCompute(db, user, nowMs);
-  summaryCache.set(key, { at: nowMs, value });
-  return { ...value, cached: false, computedAt: nowMs };
+  if (hit.value && summaryInflight >= summaryMaxInflight_()) {
+    // The line is long and this scope has a strip: hand it over now, refresh in the background.
+    summaryRun_(db, user, nowMs, key).catch(() => {});
+    return { ...hit.value, cached: true, stale: true, computedAt: hit.at };
+  }
+  return summaryRun_(db, user, nowMs, key);
+}
+function summaryRun_(db, user, nowMs, key) {
+  const prev = summaryCache.get(key) || {};
+  const pending = (async () => {
+    await summarySlot_();
+    try {
+      const value = await summaryCompute(db, user, nowMs);
+      summaryCache.set(key, { at: nowMs, value });
+      return { ...value, cached: false, computedAt: nowMs };
+    } catch (e) {
+      // A failed refresh keeps the last strip, if there was one; never a poisoned entry.
+      const cur = summaryCache.get(key);
+      if (cur && cur.pending === pending) {
+        if (cur.value) summaryCache.set(key, { at: cur.at, value: cur.value }); else summaryCache.delete(key);
+      }
+      throw e;
+    } finally { summaryRelease_(); }
+  })();
+  summaryCache.set(key, { at: prev.at || 0, value: prev.value, pending });
+  return pending;
 }
 async function summaryCompute(db, user, nowMs) {
   const d = await buildDashboard(db, user, nowMs);
