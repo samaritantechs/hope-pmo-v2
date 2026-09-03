@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-a';
+var BUILD = '2026-09-03-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -648,6 +648,26 @@ function srv(fn, args){
       /* The admin closed the system while this page was open. Every tab from here on would
          answer the same way, so a red message on each one teaches nothing -- say it once and
          go back to the launcher, which knows how to explain what is still available. */
+      /* A CODE THAT IS NO LONGER CURRENT IS A SIGN-OUT, NOT A RED MESSAGE.
+
+           "always logout all devices signed in with non current app codes"
+
+         Every request already re-checks the code against the table, so rotating or deleting
+         one does stop it working the moment it is saved. What was missing was this side: the
+         401 came back and was drawn as "Imeshindikana / could not load" on whatever screen
+         the person was looking at, so the device sat there still holding a dead code and
+         offering it again on every tap. The stored code goes and the session ends, on every
+         device, the next time any of them asks the server for anything -- which is what
+         "logged out" has to mean when there is no way to reach a handset directly. */
+      if (x.status === 401){
+        store('hopeCode', null);
+        VC.store = {}; if (VC.watch) VC.watch.ok = false;
+        document.body.innerHTML = '<div class="msg" style="padding:40px;text-align:center;line-height:1.8">'
+          + 'Msimbo wako si wa sasa &mdash; umetolewa nje.<br>'
+          + 'Your access code is no longer current &mdash; you have been signed out.<br><br>'
+          + '<a class="btn" href="/">Ingia upya / Sign in</a></div>';
+        throw new Error((x.body && x.body.error) || 'Msimbo si sahihi. / That code is not current.');
+      }
       if (x.status === 403 && x.body && /HOPE Calls/.test(String(x.body.error||''))){
         document.body.innerHTML = '<div class="msg" style="padding:40px;text-align:center;line-height:1.8">'
           + 'Mfumo umefungwa kwa sasa &mdash; tumia HOPE Calls.<br>'
