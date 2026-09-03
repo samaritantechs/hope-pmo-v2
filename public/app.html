@@ -190,6 +190,12 @@
   .pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   @media (max-width:1000px){ .pair{grid-template-columns:1fr} }
   tr.totrow td{font-weight:800;background:var(--b50);border-top:2px solid var(--b100)}
+  /* The leader reports' segments: one leader's teams, then that leader's own JUMLA, then the
+     next leader in the same table -- so the subtotal has to read as a rule under the group,
+     and the narrow column is the wall between "how we are doing" and "how we did on this same
+     day last time". */
+  td.subrow{font-weight:800;background:var(--b50);border-top:1.5px solid var(--b100)}
+  td.gapcol{width:6px;min-width:6px;padding:0;background:var(--line)}
   /* presentation: a real projector deck, full screen, dark, readable across a room */
   /* THE DECK FOLLOWS THE THEME. It was a fixed dark navy whatever the rest of the system was
      set to, so somebody working in light mode got a black screen thrown at them on the
@@ -505,6 +511,17 @@ var $ = function(s){ return document.querySelector(s); };
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
+/* "have J1 and J2 showing amount in 2.4m format single decimal" -- a weekend's recovery in the
+   width of a day column, where the full figure would push the table off the screen. */
+function m1_(v){
+  if (v == null || v === '' || isNaN(v)) return '';
+  var a = Math.abs(Number(v));
+  // A trailing ".0" is noise, not precision: 2.4m, but 850k rather than 850.0k.
+  var cut = function(x){ return x.toFixed(1).replace(/\.0$/, ''); };
+  if (a >= 1e6) return cut(Number(v)/1e6)+'m';
+  if (a >= 1e3) return cut(Number(v)/1e3)+'k';
+  return String(Math.round(Number(v)));
+}
 /* The server's own num(), mirrored here. The Iliyonasia screen used it out of server habit
    with no definition on this page, and the first REAL adjustment row killed the whole tab
    with "num is not defined" -- a ReferenceError no parse guard can see. Defined once, the
@@ -580,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-02-d';
+var BUILD = '2026-09-03-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3621,9 +3638,13 @@ function tableSimple(rows, cols, totalRow){
   var body = rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
         var k = cellCls_(r, c, ctx);
         return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
-  // A TOTAL row is not decoration on these boards -- it is the number read out in the meeting.
+  /* A TOTAL row is not decoration on these boards -- it is the number read out in the meeting.
+     It takes each column's own cls like every other row: a divider column has to reach the
+     bottom of the table, and a column that paints a good figure green means it on the total
+     too. */
   if (totalRow) body += '<tr class="totrow"><td class="sn"></td>'+cols.map(function(c,i){
-      return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
+      return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(totalRow)):'')+'">'
+        +(i===0?'JUMLA / TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
   return '<div class="scroll"><table><thead><tr><th class="sn">S/N</th>'+cols.map(function(c){
       return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
     + body + '</tbody></table></div>';
@@ -4040,11 +4061,126 @@ function weeklyLeaderBoards(d){
   return any ? out : '';
 }
 
+/* ======================================================================================
+   THE LEADER REPORTS' ORODHA -- nine tables, and the chip that picks which.
+
+     "I need chipped table segments of 9 ... so one leader goes his teams, grand
+      totals/averages row then start the other leader in the same table"
+     "Opening orodha chip should list the roles so that I tick the role(s) and get reports
+      (sales, col or recovery) that I need to spill. [TWO CHOICES - Roles and Report types]"
+
+   Two tick lists, and a table for every ticked pair the server emits. The nine open ticked;
+   sales and the credit analyst are one tick away. What is ticked is remembered on the device,
+   because whoever opens this screen opens it for the same reason every week.
+
+   J3..IJ are a LOOKUP of the latest occurrence of that weekday, not this week's -- see
+   leaderSegments_ in portal-core.js. The date each column actually read is on its tooltip. */
+function lrDayCol_(sec, k, subCls){
+  var when = (sec.dayDates && sec.dayDates[k]) || '';
+  if (sec.metric === 'sales'){
+    /* "for sales in the 6 days use format of 10c-10% to refer last achievied no of customers
+       and sales%" -- two facts in one column, because a count without its percentage does not
+       say whether the day was good. */
+    return { key:'d_'+k, label:k, kind:'text', title:'Wateja na % / customers and % · '+when,
+      get:function(r){ var c = r.d ? r.d[k] : null;
+        return c ? (money(c.n)+'c-'+(c.pct==null?'—':Math.round(c.pct)+'%')) : ''; }, cls:subCls };
+  }
+  return { key:'d_'+k, label:k, kind:'pct', title:when,
+    get:function(r){ return r.d ? r.d[k] : null; }, cls:subCls };
+}
+function lrCols_(sec){
+  var subCls = function(r){ return r.sub ? 'subrow' : ''; };
+  var cols = [ {key:'leader', label:'Kiongozi / Leader', kind:'text', cls:subCls},
+               {key:'team', label:'Timu / Team', kind:'text', cls:subCls} ];
+  if (sec.metric === 'rec'){
+    var bl = sec.basis === 'week' ? 'wiki / week' : sec.basis === 'mon' ? 'Jumatatu / Mon' : 'jana / yest';
+    cols.push({key:'uncol', label:'Uncol '+bl, kind:'money', cls:subCls});
+    cols.push({key:'recovered', label:'Recovered', kind:'money', cls:subCls});
+    cols.push({key:'pct', label:'Rec %', kind:'pct', target:'rec', cls:subCls});
+  } else if (sec.metric === 'sales'){
+    cols.push({key:'count', label:'Count', kind:'num', title:'Idadi ya wateja / number of customers', cls:subCls});
+    cols.push({key:'pct', label:'Sales %', kind:'pct', target:'sales', cls:subCls});
+  } else {
+    cols.push({key:'uncol', label:'Uncollected', kind:'money', cls:subCls});
+    cols.push({key:'pct', label:(sec.metric==='ecol'?'E.Col %':'Col %'), kind:'pct',
+      target:(sec.metric==='ecol'?'ecol':'col'), cls:subCls});
+  }
+  // The wall between today's figures and the same-day lookups beside them.
+  cols.push({key:'_gap', label:'', kind:'text', get:function(){ return ''; }, cls:function(){ return 'gapcol'; }});
+  (sec.dayKeys||[]).forEach(function(k){ cols.push(lrDayCol_(sec, k, subCls)); });
+  (sec.amtKeys||[]).forEach(function(k){
+    cols.push({key:'a_'+k, label:k, kind:'text',
+      title:'Kilichorejeshwa / recovered · '+((sec.dayDates&&sec.dayDates[k])||''),
+      get:function(r){ return m1_(r.a ? r.a[k] : null); }, cls:subCls});
+  });
+  return cols;
+}
+function lrSegHtml_(sec){
+  var rows = [];
+  (sec.groups||[]).forEach(function(g){
+    (g.rows||[]).forEach(function(r){ rows.push(Object.assign({}, r, {leader:g.leader})); });
+    rows.push(Object.assign({}, g.total, {leader:'JUMLA — '+g.leader, team:'', sub:true}));
+  });
+  var days = (sec.dayKeys||[]).concat(sec.amtKeys||[])
+    .map(function(k){ return k+' = '+((sec.dayDates&&sec.dayDates[k])||'—'); }).join(' · ');
+  return board('lrseg_'+sec.id, sec.label,
+    money((sec.groups||[]).length)+' viongozi / leaders · '+money(sec.teams||0)+' timu / teams'
+      + (sec.unstaffed ? ' · '+money(sec.unstaffed)+' bila jina / with nobody named' : '')
+      + (days ? ' · ' + days : ''),
+    rows, lrCols_(sec),
+    Object.assign({}, sec.totals, {leader:'JUMLA / TOTAL', team:'', sub:true}));
+}
+function lrSegsHtml_(d){
+  if (!d || !d.segments) return '<div class="msg">—</div>';
+  var segs = d.segments.filter(function(s){
+    return S.lrM.indexOf(s.metric) >= 0 && S.lrR.indexOf(s.role) >= 0; });
+  if (!segs.length) return '<div class="msg">Chagua angalau ripoti moja na nafasi moja hapo juu.'
+    + ' / Tick at least one report type and one role above.</div>';
+  return segs.map(lrSegHtml_).join('');
+}
+function lrPicksHtml_(d){
+  var box = function(cls, items, keyOf, labOf, have){
+    return items.map(function(x){
+      return '<label><input type="checkbox" class="'+cls+'" value="'+esc(keyOf(x))+'"'
+        + (have.indexOf(keyOf(x))>=0 ? ' checked' : '') + ' onchange="lrPick_()"> '+esc(labOf(x))+'</label>';
+    }).join('');
+  };
+  return '<div class="cleanbox">'
+    + '<div class="fld"><label>Ripoti / Report types</label><div class="checks">'
+    + box('lrM', d.segMetrics||[], function(x){ return x.metric; }, function(x){ return x.label; }, S.lrM)
+    + '</div></div>'
+    + '<div class="fld"><label>Nafasi / Roles</label><div class="checks">'
+    + box('lrR', d.segRoles||[], function(x){ return x.role; }, function(x){ return x.label; }, S.lrR)
+    + '</div></div></div>';
+}
+function lrPick_(){
+  var pick = function(cls){ return Array.prototype.filter.call(document.querySelectorAll('.'+cls),
+    function(c){ return c.checked; }).map(function(c){ return c.value; }); };
+  S.lrM = pick('lrM'); S.lrR = pick('lrR');
+  try { localStorage.setItem('hopeLrM', S.lrM.join(',')); localStorage.setItem('hopeLrR', S.lrR.join(',')); } catch(e){}
+  var host = document.getElementById('lrSegs');
+  if (host){ host.innerHTML = lrSegsHtml_(S.lrData); wireBar(); }
+}
+/** What was ticked last time, or the nine the report opened with. */
+function lrPicksInit_(d){
+  var read = function(key, dflt){
+    var v = null; try { v = localStorage.getItem(key); } catch(e){}
+    if (v == null) return dflt;
+    return String(v).split(',').filter(Boolean);
+  };
+  S.lrM = read('hopeLrM', (d.segMetrics||[]).filter(function(x){ return x.dflt; }).map(function(x){ return x.metric; }));
+  /* Every role opens ticked, including the credit analyst -- who has no early-col, col or rec
+     table of their own, so the default view is still exactly the nine, and ticking Sales shows
+     all three of its tables at once instead of one blank screen. */
+  S.lrR = read('hopeLrR', (d.segRoles || []).map(function(x){ return x.role; }));
+}
+
 /* Per-team numbers answer "how is this team doing". A leader report answers "how is this
    PERSON doing" — and most supervisors carry several teams, so their real performance is the
    roll-up across all of them. The same teams appear under a different name in each section. */
 VIEWS.reports = function(){
   return srv('leaderReports').then(function(d){
+    S.lrData = d; lrPicksInit_(d);
     var t = d.totals;
     HEAD = (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
       + '<div class="kpis">'
@@ -4066,11 +4202,21 @@ VIEWS.reports = function(){
             {leader:'', teams:sec.totals.teams, teamList:'',
              initArrears:sec.totals.initArrears, curArrears:sec.totals.curArrears,
              recovered:sec.totals.recovered, progress:sec.totals.progress, cleared:sec.totals.cleared});
-        }).join('');
+        }).join('')
+      /* THE ORODHA, behind its chip: the pickers, then a table per ticked pair. The team
+         distributions above are untouched -- "leave the team distributions, just ammend
+         orodha". */
+      + fold_('lrsegs', 'Orodha / List — ripoti kwa kiongozi / by leader',
+          money((d.segments||[]).length) + ' zinapatikana / available',
+          lrPicksHtml_(d) + '<div id="lrSegs">' + lrSegsHtml_(d) + '</div>');
     S.rows = d.rows;
     S.cols = [col('branch','Branch'), col('team','Team'), col('recovery','Recovery officer'), col('gmo','GMO'), col('manager','Manager'),
       col('initArrears','Initial','money'), col('curArrears','Current','money'), col('recovered','Recovered','money'),
       col('progress','Progress %','pct'), col('initCust','Init cust','num'), col('curCust','Cur cust','num'), col('cleared','Cleared','num')];
+    // The per-team list keeps its place, behind a chip of its own, so the Orodha above is the
+    // leader reports and this stays available without crowding them.
+    S.foldMain = 'lrteams';
+    S.foldLabel = 'Timu moja moja / team by team';
     ONROW = null;
   });
 };
@@ -4984,19 +5130,10 @@ VIEWS.teams = function(){
               }).join('')
             + '</tbody></table></div></div>')
           : '')
-      // A role's tab list was readable but not editable anywhere, so onboarding a new kind of
-      // officer meant a trip to the SQL editor.
-      + (S.me.can.admin
-          ? '<div class="card" id="rolesCard"><div class="card-h">Wadhifa / Roles &amp; their tabs'
-            + '<span class="sub"><button class="btn sm" id="newRole">+ Wadhifa mpya / New role</button></span></div>'
-            + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Role</th><th>Tabs</th><th>Codes</th><th></th></tr></thead><tbody>'
-            + (d.roles||[]).map(function(r, i){
-                return '<tr class="clickrow" data-role="'+esc(r.role)+'"><td class="sn">'+(i+1)+'</td><td><b>'+esc(r.role)+'</b></td>'
-                  + '<td>'+esc((r.tabs||[]).join(', ') || '—')+'</td>'
-                  + '<td class="r">'+((r.tabs||[]).length)+' tabs</td>'
-                  + '<td class="r"><button class="btn sm ghost" data-role="'+esc(r.role)+'">Badili / Edit</button></td></tr>';
-              }).join('') + '</tbody></table></div></div>'
-          : '')
+      /* The roles table used to sit here. It moved to SETTINGS, immediately above the access
+         codes it governs -- "I need a new role assign table before access codes" -- because
+         that is the screen where somebody decides who may see what, and a role's tabs are
+         only meaningful next to the codes that inherit them. */
       // The agent ids come from the application reports; the humans behind them are named
       // here. One id can cover two people who share a desk and a login.
       + (S.me.can.admin && S.csAgents
@@ -5518,6 +5655,8 @@ VIEWS.settings = function(){
     S.officers = cu;
     S.teamCount = (tm.rows||[]).length;
     S.roles = ac.roles || [];
+    // The roles card and its drawer live on THIS screen now, and both read S.roleMeta.
+    S.roleMeta = { roles: ac.roles || [], allTabs: ac.allTabs || [] };
     // Feeds codeForm's tab checkboxes -- HOPE PMO and HOPE Loan together, same list roleForm
     // already draws from, so "Extra tabs" stops being a box where a typo grants nothing.
     S.allTabs = ac.allTabs || [];
@@ -5664,14 +5803,37 @@ VIEWS.settings = function(){
         + '<div id="pwOut" class="note" style="display:none"></div>'
         + '</div></div>'
 
+      /* WHO MAY SEE WHAT IS DECIDED ONCE, BY ROLE.
+           "remove the tabs column from access codes, I need a new role assign table before
+            access codes so it always list all existing roles and i click role - it opens all
+            existing tabs and I choose what that role while access, so now we decide easy for
+            all users"
+         Every role in the system, every time -- click one and its tabs open as a tick list.
+         A code no longer carries tabs of its own, so there is exactly one place a permission
+         is decided and no code can quietly hold a set nobody remembers granting. */
+      + '<div class="card" id="rolesCard"><div class="card-h">Nafasi na ruhusa / Roles &amp; access'
+        + '<span class="sub"><button class="btn sm" id="newRole">+ Wadhifa mpya / New role</button></span></div>'
+        + '<div class="note" style="margin:10px 14px">Bofya wadhifa kuchagua tabs zake. Kila msimbo wenye wadhifa huu hurithi orodha hii.'
+        + ' / Tap a role to tick its tabs. Every access code with that role inherits this list.</div>'
+        + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Wadhifa / Role</th>'
+        + '<th>Tabs</th><th class="r">Idadi</th><th class="r">Misimbo / Codes</th><th></th></tr></thead><tbody>'
+        + (ac.roles||[]).map(function(r, i){
+            var n = (ac.rows||[]).filter(function(x){ return String(x.role||'').toUpperCase() === String(r.role||'').toUpperCase(); }).length;
+            return '<tr class="clickrow" data-role="'+esc(r.role)+'"><td class="sn">'+(i+1)+'</td>'
+              + '<td><b>'+esc(r.role)+'</b></td>'
+              + '<td style="white-space:normal">'+esc((r.tabs||[]).join(', ') || '—')+'</td>'
+              + '<td class="r">'+((r.tabs||[]).length)+'</td>'
+              + '<td class="r">'+money(n)+'</td>'
+              + '<td class="r"><button class="btn sm ghost" data-role="'+esc(r.role)+'">Badili / Edit</button></td></tr>';
+          }).join('') + '</tbody></table></div></div>'
+
       + '<div class="card"><div class="card-h">Misimbo ya kuingia / Access codes'
         + '<span class="sub"><button class="btn sm" id="newCode">+ Msimbo mpya / New code</button>'
         + ' <a href="/upload?admin=1" style="margin-left:8px">Pakia orodha / Upload a list &rarr;</a></span></div>'
-      + '<div class="scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Teams</th><th>Tabs</th><th>Code</th><th></th></tr></thead><tbody>'
+      + '<div class="scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Teams</th><th>Code</th><th></th></tr></thead><tbody>'
       + ac.rows.map(function(x, i){
           return '<tr><td>'+esc(x.name)+'</td><td>'+esc(x.role)+'</td>'
             + '<td>'+esc(x.teams?x.teams.join(', '):'ALL')+'</td>'
-            + '<td>'+esc((x.tabs||[]).join(', '))+'</td>'
             + '<td><code>'+esc(x.code)+'</code></td>'
             + '<td class="r"><button class="btn sm ghost" data-code="'+esc(x.code)+'">Badili / Edit</button></td></tr>';
         }).join('') + '</tbody></table></div></div>'
@@ -8073,18 +8235,14 @@ function codeForm(x){
       + '<div class="fldnote">Kwa wadhifa wenye safu kwenye jedwali la timu (OPM, RECOVERY, GMO, MANAGER, CREDIT, EXPECTED, BIKE), orodha hii pia inamweka mtu huyu kwenye Timu na Wafanyakazi. ALL haimpi mtu timu zote — inafungua tu kuona.'
       + '<br>For a role that has a column in the teams table, this list also files the person into Teams &amp; Staff. ALL only opens the view; it never makes somebody the officer of every team.</div>'
       + '</div>'
-    /* TICKED, NOT TYPED. "i'll then need to from now on set accesscodes by ticking the nav
-       pannels from all existing whatever the future stage am on because writing could error"
-       -- this used to be free text, the one tab-editing screen in the system that was, and a
-       typo here did not error, it just silently granted nothing. Same checkbox list roleForm
-       already uses, same source (S.allTabs, HOPE PMO and HOPE Loan together) -- so a tab added
-       for either side is tickable from both screens without either one being told about it
-       twice. */
-    + '<div class="fld"><label>Tabs za ziada / Extra tabs</label><div class="checks">'
-      + (S.allTabs||[]).map(function(t){
-          return '<label><input type="checkbox" class="kTab" value="'+esc(t)+'"'
-            + ((x && x.tabs || []).indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
-      + '</div></div>'
+    /* NO TAB LIST HERE ANY MORE. "remove the tabs column from access codes, I need a new role
+       assign table before access codes ... so now we decide easy for all users". A code used
+       to be able to carry extra tabs of its own, which meant a permission could be granted in
+       two places and audited in neither. Access is decided once, on the ROLE, in the card
+       directly above this list -- and saving a code clears whatever extras it was carrying,
+       which is the point of moving the decision rather than duplicating it. */
+    + '<div class="fldnote" style="margin-bottom:11px">Ruhusa zinatoka kwenye wadhifa &mdash; badilisha kwenye jedwali la <b>Nafasi na ruhusa</b> juu ya orodha hii.'
+      + ' / Access comes from the ROLE. Set it in the <b>Roles &amp; access</b> table above this list; saving here clears any extra tabs this code still carried.</div>'
     + '<button class="btn w" id="kSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="kDel">Futa msimbo / Delete code</button>'));
   document.getElementById('kSave').onclick = function(){

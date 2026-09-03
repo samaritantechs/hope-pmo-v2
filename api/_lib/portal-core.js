@@ -2440,12 +2440,278 @@ async function leaderReports(db, user, _args, nowMs) {
         : 'Timu hazina majina ya viongozi / no leader names are set on the teams table, so there is '
           + 'nobody to group these teams under. Fill in the recovery / GMO / manager columns under Teams.');
 
+  const segments = await leaderSegments_(db, user, nowMs, teamBy);
+
   return { weekday: tp.weekday, date: tp.date, paired: tp.paired, note: why,
-    rows: tp.rows, sections,
+    rows: tp.rows, sections, ...segments,
     totals: { teams: tp.rows.length,
       initArrears: tp.rows.reduce((s, r) => s + r.initArrears, 0),
       curArrears: tp.rows.reduce((s, r) => s + r.curArrears, 0),
       recovered: tp.rows.reduce((s, r) => s + r.recovered, 0) } };
+}
+
+/* =======================================================================================
+   THE LEADER REPORTS' ORODHA -- one table per (what is measured) x (who holds the teams).
+
+     "I need chipped table segments of 9: early collection by PMO col officer / gmo /
+      manager; collection by PMO col officer / gmo / manager; recovery by pmo rec officer /
+      gmo / manager (not expdef but normal rec)"
+     "so one leader goes his teams, grand totals/averages row then start the other leader in
+      the same table"
+     "J3, J4, J5, AL, IJ (lookups of last 5 days performance of those days -- this is b/se we
+      are pushing performance while observing what our latest achievement of the same day to
+      that was)"
+
+   THE DAY COLUMNS ARE A LOOKUP, NOT THIS WEEK. Each one is the LATEST occurrence of that
+   weekday on or before today -- so on a Wednesday, J3 and J4 are this week's Monday and
+   Tuesday while AL and IJ are last week's Thursday and Friday. That is the comparison the
+   sentence above asks for: what did we manage on this same day last time. Seven days back
+   from today covers every weekday exactly once, which is why this reads eight days and not
+   two weeks (the eighth is only there to give the oldest day the day BEFORE it, which the
+   recovery percentage divides by).
+
+   Every figure comes from the same team-day totals the dashboard reads, so a leader's row
+   here and their team's row on the dashboard cannot disagree.
+
+   WHO HOLDS A TEAM: the collection officers off their access codes, with the teams sheet's
+   own column as the fallback (exactly as the dashboard Orodha resolves them); everyone else
+   off the sheet. A team with nobody named collects under "(unassigned)" -- an unstaffed role
+   is precisely what a leader report exists to make visible. */
+const LEADER_DAY_KEYS = ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2'];   // Mon .. Sun
+const LEADER_ROLES = [
+  { role: 'credit', label: 'Credit analyst' },
+  { role: 'collection', label: 'PMO Col officer' },
+  { role: 'recovery', label: 'PMO Rec officer' },
+  { role: 'gmo', label: 'GMO' },
+  { role: 'manager', label: 'Manager' },
+];
+/* `roles` is which leaders that measurement is emitted for -- a sales report under the
+   collection officer would be a table nobody asked for. `dflt` is the nine that open ticked;
+   the rest are one tick away on the chip. */
+const LEADER_METRICS = [
+  { metric: 'sales', label: 'Sales / Mauzo', days: ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1'],
+    roles: ['credit', 'gmo', 'manager'], dflt: false },
+  { metric: 'ecol', label: 'Early collection', days: ['J3', 'J4', 'J5', 'AL', 'IJ'],
+    roles: ['collection', 'gmo', 'manager'], dflt: true },
+  { metric: 'col', label: 'Collection', days: ['J3', 'J4', 'J5', 'AL', 'IJ'],
+    roles: ['collection', 'gmo', 'manager'], dflt: true },
+  { metric: 'rec', label: 'Recovery', days: ['J3', 'J4', 'J5', 'AL', 'IJ'], amts: ['J1', 'J2'],
+    roles: ['recovery', 'gmo', 'manager'], dflt: true },
+];
+const weekdayOfKey_ = d => WD7[isoWeekday(Date.parse(d + 'T12:00:00Z')) - 1];
+
+async function leaderSegments_(db, user, nowMs, teamBy) {
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs);
+  const wdToday = currentWeekday(nowMs);
+  const weekend = isoWeekday(nowMs) >= 6;
+  /* Eight days: seven so every weekday appears once, and one more so the oldest of them has
+     the day before it -- the recovery percentage divides by yesterday's uncollected. */
+  const from = addDaysKey(today, -7);
+  const [expW, iniW, defW, loanRows, codeRows, pmoCfg, early] = await Promise.all([
+    expectedTotalsInRange(db, { type: 'today', from, to: today, teams: user.teams }),
+    expectedTotalsInRange(db, { type: 'initial', from, to: today, teams: user.teams }),
+    defaulterTotalsInRange(db, { from, to: today, teams: user.teams }),
+    fetchAll(() => onTeams(db.from('loans').select('team, stage, approved_date, principal_amt, loan_amt')
+      .gte('approved_date', from).lte('approved_date', today), user.teams)),
+    fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
+    settingsMany(db, [PMO_ROLE_KEY]),
+    earlyList(db, { today, teams: user.teams }),
+  ]);
+  const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
+  const dailyTargetTeam = weeklyTarget / 5;
+  const myExp = scoped(user, expW), myIni = scoped(user, iniW), myDef = scoped(user, defW);
+  const mySales = scoped(user, loanRows).filter(l => SALES_STAGES.includes(l.stage));
+
+  // Which real date each day column looks at: the latest of that weekday, today included.
+  const dayDate = {};
+  for (let i = 0; i <= 6; i++) {
+    const d = addDaysKey(today, -i);
+    const k = LEADER_DAY_KEYS[WD7.indexOf(weekdayOfKey_(d))];
+    if (k && !dayDate[k]) dayDate[k] = d;
+  }
+
+  /* One cell per team per day, for each of the four things measured. Every day is
+     batch-resolved on its own first, so a report uploaded twice cannot double a figure. */
+  const T = {};
+  const slot = team => {
+    const k = K(team) || '(NO TEAM)';
+    if (!T[k]) T[k] = { team: String(team || '(no team)'), col: {}, ecol: {}, rec: {}, sales: {} };
+    return T[k];
+  };
+  const cell = (s, kind, d) => (s[kind][d] = s[kind][d] || { e: 0, c: 0, u: 0, n: 0, amt: 0, ini: 0, cur: 0, paired: 0 });
+  for (let i = 0; i <= 7; i++) {
+    const d = addDaysKey(today, -i), dwd = weekdayOfKey_(d);
+    for (const r of pickLatestBatchRows(myExp.filter(x => String(x.snapshot_date) === d))) {
+      const c = cell(slot(r.team), 'col', d);
+      c.e += num(r.expected_amt); c.c += num(r.collected_amt); c.u += num(r.uncollected_amt);
+    }
+    for (const r of pickLatestBatchRows(myIni.filter(x => String(x.snapshot_date) === d))) {
+      const c = cell(slot(r.team), 'ecol', d);
+      c.e += num(r.expected_amt); c.c += num(r.collected_amt); c.u += num(r.uncollected_amt);
+    }
+    /* The day's own weekday on both sides -- an initial Monday deck against a current
+       Thursday one is two different populations, and their gap is not recovery. */
+    const ini = pickLatestBatchRows(myDef.filter(x => String(x.snapshot_date) === d && x.snapshot_type === 'initial' && x.weekday === dwd));
+    const cur = pickLatestBatchRows(myDef.filter(x => String(x.snapshot_date) === d && x.snapshot_type === 'current' && x.weekday === dwd));
+    if (ini.length && cur.length) {
+      for (const r of ini) { const c = cell(slot(r.team), 'rec', d); c.ini += num(r.arrears_amt); c.paired = 1; }
+      for (const r of cur) { const c = cell(slot(r.team), 'rec', d); c.cur += num(r.arrears_amt); c.paired = 1; }
+    }
+  }
+  for (const l of mySales) {
+    const d = String(l.approved_date || '').slice(0, 10);
+    if (d < from || d > today) continue;
+    const c = cell(slot(l.team), 'sales', d);
+    c.n += 1; c.amt += num(l.principal_amt) || num(l.loan_amt);
+  }
+  // The early-collection MAIN column reads the latest initial sheet, exactly as the dashboard's
+  // T.ECol does, so the two screens name the same sheet.
+  const ecolToday = {};
+  for (const r of scoped(user, early.rows)) {
+    const c = ecolToday[K(r.team)] = ecolToday[K(r.team)] || { e: 0, c: 0, u: 0 };
+    c.e += num(r.expected_amt); c.c += num(r.collected_amt); c.u += num(r.uncollected_amt);
+  }
+  for (const k in teamBy) if (teamAllowed(user, teamBy[k].team)) slot(teamBy[k].team);
+
+  // Who holds which team. Collection officers live on their codes; the sheet is the fallback.
+  const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const colByTeam = {};
+  for (const cd of codeRows) {
+    if (!isPmoRole(cd.role, pmoRoleName) || !cd.teams || !cd.teams.length) continue;
+    const name = String(cd.name || cd.code || '').trim();
+    if (!name) continue;
+    for (const tm of cd.teams) {
+      const k = K(tm);
+      colByTeam[k] = colByTeam[k] || [];
+      if (!colByTeam[k].includes(name)) colByTeam[k].push(name);
+    }
+  }
+  const holdersOf = (teamKey, role) => {
+    if (role === 'collection' && colByTeam[teamKey] && colByTeam[teamKey].length) return colByTeam[teamKey];
+    const t = teamBy[teamKey];
+    const v = t && t[role] ? String(t[role]).trim() : '';
+    return [v || '(unassigned)'];
+  };
+
+  /* The recovery denominator, per the day's own rule: Monday divides by Monday, Tuesday to
+     Friday by jana, the weekend by the week. Applied to the MAIN column by today's rule and
+     to each day column by that day's, so a lookup means the same thing as the headline. */
+  const uncolOn = (s, d) => (s.col[d] ? s.col[d].u : 0);
+  const recBasisFor = (s, d) => {
+    if (weekdayOfKey_(d) === 'MON') return uncolOn(s, d);
+    return uncolOn(s, addDaysKey(d, -1));
+  };
+  const weekUncol = s => {
+    let u = 0;
+    for (let i = 0; i < 5; i++) u += uncolOn(s, addDaysKey(mon, i));
+    return u;
+  };
+
+  const partsFor = (s, metric, d) => {
+    if (metric === 'sales') { const c = s.sales[d]; return { n: c ? c.n : 0, num: c ? c.amt : 0, den: dailyTargetTeam, has: !!c }; }
+    if (metric === 'rec') {
+      const c = s.rec[d];
+      if (!c || !c.paired) return { num: 0, den: 0, has: false };
+      return { num: c.ini - c.cur, den: recBasisFor(s, d), has: true };
+    }
+    const c = s[metric][d];
+    return { num: c ? c.c : 0, den: c ? c.e : 0, has: !!c };
+  };
+
+  const segments = [];
+  for (const m of LEADER_METRICS) {
+    for (const role of m.roles) {
+      const roleLabel = (LEADER_ROLES.find(r => r.role === role) || {}).label || role.toUpperCase();
+      const by = {};
+      for (const tk in T) {
+        const s = T[tk];
+        // The main columns, by today's rule.
+        let main;
+        if (m.metric === 'sales') {
+          const c = s.sales[today];
+          main = { count: c ? c.n : 0, num: c ? c.amt : 0, den: dailyTargetTeam };
+        } else if (m.metric === 'rec') {
+          const c = s.rec[today];
+          const paired = !!(c && c.paired);
+          main = { recovered: paired ? c.ini - c.cur : 0, paired,
+            num: paired ? c.ini - c.cur : 0,
+            den: weekend ? weekUncol(s) : (wdToday === 'MON' ? uncolOn(s, today) : uncolOn(s, addDaysKey(today, -1))) };
+          main.uncol = main.den;
+        } else if (m.metric === 'ecol') {
+          const c = ecolToday[tk] || { e: 0, c: 0, u: 0 };
+          main = { uncol: c.u, num: c.c, den: c.e };
+        } else {
+          const c = s.col[today] || { e: 0, c: 0, u: 0 };
+          main = { uncol: c.u, num: c.c, den: c.e };
+        }
+        const days = {}, amts = {};
+        for (const dk of m.days) { const p = partsFor(s, m.metric, dayDate[dk]); days[dk] = p; }
+        for (const dk of (m.amts || [])) { const p = partsFor(s, m.metric, dayDate[dk]); amts[dk] = p; }
+        for (const who of holdersOf(tk, role)) {
+          const b = bucket(by, who, { rows: [] });
+          b.rows.push({ team: s.team, main, days, amts });
+        }
+      }
+      /* One leader's teams, then their own JUMLA, then the next leader -- and the subtotal is
+         worked out again from the parts, never averaged from the percentages above it: a team
+         of four customers must not weigh the same as a team of four hundred. */
+      const rowOf = (team, main, days, amts, sub) => {
+        const o = { team, sub: !!sub };
+        if (m.metric === 'sales') { o.count = main.count; o.amount = main.num; }
+        else if (m.metric === 'rec') { o.recovered = main.recovered; o.uncol = main.uncol; o.paired = main.paired; }
+        else { o.uncol = main.uncol; o.collected = main.num; o.expected = main.den; }
+        o.pct = (m.metric === 'rec' && !main.paired) ? null : pctOf(main.num, main.den);
+        o.d = {}; o.a = {};
+        for (const dk of m.days) {
+          const p = days[dk];
+          o.d[dk] = !p || !p.has ? null
+            : (m.metric === 'sales' ? { n: p.n, pct: pctOf(p.num, p.den) } : pctOf(p.num, p.den));
+        }
+        for (const dk of (m.amts || [])) { const p = amts[dk]; o.a[dk] = (!p || !p.has) ? null : p.num; }
+        return o;
+      };
+      const addUp = rows => {
+        const t = { count: 0, num: 0, den: 0, recovered: 0, uncol: 0, paired: false };
+        const days = {}, amts = {};
+        for (const r of rows) {
+          t.count += r.main.count || 0; t.num += r.main.num || 0; t.den += r.main.den || 0;
+          t.recovered += r.main.recovered || 0; t.uncol += r.main.uncol || 0;
+          t.paired = t.paired || !!r.main.paired;
+          for (const dk of m.days) {
+            const p = r.days[dk]; if (!p || !p.has) continue;
+            const a = days[dk] = days[dk] || { n: 0, num: 0, den: 0, has: true };
+            a.n += p.n || 0; a.num += p.num; a.den += p.den;
+          }
+          for (const dk of (m.amts || [])) {
+            const p = r.amts[dk]; if (!p || !p.has) continue;
+            const a = amts[dk] = amts[dk] || { num: 0, den: 0, has: true };
+            a.num += p.num; a.den += p.den;
+          }
+        }
+        for (const dk of m.days) if (!days[dk]) days[dk] = { has: false };
+        for (const dk of (m.amts || [])) if (!amts[dk]) amts[dk] = { has: false };
+        return { main: t, days, amts };
+      };
+      const groups = Object.values(by).map(b => {
+        const t = addUp(b.rows);
+        return { leader: b.key, teams: b.rows.length,
+          rows: b.rows.slice().sort((x, y) => x.team.localeCompare(y.team)).map(r => rowOf(r.team, r.main, r.days, r.amts, false)),
+          total: rowOf('', t.main, t.days, t.amts, true) };
+      }).sort((a, b) => (b.total.pct == null ? -1 : b.total.pct) - (a.total.pct == null ? -1 : a.total.pct)
+        || a.leader.localeCompare(b.leader));
+      const all = addUp([].concat(...Object.values(by).map(b => b.rows)));
+      segments.push({ id: m.metric + '_' + role, metric: m.metric, role, roleLabel,
+        metricLabel: m.label, dflt: !!m.dflt,
+        label: m.label + ' — kwa ' + roleLabel + ' / by ' + roleLabel,
+        dayKeys: m.days, amtKeys: m.amts || [], dayDates: dayDate,
+        basis: m.metric === 'rec' ? (weekend ? 'week' : (wdToday === 'MON' ? 'mon' : 'yest')) : null,
+        groups, totals: rowOf('', all.main, all.days, all.amts, true),
+        teams: Object.values(by).reduce((s, b) => s + b.rows.length, 0),
+        unstaffed: (by['(unassigned)'] ? by['(unassigned)'].rows.length : 0) });
+    }
+  }
+  return { segments, segDays: dayDate, segRoles: LEADER_ROLES.slice(),
+    segMetrics: LEADER_METRICS.map(x => ({ metric: x.metric, label: x.label, dflt: !!x.dflt })) };
 }
 
 /** My Commission. Commission is earned by PEOPLE, not teams, and it comes from two separate
