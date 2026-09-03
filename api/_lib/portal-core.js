@@ -4092,6 +4092,86 @@ async function saveRole(db, user, p) {
   if (error) throw new Error(error.message);
   return { role, tabs };
 }
+/* A CLEAN SLATE TO SET THE ROLES FROM, AND A WAY BACK.
+
+     "Start with empty accessible navs for all roles except all for ADMIN so that i go set
+      well now : i fear running into errors while setting the new role assignment setting"
+
+   Deciding access one role at a time is only honest if you can see what each role holds, and
+   what they hold today is years of accumulated ticks plus whatever individual codes were
+   granted on the side. So this empties every role but ADMIN and clears the per-code extras,
+   leaving one blank page to fill in deliberately.
+
+   IT IS NOT A ONE-WAY DOOR. The exact state of every role and every code is written to the
+   settings table first, and `undo` puts all of it back untouched. That is the whole reason
+   this is a button rather than a paragraph of SQL: the fear in the sentence above is of a
+   mistake that cannot be walked back, and this one can.
+
+   ADMIN IS NEVER EMPTIED. Both the UI and every enforcement point already treat the ADMIN
+   role as holding every tab whatever its row says (see resolveTabs and can() in auth.js), so
+   an admin cannot lock themselves out with this -- but the row is written out in full anyway,
+   so the table on screen says what is true instead of showing a blank next to ADMIN.
+
+   The ALWAYS navs -- the handful every signed-in person keeps -- are untouched by this. An
+   emptied role is not a locked-out person; it is a person with the basics and nothing else,
+   which is exactly the state to start granting from. */
+const ROLE_TABS_BACKUP_KEY = 'ROLE_TABS_BACKUP';
+async function resetRoleTabs(db, user, p, nowMs = Date.now()) {
+  requireAdmin(user);
+  const [roleRows, codeRows] = await Promise.all([
+    fetchAll(() => db.from('roles').select('*')),
+    fetchAll(() => db.from('access_codes').select('code, tabs')),
+  ]);
+
+  if (p && p.undo) {
+    let saved = null;
+    try { saved = JSON.parse((await settingGet(db, ROLE_TABS_BACKUP_KEY)) || 'null'); } catch (e) {}
+    if (!saved || !Array.isArray(saved.roles)) {
+      throw badRequest('Hakuna nakala ya kurudisha. / There is no saved state to restore — nothing has been emptied yet.');
+    }
+    if (saved.roles.length) {
+      const { error } = await db.from('roles').upsert(
+        saved.roles.map(r => ({ role: r.role, tabs: r.tabs || [] })), { onConflict: 'role' });
+      if (error) throw new Error(error.message);
+    }
+    for (const c of (saved.codes || [])) {
+      const { error } = await db.from('access_codes').update({ tabs: c.tabs || [] }).eq('code', c.code);
+      if (error) throw new Error(error.message);
+    }
+    return { undone: true, roles: saved.roles.length, codes: (saved.codes || []).length, at: saved.at };
+  }
+
+  const at = new Date(nowMs).toISOString();
+  const backup = {
+    at, by: user.name || user.code,
+    roles: roleRows.map(r => ({ role: r.role, tabs: r.tabs || [] })),
+    // Only the codes that actually carry extras -- the rest have nothing to put back.
+    codes: codeRows.filter(c => (c.tabs || []).length).map(c => ({ code: c.code, tabs: c.tabs || [] })),
+  };
+  const { error: bErr } = await db.from('settings')
+    .upsert({ key: ROLE_TABS_BACKUP_KEY, value: JSON.stringify(backup) }, { onConflict: 'key' });
+  if (bErr) throw new Error('Nakala haikuhifadhika, kwa hivyo hakuna kilichofutwa. / The backup could not be saved, so nothing was emptied: ' + bErr.message);
+  noteSettingsWritten(db);
+
+  /* ADMIN gets the full list written out even if it had no row at all: a deployment whose
+     roles table never carried one would otherwise show an empty page with no way back in. */
+  const wanted = roleRows.map(r => ({ role: r.role,
+    tabs: K(r.role) === 'ADMIN' ? ALL_TABS.slice() : [] }));
+  if (!wanted.some(r => K(r.role) === 'ADMIN')) wanted.push({ role: 'ADMIN', tabs: ALL_TABS.slice() });
+  if (wanted.length) {
+    const { error } = await db.from('roles').upsert(wanted, { onConflict: 'role' });
+    if (error) throw new Error(error.message);
+  }
+  let cleared = 0;
+  for (const c of backup.codes) {
+    const { error } = await db.from('access_codes').update({ tabs: [] }).eq('code', c.code);
+    if (error) throw new Error(error.message);
+    cleared += 1;
+  }
+  return { emptied: wanted.filter(r => K(r.role) !== 'ADMIN').length, adminKept: ALL_TABS.length,
+    codesCleared: cleared, at };
+}
+
 async function deleteRole(db, user, p) {
   requireAdmin(user);
   const role = String((p && p.role) || '').trim().toUpperCase();
@@ -4169,9 +4249,17 @@ async function accessCodes(db, user) {
      scope -- never the secrets themselves. Checking the system and collecting its keys are
      different jobs, and this screen only serves the first to them. */
   const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••' })) : rows;
-  // allTabs rides along so the Extra-tabs field on this same screen can be a checkbox list
-  // instead of free text -- "ticking the nav pannels ... because writing could error".
-  return { rows: out, count: rows.length, roles: roleRows, allTabs: ALL_TABS.slice() };
+  /* Whether there is a saved state to undo back to -- the Roles card offers the button only
+     when pressing it would actually restore something. */
+  let backupAt = null;
+  try {
+    const saved = JSON.parse((await settingGet(db, ROLE_TABS_BACKUP_KEY)) || 'null');
+    if (saved && Array.isArray(saved.roles)) backupAt = saved.at || true;
+  } catch (e) {}
+  // allTabs rides along so the role tab list on this screen can be a checkbox list instead of
+  // free text -- "ticking the nav pannels ... because writing could error".
+  return { rows: out, count: rows.length, roles: roleRows, allTabs: ALL_TABS.slice(),
+    roleBackupAt: backupAt };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
@@ -5523,7 +5611,7 @@ const FN = {
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
   dashboardFull, dashboardProbe, monthReport, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
-  teams, saveRole, deleteRole, callAgents, saveCallAgent, settings: settingsList, settingSet,
+  teams, saveRole, deleteRole, resetRoleTabs, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,

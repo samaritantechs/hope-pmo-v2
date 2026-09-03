@@ -1840,6 +1840,63 @@ test('the leader segments group each leader\'s teams, subtotal them, and look up
 });
 const pctOfTest_ = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
 
+/* "Start with empty accessible navs for all roles except all for ADMIN so that i go set well
+   now : i fear running into errors" -- so the clean slate has to be reversible, and ADMIN has
+   to survive it, or the fear is justified. */
+test('the clean slate empties every role but ADMIN, clears code extras, and undoes exactly', async () => {
+  const t = tables();
+  t.roles = [
+    { role: 'ADMIN', tabs: ['upload'] },              // a thin ADMIN row: it must come back full
+    { role: 'GMO', tabs: ['dashboard', 'followup', 'par'] },
+    { role: 'MANAGEMENT', tabs: ['dashboard', 'weekly'] },
+  ];
+  t.access_codes = t.access_codes.concat([
+    { code: 'G1', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: ['audit'] },
+    { code: 'M1', name: 'BOSS', role: 'MANAGEMENT', teams: null, tabs: [] },
+  ]);
+  const db = dbWithRpc(t);
+
+  const before = await run('accessCodes', {}, ADMIN, db);
+  assert.equal(before.roleBackupAt, null, 'nothing saved until something is emptied');
+
+  const r = await run('resetRoleTabs', {}, ADMIN, db);
+  assert.equal(r.emptied, 2, 'GMO and MANAGEMENT');
+  assert.equal(r.codesCleared, 2, 'only the codes that actually carried extras: A and G1');
+  assert.ok(r.adminKept > 20);
+
+  const after = await run('accessCodes', {}, ADMIN, db);
+  const roleOf = (d, name) => d.roles.find(x => x.role === name);
+  assert.deepEqual(roleOf(after, 'GMO').tabs, []);
+  assert.deepEqual(roleOf(after, 'MANAGEMENT').tabs, []);
+  assert.ok(roleOf(after, 'ADMIN').tabs.includes('settings'), 'ADMIN is written out in full');
+  assert.ok(roleOf(after, 'ADMIN').tabs.includes('dashboard'));
+  assert.deepEqual(after.rows.find(x => x.code === 'G1').tabs, [], 'the code carries nothing of its own now');
+  /* The ADMIN CODE loses its per-code extras too, and that is safe: every enforcement point
+     grants an ADMIN role every tab whatever its row says, so the admin who presses this
+     cannot shut themselves out with it. */
+  assert.deepEqual(after.rows.find(x => x.code === 'A').tabs, []);
+  assert.ok(after.roleBackupAt, 'and there is something to undo back to');
+
+  const u = await run('resetRoleTabs', { undo: true }, ADMIN, db);
+  assert.equal(u.undone, true);
+  const back = await run('accessCodes', {}, ADMIN, db);
+  assert.deepEqual(roleOf(back, 'GMO').tabs, ['dashboard', 'followup', 'par'], 'exactly as it was');
+  assert.deepEqual(roleOf(back, 'MANAGEMENT').tabs, ['dashboard', 'weekly']);
+  assert.deepEqual(roleOf(back, 'ADMIN').tabs, ['upload'], 'even the thin ADMIN row is restored as it was');
+  assert.deepEqual(back.rows.find(x => x.code === 'G1').tabs, ['audit']);
+  assert.deepEqual(back.rows.find(x => x.code === 'A').tabs, ['upload', 'settings']);
+});
+
+test('an undo with nothing saved refuses rather than emptying anything', async () => {
+  const db = dbWithRpc(tables());
+  await assert.rejects(() => run('resetRoleTabs', { undo: true }, ADMIN, db), e => e.status === 400);
+});
+
+test('only an admin may empty the roles', async () => {
+  const db = dbWithRpc(tables());
+  await assert.rejects(() => run('resetRoleTabs', {}, GMO, db));
+});
+
 test('loan applications default to the whole pipeline, not one stage', async () => {
   const db = fakeDb(tables());
   // "Where is every application right now" is what this tab gets asked most, and forcing a
