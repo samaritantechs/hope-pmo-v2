@@ -153,3 +153,33 @@ test('HOPE Calls is never closed', async () => {
   clearSystemOpenCache(db);
   assert.equal((await callApi(db, 'api_callBoot', ['DEV1'], NOW)).systemOpen, true);
 });
+
+test('closing the system does not lock the admin out of their own switch', async () => {
+  /* "Brother, I am role admin and i too dont see the switch button in the call app!"
+
+     Closing the system takes the way across to the portal off every handset, and the admin who
+     closed it is holding a handset too -- so the one person who can reopen it had no button to
+     go and do it with. The portal has always let an admin through a closed door; the phone was
+     hiding a door that would have opened. */
+  const db = fakeDb({
+    settings: [{ key: 'SYSTEM_OPEN', value: 'NO' }],
+    teams: [{ team: 'KONGOWE', team_code: 'KON123' }],
+    call_users: [
+      { user_id: 'U1', name: 'JUMA G', team: 'KONGOWE', role: 'OFFICER', device_id: 'DEV1', active: true },
+      { user_id: 'U2', name: 'THE BOSS', team: 'KONGOWE', role: 'ADMIN', device_id: 'DEV2', active: true, is_leader: true },
+      { user_id: 'U3', name: 'A MANAGER', team: 'KONGOWE', role: 'GMO', device_id: 'DEV3', active: true, is_leader: true },
+    ],
+  });
+  const officer = await callApi(db, 'api_callBoot', ['DEV1'], NOW);
+  assert.equal(officer.systemOpen, false);
+  assert.equal(officer.systemAdmin, false, 'an officer stays in Calls, which is the whole point');
+
+  const boss = await callApi(db, 'api_callBoot', ['DEV2'], NOW);
+  assert.equal(boss.systemOpen, false, 'the system really is closed');
+  assert.equal(boss.systemAdmin, true, 'and the admin can still see the way back to it');
+
+  /* NOT EVERY LEADER -- only an admin. "all other users stay in the call app for a moment"
+     is what closing it is for, and a GMO is one of those users. */
+  const gmo = await callApi(db, 'api_callBoot', ['DEV3'], NOW);
+  assert.equal(gmo.systemAdmin, false);
+});

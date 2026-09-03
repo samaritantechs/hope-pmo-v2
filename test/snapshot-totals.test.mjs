@@ -41,6 +41,7 @@ const { foldExpected, foldDefaulter, expectedTotalsLatest, expectedTotalsInRange
         defaulterTotalsLatest, tExpected, tCollected, tArrears }
   = await import('../api/_lib/snapshot-totals.js');
 const { collectedOf, uncollectedOf, num } = await import('../api/_lib/recovery.js');
+const { addDaysKey, todayKey } = await import('../api/_lib/time.js');
 
 const FRIDAY = Date.parse('2026-07-24T09:00:00Z');   // Friday, midday EAT
 const SUNDAY = Date.parse('2026-07-26T09:00:00Z');   // the weekend, week-to-date shape
@@ -139,6 +140,54 @@ const OFFICER = { code: 'O', name: 'REC0', role: 'GMO', teams: ['KONGOWE', 'TEME
 const withMigration = () => fakeDb(book(), { rpc: SNAPSHOT_TOTALS_RPC });
 const withoutMigration = () => fakeDb(book());
 
+/* =====================================================================================
+   A THIRD WORLD: THE DECKS ALREADY ADDED UP.
+   =====================================================================================
+   db/RUN-ME-022-deck-totals.sql materialises what those two functions return into a small
+   table, so a week is 878 rows read rather than 109,603 aggregated. That is the change with
+   the most reach in this system -- it sits in front of every figure on every screen and every
+   handset -- so it is held to the same standard as the migration that came before it: EVERY
+   screen, computed with the cache in front of it, must equal the same screen computed without,
+   field for field.
+
+   TWO THINGS MAKE THIS WORTH HAVING RATHER THAN CIRCULAR.
+
+   The cache is filled from the RPC TRANSCRIPTION, which is what the SQL build does -- it calls
+   the same two functions the screens call, so there is one definition of the arithmetic and not
+   two. And the aggregate functions are COUNTED while the screens run: if the cache were quietly
+   falling through to them, the answers would of course match, and the test would prove nothing.
+   Zero calls is the assertion that makes the comparison mean something. */
+function builtWorld(nowMs) {
+  const t = book();
+  const store = {};
+  for (const [name, rows] of Object.entries(t)) store[name] = { rows };
+  /* The whole window the read can see -- it is bounded to thirteen months back -- so no screen's
+     range falls outside it and drops to the live path for a reason unrelated to what is under
+     test. Every day is marked built, including the days with nothing in them: that is exactly
+     what the SQL does, and it is what stops "built and empty" being read as "not built". */
+  const to = addDaysKey(todayKey(nowMs), 7);
+  const from = addDaysKey(todayKey(nowMs), -400);
+  const exp = SNAPSHOT_TOTALS_RPC.expected_snapshot_totals(store,
+    { p_from: from, p_to: to, p_type: null, p_teams: null });
+  const def = SNAPSHOT_TOTALS_RPC.defaulter_snapshot_totals(store,
+    { p_from: from, p_to: to, p_type: null, p_teams: null, p_weekday: null });
+  const days = [];
+  for (let d = from; d <= to; d = addDaysKey(d, 1)) {
+    days.push({ kind: 'expected', snapshot_date: d }, { kind: 'defaulter', snapshot_date: d });
+  }
+  const calls = { n: 0 };
+  const counted = {};
+  for (const [name, fn] of Object.entries(SNAPSHOT_TOTALS_RPC)) {
+    counted[name] = (s, a) => { calls.n++; return fn(s, a); };
+  }
+  const db = fakeDb({ ...t,
+    deck_totals: [...exp.map(r => ({ kind: 'expected', ...r })),
+      ...def.map(r => ({ kind: 'defaulter', ...r }))],
+    deck_totals_days: days,
+  }, { rpc: counted });
+  return { db, calls };
+}
+
 /* ------------------------------------------------------------------ THE FIGURES THEMSELVES */
 
 const SCREENS = [
@@ -198,6 +247,91 @@ for (const [label, fn, args] of SCREENS) {
     }
   }
 }
+
+/* ------------------------------------------------- and the same screens, read out of the cache */
+
+for (const [label, fn, args] of SCREENS) {
+  for (const [when, nowMs] of [['on a weekday', FRIDAY], ['at the weekend', SUNDAY]]) {
+    for (const [who, user] of [['for an admin', ADMIN], ['for one officer', OFFICER]]) {
+      test(`${label}: identical ${when} ${who}, read from deck_totals vs added up live`, async () => {
+        const { db: dbA, calls } = builtWorld(nowMs);
+        const dbB = withMigration();
+        if (fn === 'dashboardFull') {
+          await portalApi(dbA, user, 'monthReport', args, nowMs);
+          await portalApi(dbB, user, 'monthReport', args, nowMs);
+        }
+        const cached = await portalApi(dbA, user, fn, args, nowMs);
+        const live = await portalApi(dbB, user, fn, args, nowMs);
+        assert.equal(calls.n, 0,
+          `${label} still asked the database to add ${calls.n} time(s) with every day built.\n` +
+          '  The comparison below is worthless if the cache is falling through -- both sides\n' +
+          '  would be the live path. Find out which range is not being served.');
+        assert.deepEqual(cached, live,
+          `${label} answered differently when the totals came out of deck_totals.\n` +
+          '  These are the SAME sums, written down once at upload instead of recomputed. A\n' +
+          '  difference here is a figure the company would act on being wrong.');
+      });
+    }
+  }
+}
+
+test('a range with one unbuilt day in it is answered live, whole, not short', async () => {
+  /* THE RULE THAT KEEPS A SHORT ANSWER IMPOSSIBLE. A week whose Wednesday has not been built
+     must not come back as four days of figures with nothing to say the other three are missing
+     -- that is a dashboard quietly reporting three-fifths of the company's collections. So the
+     cache answers all of a range or none of it. */
+  const { db, calls } = builtWorld(FRIDAY);
+  const before = await portalApi(db, ADMIN, 'weekly', {}, FRIDAY);
+  assert.equal(calls.n, 0, 'the whole week was served from the cache to begin with');
+
+  /* Wednesday's DECKS are no longer built -- through the very call an upload makes, so what is
+     under test is the path that actually runs. The expected side of that day stays built, which
+     makes this the mixed case as well: one kind served from the cache, the other added up live,
+     in the same report. */
+  const { unmarkDeckTotals } = await import('../api/_lib/snapshot-totals.js');
+  await unmarkDeckTotals(db, 'defaulter', '2026-07-22');
+  const after = await portalApi(db, ADMIN, 'weekly', {}, FRIDAY);
+  assert.ok(calls.n > 0, 'so the week is added up live instead');
+  assert.deepEqual(after, before, 'and the report is the same report, not a shorter one');
+});
+
+test('a day the cache has never heard of is read live, not reported as zero', async () => {
+  /* The difference between "built and genuinely empty" and "not built yet" is the whole reason
+     deck_totals_days exists as a separate table. Confusing them would report a real trading day
+     as nothing collected, which no screen could tell from the truth. */
+  const t = book();
+  const db = fakeDb({ ...t, deck_totals: [], deck_totals_days: [] }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const empty = await portalApi(db, ADMIN, 'weekly', {}, FRIDAY);
+  const live = await portalApi(withMigration(), ADMIN, 'weekly', {}, FRIDAY);
+  assert.deepEqual(empty, live, 'an empty cache is not an empty week');
+});
+
+test('an upload unmarks its day before anything else, so a re-upload can never be stale', async () => {
+  /* The ordering that makes a stale figure impossible rather than merely unlikely: the day stops
+     being "built" the moment new rows land, whatever happens to the rebuild afterwards. If the
+     rebuild is abandoned on the upload's clock, or fails, or the database has no such function,
+     the day simply reads live. */
+  const { unmarkDeckTotals, buildDeckTotals, deckKindOfTable }
+    = await import('../api/_lib/snapshot-totals.js');
+  assert.equal(deckKindOfTable('defaulter_snapshots'), 'defaulter');
+  assert.equal(deckKindOfTable('repayment_snapshots'), 'expected');
+  assert.equal(deckKindOfTable('loans'), null, 'a table that feeds no deck totals owes them nothing');
+
+  const { db } = builtWorld(FRIDAY);
+  assert.ok(db._dump('deck_totals_days').some(d => d.kind === 'defaulter' && d.snapshot_date === '2026-07-22'));
+  assert.equal(await unmarkDeckTotals(db, 'defaulter', '2026-07-22'), true);
+  assert.ok(!db._dump('deck_totals_days').some(d => d.kind === 'defaulter' && d.snapshot_date === '2026-07-22'),
+    'that day now reads live until it is built again');
+  // The expected side of the same date is untouched -- the two kinds are built independently.
+  assert.ok(db._dump('deck_totals_days').some(d => d.kind === 'expected' && d.snapshot_date === '2026-07-22'));
+
+  /* And on a database where the migration has not been run, neither half throws -- an upload
+     that worked must never be failed by a cache that is not there. */
+  const bare = fakeDb(book());
+  assert.equal(await unmarkDeckTotals(bare, 'defaulter', '2026-07-22'), true);
+  assert.equal(await buildDeckTotals(bare, 'defaulter', '2026-07-22'), false,
+    'no build function, and it says so quietly instead of throwing');
+});
 
 test('the phone performance strip and HOPE Live agree, both ways', async () => {
   /* Six percentages on two hundred handsets, refreshed on every sync. It is the same book

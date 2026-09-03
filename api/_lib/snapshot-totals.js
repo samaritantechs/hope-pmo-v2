@@ -140,11 +140,205 @@ function knownMissing(db, fn) {
   return !!at && (Date.now() - at) < MISSING_TTL_MS;
 }
 
+/* =====================================================================================
+   ADDED UP ONCE, WHEN THE DECK IS UPLOADED.
+   =====================================================================================
+     "The cure is to add them up ONCE -- when the deck is uploaded -- (THEN DO IT)"
+
+   THE MEASUREMENT THAT SETTLED IT, from the live instance:
+
+     select sum(i) from generate_series(1,3000000) i;      ->  10,535 ms
+
+   That touches no table, no index, no lock and no disk. It is pure arithmetic, and a healthy
+   small instance does it in well under a second. So the diagnosis card showing the 84-row
+   `teams` table and the EMPTY `abnormal_payments` table both past four seconds is not a missing
+   index and not a badly written query -- the CPU is throttled, and the ONLY lever left is asking
+   the database to do less.
+
+   The plan for one week of defaulter totals: 109,603 rows read from memory, 878 rows out, half
+   a second finding them and 2.8 seconds ADDING them. That addition is identical every time and
+   is done again on every dashboard load, every weekly report, every presentation, every phone's
+   performance strip. It is the same answer, recomputed, for ever.
+
+   So `deck_totals` holds it: one row per team per day per batch, written when the deck lands.
+   878 rows read out of a small table instead of 109,603 aggregated.
+
+   THE FOUR THINGS THAT MAKE THIS SAFE TO PUT IN FRONT OF EVERY FIGURE IN THE SYSTEM:
+
+     1. IT IS NOT A SECOND IMPLEMENTATION. The build calls expected_snapshot_totals and
+        defaulter_snapshot_totals -- the very functions this file calls -- so a cached total and
+        a live total cannot disagree about the arithmetic. There is still one definition.
+     2. "BUILT" IS RECORDED SEPARATELY, in deck_totals_days. A day that is not in there is read
+        live, automatically. That is what stops "built and genuinely empty" being confused with
+        "not built yet", which would report a real day as zero.
+     3. ALL OR NOTHING, PER RANGE. The cache answers only when EVERY day of the asked-for range
+        is built. A partly built range falls through to the live path whole, so a week can never
+        come back with three days' figures in it and no sign that four are missing.
+     4. AN UPLOAD UNMARKS THE DAY BEFORE IT REBUILDS IT. A corrected re-upload therefore makes
+        its day read live from that moment, whatever happens to the rebuild afterwards -- so the
+        worst case of a rebuild that does not run is a slow day, never a stale figure.
+
+   And if the tables are not there at all, every read here returns null and the system behaves
+   EXACTLY as it did before. `drop table deck_totals, deck_totals_days` is the whole undo.
+   See db/RUN-ME-022-deck-totals.sql. */
+export const DECK_TOTALS_TABLE = 'deck_totals';
+export const DECK_TOTALS_DAYS = 'deck_totals_days';
+export const DECK_BUILD_FN = 'build_deck_totals';
+
+const DECK_KIND = { [EXPECTED_TOTALS_FN]: 'expected', [DEFAULTER_TOTALS_FN]: 'defaulter' };
+
+/* EXACTLY THE COLUMNS THE FUNCTIONS RETURN, and not the ones they do not. `kind` is how the two
+   sets of rows share a table; it is never sent to a caller, because a caller that started
+   reading it would be reading something the live path does not have. */
+const DECK_COLS = {
+  expected: 'snapshot_date, snapshot_type, team, upload_batch, created_at, '
+    + 'customers, expected_amt, collected_amt, uncollected_amt, paid_n, over_n',
+  defaulter: 'snapshot_date, snapshot_type, weekday, team, upload_batch, created_at, '
+    + 'customers, arrears_amt',
+};
+
+/* WHICH DAYS ARE BUILT -- ASKED ONCE A MINUTE FOR THE WHOLE PROCESS, NOT ONCE PER READ.
+   A dashboard asks several totals questions at once and the phone's strip asks four, so a probe
+   per question would put a round trip in front of every one of them and hand back most of what
+   this is here to save. One small read of both kinds' built days covers all of them, and the
+   IN-FLIGHT PROMISE is what is remembered, so questions asked together share one journey rather
+   than each starting their own.
+
+   THE MINUTE IS THE SAME FRESHNESS PROMISE THE ANSWER CACHE ALREADY MAKES. It can only ever
+   make a day look built for up to a minute after an upload unmarked it -- and the upload has
+   already replaced that day's rows by then in the ordinary case. */
+const builtDaysCache = new WeakMap();
+const BUILT_DAYS_TTL_MS = 60000;
+/* Thirteen months, the same window the summary lookup uses: enough for any report this system
+   draws, bounded so the read cannot grow with the age of the book. */
+const BUILT_LOOKBACK_DAYS = 400;
+/* A range longer than this is not worth walking day by day to check, and nothing in the system
+   asks for one. Beyond it the live path answers, as it always did. */
+const BUILT_MAX_SPAN = 400;
+
+function builtDays(db, nowMs = Date.now()) {
+  const hit = builtDaysCache.get(db);
+  if (hit && hit.at <= nowMs && (nowMs - hit.at) < BUILT_DAYS_TTL_MS) return hit.p;
+  const p = (async () => {
+    try {
+      const earliest = addDaysKey(todayKey(nowMs), -BUILT_LOOKBACK_DAYS);
+      const rows = await fetchAll(() => db.from(DECK_TOTALS_DAYS)
+        .select('kind, snapshot_date').gte('snapshot_date', earliest));
+      const out = { expected: new Set(), defaulter: new Set() };
+      for (const r of (rows || [])) {
+        const s = out[String(r.kind)];
+        if (s) s.add(String(r.snapshot_date).slice(0, 10));
+      }
+      return out;
+    } catch (e) {
+      return null;                              // tables not created yet -- read everything live
+    }
+  })();
+  builtDaysCache.set(db, { at: nowMs, p });
+  p.catch(() => builtDaysCache.delete(db));
+  return p;
+}
+
+/** Called after a build or an unmark, so this process does not spend the rest of the minute
+    believing something it has just changed. */
+export function noteDeckTotalsChanged(db) { builtDaysCache.delete(db); }
+
+/** Which kind of totals a snapshot table's uploads feed, or null for a table that feeds none. */
+export function deckKindOfTable(table) {
+  if (table === 'repayment_snapshots') return 'expected';
+  if (table === 'defaulter_snapshots') return 'defaulter';
+  return null;
+}
+
+/* THE TWO HALVES OF WHAT AN UPLOAD OWES THE CACHE, AND WHY THEY ARE SEPARATE.
+
+     unmark   one delete by primary key. Costs nothing, is done first, and ALWAYS.
+     build    the aggregate for that one day. Costs a second or two, is done last, and only if
+              the upload has time left for it.
+
+   Separating them is the whole safety argument. Once the day is unmarked, every screen reads it
+   live -- so the figures are right from that instant, whether or not the rebuild happens, gets
+   abandoned on the clock, or fails outright. The rebuild is then a pure optimisation: it makes
+   that day fast again, and the worst case of it not running is a slow day, never a wrong one.
+
+   Doing them the other way round -- rebuild, and unmark only if it fails -- would leave a
+   window where a corrected upload's day was still marked built with the OLD deck's totals in
+   it, and a stale figure that looks authoritative is the failure this system can least afford.
+
+   Neither ever throws. An upload that WORKED must not be reported as failed because a cache
+   did not keep up; the day simply reads live, exactly as it did before this existed. */
+export async function unmarkDeckTotals(db, kind, date) {
+  if (!kind || !date) return false;
+  try {
+    const { error } = await db.from(DECK_TOTALS_DAYS).delete()
+      .eq('kind', kind).eq('snapshot_date', String(date).slice(0, 10));
+    noteDeckTotalsChanged(db);
+    return !error;
+  } catch (e) {
+    return false;                               // tables not created yet
+  }
+}
+
+export async function buildDeckTotals(db, kind, date) {
+  if (!kind || !date || !db || typeof db.rpc !== 'function') return false;
+  const d = String(date).slice(0, 10);
+  try {
+    const { error } = await db.rpc(DECK_BUILD_FN, { p_kind: kind, p_from: d, p_to: d });
+    noteDeckTotalsChanged(db);
+    return !error;
+  } catch (e) {
+    return false;                               // function not created yet
+  }
+}
+
+/** The cached answer to one totals question, or null for "ask the database". Null is not a
+    failure -- it is the ordinary answer on a database without the tables, on a range that is
+    not fully built, and on any error at all. */
+async function deckTotalsRead(db, fn, args) {
+  const kind = DECK_KIND[fn];
+  if (!kind) return null;
+  const from = String((args && args.p_from) || '').slice(0, 10);
+  const to = String((args && args.p_to) || '').slice(0, 10);
+  if (!from || !to || to < from) return null;
+
+  const built = await builtDays(db);
+  if (!built) return null;
+  const days = built[kind];
+  if (!days || !days.size) return null;
+  /* EVERY day of the range, or none of it -- see point 3 above. A range with one unbuilt day in
+     the middle is answered live in full, rather than returned short. */
+  let n = 0;
+  for (let d = from; d <= to; d = addDaysKey(d, 1)) {
+    if (++n > BUILT_MAX_SPAN) return null;
+    if (!days.has(d)) return null;
+  }
+
+  try {
+    return await fetchAll(() => {
+      let q = db.from(DECK_TOTALS_TABLE).select(DECK_COLS[kind])
+        .eq('kind', kind).gte('snapshot_date', from).lte('snapshot_date', to);
+      if (args.p_type) q = q.eq('snapshot_type', args.p_type);
+      if (args.p_weekday) q = q.eq('weekday', args.p_weekday);
+      /* The SAME team list the function is given -- both spellings, because this comparison is
+         exact-case on either side. See teamMatchList for the Tunduru blackout that taught it. */
+      if (Array.isArray(args.p_teams) && args.p_teams.length) q = q.in('team', args.p_teams);
+      return q;
+    });
+  } catch (e) {
+    return null;                                // anything at all goes back to the live path
+  }
+}
+
 /** Calls one of the totals functions. Returns the rows, or null when the function is not there
     -- which is the caller's signal to read the rows and fold them instead. A momentary database
     failure is retried by runQuery first and then falls back too: a slow answer beats none. */
 async function callTotals(db, fn, args) {
   if (!db || typeof db.rpc !== 'function') return null;
+  /* THE CACHE IS ASKED FIRST, ahead of even the "is the function installed" note, because when
+     it answers nothing else needs to happen at all -- and when it does not, it has cost one
+     small read a minute for the whole process. */
+  const cached = await deckTotalsRead(db, fn, args);
+  if (cached) return cached;
   if (knownMissing(db, fn)) return null;
   /* PAGED. PostgREST caps a function that returns a set exactly as it caps a table read, and
      a week of defaulter decks is nearly four thousand summary rows -- of which a thousand used

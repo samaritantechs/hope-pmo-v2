@@ -29,7 +29,14 @@
 --   * To go back: "drop table deck_totals, deck_totals_days;" and the code falls through to
 --     the live path on its next request. Nothing else to undo.
 --
--- RUN SECTIONS 1-3 NOW (they are instant), THEN SECTION 4 REPEATEDLY UNTIL IT SAYS 0.
+-- RUN SECTIONS 1-3 NOW (they are instant), THEN SECTION 4 ON ITS OWN, REPEATEDLY, UNTIL
+-- days_left IS 0. Select section 4's one line by itself rather than running the whole file
+-- again: the SQL editor sends a script as ONE statement, so a timeout anywhere inside it rolls
+-- back everything in it -- which is how the first totals migration was lost once already.
+--
+-- THE CODE IS ALREADY DEPLOYED AND ALREADY LOOKING FOR THESE TABLES. Until you run this it
+-- finds nothing and reads everything live, exactly as it does today. There is no moment in
+-- between where anything is half done.
 -- =====================================================================================
 set lock_timeout = '5s';
 set statement_timeout = '5min';
@@ -116,53 +123,51 @@ end;
 $$;
 
 
--- 3. THE BACKFILL, A FEW DAYS AT A TIME, NEWEST FIRST.
---    Newest first because the newest days are the ones every screen reads. Bounded so one run
---    cannot sit past a timeout on a slow instance, and resumable: it only ever picks days that
---    are not built yet, so running it again simply carries on.
-create or replace function public.build_deck_totals_recent(p_days int default 6, p_back int default 120)
+-- 3. THE BACKFILL: AS MANY DAYS AS FIT IN A TIME BUDGET, NEWEST FIRST.
+--
+--    EVERY CALENDAR DAY IS BUILT, INCLUDING THE ONES WITH NOTHING IN THEM. That is not waste,
+--    it is the point. The code serves a range from the cache only when EVERY day of it is
+--    built -- so that a week can never come back with four days in it and no sign that three
+--    are missing. A Sunday nobody uploads is a day of the week, so if "no deck" meant "never
+--    built", no week would ever be complete and the cache would never answer anything. A day
+--    with nothing in it costs almost nothing to build: the index range is empty.
+--
+--    NEWEST FIRST, because the newest days are the ones every screen reads.
+--
+--    BOUNDED BY A CLOCK, NOT BY A COUNT. A fixed number of days is the wrong bound when the
+--    same six days take two seconds on a good morning and two minutes on a bad one. This
+--    stops when the budget is spent, whatever it has managed -- so one paste is always safe
+--    to run, and on a fast day it does far more of the work than a fixed count would.
+--
+--    RESUMABLE. It only ever picks days that are not built, so running it again carries on
+--    from where it stopped. Nothing is broken in between: a day not yet built is read the old
+--    way, exactly as every day is read today.
+create or replace function public.build_deck_totals_recent(
+  p_budget_ms int default 20000,
+  p_back int default 120)
 returns table (kind text, day date, rows_built bigint, days_left bigint)
 language plpgsql
 security definer
 set search_path = public, pg_catalog
 as $$
-declare r record; n bigint;
+declare r record; n bigint; started timestamptz := clock_timestamp();
 begin
   for r in
-    with have as (
-      select 'expected'::text as k, s.snapshot_date as d
-        from public.repayment_snapshots s
-       where s.snapshot_date >= current_date - p_back
-       group by s.snapshot_date
-      union all
-      select 'defaulter'::text, s.snapshot_date
-        from public.defaulter_snapshots s
-       where s.snapshot_date >= current_date - p_back
-       group by s.snapshot_date
-    )
-    select h.k, h.d
-      from have h
-      left join public.deck_totals_days b on b.kind = h.k and b.snapshot_date = h.d
+    select k.kind as k, d::date as d
+      from generate_series(current_date - p_back, current_date, interval '1 day') d
+      cross join (values ('expected'), ('defaulter')) as k(kind)
+      left join public.deck_totals_days b on b.kind = k.kind and b.snapshot_date = d::date
      where b.snapshot_date is null
-     order by h.d desc, h.k
-     limit p_days
+     order by d desc, k.kind
   loop
+    exit when extract(epoch from (clock_timestamp() - started)) * 1000 > p_budget_ms;
     n := public.build_deck_totals(r.k, r.d, r.d);
     kind := r.k; day := r.d; rows_built := n;
     days_left := (
-      with have as (
-        select 'expected'::text as k, s.snapshot_date as d
-          from public.repayment_snapshots s
-         where s.snapshot_date >= current_date - p_back
-         group by s.snapshot_date
-        union all
-        select 'defaulter'::text, s.snapshot_date
-          from public.defaulter_snapshots s
-         where s.snapshot_date >= current_date - p_back
-         group by s.snapshot_date
-      )
-      select count(*) from have h
-        left join public.deck_totals_days b on b.kind = h.k and b.snapshot_date = h.d
+      select count(*)
+        from generate_series(current_date - p_back, current_date, interval '1 day') d
+        cross join (values ('expected'), ('defaulter')) as kk(kind)
+        left join public.deck_totals_days b on b.kind = kk.kind and b.snapshot_date = d::date
        where b.snapshot_date is null);
     return next;
   end loop;
@@ -170,10 +175,16 @@ end;
 $$;
 
 
--- 4. RUN THIS, THEN RUN IT AGAIN, UNTIL days_left IS 0.
---    Each call builds six days. On this instance expect roughly ten to thirty seconds a call.
---    Nothing is broken while it runs: a day not yet built is simply read the old way.
-select * from public.build_deck_totals_recent(6);
+-- 4. RUN THIS ON ITS OWN, THEN RUN IT AGAIN, UNTIL days_left IS 0.
+--
+--    RUN IT BY ITSELF -- select this line alone, not the whole file. The SQL editor sends a
+--    script as ONE statement, so a timeout anywhere in it rolls back everything in it, and
+--    that is how the first totals migration was lost once already.
+--
+--    Each call works for about twenty seconds and reports how many day-builds are still to do.
+--    Nothing is broken while it runs and nothing is broken if you stop half way: an unbuilt
+--    day is read exactly as every day is read today.
+select * from public.build_deck_totals_recent();
 
 
 -- 5. WHERE IT HAS GOT TO. Run any time.

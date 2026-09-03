@@ -138,8 +138,16 @@ const BUDGETS = [
      first so that an admin and a one-team officer read the same month: a slice is every
      team's per-day totals (~180 aggregate rows on this 40-team book), never a customer row,
      and the officer's screen pays for the company's slice the same as the admin's does.
-     Measured at 5,072 / 753. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  30,  5500],
+     Measured at 5,072 / 753.
+
+     THIRTY-ONE, AND THE THIRTY-FIRST IS THE ONE THAT PAYS FOR THE OTHERS. The cached deck
+     totals ask ONE small read -- which days are built -- before serving any team-day question
+     from a small table instead of aggregating a hundred and ten thousand deck rows. It is asked
+     once per process per minute and shared by every question asked together, so in the field it
+     is not one per dashboard at all; a fixture builds a fresh database per call, so here it
+     shows as exactly one. Raised deliberately: one index read to skip several multi-second
+     aggregates is the trade this whole change is, and it belongs in the diff. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  31,  5500],
   ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  30,   900],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
