@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-b';
+var BUILD = '2026-09-03-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5832,9 +5832,17 @@ VIEWS.settings = function(){
          A code no longer carries tabs of its own, so there is exactly one place a permission
          is decided and no code can quietly hold a set nobody remembers granting. */
       + '<div class="card" id="rolesCard"><div class="card-h">Nafasi na ruhusa / Roles &amp; access'
-        + '<span class="sub"><button class="btn sm" id="newRole">+ Wadhifa mpya / New role</button></span></div>'
+        + '<span class="sub">'
+        + '<button class="btn sm ghost" id="resetRoles">Anza upya / Start empty</button>'
+        + (ac.roleBackupAt ? ' <button class="btn sm ghost" id="undoRoles">Rudisha / Undo</button>' : '')
+        + ' <button class="btn sm" id="newRole">+ Wadhifa mpya / New role</button></span></div>'
         + '<div class="note" style="margin:10px 14px">Bofya wadhifa kuchagua tabs zake. Kila msimbo wenye wadhifa huu hurithi orodha hii.'
-        + ' / Tap a role to tick its tabs. Every access code with that role inherits this list.</div>'
+        + ' / Tap a role to tick its tabs. Every access code with that role inherits this list.'
+        /* "Start with empty accessible navs for all roles except all for ADMIN so that i go
+           set well now : i fear running into errors" -- so the button says what it does, what
+           it keeps, and that it can be taken back, before it is pressed. */
+        + '<br><b>Anza upya</b> huondoa tabs zote kwa nafasi zote (ADMIN inabaki na zote) ili uanze kupanga upya &mdash; hali ya sasa inahifadhiwa na <b>Rudisha</b> inairejesha.'
+        + ' / <b>Start empty</b> clears every role\'s tabs (ADMIN keeps all of them) so you can set them deliberately. The current state is saved first, and <b>Undo</b> puts it back.</div>'
         + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Wadhifa / Role</th>'
         + '<th>Tabs</th><th class="r">Idadi</th><th class="r">Misimbo / Codes</th><th></th></tr></thead><tbody>'
         + (ac.roles||[]).map(function(r, i){
@@ -8048,6 +8056,34 @@ function wireForms(){
   });
   var nrole = document.getElementById('newRole');
   if (nrole) nrole.onclick = function(){ roleForm(null); };
+  /* The clean slate, and the way back from it. Both confirm in words, because both change what
+     every person in the company can open. */
+  var rreset = document.getElementById('resetRoles');
+  if (rreset) rreset.onclick = function(){
+    if (!confirm('Ondoa tabs zote kwa nafasi zote? ADMIN inabaki na zote, na hali ya sasa inahifadhiwa ili uweze kurudisha.'
+      + '\n\nClear every role\'s tabs? ADMIN keeps all of them. The current state is saved first, so Undo can put it back.')) return;
+    rreset.disabled = true;
+    srv('resetRoleTabs', {})
+      .then(function(r){
+        toast('Nafasi ' + money(r.emptied) + ' zimeanzishwa upya; misimbo ' + money(r.codesCleared) + ' imesafishwa.'
+          + ' / ' + money(r.emptied) + ' role(s) emptied, ' + money(r.codesCleared) + ' code(s) cleared. ADMIN keeps all.');
+        render();
+      })
+      .catch(function(e){ rreset.disabled = false; toast(String(e.message||e), true); });
+  };
+  var rundo = document.getElementById('undoRoles');
+  if (rundo) rundo.onclick = function(){
+    if (!confirm('Rudisha tabs zote kama zilivyokuwa kabla ya "Anza upya"?'
+      + '\n\nPut every role and code back exactly as it was before "Start empty"?')) return;
+    rundo.disabled = true;
+    srv('resetRoleTabs', { undo: true })
+      .then(function(r){
+        toast('Imerudishwa: nafasi ' + money(r.roles) + ', misimbo ' + money(r.codes)
+          + '. / Restored ' + money(r.roles) + ' role(s) and ' + money(r.codes) + ' code(s).');
+        render();
+      })
+      .catch(function(e){ rundo.disabled = false; toast(String(e.message||e), true); });
+  };
   Array.prototype.forEach.call(document.querySelectorAll('[data-role]'), function(el){
     el.onclick = function(){
       var r = ((S.roleMeta && S.roleMeta.roles) || []).filter(function(x){ return x.role === el.getAttribute('data-role'); })[0];
