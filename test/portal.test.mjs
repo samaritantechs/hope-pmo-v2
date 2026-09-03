@@ -1778,6 +1778,68 @@ test('leader reports roll teams up under each supervisor, not just per team', as
   assert.equal(d.totals.recovered, 400);
 });
 
+/* THE LEADER REPORTS' ORODHA -- "chipped table segments of 9 ... one leader goes his teams,
+   grand totals/averages row then start the other leader in the same table", with J3..IJ as a
+   LOOKUP of the latest occurrence of that weekday rather than this week's. */
+test('the leader segments group each leader\'s teams, subtotal them, and look up each weekday', async () => {
+  const t = tables();
+  t.access_codes = t.access_codes.concat([
+    { code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] },
+  ]);
+  const d = await run('leaderReports', {}, ADMIN, dbWithRpc(t));
+
+  // Four measurements over three leader kinds each: the nine asked for, plus sales.
+  assert.equal(d.segments.length, 12);
+  assert.deepEqual(d.segments.filter(s => s.dflt).map(s => s.id).sort(),
+    ['col_collection', 'col_gmo', 'col_manager', 'ecol_collection', 'ecol_gmo', 'ecol_manager',
+     'rec_gmo', 'rec_manager', 'rec_recovery'],
+    'the nine open ticked; sales is one tick away');
+
+  // The day columns are the LATEST of each weekday. Today is Friday 24 July.
+  assert.equal(d.segDays.IJ, TODAY, 'IJ is today');
+  assert.equal(d.segDays.AL, YEST, 'AL is yesterday');
+  assert.equal(d.segDays.J3, MON);
+  assert.equal(d.segDays.J2, '2026-07-19', 'no Sunday yet this week, so last Sunday');
+
+  // COLLECTION, by the PMO collection officer -- who is resolved off her access code.
+  const col = d.segments.find(s => s.id === 'col_collection');
+  const cath = col.groups.find(g => g.leader === 'CATHERINE');
+  assert.equal(cath.teams, 1);
+  assert.equal(cath.rows[0].team, 'KONGOWE');
+  assert.equal(cath.rows[0].uncol, 1000);          // 1500 expected, 500 collected
+  assert.equal(cath.rows[0].pct, 33.3);
+  assert.equal(cath.rows[0].d.IJ, 33.3, 'IJ is today itself');
+  assert.equal(cath.rows[0].d.AL, 0, 'Thursday collected nothing of its 400');
+  assert.equal(cath.rows[0].d.J3, null, 'nothing uploaded for Monday: not measured, never 0%');
+  assert.equal(cath.total.sub, true, 'each leader closes with their own JUMLA row');
+  assert.equal(cath.total.pct, 33.3);
+  // MBAGALA has no collection officer on either the codes or the sheet.
+  assert.ok(col.groups.find(g => g.leader === '(unassigned)'), 'an unstaffed team is visible');
+  assert.equal(col.unstaffed, 1);
+  // The segment total is worked out again from the parts, never averaged from the rows.
+  assert.equal(col.totals.pct, pctOfTest_(500, 2300));
+
+  // RECOVERY, by the recovery officer, on the day's own rule: Friday divides by jana.
+  const rec = d.segments.find(s => s.id === 'rec_recovery');
+  assert.equal(rec.basis, 'yest');
+  const juma = rec.groups.find(g => g.leader === 'JUMA G');
+  assert.equal(juma.rows[0].recovered, 300);       // initial 1200 - current 900
+  assert.equal(juma.rows[0].uncol, 400);           // Thursday's uncollected
+  assert.equal(juma.rows[0].pct, 75);
+  assert.deepEqual(rec.amtKeys, ['J1', 'J2'], 'the weekend shows an amount, not a percentage');
+
+  // SALES is emitted for the credit analyst, and is NOT one of the nine by default.
+  const sales = d.segments.find(s => s.id === 'sales_credit');
+  assert.equal(sales.dflt, false);
+  assert.ok(sales.groups.find(g => g.leader === 'ANALYST A'));
+  assert.equal(sales.dayKeys.length, 6, 'six days for sales: Mon-Sat');
+
+  // The team distributions are untouched -- "leave the team distributions, just ammend orodha".
+  assert.ok(d.sections.length);
+  assert.ok(d.rows.length);
+});
+const pctOfTest_ = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+
 test('loan applications default to the whole pipeline, not one stage', async () => {
   const db = fakeDb(tables());
   // "Where is every application right now" is what this tab gets asked most, and forcing a
