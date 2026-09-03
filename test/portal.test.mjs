@@ -4,6 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { fakeDb } from './fake-db.mjs';
 /* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
    unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
@@ -3250,6 +3251,42 @@ test('the dashboard probe times each read on its own and names them', async () =
   assert.ok(typeof p.total === 'number');
 });
 
+/* The diagnosis card on a saturated morning: settings 1.4s, the 84-row teams table past four
+   seconds, an empty abnormal_payments table past four seconds. Nothing about the queries is
+   wrong there -- so the dashboard asks for less. Half its heavy aggregate work is LAST week,
+   and all last week produces is the arrows. */
+test('a stalled last-week read costs the arrows, never the dashboard', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'PAID', 0), E('222', 'KONGOWE', 1000, 'UNPAID', 0)];
+  const slow = { ...SNAPSHOT_TOTALS_RPC,
+    // Only LAST week's window stalls; this week answers as usual.
+    async expected_snapshot_totals(store, a) {
+      if (String(a.p_to) < TODAY) await new Promise(r => setTimeout(r, 1200));
+      return SNAPSHOT_TOTALS_RPC.expected_snapshot_totals(store, a);
+    },
+    async defaulter_snapshot_totals(store, a) {
+      if (String(a.p_to) < TODAY) await new Promise(r => setTimeout(r, 1200));
+      return SNAPSHOT_TOTALS_RPC.defaulter_snapshot_totals(store, a);
+    } };
+  process.env.DASH_PREV_BUDGET_MS = '20';
+  process.env.DASH_MONTH_BUDGET_MS = '20';
+  try {
+    const t0 = Date.now();
+    const d = await run('dashboardFull', {}, ADMIN, fakeDb(t, { rpc: slow }));
+    const took = Date.now() - t0;
+    assert.ok(took < 1000, `the dashboard answered in ${took}ms, before the stalled read did`);
+    assert.equal(d.perf.prevRead, false, 'the screen is told last week could not be read');
+    assert.equal(d.perf.dCol, null, 'so no arrow is drawn');
+    assert.equal(d.perf.dRec, null);
+    // THIS week is whole -- the figures the arrows sit beside are untouched.
+    assert.equal(d.perf.colPct, 50);
+    assert.equal(d.cards.salesWeek, 600000, 'the fixture\'s three sales this week, unaffected');
+    const k = d.teamPerf.find(r => r.team === 'KONGOWE');
+    assert.equal(k.collPctToday, 50);
+  } finally { delete process.env.DASH_PREV_BUDGET_MS; delete process.env.DASH_MONTH_BUDGET_MS; }
+});
+
 test('a month with no deck paired on any day has not measured recovery: null, not 0%', async () => {
   const t = tables();
   t.defaulter_snapshots = [];                                     // no decks at all this month
@@ -6473,6 +6510,87 @@ test('but retiring most of the register is allowed when the file really says so'
   assert.equal(r.capped, 0);
   const live = db._dump('followup_status').filter(x => !(x.status == null && x.arrears == null));
   assert.equal(live.length, 50);
+});
+
+/* =====================================================================================
+   THE UPLOAD MUST NOT BE FAILED BY THE TIDYING THAT FOLLOWS IT.
+   =====================================================================================
+     "uploading (Failed: Error: Seva imechukua muda mrefu mno / the server took too long
+      — HTTP 504)"
+
+   The deck is written first and the housekeeping runs after it. A try/catch around that
+   housekeeping stops it FAILING the upload; it does nothing at all about it being SLOW, and
+   the platform kills the whole function at sixty seconds regardless. The browser then reports
+   a failure for a file that is entirely, correctly, in the database.
+
+   So the housekeeping is on a clock. These three tests hold the three promises that makes:
+   the register read is small, an overrun is abandoned rather than allowed to run out the
+   platform's clock, and an abandonment is SAID rather than swallowed. */
+test('the retirement reads only the live half of the register, and only its refs', async () => {
+  /* 300 rows, 50 of them already retired (status and arrears null). The old read fetched all
+     300 with four columns and filtered in this process; on a register of twelve thousand that
+     read alone was most of the request. What the database is ASKED for is what this checks --
+     an answer that happens to be right after fetching the whole table is the bug, not the fix. */
+  const { retireFollowupAfterDeck } = await import('../api/upload.js');
+  const reg = [], snaps = [];
+  for (let i = 0; i < 300; i++) {
+    const live = i < 250;
+    reg.push({ ref: 'R' + i, team: 'KONGOWE', full_name: 'C' + i,
+      status: live ? 'Defaulter' : null, arrears: live ? 500 : null,
+      deck_date: live ? TODAY : null, updated_at: TODAY + 'T06:00:00Z' });
+  }
+  // Today's deck names 240 of the 250 live ones. Ten have cleared.
+  for (let i = 0; i < 240; i++) {
+    snaps.push({ id: 'n' + i, ref: 'R' + i, team: 'KONGOWE', snapshot_type: 'current',
+      weekday: 'MON', snapshot_date: TODAY, upload_batch: 'NEW', created_at: TODAY + 'T06:00:00Z' });
+  }
+  const db = fakeDb({ ...tables(), defaulter_snapshots: snaps, followup_status: reg });
+  const r = await retireFollowupAfterDeck(db, 'MON', 'NEW', TODAY);
+  assert.equal(r.retired, 10, 'exactly the ten live customers the deck no longer names');
+  assert.equal(r.capped, 0, 'ten of two hundred and fifty is nowhere near the brake');
+  /* THE BRAKE COUNTS THE LIVE ROWS, NOT EVERY ROW. Were the fifty retired rows still in the
+     denominator the ceiling would sit at 270 instead of 225, which is the sort of drift a
+     "same answer, cheaper read" change makes silently. */
+  const live = db._dump('followup_status').filter(x => !(x.status == null && x.arrears == null));
+  assert.equal(live.length, 240, 'the deck\'s own people, and nobody else, are left standing');
+});
+
+test('an upload with no clock left does its tidying next time rather than dying at the host', async () => {
+  const { uploadClock, beforeDeadline } = await import('../api/upload.js');
+  /* A budget already spent. `worth()` is what the upload asks before starting a step, and it
+     must say no -- starting a thirty-second read with two seconds of platform time left is how
+     a finished upload becomes a 504. */
+  let t = 100000;
+  const spent = uploadClock(0, 45000, () => t);
+  assert.equal(spent.left(), 0, 'nothing left of the budget');
+  assert.equal(spent.worth(), false, 'so no housekeeping step may start');
+
+  t = 1000;
+  const fresh = uploadClock(0, 45000, () => t);
+  assert.equal(fresh.worth(), true, 'a second into the request there is plenty of room');
+  assert.equal(fresh.left(), 44000);
+
+  /* And a step that overruns is ABANDONED with the fallback, not waited out. The abandoned
+     promise keeps running -- nothing here cancels a database write half done -- so the test
+     also proves the answer does not wait for it. */
+  let settled = false;
+  const slow = new Promise(res => setTimeout(() => { settled = true; res('too late'); }, 5000));
+  const got = await beforeDeadline(slow, 30, null);
+  assert.equal(got, null, 'the deadline answers, not the slow step');
+  assert.equal(settled, false, 'and it answered before the slow step finished');
+});
+
+test('a deferred retirement is reported in the upload\'s own message, never swallowed', async () => {
+  /* "The file is in and one tidying step is a day late" and "the upload failed" are completely
+     different facts, and the person at the keyboard can only tell them apart if the result says
+     so. This reads the source rather than running a request, because what is under test is that
+     the sentence EXISTS on the deferred path at all -- a silent skip is the failure shape. */
+  const src = await readFile(new URL('../api/upload.js', import.meta.url), 'utf8');
+  assert.match(src, /followupDeferred \? `/, 'the deferred retirement has its own sentence');
+  assert.match(src, /sweepDeferred \? `/, 'and so does the deferred sweep');
+  assert.match(src, /The deck is in\./, 'which says the upload itself succeeded, first');
+  assert.match(src, /The next current-defaulters upload does it in full/,
+    'and says when it will be done, so nobody has to go looking for a button');
 });
 
 /* =====================================================================================
