@@ -28,6 +28,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ||
 const { portalApi } = await import('../api/_lib/portal-core.js');
 const { callApi } = await import('../api/_lib/call-core.js');
 const { loanApi } = await import('../api/_lib/loan-core.js');
+const { USER_TABS } = await import('../api/_lib/auth.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TEAMS = Array.from({ length: 40 }, (_, i) => 'TEAM' + String(i + 1).padStart(2, '0'));
@@ -104,7 +105,8 @@ function counting(tables, opts) {
 }
 
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
-const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
+// Ticked for the ordinary screens -- see the note beside GMO in portal.test.mjs.
+const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: USER_TABS.slice() };
 
 /* ROWS ARE A BUDGET TOO, and leaving them out is how three unbounded reads of the comment log
    sat behind a guard that was passing. A filtered fetchAll costs ONE round trip and can still

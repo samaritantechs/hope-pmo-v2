@@ -121,8 +121,14 @@ export function resolveTabs(user, roleTabs) {
   if (String(user.role || '').trim().toUpperCase() === 'ADMIN') return ADMIN_TABS.slice();
   // Everything an admin can SEE, none of what an admin can DO -- upload is a write tool.
   if (isReadOnly(user)) return USER_TABS.concat(['settings', 'audit']);
-  const merged = [...new Set([...(user.tabs || []), ...(roleTabs || [])])];
-  return merged.length ? merged : USER_TABS.slice();
+  /* EMPTY MEANS EMPTY.
+       "so if empty in the system show none: the custom ticking aint working"
+     This used to fall back to USER_TABS -- twenty-two screens -- whenever the merged list came
+     out empty, which meant a role with nothing ticked was granted almost everything, and the
+     clean slate emptied the table while changing nothing anybody could see. A fallback that
+     GRANTS is the wrong direction for a permission: the safe answer to "we do not know what
+     this role may see" is nothing, and the admin ticks it. */
+  return [...new Set([...(user.tabs || []), ...(roleTabs || [])])];
 }
 
 /* WHICH ROW OF `roles` BELONGS TO THIS PERSON -- MATCHED THE WAY A HUMAN SPELLS A ROLE.
