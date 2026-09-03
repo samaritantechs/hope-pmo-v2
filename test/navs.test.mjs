@@ -92,6 +92,22 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
   /* And the screen somebody lands on when their role holds nothing at all. Without it an
      unticked role opens a blank app, which is indistinguishable from a broken one. */
   assert.ok(views.has('noaccess'), 'the "access not set yet" screen went missing');
+  /* THE STAMP THE SERVER READS AND THE ONE THE PAGE REPORTS MUST BE THE SAME STRING.
+     A permission that lands on the server and not on the screen is what let an unticked role
+     keep its navs, so the page reloads itself when /api/me says it is behind. That handshake
+     is only worth anything while the server's regex still finds the page's stamp -- rename
+     BUILD on one side and the check silently never fires again, which is exactly the shape of
+     the fault it exists to catch. */
+  const pageBuild = app.match(/var BUILD = '([^']+)'/);
+  assert.ok(pageBuild, 'the page lost its BUILD stamp');
+  const meSrc = readFileSync(new URL('../api/me.js', import.meta.url), 'utf8');
+  const serverRe = meSrc.match(/src\.match\((\/var BUILD = [^/]*\/)\)/);
+  assert.ok(serverRe, 'api/me.js no longer reads the page build -- the handshake is dead');
+  const found = app.match(new RegExp(serverRe[1].slice(1, -1)));
+  assert.ok(found && found[1] === pageBuild[1],
+    'the server reads a different stamp (' + (found && found[1]) + ') than the page reports ('
+    + pageBuild[1] + ')');
+  assert.ok(/freshEnough_/.test(app), 'the page stopped checking whether it is out of date');
   assert.ok(/go\(firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
     'the landing tab must be one the person actually holds, never a fixed dashboard');
 

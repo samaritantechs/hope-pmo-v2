@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-e';
+var BUILD = '2026-09-03-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1044,7 +1044,29 @@ function bellOpen(){
 }
 
 
+/* THE PAGE THAT WAS OUT OF DATE AND SAID NOTHING.
+     "I logged in using a code of someone i didnt assign any nav and when entered through the
+      switch found many of them, even if i refresh they are there"
+   The server had stopped granting those tabs; an old copy of THIS FILE, still carrying the
+   ALWAYS list, was drawing them anyway. A permission is the worst thing to have arrive late,
+   because the screen is the only evidence anybody has that it arrived -- and a stale page
+   states the opposite of the truth with complete confidence.
+   /api/me now says which version this deployment serves. If we are behind it, reload past the
+   cache. ONCE, guarded per tab: a reload that does not fix the stamp must not become a loop,
+   which would be a far worse fault than the one it is fixing. Doing nothing when the server
+   sends no stamp keeps every older deployment behaving exactly as it does today. */
+function freshEnough_(me){
+  if (!me || !me.build || me.build === BUILD) return true;
+  try {
+    if (sessionStorage.getItem('hopeBuildTried') === me.build) return true;   // already tried
+    sessionStorage.setItem('hopeBuildTried', me.build);
+  } catch (e) { return true; }   // no session storage to guard with -- never risk the loop
+  location.replace(location.pathname + '?v=' + encodeURIComponent(me.build));
+  return false;
+}
+
 function start(me){
+  if (!freshEnough_(me)) return;
   S.me = me;
   /* THE FOLLOW-UP STATUS LIST COMES FROM THE DATABASE, not from this file. It is editable in
      Settings, and the office and the field must offer the same words -- two hard-coded copies
@@ -1067,7 +1089,12 @@ function start(me){
   $('#signin').classList.add('hide');
   $('#shell').classList.remove('hide');
   $('#meName').textContent = me.name;
-  $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams');
+  /* THE VERSION, WHERE IT CAN BE READ RATHER THAN HOVERED. It lived only in the reload
+     button's tooltip, and a phone has no tooltips -- so "is the fix on my screen yet", the
+     question that has now cost several rounds, could not be answered by the person holding
+     the screen. Beside the role, where the eye already goes to check who is signed in. */
+  $('#meRole').textContent = me.role + ' · ' + (me.teams ? me.teamCount+' team(s)' : 'All teams')
+    + ' · ' + BUILD;
   // me.hopeLoanAvailable rides along on S.me (set above) and is all buildNav() needs to decide
   // whether HOPE Loan's own items belong in this sidebar at all -- see /api/me.js. Nothing
   // client-side decides this on its own.
