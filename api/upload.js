@@ -109,6 +109,64 @@ async function writeInChunks(db, table, records, onConflict) {
   return written;
 }
 
+/* =====================================================================================
+   THE FILE IS IN. THE TIDYING AFTER IT MUST NEVER BE THE THING THAT FAILS THE UPLOAD.
+   =====================================================================================
+     "uploading (Failed: Error: Seva imechukua muda mrefu mno / the server took too long
+      — HTTP 504)"
+
+   That is the second time this shape has been reported, and the first fix -- moving the
+   register rebuild out of the request -- treated the symptom that was in front of me rather
+   than the shape of the failure. The shape is this:
+
+     write the deck        the upload. Must happen, must be waited for.
+     everything after it   the register retirement, the superseded-batch sweep. Housekeeping,
+                           already wrapped so a failure is not fatal -- but NOT BOUNDED, so it
+                           can spend fifty seconds and let the PLATFORM cut the function off
+                           at sixty. The browser then gets a 504 and says the upload failed.
+
+   And the deck is already written by then. So a 504 here does not mean "nothing landed"; it
+   means "everything landed and the answer was lost", which is worse than either -- the person
+   at the keyboard uploads the same file again, and again, chasing a failure that is not there.
+
+   A try/catch cannot catch a platform timeout. Only a clock can. So the housekeeping now runs
+   against a DEADLINE measured from the start of the request: each step is skipped if there is
+   not enough time left to be worth starting, and abandoned if it overruns. What was abandoned
+   is SAID, in the upload's own result, so nothing is quietly not done.
+
+   NOTHING IS LOST BY ABANDONING EITHER STEP. The retirement is re-run in full by the next
+   current-defaulter upload, and the sweep by the next upload of any deck or by the Settings
+   card -- both are idempotent and both work from the table, not from this request. Abandoning
+   them costs a day of staleness at the very worst; the 504 costs the upload.
+
+   45 seconds of the platform's 60, so there is always room to send the answer back. */
+const UPLOAD_BUDGET_MS = 45000;
+const uploadBudget = () => Number(process.env.UPLOAD_BUDGET_MS) || UPLOAD_BUDGET_MS;
+
+/** How long a housekeeping step must have in front of it before it is worth starting at all.
+    Starting one with two seconds left buys nothing and risks the clock. */
+const UPLOAD_STEP_MIN_MS = 4000;
+
+/** Run `p`, but give up on it after `ms` and answer `fallback` instead. The abandoned work is
+    NOT cancelled -- it carries on against the database for as long as the platform lets it, and
+    since every step here writes in chunks, whatever it finished stands. */
+export function beforeDeadline(p, ms, fallback) {
+  let t = null;
+  const late = new Promise(res => { t = setTimeout(() => res(fallback), ms); if (t.unref) t.unref(); });
+  return Promise.race([
+    p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return fallback; }),
+    late,
+  ]);
+}
+
+/** The clock for one upload request. `left()` is what remains of the budget; `worth()` says
+    whether a step has room to start. Pure arithmetic over a start time, so a test can drive it
+    with a tiny budget instead of waiting forty-five seconds. */
+export function uploadClock(startedAt, budgetMs = uploadBudget(), nowFn = Date.now) {
+  const left = () => Math.max(0, budgetMs - (nowFn() - startedAt));
+  return { left, worth: (min = UPLOAD_STEP_MIN_MS) => left() >= min };
+}
+
 // POST /api/upload   { code, type, meta, rows }
 //   rows: the parsed sheet as an array-of-arrays, header row included -- the SAME shape
 //         csv-parse produces for the CLI migration scripts, just coming from the
@@ -439,6 +497,10 @@ export function partPlan(part) {
 
 export default withApi(async (req, res) => {
   if (req.method !== 'POST') { const e = new Error('Method not allowed'); e.status = 405; throw e; }
+  /* The clock starts HERE, not after the write, because the platform's sixty seconds started
+     here too. See the note on UPLOAD_BUDGET_MS: the write is waited for whatever it costs, and
+     the housekeeping that follows it gets whatever is left. */
+  const clock = uploadClock(Date.now());
   /* A BIG FILE IS SEVERAL REQUESTS NOW, NOT ONE.
    *
    * A thirty-thousand row deck cannot be relied on to finish inside the sixty seconds the
@@ -981,13 +1043,25 @@ export default withApi(async (req, res) => {
                     from the table -- one column, so the file's own size is no longer the thing
                     that decides who gets retired.
      ===================================================================================== */
-  let followupSynced = 0, followupRetired = 0, followupCapped = 0;
+  let followupSynced = 0, followupRetired = 0, followupCapped = 0, followupDeferred = false;
   if (type === 'defaulters-current') {
     followupSynced = await writeFollowupFromDeck(supabase, records, meta.date);
   }
   if (type === 'defaulters-current' && isLastPart) {
-    const fu = await retireFollowupAfterDeck(supabase, meta.weekday, uploadBatch, meta.date);
-    followupRetired = fu.retired; followupCapped = fu.capped;
+    /* THE RETIREMENT IS ON THE CLOCK. It reads back every ref of this batch and then the live
+       half of the register, both of which grow with the book -- so on a database having a bad
+       morning it is the step most likely to run past the platform's limit and turn a completed
+       upload into a 504. The next current file re-runs it in full against the same table, so a
+       deferral costs nothing but a day of a few cleared customers still showing. */
+    if (!clock.worth()) {
+      followupDeferred = true;
+    } else {
+      const fu = await beforeDeadline(
+        retireFollowupAfterDeck(supabase, meta.weekday, uploadBatch, meta.date),
+        clock.left(), null);
+      if (fu) { followupRetired = fu.retired; followupCapped = fu.capped; }
+      else followupDeferred = true;
+    }
   }
   /* =====================================================================================
      THE DEFAULTERS LIST COMES FROM THE DEFAULTERS FILE. NOTHING ELSE WRITES IT.
@@ -1065,15 +1139,26 @@ export default withApi(async (req, res) => {
      below are fixed by this file, so nothing a caller sends can widen what runs. */
   const housekeeper = { code: user.code, name: user.name, role: user.role,
     teams: null, tabs: ['upload', 'settings'] };
+  let sweepDeferred = false;
   if (isLastPart && SNAPSHOT_TABLES.has(table)) {
-    try {
-      /* The same sweep the Settings card runs, on this date only, keeping two: the file just
-         uploaded and the one it replaced -- so a wrong file can still be undone by sending the
-         right one again, which is the whole reason two are kept rather than one. */
-      const r = await portalApi(supabase, housekeeper, 'purgeSuperseded',
-        { confirm: true, keep: 2, to: uploadDate || meta.date, days: 1, limit: 200 }, Date.now());
-      autoSwept = { batches: r.deletedBatches, rows: r.totalRows };
-    } catch (e) { /* the upload stands */ }
+    /* ON THE CLOCK TOO, and last in the queue on purpose: of everything after the write this is
+       the one whose only job is to save disk. The batch rule already makes the file that just
+       landed the one that counts, so a superseded batch left in place for another day changes
+       no figure on any screen. The next upload sweeps it, or the Settings card does. */
+    if (!clock.worth()) {
+      sweepDeferred = true;
+    } else {
+      try {
+        /* The same sweep the Settings card runs, on this date only, keeping two: the file just
+           uploaded and the one it replaced -- so a wrong file can still be undone by sending the
+           right one again, which is the whole reason two are kept rather than one. */
+        const r = await beforeDeadline(portalApi(supabase, housekeeper, 'purgeSuperseded',
+          { confirm: true, keep: 2, to: uploadDate || meta.date, days: 1, limit: 200 }, Date.now()),
+        clock.left(), null);
+        if (r) autoSwept = { batches: r.deletedBatches, rows: r.totalRows };
+        else sweepDeferred = true;
+      } catch (e) { /* the upload stands */ }
+    }
   }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.
@@ -1154,6 +1239,8 @@ export default withApi(async (req, res) => {
        reads: true means the file is not all in yet and nothing has been rebuilt from it. */
     ...(part ? { part: { index: partIndex, total: partTotal, partial: !isLastPart } } : {}),
     followupSynced, followupRetired: followupRetired || undefined, behaviour, sameAsToday,
+    deferred: (followupDeferred || sweepDeferred)
+      ? { retire: followupDeferred || undefined, sweep: sweepDeferred || undefined } : undefined,
     stubbed: stubbed || undefined,
     collapsed: collapsed || undefined,
     /* Reading a date column the wrong way round moves history by up to eleven months and looks
@@ -1185,6 +1272,12 @@ export default withApi(async (req, res) => {
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
       followupRetired ? `\u2713 ${followupRetired} customer(s) this deck no longer names were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
+      /* SAID, NOT SWALLOWED. Housekeeping that ran out of clock is reported in the same
+         sentence the upload reports itself, because "the file is in and one tidying step is a
+         day late" is a completely different thing from a failed upload -- and the person at the
+         keyboard can only tell the difference if somebody tells them. */
+      followupDeferred ? `\u2713 The deck is in. The officers' working list was NOT re-checked for customers who have cleared, because the database was too slow today to finish that inside the time the host allows -- and running past it would have failed this upload after the file had already landed. The next current-defaulters upload does it in full. Nothing is missing from the list; at most a few cleared customers are still on it.` : '',
+      sweepDeferred ? `Superseded older uploads of this date were left in place for now, for the same reason. They change no figure -- the newest upload is the one every screen reads -- and the next upload or the Settings sweep clears them.` : '',
       followupCapped ? `\u26a0\ufe0f NOTHING was taken off the officers' working list, because this file would have retired ${followupCapped} of them -- nearly the whole list. A current-defaulters file is meant to carry the WHOLE book, so that shape usually means the export was cut short or only part of it was selected. Check the file has every team in it and upload it again. Nobody was changed.` : '',
     ].filter(Boolean).join(' ') || undefined
   };
@@ -1269,18 +1362,30 @@ export async function retireFollowupAfterDeck(db, weekday, uploadBatch, deckDate
   const inDeck = new Set((mine || []).map(r => String(r.ref).trim().toUpperCase()));
   if (!inDeck.size) return { retired: 0, capped: 0 };
 
-  /* deck_date is read only to PROBE whether the column exists yet (migrations here are run by
-     hand) -- the per-row weekday comparison that used to read its value is gone along with
-     prevWeekdayDeck. updated_at is gone from this select entirely: it fed the fortnight-stale
-     fallback, which the fix above subsumes, so nothing in this function reads it any more. */
-  let stamped = true, existing = null;
+  /* THE WHOLE REGISTER WAS BEING READ TO FIND THE PART OF IT THAT IS LIVE.
+     Four columns of every row in the largest current-state table in the system came back here,
+     and then all but the live ones -- the rows with a status or arrears still on them -- were
+     thrown away in this process. On a slow morning that read alone is most of the sixty seconds
+     the platform allows, which is how a completed upload ended as an HTTP 504.
+
+     The filter belongs at the database, where it is one index-free but narrow scan returning a
+     fraction of the rows, and ONE column: `ref` is all that is used from here on. status and
+     arrears were only ever read to decide "is this row live", which is now decided before the
+     rows are sent, and PostgREST spells that `status.not.is.null,arrears.not.is.null`.
+
+     deck_date is not read at all -- it is only PROBED, because the migration that adds it is
+     run by hand and the retirement write must know whether to blank it. One row is enough to
+     ask that, so the probe costs nothing next to what it replaced. */
+  let stamped = true;
   try {
-    existing = await fetchAll(() => db.from('followup_status').select('ref, deck_date, status, arrears'));
+    const { error } = await db.from('followup_status').select('deck_date').limit(1);
+    if (error) throw new Error(error.message);
   } catch (e) {
     if (!/deck_date/.test(String((e && e.message) || e))) throw e;
     stamped = false;
-    existing = await fetchAll(() => db.from('followup_status').select('ref, status, arrears'));
   }
+  const liveRows = (await fetchAll(() => db.from('followup_status').select('ref')
+    .or('status.not.is.null,arrears.not.is.null'))) || [];
 
   /* =====================================================================================
      THE LATEST CURRENT FILE IS THE DEFAULTERS LIST. THAT IS THE WHOLE RULE.
@@ -1320,7 +1425,6 @@ export async function retireFollowupAfterDeck(db, weekday, uploadBatch, deckDate
      thousand-row slice, so 8,000 of 8,888 customers looked absent. `inDeck` is now read back
      from the table by upload_batch -- the whole upload, every slice -- so "not in the file" is
      a fact about the FILE, and the per-weekday scoping added to compensate is not needed. */
-  const liveRows = (existing || []).filter(r => !(r.status == null && r.arrears == null));
   const departed = liveRows.filter(r => !inDeck.has(String(r.ref).trim().toUpperCase()));
 
   /* THE BRAKE, against a file that is not all there.

@@ -6615,6 +6615,11 @@ async function dashboardProbe(db, user, args, nowMs) {
    the month report's 8s. The live week's slice is one call and always fits; a cold month's
    earlier weeks fill one or two slices per load and are remembered, so the columns arrive
    within a few opens and the screen never waits on them. */
+/* How long the dashboard will wait on LAST week, which only feeds the movement arrows. Well
+   inside the client's 45 seconds and well inside the month ledger's own budget, so a slow
+   morning costs arrows rather than the screen. Overridable for the test that proves it. */
+const DASH_PREV_BUDGET_MS = 6000;
+const dashPrevBudget_ = () => Number(process.env.DASH_PREV_BUDGET_MS) || DASH_PREV_BUDGET_MS;
 const DASH_MONTH_BUDGET_MS = 3000;
 // Overridable so a test can prove the race below with a stalled fake in milliseconds.
 const dashMonthBudget_ = () => Number(process.env.DASH_MONTH_BUDGET_MS) || DASH_MONTH_BUDGET_MS;
@@ -6634,6 +6639,15 @@ const DASH_MONTH_SLICES = 2;
    say "still filling" and the rest of the screen is drawn on time -- while the ledger call
    runs on and stores whatever progress it makes for the next load. The timer never keeps
    the process alive on its own. */
+/* Whatever has not answered in `ms`, answered as `fallback` instead. The call runs on -- it
+   is already in flight and cancelling it would not give the database its time back -- but the
+   screen stops waiting on it. Used for every part of the dashboard that is worth having and
+   not worth failing over. */
+function within_(p, ms, fallback) {
+  let t = null;
+  const late = new Promise(res => { t = setTimeout(() => res(fallback), ms); if (t.unref) t.unref(); });
+  return Promise.race([p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return fallback; }), late]);
+}
 function ledgerWithin_(p, ms) {
   let t = null;
   const late = new Promise(res => { t = setTimeout(() => res(null), ms); if (t.unref) t.unref(); });
@@ -6687,8 +6701,23 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
-    expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevSun, teams: user.teams }),
-    defaulterTotalsInRange(db, { from: prevMon, to: prevSun, teams: user.teams }),
+    /* LAST WEEK IS FOR THE ARROWS, AND THE ARROWS ARE NOT WORTH THE SCREEN.
+
+       The diagnosis card, on a morning the dashboard would not load: settings 1.4s, the teams
+       table -- eighty-four rows -- past four seconds, abnormal payments past four seconds on
+       a table with no rows in it. When a read of eighty-four rows cannot finish, nothing about
+       these queries is the problem; the database is saturated and every read is queuing.
+
+       What this screen can do about that is ask for less. Half of its heavy aggregate work is
+       these two, and all they produce is the little up/down arrow beside each percentage on
+       the performance strip. So they are given a budget of their own: whatever has not
+       answered by then comes back empty, the strip draws its figures with no arrow -- which is
+       exactly what it already does for a week with nothing uploaded -- and the dashboard is
+       drawn. Half the heavy work, none of the figures. */
+    within_(expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevSun, teams: user.teams }),
+      dashPrevBudget_(), []),
+    within_(defaulterTotalsInRange(db, { from: prevMon, to: prevSun, teams: user.teams }),
+      dashPrevBudget_(), []),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
       /* upload_date rides along because it is the day the admin CHOSE for the report, and a
@@ -6898,6 +6927,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     dCol: move_(wkNow.colPct, wkPrev.colPct),
     dRec: move_(wkNow.recPct, wkPrev.recPct),
     dAvg: move_(wkNow.avgPct, wkPrev.avgPct),
+    /* Whether last week actually arrived. An arrow that is missing because the comparison
+       could not be read is a different thing from an arrow that is missing because last week
+       was flat, and the screen should not present them as the same. */
+    prevRead: !!(myExpPrev.length || myDefPrev.length),
   };
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */

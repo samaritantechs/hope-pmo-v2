@@ -108,9 +108,19 @@ class FakeQuery {
       "either of these two dates is recent" exclude a row that has neither. */
   or(expr) {
     const parts = String(expr || '').split(',').map(p => {
-      const i = p.indexOf('.'), j = p.indexOf('.', i + 1);
-      if (i < 0 || j < 0) return null;
-      return { col: p.slice(0, i), op: p.slice(i + 1, j), val: p.slice(j + 1) };
+      const i = p.indexOf('.');
+      if (i < 0) return null;
+      const col = p.slice(0, i);
+      /* PostgREST negates an operator by prefixing it: `status.not.is.null` is "status IS NOT
+         NULL". Splitting on the first two dots reads that as an operator called "not", so the
+         prefix is taken off first and remembered -- otherwise the one idiom for "this column
+         has a value", which is how the follow-up register finds its live rows, is unusable
+         inside an .or(). */
+      let rest = p.slice(i + 1), negate = false;
+      if (rest.startsWith('not.')) { negate = true; rest = rest.slice(4); }
+      const j = rest.indexOf('.');
+      if (j < 0) return null;
+      return { col, op: rest.slice(0, j), val: rest.slice(j + 1), negate };
     }).filter(Boolean);
     const test = (p, r) => {
       const v = r[p.col];
@@ -129,7 +139,7 @@ class FakeQuery {
             + 'be silently treated as equality.');
       }
     };
-    this.filters.push(r => parts.some(p => test(p, r)));
+    this.filters.push(r => parts.some(p => (p.negate ? !test(p, r) : test(p, r))));
     return this;
   }
   /** PostgREST accepts SEVERAL order columns and applies them left to right, which is the
