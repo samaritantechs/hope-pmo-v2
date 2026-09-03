@@ -580,7 +580,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-02-c';
+var BUILD = '2026-09-02-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1350,6 +1350,11 @@ function tableHtml(rows, cols, onRow){
           return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>';
         }).join('') + '</tr>';
   }).join('');
+  /* THE HEADERS AGAIN, ABOVE THE TOTAL. "repeat the headers from t.sales to abn above the
+     grand totals because it is too down to refer": on a list of eighty-odd teams the column
+     names are a screen and a half away from the JUMLA row they explain. Only on a long list
+     -- a short one has its headers in sight -- and they sort exactly like the ones at the top. */
+  if (tot && rows.length > 25) body += '<tr class="hdr2">' + head + '</tr>';
   if (tot) body += '<tr class="totrow"><td class="sn"></td>' + cols.map(function(c, i){
     return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>';
   return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
@@ -1536,6 +1541,26 @@ function exportXls(){
    reasons for 1x are both gone. The canvas ceiling still drops it to 1x for a picture that
    would not fit at 2x. */
 var JPG_SCALE = 2;
+/* The picture's own background and margin -- literals, because the drawing cannot read the
+   page's theme variables and the ink walk has to know exactly what "nothing" looks like. */
+var JPG_BG = '#F6F8FC', JPG_PAD = 10;
+/** The last column and the last row of a canvas that carry anything but the background --
+    read from the right edge inward and the bottom edge upward, one strip at a time, stopping
+    at the first strip with ink in it. A tolerance of a few levels forgives anti-aliasing. */
+function inkBox_(ctx, w, h, bg){
+  var R = parseInt(bg.slice(1,3),16), G = parseInt(bg.slice(3,5),16), B = parseInt(bg.slice(5,7),16);
+  var ink = function(d, i){ return Math.abs(d[i]-R) > 6 || Math.abs(d[i+1]-G) > 6 || Math.abs(d[i+2]-B) > 6; };
+  var right = 0, bottom = 0, x, y, i, d;
+  for (x = w - 1; x >= 0 && !right; x--) {
+    d = ctx.getImageData(x, 0, 1, h).data;
+    for (i = 0; i < d.length; i += 4) if (ink(d, i)) { right = x + 1; break; }
+  }
+  for (y = h - 1; y >= 0 && !bottom; y--) {
+    d = ctx.getImageData(0, y, w, 1).data;
+    for (i = 0; i < d.length; i += 4) if (ink(d, i)) { bottom = y + 1; break; }
+  }
+  return { right: right || w, bottom: bottom || h };
+}
 var JPG_UNCLIP = '.jpgshot,.jpgshot *{overflow:visible !important;max-height:none !important;'
   + 'max-width:none !important;}'
   + '.jpgshot .body,.jpgshot .scroll,.jpgshot .card{overflow:visible !important;height:auto !important;}'
@@ -1723,7 +1748,9 @@ function saveJpg(el){
          so `width:w` here gave the content w MINUS the 20px of padding -- twenty pixels of the
          report pushed outside the picture on every single export, which is "the current are
          even cutting info" in one line of CSS. */
-      + '<div style="background:var(--bg);padding:10px;box-sizing:content-box;width:'+w+'px">'
+      /* A LITERAL background, the same literal the canvas is filled with, so the ink walk
+         below can tell page from picture in either theme. */
+      + '<div style="background:'+JPG_BG+';padding:'+JPG_PAD+'px;box-sizing:content-box;width:'+w+'px">'
       + new XMLSerializer().serializeToString(clone) + '</div></div>';
     /* SCALED BY THE viewBox, WHICH IS WHAT SVG IS FOR -- not by `zoom`.
 
@@ -1732,22 +1759,45 @@ function saveJpg(el){
        viewBox leaves the layout alone at its natural size and scales the DRAWING of it, which
        cannot round content out of frame and re-rasterises crisply because it is still vector at
        that point. Same sharpness when enlarged, none of the risk. */
-    var W = w + 20, H = h + 20;
-    var sc = (W * JPG_SCALE <= 8000 && H * JPG_SCALE <= 20000) ? JPG_SCALE : 1;
-    var sw = Math.ceil(W * sc), sh = Math.ceil(H * sc);
+    /* MEASURED WHERE THE INK LANDS, NOT WHERE IT WAS PREDICTED TO.
+
+         "also the pic didn't download the whole table"  -- a third time, and by the same
+         fraction on the right as at the bottom: the drawing came out a few percent larger than
+         the probe had measured, and two columns and six rows fell off the edge.
+
+       Every cure so far corrected one difference between the probe's layout and the drawing's
+       (the unclipping, the width, the font) and there is always another one a device can
+       hide -- a font the picture cannot reach, a metric the image renderer rounds its own way.
+       So the prediction is no longer trusted to the pixel. The drawing is made with a third
+       more room than it should need, and then the CANVAS is read: the last column and the
+       last row that carry anything other than the background are found, and the picture is
+       cropped there. Whatever the drawing decided to do with the layout, the file holds all
+       of it. Costs one scan of the edges of a bitmap, on a click. */
+    var W = w + 2 * JPG_PAD, H = h + 2 * JPG_PAD;
+    var GW = Math.ceil(W * 1.3) + 60, GH = Math.ceil(H * 1.3) + 60;
+    var sc = (GW * JPG_SCALE <= 8000 && GH * JPG_SCALE <= 20000) ? JPG_SCALE : 1;
+    var sw = Math.ceil(GW * sc), sh = Math.ceil(GH * sc);
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+sw+'" height="'+sh+'"'
-      + ' viewBox="0 0 '+W+' '+H+'">'
-      + '<foreignObject width="'+W+'" height="'+H+'">'
+      + ' viewBox="0 0 '+GW+' '+GH+'">'
+      + '<foreignObject width="'+GW+'" height="'+GH+'">'
       + html + '</foreignObject></svg>';
     var img = new Image();
     img.onload = function(){
       var cv = document.createElement('canvas');
       cv.width = sw; cv.height = sh;
       var ctx = cv.getContext('2d');
-      ctx.fillStyle = document.body.classList.contains('dark') ? '#0B1120' : '#F6F8FC';
+      ctx.fillStyle = JPG_BG;
       ctx.fillRect(0,0,cv.width,cv.height);
       ctx.drawImage(img,0,0);
-      cv.toBlob(function(b){
+      var box = inkBox_(ctx, sw, sh, JPG_BG);
+      var out = document.createElement('canvas');
+      out.width = Math.min(sw, Math.ceil(box.right + JPG_PAD * sc));
+      out.height = Math.min(sh, Math.ceil(box.bottom + JPG_PAD * sc));
+      var octx = out.getContext('2d');
+      octx.fillStyle = JPG_BG;
+      octx.fillRect(0, 0, out.width, out.height);
+      octx.drawImage(cv, 0, 0);
+      out.toBlob(function(b){
         if (!b){ toast(t('jpgfail'), true); return; }
         download(b, S.view+'-'+today()+'.jpg');
       }, 'image/jpeg', 0.94);
@@ -3547,10 +3597,15 @@ VIEWS.fureport = function(){
          was ever given. An empty New No on a HAPATIKANI row is the customer nobody can reach
          yet, which is exactly what the status filter above hunts for. */
       col('contact','Namba / Customer No'),
-      {key:'new_no', label:'Namba mpya / New No', kind:'text',
-       get:function(r){ return r.new_no || '—'; },
-       cls:function(r){ return r.new_no ? 'good' : ''; }},
       {key:'fu_status', label:'Status', kind:'chip', chip:function(r){ return chipFor(r.fu_status); }},
+      /* AFTER the status, and a plain NO where there is none: "so that when we sort these
+         hapatikani yy na mdamini we can also sort those with [NO] at new number so as to send
+         excels for perusing their new reachable numbers". A dash sorted nowhere useful; NO
+         sorts as a word, groups the unreachable together under HAPATIKANI, and exports as a
+         word the person perusing the sheet can filter on. */
+      {key:'new_no', label:'Namba mpya / New No', kind:'text',
+       get:function(r){ return r.new_no || 'NO'; },
+       cls:function(r){ return r.new_no ? 'good' : 'bad'; }},
       {key:'promise_date', label:'Promise', kind:'text', get:function(r){
         return r.promise_date ? (String(r.promise_date).slice(0,10) + (r.promise_amt ? ' · '+money(r.promise_amt) : '')) : ''; }},
       col('comment','Comment')];
