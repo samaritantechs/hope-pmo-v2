@@ -5959,9 +5959,78 @@ async function auditLog(db, user, args) {
    gets added to BOTH lists in one glance -- and the test that walks FN checks the naming. */
 const WRITE_FNS = new Set([...AUDITED, 'stampWeek', 'rebuildFollowup']);
 
+/* =====================================================================================
+   THE TICKS ARE ENFORCED HERE, NOT ONLY DRAWN.
+   =====================================================================================
+     "roles assignment aint strict ... the custom ticking aint working"
+
+   Taking the blanket out of the sidebar makes the drawer honest. It does not make the SYSTEM
+   strict: a screen is a nav item AND a function, and until now the function was reachable by
+   anybody with a valid code, on the reasoning that the data is team-scoped anyway. That is a
+   fair argument about data and no argument at all about permission -- if an admin unticks
+   Commission for a role, that role must not be able to read Commission.
+
+   So every screen that HAS a nav item names the tab that opens it. The list is any-of, because
+   a few functions genuinely serve two screens: officerBoards and dashboardFull draw both the
+   Dashboard and the Presentation, and `teams` is read by Teams & Staff, by Settings and by
+   Iliyonasia. Granting either tab is enough, which is what the screens already imply.
+
+   WHAT IS DELIBERATELY NOT IN HERE, and why that is not a hole:
+     * anything already behind requireAdmin -- a stricter gate, applied first
+     * the things every signed-in person needs whatever their role: the follow-up status list,
+       the bell, the hints, changing one's own code, upload status
+     * findCustomer, reached from the top-bar magnifier rather than from a nav, and team-scoped
+   A function not named here behaves exactly as it did before this existed. */
+const FN_TAB = {
+  dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
+  dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
+  recoveryByCredit: ['dashboard'], monthReport: ['dashboard'],
+  loans: ['apps'], loanPipeline: ['apps'],
+  expected: ['expected'], expectedDay: ['expected'],
+  expectedDefaulters: ['defexp'],
+  expdfReport: ['expdfrep'], expdfMine: ['expdfrep'], emailWeeklyExpdf: ['expdfrep'],
+  assignments: ['assignments'],
+  followup: ['followup'],
+  promises: ['promises'],
+  followupReport: ['fureport'],
+  par: ['par'],
+  weekly: ['weekly'], teamProgress: ['weekly'], stampWeek: ['weekly'],
+  leaderReports: ['reports'],
+  commission: ['commission'], commissionSave: ['commission'],
+  callReport: ['calls'], callOfficers: ['calls'],
+  complaints: ['complaints'], addComplaint: ['complaints'], saveComplaint: ['complaints'],
+  complaintLog: ['complaints'], resolveComplaint: ['complaints'], deleteComplaint: ['complaints'],
+  restructures: ['restructure'], addRestructure: ['restructure'], decideRestructure: ['restructure'],
+  restructureEligible: ['restructure'], restructureContract: ['restructure'],
+  demandNotices: ['legal'], addDemandNotice: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'],
+  adjustments: ['adjust'], adjustmentRecord: ['adjust'], adjustmentAmend: ['adjust'],
+  adjustmentDelete: ['adjust'],
+  abnormal: ['abnormal'], received: ['abnormal'],
+  credit: ['credit'],
+  perfHistory: ['perf'],
+  defaulters: ['defexp', 'followup'],
+  teams: ['teams', 'settings', 'adjust'], staffRoster: ['teams'], callAgents: ['teams', 'dashboard'],
+};
+
+/** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the
+    read-only supervisor pass everything, exactly as they do at every other gate in this file. */
+function tabGate_(user, fn) {
+  const need = FN_TAB[fn];
+  if (!need) return;
+  if (!user) return;
+  if (K(user.role) === 'ADMIN' || user.readOnly) return;
+  const have = user.tabs || [];
+  if (need.some(t => have.includes(t))) return;
+  throw forbidden('Ukurasa huu haujafunguliwa kwa wadhifa wako (' + (user.role || '—') + '). '
+    + 'Mwambie admin akutikie kwenye Nafasi na ruhusa. '
+    + '/ This screen is not open to your role yet — ask the admin to tick it under Roles & access. '
+    + '(' + fn + ')');
+}
+
 export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
   const h = FN[fn];
   if (!h) throw badRequest('Unknown portal function: ' + fn);
+  tabGate_(user, fn);
   /* THE READ-ONLY WALL. One check at the one door every portal call passes through, so a
      supervisor's code -- or an AI signed in with it -- can try every screen and change
      nothing. Refused loudly rather than silently ignored: a button that appears to work but

@@ -23,11 +23,19 @@ const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/por
 // what one writes the other must be willing to show.
 const { callApi } = await import('../api/_lib/call-core.js');
 
+/* The ordinary screens' tab ids, from the one place that names them, so a fixture's grant
+   cannot drift away from what the system actually offers. */
+const { USER_TABS } = await import('../api/_lib/auth.js');
 const { todayKey: todayKeyOf } = await import('../api/_lib/time.js');
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20';
 const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
-const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+/* GRANTED, EXPLICITLY, because the blanket is gone. These tests are about TEAM SCOPING --
+   an officer seeing only their own rows -- and they used to lean on every screen being open
+   to everybody. The screens are now open because a role was ticked for them, which is the
+   state a real officer is in once the admin has set them up, and the scoping question is
+   unchanged: holding the tab is not holding the company's data. */
+const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: USER_TABS.slice() };
 
 const E = (ref, team, exp, status, arrears, date = TODAY, type = 'today') => ({
   ref, full_name: 'C' + ref, contact: '07120000' + ref, team, payment_expected: exp, arrears,
@@ -149,7 +157,7 @@ test('expected defaulters place every customer on two weekdays', async () => {
    their own -- without that it can only ever show everybody's book. */
 test('expected defaulters names the viewer, and says whether the rotation gives them a list', async () => {
   // KONGOWE's manager. Holding a gmo/manager/bike column ANYWHERE is what counts.
-  const boss = { code: 'B', name: 'BOSS', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+  const boss = { code: 'B', name: 'BOSS', role: 'GMO', teams: ['KONGOWE'], tabs: USER_TABS.slice() };
   const d = await portalApi(fakeDb(tables()), boss, 'expectedDefaulters', {}, NOW);
   assert.equal(d.me, 'BOSS');
   assert.equal(d.iAmLeader, true);
@@ -1202,7 +1210,7 @@ test('the restructuring contract prints exactly what was agreed', async () => {
 
   // Team scoping is not optional on a document naming a customer and their guarantor. The row
   // is KONGOWE; a leader scoped to MBAGALA must not be able to print it.
-  const OTHER = { code: 'M', name: 'MB LEAD', role: 'GMO', teams: ['MBAGALA'], tabs: [] };
+  const OTHER = { code: 'M', name: 'MB LEAD', role: 'GMO', teams: ['MBAGALA'], tabs: USER_TABS.slice() };
   await assert.rejects(() => portalApi(db, OTHER, 'restructureContract', { id: 's1' }, NOW),
     e => e.status === 403);
   await assert.rejects(() => portalApi(db, ADMIN, 'restructureContract', { id: 'nope' }, NOW),
@@ -1312,7 +1320,7 @@ test('one search finds a customer in every book at once', async () => {
   }
 
   // TEAM SCOPING IS NOT OPTIONAL. A search box is not a way around it.
-  const mbagala = { code: 'M', name: 'MB', role: 'GMO', teams: ['MBAGALA'], tabs: [] };
+  const mbagala = { code: 'M', name: 'MB', role: 'GMO', teams: ['MBAGALA'], tabs: USER_TABS.slice() };
   const blocked = await portalApi(db, mbagala, 'customerSearch', { q: '555' }, NOW);
   assert.equal(blocked.total, 0, "another team's customer must not appear");
   assert.equal(JSON.stringify(blocked).includes('C555'), false);
@@ -1928,6 +1936,81 @@ test('every role on an access code is listed, even one that has no row of its ow
   assert.ok(!col.unset);
 });
 
+/* =====================================================================================
+   THE TICKS DECIDE, AND THEY ARE ENFORCED.
+   =====================================================================================
+     "roles assignment aint strict: user will see all allowed teams in call app but see only
+      allowed navs in the system, so if empty in the system show none: the custom ticking aint
+      working"
+
+   Two things made ticking decorative. resolveTabs fell back to USER_TABS -- twenty-two screens
+   -- whenever the granted list came out empty, so an emptied role was granted almost
+   everything. And a screen is a nav item AND a function: the drawer drew twenty-five ids for
+   everybody, and the function behind each was reachable by anybody with a valid code. */
+test('an empty role is granted nothing at all -- no fallback to the ordinary screens', async () => {
+  const { resolveTabs } = await import('../api/_lib/auth.js');
+  assert.deepEqual(resolveTabs({ role: 'GMO', tabs: [] }, []), [],
+    'empty means empty. A fallback that GRANTS is the wrong direction for a permission.');
+  assert.deepEqual(resolveTabs({ role: 'GMO', tabs: [] }, null), [],
+    'and a role with no row at all is the same answer, not a wider one');
+  assert.deepEqual(resolveTabs({ role: 'GMO', tabs: [] }, ['followup']), ['followup'],
+    'exactly what was ticked, and nothing beside it');
+  const admin = resolveTabs({ role: 'ADMIN', tabs: [] }, []);
+  assert.ok(admin.includes('settings') && admin.includes('dashboard'),
+    'ADMIN still holds everything whatever its row says -- nobody can lock the admin out');
+});
+
+test('a screen refuses the role it was not ticked for, and says who can open it', async () => {
+  const db = dbWithRpc();
+  const nothing = { code: 'N', name: 'NEW LEADER', role: 'ZONE OFFICER', teams: null, tabs: [] };
+  for (const fn of ['dashboardFull', 'commission', 'weekly', 'followup', 'par', 'credit']) {
+    await assert.rejects(() => portalApi(db, nothing, fn, {}, NOW),
+      e => e.status === 403 && /Nafasi na ruhusa|Roles & access/.test(String(e.message)),
+      fn + ' must refuse a role that holds nothing, and name where it is granted');
+  }
+  /* TICK ONE, AND ONLY THAT ONE OPENS. This is the whole promise: what was ticked is what is
+     reachable, on the server, not only in the drawer. */
+  const one = { ...nothing, tabs: ['followup'] };
+  assert.ok(await portalApi(db, one, 'followup', {}, NOW));
+  await assert.rejects(() => portalApi(db, one, 'commission', {}, NOW), e => e.status === 403);
+});
+
+test('a function serving two screens opens for either tab', async () => {
+  /* officerBoards and dashboardFull draw the Dashboard AND the Presentation; `teams` is read
+     by Teams & Staff, by Settings and by Iliyonasia. Requiring one named tab would have shut
+     the other screen for somebody who legitimately holds it. */
+  const db = dbWithRpc();
+  const presenter = { code: 'P', name: 'PRESENTER', role: 'MANAGER', teams: null, tabs: ['present'] };
+  assert.ok(await portalApi(db, presenter, 'officerBoards', {}, NOW));
+  assert.ok(await portalApi(db, presenter, 'dashboardFull', {}, NOW));
+  const teamsOnly = { code: 'T', name: 'HR', role: 'MANAGER', teams: null, tabs: ['teams'] };
+  assert.ok(await portalApi(db, teamsOnly, 'teams', {}, NOW));
+  await assert.rejects(() => portalApi(db, teamsOnly, 'dashboardFull', {}, NOW), e => e.status === 403);
+});
+
+test('the admin and the read-only supervisor pass the tab gate whatever their row says', async () => {
+  const db = dbWithRpc();
+  const thinAdmin = { code: 'A2', name: 'BOSS', role: 'ADMIN', teams: null, tabs: [] };
+  assert.ok(await portalApi(db, thinAdmin, 'dashboardFull', {}, NOW),
+    'an ADMIN with a blank tabs cell still holds every tab -- the same rule as resolveTabs');
+  const sup = { code: 'V2', name: 'SUPERVISOR', role: 'AUDITOR', teams: null, tabs: [], readOnly: true };
+  assert.ok(await portalApi(db, sup, 'weekly', {}, NOW),
+    'supervision sees every screen; the read-only wall stops it CHANGING anything');
+});
+
+test('the phone is untouched by any of this', async () => {
+  /* "user will see all allowed teams in call app but see only allowed navs in the system".
+     HOPE Calls has its own door and its own identity -- no access code, no tabs -- so an
+     officer whose portal role holds nothing still boots into their full working list. */
+  const db = fakeDb({ ...tables(),
+    roles: [{ role: 'OFFICER', tabs: [] }],
+    call_users: [{ user_id: 'U1', name: 'JUMA G', team: 'KONGOWE', role: 'OFFICER',
+      device_id: 'DEV1', active: true }] });
+  const boot = await callApi(db, 'api_callBoot', ['DEV1'], NOW);
+  assert.equal(boot.ok, true, 'the phone signs in regardless of what the portal role holds');
+  assert.equal(boot.team, 'KONGOWE', 'and still has their team');
+});
+
 test('a role listed from a code keeps the spelling the code actually holds', async () => {
   /* Not cosmetic. Every permission check finds the row by the role's NAME, so tidying the
      spelling here would list a role nobody holds, and the tabs ticked against it would reach
@@ -2033,7 +2116,7 @@ function expdfTables() {
 
 test('a recycling leader sees only their own expected defaulters, with the cycle label', async () => {
   const db = fakeDb(expdfTables());
-  const asLeader = n => ({ code: 'X', name: n, role: 'MANAGER', teams: null, tabs: [] });
+  const asLeader = n => ({ code: 'X', name: n, role: 'MANAGER', teams: null, tabs: USER_TABS.slice() });
 
   const boss = await portalApi(db, asLeader('BOSS'), 'expdfMine', {}, NOW);
   assert.deepEqual(boss.rows.map(r => r.ref), ['A2']);        // bucket 2 -> MANAGER
@@ -2072,7 +2155,7 @@ test('expdf leaves out customers not due on the visit day, unless asked for all'
   const db = fakeDb(expdfTables());
   // Disbursed on a Wednesday -> visited Wed and Sat, so NOT due on this Friday.
   for (const r of db._dump('defaulter_snapshots')) if (r.ref === 'A2') r.disb_date = '2026-07-22';
-  const me = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: [] };
+  const me = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: USER_TABS.slice() };
   assert.equal((await portalApi(db, me, 'expdfMine', {}, NOW)).rows.length, 0);
   const all = await portalApi(db, me, 'expdfMine', { all: true }, NOW);
   assert.equal(all.rows.length, 1);
@@ -2291,7 +2374,7 @@ test('expdf says WHY it is empty, and shows the book when the deck has no DISB D
   const bare = tables();
   bare.teams[0] = { ...bare.teams[0], gmo: 'GMO GEE', manager: 'BOSS', bike: 'BIKE BEE' };
   bare.defaulter_snapshots = [];
-  const me = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: [] };
+  const me = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: USER_TABS.slice() };
   const none = await portalApi(fakeDb(bare), me, 'expdfMine', {}, NOW);
   assert.equal(none.diag.deck, 0);
   assert.equal(none.rows.length, 0);
@@ -3706,7 +3789,7 @@ test('an unknown role is refused rather than silently doing nothing', async () =
 
 test('only an admin may reassign staff', async () => {
   const db = fakeDb(STAFF_BOOK());
-  const officer = { code: 'O', name: 'OFF', role: 'GMO', teams: ['ALPHA'], tabs: [] };
+  const officer = { code: 'O', name: 'OFF', role: 'GMO', teams: ['ALPHA'], tabs: USER_TABS.slice() };
   await assert.rejects(
     () => portalApi(db, officer, 'saveStaffTeams', { role: 'gmo', name: 'X', teams: [] }, NOW),
     /admin/i);
@@ -4262,7 +4345,7 @@ const DEMAND_BOOK = () => {
 };
 
 test('the number is the sender\'s own, found by the role they hold on that team', async () => {
-  const gmo = { code: 'G', name: 'GEE MO', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+  const gmo = { code: 'G', name: 'GEE MO', role: 'GMO', teams: ['KONGOWE'], tabs: USER_TABS.slice() };
   const d = await portalApi(fakeDb(DEMAND_BOOK()), gmo, 'demandMessage', { ref: '555' }, NOW);
   assert.equal(d.phone, '0714000002');
   assert.equal(d.phoneSource, 'gmo');
@@ -4939,11 +5022,11 @@ test('a leader filter narrows what you may see, never widens it', async () => {
     { team: 'MBAGALA', recovery: 'JUMA G' },
   ];
   const db = fakeDb(book);
-  const onlyKongowe = { code: 'X', name: 'NOBODY', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
+  const onlyKongowe = { code: 'X', name: 'NOBODY', role: 'GMO', teams: ['KONGOWE'], tabs: USER_TABS.slice() };
   const d = await portalApi(db, onlyKongowe, 'callReport', { leader: 'JUMA G' }, NOW);
   assert.deepEqual(d.scope, ['KONGOWE'], 'the overlap only');
 
-  const elsewhere = { code: 'Y', name: 'NOBODY2', role: 'GMO', teams: ['SINZA'], tabs: [] };
+  const elsewhere = { code: 'Y', name: 'NOBODY2', role: 'GMO', teams: ['SINZA'], tabs: USER_TABS.slice() };
   const none = await portalApi(db, elsewhere, 'callReport', { leader: 'JUMA G' }, NOW);
   assert.deepEqual(none.scope, [], 'and nothing at all when there is no overlap');
 });
@@ -7558,7 +7641,7 @@ test('an officer on a mixed-case team sees their rows under either spelling', as
     { ref: 'TN1', team: 'Tunduru', full_name: 'MTEJA WA TUNDURU', payment_expected: 1000, todays_status: 'UNPAID',
       arrears: 0, snapshot_type: 'today', snapshot_date: TODAY, upload_batch: 'tb', created_at: TODAY + 'T04:00:00Z' },
   );
-  const OFF = { code: 'T', name: 'AFISA', role: 'GMO', teams: ['Tunduru'], tabs: [] };
+  const OFF = { code: 'T', name: 'AFISA', role: 'GMO', teams: ['Tunduru'], tabs: USER_TABS.slice() };
 
   const fu = await portalApi(fakeDb(t), OFF, 'followup', {}, NOW);
   assert.equal(fu.rows.length, 2, 'both spellings of their own team, nothing hidden');

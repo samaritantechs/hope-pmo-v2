@@ -42,6 +42,7 @@ const { foldExpected, foldDefaulter, expectedTotalsLatest, expectedTotalsInRange
   = await import('../api/_lib/snapshot-totals.js');
 const { collectedOf, uncollectedOf, num } = await import('../api/_lib/recovery.js');
 const { addDaysKey, todayKey } = await import('../api/_lib/time.js');
+const { USER_TABS } = await import('../api/_lib/auth.js');
 
 const FRIDAY = Date.parse('2026-07-24T09:00:00Z');   // Friday, midday EAT
 const SUNDAY = Date.parse('2026-07-26T09:00:00Z');   // the weekend, week-to-date shape
@@ -132,7 +133,8 @@ function book() {
 }
 
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
-const OFFICER = { code: 'O', name: 'REC0', role: 'GMO', teams: ['KONGOWE', 'TEMEKE'], tabs: [] };
+// Ticked for the ordinary screens -- see the note beside GMO in portal.test.mjs.
+const OFFICER = { code: 'O', name: 'REC0', role: 'GMO', teams: ['KONGOWE', 'TEMEKE'], tabs: USER_TABS.slice() };
 
 /** The same book, once behind a database that has the migration and once behind one that has
     not. Two separate fakes so nothing -- not the one-minute answer cache, not the note about a

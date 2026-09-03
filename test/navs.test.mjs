@@ -80,11 +80,20 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
   const navMissing = navIds.filter(id => !views.has(id));
   assert.deepEqual(navMissing, [], 'nav items whose screen does not exist: ' + navMissing.join(', '));
 
-  const alwaysSrc = app.match(/var ALWAYS = \[([^\]]+)\]/);
-  assert.ok(alwaysSrc, 'the ALWAYS list moved -- update the extractor');
-  const always = names(alwaysSrc[1], /'([A-Za-z_]+)'/g);
-  const alwaysMissing = always.filter(id => !views.has(id));
-  assert.deepEqual(alwaysMissing, [], 'ALWAYS ids with no screen: ' + alwaysMissing.join(', '));
+  /* ALWAYS -- the twenty-five tabs drawn for everybody whatever their role -- is gone, because
+     it made ticking a permission decorative. What is left is the handful of views that have no
+     nav item of their own and are reached from inside a screen that IS gated, so they still
+     have to exist even though nothing in the drawer points at them. */
+  const hiddenSrc = app.match(/var HIDDEN_VIEWS = \[([^\]]+)\]/);
+  assert.ok(hiddenSrc, 'the HIDDEN_VIEWS list moved -- update the extractor');
+  const hidden = names(hiddenSrc[1], /'([A-Za-z_]+)'/g);
+  const hiddenMissing = hidden.filter(id => !views.has(id));
+  assert.deepEqual(hiddenMissing, [], 'hidden views with no screen: ' + hiddenMissing.join(', '));
+  /* And the screen somebody lands on when their role holds nothing at all. Without it an
+     unticked role opens a blank app, which is indistinguishable from a broken one. */
+  assert.ok(views.has('noaccess'), 'the "access not set yet" screen went missing');
+  assert.ok(/go\(firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
+    'the landing tab must be one the person actually holds, never a fixed dashboard');
 
   const goTargets = names(app, /data-go="([A-Za-z_]+)"/g);
   const goMissing = goTargets.filter(id => !views.has(id));

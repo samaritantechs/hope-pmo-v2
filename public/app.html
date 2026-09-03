@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-d';
+var BUILD = '2026-09-03-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -748,9 +748,8 @@ var NAV = [
   { id:'teams',       label:'Teams & Staff', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   { id:'upload',      label:'Upload Reports', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
   { id:'settings',    label:'Settings', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>' },
-  /* Deliberately NOT in ALWAYS below -- this one is granted, not assumed. Admins hold it from
-     the start; anyone else gets it when the tab is ticked on their role, which is the same
-     mechanism every other tab uses. */
+  /* Granted, not assumed -- which is now true of every tab in this list, not only this one.
+     Admins hold it from the start; anyone else gets it when the tab is ticked on their role. */
   /* WHO WAS BEST, AND WHEN. A read of what was RECORDED, never a recomputation -- the whole
      point is that these figures are not re-derived from a teams table that has since changed. */
   { id:'perf',        label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
@@ -771,10 +770,34 @@ var NAV = [
   { id:'cmmonth', label:'Kamisheni ya Mwezi / Month Commission', hidden: true,
     ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' }
 ];
-/* Tabs the v1 portal gated on. A tab nobody was ever granted (defexp, par, weekly...) stays
-   visible to anyone holding a code, because the DATA is team-scoped server-side anyway --
-   the gate that matters is upload/settings, which are checked on the server too. */
-var ALWAYS = ['dashboard','expected','defexp','expdfrep','assignments','followup','promises','fureport','par','weekly','reports','commission','calls','complaints','restructure','legal','abnormal','credit','present','teams','apps','perf','findcust','monthreport','cmmonth'];
+/* =====================================================================================
+   THE TICKS DECIDE. THERE IS NO LIST OF TABS EVERYBODY GETS ANY MORE.
+   =====================================================================================
+     "roles assignment aint strict: user will see all allowed teams in call app but see only
+      allowed navs in the system, so if empty in the system show none: the custom ticking aint
+      working"
+
+   ALWAYS stood here: twenty-five tab ids drawn for anybody holding a code, whatever their role
+   said. Its own comment argued the case -- the data is team-scoped server-side, so the gate
+   that mattered was upload/settings. That was true of a portal where nobody chose the navs.
+   It is not true of one where the whole point is choosing them: it made ticking twenty-five of
+   the twenty-nine boxes decorative, and "Start empty" a button that emptied the table and
+   changed nothing on anybody's screen.
+
+   So it is gone, and a tab is drawn if and only if it was granted. Empty means empty, which is
+   what makes the clean slate honest.
+
+   TWO THINGS ARE DELIBERATELY NOT GATED HERE, because they are not navs:
+
+     ADMIN         holds every tab whatever any row says. Same rule as resolveTabs and can().
+     hidden views  monthreport, cmmonth, findcust. None is in the drawer; each is reached from
+                   inside a screen that IS gated (the dashboard's week chip, the commission
+                   dot, the top-bar magnifier), so gating them again would only break the
+                   route in. The server gate in portal-core.js is what actually holds.
+
+   The phone is untouched. An officer sees their teams in HOPE Calls exactly as before -- this
+   is the portal's nav list and nothing else. */
+var HIDDEN_VIEWS = ['findcust', 'monthreport', 'cmmonth'];
 
 /* =====================================================================================
    HOPE LOAN'S OWN NAV -- one screen per stage, gated on the HOPE LOAN TAB, not the role name.
@@ -825,12 +848,22 @@ function allowed(id){
     var need = Array.isArray(n.tab) ? n.tab : [n.tab];
     return need.some(function(t){ return (S.me.tabs||[]).indexOf(t) >= 0; });
   }
-  /* Anything in ALWAYS is drawn for everyone; anything NOT in ALWAYS is a granted tab and
-     shows only when /api/me handed it over. Naming upload/settings here one by one was the
-     bug that hid `audit` and `adjust` from every drawer, admins included -- the server
-     granted them, the drawer never asked. */
-  if (ALWAYS.indexOf(id)>=0) return true;
+  /* GRANTED, OR NOT DRAWN. /api/me hands over exactly what the role was ticked for, and this
+     asks it about every tab rather than about four of them. */
+  if (S.me.role === 'ADMIN') return true;
+  if (HIDDEN_VIEWS.indexOf(id) >= 0) return true;   // reached from inside a gated screen
   return (S.me.tabs||[]).indexOf(id)>=0;
+}
+/** The first tab this person actually holds -- where they land, instead of a dashboard they
+    may not have been given. Null when nothing at all was granted. */
+function firstAllowed_(){
+  var pmo = NAV.filter(function(n){ return !n.hidden && allowed(n.id); })[0];
+  if (pmo) return pmo.id;
+  if (S.me.hopeLoanAvailable) {
+    var ln = NAV_LOAN.filter(function(n){ return !n.hidden && allowed(n.id); })[0];
+    if (ln) return ln.id;
+  }
+  return null;
 }
 /* ONE SIDEBAR, NOT TWO -- "i thout we killing the sandbox shotcut and having one flow from now
    on". HOPE Loan's items are appended after HOPE PMO's own, gated exactly like every other
@@ -905,7 +938,10 @@ function go(view, args){
   S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
   var t = (isLoanId_(view) ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
-  $('#title').textContent = t ? t.label : view;
+  // 'noaccess' has no nav entry by design -- it is where somebody lands when their role holds
+  // nothing -- so it would otherwise show its own id as the page title.
+  $('#title').textContent = t ? t.label
+    : (view === 'noaccess' ? 'Ruhusa hazijawekwa / Access not set yet' : view);
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
     b.classList.toggle('on', b.getAttribute('data-v')===view);
   });
@@ -1037,7 +1073,11 @@ function start(me){
   // client-side decides this on its own.
   buildNav();
   tipsStart();
-  go('dashboard');
+  /* WHERE THEY LAND IS THE FIRST TAB THEY ACTUALLY HOLD, not the dashboard. Now that the
+     dashboard is granted like everything else, sending everybody there would open a screen
+     half of them have not been given -- and the server would refuse it, which reads as a
+     broken app rather than as a permission. */
+  go(firstAllowed_() || 'noaccess');
   annCheck();
   bellRefresh();
   $('#bellBtn').onclick = bellOpen;
@@ -5453,6 +5493,26 @@ var CLEAN_TYPES = [
 /* WHO DID WHAT. Reads from the top, because that is how a log is read -- and says plainly when
    the table does not exist yet, rather than showing an empty one. An empty audit log reads as
    "nobody has done anything", which is the single conclusion it must never invite by accident. */
+/* NOTHING GRANTED IS A SENTENCE, NOT A BLANK SCREEN.
+   Now that an empty role really means an empty drawer, somebody whose role has not been set
+   yet opens the portal to nothing at all -- and a blank app is indistinguishable from a broken
+   one. So it says which role it is waiting on and who sets it, and that their phone is
+   unaffected, because the first thing anybody does with a portal that looks broken is stop
+   trusting the app they work in all day. */
+VIEWS.noaccess = function(){
+  HEAD = '<div class="card"><div class="card-h">Ruhusa hazijawekwa / Access not set yet</div>'
+    + '<div class="note" style="margin:12px 14px">'
+    + 'Msimbo wako ni sahihi na umeingia. Wadhifa wako &mdash; <b>' + esc(S.me.role || '—') + '</b>'
+    + ' &mdash; bado haujapewa ukurasa wowote, kwa hivyo hakuna cha kuonyesha hapa.'
+    + ' Mwambie admin akufungulie kwenye <b>Nafasi na ruhusa</b> (Settings).'
+    + '<br><br>Your code is valid and you are signed in. Your role &mdash; <b>' + esc(S.me.role || '—') + '</b>'
+    + ' &mdash; has not been given any screens yet, so there is nothing to show. Ask the admin to'
+    + ' tick them under <b>Roles &amp; access</b> in Settings.'
+    + '<br><br>Hii haiathiri app ya simu &mdash; endelea kufanya kazi kama kawaida.'
+    + ' / This does not affect the phone app: HOPE Calls is unchanged and your teams are all still there.'
+    + '</div></div>';
+  return Promise.resolve();
+};
 VIEWS.perf = function(){
   var a = S.args || {};
   var period = a.period || 'week';
