@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-c';
+var BUILD = '2026-09-03-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5849,7 +5849,11 @@ VIEWS.settings = function(){
             var n = (ac.rows||[]).filter(function(x){ return String(x.role||'').toUpperCase() === String(r.role||'').toUpperCase(); }).length;
             return '<tr class="clickrow" data-role="'+esc(r.role)+'"><td class="sn">'+(i+1)+'</td>'
               + '<td><b>'+esc(r.role)+'</b></td>'
-              + '<td style="white-space:normal">'+esc((r.tabs||[]).join(', ') || '—')+'</td>'
+              /* A role that has never been given a row reads differently from one deliberately
+                 emptied, and on a screen being filled in from scratch that difference is the
+                 whole point -- it says "this one is still waiting for you". */
+              + '<td style="white-space:normal">'+((r.tabs||[]).length ? esc(r.tabs.join(', '))
+                  : (r.unset ? '<span class="chip mut">haijawekwa / not set yet</span>' : '—'))+'</td>'
               + '<td class="r">'+((r.tabs||[]).length)+'</td>'
               + '<td class="r">'+money(n)+'</td>'
               + '<td class="r"><button class="btn sm ghost" data-role="'+esc(r.role)+'">Badili / Edit</button></td></tr>';

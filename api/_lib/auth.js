@@ -125,6 +125,41 @@ export function resolveTabs(user, roleTabs) {
   return merged.length ? merged : USER_TABS.slice();
 }
 
+/* WHICH ROW OF `roles` BELONGS TO THIS PERSON -- MATCHED THE WAY A HUMAN SPELLS A ROLE.
+ *
+ * Both callers below used `.eq('role', user.role)`, an EXACT string comparison. Every role
+ * name in this system is typed by hand -- once on the access code, again in the roles table --
+ * and `saveRole` uppercases what it stores while an access code keeps whatever was typed. So
+ * a code reading "Pmo Collection" beside a row reading "PMO COLLECTION" is two spellings of
+ * one role, and the exact comparison finds NOTHING: the person is granted no tabs at all, the
+ * roles screen shows a full tick list beside their role, and nothing anywhere says why.
+ *
+ * That is the same fault as the Tunduru blackout -- an exact-case comparison standing between
+ * a person and their own data -- and it is far more dangerous while access is being set from
+ * an empty slate, because "this role has nothing yet" and "this role's row cannot be found"
+ * look identical on screen.
+ *
+ * ONE READ EITHER WAY. The roles table is one row per role -- a handful on the largest
+ * deployment -- so reading it whole and matching in here costs exactly what asking for one row
+ * cost, and cannot be defeated by a capital letter. Deliberately not `ilike`: a role name is
+ * free text and `%` or `_` in one would quietly become a wildcard over everybody's
+ * permissions, which is the wrong kind of forgiving.
+ *
+ * Returns null for "no such role", which is not the same as [] -- "a role with no tabs". */
+const KROLE = s => String(s == null ? '' : s).trim().toUpperCase();
+/** The matching rule on its own, so it can be held to a test without a database. */
+export function pickRoleTabs(rows, role) {
+  const want = KROLE(role);
+  if (!want) return null;
+  const hit = (rows || []).find(r => KROLE(r.role) === want);
+  return hit ? (hit.tabs || []) : null;
+}
+async function roleTabsOf(role) {
+  if (!KROLE(role)) return null;
+  const { data } = await supabase.from('roles').select('role, tabs');
+  return pickRoleTabs(data, role);
+}
+
 /** Same as can_() -- checks the role's tab permissions. Extend ROLE_TABS as roles are migrated. */
 export async function can(user, tab) {
   // ADMIN holds every tab, same as resolveTabs and the live system's auth_(). Without this an
@@ -135,8 +170,8 @@ export async function can(user, tab) {
   // A read-only code never holds upload, whatever its row or role says -- see resolveTabs.
   if (isReadOnly(user) && tab === 'upload') return false;
   if (user.tabs && user.tabs.includes(tab)) return true;
-  const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
-  return !!(data && data.tabs && data.tabs.includes(tab));
+  const tabs = await roleTabsOf(user.role);
+  return !!(tabs && tabs.includes(tab));
 }
 
 /** authCode, then the role's tabs merged in -- the SAME two steps /api/me and /api/portal each
@@ -145,8 +180,7 @@ export async function can(user, tab) {
     this person?" has to start here rather than from the raw row. */
 export async function authCodeResolved(code) {
   const user = await authCode(code);
-  const { data } = await supabase.from('roles').select('tabs').eq('role', user.role).maybeSingle();
-  user.tabs = resolveTabs(user, data && data.tabs);
+  user.tabs = resolveTabs(user, await roleTabsOf(user.role));
   // Carried on the user object so every enforcement point reads ONE fact, resolved once.
   user.readOnly = isReadOnly(user);
   return user;

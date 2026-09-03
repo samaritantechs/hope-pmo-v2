@@ -1893,6 +1893,76 @@ test('an undo with nothing saved refuses rather than emptying anything', async (
   await assert.rejects(() => run('resetRoleTabs', { undo: true }, ADMIN, db), e => e.status === 400);
 });
 
+/* =====================================================================================
+   A ROLE EXISTS THE MOMENT A CODE CARRIES IT.
+   =====================================================================================
+     "Nafasi na ruhusa / Roles & access showed only collection and pmo collection"
+     "yet i said all existing roles meaning even if i create a new one [in access codes
+      creation] thats where the leaders who use system are created and their nav settings"
+
+   The card listed the `roles` TABLE, which only ever gains a row when somebody edits a role.
+   Every leader in this system is created by typing a role on an access code -- so that role
+   existed for the person holding it and appeared nowhere on the screen that grants
+   permissions. There was no route to give it a single tab. */
+test('every role on an access code is listed, even one that has no row of its own', async () => {
+  const t = tables();
+  t.roles = [{ role: 'COLLECTION', tabs: ['followup'] }];
+  t.access_codes = t.access_codes.concat([
+    { code: 'G1', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: [] },
+    { code: 'X1', name: 'NEW LEADER', role: 'ZONE OFFICER', teams: null, tabs: [] },
+    { code: 'G2', name: 'ASHA G', role: 'GMO', teams: ['TEMEKE'], tabs: [] },
+  ]);
+  const d = await run('accessCodes', {}, ADMIN, dbWithRpc(t));
+  const names = d.roles.map(r => r.role);
+  assert.ok(names.includes('GMO'), 'a role only an access code carries is still a role');
+  assert.ok(names.includes('ZONE OFFICER'), 'including one invented while creating a code');
+  assert.ok(names.includes('COLLECTION'), 'and the ones with rows are still there');
+  assert.ok(names.includes('ADMIN'), 'ADMIN is always grantable');
+  assert.equal(names.length, new Set(names).size, 'two codes with the same role list it once');
+
+  const gmo = d.roles.find(r => r.role === 'GMO');
+  assert.deepEqual(gmo.tabs, [], 'nothing granted yet');
+  assert.equal(gmo.unset, true, 'and the screen can say so, rather than looking emptied');
+  const col = d.roles.find(r => r.role === 'COLLECTION');
+  assert.deepEqual(col.tabs, ['followup'], 'a role WITH a row keeps its own tabs');
+  assert.ok(!col.unset);
+});
+
+test('a role listed from a code keeps the spelling the code actually holds', async () => {
+  /* Not cosmetic. Every permission check finds the row by the role's NAME, so tidying the
+     spelling here would list a role nobody holds, and the tabs ticked against it would reach
+     no one. */
+  const t = tables();
+  t.roles = [];
+  t.access_codes = t.access_codes.concat([
+    { code: 'P9', name: 'KAMARIA', role: 'Pmo Collection', teams: null, tabs: [] },
+  ]);
+  const d = await run('accessCodes', {}, ADMIN, dbWithRpc(t));
+  assert.ok(d.roles.some(r => r.role === 'Pmo Collection'),
+    'listed exactly as the code spells it, not normalised into something else');
+});
+
+test('a role row and a code that spell the role differently are ONE role, and it grants', async () => {
+  /* THE SILENT LOCKOUT. saveRole stores a role uppercased; an access code keeps whatever was
+     typed. The permission checks compared the two EXACTLY, so "Pmo Collection" beside a row
+     saying "PMO COLLECTION" found nothing -- the person got no tabs at all, while the roles
+     screen showed a full tick list beside their role and nothing said why.
+
+     The same fault as the Tunduru blackout, one level up: an exact-case comparison standing
+     between a person and their own screens. It is at its most dangerous exactly now, while
+     access is being set from an empty slate, because "not granted yet" and "row not found"
+     look identical. */
+  const t = tables();
+  t.roles = [{ role: 'PMO COLLECTION', tabs: ['followup', 'par'] }];
+  t.access_codes = t.access_codes.concat([
+    { code: 'P9', name: 'KAMARIA', role: 'Pmo Collection', teams: ['KONGOWE'], tabs: [] },
+  ]);
+  const d = await run('accessCodes', {}, ADMIN, dbWithRpc(t));
+  const listed = d.roles.filter(r => String(r.role).toUpperCase() === 'PMO COLLECTION');
+  assert.equal(listed.length, 1, 'one role, not two rows saying the same thing');
+  assert.deepEqual(listed[0].tabs, ['followup', 'par'], 'and it is the row with the tabs on it');
+});
+
 test('only an admin may empty the roles', async () => {
   const db = dbWithRpc(tables());
   await assert.rejects(() => run('resetRoleTabs', {}, GMO, db));
@@ -6934,6 +7004,26 @@ test('the read-only role is recognised in all its spellings, and only those', as
   const tabs = resolveTabs({ role: 'AUDITOR', tabs: [] }, null);
   assert.ok(tabs.includes('settings') && tabs.includes('audit'), 'sees the admin screens');
   assert.equal(tabs.includes('upload'), false, 'the upload door is not even drawn');
+});
+
+test('a role is found however it is spelled, and "no such role" is not "no tabs"', async () => {
+  /* The permission checks found the role's row with an exact string comparison. Role names
+     are typed by hand twice -- once on the code, once in the roles table, which stores them
+     uppercased -- so "Pmo Collection" beside "PMO COLLECTION" granted NOTHING, with a full
+     tick list on screen and no message anywhere. Same shape as the Tunduru blackout. */
+  const { pickRoleTabs } = await import('../api/_lib/auth.js');
+  const rows = [{ role: 'PMO COLLECTION', tabs: ['followup', 'par'] },
+    { role: 'GMO', tabs: [] }];
+  for (const spelling of ['PMO COLLECTION', 'Pmo Collection', 'pmo collection', '  PMO Collection  ']) {
+    assert.deepEqual(pickRoleTabs(rows, spelling), ['followup', 'par'], spelling);
+  }
+  /* NULL AND [] ARE DIFFERENT ANSWERS. A role with a row and no tabs has been deliberately
+     emptied; a role with no row has never been set. resolveTabs falls back to the basic tabs
+     for the second and must not be handed the first by mistake. */
+  assert.deepEqual(pickRoleTabs(rows, 'GMO'), [], 'a real role that holds nothing');
+  assert.equal(pickRoleTabs(rows, 'ZONE OFFICER'), null, 'a role with no row at all');
+  assert.equal(pickRoleTabs(rows, ''), null);
+  assert.equal(pickRoleTabs(null, 'GMO'), null, 'and a database that answered nothing');
 });
 
 /* =====================================================================================

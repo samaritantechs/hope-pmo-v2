@@ -4239,6 +4239,43 @@ async function systemOpenGet(db, user) {
   requireAdmin(user);
   return { open: await isSystemOpen(db) };
 }
+/* EVERY ROLE THAT EXISTS, NOT ONLY THE ONES SOMEBODY HAS ALREADY WRITTEN A ROW FOR.
+ *
+ *   "Nafasi na ruhusa / Roles & access showed only collection and pmo collection"
+ *   "yet i said all existing roles meaning even if i create a new one [in access codes
+ *    creation] thats where the leaders who use system are created and their nav settings"
+ *
+ * Exactly right, and the card's own words promise it: "it always list all existing roles".
+ * It was listing the `roles` TABLE, which only ever gains a row when somebody edits a role --
+ * so a role invented while creating an access code, which is how every leader in this system
+ * is actually created, existed for the person holding it and nowhere on the screen that grants
+ * permissions. There was no route to give that role a single tab.
+ *
+ * A role EXISTS the moment a code carries it. So the list is the union: rows from the roles
+ * table, keeping their own tabs and their own spelling, plus every other role found on a code,
+ * with an empty list waiting to be ticked. `unset` marks the second kind, so the screen can say
+ * "nothing granted yet" rather than leaving it to look like a role that was deliberately
+ * emptied.
+ *
+ * SPELLING IS KEPT, NEVER NORMALISED. The row a permission check finds is matched on the
+ * role's name, so inventing a tidier spelling here would hand back a role nobody holds. See
+ * roleTabsOf in auth.js for the other half of that. */
+export function mergeRoles_(roleRows, codeRows) {
+  const out = new Map();
+  for (const r of (roleRows || [])) {
+    const k = K(r.role);
+    if (k && !out.has(k)) out.set(k, { ...r, tabs: r.tabs || [] });
+  }
+  for (const c of (codeRows || [])) {
+    const k = K(c.role);
+    if (k && !out.has(k)) out.set(k, { role: String(c.role).trim(), tabs: [], unset: true });
+  }
+  /* ADMIN is listed even on a book where no code carries it yet, because it is the one role
+     that must never be un-grantable -- and it holds every tab whatever its row says. */
+  if (!out.has('ADMIN')) out.set('ADMIN', { role: 'ADMIN', tabs: [], unset: true });
+  return [...out.values()].sort((a, b) => (K(a.role) < K(b.role) ? -1 : K(a.role) > K(b.role) ? 1 : 0));
+}
+
 async function accessCodes(db, user) {
   requireAdmin(user);
   const [rows, roleRows] = await Promise.all([
@@ -4258,8 +4295,8 @@ async function accessCodes(db, user) {
   } catch (e) {}
   // allTabs rides along so the role tab list on this screen can be a checkbox list instead of
   // free text -- "ticking the nav pannels ... because writing could error".
-  return { rows: out, count: rows.length, roles: roleRows, allTabs: ALL_TABS.slice(),
-    roleBackupAt: backupAt };
+  return { rows: out, count: rows.length, roles: mergeRoles_(roleRows, rows),
+    allTabs: ALL_TABS.slice(), roleBackupAt: backupAt };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
