@@ -1087,7 +1087,11 @@ function enterApp(d){
      running an older app than the server, shows no door rather than a dead one. Set both ways
      round: a system closed at lunchtime has to take the button away, not merely stop adding
      it. */
-  $('#swapBtn').classList.toggle('hide', d.systemOpen !== true);
+  /* An ADMIN handset keeps the door even while the system is closed -- otherwise the one
+     person who can reopen it is locked out along with everybody else, which is exactly what
+     happened. The portal re-checks the access code either way, so this reveals a button and
+     never a permission. */
+  $('#swapBtn').classList.toggle('hide', d.systemOpen !== true && d.systemAdmin !== true);
   /* THE HOPE LOAN SWITCH ON THE PHONE. Offered only to a LEADER handset -- an ordinary
      officer never sees it exists -- and even then it is only an invitation to prove an ADMIN
      access code, which api/call.js re-checks on every request. Being able to press it is not

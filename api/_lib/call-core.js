@@ -243,6 +243,23 @@ async function boot(db, [dev], nowMs) {
   return {
     ok: true,
     systemOpen,
+    /* THE PERSON WHO CLOSED THE SYSTEM STILL NEEDS THE DOOR TO IT.
+
+         "Brother, I am role admin and i too dont see the switch button in the call app!"
+
+       Quite right, and it is a trap of my making: closing the system takes the way across to
+       the portal off EVERY handset, and the admin who closed it is holding a handset too. So
+       the one person who can reopen it had no button to go and do so.
+
+       The portal itself has always let an admin through a closed door -- that is what gatedUser
+       does -- so the phone was hiding a door that would have opened. This tells it not to.
+
+       IT REVEALS A BUTTON, NOT AN AUTHORITY. Pressing it navigates to the portal, which asks
+       for an access code and re-checks it on the server exactly as it does for anybody else.
+       The same reasoning as the HOPE Loan switch below: being able to press it is not
+       permission, the code is. So a handset that registered as an admin and has since been
+       demoted gains nothing at all by seeing it. */
+    systemAdmin: K(cu.role || '') === 'ADMIN',
     userId: cu.user_id, name: cu.name, team: cu.team, role: cu.role,
     leader: !!cu.is_leader,
     // Whether the teams table names this person as a GMO / MANAGER / BIKE officer anywhere --

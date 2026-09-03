@@ -6,6 +6,7 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
    two answers that can disagree, and the disagreement would only ever show up as a figure
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
+import { deckKindOfTable, unmarkDeckTotals, buildDeckTotals } from './_lib/snapshot-totals.js';
 import { weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
@@ -956,6 +957,15 @@ export default withApi(async (req, res) => {
 
   await writeInChunks(supabase, table, records, upsertTables[table] || null);
 
+  /* THE DAY'S CACHED TOTALS ARE NOW OUT OF DATE, AND THIS IS THE FIRST MOMENT ANYTHING KNOWS IT.
+     One delete by primary key, on every slice, before anything else -- so from this instant that
+     day is read live by every screen, whether or not the rebuild at the bottom of this function
+     ever runs. It is deliberately not paired with the rebuild: see the note in snapshot-totals.js
+     for why unmarking first and building later is what makes a stale figure impossible rather
+     than merely unlikely. Never fatal; on a database without the tables it does nothing. */
+  const deckKind = deckKindOfTable(table);
+  if (deckKind && meta.date) { try { await unmarkDeckTotals(supabase, deckKind, meta.date); } catch (e) { /* reads live */ } }
+
   /* THE FIGURES ON EVERY PHONE ARE NOW OUT OF DATE, AND ONLY THIS CODE KNOWS IT.
      The performance strip is worked out from the whole book, so it is far too expensive to
      recompute on a timer for two hundred officers. It was therefore refreshed a quarter of an
@@ -1160,6 +1170,19 @@ export default withApi(async (req, res) => {
       } catch (e) { /* the upload stands */ }
     }
   }
+
+  /* ADD THE DECK UP, ONCE, NOW THAT IT IS ALL IN. Last of everything and on the same clock, so
+     it can only ever use time nothing else needed. If it does not run, the day was unmarked at
+     the top of this function and is simply read live -- which is what every day did before this
+     existed, and what every unbuilt day still does. The backfill in RUN-ME-022 catches it, or
+     the next upload of that date does. */
+  let deckBuilt = false;
+  if (isLastPart && deckKind && meta.date && clock.worth(6000)) {
+    try {
+      deckBuilt = !!(await beforeDeadline(buildDeckTotals(supabase, deckKind, meta.date),
+        clock.left(), false));
+    } catch (e) { /* the day reads live */ }
+  }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.
 
@@ -1241,6 +1264,7 @@ export default withApi(async (req, res) => {
     followupSynced, followupRetired: followupRetired || undefined, behaviour, sameAsToday,
     deferred: (followupDeferred || sweepDeferred)
       ? { retire: followupDeferred || undefined, sweep: sweepDeferred || undefined } : undefined,
+    deckBuilt: deckBuilt || undefined,
     stubbed: stubbed || undefined,
     collapsed: collapsed || undefined,
     /* Reading a date column the wrong way round moves history by up to eleven months and looks
