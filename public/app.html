@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-g';
+var BUILD = '2026-09-04-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3281,18 +3281,36 @@ VIEWS.apps = function(){
      written. Undefined means "the server decides", which is today; the boxes below carry
      whatever the server settled on, so the dates on screen are always the dates in the table. */
   var from = S.args.from, to = S.args.to;
-  return Promise.all([srv('loanPipeline'),
+  return Promise.all([srv('loanPipeline', {month: S.args.month || ''}),
       srv('loans', {stage:stage, from:from, to:to}),
       srv('appsWeekly', {weekOf: S.args.weekOf || ''})]).then(function(r){
     var pipe=r[0], d=r[1], wk=r[2];
     S.args.from = d.from; S.args.to = d.to;
+    /* THE CARDS ARE THIS MONTH'S PROGRESS, AND THEY SAY SO ON EVERY ONE OF THEM.
+         "the applications widgets should be monthly progress based and not alltime"
+       A running total of every application ever written only ever goes up -- a good month and
+       a bad one look identical beside it. These count what CAME IN this month, grouped by
+       where each has reached since, so the row of cards reads as progress rather than as a
+       milestone. The month is named on the tiles because a figure whose period is guessed at
+       is a figure that gets quoted in the wrong meeting. */
+    var mLab = pipe.month + ' (' + pipe.from.slice(8) + '–' + pipe.to.slice(8) + ')';
     // Eight stage cards answer "where are they" and never "how many". These two answer that.
     HEAD = '<div class="kpis">'
-      + kpi('Applications in pipeline', money(pipe.total), 'hatua zote / every stage')
-      + kpi('Requested amount', money(pipe.requested), 'TZS')
+      + kpi('Maombi mwezi huu / Applications this month', money(pipe.total),
+          mLab + ' · hatua zote / every stage')
+      + kpi('Requested amount', money(pipe.requested), 'TZS · ' + mLab)
       + pipe.stages.map(function(s){
           return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
         }).join('') + '</div>'
+      + bar('<label style="font-size:12px;color:var(--mut)">Mwezi / Month</label>'
+        + '<input type="month" data-arg="month" value="'+esc(pipe.month)+'">'
+        + '<span class="chip">'+money(pipe.total)+' mwezi huu / this month'
+          + ' · '+money(pipe.allTime)+' tangu mwanzo / all time</span>'
+        /* The all-time figure stays on screen, small, beside the month. Taking it away
+           entirely would replace one missing answer with another -- "how big is the book" is
+           still a real question, it is just not the headline. */
+        + (pipe.undated ? '<span class="chip bad">'+money(pipe.undated)+' bila tarehe / undated'
+            + ' — hazihesabiki kwenye mwezi wowote / counted in no month</span>' : ''))
       /* THE WEEK BY TEAM, CHIPPED UNDER THE CARDS. Folded by default like every other chip in
          this system, so the tab still opens on the day's list and the week is one tap away. */
       + fold_('appsWeek', 'Maombi kwa wiki / Applications by team — wiki hii / this week',

@@ -125,13 +125,13 @@ test('loans: stage filter, totals, and the pipeline strip', async () => {
   const d = await run('loans', { stage: 'approved', from: '', to: '' });
   assert.equal(d.count, 2);
   assert.equal(d.amount, 500000);
+  /* THE STRIP IS THIS MONTH'S PROGRESS. The base fixture's loans carry no date at all, so none
+     of them belongs to any month -- which is exactly the case the undated count exists to
+     report rather than hide. */
   const p = await run('loanPipeline');
-  const by = Object.fromEntries(p.stages.map(s => [s.stage, s.count]));
-  assert.equal(by.approved, 2); assert.equal(by.disbursed, 1); assert.equal(by.unassigned, 1);
-  /* THE PIPELINE STRIP IS NOT WINDOWED, on purpose. "Where is every application right now" is
-     a question about the present, not about a date range, so the cards keep counting the whole
-     book while the list below them narrows. */
-  assert.equal(p.total, 4);
+  assert.equal(p.total, 0);
+  assert.equal(p.undated, 4, 'said, not silently dropped');
+  assert.equal(p.allTime, 4, 'and the whole book is still reported beside the month');
 });
 
 test('expected: totals, collection %, status split, batch-resolved date', async () => {
@@ -1474,12 +1474,13 @@ test('a complaint can be removed, and the removal is on the record', async () =>
 });
 
 /* Eight stage cards answer "where are they" and never "how many". */
-test('the pipeline says how many applications there are altogether', async () => {
+test('the pipeline says how many applications came in this month', async () => {
   const t = tables();
+  // All three landed this month (TODAY is 2026-07-24).
   t.loans = [
-    { id: 'l1', team: 'KONGOWE', stage: 'approved', principal_amt: 300000, requested_amt: 350000 },
-    { id: 'l2', team: 'KONGOWE', stage: 'unassigned', requested_amt: 200000 },
-    { id: 'l3', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100000, requested_amt: 120000 },
+    { id: 'l1', team: 'KONGOWE', stage: 'approved', principal_amt: 300000, requested_amt: 350000, upload_date: TODAY },
+    { id: 'l2', team: 'KONGOWE', stage: 'unassigned', requested_amt: 200000, upload_date: MON },
+    { id: 'l3', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100000, requested_amt: 120000, upload_date: '2026-07-01' },
   ];
   const all = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', {}, NOW);
   assert.equal(all.total, 3);
@@ -1491,6 +1492,50 @@ test('the pipeline says how many applications there are altogether', async () =>
   const mine = await portalApi(fakeDb(t), GMO, 'loanPipeline', {}, NOW);
   assert.equal(mine.total, 2);
   assert.equal(mine.requested, 550000);
+});
+
+/* "the applications widgets should be monthly progress based and not alltime"
+   A running total of every application ever written only ever goes up: a good month and a bad
+   one look identical beside it, and nobody can tell from it whether this month is going well. */
+test('the widgets count this month\'s arrivals, wherever each has reached since', async () => {
+  const t = tables();
+  t.loans = [
+    { id: 'now1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: TODAY },
+    { id: 'now2', team: 'KONGOWE', stage: 'approved', principal_amt: 900, requested_amt: 900, upload_date: '2026-07-02' },
+    // Last month, and the month before: neither belongs to this month's progress.
+    { id: 'old1', team: 'KONGOWE', stage: 'disbursed', principal_amt: 500, requested_amt: 500, upload_date: '2026-06-30' },
+    { id: 'old2', team: 'KONGOWE', stage: 'approved', principal_amt: 500, requested_amt: 500, upload_date: '2026-05-15' },
+    // Dated by the insert moment where the admin's day is missing, as everywhere else.
+    { id: 'fb', team: 'KONGOWE', stage: 'assigned', requested_amt: 50, created_at: '2026-07-10T06:00:00Z' },
+    // No date at all: it can be in no month, and the tab is told so rather than left to guess.
+    { id: 'nd', team: 'KONGOWE', stage: 'unassigned', requested_amt: 7 },
+  ];
+  const d = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', {}, NOW);
+  assert.equal(d.month, '2026-07');
+  assert.equal(d.from, '2026-07-01');
+  assert.equal(d.to, TODAY, 'month TO DATE for the month we are in');
+  assert.equal(d.total, 3, 'the two July arrivals plus the one dated by created_at');
+  assert.equal(d.requested, 1050);
+  /* THE STAGE IS WHEREVER IT HAS REACHED. An application that came in this month and has since
+     been approved is still this month's arrival -- counting only what is still sitting in the
+     early stages would make the month shrink as work got done. */
+  assert.equal(d.stages.find(s => s.stage === 'approved').count, 1);
+  assert.equal(d.stages.find(s => s.stage === 'disbursed').count, 0, 'June\'s disbursement is June\'s');
+  // The whole book is still reported, small, beside the month -- "how big is it" is still real.
+  assert.equal(d.allTime, 6);
+  assert.equal(d.undated, 1);
+
+  // A month already finished runs to its own end, not to today.
+  const june = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', { month: '2026-06' }, NOW);
+  assert.equal(june.from, '2026-06-01');
+  assert.equal(june.to, '2026-06-30', 'a finished month is finished');
+  assert.equal(june.total, 1);
+
+  // And December rolls the year over rather than producing month 13.
+  t.loans.push({ id: 'dec', team: 'KONGOWE', stage: 'unassigned', requested_amt: 1, upload_date: '2025-12-31' });
+  const dec = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', { month: '2025-12' }, NOW);
+  assert.equal(dec.to, '2025-12-31');
+  assert.equal(dec.total, 1);
 });
 
 test('every complaint save is written to the audit trail', async () => {
