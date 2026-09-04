@@ -184,6 +184,7 @@ function knownMissing(db, fn) {
 export const DECK_TOTALS_TABLE = 'deck_totals';
 export const DECK_TOTALS_DAYS = 'deck_totals_days';
 export const DECK_BUILD_FN = 'build_deck_totals';
+export const DECK_RECENT_FN = 'build_deck_totals_recent';
 
 const DECK_KIND = { [EXPECTED_TOTALS_FN]: 'expected', [DEFAULTER_TOTALS_FN]: 'defaulter' };
 
@@ -276,6 +277,32 @@ export async function unmarkDeckTotals(db, kind, date) {
     return !error;
   } catch (e) {
     return false;                               // tables not created yet
+  }
+}
+
+/* THE WINDOW HAS TO KEEP MOVING, OR ALL OF THIS QUIETLY UNDOES ITSELF.
+
+   The backfill builds fourteen days ahead so the dashboard's Monday-to-Sunday week is complete
+   -- every day of a range must be built or the cache refuses it. But "fourteen days ahead" is
+   measured from the day the backfill RAN. Two weeks later the far end of that window is in the
+   past, the week contains unbuilt days again, and every screen falls back to the live aggregate
+   with nothing anywhere to say so. The work would come undone on its own, silently, and the
+   first sign would be somebody saying the dashboard is slow again a fortnight from now.
+
+   So the upload tops the window up. It is the right place: a deck lands most days, this runs
+   last, on the same clock as the rest of the housekeeping, and the days it builds are in the
+   FUTURE -- no decks, empty index range, a few milliseconds each. A bounded call, so a slow
+   morning spends nothing on it and the next upload carries on where this one stopped.
+
+   Returns quietly on a database that has not built the tables, like everything else here. */
+export async function topUpDeckTotals(db, budgetMs = 3000) {
+  if (!db || typeof db.rpc !== 'function') return false;
+  try {
+    const { error } = await db.rpc(DECK_RECENT_FN, { p_budget_ms: Math.max(500, budgetMs) });
+    noteDeckTotalsChanged(db);
+    return !error;
+  } catch (e) {
+    return false;
   }
 }
 
