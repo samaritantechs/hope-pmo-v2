@@ -159,9 +159,42 @@ async function appsWeekly(db, user, args, nowMs = Date.now()) {
 }
 
 /** Counts for every stage in one pass -- the applications tab's pipeline strip. */
-async function loanPipeline(db, user) {
+/* THE WIDGETS ARE THIS MONTH'S PROGRESS, NOT THE COMPANY'S WHOLE HISTORY.
+
+     "the applications widgets should be monthly progress based and not alltime"
+
+   I argued the other way when the list was given its date box -- that "where is every
+   application right now" is a question about the present rather than a date range -- and that
+   was wrong for these cards. A running total of every application ever written does not move
+   in a way anybody can read: it only ever goes up, a good month and a bad one look identical
+   beside it, and nobody can tell from it whether this month is going well. A month-to-date
+   figure is a figure you can act on this morning.
+
+   THE MONTH IS DECIDED BY THE DAY THE APPLICATION ARRIVED -- the same loanDay_ rule the list,
+   the weekly board and the dashboard's trend all use -- and the STAGE is wherever that
+   application has got to since. So the cards read "of what came in this month, this is where
+   it has reached", which is what progress means here.
+
+   `month` may be given as YYYY-MM to look back; the window then runs to the end of that month
+   rather than to today, because a finished month is finished. */
+async function loanPipeline(db, user, args, nowMs = Date.now()) {
+  const today = todayKey(nowMs);
+  const askedMonth = /^\d{4}-\d{2}$/.test(String((args && args.month) || '')) ? args.month : null;
+  const month = askedMonth || today.slice(0, 7);
+  const from = month + '-01';
+  // Month to date for the month we are in; the whole month for one already finished.
+  const monthEnd = addDaysKey(addMonthKey_(from), -1);
+  const to = monthEnd < today ? monthEnd : today;
+
   // Same read, same rule: narrowed in the query rather than after it has all arrived.
-  const rows = scoped(user, await fetchAll(() => onTeams(db.from('loans').select('team, stage, principal_amt, requested_amt, loan_amt'), user.teams)));
+  const all = scoped(user, await fetchAll(() => onTeams(db.from('loans')
+    .select('team, stage, upload_date, created_at, principal_amt, requested_amt, loan_amt'), user.teams)));
+  let undated = 0;
+  const rows = all.filter(r => {
+    const d = loanDay_(r);
+    if (!d) { undated++; return false; }
+    return d >= from && d <= to;
+  });
   const by = {};
   for (const st of STAGES) by[st] = { stage: st, count: 0, amount: 0 };
   for (const r of rows) {
@@ -170,13 +203,26 @@ async function loanPipeline(db, user) {
     b.count++;
     b.amount += num(r.principal_amt) || num(r.requested_amt) || num(r.loan_amt);
   }
-  // A card per stage, and the two figures v1 led with: how many applications are in the
-  // pipeline ALTOGETHER, and what they are asking for. Eight stage cards answer "where are
-  // they" and never "how many".
+  // A card per stage, and the two figures v1 led with: how many applications came in this
+  // month ALTOGETHER, and what they asked for. Eight stage cards answer "where are they" and
+  // never "how many".
   const stages = STAGES.map(s => by[s]);
-  return { stages,
+  return { month, from, to, stages,
     total: stages.reduce((n, x) => n + x.count, 0),
-    requested: rows.reduce((n, r) => n + num(r.requested_amt), 0) };
+    requested: rows.reduce((n, r) => n + num(r.requested_amt), 0),
+    // What the month CANNOT see: the whole book, and the rows carrying no date at all.
+    allTime: all.length, undated };
+}
+
+/** The first of the month after this one. Kept here rather than reached for from time.js
+    because it is the only place in this file that needs it, and a month is the one date step
+    addDaysKey cannot express. */
+function addMonthKey_(dayKey) {
+  const y = Number(String(dayKey).slice(0, 4));
+  const m = Number(String(dayKey).slice(5, 7));
+  const ny = m === 12 ? y + 1 : y;
+  const nm = m === 12 ? 1 : m + 1;
+  return ny + '-' + String(nm).padStart(2, '0') + '-01';
 }
 
 /* ------------------------------------------------------------------ expected repayment */
