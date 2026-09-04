@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-04-b';
+var BUILD = '2026-09-04-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3273,6 +3273,9 @@ VIEWS.monthreport = function(){
    the weekend. Same keys and the same order as every other day-column board in this system. */
 var APPS_DAYS = [['J3','Jumatatu / Mon'],['J4','Jumanne / Tue'],['J5','Jumatano / Wed'],
   ['AL','Alhamisi / Thu'],['IJ','Ijumaa / Fri'],['J1','Jumamosi / Sat'],['J2','Jumapili / Sun']];
+/* Which of the eight pipeline stages get a card of their own at the top of the tab. The other
+   five are still counted, still filterable, and still in the table -- they simply do not lead. */
+var APPS_CARD_STAGES = ['unassigned', 'assigned', 'approved'];
 
 VIEWS.apps = function(){
   var stage = S.args.stage || 'approved';
@@ -3301,7 +3304,17 @@ VIEWS.apps = function(){
       + kpi('Maombi mwezi huu / Applications this month', money(pipe.total),
           mLab + ' · hatua zote / every stage')
       + kpi('Requested amount', money(pipe.requested), 'TZS · ' + mLab)
-      + pipe.stages.map(function(s){
+      /* THE THREE STAGES ANYBODY READS OFF THIS SCREEN, not all eight.
+         "remove these widgets from loan applications top: unassessed, assessed, pending
+          approval, pending disb, disbursed"
+         Eight cards is a wall of numbers to walk past to reach the table, and five of them
+         answered a question nobody was asking here. What is left is what an application tab
+         is actually for: what came in (unassigned + assigned -- the same pair the weekly board
+         and the dashboard trend count) and what came out of it (approved).
+         NOTHING IS HIDDEN. The stage dropdown below still offers every one of the eight, so a
+         docket in any stage is still one pick away -- this is only which figures lead. */
+      + pipe.stages.filter(function(s){ return APPS_CARD_STAGES.indexOf(s.stage) >= 0; })
+        .map(function(s){
           return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
         }).join('') + '</div>'
       + bar('<label style="font-size:12px;color:var(--mut)">Mwezi / Month</label>'
