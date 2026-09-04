@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-04-a';
+var BUILD = '2026-09-04-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3281,10 +3281,12 @@ VIEWS.apps = function(){
      written. Undefined means "the server decides", which is today; the boxes below carry
      whatever the server settled on, so the dates on screen are always the dates in the table. */
   var from = S.args.from, to = S.args.to;
-  return Promise.all([srv('loanPipeline', {month: S.args.month || ''}),
-      srv('loans', {stage:stage, from:from, to:to}),
-      srv('appsWeekly', {weekOf: S.args.weekOf || ''})]).then(function(r){
-    var pipe=r[0], d=r[1], wk=r[2];
+  /* ONE REQUEST, NOT THREE. Each of the three answers this tab shows used to fetch the whole
+     applications book for itself, in parallel -- which is what put the tab past the client's
+     45 seconds. They are all worked out from the same rows, so the server reads them once. */
+  return srv('appsTab', {stage:stage, from:from, to:to,
+      month: S.args.month || '', weekOf: S.args.weekOf || ''}).then(function(r){
+    var pipe=r.pipeline, d=r.list, wk=r.weekly;
     S.args.from = d.from; S.args.to = d.to;
     /* THE CARDS ARE THIS MONTH'S PROGRESS, AND THEY SAY SO ON EVERY ONE OF THEM.
          "the applications widgets should be monthly progress based and not alltime"
@@ -3344,11 +3346,10 @@ VIEWS.apps = function(){
           + (d.windowed ? ' · ' + esc(d.from) + (d.to !== d.from ? ' → ' + esc(d.to) : '') : ' · zote / all')
           + '</span>'
         /* A ROW WITH NO DATE CANNOT BE ON A DAY, and must not disappear behind a date box
-           without a word -- that is how a docket goes missing for a week. */
-        + (d.undated ? '<span class="chip bad">'+money(d.undated)+' bila tarehe / undated — '
-            + 'futa tarehe zote mbili kuziona / clear both dates to see them</span>' : ''));
-    S.rows = d.rows;
-    S.cols = [{key:'stage', label:'Stage', kind:'chip', chip:function(){ return 'mut'; },
+           without a word -- that is how a docket goes missing for a week. It is listed, not
+           merely counted: see the chip above the table. */
+        + (d.undated ? '<span class="chip bad">'+money(d.undated)+' bila tarehe / undated</span>' : ''));
+    var appCols = [{key:'stage', label:'Stage', kind:'chip', chip:function(){ return 'mut'; },
         get:function(r){ return String(r.stage||'').replace(/_/g,' '); }},
       col('docket_no','Docket'), col('full_name','Customer'),
       {key:'contact', label:'Contact', kind:'tel'}, col('branch','Branch'), col('team','Team'), col('product','Product'),
@@ -3356,6 +3357,23 @@ VIEWS.apps = function(){
       col('approved_date','Approved','date'), col('disb_date','Disbursed','date'),
       // When the application was created and by whom -- both already stored, never shown.
       col('created_at','Date','dt'), col('created_by','By')];
+    /* THE UNDATED ONES, CHIPPED, BEFORE TODAY'S LIST.
+         "Chip the undated before listing today's"
+       A count told somebody a docket was missing and gave them no way to reach it. These rows
+       carry neither the day the admin chose nor an insert moment, so they can be in no window
+       at all -- which is exactly why they need to be reachable from the tab that is windowed.
+       Above the day's list, folded, with its own Excel and JPG like every other board. */
+    if (d.undatedRows && d.undatedRows.length) {
+      HEAD += fold_('appsUndated',
+        'Bila tarehe / Undated applications — ' + money(d.undated),
+        'hazina siku ya ripoti wala ya kuingizwa, kwa hivyo haziko kwenye mwezi wala siku yoyote'
+          + ' / no report day and no insert stamp, so they fall in no month and no day',
+        board('appsUndatedBoard', 'Bila tarehe / Undated applications',
+          'zipe tarehe kwa kupakia upya faili lenye siku sahihi / give them a day by re-uploading '
+            + 'the file with the right date', d.undatedRows, appCols, false));
+    }
+    S.rows = d.rows;
+    S.cols = appCols;
     ONROW = null;
     S.foot = money(d.count)+' applications · TZS '+money(d.amount);
   });

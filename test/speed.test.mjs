@@ -155,6 +155,13 @@ const BUDGETS = [
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
   ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000,  10, 10000],
+  /* THE TAB, AS THE TAB ACTUALLY LOADS IT. The three answers on this screen -- the month's
+     widgets, the day's list, the week by team -- each read the whole applications book for
+     itself, in parallel, which is what put it past the client's 45 seconds. They come from the
+     same rows, so the tab reads them once. Two trips: the loans book and the small teams list.
+     A budget here is the only thing that stops that being undone by somebody (me) adding a
+     fourth question to the screen without counting what it already asks for. */
+  ['Applications tab',        'appsTab',       {}, ADMIN,    4,  20000,   4, 20000],
   ['Promise to Pay',          'promises',      {}, ADMIN,   10,  10000,  10, 10000],
   /* A report over a date range must read that range -- there is no honest way to count a
      week's follow-up comments without them. It is already narrowed to the six columns it uses
