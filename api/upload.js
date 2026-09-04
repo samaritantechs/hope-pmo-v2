@@ -6,7 +6,7 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
    two answers that can disagree, and the disagreement would only ever show up as a figure
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
-import { deckKindOfTable, unmarkDeckTotals, buildDeckTotals } from './_lib/snapshot-totals.js';
+import { deckKindOfTable, unmarkDeckTotals, buildDeckTotals, topUpDeckTotals } from './_lib/snapshot-totals.js';
 import { weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
@@ -1182,6 +1182,17 @@ export default withApi(async (req, res) => {
       deckBuilt = !!(await beforeDeadline(buildDeckTotals(supabase, deckKind, meta.date),
         clock.left(), false));
     } catch (e) { /* the day reads live */ }
+  }
+  /* AND TOP UP THE FORWARD WINDOW, so the cache does not quietly expire.
+     The backfill builds a fortnight ahead so the dashboard's Monday-to-Sunday week is complete
+     -- but that fortnight is measured from the day it ran, and two weeks later the week has
+     unbuilt days in it again and every screen silently returns to the slow path. The days this
+     builds are in the FUTURE: no decks, empty index range, milliseconds each. Bounded, last,
+     and on the same clock as everything else, so a slow morning simply skips it and the next
+     upload carries on. See topUpDeckTotals. */
+  if (isLastPart && deckKind && clock.worth(5000)) {
+    try { await beforeDeadline(topUpDeckTotals(supabase, 3000), Math.min(4000, clock.left()), false); }
+    catch (e) { /* the window is topped up by the next upload, or by RUN-ME-022 */ }
   }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.
