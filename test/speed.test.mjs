@@ -176,6 +176,38 @@ const BUDGETS = [
   ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  14,  3500],
   ['The bell',                'notifications', {}, ADMIN,    6,    200,   6,   200],
   ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200,   6,   200],
+  /* =====================================================================================
+     EVERY REMAINING NAV, SO "ALL NAVS" IS A CEILING RATHER THAN A PROMISE.
+     =====================================================================================
+       "the postgress war should check efficiency in all navs existing"
+       "Slow speed is almost everywhere thats why i said all navs"
+
+     Two thirds of the sidebar had no budget at all, which is how a screen gets slowly worse
+     with nothing turning red. These numbers are what each one MEASURES on this fixture today,
+     rounded up a little -- a ceiling, not a target. Raising one is allowed in the same commit
+     as the change that needs it, with the reason in the diff, and the first question is always
+     "can the database do this instead of me?".
+
+     They will not catch a throttled instance, and nothing here can: when arithmetic with no
+     table behind it takes ten seconds, every screen is slow whatever its shape. What they DO
+     catch is the thing I did to the Applications tab -- three full reads of one table where
+     one would do -- which is the only part of "slow everywhere" that is mine to fix. */
+  ['Leader reports',          'leaderReports',       {}, ADMIN, 24, 26000, 20, 4500],
+  ['Month report',            'monthReport',         {}, ADMIN, 16,  5000, 22, 5500],
+  ['Credit analysts',         'credit',              {}, ADMIN, 14,  4000, 12, 4200],
+  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  6,  1000,  6, 1000],
+  ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 10,  1500,  9, 1200],
+  ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
+  ['Portfolio at Risk',       'par',                 {}, ADMIN,  5,   800,  5,  800],
+  ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
+  ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],
+  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  6,   800,  6,  800],
+  ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
+  ['Calls report',            'callReport',          {}, ADMIN,  6,   200,  6,  200],
+  ['Teams & Staff',           'teams',               {}, ADMIN,  5,   200,  5,  200],
+  ['Access codes (Settings)', 'accessCodes',         {}, ADMIN,  5,   100,  5,  100],
+  ['Best of / Rekodi',        'perfHistory',         {}, ADMIN,  3,   100,  3,  100],
+  ['Audit log',               'auditLog',            {}, ADMIN,  3,   100,  3,  100],
   /* THE TWO "error 504"s THIS GUARD WOULD HAVE CAUGHT ON DAY ONE. smsGaps and smsExport used
      to each read the whole defaulter book on their own -- a plain download paid for it once,
      "Save & download" in the gap-fill form paid for it TWICE in the same click -- and nothing
