@@ -130,11 +130,12 @@ async function readAdjustments(db, nowMs) {
   }
   const pending = (async () => {
     try {
-      /* WHOLE, AND FOUR COLUMNS. The reason, the ref, who typed it and when belong to the
-         Iliyonasia tab, which reads the table itself; a collection figure needs the team, the
-         book, the amount and the day. */
+      /* WHOLE, AND FIVE COLUMNS. The reason and who typed it belong to the Iliyonasia tab,
+         which reads the table itself. A collection figure needs the team, the book, the amount
+         and the day -- and the REF, because commission on the early-collection scheme is paid
+         per customer rather than on a percentage, and a customer is a ref. */
       const rows = await fetchAll(() => db.from('pmo_adjustments')
-        .select('team, target, amount, adj_date'));
+        .select('team, target, amount, adj_date, ref'));
       adjCache.set(db, { at: Date.now(), rows });
       return rows;
     } catch (e) {
@@ -162,7 +163,7 @@ export async function adjReceived_(db, user, { from, to }) {
      the day's collection sheet and `expected-initial` is the early-collection one -- a
      correction to one is not a correction to the other, and adding them together would move
      Col by an Early Col figure and be impossible to find afterwards. */
-  const byTeam = new Map(), byDay = new Map(), byCell = new Map();
+  const byTeam = new Map(), byDay = new Map(), byCell = new Map(), byRef = new Map();
   const total = {}, seen = {};
   let unattributed = 0;
   const add = (m, k, a) => m.set(k, (m.get(k) || 0) + a);
@@ -178,7 +179,15 @@ export async function adjReceived_(db, user, { from, to }) {
        -- and only after a correction, which is exactly when somebody is already hunting a
        discrepancy. Every figure on a report moves together or none of them does. */
     const d = String(r.adj_date || '').slice(0, 10);
-    if (d) { add(byDay, tg + '|' + d, a); add(byCell, tg + '|' + r.team + '|' + d, a); }
+    if (d) {
+      add(byDay, tg + '|' + d, a); add(byCell, tg + '|' + r.team + '|' + d, a);
+      /* NETTED PER REF AS WELL, for the commission side. Two rows against the same customer on
+         the same day are ONE customer -- a second entry is a correction to the first, not a
+         second person paying -- and a ref whose entries net to nothing or less is not somebody
+         who paid at all. Both of those are decided here, once, rather than by whoever counts. */
+      const ref = String(r.ref == null ? '' : r.ref).trim();
+      if (ref) add(byRef, tg + '|' + r.team + '|' + d + '|' + ref, a);
+    }
     total[tg] = (total[tg] || 0) + a;
     seen[tg] = (seen[tg] || 0) + 1;
   }
@@ -189,7 +198,81 @@ export async function adjReceived_(db, user, { from, to }) {
        rather than adding to a finished total. Same rows, one grouping further down. */
     cells: target => [...byCell.entries()]
       .filter(([k]) => k.startsWith(target + '|'))
-      .map(([k, amount]) => { const p = k.split('|'); return { team: p[1], date: p[2], amount }; }) };
+      .map(([k, amount]) => { const p = k.split('|'); return { team: p[1], date: p[2], amount }; }),
+    /* THE CUSTOMERS THE REGISTER NAMES, one entry per ref per team per day, with what that
+       ref nets to. Only rows that CARRY a ref appear: an entry with no ref is money that
+       cannot be attributed to a person, and inventing a person to pay somebody for would be
+       worse than paying nothing. */
+    refCells: target => [...byRef.entries()]
+      .filter(([k]) => k.startsWith(target + '|'))
+      .map(([k, amount]) => { const p = k.split('|'); return { team: p[1], date: p[2], ref: p[3], amount }; }) };
+}
+
+/* =====================================================================================
+   PAYING FOR A CUSTOMER, AND NOT PAYING FOR THEM TWICE.
+   =====================================================================================
+     "yes keep commission on the register: everywhere the amount was registered it must apply
+      so even commissions too and they are the most complaining on this part"
+     "so check the deck by customer ref no and status not amounts"
+
+   THE TWO SCHEMES ARE PAID DIFFERENTLY, and that is why applying the amount was only half the
+   job. PMO Collection is paid by BAND on the day's collection percentage, so a registered
+   payment moves the percentage and therefore moves the money -- that half worked the moment the
+   amount was applied. Early Collection is paid PER CUSTOMER: so many PAID or OVERPAID, times a
+   rate. An Iliyonasia has no customer row, so it moved that officer's percentage and left their
+   shillings exactly where they were. They are the ones complaining, and they were right to.
+
+   SO A REGISTERED PAYMENT COUNTS AS ONE COLLECTED CUSTOMER -- if it names one. A register row
+   with a REF is a person; a row without one is money that cannot be attributed to anybody, and
+   inventing a person to pay somebody for is worse than paying nothing. A ref whose entries net
+   to zero or less is not somebody who paid.
+
+   AND THE DECK IS CHECKED BY REF AND STATUS, NEVER BY AMOUNT. When the corrected sheet finally
+   arrives with that customer marked PAID, the deck and the register would each pay for them --
+   the same person, twice, on a screen that decides what people are owed. So before a ref is
+   counted, that day's book is asked one question about it: does this customer already read PAID
+   or OVERPAID here? If so the register does not pay for them again; the deck already has.
+   Comparing AMOUNTS would be the wrong test -- a part payment, a rounding, a customer who paid
+   twice, and it silently pays or silently does not. A status is what the sheet actually asserts.
+
+   IT IS A NARROW READ, AND USUALLY NO READ AT ALL. Only the refs the register itself names are
+   asked about -- tens of them, by primary-key-shaped `in (...)`, over the days already in hand
+   -- and a range with no ref-carrying rows in it does not go to the database at all. It is
+   called from the commission board and from nowhere else: this is the one screen where the
+   count decides money, and the count is not worth a read on any screen where it is decoration.
+
+   Where the migration has not been run, or the read fails, NOTHING is counted. Paying nobody by
+   accident is a complaint; paying twice by accident is a loss and an argument. */
+export async function adjCountableRefs_(db, adj, { target, snapshotType, from, to }) {
+  const empty = new Set();
+  if (!adj) return empty;
+  /* Positive only. A negative entry is money going back out -- a correction to a correction --
+     and it does not make somebody a paying customer. */
+  const named = adj.refCells(target).filter(c => c.amount > 0);
+  if (!named.length) return empty;
+  const refs = [...new Set(named.map(c => c.ref))];
+  let rows = [];
+  try {
+    rows = await fetchAll(() => db.from('repayment_snapshots')
+      .select('ref, team, snapshot_date, todays_status')
+      .eq('snapshot_type', snapshotType)
+      .in('ref', refs)
+      .gte('snapshot_date', from).lte('snapshot_date', to));
+  } catch (e) {
+    return empty;                       // cannot check -- so do not pay. See above.
+  }
+  const already = new Set();
+  for (const r of (rows || [])) {
+    const st = K(r.todays_status);
+    if (st !== 'PAID' && st !== 'OVERPAID') continue;
+    already.add(K(r.team) + '|' + String(r.snapshot_date || '').slice(0, 10) + '|' + K(r.ref));
+  }
+  const out = new Set();
+  for (const c of named) {
+    const k = K(c.team) + '|' + c.date + '|' + K(c.ref);
+    if (!already.has(k)) out.add(k);
+  }
+  return out;
 }
 
 /* THE CORRECTION FOLDED INTO TEAM-DAY TOTALS -- ONE FUNCTION, EVERY SCREEN.
@@ -224,7 +307,7 @@ export async function adjReceived_(db, user, { from, to }) {
    day whose sheet never arrived is precisely the case the register exists for, but a caller
    that has filtered to one day must not be handed rows from another. Callers holding a single
    resolved day pass that day; callers holding a whole resolved range pass null. */
-export function withAdj_(rows, adj, target, onDate = null) {
+export function withAdj_(rows, adj, target, onDate = null, countable = null) {
   if (!adj) return rows;
   /* One day, a named set of days, or null for "these rows are the whole range I read". The set
      form is for the shared dashboard, whose Expected read is today on a weekday and the whole
@@ -236,6 +319,20 @@ export function withAdj_(rows, adj, target, onDate = null) {
   const inRange = d => only == null || (only instanceof Set ? only.has(d) : d === only);
   const cells = adj.cells(target).filter(c => inRange(c.date));
   if (!cells.length) return rows;
+  /* HOW MANY CUSTOMERS THIS CORRECTION IS WORTH, per team-day -- see adjCountableRefs_. Only
+     the commission board passes a set; everywhere else `paid_n` is a display count and moving
+     it would change a figure nobody asked about. Null and empty behave identically, so a
+     caller that asks for counting on a range with nothing countable in it gets today's
+     behaviour exactly. */
+  const nBy = new Map();
+  if (countable && countable.size) {
+    for (const c of adj.refCells(target)) {
+      if (!inRange(c.date) || c.amount <= 0) continue;
+      const k = K(c.team) + '|' + c.date;
+      if (!countable.has(k + '|' + K(c.ref))) continue;
+      nBy.set(k, (nBy.get(k) || 0) + 1);
+    }
+  }
   const dayOf = r => String(r.snapshot_date || '').slice(0, 10);
   const out = rows.slice();
   const at = new Map();
@@ -245,22 +342,31 @@ export function withAdj_(rows, adj, target, onDate = null) {
   }
   for (const c of cells) {
     const k = K(c.team) + '|' + c.date;
+    const n = nBy.get(k) || 0;
     const i = at.get(k);
     if (i == null) {
       at.set(k, out.length);
       out.push({ snapshot_date: c.date, snapshot_type: null, team: c.team,
-        upload_batch: null, created_at: null, customers: 0,
+        upload_batch: null, created_at: null, customers: n,
         expected_amt: 0, collected_amt: c.amount, uncollected_amt: 0,
-        paid_n: 0, over_n: 0, adjusted_amt: c.amount });
+        paid_n: n, over_n: 0, adjusted_amt: c.amount, adjusted_n: n });
     } else {
       const r = out[i];
       out[i] = { ...r,
         collected_amt: num(r.collected_amt) + c.amount,
         uncollected_amt: Math.max(0, num(r.uncollected_amt) - c.amount),
-        adjusted_amt: num(r.adjusted_amt) + c.amount };
+        adjusted_amt: num(r.adjusted_amt) + c.amount,
+        /* PAID, not OVERPAID. The register says a payment was made and verified; nothing in it
+           says it was more than what was due, and guessing the richer of the two rates would
+           pay somebody for a thing nobody wrote down. */
+        paid_n: num(r.paid_n) + n,
+        adjusted_n: num(r.adjusted_n) + n };
     }
   }
   return out;
 }
 /** How much of a set of already-corrected rows is correction rather than deck. */
 export const tAdjusted = rows => rows.reduce((s, r) => s + num(r.adjusted_amt), 0);
+/** And how many of its collected CUSTOMERS came from the register rather than the deck -- so a
+    commission board can say what it is paying for, and a double can be found by looking. */
+export const tAdjustedN = rows => rows.reduce((s, r) => s + num(r.adjusted_n), 0);

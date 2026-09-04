@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-04-d';
+var BUILD = '2026-09-04-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5105,6 +5105,15 @@ var ADJ_TARGET_LABELS = {
   'defaulter-initial': 'Defaulter — Initial',
   'defaulter-current': 'Defaulter — Current',
 };
+/* What the commission side did with a register row -- the server decides which of these is
+   true (see `adjustments` in portal-core.js); this is only the wording. */
+var ADJ_COUNT_LABELS = {
+  counted:      'Inahesabika / counted',
+  superseded:   'Imeondolewa — deki imelipa / auto-removed',
+  'no-ref':     'Hakuna REF / no ref',
+  unchecked:    'Haikuhakikiwa / unchecked',
+  'amount-only': 'Kiasi pekee / amount only',
+};
 VIEWS.adjust = function(){
   return Promise.all([srv('adjustments', { from: S.args.from || '', to: S.args.to || '' }),
                       srv('teams').catch(function(){ return { rows: [] }; })]).then(function(r){
@@ -5118,6 +5127,25 @@ VIEWS.adjust = function(){
       + kpi('Defaulter — Current', money(tg['defaulter-current'] || 0), 'jumla / net', (tg['defaulter-current']||0) < 0 ? 'bad' : '')
       + '</div>'
       + (d.ready === false ? '<div class="note bad">' + esc(d.note || '') + '</div>' : '')
+      /* THE ONE THING ON THIS TAB THAT NEEDS A PERSON, AT THE TOP.
+         "so if autoremoved find a way to flag by anything on the transaction row in iliyonasia
+          that alerts what was done"
+         A row whose customer the deck has since caught up with is AUTO-REMOVED from the
+         commission count -- the deck pays for them now, so counting the register too would pay
+         twice. That standing-down used to be invisible. It is a banner here and a chip on the
+         row itself, because a figure that changed for a reason nobody can see is the exact
+         thing this register exists to stop. */
+      + ((d.superseded ? '<div class="note bad" style="padding:6px 10px;font-size:12px;line-height:1.35">'
+          + '<b>' + d.superseded + '</b> ' + (d.superseded === 1 ? 'safu imeondolewa' : 'safu zimeondolewa')
+          + ' kwenye hesabu ya kamisheni — deki sasa inaonyesha wateja hao WAMELIPA, hivyo deki '
+          + 'ndiyo inayolipa. Kiasi bado kinahesabika; safu hizi zinaweza kufutwa. '
+          + '/ <b>' + d.superseded + '</b> row' + (d.superseded === 1 ? '' : 's')
+          + ' auto-removed from the commission count: the deck now shows those customers PAID, so '
+          + 'the deck pays for them. The amount still applies — these rows can be deleted.'
+          + '</div>' : ''))
+      + ((d.ready !== false && d.deckChecked === false && (d.rows||[]).some(function(x){ return x.ref; }))
+          ? '<div class="note" style="padding:6px 10px;font-size:12px">Deki halikuhakikiwa safari hii. '
+            + '/ The deck could not be checked this time — the customer flags below are unverified.</div>' : '')
       /* The entry form, on the page rather than behind a drawer: this tab exists to be typed
          into, and the person doing it is entering a dozen corrections off a reconciliation. */
       + '<div class="card"><div class="card-h">Rekebisha / New adjustment'
@@ -5149,28 +5177,67 @@ VIEWS.adjust = function(){
       col('team','Team'),
       {key:'amount', label:'Kiasi / Amount', kind:'money',
        cls:function(r){ return num(r.amount) < 0 ? 'bad' : 'good'; }},
-      col('ref','REF'), col('reason','Sababu / Reason'),
+      col('ref','REF'),
+      /* WHAT THE COMMISSION SIDE DID WITH THIS ROW. Four states, and each one tells the person
+         reading it what to do: counted (nothing), superseded (delete it when tidying), no-ref
+         (type the customer number and it starts counting), amount-only (nothing to do). */
+      {key:'countState', label:'Kamisheni / Commission', kind:'chip',
+       chip:function(r){ return r.countState === 'superseded' ? 'bad'
+         : r.countState === 'counted' ? 'ok'
+         : r.countState === 'no-ref' ? 'warn' : 'mut'; },
+       get:function(r){ return ADJ_COUNT_LABELS[r.countState] || r.countState || '—'; }},
+      col('reason','Sababu / Reason'),
       col('created_by','Aliyerekebisha / By'), col('created_at','Lini / When','dt')];
-    /* A tap on a row opens it: the AMOUNT can be re-typed ("some issues are sorted midday"),
-       or the row deleted. Only the amount moves -- date, book, team and reason stand -- and
-       the register's rule holds because the server re-signs the row with whoever last
-       decided the number. */
+    /* A tap on a row opens it, AND THE WHOLE ROW IS EDITABLE -- "the iliyonasia register rows
+       info should be editable". Only the amount used to be, so a row typed against the wrong
+       day, the wrong book, the wrong team, or with the customer number left off had to be
+       deleted and re-typed: which loses who entered it and when, and leaves the figure it was
+       correcting wrong in the meantime. The REF especially, now that a row carrying one counts
+       as a collected customer on the commission board -- a missing ref used to be a shrug and
+       is now money.
+
+       The drawer also says, in words, what the commission side did with this row: whether it
+       is being counted, whether the deck has overtaken it, or what to type to make it count. */
     ONROW = function(r){
+      var cs = r.countState || '';
       drawer('<h3>Rekebisho / Adjustment</h3>'
         + '<div class="sub">' + esc(ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + esc(r.adj_date)
           + (r.team ? ' · ' + esc(r.team) : ' · kitabu chote / whole book') + '</div>'
-        + (r.reason ? '<div class="frow"><span>Sababu / Reason</span>' + esc(r.reason) + '</div>' : '')
-        + (r.ref ? '<div class="frow"><span>REF</span>' + esc(r.ref) + '</div>' : '')
+        + (r.countNote ? '<div class="note ' + (cs === 'superseded' ? 'bad' : cs === 'counted' ? 'good' : '')
+            + '" style="padding:6px 10px;font-size:12px;line-height:1.35">' + esc(r.countNote) + '</div>' : '')
         + '<div class="frow"><span>Aliyeweka / By</span>' + esc(r.created_by || '') + '</div>'
-        + '<div class="fld" style="margin-top:10px"><label>Kiasi kipya / New amount (TZS, + au −)</label>'
+        + '<div class="fld" style="margin-top:10px"><label>Tarehe ya ripoti / Report date</label>'
+          + '<input type="date" id="adjEditDate" value="' + esc(String(r.adj_date || '').slice(0,10)) + '"></div>'
+        + '<div class="fld"><label>Aina ya ripoti / Report type</label><select id="adjEditTarget">'
+          + Object.keys(ADJ_TARGET_LABELS).map(function(k){
+              return '<option value="'+k+'"'+(k===r.target?' selected':'')+'>'+esc(ADJ_TARGET_LABELS[k])+'</option>'; }).join('')
+          + '</select></div>'
+        + '<div class="fld"><label>Timu / Team</label><select id="adjEditTeam">'
+          + '<option value="">— kitabu chote / whole book —</option>'
+          + (tm.rows||[]).map(function(t){
+              return '<option'+(String(t.team)===String(r.team||'')?' selected':'')+'>'+esc(t.team)+'</option>'; }).join('')
+          + '</select></div>'
+        + '<div class="fld"><label>Kiasi / Amount (TZS, + au −)</label>'
           + '<input type="number" id="adjEditAmt" step="any" value="' + esc(String(num(r.amount))) + '"></div>'
-        + '<button class="btn w" id="adjEditSave">Hifadhi kiasi kipya / Save new amount</button>'
+        + '<div class="fld"><label>REF ya mteja / Customer ref'
+          + '<span class="sub"> — inahitajika ili ihesabike kwenye kamisheni / needed for the commission count</span>'
+          + '</label><input id="adjEditRef" value="' + esc(r.ref || '') + '"></div>'
+        + '<div class="fld"><label>Sababu / Reason</label>'
+          + '<input id="adjEditReason" value="' + esc(r.reason || '') + '"></div>'
+        + '<button class="btn w" id="adjEditSave">Hifadhi mabadiliko / Save changes</button>'
         + '<button class="btn w ghost" id="adjEditDel" style="margin-top:8px">Futa rekebisho / Delete this adjustment</button>');
       $('#adjEditSave').onclick = function(){
         var v = Number($('#adjEditAmt').value);
         if (!isFinite(v) || !v) { toast('Weka kiasi kisicho sifuri. / A non-zero amount is required.', true); return; }
-        srv('adjustmentAmend', { id: r.id, amount: v })
-          .then(function(){ closeDrawer(); toast('Kiasi kimebadilishwa. / Amount updated.'); render({ force: true }); })
+        var dt = String($('#adjEditDate').value || '');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dt)) { toast('Chagua tarehe. / A date is required.', true); return; }
+        /* EVERY FIELD IS SENT, because the drawer shows every field: what is on screen is what
+           is saved. The server's absent-means-untouched rule is for callers that send a
+           subset; this one deliberately is not. */
+        srv('adjustmentAmend', { id: r.id, amount: v, date: dt,
+              target: $('#adjEditTarget').value, team: $('#adjEditTeam').value,
+              ref: $('#adjEditRef').value, reason: $('#adjEditReason').value })
+          .then(function(){ closeDrawer(); toast('Rekebisho limehifadhiwa. / Adjustment saved.'); render({ force: true }); })
           .catch(function(e){ toast(String(e.message || e), true); });
       };
       $('#adjEditDel').onclick = function(){
@@ -5183,7 +5250,8 @@ VIEWS.adjust = function(){
       };
     };
     S.foot = 'Jumla / Net across everything shown: TZS ' + money(d.net || 0)
-      + ' · bofya mstari kuhariri kiasi au kufuta / tap a row to edit the amount or delete';
+      + (d.superseded ? ' · ' + d.superseded + ' zimeondolewa kwenye kamisheni / auto-removed from commission' : '')
+      + ' · bofya mstari kuhariri au kufuta / tap a row to edit it or delete';
   });
 };
 
