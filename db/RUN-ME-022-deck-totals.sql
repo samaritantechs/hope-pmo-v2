@@ -152,6 +152,17 @@ $$;
 --    RESUMABLE. It only ever picks days that are not built, so running it again carries on
 --    from where it stopped. Nothing is broken in between: a day not yet built is read the old
 --    way, exactly as every day is read today.
+/* ADDING AN ARGUMENT MAKES A SECOND FUNCTION, NOT A REPLACEMENT.
+   "create or replace" matches on the whole signature, so growing p_ahead onto a two-argument
+   function left BOTH versions in the database, and calling it with no arguments then failed:
+
+     ERROR: 42725: function public.build_deck_totals_recent() is not unique
+
+   Both had defaults for every parameter, so neither was a better candidate than the other.
+   The old shape is dropped by name FIRST -- explicitly, so re-running this file is safe -- and
+   only then is the new one created. */
+drop function if exists public.build_deck_totals_recent(int, int);
+
 create or replace function public.build_deck_totals_recent(
   p_budget_ms int default 20000,
   p_back int default 120,
