@@ -121,12 +121,17 @@ test('an unknown function is a 400, not a 500', async () => {
 });
 
 test('loans: stage filter, totals, and the pipeline strip', async () => {
-  const d = await run('loans', { stage: 'approved' });
+  // '' at both ends is "no window" -- the whole pipeline, which is what this test is about.
+  const d = await run('loans', { stage: 'approved', from: '', to: '' });
   assert.equal(d.count, 2);
   assert.equal(d.amount, 500000);
   const p = await run('loanPipeline');
   const by = Object.fromEntries(p.stages.map(s => [s.stage, s.count]));
   assert.equal(by.approved, 2); assert.equal(by.disbursed, 1); assert.equal(by.unassigned, 1);
+  /* THE PIPELINE STRIP IS NOT WINDOWED, on purpose. "Where is every application right now" is
+     a question about the present, not about a date range, so the cards keep counting the whole
+     book while the list below them narrows. */
+  assert.equal(p.total, 4);
 });
 
 test('expected: totals, collection %, status split, batch-resolved date', async () => {
@@ -2055,15 +2060,101 @@ test('loan applications default to the whole pipeline, not one stage', async () 
   const db = fakeDb(tables());
   // "Where is every application right now" is what this tab gets asked most, and forcing a
   // stage first meant a docket could only be found if you already knew its stage.
-  const all = await portalApi(db, ADMIN, 'loans', {}, NOW);
+  const all = await portalApi(db, ADMIN, 'loans', { from: '', to: '' }, NOW);
   assert.equal(all.stage, '');
   assert.equal(all.count, 4);                      // 2 approved + 1 disbursed + 1 unassigned
   assert.equal(all.amount, 650000);
+  assert.equal(all.windowed, false);
   // A named stage still narrows it.
-  const appr = await portalApi(db, ADMIN, 'loans', { stage: 'approved' }, NOW);
+  const appr = await portalApi(db, ADMIN, 'loans', { stage: 'approved', from: '', to: '' }, NOW);
   assert.equal(appr.count, 2);
   // Team scoping still applies to the unfiltered view.
-  assert.equal((await portalApi(db, GMO, 'loans', {}, NOW)).count, 3);
+  assert.equal((await portalApi(db, GMO, 'loans', { from: '', to: '' }, NOW)).count, 3);
+});
+
+/* "having loan applications nav - put a default start and end date of today {they too many}"
+   Every application the company has ever written arrived on this tab at once. */
+test('the applications list opens on today, and both ends are editable', async () => {
+  const t = tables();
+  // Three applications on three different days, filed by the day the ADMIN chose.
+  t.loans = [
+    { id: 'a1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: TODAY },
+    { id: 'a2', team: 'KONGOWE', stage: 'assigned', requested_amt: 100, upload_date: MON },
+    // No upload_date: the day falls back to the insert moment, as the dashboard's trend does.
+    { id: 'a3', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, created_at: TODAY + 'T06:00:00Z' },
+  ];
+  const db = fakeDb(t);
+  const d = await portalApi(db, ADMIN, 'loans', {}, NOW);
+  assert.equal(d.windowed, true);
+  assert.equal(d.from, TODAY); assert.equal(d.to, TODAY);
+  assert.deepEqual(d.rows.map(r => r.id).sort(), ['a1', 'a3'], 'today only, both ways of dating');
+  assert.equal(d.total, 3, 'and it still says how many there are altogether');
+
+  // Widened by hand: the whole week is one change away.
+  const wk = await portalApi(db, ADMIN, 'loans', { from: MON, to: TODAY }, NOW);
+  assert.equal(wk.count, 3);
+  // One day back on its own.
+  const mon = await portalApi(db, ADMIN, 'loans', { from: MON, to: MON }, NOW);
+  assert.deepEqual(mon.rows.map(r => r.id), ['a2']);
+});
+
+test('an application carrying no date at all is left out of the window and SAID, not dropped', async () => {
+  /* It cannot be put on a day, and putting it in every window would be worse -- the same
+     docket in every report. So it is excluded and counted, because a row that disappears
+     behind a date box with nothing said about it is how a docket goes missing for a week. */
+  const t = tables();
+  t.loans = [
+    { id: 'ok', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: TODAY },
+    { id: 'nodate', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100 },
+  ];
+  const d = await portalApi(fakeDb(t), ADMIN, 'loans', {}, NOW);
+  assert.deepEqual(d.rows.map(r => r.id), ['ok']);
+  assert.equal(d.undated, 1, 'the screen can say so instead of the row vanishing');
+  // With no window there is nothing to fall out of, so nothing is reported undated.
+  const all = await portalApi(fakeDb(t), ADMIN, 'loans', { from: '', to: '' }, NOW);
+  assert.equal(all.count, 2);
+  assert.equal(all.undated, 0);
+});
+
+/* "chip their list under a teams weekly report s/n teamname j3(u+a), j4 - j2, total and avrg
+   (avrg per day in the 7 days) so that we get loan app performance report by all existing
+   teams" */
+test('the weekly applications board counts u+a per day, for every team, including the zeros', async () => {
+  const t = tables();
+  t.teams = [{ team: 'KONGOWE' }, { team: 'MBAGALA' }, { team: 'QUIET' }];
+  t.loans = [
+    // KONGOWE: two on Monday, one on Tuesday. MBAGALA: one on Monday.
+    { id: 'k1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: MON },
+    { id: 'k2', team: 'KONGOWE', stage: 'assigned', requested_amt: 100, upload_date: MON },
+    { id: 'k3', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: '2026-07-21' },
+    { id: 'm1', team: 'MBAGALA', stage: 'assigned', requested_amt: 100, upload_date: MON },
+    /* APPROVED IS STILL AN APPLICATION -- it just moved on. Counting only what is still
+       sitting in u/a would make last week's figures shrink every time a docket advanced, so
+       this one is deliberately excluded from the (u+a) definition the dashboard also uses. */
+    { id: 'k4', team: 'KONGOWE', stage: 'approved', principal_amt: 100, upload_date: MON },
+    // Last week: outside the window entirely.
+    { id: 'old', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: '2026-07-17' },
+  ];
+  const d = await portalApi(fakeDb(t), ADMIN, 'appsWeekly', {}, NOW);
+  assert.equal(d.weekOf, MON);
+  assert.deepEqual(d.days.map(x => x.key), ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2']);
+
+  const by = Object.fromEntries(d.rows.map(r => [r.team, r]));
+  assert.equal(by.KONGOWE.J3, 2); assert.equal(by.KONGOWE.J4, 1);
+  assert.equal(by.KONGOWE.total, 3);
+  assert.equal(by.MBAGALA.J3, 1); assert.equal(by.MBAGALA.total, 1);
+  /* A TEAM THAT BROUGHT IN NOTHING IS THE FINDING. A report that omits it says nothing about
+     it at all -- a zero row is an answer, a missing row is a question. */
+  assert.ok(by.QUIET, 'every existing team is on the board');
+  assert.equal(by.QUIET.total, 0);
+  assert.equal(by.QUIET.avg, 0);
+
+  // The average is per day over SEVEN, not over the days that happened to have something.
+  assert.equal(by.KONGOWE.avg, Math.round((3 / 7) * 10) / 10);
+  assert.equal(d.rows[0].team, 'KONGOWE', 'busiest first');
+  assert.equal(d.totals.total, 4);
+  assert.equal(d.totals.J3, 3);
+  assert.equal(d.totals.avg, Math.round((4 / 7) * 10) / 10);
 });
 
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {

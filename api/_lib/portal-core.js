@@ -42,15 +42,120 @@ const STAGES = ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_app
     because "where is every application right now" is the question this tab gets asked most,
     and forcing a stage first meant a docket could only be found if you already knew which
     stage it had reached. */
-async function loans(db, user, { stage }) {
+/* WHICH DAY AN APPLICATION BELONGS TO. The day the ADMIN CHOSE for the report, falling back
+   to the insert moment for rows from before that stamp existed. This is not a new rule -- it
+   is the dashboard's own (see appsTrend), and it is here as one function so the list, the
+   weekly board and the trend cannot drift into three answers about the same Friday. */
+const loanDay_ = l => String((l && (l.upload_date || l.created_at)) || '').slice(0, 10);
+
+async function loans(db, user, { stage, from, to }, nowMs = Date.now()) {
   const st = STAGES.includes(stage) ? stage : '';
+  /* A DAY AT A TIME, BECAUSE THE WHOLE PIPELINE IS NOT A LIST ANYBODY READS.
+       "having loan applications nav - put a default start and end date of today {they too many}"
+     Every application the company has ever written arrived on this tab at once. Today is the
+     default; both ends are editable, so a week or a month is one change away and nothing is
+     out of reach. A blank pair means "no window" and gives back the old behaviour whole,
+     which is what the pipeline cards and the exports still want. */
+  const today = todayKey(nowMs);
+  const win = (from === '' && to === '') ? null
+    : { from: String(from || today).slice(0, 10), to: String(to || from || today).slice(0, 10) };
   /* Scoped at the database. An officer holding one team read every loan the company has ever
      written -- all forty teams, every column -- and kept a fortieth of it. */
   const q = onTeams(db.from('loans').select('*'), user.teams);
-  const rows = await fetchAll(() => (st ? q.eq('stage', st) : q).order('created_at', { ascending: false }));
-  const mine = scoped(user, rows);
+  const all = await fetchAll(() => (st ? q.eq('stage', st) : q).order('created_at', { ascending: false }));
+  /* The window is applied HERE rather than in the query, and deliberately: the day is
+     `upload_date OR created_at`, which no single column comparison expresses, and inventing a
+     second definition of an application's day at the database is exactly how the trend and
+     the list would come to disagree about a Friday file uploaded on Sunday. Same read as
+     before, same cost. */
+  /* A ROW WITH NEITHER STAMP CANNOT BE PUT ON A DAY, and must not vanish in silence. It is
+     left out of the window -- putting it in every window would be worse, the same docket
+     appearing in every report -- and COUNTED, so the tab can say how many are unreachable this
+     way instead of letting them disappear behind a date box. */
+  let undated = 0;
+  const inWin = win
+    ? all.filter(l => {
+      const d = loanDay_(l);
+      if (!d) { undated++; return false; }
+      return d >= win.from && d <= win.to;
+    })
+    : all;
+  const mine = scoped(user, inWin);
   return { stage: st, stages: STAGES, rows: mine, count: mine.length,
+    from: win ? win.from : '', to: win ? win.to : '', windowed: !!win,
+    total: all.length, undated,
     amount: mine.reduce((s, r) => s + (num(r.principal_amt) || num(r.requested_amt) || num(r.loan_amt)), 0) };
+}
+
+/* =====================================================================================
+   LOAN APPLICATIONS, WEEK BY WEEK, BY TEAM.
+   =====================================================================================
+     "chip their list under a teams weekly report s/n teamname j3(u+a), j4 - j2, total and
+      avrg (avrg per day in the 7 days) so that we get loan app performance report by all
+      existing teams"
+
+   AN APPLICATION IS UNASSIGNED + ASSIGNED -- the (u+a) in the request, and the same pair the
+   dashboard's own trend counts. Anything further down the pipeline was an application on the
+   day it arrived and is counted on that day, whatever it has become since; counting only what
+   is still sitting in those two stages would make last week's figures shrink every time a
+   docket moved forward, which is a report that rewrites its own history.
+
+   EVERY TEAM, INCLUDING THE ONES WITH NOTHING. "by all existing teams" is the whole point: a
+   team that brought in no applications is the finding, and a report that simply omits it says
+   nothing about it at all. A zero row is an answer; a missing row is a question.
+
+   THE AVERAGE IS PER DAY OVER SEVEN, always -- not over the days that happened to have
+   something on them. Dividing by "days with applications" would flatter a team that worked one
+   day and rank it above a team that worked all week. */
+async function appsWeekly(db, user, args, nowMs = Date.now()) {
+  const mon = (args && args.weekOf) ? String(args.weekOf).slice(0, 10) : weekMondayKey(nowMs);
+  const days = WD7.map((wd, i) => ({ key: LEADER_DAY_KEYS[i], weekday: wd, date: addDaysKey(mon, i) }));
+  const sun = days[6].date;
+
+  const [loanRows, teamRows] = await Promise.all([
+    fetchAll(() => onTeams(db.from('loans')
+      .select('team, stage, upload_date, created_at, requested_amt, principal_amt'), user.teams)),
+    fetchAll(() => db.from('teams').select('team')),
+  ]);
+  const mine = scoped(user, loanRows).filter(l => {
+    if (l.stage !== 'unassigned' && l.stage !== 'assigned') return false;
+    const d = loanDay_(l);
+    return d >= mon && d <= sun;
+  });
+
+  const byTeam = new Map();
+  const slot = team => {
+    const k = K(team) || '(no team)';
+    if (!byTeam.has(k)) {
+      const r = { team: team || '(no team)', total: 0, amount: 0 };
+      for (const d of days) r[d.key] = 0;
+      byTeam.set(k, r);
+    }
+    return byTeam.get(k);
+  };
+  // Every team on the book first, so the zeros are rows rather than absences.
+  for (const t of teamRows) if (teamAllowed(user, t.team)) slot(t.team);
+  const dayOfDate = new Map(days.map(d => [d.date, d.key]));
+  for (const l of mine) {
+    const k = dayOfDate.get(loanDay_(l));
+    if (!k) continue;
+    const r = slot(l.team);
+    r[k] += 1;
+    r.total += 1;
+    r.amount += num(l.requested_amt) || num(l.principal_amt);
+  }
+
+  const rows = [...byTeam.values()]
+    .map(r => ({ ...r, avg: Math.round((r.total / 7) * 10) / 10 }))
+    .sort((a, b) => b.total - a.total || String(a.team).localeCompare(String(b.team)));
+
+  const totals = { team: '', total: 0, amount: 0 };
+  for (const d of days) totals[d.key] = rows.reduce((s, r) => s + r[d.key], 0);
+  totals.total = rows.reduce((s, r) => s + r.total, 0);
+  totals.amount = rows.reduce((s, r) => s + r.amount, 0);
+  totals.avg = Math.round((totals.total / 7) * 10) / 10;
+
+  return { weekOf: mon, weekEnd: sun, days, rows, totals, teams: rows.length };
 }
 
 /** Counts for every stage in one pass -- the applications tab's pipeline strip. */
@@ -5640,7 +5745,7 @@ function requireAdmin(user) {
 
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
-  loans, loanPipeline, expected, defaulters, expectedDefaulters,
+  loans, loanPipeline, appsWeekly, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
@@ -5985,7 +6090,7 @@ const FN_TAB = {
   dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
   recoveryByCredit: ['dashboard'], monthReport: ['dashboard'],
-  loans: ['apps'], loanPipeline: ['apps'],
+  loans: ['apps'], loanPipeline: ['apps'], appsWeekly: ['apps'],
   expected: ['expected'], expectedDay: ['expected'],
   expectedDefaulters: ['defexp'],
   expdfReport: ['expdfrep'], expdfMine: ['expdfrep'], emailWeeklyExpdf: ['expdfrep'],
