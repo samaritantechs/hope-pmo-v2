@@ -125,6 +125,16 @@ $$;
 
 -- 3. THE BACKFILL: AS MANY DAYS AS FIT IN A TIME BUDGET, NEWEST FIRST.
 --
+--    IT BUILDS FORWARD AS WELL AS BACK, AND THAT IS NOT AN OPTIMISATION -- IT IS THE BUG.
+--    This walked from p_back days ago up to TODAY, and stopped. But the dashboard reads its week
+--    as MONDAY TO SUNDAY, and a range is served from the cache only when EVERY day of it is
+--    built -- so on any day except Sunday the week contained unbuilt future days, the all-or-
+--    nothing rule refused it, and the dashboard fell through to the live aggregate EVERY TIME.
+--    The cache was being filled and the screen that needed it most never touched it.
+--    A future day costs nothing to build: there is no deck, the index range is empty, and an
+--    upload dated into the future unmarks its own day on the way in. Fourteen days ahead covers
+--    any week, month or fortnight a screen can ask for.
+--
 --    EVERY CALENDAR DAY IS BUILT, INCLUDING THE ONES WITH NOTHING IN THEM. That is not waste,
 --    it is the point. The code serves a range from the cache only when EVERY day of it is
 --    built -- so that a week can never come back with four days in it and no sign that three
@@ -144,7 +154,8 @@ $$;
 --    way, exactly as every day is read today.
 create or replace function public.build_deck_totals_recent(
   p_budget_ms int default 20000,
-  p_back int default 120)
+  p_back int default 120,
+  p_ahead int default 14)
 returns table (kind text, day date, rows_built bigint, days_left bigint)
 language plpgsql
 security definer
@@ -154,7 +165,7 @@ declare r record; n bigint; started timestamptz := clock_timestamp();
 begin
   for r in
     select k.kind as k, d::date as d
-      from generate_series(current_date - p_back, current_date, interval '1 day') d
+      from generate_series(current_date - p_back, current_date + p_ahead, interval '1 day') d
       cross join (values ('expected'), ('defaulter')) as k(kind)
       left join public.deck_totals_days b on b.kind = k.kind and b.snapshot_date = d::date
      where b.snapshot_date is null
@@ -165,7 +176,7 @@ begin
     kind := r.k; day := r.d; rows_built := n;
     days_left := (
       select count(*)
-        from generate_series(current_date - p_back, current_date, interval '1 day') d
+        from generate_series(current_date - p_back, current_date + p_ahead, interval '1 day') d
         cross join (values ('expected'), ('defaulter')) as kk(kind)
         left join public.deck_totals_days b on b.kind = kk.kind and b.snapshot_date = d::date
        where b.snapshot_date is null);
