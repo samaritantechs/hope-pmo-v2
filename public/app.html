@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-03-f';
+var BUILD = '2026-09-03-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1309,14 +1309,29 @@ function targetOf_(c){
   return (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
 }
 /* Everything the per-cell rule needs, worked out ONCE per table rather than per cell. */
-function colourCtx_(cols, tot){
+function colourCtx_(cols, tot, rows){
   var ctx = { floors: {}, avgCol: null };
   (cols || []).forEach(function(c){
+    /* A COUNT COLUMN'S LINE IS THE MEAN ACROSS THE ROWS, NOT THE TOTAL.
+       "those below average in grand total row marked red" -- on a percentage column the total
+       row IS the line, which is the rule everywhere else in this app. On a column of counts it
+       cannot be: every team is below the sum of all teams, so the whole table would go red.
+       The honest line for a count is what an average team did, so `meanFloor` says to take it
+       from the rows. */
+    if (c.meanFloor && rows && rows.length && !c.lowGood) {
+      var s = 0, n = 0;
+      rows.forEach(function(r){
+        var x = Number(c.get ? c.get(r) : r[c.key]);
+        if (!isNaN(x)) { s += x; n++; }
+      });
+      if (n) ctx.floors[c.key] = s / n;
+      return;
+    }
     if (c.kind !== 'pct' || c.lowGood || !tot) return;
     var v = tot[c.key];
     if (v == null || v === '') return;
-    var n = Number(String(v).replace(/[~%\s,]/g, ''));
-    if (!isNaN(n)) ctx.floors[c.key] = n;
+    var n2 = Number(String(v).replace(/[~%\s,]/g, ''));
+    if (!isNaN(n2)) ctx.floors[c.key] = n2;
   });
   var named = (cols || []).filter(function(c){ return c.avgKey; })[0];
   var want = named ? [named.avgKey] : AVG_KEYS;
@@ -1336,6 +1351,10 @@ function pctClass_(r, c, ctx){
   return '';
 }
 function cellCls_(r, c, ctx){
+  if (c.meanFloor && ctx.floors[c.key] != null && c.kind !== 'pct') {
+    var v = Number(c.get ? c.get(r) : r[c.key]);
+    return (!isNaN(v) && v < ctx.floors[c.key]) ? 'bad' : '';
+  }
   if (c.kind === 'pct') return pctClass_(r, c, ctx);
   if ((NAME_KEYS[c.key] || c.nameCol) && ctx.avgCol) return pctClass_(r, ctx.avgCol, ctx) === 'bad' ? 'bad' : '';
   return '';
@@ -1445,7 +1464,7 @@ function tableHtml(rows, cols, onRow){
      read as the filtered one by everybody. */
   var tot = autoTotals(rows, cols);
   // Green at target, red under the JUMLA line, names red with their row's average -- see cellCls_.
-  var ctx = colourCtx_(cols, tot);
+  var ctx = colourCtx_(cols, tot, rows);
   var body = rows.map(function(r, i){
     return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
       + '<td class="sn">'+(i+1)+'</td>'
@@ -2193,6 +2212,7 @@ function wireBar(){
       paint(true);
     };
   });
+  wireBoardSort();
   Array.prototype.forEach.call(document.querySelectorAll('[data-jpg]'), function(el){
     el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
   });
@@ -3249,10 +3269,23 @@ VIEWS.monthreport = function(){
   });
 };
 
+/* The seven day columns, in the order the working week is spoken here -- J3 J4 J5 AL IJ, then
+   the weekend. Same keys and the same order as every other day-column board in this system. */
+var APPS_DAYS = [['J3','Jumatatu / Mon'],['J4','Jumanne / Tue'],['J5','Jumatano / Wed'],
+  ['AL','Alhamisi / Thu'],['IJ','Ijumaa / Fri'],['J1','Jumamosi / Sat'],['J2','Jumapili / Sun']];
+
 VIEWS.apps = function(){
   var stage = S.args.stage || 'approved';
-  return Promise.all([srv('loanPipeline'), srv('loans', {stage:stage})]).then(function(r){
-    var pipe=r[0], d=r[1];
+  /* TODAY AT BOTH ENDS, unless something else was chosen. "put a default start and end date of
+     today {they too many}" -- the tab used to open with every application the company has ever
+     written. Undefined means "the server decides", which is today; the boxes below carry
+     whatever the server settled on, so the dates on screen are always the dates in the table. */
+  var from = S.args.from, to = S.args.to;
+  return Promise.all([srv('loanPipeline'),
+      srv('loans', {stage:stage, from:from, to:to}),
+      srv('appsWeekly', {weekOf: S.args.weekOf || ''})]).then(function(r){
+    var pipe=r[0], d=r[1], wk=r[2];
+    S.args.from = d.from; S.args.to = d.to;
     // Eight stage cards answer "where are they" and never "how many". These two answer that.
     HEAD = '<div class="kpis">'
       + kpi('Applications in pipeline', money(pipe.total), 'hatua zote / every stage')
@@ -3260,14 +3293,42 @@ VIEWS.apps = function(){
       + pipe.stages.map(function(s){
           return kpi(s.stage.replace(/_/g,' '), money(s.count), money(s.amount));
         }).join('') + '</div>'
+      /* THE WEEK BY TEAM, CHIPPED UNDER THE CARDS. Folded by default like every other chip in
+         this system, so the tab still opens on the day's list and the week is one tap away. */
+      + fold_('appsWeek', 'Maombi kwa wiki / Applications by team — wiki hii / this week',
+          wk.weekOf + ' → ' + wk.weekEnd + ' · ' + money(wk.totals.total) + ' maombi / applications',
+          board('appsWeekBoard',
+            'Maombi ya mikopo kwa timu / Loan applications by team',
+            'unassigned + assigned, kwa siku ya ripoti / by the report’s day · '
+              + 'nyekundu = chini ya wastani wa timu / red = below the average team',
+            wk.rows,
+            [col('team','Timu / Team')].concat(APPS_DAYS.map(function(p){
+                return { key: p[0], label: p[0], kind: 'num', meanFloor: true, title: p[1] }; }))
+              .concat([{ key:'total', label:'Jumla / Total', kind:'num', meanFloor: true },
+                { key:'avg', label:'Wastani/siku / Avg per day', kind:'num', meanFloor: true,
+                  title:'Jumla ÷ siku 7 / total ÷ the 7 days of the week' },
+                col('amount','Kiasi / Requested','money')]),
+            wk.totals))
       + bar('<label style="font-size:12px;color:var(--mut)">Stage</label>'
         + '<select data-arg="stage"><option value="">Hatua zote / All stages</option>'
         + d.stages.map(function(s){
             return '<option value="'+s+'"'+(s===d.stage?' selected':'')+'>'+s.replace(/_/g,' ')+'</option>'; }).join('') + '</select>'
+        /* BOTH ENDS, EDITABLE. Clearing them both is "no window" and gives the whole pipeline
+           back -- nothing is put out of reach by the default. */
+        + '<label style="font-size:12px;color:var(--mut)">Kuanzia / From</label>'
+        + '<input type="date" data-arg="from" value="'+esc(d.from||'')+'">'
+        + '<label style="font-size:12px;color:var(--mut)">Hadi / To</label>'
+        + '<input type="date" data-arg="to" value="'+esc(d.to||'')+'">'
         + '<select data-filter="team"><option value="">All teams</option>'
         + [...new Set(d.rows.map(function(r){ return r.team; }).filter(Boolean))].sort().map(function(x){
             return '<option'+(S.filters.team===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
-        + '<span class="chip">'+money(d.count)+' loans · TZS '+money(d.amount)+'</span>');
+        + '<span class="chip">'+money(d.count)+' loans · TZS '+money(d.amount)
+          + (d.windowed ? ' · ' + esc(d.from) + (d.to !== d.from ? ' → ' + esc(d.to) : '') : ' · zote / all')
+          + '</span>'
+        /* A ROW WITH NO DATE CANNOT BE ON A DAY, and must not disappear behind a date box
+           without a word -- that is how a docket goes missing for a week. */
+        + (d.undated ? '<span class="chip bad">'+money(d.undated)+' bila tarehe / undated — '
+            + 'futa tarehe zote mbili kuziona / clear both dates to see them</span>' : ''));
     S.rows = d.rows;
     S.cols = [{key:'stage', label:'Stage', kind:'chip', chip:function(){ return 'mut'; },
         get:function(r){ return String(r.stage||'').replace(/_/g,' '); }},
@@ -3719,9 +3780,44 @@ VIEWS.fureport = function(){
   });
 };
 /* Small static tables inside a head block (no search/sort -- those belong to the main table). */
-function tableSimple(rows, cols, totalRow){
+/* A BOARD'S HEADERS SORT TOO, and without a trip to the server.
+     "column headers sortable"
+   The main list has sorted on its headers since the beginning; the chipped boards never did,
+   so a team's row on a forty-row board could only be found by reading down it. The rows are
+   already in hand -- BOARDS[id] holds them -- so this is pure rearrangement: the board is
+   re-rendered in place, the page does not move, and nothing is fetched. Same rule as the main
+   table's sort, for the same reason it was made not to move the page. */
+function bsort_(id, key){
+  var b = BOARDS[id];
+  if (!b) return;
+  if (b.sort === key) b.asc = !b.asc; else { b.sort = key; b.asc = false; }
+  var c = (b.cols || []).filter(function(x){ return x.key === key; })[0] || { key: key };
+  var val = function(r){ return c.get ? c.get(r) : r[key]; };
+  var dir = b.asc ? 1 : -1;
+  b.rows = b.rows.slice().sort(function(x, y){
+    var a = val(x), z = val(y);
+    var na = Number(a), nz = Number(z);
+    if (!isNaN(na) && !isNaN(nz) && a !== '' && z !== '' && a != null && z != null) return (na - nz) * dir;
+    return String(a == null ? '' : a).localeCompare(String(z == null ? '' : z)) * dir;
+  });
+  var card = document.getElementById(id);
+  if (!card) return;
+  var holder = card.querySelector('.scroll');
+  if (!holder) return;
+  var fresh = document.createElement('div');
+  fresh.innerHTML = tableSimple(b.rows, b.cols, b.total, id);
+  holder.parentNode.replaceChild(fresh.firstChild, holder);
+  wireBoardSort();
+}
+function wireBoardSort(){
+  Array.prototype.forEach.call(document.querySelectorAll('th[data-bsort]'), function(th){
+    th.onclick = function(){ bsort_(th.getAttribute('data-bid'), th.getAttribute('data-bsort')); };
+  });
+}
+
+function tableSimple(rows, cols, totalRow, boardId){
   if (!rows || !rows.length) return '<div class="msg">—</div>';
-  var ctx = colourCtx_(cols, totalRow);         // the same colour rule as the main list
+  var ctx = colourCtx_(cols, totalRow, rows);   // the same colour rule as the main list
   var body = rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
         var k = cellCls_(r, c, ctx);
         return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
@@ -3732,9 +3828,13 @@ function tableSimple(rows, cols, totalRow){
   if (totalRow) body += '<tr class="totrow"><td class="sn"></td>'+cols.map(function(c,i){
       return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(totalRow)):'')+'">'
         +(i===0?'JUMLA / TOTAL':cellHtml(totalRow,c))+'</td>'; }).join('')+'</tr>';
+  var b = boardId ? BOARDS[boardId] : null;
   return '<div class="scroll"><table><thead><tr><th class="sn">S/N</th>'+cols.map(function(c){
-      return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
-    + body + '</tbody></table></div>';
+      var arrow = (b && b.sort === c.key) ? (b.asc ? ' ↑' : ' ↓') : '';
+      var tip = c.title ? ' title="'+esc(c.title)+'"' : '';
+      var s = boardId ? ' data-bsort="'+esc(c.key)+'" data-bid="'+esc(boardId)+'"' : '';
+      return '<th class="'+(isNum(c)?'r':'')+'"'+s+tip+'>'+esc(c.label)+arrow+'</th>'; }).join('')
+    + '</tr></thead><tbody>' + body + '</tbody></table></div>';
 }
 function sumRow(rows, fields){
   var o = {};
@@ -3874,7 +3974,8 @@ function board(id, title, sub, rows, cols, totalRow){
     + '<span class="sub"><button class="btn sm ghost" data-xls="'+id+'">Excel</button>'
     + ' <button class="btn sm ghost" data-jpg="'+id+'">JPG</button>'
     + ' <button class="btn sm ghost" data-csv="'+id+'">CSV</button></span></div>'
-    + tableSimple(rows, cols, totalRow) + '</div>';
+    // The total row is remembered so a re-sort can redraw the board without recomputing it.
+    + ((BOARDS[id].total = totalRow), tableSimple(rows, cols, totalRow, id)) + '</div>';
 }
 function boardPair(idA, titleA, subA, a, idB, titleB, subB, b, cols, totalFields){
   return '<div class="pair">'
