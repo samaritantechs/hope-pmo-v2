@@ -146,3 +146,112 @@ test('a chipped board draws sortable headers, and the total row is never painted
   const totrow = html.slice(html.indexOf('totrow'));
   assert.equal(/ bad/.test(totrow), false, 'the JUMLA row carries no red');
 });
+
+/* =====================================================================================
+   THE UPLOAD SLICES ITSELF DOWN WHEN THE DATABASE IS SLOW.
+   =====================================================================================
+     "Uploading is running out of time server error so were not obeying the rule"
+
+   Two thousand rows a request was chosen when the database answered normally. It does not:
+   the same instance now takes SIXTEEN SECONDS to add three million integers with no table
+   behind it. The upload clock on the server can stand the housekeeping down; it cannot make
+   the WRITE smaller, because the write is the upload. Only the page can send less.
+
+   Run, not grepped for -- the three properties that matter are all silent when broken:
+   every row arrives exactly once, a timed-out slice is re-sent rather than lost or doubled,
+   and every slice keeps ONE batch id (twelve batches would be read as a twelfth of the file,
+   with every figure quietly too low). */
+function liftSlicer() {
+  const src = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
+  const grab = re => {
+    const m = src.match(re);
+    assert.ok(m, 'upload.html no longer contains ' + re + ' -- the extractor needs updating');
+    return m[0];
+  };
+  const code = [
+    grab(/var UPLOAD_SLICE_ROWS = \d+;/), grab(/var SLICE_MIN_ROWS = \d+;/),
+    grab(/var SLICE_SLOW_MS = \d+;/), grab(/function sliceTimedOut_\(e\)\{[\s\S]*?\n\}/),
+    grab(/function sendInSlices_\([\s\S]*?\n\}\n(?=\n)/),
+    'return sendInSlices_;',
+  ].join('\n');
+
+  /** Drive the slicer against a fake network whose speed and failures we choose. */
+  return (rowCount, behave) => {
+    const calls = [];
+    let now = 0;
+    const clock = { now: () => now };
+    const fetch = async (url, opt) => {
+      const body = JSON.parse(opt.body);
+      const n = body.rows.length - 1;                       // every slice carries the header
+      const t = behave(n, calls.length);
+      now += t.ms;
+      calls.push({ n, part: body.part, ok: t.ok });
+      return t.ok
+        ? { r: { status: 200, body: { ok: true, inserted: n } } }
+        : { r: { status: 500, body: { ok: false,
+            error: t.error || 'Seva imechukua muda mrefu mno — HTTP 504' } } };
+    };
+    const send = new Function('fetch', 'readJson_', 'uuid_', 'Date', code)(
+      fetch, x => Promise.resolve(x.r), () => 'one-batch-id', clock);
+    const rows = [['A', 'B']].concat(Array.from({ length: rowCount }, (_, i) => ['r' + i, i]));
+    return send('', 'CODE', 'defaulters-current', {}, rows, null)
+      .then(res => ({ calls, body: res.r ? res.r.body : res.body }));
+  };
+}
+
+test('a healthy database keeps the full slice, and the last part is flagged last', async () => {
+  const drive = liftSlicer();
+  const { calls, body } = await drive(9000, () => ({ ms: 5000, ok: true }));
+  assert.deepEqual(calls.map(c => c.n), [2000, 2000, 2000, 2000, 1000]);
+  assert.equal(body.inserted, 9000, 'every row, counted once');
+  const last = calls[calls.length - 1].part;
+  assert.ok(last.index >= last.total - 1,
+    'the server decides isLast from index >= total - 1; a resized plan must still land on it, '
+    + 'or the register is never rebuilt and the phones never get the new data stamp');
+  assert.equal(new Set(calls.map(c => c.part.id)).size, 1, 'one batch, not five');
+});
+
+test('a slow database is answered with smaller slices, and still delivers every row', async () => {
+  const drive = liftSlicer();
+  const { calls, body } = await drive(9000, () => ({ ms: 32000, ok: true }));
+  assert.deepEqual(calls.slice(0, 4).map(c => c.n), [2000, 1000, 500, 250],
+    'halving as it goes, rather than after it has already failed');
+  assert.equal(calls[calls.length - 1].n <= 250, true, 'and it does not grow back mid-file');
+  assert.equal(body.inserted, 9000);
+  assert.equal(new Set(calls.map(c => c.part.id)).size, 1);
+});
+
+test('a slice that ran out of time is re-sent smaller -- never lost, never doubled', async () => {
+  /* A cancelled statement is rolled back whole and a killed function wrote nothing it had not
+     already committed, so the rows that slice was carrying are not in the database. Re-sending
+     them cannot double anything, and NOT re-sending them would leave a hole in the deck that
+     nothing on any screen would ever say was there. */
+  const drive = liftSlicer();
+  let failures = 0;
+  const { calls, body } = await drive(6000,
+    (n, i) => (i === 1 && failures++ < 1 ? { ms: 60000, ok: false } : { ms: 5000, ok: true }));
+  assert.equal(calls.filter(c => !c.ok).length, 1, 'one slice failed');
+  assert.equal(body.inserted, 6000, 'and all six thousand rows still arrived, exactly once');
+  assert.equal(new Set(calls.map(c => c.part.id)).size, 1);
+});
+
+test('a file small enough for one request is still sent whole, unsliced', async () => {
+  const drive = liftSlicer();
+  const { calls } = await drive(1500, () => ({ ms: 1000, ok: true }));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].part, undefined, 'no part block at all -- the ordinary case is unchanged');
+});
+
+test('only a TIMEOUT buys a smaller slice; a bad file fails at once and says why', async () => {
+  /* A missing column or a rejected date fails identically at every size. Halving four times
+     over would take four times as long to tell somebody what is actually wrong with the file. */
+  const drive = liftSlicer();
+  let calls = 0;
+  await assert.rejects(
+    () => drive(6000, () => {
+      calls++;
+      return { ms: 1000, ok: false, error: 'column "REF#" could not be read in this file' };
+    }),
+    e => /REF#/.test(String(e.message)));
+  assert.equal(calls, 1, 'it did not sit there halving a file the database will never accept');
+});

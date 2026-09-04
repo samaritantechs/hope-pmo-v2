@@ -1335,8 +1335,41 @@ $('go').addEventListener('click', function(){
    upload batch rather than twelve -- the readers keep the latest batch and discard the rest, so
    a file that arrived as twelve batches would be read as a twelfth of itself.
 
-   A file small enough to fit in one request is sent whole, with no slicing, exactly as before. */
+   A file small enough to fit in one request is sent whole, with no slicing, exactly as before.
+
+   AND THE SLICE SIZES ITSELF NOW, because a fixed number is always wrong on some morning.
+
+     "Uploading is running out of time server error so were not obeying the rule"
+
+   Two thousand rows was chosen when the database was answering normally. It is not answering
+   normally: the same instance now takes SIXTEEN SECONDS to add three million integers together
+   with no table behind it, so a slice that used to take eight seconds takes far longer, and the
+   host cuts the function off at sixty whatever the server does about its own housekeeping. The
+   upload clock added on the server can stand the tidying down; it cannot make the WRITE smaller,
+   because the write is the upload.
+
+   Only the page can send less. So it watches its own clock:
+
+     a slice slower than SLICE_SLOW_MS      -> halve the slice for everything still to come
+     a slice that fails on time             -> halve it and send THAT slice again
+     a slice comfortably fast               -> leave it alone; never grows back mid-file
+
+   It only ever gets smaller within one file, on purpose: growing back after a slow slice is how
+   an upload oscillates instead of finishing. And the floor is 250 rows, below which the number
+   of round trips becomes its own way of running out of time -- the exact trap described above. */
 var UPLOAD_SLICE_ROWS = 2000;
+var SLICE_MIN_ROWS = 250;
+/* Half the host's sixty seconds. A slice at or past this is not yet a failure, but it is the
+   last warning before one, and the point of the whole mechanism is to move before the failure
+   rather than after it. */
+var SLICE_SLOW_MS = 30000;
+/* Only a TIMEOUT is answered with a smaller slice. A bad column or a rejected date fails
+   identically at every size, and halving four times over would just take four times as long to
+   tell somebody what is actually wrong with their file. */
+function sliceTimedOut_(e){
+  var m = String((e && e.message) || e);
+  return /504|timeout|timed out|muda mrefu|took too long|canceling statement|statement timeout/i.test(m);
+}
 
 function uuid_(){
   if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -1375,7 +1408,6 @@ function repairRegister_(apiBase, code, msg){
 function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
   var header = rows[0];
   var data = rows.slice(1);
-  var total = Math.max(1, Math.ceil(data.length / UPLOAD_SLICE_ROWS));
   var id = uuid_();
 
   function post(body){
@@ -1387,7 +1419,7 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
 
   // Small enough for one request: send it the way it has always been sent, so nothing about the
   // ordinary case depends on any of this.
-  if (total === 1) return post({ code: code, type: type, meta: meta, rows: rows });
+  if (data.length <= UPLOAD_SLICE_ROWS) return post({ code: code, type: type, meta: meta, rows: rows });
 
   var inserted = 0;
   /* THE WORKING-LIST COUNT IS A TOTAL TOO, and reading it off the last slice is what made a
@@ -1400,11 +1432,22 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
      its own answer, and this took the LAST one's number as the file's. 888 is the size of the
      final slice, not the size of the failure. Summed, like the row count beside it. */
   var synced = 0;
-  var step = function(i){
-    if (onProgress) onProgress(i, total);
-    var slice = [header].concat(data.slice(i * UPLOAD_SLICE_ROWS, (i + 1) * UPLOAD_SLICE_ROWS));
+  /* WHERE WE ARE, rather than which fixed slice we are on. `at` is the next unsent row and
+     `size` can shrink between slices, so the plan is recomputed every time instead of being
+     fixed up front -- `total` is only ever "this one plus however many are still to come at
+     the size we are using NOW", which is all the server reads it for (see partPlan: isLast is
+     index >= total - 1). */
+  var at = 0, idx = 0, size = UPLOAD_SLICE_ROWS, shrunk = 0;
+
+  var step = function(){
+    var left = data.length - at;
+    var total = idx + Math.max(1, Math.ceil(left / size));
+    if (onProgress) onProgress(idx, total);
+    var take = Math.min(size, left);
+    var slice = [header].concat(data.slice(at, at + take));
+    var startedAt = Date.now();
     return post({ code: code, type: type, meta: meta, rows: slice,
-                  part: { id: id, index: i, total: total } })
+                  part: { id: id, index: idx, total: total } })
       .then(function(res){
         var ok = res.status >= 200 && res.status < 300 && res.body && res.body.ok !== false;
         if (!ok) {
@@ -1412,25 +1455,45 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
              the file is in and whether sending it again would double it. It would not: the
              slices that landed share one batch stamp, and a fresh upload writes a new batch
              which supersedes the incomplete one whole. */
-          var e = new Error((res.body && res.body.error) || ('HTTP ' + res.status)
-            + '');
-          e.uploadStoppedAt = { part: i + 1, total: total, rows: inserted };
+          var e = new Error((res.body && res.body.error) || ('HTTP ' + res.status) + '');
+          e.uploadStoppedAt = { part: idx + 1, total: total, rows: inserted };
           throw e;
         }
         inserted += (res.body.inserted || 0);
         synced += (res.body.followupSynced || 0);
-        if (i + 1 >= total) {
+        at += take; idx += 1;
+        if (at >= data.length) {
           // The last slice's answer is the file's answer -- it is the one that did the retiring
           // and moved the phones' stamp -- but the COUNTS belong to the whole file.
           res.body.inserted = inserted;
           if (synced) res.body.followupSynced = synced;
-          if (onProgress) onProgress(total, total);
+          if (shrunk) res.body.sliceShrunk = { to: size, times: shrunk };
+          if (onProgress) onProgress(idx, idx);
           return res;
         }
-        return step(i + 1);
+        /* SLOW IS A WARNING, NOT YET A FAILURE -- and the whole point is to move before the
+           failure rather than after it. */
+        if ((Date.now() - startedAt) >= SLICE_SLOW_MS && size > SLICE_MIN_ROWS) {
+          size = Math.max(SLICE_MIN_ROWS, Math.floor(size / 2)); shrunk++;
+        }
+        return step();
+      })
+      .catch(function(e){
+        /* A SLICE THAT RAN OUT OF TIME IS SENT AGAIN, SMALLER. The rows it was carrying were
+           never written -- a cancelled statement is rolled back whole and a killed function
+           wrote nothing it had not already committed -- so re-sending them cannot double
+           anything. `at` has not moved, so this is the same rows in a smaller bite. */
+        if (sliceTimedOut_(e) && size > SLICE_MIN_ROWS) {
+          size = Math.max(SLICE_MIN_ROWS, Math.floor(size / 2)); shrunk++;
+          return step();
+        }
+        if (e && !e.uploadStoppedAt) {
+          e.uploadStoppedAt = { part: idx + 1, total: idx + Math.ceil((data.length - at) / size), rows: inserted };
+        }
+        throw e;
       });
   };
-  return step(0);
+  return step();
 }
 
 function escHtml_(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
