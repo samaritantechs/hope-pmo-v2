@@ -148,9 +148,27 @@ const BUDGETS = [
      once per process per minute and shared by every question asked together, so in the field it
      is not one per dashboard at all; a fixture builds a fresh database per call, so here it
      shows as exactly one. Raised deliberately: one index read to skip several multi-second
-     aggregates is the trade this whole change is, and it belongs in the diff. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  31,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  30,   900],
+     aggregates is the trade this whole change is, and it belongs in the diff.
+
+     THIRTY-TWO, AND THE THIRTY-SECOND IS ILIYONASIA -- "the col% of excels and our system
+     differ ... he is worried we are not including iliyonasia in collected". He was right, and
+     the reason is that the register was applied on the weekly report and the leader reports
+     and nowhere else, so this screen's Col % and that report's Col % were two answers to one
+     question. The read that fixes it is the pmo_adjustments register over the widest stretch
+     this screen draws: a HAND-TYPED book of tens of rows, bounded by date, riding inside the
+     existing parallel wave so it costs no wall time, and adding no measurable rows at all
+     (the row budgets below are untouched). Could the database do it instead? It already is --
+     the filtering is a `gte`/`lte` on an indexed column and what comes back is the answer, not
+     a book to sift. One small read is what one consistent figure costs, and it belongs in the
+     diff rather than in a later commit nobody connects to it.
+
+     THIRTY-THREE, AND THE THIRTY-THIRD IS THE SAME REGISTER ON THE SHARED DASHBOARD. This
+     screen is built from TWO things: its own reads, and buildDashboard -- which the phone's
+     summary strip is also built from. Correcting one and not the other put two different
+     Collected figures for one day on this one screen, which is worse than the fault being
+     fixed. So both read it, and this screen pays for both because it draws both. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  33,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  32,   900],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
@@ -290,6 +308,29 @@ const PHONE = [
   ['Calls: sync / search index', 'api_callSync',
     ['DEV1', [{ phone: '0712000001', date: '2026-07-24', ts: 1, duration: 60, outcome: 'CONNECTED' }]],
     20, 30000],
+  /* THE PHONE'S SUMMARY STRIP, WHICH HAD NO BUDGET AT ALL, AND COSTS THIRTY TRIPS.
+     Adding the Iliyonasia read here is what made me measure it, and the number is worth
+     writing down plainly rather than burying: TWENTY-NINE before this change, THIRTY-ONE
+     after. Two of those thirty-one are mine -- one inside buildDashboard, one for the week's
+     Col figure on the bar -- and the other twenty-nine were already there with nothing
+     watching them.
+
+     TWO, NOT ONE, BECAUSE THE BAR SHOWS TWO COLLECTION FIGURES. Today's comes from
+     buildDashboard; the week's is its own read. Correcting one and not the other would have
+     left the bar contradicting itself, which is exactly the fault being fixed.
+
+     It is thirty because the strip deliberately runs buildDashboard -- the same function the
+     portal's dashboard is built from -- so that the phone and the portal can never disagree
+     about the same day. That is the right trade and it is not what this budget is for. What
+     this budget is for is the NEXT read somebody adds without noticing, on the one path that
+     must never slow down.
+
+     Two things already stop this being per-handset: summaryCache holds the strip per scope
+     with a single flight, and buildDashboard sits behind cachedAnswer -- which exists
+     precisely because forty handsets on a scope used to run it side by side. So thirty trips
+     is thirty per scope per minute, not thirty per officer. A number that goes UP here is a
+     number to argue about before it ships, not after. */
+  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 31, 40000],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way

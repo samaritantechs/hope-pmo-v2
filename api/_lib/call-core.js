@@ -7,6 +7,8 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
+/* The Iliyonasia register and the one function that folds it into a collection figure. */
+import { adjReceived_, withAdj_ } from './adjustments.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { statusWithPaid } from './settled.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
@@ -1129,9 +1131,26 @@ async function summaryCompute(db, user, nowMs) {
      week is being carried; the officers are chased on the week, so the week is on the bar.
      Same per-day batch resolution the dashboard uses on weekends, so a re-upload of any day
      supersedes rather than doubles. */
-  const weekAll = await expectedTotalsInRange(db, { type: 'today',
-    from: weekMondayKey(nowMs), to: addDaysKey(weekMondayKey(nowMs), 4), teams: user.teams });
-  const wRows = mine([...resolveLatestPerKey(weekAll, r => r.snapshot_date).values()].flatMap(s => s.rows));
+  /* AND THE ILIYONASIA REGISTER OVER THE SAME FIVE DAYS.
+     "not just there ... everywhere the amount should add as stated during manual input"
+     Without it this one figure -- the week's Col, on the bar three hundred officers read all
+     day -- would be the last place in the system still quoting the deck alone, and it would
+     contradict the Col beside it on the same bar, which comes from buildDashboard and does
+     apply the register.
+
+     RULE 1, COUNTED. This is ONE read on the call path: a hand-typed book of tens of rows,
+     bounded to Monday-Friday, issued IN PARALLEL with the week read above rather than after
+     it, so the strip waits no longer than it did. It sits behind summaryCache and its single
+     flight, so it is one read per scope per refresh, not one per handset -- and a deployment
+     without the table gets null and the bar is exactly what it is today. The budget for this
+     whole path is in test/speed.test.mjs and it went up by one in the same commit. */
+  const weekMon_ = weekMondayKey(nowMs), weekFri_ = addDaysKey(weekMon_, 4);
+  const [weekAll, wAdj] = await Promise.all([
+    expectedTotalsInRange(db, { type: 'today', from: weekMon_, to: weekFri_, teams: user.teams }),
+    adjReceived_(db, user, { from: weekMon_, to: weekFri_ }),
+  ]);
+  const wRows = [...resolveLatestPerKey(weekAll, r => r.snapshot_date).entries()]
+    .flatMap(([date, s]) => withAdj_(mine(s.rows), wAdj, 'expected-current', date));
   const wExp = tExpected(wRows);
   const wCol = tCollected(wRows);
 

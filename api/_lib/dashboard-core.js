@@ -11,6 +11,8 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, de
     looking rather than by remembering. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
 import { recoveryBasis, num } from './recovery.js';
+/* The Iliyonasia register and the one function that folds it into a collection figure. */
+import { adjReceived_, withAdj_ } from './adjustments.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 /* SATURDAY IS A WORKING DAY HERE, AND THE WEEKEND VIEW WAS THROWING IT AWAY.
@@ -82,7 +84,7 @@ async function buildDashboardUncached(db, user, nowMs) {
   const scoped = rows => rows.filter(r => teamAllowed(user, r.team));
 
   // ---- Expected (collections), defaulter decks, sales, received -- independent reads ----
-  const [expected, decks, sal0, rcv0] = await Promise.all([
+  const [expected, decks, sal0, rcv0, adj] = await Promise.all([
     loadExpected(db, { weekend, today, weekMon, weekFri, teams: user.teams }),
     loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams: user.teams }),
     // Sales = approved within the CURRENT WEEK, the same correction the live system's sales
@@ -95,9 +97,35 @@ async function buildDashboardUncached(db, user, nowMs) {
     fetchAll(() => onTeams(weekend
       ? db.from('received_payments').select('team, amount_paid').gte('paid_at', weekMon).lte('paid_at', today)
       : db.from('received_payments').select('team, amount_paid').eq('paid_at', today), user.teams)),
+    /* The Iliyonasia register -- see the note where it is applied, below. Read over a fortnight
+       rather than over `expected.dates`, because those are not known until loadExpected has
+       answered and waiting for them would turn a parallel read into a sequential one on the
+       path the phone's summary strip uses. A fortnight of a hand-typed book is still tens of
+       rows, and which of those days actually count is decided when it is APPLIED, not here. */
+    adjReceived_(db, user, { from: addDaysKey(weekMon, -7), to: today }),
   ]);
 
-  const expRows = scoped(expected.rows);
+  /* ILIYONASIA, ON THE SHARED DASHBOARD.
+     =====================================================================================
+       "not just there: that was evidence so EVERYWHERE the amount should add as stated
+        during manual input"
+
+     This function is the one both the portal's dashboard and the PHONE's daily-summary strip
+     are built from, which is exactly why the correction has to land here: without it the same
+     screen carried two Collected figures -- this one, and the Orodha's beside it, which does
+     apply the register. Two numbers for one day on one screen is the drift CLAUDE.md's
+     one-rule-one-place exists to stop.
+
+     WHAT IT COSTS THE PHONE, COUNTED. Rule 1 says count every read added to /api/call. This
+     adds ONE: a hand-typed register of tens of rows, read INSIDE the existing parallel wave
+     above so it adds no wall time, and behind cachedAnswer -- which is here precisely because
+     forty handsets on a scope used to run this side by side, so in the field it is one read
+     per scope per minute, not one per handset. It cannot fail the screen either: a missing
+     table answers null and every figure below is exactly what it is today.
+
+     `expected.dates` is what bounds the APPLYING, so the correction lands on the days this
+     dashboard actually drew and on no others -- today on a weekday, the week at the weekend. */
+  const expRows = withAdj_(scoped(expected.rows), adj, 'expected-current', expected.dates || []);
   const sal = scoped(sal0);
   const rcv = scoped(rcv0);
   const defCurRows = scoped(decks.currentRows);
