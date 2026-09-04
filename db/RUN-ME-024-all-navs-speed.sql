@@ -145,14 +145,45 @@ select count(*) from public.followup_comments where created_at >= current_date -
 --   analyze public.followup_comments;
 --   analyze public.loans;
 
--- 7b. RECLAIM DEAD ROWS, for any table section 5 shows badly bloated.
---     VACUUM (not FULL) does NOT lock the table -- reads and writes carry on, so uploading and
---     the call app are untouched. VACUUM FULL does lock it and rewrites it; it is NOT here.
---     One table at a time, run on its own line.
+-- 7b. RECLAIM DEAD ROWS -- AND THEN STOP HAVING TO.
+--
+--     WHAT SECTION 5 FOUND ON THIS BOOK: `last_autovacuum` was NULL on every table but one.
+--     defaulter_snapshots -- 1.39 million live rows, 211,000 dead -- had never been vacuumed at
+--     all. That is why an "Index Only Scan" in section 6 still showed `Heap Fetches: 1774`:
+--     without a vacuum the VISIBILITY MAP is never built, so an index-only scan has to go to
+--     the heap anyway. Every read, on every nav, doing work it should not have to.
+--
+--     AND IT WAS NOT A BROKEN AUTOVACUUM. It is ON, with the default
+--     autovacuum_vacuum_scale_factor = 0.2 -- twenty per cent. Twenty per cent of 1.39 million
+--     rows is 278,000 dead tuples before it will even start. The table sat at 211,000, under
+--     the line, for ever. The default is written for small tables; on a big one it means the
+--     table permanently carries a quarter of a million corpses.
+--
+--     SO THE DURABLE FIX IS THE THRESHOLD, not a vacuum somebody has to remember to run.
+--     ALTER TABLE ... SET (autovacuum_*) takes SHARE UPDATE EXCLUSIVE: it does NOT block reads
+--     or writes, so uploading and the call app are untouched. Two per cent of 1.39 million is
+--     27,800 -- often enough to keep the map warm, rarely enough to cost nothing noticeable.
+--
+--   alter table public.defaulter_snapshots
+--     set (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
+--   alter table public.repayment_snapshots
+--     set (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
+--   alter table public.call_logs
+--     set (autovacuum_vacuum_scale_factor = 0.02, autovacuum_analyze_scale_factor = 0.02);
+--
+--     THEN ONE VACUUM BY HAND to clear what has already built up and build the visibility map
+--     for the first time. VACUUM (not FULL) does NOT lock the table -- reads and writes carry
+--     on. VACUUM FULL does lock it and rewrite it, and it is deliberately NOT in this file.
+--
+--     VACUUM CANNOT RUN INSIDE A TRANSACTION BLOCK, and the SQL editor wraps a multi-statement
+--     script in one:  ERROR: 25001: VACUUM cannot run inside a transaction block.
+--     So each of these is selected and run ENTIRELY ALONE -- one line, nothing else
+--     highlighted, not even a `set` beside it.
 --
 --   vacuum (analyze) public.defaulter_snapshots;
 --   vacuum (analyze) public.repayment_snapshots;
---   vacuum (analyze) public.followup_comments;
+--   vacuum (analyze) public.call_logs;
+--   vacuum (analyze) public.loans;
 
 -- 7c. DROP AN INDEX NOBODY READS, from section 4's list, ONE AT A TIME.
 --     CONCURRENTLY so nothing is locked and no upload waits. Every drop makes every INSERT on
