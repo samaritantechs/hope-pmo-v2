@@ -2468,6 +2468,138 @@ test('the collection commission boards pay on what was collected, register inclu
     'a payment that was collected and registered is paid on, not left on the deck that missed it');
 });
 
+/* =====================================================================================
+   PAYING FOR A CUSTOMER, AND NOT PAYING FOR THEM TWICE.
+   =====================================================================================
+     "yes keep commission on the register ... they are the most complaining on this part"
+     "so check the deck by customer ref no and status not amounts"
+
+   PMO Collection is paid by BAND on a percentage, so applying the amount already moved that
+   officer's money. Early Collection is paid PER PAID CUSTOMER times a rate -- so applying the
+   amount moved their percentage and left their shillings exactly where they were. */
+function earlyBook_() {
+  /* An INITIAL sheet, which is the only book the early scheme is judged on, with a team whose
+     early-collection officer is named on the sheet. */
+  const x = tables();
+  x.teams = x.teams.map(t => (t.team === 'KONGOWE' ? { ...t, expected: 'EARLY E' } : t));
+  x.settings = x.settings.concat([{ key: 'CMS_PAID_TZS', value: '1000' }]);
+  x.repayment_snapshots = x.repayment_snapshots.concat([
+    { ref: '901', full_name: 'A', team: 'KONGOWE', payment_expected: 1000, todays_status: 'UNPAID',
+      arrears: 0, snapshot_type: 'initial', snapshot_date: TODAY, upload_batch: 'i1',
+      created_at: TODAY + 'T04:00:00Z' },
+    { ref: '902', full_name: 'B', team: 'KONGOWE', payment_expected: 1000, todays_status: 'PAID',
+      arrears: 0, snapshot_type: 'initial', snapshot_date: TODAY, upload_batch: 'i1',
+      created_at: TODAY + 'T04:00:00Z' },
+  ]);
+  return x;
+}
+const earlyRow_ = d => (d.colBoard || []).find(r => r.officer === 'EARLY E');
+
+test('a registered payment that names a customer is paid for on the early scheme', async () => {
+  const plainT = earlyBook_();
+  const t = earlyBook_();
+  // 901 is UNPAID on the deck and was paid in cash -- the case the register exists for.
+  t.pmo_adjustments = [{ id: 'e1', adj_date: TODAY, target: 'expected-initial',
+    team: 'KONGOWE', amount: 1000, ref: '901', reason: 'ilipwa, haikuonekana' }];
+  const plain = await portalApi(dbWithRpc(plainT), ADMIN, 'commission', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.equal(earlyRow_(plain).weekN, 1, 'the deck alone has one paid customer');
+  assert.equal(earlyRow_(d).weekN, 2, 'the register names a second, and it counts');
+  assert.ok(earlyRow_(d).weekCommission > earlyRow_(plain).weekCommission,
+    'which is the whole point -- the percentage moved before, the money did not');
+});
+
+test('the deck is checked by ref and status, so nobody is paid for twice', async () => {
+  /* "so check the deck by customer ref no and status not amounts". 902 already reads PAID on
+     the sheet. A register row against them is stale -- the corrected deck arrived -- so the
+     deck pays for them and the register stands down. */
+  const t = earlyBook_();
+  t.pmo_adjustments = [{ id: 'e1', adj_date: TODAY, target: 'expected-initial',
+    team: 'KONGOWE', amount: 1000, ref: '902' }];
+  const plain = await portalApi(dbWithRpc(earlyBook_()), ADMIN, 'commission', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.equal(earlyRow_(d).weekN, earlyRow_(plain).weekN,
+    'the deck already counts 902 -- the register must not count them again');
+  assert.equal(earlyRow_(d).weekCommission, earlyRow_(plain).weekCommission);
+  // The AMOUNT still applies. It is only the customer count that stands down.
+  assert.ok(earlyRow_(d).weekPct > earlyRow_(plain).weekPct);
+});
+
+test('a register row with no customer ref moves the amount and pays for nobody', async () => {
+  /* An entry with no ref cannot be attributed to a person, and inventing one to pay somebody
+     for would be worse than paying nothing. */
+  const t = earlyBook_();
+  t.pmo_adjustments = [{ id: 'e1', adj_date: TODAY, target: 'expected-initial',
+    team: 'KONGOWE', amount: 1000, ref: null }];
+  const plain = await portalApi(dbWithRpc(earlyBook_()), ADMIN, 'commission', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.equal(earlyRow_(d).weekN, earlyRow_(plain).weekN, 'no ref, no customer');
+  assert.ok(earlyRow_(d).weekPct > earlyRow_(plain).weekPct, 'but the amount still applies');
+});
+
+test('a negative correction never turns into a paying customer', async () => {
+  const t = earlyBook_();
+  t.pmo_adjustments = [{ id: 'e1', adj_date: TODAY, target: 'expected-initial',
+    team: 'KONGOWE', amount: -500, ref: '901' }];
+  const plain = await portalApi(dbWithRpc(earlyBook_()), ADMIN, 'commission', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.equal(earlyRow_(d).weekN, earlyRow_(plain).weekN,
+    'money going back out does not make somebody a paying customer');
+});
+
+test('the Iliyonasia tab says what the commission side did with every row', async () => {
+  /* "so if autoremoved find a way to flag by anything on the transaction row in iliyonasia
+      that alerts what was done" -- a figure that changed for a reason nobody can see is the
+     exact thing this register exists to stop. */
+  const t = earlyBook_();
+  t.pmo_adjustments = [
+    { id: 'a', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 1000, ref: '901' },
+    { id: 'b', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 1000, ref: '902' },
+    { id: 'c', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 1000, ref: null },
+    { id: 'e', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 1000, ref: '901' },
+  ];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'adjustments', {}, NOW);
+  const by = {};
+  for (const r of d.rows) by[r.id] = r;
+  assert.equal(by.a.countState, 'counted');
+  assert.equal(by.b.countState, 'superseded', 'the deck overtook this one -- say so on the row');
+  assert.equal(by.c.countState, 'no-ref');
+  assert.equal(by.e.countState, 'amount-only', 'the arrears books pay no per-customer commission');
+  assert.equal(d.superseded, 1, 'and the tab can lead with the count that needs a person');
+  for (const r of d.rows) assert.ok(r.countNote, 'every row explains itself in words');
+});
+
+test('every field of a register row is editable, and absent means untouched', async () => {
+  /* "the iliyonasia register rows info should be editable" -- the ref especially, now that a
+     row carrying one is worth money to an officer. */
+  const t = tables();
+  t.pmo_adjustments = [{ id: 'x1', adj_date: MON, target: 'expected-current', team: 'KONGOWE',
+    amount: 1000, ref: null, reason: 'first go', created_by: 'PMO ONE' }];
+  const db = dbWithRpc(t);
+  const r1 = await portalApi(db, ADMIN, 'adjustmentAmend',
+    { id: 'x1', ref: '901', date: TODAY, target: 'expected-initial', team: 'MBAGALA' }, NOW);
+  assert.equal(r1.row.ref, '901');
+  assert.equal(r1.row.adj_date, TODAY);
+  assert.equal(r1.row.target, 'expected-initial');
+  assert.equal(r1.row.team, 'MBAGALA');
+  assert.equal(r1.row.amount, 1000, 'a field not sent is left exactly as it was');
+  assert.equal(r1.row.reason, 'first go');
+  assert.equal(r1.row.created_by, 'THE ADMIN', 'and the row is re-signed by whoever decided it');
+
+  // A team the register does not know is refused, exactly as it is on a new row.
+  await assert.rejects(() => portalApi(db, ADMIN, 'adjustmentAmend', { id: 'x1', team: 'NOWHERE' }, NOW),
+    /haipo kwenye orodha|not in the register/);
+  // So is a book that does not exist, and a zero amount.
+  await assert.rejects(() => portalApi(db, ADMIN, 'adjustmentAmend', { id: 'x1', target: 'nonsense' }, NOW),
+    /target must be one of/);
+  await assert.rejects(() => portalApi(db, ADMIN, 'adjustmentAmend', { id: 'x1', amount: 0 }, NOW),
+    /non-zero/);
+  // Clearing is deliberate and possible: an empty string blanks, undefined leaves alone.
+  const r2 = await portalApi(db, ADMIN, 'adjustmentAmend', { id: 'x1', reason: '', ref: '' }, NOW);
+  assert.equal(r2.row.reason, null);
+  assert.equal(r2.row.ref, null);
+});
+
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {
   const db = fakeDb(tables());
   await portalApi(db, ADMIN, 'saveAccessCode',

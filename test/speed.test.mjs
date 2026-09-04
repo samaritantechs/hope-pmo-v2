@@ -255,6 +255,13 @@ const BUDGETS = [
      per-customer arrears comparison into the database, the way the team-day totals already
      went) is decided. Lowering this number is the goal, not raising it. */
   ['Commission',              'commission',     {}, ADMIN, 30, 140000, 30, 140000],
+  /* THE ILIYONASIA TAB, which had no budget and just grew a conditional read: for the rows
+     that NAME a customer it asks the deck, by ref and status, whether that customer has since
+     been marked PAID -- so the row can say it has been auto-removed from the commission count
+     instead of standing down in silence. Two things keep it at one trip: only the refs the
+     page itself lists are asked about, and a page with no ref-carrying rows does not ask at
+     all. This fixture has an empty register, which is the ordinary case on most days. */
+  ['Iliyonasia',              'adjustments',    {}, ADMIN,  1,    100,  1,   100],
   ['Promise to Pay (report)', 'promises',       {}, ADMIN, 16, 100000, 16, 100000],
   ['Follow-up report (big)',  'followupReport', {}, ADMIN, 14,  85000, 14,  85000],
   ['Credit book',             'credit',         {}, ADMIN, 16,  80000, 16,  80000],

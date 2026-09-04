@@ -14,7 +14,8 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_, noteAdjustmentsWritten } from './adjustments.js';
+import { adjReceived_, withAdj_, adjCountableRefs_, noteAdjustmentsWritten,
+  ADJ_RECEIVED_TARGETS } from './adjustments.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -3191,7 +3192,24 @@ async function commission(db, user, args = {}, nowMs) {
      corrections (`expected-initial`) and the PMO Collection board takes the day sheet's
      (`expected-current`) -- including last week's, since the bonus condition compares the two
      weeks and comparing a corrected week against an uncorrected one is not a comparison. */
-  const colRows = d => withAdj_(onDate(myExpInit, d), adj, 'expected-initial', d);
+  /* AND THE CUSTOMER COUNT, WHICH IS WHERE THE EARLY SCHEME'S MONEY ACTUALLY COMES FROM.
+       "yes keep commission on the register ... they are the most complaining on this part"
+       "so check the deck by customer ref no and status not amounts"
+     PMO Collection is paid by band on a percentage, so applying the amount already moved that
+     officer's pay. Early Collection is paid PER PAID CUSTOMER times a rate -- so applying the
+     amount moved their percentage and left their shillings exactly where they were. A register
+     row that NAMES a customer now counts as one collected customer for them.
+     The deck is asked, by ref and status, whether it already reads PAID or OVERPAID for that
+     person on that day; if it does, the register does not pay for them a second time. One
+     narrow read of only the refs the register names, and no read at all in a week where
+     nothing was registered against a ref. See adjCountableRefs_. */
+  const [colCount, pmoCount] = await Promise.all([
+    adjCountableRefs_(db, adj, { target: 'expected-initial', snapshotType: 'initial',
+      from: prevMon, to: sun }),
+    adjCountableRefs_(db, adj, { target: 'expected-current', snapshotType: 'today',
+      from: prevMon, to: sun }),
+  ]);
+  const colRows = d => withAdj_(onDate(myExpInit, d), adj, 'expected-initial', d, colCount);
   /* WHAT THE WALK ACTUALLY SAW, said out loud. "I uploaded. recovery still [empty]" -- an
      empty board has three different truths behind it (no deck in the range; a deck in the
      range but dated outside it; a deck observed with nothing newly dropped), and the screen
@@ -3442,7 +3460,7 @@ async function commission(db, user, args = {}, nowMs) {
     .map(c => ({ name: c.name, teams: c.teams }));
   const pmoDays = colDays;
   const byDay = new Map();
-  const colDay_ = d => withAdj_(onDate(myExp, d), adj, 'expected-current', d);
+  const colDay_ = d => withAdj_(onDate(myExp, d), adj, 'expected-current', d, pmoCount);
   for (const d of pmoDays) byDay.set(d, colDay_(d));
   byDay.set(today, colDay_(today));
   const pmoRows = pmoBoard(pmoRoster, byDay, today, pmoDays);
@@ -3454,7 +3472,7 @@ async function commission(db, user, args = {}, nowMs) {
   const prevDays = WD5.map((_w, i) => addDaysKey(prevMon, i));
   for (const d of prevDays) prevByDay.set(d,
     withAdj_(pickLatestBatchRows(prevMine.filter(r => String(r.snapshot_date) === d)),
-      adj, 'expected-current', d));
+      adj, 'expected-current', d, pmoCount));
   const prevRows = pmoBoard(pmoRoster, prevByDay, prevDays[0], prevDays);
   const prevPct = {};
   for (const r of prevRows) prevPct[K(r.officer)] = r.weekPct;
@@ -5867,15 +5885,94 @@ async function adjustments(db, user, p = {}) {
     }
     throw e;
   }
-  // Net per target, so the tab answers "how much is riding on adjustments" at a glance.
+  /* WHAT THE COMMISSION SIDE QUIETLY DID WITH EACH ROW, SAID ON THE ROW ITSELF.
+     =====================================================================================
+       "so if autoremoved find a way to flag by anything on the transaction row in iliyonasia
+        that alerts what was done"
+
+     A register row that names a customer counts as one collected customer for the early
+     collection scheme -- UNLESS the deck has since been corrected and now shows that customer
+     PAID, in which case the deck pays for them and the register stands down so nobody is paid
+     twice. That standing-down is invisible: the officer's count simply does not include it,
+     and there is nothing on the screen to explain why. Silence reads as success, which is the
+     one thing this register must never do -- the whole reason it exists is that a figure
+     changed and nobody could see why.
+
+     So every row now says which of four things is true of it:
+
+       counted     names a customer, positive, and the deck does NOT show them paid.
+                   The officer is being paid for this one.
+       superseded  the deck now shows this customer PAID or OVERPAID. AUTO-REMOVED from the
+                   count -- the deck already pays for them. The amount still applies to
+                   Collected; only the customer count stands down, and this row can now be
+                   deleted whenever somebody is tidying.
+       no-ref      no customer number was typed, so the amount applies everywhere it should
+                   but no commission customer can be attributed to anybody. Typing the ref
+                   fixes it.
+       amount-only a negative entry, or a book the count does not apply to (the arrears decks).
+                   Money moves; nobody is counted, and nobody should be.
+
+     ONE NARROW READ, AND ONLY WHEN THERE IS SOMETHING TO ASK. Only the refs these rows name
+     are looked up, by ref and STATUS -- never by amount, which a part payment or a rounding
+     would answer wrongly -- over the days already in hand. A page with no ref-carrying rows
+     costs nothing at all. */
+  const named = rows.filter(r => String(r.ref || '').trim()
+    && ADJ_RECEIVED_TARGETS.includes(String(r.target)) && num(r.amount) > 0);
+  const paidRefs = new Set();
+  let deckChecked = false;
+  if (named.length) {
+    const dates = named.map(r => String(r.adj_date || '').slice(0, 10)).filter(Boolean).sort();
+    try {
+      const deck = await fetchAll(() => db.from('repayment_snapshots')
+        .select('ref, team, snapshot_date, snapshot_type, todays_status')
+        .in('ref', [...new Set(named.map(r => String(r.ref).trim()))])
+        .gte('snapshot_date', dates[0]).lte('snapshot_date', dates[dates.length - 1]));
+      deckChecked = true;
+      for (const r of (deck || [])) {
+        const st = K(r.todays_status);
+        if (st !== 'PAID' && st !== 'OVERPAID') continue;
+        paidRefs.add(String(r.snapshot_type) + '|' + K(r.team) + '|'
+          + String(r.snapshot_date || '').slice(0, 10) + '|' + K(r.ref));
+      }
+    } catch (e) { /* cannot check -- the rows say so below rather than claiming either way */ }
+  }
+  const bookOf = t => (t === 'expected-initial' ? 'initial' : t === 'expected-current' ? 'today' : null);
   const totals = {};
-  let net = 0;
-  for (const r of rows) {
+  let net = 0, superseded = 0;
+  const out = rows.map(r => {
     const a = num(r.amount);
     totals[r.target] = (totals[r.target] || 0) + a;
     net += a;
-  }
-  return { rows, totals, net, ready: true, targets: ADJ_TARGETS.slice() };
+    const book = bookOf(String(r.target));
+    const ref = String(r.ref || '').trim();
+    let countState = 'amount-only', countNote = null;
+    if (!book || a <= 0) {
+      countNote = a <= 0
+        ? 'Kiasi pekee — hasi haihesabu mteja. / Amount only: a negative entry counts no customer.'
+        : 'Kiasi pekee — daftari hili halihesabu wateja. / Amount only: this book pays no per-customer commission.';
+    } else if (!ref) {
+      countState = 'no-ref';
+      countNote = 'Hakuna namba ya mteja — kiasi kinahesabika, mteja hahesabiki kwenye kamisheni. '
+        + '/ No customer ref: the amount applies, but no commission customer can be attributed. Add the ref.';
+    } else if (!deckChecked) {
+      countState = 'unchecked';
+      countNote = 'Haikuweza kuhakiki deki. / The deck could not be checked for this customer.';
+    } else if (paidRefs.has(book + '|' + K(r.team) + '|' + String(r.adj_date || '').slice(0, 10) + '|' + K(ref))) {
+      countState = 'superseded';
+      superseded += 1;
+      countNote = 'IMEONDOLEWA KWENYE HESABU — deki sasa inaonyesha mteja huyu AMELIPA, hivyo '
+        + 'kamisheni inalipwa na deki. Kiasi bado kinahesabika. Unaweza kufuta safu hii. '
+        + '/ AUTO-REMOVED from the commission count: the deck now shows this customer PAID, so the '
+        + 'deck pays for them. The amount still applies. This row can be deleted.';
+    } else {
+      countState = 'counted';
+      countNote = 'Inahesabika kama mteja mmoja kwenye kamisheni. / Counted as one customer for commission.';
+    }
+    return { ...r, countState, countNote };
+  });
+  return { rows: out, totals, net, ready: true, targets: ADJ_TARGETS.slice(),
+    // So the tab can lead with the one thing that needs a person: rows the deck has overtaken.
+    superseded, deckChecked };
 }
 async function adjustmentRecord(db, user, p = {}) {
   requireAdjust(user);
@@ -5915,25 +6012,72 @@ async function adjustmentRecord(db, user, p = {}) {
 }
 /* "some issues are sorted midday" -- an adjustment entered in the morning can be re-sized
    once the real figure lands, without deleting the row and losing its date, book, team and
-   reason. Only the AMOUNT moves; the register's rule stands, so the row is re-signed by the
-   person who last decided the number, and the old figure is echoed back so the caller can
-   say what changed. */
+   reason.
+
+   AND THEN THE REST OF THE ROW TOO -- "the iliyonasia register rows info should be editable".
+   Only the amount could be changed, so a row typed against the wrong day, the wrong book, the
+   wrong team, or with the customer number left off had to be DELETED and re-typed: which loses
+   who entered it and when, and in the meantime the figure it was correcting is wrong again.
+   The REF especially, now that a register row carrying one counts as a collected customer on
+   the commission board -- a missing ref used to be a shrug, and is now money.
+
+   ABSENT MEANS UNTOUCHED, the rule every save in this system follows: a field the caller does
+   not mention is left exactly as it is, so a form that sends one field cannot blank the rest.
+   Blanking a reason or a ref is still possible, deliberately, by sending an empty string.
+
+   VALIDATED THE SAME WAY A NEW ROW IS. A team must be one the register knows, spelled as it is
+   registered; a date must be a date; a book must be one of the four; an amount must be non-zero.
+   An edit that could not be typed in the first place must not be reachable through the back
+   door -- and the row is re-signed by whoever last decided it, because the register's value is
+   that every figure in it has a name against it.
+
+   The row BEFORE the change comes back beside the row after, so the screen can say what moved
+   rather than just redrawing. */
 async function adjustmentAmend(db, user, p = {}) {
   requireAdjust(user);
   const id = String(p.id || '').trim();
   if (!id) throw badRequest('id is required');
-  const amount = Number(p.amount);
-  if (!Number.isFinite(amount) || !amount) throw badRequest('Weka kiasi kisicho sifuri — chanya huongeza, hasi hupunguza. / A non-zero amount is required: positive adds, negative reduces.');
   const { data: before, error: readErr } = await db.from('pmo_adjustments')
     .select('*').eq('id', id).maybeSingle();
   if (readErr) throw new Error(readErr.message);
   if (!before) throw badRequest('Rekebisho halipo — huenda limefutwa. / That adjustment no longer exists.');
+
+  const patch = {};
+  if (p.amount !== undefined) {
+    const amount = Number(p.amount);
+    if (!Number.isFinite(amount) || !amount) throw badRequest('Weka kiasi kisicho sifuri — chanya huongeza, hasi hupunguza. / A non-zero amount is required: positive adds, negative reduces.');
+    patch.amount = amount;
+  }
+  if (p.date !== undefined) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(p.date || ''))) throw badRequest('Chagua tarehe. / A date is required.');
+    patch.adj_date = p.date;
+  }
+  if (p.target !== undefined) {
+    if (!ADJ_TARGETS.includes(p.target)) throw badRequest('Chagua aina ya ripoti. / target must be one of: ' + ADJ_TARGETS.join(', '));
+    patch.target = p.target;
+  }
+  if (p.team !== undefined) {
+    const want = String(p.team || '').trim();
+    if (!want) patch.team = null;      // deliberately clearable: an unattributable correction
+    else {
+      const reg = await readTeamsAll(db);
+      const hit = reg.find(t => K(t.team) === K(want));
+      if (!hit) throw badRequest(`Timu "${want}" haipo kwenye orodha. / That team is not in the register.`);
+      patch.team = hit.team;
+    }
+  }
+  if (p.reason !== undefined) patch.reason = String(p.reason || '').trim() || null;
+  if (p.ref !== undefined) patch.ref = String(p.ref || '').trim() || null;
+  if (!Object.keys(patch).length) throw badRequest('Hakuna kilichobadilishwa. / Nothing to change.');
+
+  patch.created_by = user.name || user.code;
+  patch.created_at = new Date().toISOString();
   const { data, error } = await db.from('pmo_adjustments')
-    .update({ amount, created_by: user.name || user.code, created_at: new Date().toISOString() })
-    .eq('id', id).select('*').maybeSingle();
+    .update(patch).eq('id', id).select('*').maybeSingle();
   if (error) throw new Error(error.message);
   noteAdjustmentsWritten(db);
-  return { row: data, previousAmount: num(before.amount) };
+  return { row: data, before, previousAmount: num(before.amount),
+    changed: Object.keys(patch).filter(k => k !== 'created_by' && k !== 'created_at') };
 }
 async function adjustmentDelete(db, user, p = {}) {
   requireAdjust(user);
