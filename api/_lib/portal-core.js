@@ -48,7 +48,30 @@ const STAGES = ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_app
    weekly board and the trend cannot drift into three answers about the same Friday. */
 const loanDay_ = l => String((l && (l.upload_date || l.created_at)) || '').slice(0, 10);
 
+/* EXACTLY THE COLUMNS THE APPLICATIONS TAB DRAWS, and nothing else.
+   This was `select('*')` -- every column of the widest table on the book, for every
+   application the company has ever written, on every open of the tab. The list shows
+   fourteen fields; upload_date rides along because it decides which day a row belongs to.
+   IF A COLUMN IS ADDED TO THE SCREEN IT MUST BE ADDED HERE, the same rule the Expected tab's
+   projection carries -- the fake database honours the projection, so a forgotten one fails a
+   test rather than showing up blank in the field. */
+const LOAN_TAB_COLS = 'id, stage, docket_no, full_name, contact, branch, team, product, '
+  + 'requested_amt, principal_amt, loan_amt, approved_date, disb_date, created_at, created_by, '
+  + 'upload_date';
+
+/** One read of the applications book, narrowed and team-scoped. Every answer this tab gives
+    is worked out from THIS -- see appsTab for why that matters. */
+async function loanRows_(db, user) {
+  return scoped(user, await fetchAll(() => onTeams(db.from('loans').select(LOAN_TAB_COLS), user.teams)
+    .order('created_at', { ascending: false })));
+}
+
 async function loans(db, user, { stage, from, to }, nowMs = Date.now()) {
+  return listFrom_(await loanRows_(db, user), { stage, from, to }, nowMs);
+}
+
+/** The windowed list, from rows already in hand. Pure: no database, so appsTab can reuse it. */
+function listFrom_(all, { stage, from, to }, nowMs) {
   const st = STAGES.includes(stage) ? stage : '';
   /* A DAY AT A TIME, BECAUSE THE WHOLE PIPELINE IS NOT A LIST ANYBODY READS.
        "having loan applications nav - put a default start and end date of today {they too many}"
@@ -59,10 +82,7 @@ async function loans(db, user, { stage, from, to }, nowMs = Date.now()) {
   const today = todayKey(nowMs);
   const win = (from === '' && to === '') ? null
     : { from: String(from || today).slice(0, 10), to: String(to || from || today).slice(0, 10) };
-  /* Scoped at the database. An officer holding one team read every loan the company has ever
-     written -- all forty teams, every column -- and kept a fortieth of it. */
-  const q = onTeams(db.from('loans').select('*'), user.teams);
-  const all = await fetchAll(() => (st ? q.eq('stage', st) : q).order('created_at', { ascending: false }));
+  const staged = st ? all.filter(l => l.stage === st) : all;
   /* The window is applied HERE rather than in the query, and deliberately: the day is
      `upload_date OR created_at`, which no single column comparison expresses, and inventing a
      second definition of an application's day at the database is exactly how the trend and
@@ -72,18 +92,22 @@ async function loans(db, user, { stage, from, to }, nowMs = Date.now()) {
      left out of the window -- putting it in every window would be worse, the same docket
      appearing in every report -- and COUNTED, so the tab can say how many are unreachable this
      way instead of letting them disappear behind a date box. */
-  let undated = 0;
-  const inWin = win
-    ? all.filter(l => {
+  let undated = [];
+  const mine = win
+    ? staged.filter(l => {
       const d = loanDay_(l);
-      if (!d) { undated++; return false; }
+      if (!d) { undated.push(l); return false; }
       return d >= win.from && d <= win.to;
     })
-    : all;
-  const mine = scoped(user, inWin);
+    : staged;
   return { stage: st, stages: STAGES, rows: mine, count: mine.length,
     from: win ? win.from : '', to: win ? win.to : '', windowed: !!win,
-    total: all.length, undated,
+    total: staged.length,
+    /* THE UNDATED ROWS THEMSELVES, not just how many. "Chip the undated before listing
+       today's" -- a count tells somebody a docket is missing and gives them no way to reach
+       it; the rows are already in hand, so handing them over costs nothing and the chip above
+       the list becomes a list rather than a warning. */
+    undated: undated.length, undatedRows: undated,
     amount: mine.reduce((s, r) => s + (num(r.principal_amt) || num(r.requested_amt) || num(r.loan_amt)), 0) };
 }
 
@@ -113,11 +137,14 @@ async function appsWeekly(db, user, args, nowMs = Date.now()) {
   const sun = days[6].date;
 
   const [loanRows, teamRows] = await Promise.all([
-    fetchAll(() => onTeams(db.from('loans')
-      .select('team, stage, upload_date, created_at, requested_amt, principal_amt'), user.teams)),
+    loanRows_(db, user),
     fetchAll(() => db.from('teams').select('team')),
   ]);
-  const mine = scoped(user, loanRows).filter(l => {
+  return weeklyFrom_(loanRows, teamRows, user, mon, days, sun);
+}
+
+function weeklyFrom_(loanRows, teamRows, user, mon, days, sun) {
+  const mine = loanRows.filter(l => {
     if (l.stage !== 'unassigned' && l.stage !== 'assigned') return false;
     const d = loanDay_(l);
     return d >= mon && d <= sun;
@@ -178,6 +205,10 @@ async function appsWeekly(db, user, args, nowMs = Date.now()) {
    `month` may be given as YYYY-MM to look back; the window then runs to the end of that month
    rather than to today, because a finished month is finished. */
 async function loanPipeline(db, user, args, nowMs = Date.now()) {
+  return pipelineFrom_(await loanRows_(db, user), args, nowMs);
+}
+
+function pipelineFrom_(all, args, nowMs) {
   const today = todayKey(nowMs);
   const askedMonth = /^\d{4}-\d{2}$/.test(String((args && args.month) || '')) ? args.month : null;
   const month = askedMonth || today.slice(0, 7);
@@ -186,9 +217,6 @@ async function loanPipeline(db, user, args, nowMs = Date.now()) {
   const monthEnd = addDaysKey(addMonthKey_(from), -1);
   const to = monthEnd < today ? monthEnd : today;
 
-  // Same read, same rule: narrowed in the query rather than after it has all arrived.
-  const all = scoped(user, await fetchAll(() => onTeams(db.from('loans')
-    .select('team, stage, upload_date, created_at, principal_amt, requested_amt, loan_amt'), user.teams)));
   let undated = 0;
   const rows = all.filter(r => {
     const d = loanDay_(r);
@@ -223,6 +251,42 @@ function addMonthKey_(dayKey) {
   const ny = m === 12 ? y + 1 : y;
   const nm = m === 12 ? 1 : m + 1;
   return ny + '-' + String(nm).padStart(2, '0') + '-01';
+}
+
+/* =====================================================================================
+   ONE READ, THREE ANSWERS.
+   =====================================================================================
+     "Imeshindikana / Could not load. Seva haijibu ndani ya sekunde 45"
+
+   That is mine, and it is the plainest kind of mistake. The Applications tab asked three
+   questions at once -- the month's widgets, the day's list, the week by team -- and each one
+   went and read the WHOLE loans table for itself. Three full reads of the same table, in
+   parallel, on a database whose CPU is throttled: I added two of them in the last two changes
+   and did not stop to count what the tab was now asking for.
+
+   Every one of those three answers is worked out from the same rows. So the tab reads them
+   ONCE and the three pure functions above -- pipelineFrom_, listFrom_, weeklyFrom_ -- are
+   handed the result. Same figures, exactly: they are the same functions the three separate
+   endpoints call, not a fourth copy of the arithmetic.
+
+     before   3 full reads of `loans`, every column, in parallel
+     after    1 read, fifteen columns, plus the small teams read
+
+   The three endpoints stay, because each is a real answer on its own and each has its own
+   tests; nothing in the field calls them separately any more. */
+async function appsTab(db, user, args, nowMs = Date.now()) {
+  const a = args || {};
+  const mon = a.weekOf ? String(a.weekOf).slice(0, 10) : weekMondayKey(nowMs);
+  const days = WD7.map((wd, i) => ({ key: LEADER_DAY_KEYS[i], weekday: wd, date: addDaysKey(mon, i) }));
+  const [rows, teamRows] = await Promise.all([
+    loanRows_(db, user),
+    fetchAll(() => db.from('teams').select('team')),
+  ]);
+  return {
+    pipeline: pipelineFrom_(rows, a, nowMs),
+    list: listFrom_(rows, { stage: a.stage, from: a.from, to: a.to }, nowMs),
+    weekly: weeklyFrom_(rows, teamRows, user, mon, days, days[6].date),
+  };
 }
 
 /* ------------------------------------------------------------------ expected repayment */
@@ -5791,7 +5855,7 @@ function requireAdmin(user) {
 
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
-  loans, loanPipeline, appsWeekly, expected, defaulters, expectedDefaulters,
+  loans, loanPipeline, appsWeekly, appsTab, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
@@ -6136,7 +6200,7 @@ const FN_TAB = {
   dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
   recoveryByCredit: ['dashboard'], monthReport: ['dashboard'],
-  loans: ['apps'], loanPipeline: ['apps'], appsWeekly: ['apps'],
+  loans: ['apps'], loanPipeline: ['apps'], appsWeekly: ['apps'], appsTab: ['apps'],
   expected: ['expected'], expectedDay: ['expected'],
   expectedDefaulters: ['defexp'],
   expdfReport: ['expdfrep'], expdfMine: ['expdfrep'], emailWeeklyExpdf: ['expdfrep'],
