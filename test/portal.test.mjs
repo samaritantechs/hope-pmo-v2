@@ -2202,6 +2202,83 @@ test('the weekly applications board counts u+a per day, for every team, includin
   assert.equal(d.totals.avg, Math.round((4 / 7) * 10) / 10);
 });
 
+/* =====================================================================================
+   ILIYONASIA COUNTS, OR IT IS A NOTEBOOK.
+   =====================================================================================
+     "received amounts in all team reports and leader reports must include registered
+      iliyonasia"
+
+   The register recorded a payment that was made and verified and did not reach the deck, with
+   who, when and why attached -- and NOTHING read it back. Every report went on showing the
+   figure the deck got wrong, which is the exact situation it was built to end. Writing a
+   correction down and not applying it is worse than not having the register, because it looks
+   like the fix has been made. */
+test('a registered Iliyonasia payment is part of what the weekly report says was received', async () => {
+  const t = tables();
+  t.pmo_adjustments = [
+    // KONGOWE received 40,000 on Monday that the day's sheet never showed.
+    { id: 'a1', adj_date: MON, target: 'expected-current', team: 'KONGOWE', amount: 40000,
+      reason: 'ilipwa benki, haikuonekana', created_by: 'PMO DATA' },
+  ];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const withAdj = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const teamOf = (d, name) => d.teams.find(x => x.team === name);
+
+  assert.equal(teamOf(withAdj, 'KONGOWE').collected,
+    teamOf(plain, 'KONGOWE').collected + 40000, 'the correction is part of what was received');
+  assert.equal(teamOf(withAdj, 'KONGOWE').adjusted, 40000,
+    'and it is shown beside the figure, never folded away -- an adjustment that moves a total '
+    + 'silently is indistinguishable from a bug');
+  /* MONEY RECEIVED IS MONEY NO LONGER OUTSTANDING. Uncollected falls by the same amount,
+     clamped at zero like every uncollected figure in this system. */
+  assert.equal(teamOf(withAdj, 'KONGOWE').uncollected,
+    Math.max(0, teamOf(plain, 'KONGOWE').uncollected - 40000));
+  // Nobody else moves.
+  assert.equal(teamOf(withAdj, 'MBAGALA').collected, teamOf(plain, 'MBAGALA').collected);
+  assert.equal(teamOf(withAdj, 'MBAGALA').adjusted, 0);
+  assert.equal(withAdj.teamTotals.adjusted, 40000);
+
+  /* THE DAY STRIP MOVES WITH THE TEAM TABLE. A report that corrects one and not the other
+     shows two figures for the same money on the same screen -- and only after a correction,
+     which is exactly when somebody is already hunting a discrepancy. */
+  const dayOf = (d, date) => d.days.find(x => x.date === date);
+  assert.equal(dayOf(withAdj, MON).collected, dayOf(plain, MON).collected + 40000);
+  assert.equal(dayOf(withAdj, MON).adjusted, 40000);
+  assert.equal(dayOf(withAdj, TODAY).collected, dayOf(plain, TODAY).collected, 'other days untouched');
+});
+
+test('a negative Iliyonasia reduces what was received, and an unattributed one is kept apart', async () => {
+  const t = tables();
+  t.pmo_adjustments = [
+    { id: 'a1', adj_date: MON, target: 'expected-current', team: 'KONGOWE', amount: -25000 },
+    /* NO TEAM. It cannot be attributed to one, and inventing an attribution would make the
+       team rows stop adding up to the total -- a discrepancy nobody could account for. */
+    { id: 'a2', adj_date: MON, target: 'expected-current', team: null, amount: 99000 },
+    /* THE ARREARS BOOKS ARE DELIBERATELY NOT APPLIED. Recovery is initial-minus-current across
+       two decks, so the same +50,000 raises it on one side and lowers it on the other, and
+       guessing which was meant would put a confident wrong number in the Monday meeting. */
+    { id: 'a3', adj_date: MON, target: 'defaulter-current', team: 'KONGOWE', amount: 50000 },
+    { id: 'a4', adj_date: MON, target: 'defaulter-initial', team: 'KONGOWE', amount: 50000 },
+  ];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const kong = d.teams.find(x => x.team === 'KONGOWE');
+  assert.equal(kong.adjusted, -25000, 'positive adds, negative reduces -- the register\'s own rule');
+  assert.equal(kong.recovered, plain.teams.find(x => x.team === 'KONGOWE').recovered,
+    'the defaulter rows change no recovery figure until somebody says which way they read');
+  assert.equal(d.teamTotals.adjusted, -25000, 'the unattributed 99,000 is not in the team total');
+});
+
+test('a database with no Iliyonasia table reports exactly as it always did', async () => {
+  /* db/RUN-ME-015 is pasted in by hand like every migration here, so between a deploy and
+     somebody opening the SQL editor the reports must be untouched -- not broken, not empty. */
+  const bare = tables();
+  delete bare.pmo_adjustments;
+  const d = await portalApi(dbWithRpc(bare), ADMIN, 'weekly', {}, NOW);
+  assert.ok(d.teams.length);
+  assert.equal(d.teamTotals.adjusted, 0);
+});
+
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {
   const db = fakeDb(tables());
   await portalApi(db, ADMIN, 'saveAccessCode',
