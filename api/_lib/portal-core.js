@@ -12,6 +12,9 @@ import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
+/* The Iliyonasia register and the one function that folds it into a collection figure. Its own
+   file since the shared dashboard reads it too -- see the header of adjustments.js. */
+import { adjReceived_, withAdj_, noteAdjustmentsWritten } from './adjustments.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -289,88 +292,6 @@ async function appsTab(db, user, args, nowMs = Date.now()) {
   };
 }
 
-/* =====================================================================================
-   ILIYONASIA COUNTS. A REGISTER NOTHING READS BACK IS A NOTEBOOK.
-   =====================================================================================
-     "received amounts in all team reports and leader reports must include registered
-      iliyonasia"
-
-   Iliyonasia records a payment that was made and verified and did not reach the deck -- with
-   who, when and why attached -- so the correction lives in the system instead of in somebody's
-   Excel. It has been recording them and NOTHING has been reading them: every report went on
-   showing the figure the deck got wrong, which is the exact situation the register was built
-   to end. Writing a correction down and then not applying it is worse than not having the
-   register, because it looks like the fix has been made.
-
-   WHAT IS APPLIED HERE, AND WHAT DELIBERATELY IS NOT.
-
-     expected-current   the day's collection sheet    -> COLLECTED goes up (or down)
-     expected-initial   the early-collection sheet    -> COLLECTED goes up (or down)
-     defaulter-*        the arrears decks             -> NOT APPLIED
-
-   The two `expected` books are money RECEIVED, which is what the request names and what an
-   adjustment against them plainly means. The defaulter books are arrears, and recovery is
-   initial-minus-current across two of them -- so the same +50,000 raises recovery on one side
-   and lowers it on the other, and guessing which was meant would produce a confident wrong
-   number in the Monday meeting. Those rows stay in the register, visible on the Iliyonasia
-   tab, until somebody says which way they should read.
-
-   IT IS NEVER SILENT. Each team row carries `adjusted` beside its collected figure, and the
-   totals carry the sum, so a figure that includes a correction can always be taken apart. An
-   adjustment that quietly moves a total is indistinguishable from a bug.
-
-   ONLY ADJUSTMENTS WITH A TEAM count towards a team report -- an adjustment with no team
-   cannot be attributed to one, and inventing an attribution would make the rows stop adding up
-   to the total. They are returned separately as `unattributed` so the screen can say so.
-
-   A TINY READ. This is a hand-typed register: tens of rows, not thousands, and bounded to the
-   report's own date range. It is never read on the phone or during an upload -- see rule 1 in
-   CLAUDE.md -- and where the table does not exist yet it answers null and every report behaves
-   exactly as it does today. */
-const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
-
-async function adjReceived_(db, user, { from, to }) {
-  let rows;
-  try {
-    rows = await fetchAll(() => db.from('pmo_adjustments')
-      .select('team, target, amount, adj_date')
-      .gte('adj_date', from).lte('adj_date', to));
-  } catch (e) {
-    return null;                       // db/RUN-ME-015 not run here -- reports are unchanged
-  }
-  /* KEYED BY TARGET, because the two books are two different figures. `expected-current` is
-     the day's collection sheet and `expected-initial` is the early-collection one -- a
-     correction to one is not a correction to the other, and adding them together would move
-     Col by an Early Col figure and be impossible to find afterwards. */
-  const byTeam = new Map(), byDay = new Map(), byCell = new Map();
-  const total = {}, seen = {};
-  let unattributed = 0;
-  const add = (m, k, a) => m.set(k, (m.get(k) || 0) + a);
-  for (const r of (rows || [])) {
-    const tg = String(r.target);
-    if (!ADJ_RECEIVED_TARGETS.includes(tg)) continue;
-    const a = num(r.amount);
-    if (!r.team) { unattributed += a; continue; }
-    if (!teamAllowed(user, r.team)) continue;
-    add(byTeam, tg + '|' + K(r.team), a);
-    /* PER DAY AS WELL AS PER TEAM, because a report that applies a correction to its team
-       table and not to its day strip shows two figures for the same money on the same screen
-       -- and only after a correction, which is exactly when somebody is already hunting a
-       discrepancy. Every figure on a report moves together or none of them does. */
-    const d = String(r.adj_date || '').slice(0, 10);
-    if (d) { add(byDay, tg + '|' + d, a); add(byCell, tg + '|' + r.team + '|' + d, a); }
-    total[tg] = (total[tg] || 0) + a;
-    seen[tg] = (seen[tg] || 0) + 1;
-  }
-  return { total, seen, unattributed,
-    of: (target, team) => byTeam.get(target + '|' + K(team)) || 0,
-    onDay: (target, date) => byDay.get(target + '|' + String(date).slice(0, 10)) || 0,
-    /* The register rows themselves, netted per team per day, for a caller that fills cells
-       rather than adding to a finished total. Same rows, one grouping further down. */
-    cells: target => [...byCell.entries()]
-      .filter(([k]) => k.startsWith(target + '|'))
-      .map(([k, amount]) => { const p = k.split('|'); return { team: p[1], date: p[2], amount }; }) };
-}
 
 /* ------------------------------------------------------------------ expected repayment */
 /* EXACTLY WHAT THE EXPECTED TAB DRAWS, and nothing else.
@@ -400,13 +321,30 @@ async function expected(db, user, { type = 'today', date }, nowMs) {
          : { notAfter: todayKey(nowMs), teams: user.teams, columns: EXPECTED_TAB_COLS });
   const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r) }));
   const expectedAmt = rows.reduce((s, r) => s + num(r.payment_expected), 0);
-  const collected = rows.reduce((s, r) => s + r.collected, 0);
+  const deckCollected = rows.reduce((s, r) => s + r.collected, 0);
+  /* THE REGISTER, ON THE SAME BOOK AND THE SAME DAY -- the rule expectedDay carries, applied
+     here too because this is the same list drawn by a different door and two doors onto one
+     deck must not report two Collected figures. Only the two books the register knows;
+     `tomorrow` and `yesterday` have no target and get nothing. */
+  const adjTarget = type === 'initial' ? 'expected-initial'
+    : type === 'today' ? 'expected-current' : null;
+  const adj = (adjTarget && snap.date)
+    ? await adjReceived_(db, user, { from: snap.date, to: snap.date }) : null;
+  const adjAmt = (adj && adjTarget) ? adj.onDay(adjTarget, snap.date) : 0;
+  const collected = deckCollected + adjAmt;
+  const deckUncollected = uncollectedOf(rows);
   const status = {};
   for (const r of rows) { const k = K(r.todays_status) || '(BLANK)'; status[k] = (status[k] || 0) + 1; }
   return {
     type, date: snap.date, rows, count: rows.length,
-    totals: { expected: expectedAmt, collected, uncollected: uncollectedOf(rows),
-      pct: expectedAmt > 0 ? Math.round((collected / expectedAmt) * 1000) / 10 : null },
+    totals: { expected: expectedAmt, collected,
+      uncollected: Math.max(0, deckUncollected - adjAmt),
+      pct: expectedAmt > 0 ? Math.round((collected / expectedAmt) * 1000) / 10 : null,
+      // Beside it, always, so a corrected total can be taken back apart -- and so the rows
+      // below (which are the deck alone) can still be reconciled against something.
+      adjusted: adjAmt, deckCollected, deckUncollected,
+      deckPct: expectedAmt > 0 ? Math.round((deckCollected / expectedAmt) * 1000) / 10 : null,
+      adjReady: !!adj },
     byStatus: Object.keys(status).sort().map(k => ({ status: k, count: status[k] })),
   };
 }
@@ -3199,7 +3137,7 @@ async function commission(db, user, args = {}, nowMs) {
      that uploaded nothing that day is simply unobserved, never "all recovered". A customer
      who slips back keeps the commission of the day they recovered, exactly as promised.
      ===================================================================================== */
-  const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp] = await Promise.all([
+  const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp, adj] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
     /* The week's current decks, per customer -- ref to pair, weekday to know which book,
@@ -3225,6 +3163,9 @@ async function commission(db, user, args = {}, nowMs) {
        got the previous week". Without last week's figures the condition cannot be checked at
        all, and a bonus awarded without checking it is just a bonus. */
     expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevFri, teams: user.teams }),
+    /* The Iliyonasia register over BOTH weeks this board reads -- see the note beside colRows.
+       One small read, in this wave, null where the table has not been built. */
+    adjReceived_(db, user, { from: prevMon, to: sun }),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
@@ -3241,8 +3182,16 @@ async function commission(db, user, args = {}, nowMs) {
       columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
   ]);
   const myExpInit = scoped(user, expInit);
-  // The early scheme's rows for one day: the INITIAL book, only ever the initial book.
-  const colRows = d => onDate(myExpInit, d);
+  /* THE REGISTER, ON THE COMMISSION BOARDS TOO -- and this is the one worth saying out loud,
+     because it is PAY, not a report.
+       "not just there ... everywhere the amount should add as stated during manual input"
+     An Iliyonasia is money an officer DID collect; the only thing that went wrong is that it
+     never reached the deck. Paying them on the deck alone pays them less than they collected,
+     and the register exists precisely to record that. So the early scheme takes its own book's
+     corrections (`expected-initial`) and the PMO Collection board takes the day sheet's
+     (`expected-current`) -- including last week's, since the bonus condition compares the two
+     weeks and comparing a corrected week against an uncorrected one is not a comparison. */
+  const colRows = d => withAdj_(onDate(myExpInit, d), adj, 'expected-initial', d);
   /* WHAT THE WALK ACTUALLY SAW, said out loud. "I uploaded. recovery still [empty]" -- an
      empty board has three different truths behind it (no deck in the range; a deck in the
      range but dated outside it; a deck observed with nothing newly dropped), and the screen
@@ -3493,8 +3442,9 @@ async function commission(db, user, args = {}, nowMs) {
     .map(c => ({ name: c.name, teams: c.teams }));
   const pmoDays = colDays;
   const byDay = new Map();
-  for (const d of pmoDays) byDay.set(d, onDate(myExp, d));
-  byDay.set(today, onDate(myExp, today));
+  const colDay_ = d => withAdj_(onDate(myExp, d), adj, 'expected-current', d);
+  for (const d of pmoDays) byDay.set(d, colDay_(d));
+  byDay.set(today, colDay_(today));
   const pmoRows = pmoBoard(pmoRoster, byDay, today, pmoDays);
 
   /* Last week's percentage per officer, so "beat your own previous week" can be checked rather
@@ -3502,7 +3452,9 @@ async function commission(db, user, args = {}, nowMs) {
   const prevMine = scoped(user, prevExp);
   const prevByDay = new Map();
   const prevDays = WD5.map((_w, i) => addDaysKey(prevMon, i));
-  for (const d of prevDays) prevByDay.set(d, pickLatestBatchRows(prevMine.filter(r => String(r.snapshot_date) === d)));
+  for (const d of prevDays) prevByDay.set(d,
+    withAdj_(pickLatestBatchRows(prevMine.filter(r => String(r.snapshot_date) === d)),
+      adj, 'expected-current', d));
   const prevRows = pmoBoard(pmoRoster, prevByDay, prevDays[0], prevDays);
   const prevPct = {};
   for (const r of prevRows) prevPct[K(r.officer)] = r.weekPct;
@@ -5956,6 +5908,9 @@ async function adjustmentRecord(db, user, p = {}) {
     created_by: user.name || user.code,
   }).select('*').maybeSingle();
   if (error) throw new Error(error.message);
+  // The register is remembered for a minute (see adjustments.js); a write drops the memo so
+  // the person who just typed it sees it on the next screen, not on the next minute.
+  noteAdjustmentsWritten(db);
   return { row: data };
 }
 /* "some issues are sorted midday" -- an adjustment entered in the morning can be re-sized
@@ -5977,6 +5932,7 @@ async function adjustmentAmend(db, user, p = {}) {
     .update({ amount, created_by: user.name || user.code, created_at: new Date().toISOString() })
     .eq('id', id).select('*').maybeSingle();
   if (error) throw new Error(error.message);
+  noteAdjustmentsWritten(db);
   return { row: data, previousAmount: num(before.amount) };
 }
 async function adjustmentDelete(db, user, p = {}) {
@@ -5985,6 +5941,7 @@ async function adjustmentDelete(db, user, p = {}) {
   if (!id) throw badRequest('id is required');
   const { error } = await db.from('pmo_adjustments').delete().eq('id', id);
   if (error) throw new Error(error.message);
+  noteAdjustmentsWritten(db);
   return { id, deleted: true };
 }
 /** Managing who can sign in is the one thing gated harder than team scope. */
@@ -6708,18 +6665,52 @@ async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs, maxJobs 
   for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) if (!ledger.days[d]) return null;
   return ledger.days;
 }
-/** One stretch of ledger days summed for one viewer -- the shape the month cards read. */
-function ledgerSum_(days, user, from, to) {
-  let colE = 0, colC = 0, recR = 0, recU = 0;
+/* THE REGISTER IS APPLIED WHEN THE LEDGER IS READ, NEVER WHEN IT IS WRITTEN.
+   The ledger's whole point is that days before the current week FREEZE -- they are computed
+   once and stored, and never recomputed. An Iliyonasia registered today against a day three
+   weeks back is the ordinary case (that is when somebody finds the missing payment), and a
+   correction baked into a frozen cell would simply never appear. So the stored ledger stays
+   exactly what the decks said, and the correction is laid over it on every read.
+
+   One walk, two readers, so the month report and the Orodha cannot drift apart. A team-day
+   the decks never covered still gets a cell, for the reason in withAdj_. */
+function adjLedgerCells_(adj, from, to) {
+  const out = new Map();
+  const put = (date, team, field, amount) => {
+    if (date < from || date > to) return;
+    if (!out.has(date)) out.set(date, new Map());
+    const m = out.get(date), k = K(team);
+    if (!m.has(k)) m.set(k, { c: 0, ic: 0 });
+    m.get(k)[field] += amount;
+  };
+  for (const r of adj.cells('expected-current')) put(r.date, r.team, 'c', r.amount);
+  for (const r of adj.cells('expected-initial')) put(r.date, r.team, 'ic', r.amount);
+  return out;
+}
+const LEDGER_ZERO = { e: 0, c: 0, u: 0, ri: 0, rc: 0, p: 0, ie: 0, ic: 0 };
+function ledgerWalk_(days, from, to, adj, fn) {
+  const extra = adj ? adjLedgerCells_(adj, from, to) : null;
   for (let d = from; d <= to; d = addDaysKey(d, 1)) {
     const cellMap = days[d] || {};
+    const add = extra && extra.get(d);
     for (const T in cellMap) {
-      if (!teamAllowed(user, T)) continue;
-      const s = cellMap[T];
-      colE += s.e; colC += s.c; recU += s.u;
-      if (s.p) recR += s.ri - s.rc;
+      const s = cellMap[T], a = add && add.get(T);
+      fn(T, a ? { ...s, c: num(s.c) + a.c, u: Math.max(0, num(s.u) - a.c), ic: num(s.ic) + a.ic } : s);
+    }
+    if (add) for (const [T, a] of add) {
+      if (T in cellMap) continue;
+      fn(T, { ...LEDGER_ZERO, c: a.c, ic: a.ic });
     }
   }
+}
+/** One stretch of ledger days summed for one viewer -- the shape the month cards read. */
+function ledgerSum_(days, user, from, to, adj = null) {
+  let colE = 0, colC = 0, recR = 0, recU = 0;
+  ledgerWalk_(days, from, to, adj, (T, s) => {
+    if (!teamAllowed(user, T)) return;
+    colE += s.e; colC += s.c; recU += s.u;
+    if (s.p) recR += s.ri - s.rc;
+  });
   return { colE, colC, recU, recR };
 }
 /** The same stretch of ledger days, kept PER TEAM -- what the dashboard's Orodha reads its
@@ -6727,17 +6718,13 @@ function ledgerSum_(days, user, from, to) {
     uncollected, the initial sheet's expected / collected, the recovered sum over the days
     that were paired, and how many such days there were (none means recovery was not
     measured this month -- null on the screen, never 0%). */
-function ledgerByTeam_(days, from, to) {
+function ledgerByTeam_(days, from, to, adj = null) {
   const out = {};
-  for (let d = from; d <= to; d = addDaysKey(d, 1)) {
-    const cellMap = days[d] || {};
-    for (const T in cellMap) {
-      const s = cellMap[T];
-      const m = out[T] = out[T] || { e: 0, c: 0, u: 0, ie: 0, ic: 0, rec: 0, pairedDays: 0 };
-      m.e += num(s.e); m.c += num(s.c); m.u += num(s.u); m.ie += num(s.ie); m.ic += num(s.ic);
-      if (s.p) { m.rec += num(s.ri) - num(s.rc); m.pairedDays += 1; }
-    }
-  }
+  ledgerWalk_(days, from, to, adj, (T, s) => {
+    const m = out[T] = out[T] || { e: 0, c: 0, u: 0, ie: 0, ic: 0, rec: 0, pairedDays: 0 };
+    m.e += num(s.e); m.c += num(s.c); m.u += num(s.u); m.ie += num(s.ie); m.ic += num(s.ic);
+    if (s.p) { m.rec += num(s.ri) - num(s.rc); m.pairedDays += 1; }
+  });
   return out;
 }
 /* ---- THE MONTH REPORT: the ONLY place the month's AMOUNTS are shown. ----
@@ -6793,7 +6780,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   // the screen -- and the dashboard no longer pays for any of this on its own loads.
   const days = await monthLedgerDays_(db, { monthStart, today, mon: liveMon, budgetMs: 8000 })
     .catch(() => null);
-  const [loansRaw, teamRows, appsRaw, codeRows, pmoCfg, agentRows] = await Promise.all([
+  const [loansRaw, teamRows, appsRaw, codeRows, pmoCfg, agentRows, adj] = await Promise.all([
     fetchAll(() => onTeams(db.from('loans')
       .select('team, stage, principal_amt, loan_amt, approved_date')
       .gte('approved_date', monthStart).lte('approved_date', today), user.teams)),
@@ -6807,6 +6794,10 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
     fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY]),
     fetchAll(() => db.from('call_agents').select('user_id, names')),
+    /* ILIYONASIA over this month -- laid over the ledger on READ, never baked into it; see
+       ledgerWalk_. This report and the dashboard's Orodha read the same ledger through the
+       same walk, so a month's Col % is one figure in both places or it is a bug. */
+    adjReceived_(db, user, { from: monthStart, to: today }),
   ]);
   const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
   const appRows = scoped(user, appsRaw).filter(l => {
@@ -6879,7 +6870,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
       const d = String(l.approved_date || '').slice(0, 10);
       return d >= from && d <= done;
     });
-    const s = (days && started) ? ledgerSum_(days, user, from, done) : null;
+    const s = (days && started) ? ledgerSum_(days, user, from, done, adj) : null;
     const salesAmt = started ? wk.reduce((t, l) => t + amtOf(l), 0) : null;
     // A week's sales are judged against a quarter of the month's target.
     const salesPct = started ? pct(salesAmt, monthTarget / 4) : null;
@@ -6912,7 +6903,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
     if (r.started) prev = r;
   }
 
-  const total = days ? ledgerSum_(days, user, monthStart, today) : null;
+  const total = days ? ledgerSum_(days, user, monthStart, today, adj) : null;
   const salesTotal = sales.reduce((t, l) => t + amtOf(l), 0);
   const totSalesPct = pct(salesTotal, monthTarget);
   const totColPct = total ? pct(total.colC, total.colE) : null;
@@ -6932,7 +6923,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
      different teams. */
   const ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection (PMO)',
     recovery: 'Recovery', gmo: 'GMO', manager: 'Manager', opm: 'OPM', bike: 'Bike', legal: 'Legal' };
-  const monthByTeam = days ? ledgerByTeam_(days, monthStart, today) : null;
+  const monthByTeam = days ? ledgerByTeam_(days, monthStart, today, adj) : null;
   const salesByTeam = {};
   for (const l of sales) salesByTeam[K(l.team)] = (salesByTeam[K(l.team)] || 0) + amtOf(l);
   const held = new Map();
@@ -7158,7 +7149,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
      to say which way it is MOVING, and movement needs the week before. */
-  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg] = await Promise.all([
+  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     /* LAST WEEK IS FOR THE ARROWS, AND THE ARROWS ARE NOT WORTH THE SCREEN.
@@ -7218,6 +7209,18 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        by the teams they hold -- with the sheet's column as the fallback. */
     fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
     settingsMany(db, [PMO_ROLE_KEY]),
+    /* ILIYONASIA -- ONE MORE READ ON THIS SCREEN, AND THE REASON IT IS WORTH IT.
+       Rule 1 in CLAUDE.md counts reads on /api/upload and /api/call; this is neither, and the
+       dashboard is a screen somebody can come back to in five minutes. What it buys is the
+       thing that rule exists to protect in the first place -- one answer to one question.
+       Until now this screen's Col % and the weekly report's Col % were computed from the same
+       decks by two different rules, and disagreed by exactly the register.
+
+       It is a hand-typed book of tens of rows, it rides IN this wave rather than after it so
+       it costs no wall time, it is bounded to the widest stretch this screen draws (the month
+       for the Orodha's M. columns, last Monday for the strip's arrows), and where the table
+       does not exist it answers null and every figure below is exactly what it is today. */
+    adjReceived_(db, user, { from: monthStart0 < prevMon ? monthStart0 : prevMon, to: sun }),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   /* The month ledger, for the Orodha's M. columns -- AFTER the wave above, never inside it,
@@ -7228,7 +7231,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const ledgerDays = await ledgerWithin_(
     monthLedgerDays_(db, { monthStart: monthStart0, today, mon, budgetMs: monthBudget, maxJobs: DASH_MONTH_SLICES }),
     monthBudget + 500);
-  const monthByTeam = ledgerDays ? ledgerByTeam_(ledgerDays, monthStart0, today) : null;
+  const monthByTeam = ledgerDays ? ledgerByTeam_(ledgerDays, monthStart0, today, adj) : null;
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
@@ -7246,6 +7249,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const myAbn = abnUploaded.concat(abnFound);
   const myTeams = teamRows.filter(t => teamAllowed(user, t.team));
   const dayRows = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
+  /* ONE DAY OF THE COLLECTION SHEET, RESOLVED AND CORRECTED -- the shape every collection
+     figure on this screen is built from. Batch first, register second; see withAdj_. Every
+     `pickLatestBatchRows(dayRows(...))` on this screen goes through here, so the Col % on the
+     performance strip, the Col trend tile, the Orodha's T. and M. columns and the recovery
+     denominators all move together or none of them does. */
+  const colDay_ = (rows, d) => withAdj_(pickLatestBatchRows(dayRows(rows, d)), adj, 'expected-current', d);
 
   /* ---- loan applications per weekday: unassigned + assigned, by the day the admin CHOSE ----
 
@@ -7288,7 +7297,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   /* ---- collection trend Mon-Fri: collected + uncollected per weekday ---- */
   const colTrend = WD5.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const rows = pickLatestBatchRows(dayRows(myExpWeek, d));
+    const rows = colDay_(myExpWeek, d);
     const exp = tExpected(rows);
     const col = tCollected(rows);
     /* A DAY NOBODY HAS UPLOADED IS NOT A DAY OF ZERO COLLECTION.
@@ -7316,7 +7325,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const from = tArrears(ini);
     const to = tArrears(cur);
     const rec = (ini.length && cur.length) ? from - to : 0;
-    const unc = tUncollected(pickLatestBatchRows(dayRows(myExpWeek, d)));
+    const unc = tUncollected(colDay_(myExpWeek, d));
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       /* WHAT IS STILL OUT AT THE END OF THE DAY -- which is not the same number as what went
          uncollected at the start of it, and the tile was showing the second under the first
@@ -7354,7 +7363,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       return (d0 >= from && d0 <= to) ? s + (num(l.principal_amt) || num(l.loan_amt)) : s;
     }, 0);
     for (let i = 0; i < 5; i++) {
-      const rows = pickLatestBatchRows(expRows.filter(r => String(r.snapshot_date) === addDaysKey(from, i)));
+      /* Corrected the same way as every other collection figure on this screen -- and note
+         that LAST week goes through it too, because an arrow that compares a corrected week
+         against an uncorrected one is an arrow pointing at the correction. */
+      const rows = colDay_(expRows, addDaysKey(from, i));
       e += tExpected(rows); c += tCollected(rows); u += tUncollected(rows);
     }
     let measured = false;
@@ -7397,9 +7409,15 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
 
   /* ---- team performance: numbers WITH the leader names beside them ---- */
-  const todayExp = pickLatestBatchRows(dayRows(myExpWeek, today));
+  const todayExp = colDay_(myExpWeek, today);
   const tomorrowSnap = await earlyList(db, { today, teams: user.teams });
-  const earlyExp = scoped(user, tomorrowSnap.rows);
+  /* The early-collection sheet gets its OWN book's corrections -- `expected-initial`, never the
+     day sheet's -- and only when the list actually IS the initial sheet. earlyList falls back to
+     the `tomorrow` book when no initial one was uploaded, and an initial-sheet correction laid
+     over a tomorrow sheet would be a figure from one book printed against another. */
+  const earlyExp = tomorrowSnap.source === 'initial'
+    ? withAdj_(scoped(user, tomorrowSnap.rows), adj, 'expected-initial', tomorrowSnap.date)
+    : scoped(user, tomorrowSnap.rows);
   /* Today's own weekday, so the headline counts and the team board describe ONE deck rather
      than whichever two happened to be uploaded last. This is the same rule the RECOVERED card
      has always used -- the card was right and these were not. */
@@ -7459,7 +7477,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      Each day is batch-resolved on its own before being summed, so a report uploaded twice
      cannot double a denominator and halve a percentage. */
   const uncolInto = (d, field) => {
-    for (const r of pickLatestBatchRows(dayRows(myExpWeek, d))) {
+    for (const r of colDay_(myExpWeek, d)) {
       slot(r.team)[field] += num(r.uncollected_amt);
     }
   };
@@ -7467,7 +7485,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   uncolInto(addDaysKey(today, -1), 'uncolYest');
   for (let i = 0; i < 5; i++) {
     const d = addDaysKey(mon, i);
-    for (const r of pickLatestBatchRows(dayRows(myExpWeek, d))) {
+    for (const r of colDay_(myExpWeek, d)) {
       const sl = slot(r.team);
       sl.uncolWeek += num(r.uncollected_amt);
       sl.expWeek += num(r.expected_amt);
@@ -7670,10 +7688,34 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
     snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs), ...dayOpts });
     fellBack = true;
   }
-  const teamBranch = await branchByTeam(db, nowMs);
+  /* ILIYONASIA FOR THIS EXACT DECK -- "he just uploaded and confirmed that by using the
+     expected tab ... not just there: that was evidence so EVERYWHERE the amount should add as
+     stated during manual input".
+
+     THE AMOUNT ADDS. I first returned it only beside the deck's own total, on the reasoning
+     that this tab lists the deck one CUSTOMER per row and the register has no customer row to
+     put in that list -- so a total including it would no longer add up to the rows on screen.
+     That was overruled, and correctly: what somebody typed into the register is money that was
+     received, and a screen that shows Collected has to say so. A person who wants the deck
+     alone can read the deck; a person reading Collected is asking what came in.
+
+     So Collected and Col % carry it, and the deck's own figures are returned BESIDE them
+     (`deckCollected`, `deckPct`, `adjusted`) instead of the other way round -- so the total
+     can still be taken back apart, which is the rule the register has had since it was built.
+
+     ONLY THE TWO BOOKS THE REGISTER KNOWS. `tomorrow` and `yesterday` are their own snapshot
+     types with no adjustment target, so they get nothing rather than somebody else's figure. */
+  const adjTarget = type === 'initial' ? 'expected-initial'
+    : type === 'today' ? 'expected-current' : null;
+  const [teamBranch, adj] = await Promise.all([
+    branchByTeam(db, nowMs),
+    adjTarget && snap.date ? adjReceived_(db, user, { from: snap.date, to: snap.date }) : null,
+  ]);
   const rows = scoped(user, snap.rows).map(r => ({ ...r, collected: collectedOf(r), branch: teamBranch.get(K(r.team)) || null }));
   const exp = rows.reduce((s, r) => s + num(r.payment_expected), 0);
   const col = rows.reduce((s, r) => s + r.collected, 0);
+  const adjAmt = (adj && adjTarget) ? adj.onDay(adjTarget, snap.date) : 0;
+  const colAdj = col + adjAmt;
   const st = {};
   for (const r of rows) { const k = K(r.todays_status) || '(BLANK)'; st[k] = (st[k] || 0) + 1; }
   const teamsSeen = [...new Set(rows.map(r => r.team).filter(Boolean))].sort();
@@ -7689,8 +7731,19 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
     isToday: !!snap.date && String(snap.date) === String(todayK),
     weekdays: WD5, todayWeekday: currentWeekday(nowMs),
     rows, count: rows.length, teams: teamsSeen,
-    totals: { expected: exp, collected: col, uncollected: uncollectedOf(rows),
-      pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null,
+    totals: { expected: exp, collected: colAdj,
+      uncollected: Math.max(0, uncollectedOf(rows) - adjAmt),
+      pct: exp > 0 ? Math.round((colAdj / exp) * 1000) / 10 : null,
+      /* THE SAME FIGURES WITHOUT THE REGISTER, so a total that includes a correction can
+         always be taken back apart -- and so this list's rows can still be reconciled against
+         the deck they came from. */
+      adjusted: adjAmt,
+      deckCollected: col,
+      deckUncollected: uncollectedOf(rows),
+      deckPct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null,
+      // False when the register has not been built on this deployment -- "say what was not
+      // done": a zero would read as "checked, nothing registered", which is a different fact.
+      adjReady: !!adj,
       installments: rows.length,
       paid: rows.filter(r => ['PAID', 'OVERPAID'].includes(K(r.todays_status))).length,
       unpaid: rows.filter(r => K(r.todays_status) === 'UNPAID').length,
@@ -8112,7 +8165,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
-         codeRows, cfgS] = await Promise.all([
+         codeRows, cfgS, adj] = await Promise.all([
     readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     earlyList(db, { today, teams: user.teams }),
@@ -8147,6 +8200,10 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     // Every setting this screen needs, in ONE journey rather than three.
     settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY]),
+    /* ILIYONASIA over the week these boards are read on -- "everywhere the amount should add
+       as stated during manual input". One small read of a hand-typed register, in this wave so
+       it costs no wall time, null on a deployment that has not built the table. */
+    adjReceived_(db, user, { from: mon, to: sun }),
   ]);
   const pmoRoleName = cfgS.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const teamBy = {};
@@ -8192,8 +8249,28 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       // Numbered after sorting, so S/N is the ranking rather than an accident of map order.
       .map((r, i) => ({ sn: i + 1, ...r }));
   }
-  const earlyToday = earlyBoard(myTmrw);
-  const earlyWeek = earlyBoard(myExp);
+  /* THE REGISTER, ON BOTH OF THESE BOARDS.
+       "not just there ... everywhere the amount should add as stated during manual input"
+
+     `earlyToday` reads the early-collection sheet, so it takes `expected-initial` -- and only
+     when the list actually IS that sheet, because earlyList falls back to the `tomorrow` book
+     and an initial-sheet correction laid over a tomorrow sheet is one book's figure printed
+     against another.
+
+     `earlyWeek` reads the week's DAY sheets, so it takes `expected-current` -- and taking it
+     meant resolving the week per day first, which this board was not doing. It summed EVERY
+     batch, so a day somebody uploaded twice counted twice here while the same day counted once
+     on every other screen. That is the rule from snapshots.js, and it is not optional; a
+     correction cannot be applied honestly on top of a figure that is already doubled. So this
+     board now resolves each day the way the rest of the system does, and the number it prints
+     may drop on a week that carried a re-upload. That is the figure being right, not a loss. */
+  const myExpDay_ = d => withAdj_(onDate(myExp, d), adj, 'expected-current', d);
+  const weekDays_ = WD5.map((_w, i) => addDaysKey(mon, i));
+  const myExpWeekResolved = weekDays_.flatMap(myExpDay_);
+  const earlyToday = earlyBoard(tomorrow.source === 'initial'
+    ? withAdj_(myTmrw, adj, 'expected-initial', tomorrow.date)
+    : myTmrw);
+  const earlyWeek = earlyBoard(myExpWeekResolved);
 
   /* ---- RECOVERY: per Recovery officer. ----
 
@@ -8464,7 +8541,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
     .map(c => ({ name: c.name, teams: c.teams }));
   const pmoByDay = new Map();
-  for (let i = 0; i < 7; i++) { const d = addDaysKey(mon, i); pmoByDay.set(d, onDate(myExp, d)); }
+  // Corrected the same way the boards above are -- one register, one rule, one figure.
+  for (let i = 0; i < 7; i++) { const d = addDaysKey(mon, i); pmoByDay.set(d, myExpDay_(d)); }
   const pmoDays = WD5.map((_w, i) => addDaysKey(mon, i));
   const pmoRows = pmoBoard(pmoRoster, pmoByDay, today, pmoDays);
 

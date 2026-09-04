@@ -339,6 +339,45 @@ test('the called-today tick needs a real conversation, not a dial attempt', asyn
   assert.equal((await callApi(db3, 'api_callList', ['d1', 'today'], NOW)).rows.find(r => r.ref === '111').called, false);
 });
 
+/* =====================================================================================
+   THE BAR MUST NOT CONTRADICT ITSELF, AND IT MUST NOT CONTRADICT THE PORTAL.
+   =====================================================================================
+     "the col% of excels and our system differ ... not just there: that was evidence so
+      everywhere the amount should add as stated during manual input"
+
+   The strip carries TWO collection figures -- today's, out of buildDashboard, and the week's,
+   which is its own read. Correcting one and not the other would leave the bar disagreeing with
+   itself in front of three hundred officers. Both take the register; Kesho does not, because
+   the `tomorrow` book has no adjustment target and inventing one would print a figure from one
+   book against another. */
+test('the phone strip counts a registered Iliyonasia in Col, today and for the week', async () => {
+  const { _clearSummaryCache } = await import('../api/_lib/call-core.js');
+  const withAdj = () => {
+    const t = makeTables();
+    t.pmo_adjustments = [
+      { id: 'a1', adj_date: '2026-07-24', target: 'expected-current', team: 'KONGOWE',
+        amount: 400, reason: 'ilipwa benki', created_by: 'PMO DATA' },
+    ];
+    return t;
+  };
+  const strip = async (tables) => {
+    const db = fakeDb(tables);
+    await callApi(db, 'api_callRegister', ['bx', 'JUMA ISSA', '', '', '0712999711', 'KON123'], NOW);
+    _clearSummaryCache();
+    return callApi(db, 'api_callDailySummary', ['bx'], NOW);
+  };
+  _clearSummaryCache();
+  const plain = await strip(makeTables());
+  const d = await strip(withAdj());
+
+  assert.ok(d.col.num > plain.col.num, 'today Col on the bar counts the registered payment');
+  assert.ok(d.col.pct > plain.col.pct);
+  assert.ok(d.weekCol.num > plain.weekCol.num,
+    'and so does the week beside it -- one bar, one rule');
+  assert.equal(d.kesho.num, plain.kesho.num,
+    'Kesho reads the tomorrow book, which has no adjustment target -- it must not borrow one');
+});
+
 /* THE BURST. pg_stat_activity on the morning the dashboard would not load: 27 queries active
    at once, nearly all the totals functions, nothing old, nothing blocked -- three hundred
    handsets re-asking for the strip after an upload, every one of them running buildDashboard

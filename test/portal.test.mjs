@@ -2279,6 +2279,195 @@ test('a database with no Iliyonasia table reports exactly as it always did', asy
   assert.equal(d.teamTotals.adjusted, 0);
 });
 
+/* =====================================================================================
+   ONE COL %, OR THE REGISTER IS WORSE THAN USELESS.
+   =====================================================================================
+     "my guys who posts reports says the col% of excels and our system differ so he is worried
+      we are not including iliyonasia in collected"
+     "he just uploaded and confirmed that by using the expected tab"
+
+   He was right, and the fault was the one CLAUDE.md names first: TWO implementations of one
+   rule. The weekly report and the leader reports applied the register; the dashboard, the
+   Orodha, the month ledger and the month report did not. So the same week's Col % read one
+   figure on the report he posts and another on the screen the directors open, and neither
+   matched his Excel. A figure that disagrees with itself is worse than a wrong one, because
+   there is nothing to correct. These tests are what stops it splitting again. */
+const ADJ_WEEK = [
+  /* TODAY, because that is the day this fixture actually has a deck on -- and because a
+     correction against a day whose sheet DID arrive is the case where every screen has a
+     figure to move. The day-with-no-deck case is covered by the weekly report's own tests
+     above, which register against Monday. */
+  { id: 'c1', adj_date: TODAY, target: 'expected-current', team: 'KONGOWE', amount: 40000,
+    reason: 'ilipwa benki, haikuonekana', created_by: 'PMO DATA' },
+];
+
+test('the dashboard Col % counts the same Iliyonasia the weekly report does', async () => {
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'dashboardFull', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+
+  /* THE PERFORMANCE STRIP. Its Col % is the week's collected over its expected, and the
+     collected side is now the same one the report he posts prints. */
+  assert.ok(d.perf.colPct > plain.perf.colPct,
+    'the registered payment raises the week Col % the strip shows');
+
+  // THE COL TREND TILE -- the same money, on the day it was registered against.
+  const dayOf = (x, date) => x.colTrend.find(r => r.date === date);
+  assert.equal(dayOf(d, TODAY).collected, dayOf(plain, TODAY).collected + 40000);
+  /* MONEY RECEIVED IS MONEY NO LONGER OUTSTANDING -- clamped PER TEAM, which is the whole
+     reason the correction is applied to team-day cells rather than to a finished total. The
+     40,000 clears KONGOWE's own outstanding and stops there; it cannot reach into MBAGALA's,
+     which is what subtracting it from the day's total would have done. */
+  assert.ok(dayOf(d, TODAY).uncollected < dayOf(plain, TODAY).uncollected);
+  assert.equal(dayOf(d, TODAY).uncollected,
+    dayOf(plain, TODAY).uncollected - Math.min(1000, 40000) - 0 + 0 - 0,
+    'KONGOWE"s 1,000 is cleared; MBAGALA"s 800 is untouched');
+  assert.ok(dayOf(d, TODAY).pct > dayOf(plain, TODAY).pct);
+
+  /* THE ORODHA. Its T. Col % is the same day read per team, and it must not be a third
+     answer to the question the two figures above already agree on. */
+  const teamOf = (x, name) => x.teamPerf.find(r => r.team === name);
+  assert.ok(teamOf(d, 'KONGOWE').tColPct > teamOf(plain, 'KONGOWE').tColPct);
+  assert.equal(teamOf(d, 'MBAGALA').tColPct, teamOf(plain, 'MBAGALA').tColPct,
+    'a correction is for one team -- nobody else moves');
+});
+
+test('the weekly report and the dashboard now answer the day with ONE Col %', async () => {
+  /* The whole point. Before this these two read the same decks by two different rules and
+     disagreed by exactly the register -- which is what sent somebody to check their Excel. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const wk = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  const dWk = wk.days.find(x => x.date === TODAY);
+  const dDash = dash.colTrend.find(x => x.date === TODAY);
+  assert.equal(dWk.collected, dDash.collected,
+    'one day, one collected figure, whichever screen asks');
+  assert.equal(dWk.pct, dDash.pct, 'and therefore one Col %');
+});
+
+test('the Expected tab adds the register to Collected, and still shows the deck alone', async () => {
+  /* This is the tab he checked, and the instruction after the evidence was explicit: "not just
+     there ... EVERYWHERE the amount should add as stated during manual input". So Collected and
+     Col % include it. The deck's own figures come back beside them, because the rows on screen
+     are still the deck alone -- an Iliyonasia has no customer row, that is what it is -- and
+     without saying so a person adding up the list would find it short and hunt a bug. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const args = { type: 'today', weekday: 'FRI' };
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'expectedDay', args, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'expectedDay', args, NOW);
+
+  assert.equal(d.totals.collected, plain.totals.collected + 40000, 'the amount adds, as typed');
+  assert.ok(d.totals.pct > plain.totals.pct, 'and Col % moves with it');
+  assert.equal(d.totals.adjusted, 40000);
+  assert.equal(d.totals.deckCollected, plain.totals.collected,
+    'the deck is still there to be reconciled against the rows');
+  assert.equal(d.totals.deckPct, plain.totals.pct);
+  assert.ok(d.totals.uncollected < plain.totals.uncollected, 'and uncollected falls with it');
+  assert.equal(d.totals.adjReady, true);
+
+  /* THE INITIAL BOOK IS NOT THIS BOOK. An `expected-current` correction must not appear on the
+     early-collection sheet, or Col would move Early Col by its own figure. */
+  const ini = await portalApi(dbWithRpc(t), ADMIN, 'expectedDay', { type: 'initial', weekday: 'FRI' }, NOW);
+  assert.equal(ini.totals.adjusted, 0);
+
+  // No register table: the tab is exactly what it was, and says so rather than claiming zero.
+  const bare = tables();
+  delete bare.pmo_adjustments;
+  const b = await portalApi(dbWithRpc(bare), ADMIN, 'expectedDay', args, NOW);
+  assert.equal(b.totals.adjusted, 0);
+  assert.equal(b.totals.collected, plain.totals.collected);
+  assert.equal(b.totals.deckCollected, plain.totals.collected);
+});
+
+test('the month ledger takes the register on READ, so a late correction still lands', async () => {
+  /* The ledger FREEZES days before the current week -- computed once, stored, never
+     recomputed. An Iliyonasia registered today against a day three weeks back is the ordinary
+     case (that is when somebody finds the missing payment), so a correction baked into a
+     frozen cell would simply never appear. It is laid over the stored ledger on every read. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'monthReport', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'monthReport', {}, NOW);
+  assert.ok(plain.ledgerReady && d.ledgerReady, 'the fixture fills the ledger in one pass');
+  assert.equal(d.totals.collected, plain.totals.collected + 40000,
+    'the month total carries the correction');
+  assert.ok(d.totals.colPct > plain.totals.colPct);
+  // Per team, per day, as above: KONGOWE's Friday 1,000 clears and nothing else moves.
+  assert.equal(d.totals.uncollected, plain.totals.uncollected - 1000);
+  /* AND THE LEADER ROWS OFF THE SAME LEDGER. One walk, two readers -- so the month report's
+     total and the leader beside it cannot disagree about the same money. */
+  const leadOf = (x, name) => x.leaders.find(r => r.name === name && r.roleKey === 'manager');
+  assert.ok(leadOf(d, 'BOSS').colPct > leadOf(plain, 'BOSS').colPct);
+});
+
+test('the register is read once per request, and a missing one is not asked twice', async () => {
+  /* "Mind you we aint interfering app efficiency and speed : postgres issues"
+     The dashboard asks for the register twice -- its own figures and buildDashboard's -- and
+     the phone's bar asks twice as well. Read per caller, that is a drip on a throttled
+     instance; read whole and remembered, it is one trip that everything behind it shares. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const db = dbWithRpc(t);
+  let hits = 0;
+  const from0 = db.from.bind(db);
+  db.from = (n) => { if (n === 'pmo_adjustments') hits += 1; return from0(n); };
+  await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(hits, 1, 'two callers in one request, one journey to the database');
+
+  /* AND THE MISSING TABLE IS REMEMBERED, WHICH IS NOT AN OPTIMISATION. db/RUN-ME-015 is pasted
+     in by hand, so until it is, every one of these reads is a query Postgres REJECTS and LOGS
+     as an error -- which is what a screen full of Postgres errors is made of. Asked once and
+     remembered, the fallback behaves identically and stops shouting. */
+  const bare = tables();
+  delete bare.pmo_adjustments;
+  const db2 = dbWithRpc(bare);
+  let asks = 0;
+  const f2 = db2.from.bind(db2);
+  db2.from = (n) => { if (n === 'pmo_adjustments') asks += 1; return f2(n); };
+  await portalApi(db2, ADMIN, 'dashboardFull', {}, NOW);
+  await portalApi(db2, ADMIN, 'weekly', {}, NOW);
+  assert.ok(asks <= 1, `a table that is not there was asked for ${asks} times`);
+});
+
+test('the phone strip and the portal dashboard cannot disagree about the same day', async () => {
+  /* buildDashboard is shared by both on purpose. Correcting one and not the other would have
+     put two Collected figures for one day on ONE screen -- the shared cards and the Orodha
+     beside them -- which is worse than the fault being fixed. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'dashboard', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'dashboard', {}, NOW);
+  assert.equal(d.totals.collected, plain.totals.collected + 40000, 'the amount adds, as typed');
+  const kong = x => x.teams.find(r => r.team === 'KONGOWE');
+  assert.equal(kong(d).collected, kong(plain).collected + 40000);
+  assert.equal(kong(d).uncollected, Math.max(0, kong(plain).uncollected - 40000));
+  assert.equal(d.teams.find(r => r.team === 'MBAGALA').collected,
+    plain.teams.find(r => r.team === 'MBAGALA').collected, 'one team, one day');
+});
+
+test('the collection commission boards pay on what was collected, register included', async () => {
+  /* This one is PAY, not a report, which is why it is tested on its own. An Iliyonasia is
+     money the officer DID collect -- the only thing that went wrong is that it never reached
+     the deck -- so paying on the deck alone pays them less than they collected. */
+  const withOfficer = () => {
+    const x = tables();
+    // A collection officer holding KONGOWE -- these people live on their access codes.
+    x.access_codes.push({ code: 'PMO1', name: 'PMO ONE', role: 'COLLECTION', teams: ['KONGOWE'] });
+    return x;
+  };
+  const t = withOfficer();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const plain = await portalApi(dbWithRpc(withOfficer()), ADMIN, 'commission', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  const rowOf = x => x.pmo.find(r => r.officer === 'PMO ONE');
+  assert.ok(rowOf(plain), 'the fixture puts a collection officer on the board');
+  assert.ok(rowOf(d).weekPct > rowOf(plain).weekPct,
+    'a payment that was collected and registered is paid on, not left on the deck that missed it');
+});
+
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {
   const db = fakeDb(tables());
   await portalApi(db, ADMIN, 'saveAccessCode',

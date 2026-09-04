@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-04-c';
+var BUILD = '2026-09-04-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3406,6 +3406,22 @@ VIEWS.expected = function(){
       + kpi('Uncollected', money(t.uncollected), money(t.unpaid)+' unpaid · '+money(t.underpaid)+' underpaid', 'bad')
       + kpi('Collection', pct(t.pct), money(t.paid) + ' paid/overpaid')
       + '</div>'
+      /* ILIYONASIA, ON THE DECK IT WAS REGISTERED AGAINST.
+         "the col% of excels and our system differ ... he just uploaded and confirmed that by
+          using the expected tab -- not just there: that was evidence so everywhere the amount
+          should add as stated during manual input"
+         Collected and Collection % above INCLUDE the register. This line is what it is made
+         of: the deck's own figure, and what was added to it. The rows below are still the deck
+         alone -- an Iliyonasia has no customer row, that is what it is -- so without this line
+         somebody adding up the list would find it short and go looking for a bug.
+         Shown only when there IS a correction on this deck; silence means the register is empty
+         for this day, which is the ordinary case and needs no row. */
+      + ((t.adjusted ? '<div class="note" style="padding:6px 10px;font-size:12px;line-height:1.35">'
+          + 'Makusanyo yanajumuisha Iliyonasia / Collected includes Iliyonasia &middot; '
+          + 'deki / deck <b>' + money(t.deckCollected) + '</b> (' + pct(t.deckPct) + ')'
+          + ' + iliyonasia <b>' + money(t.adjusted) + '</b>'
+          + ' = <b>' + money(t.collected) + '</b> (<b>' + pct(t.pct) + '</b>)'
+          + '</div>' : ''))
       /* ONE SLIM RED LINE, AND ONLY WHEN THE LIST IS NOT TODAY'S.
          "i missed the banner ... the banner is always too long just pass a single slim red row"
          It used to be a paragraph of standing advice in calm blue, with the warning tacked on
@@ -3443,7 +3459,9 @@ VIEWS.expected = function(){
       col('arrears','Arrears','money'), col('balance','Balance','money'), col('zone','Zone')];
     ONROW = openFollowup;
     S.foot = 'Expected: TZS '+money(t.expected)+' · Collected: TZS '+money(t.collected)
-      + ' · Uncollected: TZS '+money(t.uncollected)+' · Collection: '+pct(t.pct);
+      + ' · Uncollected: TZS '+money(t.uncollected)+' · Collection: '+pct(t.pct)
+      + (t.adjusted ? ' · incl. Iliyonasia TZS '+money(t.adjusted)
+          +' (deck TZS '+money(t.deckCollected)+' · '+pct(t.deckPct)+')' : '');
   });
 };
 function chipFor(s){
@@ -4184,11 +4202,27 @@ VIEWS.weekly = function(){
            col('stat','Static','num'), col('success','Success %','pct')],
           {team:'', c16:d.teamTotals.c16, cleared:d.teamTotals.cleared, reduced:d.teamTotals.reduced,
            bad:d.teamTotals.bad, stat:d.teamTotals.stat, success:d.teamTotals.success})
-      + board('wColl','Makusanyo / Collection (Mon–Fri expected)','collected vs expected', d.teams,
-          [col('branch','Branch'), col('team','Team'), col('expected','Expected','money'), col('collected','Collected','money'),
+      /* THE CORRECTION HAS ITS OWN COLUMN, AND THAT IS THE POINT.
+         The server has sent `adjusted` beside every collected figure since the register was
+         first applied -- how much of Collected came from Iliyonasia rather than from the deck
+         -- and this board quietly dropped it. So the figure moved and the screen never said
+         why, which is the one thing an adjustment must never do: a correction nobody can see
+         is indistinguishable from a bug, and it is exactly what sent somebody to check their
+         Excel. The column only appears in a week that HAS a correction; a week with none is
+         drawn as it always was. */
+      + board('wColl','Makusanyo / Collection (Mon–Fri expected)',
+          d.teamTotals.adjusted ? 'collected vs expected · Collected includes Iliyonasia'
+                                : 'collected vs expected', d.teams,
+          [col('branch','Branch'), col('team','Team'), col('expected','Expected','money'), col('collected','Collected','money')]
+          .concat(d.teamTotals.adjusted
+            ? [{key:'adjusted', label:'Iliyonasia', kind:'money',
+                cls:function(r){ return r.adjusted ? 'good' : ''; }}]
+            : [])
+          .concat([
            {key:'uncollected', label:'Uncollected', kind:'money', cls:function(){ return 'bad'; }},
-           col('collPct','Collection %','pct')],
+           col('collPct','Collection %','pct')]),
           {team:'', expected:d.teamTotals.expected, collected:d.teamTotals.collected,
+           adjusted:d.teamTotals.adjusted,
            uncollected:d.teamTotals.uncollected, collPct:d.teamTotals.collPct})
       + board('wRec','Urejeshaji / Recovery','recovered ÷ the week’s uncollected', d.teams,
           [col('branch','Branch'), col('team','Team'),
@@ -4214,12 +4248,19 @@ VIEWS.weekly = function(){
       /* "weekly report is intended to have reports of all leaders in the leaders' table" */
       + weeklyLeaderBoards(d);
     S.rows = d.days;
+    // Same rule as the team board above: the day strip names its correction or has none.
     S.cols = [col('weekday','Day'), col('date','Date','date'), col('customers','Customers','num'),
-      col('expected','Expected','money'), col('collected','Collected','money'), col('uncollected','Uncollected','money'),
-      col('pct','Collection %','pct'), col('recovered','Recovered','money'), col('received','Received','money')];
+      col('expected','Expected','money'), col('collected','Collected','money')]
+      .concat(d.teamTotals.adjusted
+        ? [{key:'adjusted', label:'Iliyonasia', kind:'money',
+            cls:function(r){ return r.adjusted ? 'good' : ''; }}]
+        : [])
+      .concat([col('uncollected','Uncollected','money'),
+        col('pct','Collection %','pct'), col('recovered','Recovered','money'), col('received','Received','money')]);
     ONROW = null;
     S.foot = 'Sales: TZS '+money(d.teamTotals.sales)+' ('+pct(d.teamTotals.salesPct)+' of target)'
-      + ' · Collection: '+pct(d.teamTotals.collPct)+' · Recovery: '+pct(d.teamTotals.recPct);
+      + ' · Collection: '+pct(d.teamTotals.collPct)+' · Recovery: '+pct(d.teamTotals.recPct)
+      + (d.teamTotals.adjusted ? ' · incl. Iliyonasia TZS '+money(d.teamTotals.adjusted) : '');
   });
 };
 
