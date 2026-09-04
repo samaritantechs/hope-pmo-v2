@@ -14,7 +14,7 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_ } from './adjustments.js';
+import { adjReceived_, withAdj_, noteAdjustmentsWritten } from './adjustments.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -5908,6 +5908,9 @@ async function adjustmentRecord(db, user, p = {}) {
     created_by: user.name || user.code,
   }).select('*').maybeSingle();
   if (error) throw new Error(error.message);
+  // The register is remembered for a minute (see adjustments.js); a write drops the memo so
+  // the person who just typed it sees it on the next screen, not on the next minute.
+  noteAdjustmentsWritten(db);
   return { row: data };
 }
 /* "some issues are sorted midday" -- an adjustment entered in the morning can be re-sized
@@ -5929,6 +5932,7 @@ async function adjustmentAmend(db, user, p = {}) {
     .update({ amount, created_by: user.name || user.code, created_at: new Date().toISOString() })
     .eq('id', id).select('*').maybeSingle();
   if (error) throw new Error(error.message);
+  noteAdjustmentsWritten(db);
   return { row: data, previousAmount: num(before.amount) };
 }
 async function adjustmentDelete(db, user, p = {}) {
@@ -5937,6 +5941,7 @@ async function adjustmentDelete(db, user, p = {}) {
   if (!id) throw badRequest('id is required');
   const { error } = await db.from('pmo_adjustments').delete().eq('id', id);
   if (error) throw new Error(error.message);
+  noteAdjustmentsWritten(db);
   return { id, deleted: true };
 }
 /** Managing who can sign in is the one thing gated harder than team scope. */

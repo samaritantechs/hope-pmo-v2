@@ -86,15 +86,78 @@ const K = v => String(v == null ? '' : v).trim().toUpperCase();
    IT IS STILL NEVER READ DURING AN UPLOAD. Nothing in api/upload.js touches this file. */
 export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
 
-export async function adjReceived_(db, user, { from, to }) {
-  let rows;
-  try {
-    rows = await fetchAll(() => db.from('pmo_adjustments')
-      .select('team, target, amount, adj_date')
-      .gte('adj_date', from).lte('adj_date', to));
-  } catch (e) {
-    return null;                       // db/RUN-ME-015 not run here -- reports are unchanged
+/* ---------------------------------------------------------------- READ IT ONCE, NOT PER SCREEN
+   "Mind you we aint interfering app efficiency and speed : postgres issues"
+
+   Fair. The first version of this asked the database once per screen, per range -- which on a
+   dashboard meant twice in one request, and on the phone's bar twice more. On a throttled
+   instance that is exactly the kind of drip nobody notices until it is everywhere.
+
+   So the register is read WHOLE and REMEMBERED, the same way `settings` and `teams` already are
+   in portal-core: it is a hand-typed book of tens of rows -- config-sized, not book-sized --
+   filtering it by date on the wire saves nothing and costs the sharing. One read per database
+   client per minute now serves every screen and every handset behind it, and a second caller in
+   the same request pays nothing at all.
+
+   IN-FLIGHT IS SHARED TOO. Without that, the dashboard's two callers both miss the cold cache
+   in the same millisecond and both go to the database -- which is the shape that took this
+   system down once already (see the note in supabase.js).
+
+   AND A WRITE DROPS THE MEMO, so a PMO who registers a payment sees it on the next screen they
+   open rather than up to a minute later.
+
+   THE MISSING TABLE IS REMEMBERED TOO, AND THAT PART IS NOT AN OPTIMISATION. db/RUN-ME-015 is
+   pasted in by hand like every migration here, so on a deployment where it has not been run,
+   every one of these reads is a query Postgres REJECTS -- and logs as an error. The Supabase
+   report showing twelve thousand Postgres errors is what a fallback that keeps asking looks
+   like from the database's side. Asked once every five minutes instead of on every screen, the
+   same fallback behaves identically and stops shouting. Same rule as knownMissing() for the
+   totals functions in snapshot-totals.js, for the same reason. */
+const ADJ_TTL_MS = 60000;
+const ADJ_MISSING_TTL_MS = 5 * 60 * 1000;
+const adjCache = new WeakMap();
+
+/** Called by every write to the register, so an admin sees their own entry immediately. */
+export function noteAdjustmentsWritten(db) { adjCache.delete(db); }
+
+async function readAdjustments(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = adjCache.get(db);
+  if (hit) {
+    if (hit.missingAt && (at - hit.missingAt) < ADJ_MISSING_TTL_MS) return null;
+    if (hit.pending) return hit.pending;
+    if (hit.rows && (at - hit.at) < ADJ_TTL_MS) return hit.rows;
   }
+  const pending = (async () => {
+    try {
+      /* WHOLE, AND FOUR COLUMNS. The reason, the ref, who typed it and when belong to the
+         Iliyonasia tab, which reads the table itself; a collection figure needs the team, the
+         book, the amount and the day. */
+      const rows = await fetchAll(() => db.from('pmo_adjustments')
+        .select('team, target, amount, adj_date'));
+      adjCache.set(db, { at: Date.now(), rows });
+      return rows;
+    } catch (e) {
+      // db/RUN-ME-015 not run here. Remembered, so the next screen does not ask again and get
+      // the same rejection logged against the database a second time.
+      adjCache.set(db, { at, missingAt: Date.now() });
+      return null;
+    }
+  })();
+  adjCache.set(db, { at: (hit && hit.at) || 0, rows: hit && hit.rows, pending });
+  return pending;
+}
+
+export async function adjReceived_(db, user, { from, to }) {
+  const all = await readAdjustments(db);
+  if (all == null) return null;        // db/RUN-ME-015 not run here -- reports are unchanged
+  /* THE DATE WINDOW, APPLIED HERE. It used to be a `gte`/`lte` on the wire; on tens of rows
+     that is a round trip to save nothing, and it is what stopped the register being shared
+     between two callers asking for two different ranges in one request. */
+  const rows = all.filter(r => {
+    const d = String(r.adj_date || '').slice(0, 10);
+    return d >= from && d <= to;
+  });
   /* KEYED BY TARGET, because the two books are two different figures. `expected-current` is
      the day's collection sheet and `expected-initial` is the early-collection one -- a
      correction to one is not a correction to the other, and adding them together would move

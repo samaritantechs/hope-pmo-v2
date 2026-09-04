@@ -2403,6 +2403,35 @@ test('the month ledger takes the register on READ, so a late correction still la
   assert.ok(leadOf(d, 'BOSS').colPct > leadOf(plain, 'BOSS').colPct);
 });
 
+test('the register is read once per request, and a missing one is not asked twice', async () => {
+  /* "Mind you we aint interfering app efficiency and speed : postgres issues"
+     The dashboard asks for the register twice -- its own figures and buildDashboard's -- and
+     the phone's bar asks twice as well. Read per caller, that is a drip on a throttled
+     instance; read whole and remembered, it is one trip that everything behind it shares. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const db = dbWithRpc(t);
+  let hits = 0;
+  const from0 = db.from.bind(db);
+  db.from = (n) => { if (n === 'pmo_adjustments') hits += 1; return from0(n); };
+  await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(hits, 1, 'two callers in one request, one journey to the database');
+
+  /* AND THE MISSING TABLE IS REMEMBERED, WHICH IS NOT AN OPTIMISATION. db/RUN-ME-015 is pasted
+     in by hand, so until it is, every one of these reads is a query Postgres REJECTS and LOGS
+     as an error -- which is what a screen full of Postgres errors is made of. Asked once and
+     remembered, the fallback behaves identically and stops shouting. */
+  const bare = tables();
+  delete bare.pmo_adjustments;
+  const db2 = dbWithRpc(bare);
+  let asks = 0;
+  const f2 = db2.from.bind(db2);
+  db2.from = (n) => { if (n === 'pmo_adjustments') asks += 1; return f2(n); };
+  await portalApi(db2, ADMIN, 'dashboardFull', {}, NOW);
+  await portalApi(db2, ADMIN, 'weekly', {}, NOW);
+  assert.ok(asks <= 1, `a table that is not there was asked for ${asks} times`);
+});
+
 test('the phone strip and the portal dashboard cannot disagree about the same day', async () => {
   /* buildDashboard is shared by both on purpose. Correcting one and not the other would have
      put two Collected figures for one day on ONE screen -- the shared cards and the Orodha

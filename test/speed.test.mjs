@@ -154,21 +154,21 @@ const BUDGETS = [
      differ ... he is worried we are not including iliyonasia in collected". He was right, and
      the reason is that the register was applied on the weekly report and the leader reports
      and nowhere else, so this screen's Col % and that report's Col % were two answers to one
-     question. The read that fixes it is the pmo_adjustments register over the widest stretch
-     this screen draws: a HAND-TYPED book of tens of rows, bounded by date, riding inside the
-     existing parallel wave so it costs no wall time, and adding no measurable rows at all
-     (the row budgets below are untouched). Could the database do it instead? It already is --
-     the filtering is a `gte`/`lte` on an indexed column and what comes back is the answer, not
-     a book to sift. One small read is what one consistent figure costs, and it belongs in the
-     diff rather than in a later commit nobody connects to it.
+     question.
 
-     THIRTY-THREE, AND THE THIRTY-THIRD IS THE SAME REGISTER ON THE SHARED DASHBOARD. This
-     screen is built from TWO things: its own reads, and buildDashboard -- which the phone's
-     summary strip is also built from. Correcting one and not the other put two different
-     Collected figures for one day on this one screen, which is worse than the fault being
-     fixed. So both read it, and this screen pays for both because it draws both. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  33,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  32,   900],
+     ONE trip, not two, and the difference is the point. This screen asks for the register
+     twice -- once for its own figures, once inside buildDashboard -- and the first version of
+     the change paid for both. It is now read WHOLE and memoised per database client for a
+     minute (see adjustments.js), so a second caller in the same request pays nothing, and in
+     the field one read serves every screen and every handset behind it for that minute. A
+     fixture builds a fresh database per call, so here it shows as exactly one.
+
+     Could the database do it instead? It already is -- what comes back is the answer, not a
+     book to sift: a hand-typed register of tens of rows, config-sized like `settings` and
+     `teams`, which are memoised in exactly the same way and for exactly the same reason. The
+     row budgets below are untouched because it adds no measurable rows. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  32,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  31,   900],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
@@ -309,28 +309,20 @@ const PHONE = [
     ['DEV1', [{ phone: '0712000001', date: '2026-07-24', ts: 1, duration: 60, outcome: 'CONNECTED' }]],
     20, 30000],
   /* THE PHONE'S SUMMARY STRIP, WHICH HAD NO BUDGET AT ALL, AND COSTS THIRTY TRIPS.
-     Adding the Iliyonasia read here is what made me measure it, and the number is worth
-     writing down plainly rather than burying: TWENTY-NINE before this change, THIRTY-ONE
-     after. Two of those thirty-one are mine -- one inside buildDashboard, one for the week's
-     Col figure on the bar -- and the other twenty-nine were already there with nothing
-     watching them.
+     Adding the Iliyonasia read is what made me measure it, and the number is worth writing
+     down plainly rather than burying: TWENTY-NINE before this change, THIRTY after. ONE of
+     those thirty is mine. The other twenty-nine were already there with nothing watching them.
 
-     TWO, NOT ONE, BECAUSE THE BAR SHOWS TWO COLLECTION FIGURES. Today's comes from
-     buildDashboard; the week's is its own read. Correcting one and not the other would have
-     left the bar contradicting itself, which is exactly the fault being fixed.
+     The bar shows TWO collection figures -- today's, out of buildDashboard, and the week's,
+     which is its own read -- and both take the register, because a bar that contradicts itself
+     in front of three hundred officers is worse than the fault being fixed. That is two
+     callers and one trip: the register is read whole and memoised per database client, so the
+     second caller pays nothing. Behind that sit summaryCache with its single flight and
+     cachedAnswer, both of which exist because forty handsets on a scope used to run this side
+     by side -- so thirty trips is thirty per scope per refresh, not thirty per officer.
 
-     It is thirty because the strip deliberately runs buildDashboard -- the same function the
-     portal's dashboard is built from -- so that the phone and the portal can never disagree
-     about the same day. That is the right trade and it is not what this budget is for. What
-     this budget is for is the NEXT read somebody adds without noticing, on the one path that
-     must never slow down.
-
-     Two things already stop this being per-handset: summaryCache holds the strip per scope
-     with a single flight, and buildDashboard sits behind cachedAnswer -- which exists
-     precisely because forty handsets on a scope used to run it side by side. So thirty trips
-     is thirty per scope per minute, not thirty per officer. A number that goes UP here is a
-     number to argue about before it ships, not after. */
-  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 31, 40000],
+     A number that goes UP here is a number to argue about before it ships, not after. */
+  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 30, 40000],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way
