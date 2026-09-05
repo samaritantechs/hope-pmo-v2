@@ -1791,8 +1791,24 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   const totals = rollup ? rollTot : { calls: rows.length, duration: 0, portfolio: 0, nonPortfolio: 0 };
   if (!rollup) rows.forEach(r => { totals.duration += num(r.duration); r.portfolio ? totals.portfolio++ : totals.nonPortfolio++; });
   totals.ratio = totals.calls ? totals.portfolio / totals.calls : 0;
+  /* SAY IT WHEN THE RANGE REACHES BEFORE WHAT IS KEPT.
+       "please always autodelete call logs by keeping only last week and current [2]"
+     The retention is the owner's choice and it is the right one -- call_logs was 977,000 rows
+     after a month on the table the phone reads all day. But a leader can still pick any two
+     dates on this report, and a range that reaches back further than the log now goes would
+     come back as an honest-looking zero: every officer at nought calls, which reads as a team
+     that did no work rather than as a book that no longer holds it. So the report says which.
+     The cut is the Monday of LAST week, matching prune_call_logs. */
+  const keepFrom = addDaysKey(weekMondayKey(nowMs), -7);
+  const prunedNote = fromKey < keepFrom
+    ? 'Kumbukumbu za simu huhifadhiwa kwa wiki hii na iliyopita tu — kabla ya '
+      + keepFrom + ' hazipo tena. / Call records are kept for this week and last week only; '
+      + 'anything before ' + keepFrom + ' has been cleared, so this range is short rather than quiet.'
+    : null;
   return {
     from: fromKey, to: toKey,
+    keepFrom,
+    ...(prunedNote ? { prunedNote } : {}),
     byDay: Object.keys(byDayUser).sort().map(k => byDayUser[k]),
     users: Object.keys(users).sort((a, b) => users[a].name < users[b].name ? -1 : users[a].name > users[b].name ? 1 : 0).map(k => {
       const u = users[k];
