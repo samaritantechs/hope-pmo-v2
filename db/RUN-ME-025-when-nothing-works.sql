@@ -174,4 +174,61 @@ limit 1000;
 --     Small -> Medium doubles the memory.
 --
 --     Do it in the EVENING, never during the morning collection round: the instance restarts.
+
+
+-- =====================================================================================
+-- 9. WHICH QUERY IS ACTUALLY SLOW -- BY NAME, NOT BY GUESS.  ** RUN AFTER A MORNING ROUND. **
+--
+-- Sections 1 to 7 photograph the instant you look. This one is the RECORD: Postgres keeps a
+-- running total for every distinct query shape it has executed, so after a real morning of
+-- three hundred officers it can say which shape spent the most time, without anybody having to
+-- be watching when it happened.
+--
+-- THIS IS THE QUERY THAT WOULD HAVE FOUND upload_status_summary ON DAY ONE. It took sixteen
+-- seconds on every upload page load for weeks and was found only by catching it mid-flight in
+-- pg_stat_activity. Section 9a would have had it at the top of the list the first morning.
+--
+-- WHERE TO RUN IT: the Supabase dashboard -> SQL Editor, the same box as everything else here.
+-- =====================================================================================
+
+-- 9a. THE TEN WORST, BY TOTAL TIME SPENT. Total, not average, on purpose: a query taking 40 ms
+--     six thousand times an hour costs the officers more than one taking 9 seconds twice a day.
+--     Sort by mean_ms instead to find the single slowest shape.
+select calls,
+       round(total_exec_time)::bigint            as total_ms,
+       round(mean_exec_time)::bigint             as mean_ms,
+       rows,
+       left(regexp_replace(query, '\s+', ' ', 'g'), 160) as query
+from pg_stat_statements
+where dbid = (select oid from pg_database where datname = current_database())
+  and query not like '%pg_stat_statements%'
+order by total_exec_time desc
+limit 10;
+
+-- 9b. IF 9a ERRORS with `relation "pg_stat_statements" does not exist`, the extension is not on.
+--     Supabase ships it but it can be off. Turn it on in Database -> Extensions (search
+--     "pg_stat_statements"), or run this line, then wait for a morning before reading 9a --
+--     it starts counting from empty.
+--
+--   create extension if not exists pg_stat_statements;
+--
+--     On older Postgres the columns are named total_time / mean_time instead of
+--     total_exec_time / mean_exec_time. If 9a complains about the column, swap those two names.
+
+-- 9c. START THE CLOCK AGAIN. The totals in 9a are cumulative since the counters were last
+--     reset, so they carry every slow query from before a fix as well as after it. Reset,
+--     let ONE morning round go by, then read 9a: what is left is the book as it is TODAY.
+--
+--   select pg_stat_statements_reset();
+
+-- 9d. AND THE ONE NUMBER THAT SAYS "it is not any single query". If no shape in 9a stands out
+--     and yet everything is slow, the machine is the answer, not the SQL -- see 8c.
+select round(100.0 * sum(blks_hit) / nullif(sum(blks_hit) + sum(blks_read), 0), 2)
+         as cache_hit_pct,        -- under about 95 means the working set no longer fits RAM
+       xact_commit, xact_rollback,
+       round(100.0 * xact_rollback / nullif(xact_commit + xact_rollback, 0), 3) as rollback_pct,
+       stats_reset
+from pg_stat_database
+where datname = current_database()
+group by xact_commit, xact_rollback, stats_reset;
 -- =====================================================================================
