@@ -8,7 +8,7 @@ import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. */
-import { adjReceived_, withAdj_ } from './adjustments.js';
+import { adjReceived_, withAdj_, ADJ_BUDGET_MS } from './adjustments.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { statusWithPaid } from './settled.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
@@ -739,21 +739,41 @@ const CALL_EXPECTED_COLS = 'ref, full_name, contact, guarantor_name, guarantor_c
 const ADMIN_LOOKUP_TTL_MS = 60000;
 const adminLookupCache = new WeakMap();
 
+/* AND IT IS ON A CLOCK, because this runs inside BOOT.
+   A try/catch covers a read that FAILS. It does nothing at all about a read that HANGS -- and
+   the database this talks to has been running Unhealthy at 83% RAM, where hanging is the
+   likelier of the two. A hung read here is not a missing button, it is a leader whose app
+   will not start, which is the one outcome rule 1 exists to prevent.
+
+   So: answered in time, or not answered. Not answered means "not an administrator", which
+   costs somebody a button they can get back by reopening the app, and costs nobody their day.
+   The read runs on and fills the memo for the next boot. */
+const ADMIN_LOOKUP_BUDGET_MS = 1500;
+function adminWithin_(p, ms, fallback) {
+  let t = null;
+  const late = new Promise(res => { t = setTimeout(() => res(fallback), ms); if (t.unref) t.unref(); });
+  return Promise.race([p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return fallback; }), late]);
+}
+
 async function adminTabsSource_(db, nowMs) {
   const at = nowMs || Date.now();
   const hit = adminLookupCache.get(db);
   if (hit && (at - hit.at) < ADMIN_LOOKUP_TTL_MS) return hit.v;
-  const v = { codes: [], roles: [] };
-  try {
+  const read = (async () => {
     const [codes, roles] = await Promise.all([
       fetchAll(() => db.from('access_codes').select('name, role, tabs')),
       fetchAll(() => db.from('roles').select('role, tabs')),
     ]);
-    v.codes = codes || [];
-    v.roles = roles || [];
-  } catch (e) { /* answered as "not an admin" below -- never as a failed boot */ }
-  adminLookupCache.set(db, { at, v });
-  return v;
+    const v = { codes: codes || [], roles: roles || [] };
+    // Stored on the way past, so a read that arrived LATE still serves the next boot rather
+    // than being thrown away for having missed this one.
+    adminLookupCache.set(db, { at: Date.now(), v });
+    return v;
+  })().catch(() => null);
+  const v = await adminWithin_(read, ADMIN_LOOKUP_BUDGET_MS, null);
+  // Only a real answer is memoised here; a timeout must not pin "not an admin" for a minute.
+  if (v) return v;
+  return { codes: [], roles: [] };
 }
 
 /** The portal's own admin test, run against what the handset knows. Exported for the test that
@@ -1217,7 +1237,9 @@ async function summaryCompute(db, user, nowMs) {
   const weekMon_ = weekMondayKey(nowMs), weekFri_ = addDaysKey(weekMon_, 4);
   const [weekAll, wAdj] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: weekMon_, to: weekFri_, teams: user.teams }),
-    adjReceived_(db, user, { from: weekMon_, to: weekFri_ }),
+    // On a budget: the strip draws on time or without the correction, never late. See
+    // ADJ_BUDGET_MS -- a slow database is a reason to ask for less, not to make the phone wait.
+    adjReceived_(db, user, { from: weekMon_, to: weekFri_, budgetMs: ADJ_BUDGET_MS }),
   ]);
   const wRows = [...resolveLatestPerKey(weekAll, r => r.snapshot_date).entries()]
     .flatMap(([date, s]) => withAdj_(mine(s.rows), wAdj, 'expected-current', date));

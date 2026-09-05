@@ -47,18 +47,20 @@ const K = v => String(v == null ? '' : v).trim().toUpperCase();
    withAdj_ below is now the only function that folds a correction into a collection figure.
    Every screen calls it, and none of them re-implements it.
 
-   WHAT IS APPLIED HERE, AND WHAT DELIBERATELY IS NOT.
+   ALL FOUR BOOKS ARE APPLIED NOW, and one rule decides every one of them: an Iliyonasia is
+   money RECEIVED, so it comes off whichever book it was filed against.
 
-     expected-current   the day's collection sheet    -> COLLECTED goes up (or down)
-     expected-initial   the early-collection sheet    -> COLLECTED goes up (or down)
-     defaulter-*        the arrears decks             -> NOT APPLIED
+     expected-current   the day's collection sheet    -> COLLECTED up   (uncollected down)
+     expected-initial   the early-collection sheet    -> COLLECTED up   (uncollected down)
+     defaulter-current  the evening arrears deck      -> arrears down   -> RECOVERY UP
+     defaulter-initial  the morning arrears deck      -> arrears down   -> RECOVERY DOWN
 
-   The two `expected` books are money RECEIVED, which is what the request names and what an
-   adjustment against them plainly means. The defaulter books are arrears, and recovery is
-   initial-minus-current across two of them -- so the same +50,000 raises recovery on one side
-   and lowers it on the other, and guessing which was meant would produce a confident wrong
-   number in the Monday meeting. Those rows stay in the register, visible on the Iliyonasia
-   tab, until somebody says which way they should read.
+   The arrears pair looks contradictory until you write recovery out: it is initial MINUS
+   current, per day. Take money off the current deck and the gap widens; take it off the
+   initial deck and the day started from a lower figure, so the gap narrows. Same rule, one
+   subtraction, opposite directions -- which is exactly why these two sat unapplied until
+   somebody who runs the book said which was which. See ADJ_ARREARS_TARGETS below for the
+   worked example.
 
    IT IS NEVER SILENT. Each corrected row carries `adjusted` beside its collected figure and
    the totals carry the sum, so a figure that includes a correction can always be taken apart.
@@ -85,6 +87,47 @@ const K = v => String(v == null ? '' : v).trim().toUpperCase();
 
    IT IS STILL NEVER READ DURING AN UPLOAD. Nothing in api/upload.js touches this file. */
 export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
+/* THE ARREARS BOOKS, AND WHICH WAY EACH ONE MOVES RECOVERY.
+   =====================================================================================
+     "we have defaulter initial to mark the state of day, and current to mark the
+      progress/end of the day so initial minus current = recovered amount. Per Day."
+     "if an amount is registered wether positive or negative to initial or current even if by
+      team or by customer ref no then it should apply in that inital deck or any current
+      available"
+
+   ONE RULE, AND BOTH DIRECTIONS FALL OUT OF IT: an Iliyonasia is money RECEIVED, and money
+   received REDUCES ARREARS. It comes off whichever deck it was filed against, and recovery is
+   initial minus current, so:
+
+     defaulter-current   the evening deck missed a payment, so its arrears are too HIGH.
+                         Take it off -> current falls -> RECOVERY GOES UP.
+
+       initial 1,000,000   current 850,000 -> recovered 150,000
+       + 50,000 registered against current
+       initial 1,000,000   current 800,000 -> recovered 200,000
+
+     defaulter-initial   the morning deck was wrong, so the day STARTED from an overstated
+                         position. Take it off -> initial falls -> RECOVERY GOES DOWN.
+
+       initial 1,000,000   current 850,000 -> recovered 150,000
+       + 50,000 registered against initial
+       initial   950,000   current 850,000 -> recovered 100,000
+
+   THE SIGN IS TAKEN AS TYPED, both books, exactly as it is on the expected side: positive is
+   money received and lowers arrears; negative is money going back out and raises them.
+   Clamped at zero, because a book cannot owe less than nothing.
+
+   WHERE IT LANDS: the deck the row NAMES, on the day it names -- "that initial deck or any
+   current available". A caller has already resolved which deck it is reading (a date, a type
+   and a weekday), so the correction goes onto that one, whichever weekday's it turned out to
+   be. A team-day the deck never covered gets a cell made for it, same as the expected side.
+
+   THE ONE THING IT WILL NOT DO IS INVENT A PAIR. Recovery is only measured on a day where BOTH
+   decks were uploaded; a correction on a day with no pair leaves that day contributing nothing,
+   because "we did not measure recovery" and "recovery was nil" are different facts and the
+   register cannot turn one into the other. */
+export const ADJ_ARREARS_TARGETS = ['defaulter-current', 'defaulter-initial'];
+export const ADJ_ALL_TARGETS = ADJ_RECEIVED_TARGETS.concat(ADJ_ARREARS_TARGETS);
 
 /* ---------------------------------------------------------------- READ IT ONCE, NOT PER SCREEN
    "Mind you we aint interfering app efficiency and speed : postgres issues"
@@ -116,6 +159,28 @@ export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
 const ADJ_TTL_MS = 60000;
 const ADJ_MISSING_TTL_MS = 5 * 60 * 1000;
 const adjCache = new WeakMap();
+
+/* AND IT NEVER MAKES ANYBODY WAIT. Rule 1 in CLAUDE.md, applied honestly rather than only
+   counted: this register rides on /api/call now -- twice on the phone's summary strip, once
+   inside buildDashboard for today's Col and once for the week's -- and the database it reads
+   has been running Unhealthy at 83% RAM. Counting the read was not enough. A read that is
+   ONE of thirty on a path is still a read that can HANG, and a hang on that path is three
+   hundred officers looking at a spinner because a report figure could not be corrected.
+
+   So every caller gets an answer within a budget or gets null, and null means "the figures are
+   exactly what the decks say" -- the same answer a deployment without the table gets, which is
+   a state this whole file is already built to be correct in. The read runs on and fills the
+   memo for the next caller; nothing is cancelled, because cancelling would not give the
+   database its time back.
+
+   A slow database is not a reason to slow the phone down. It is a reason to ask it for less
+   and draw the screen. */
+export const ADJ_BUDGET_MS = 1500;
+function within_(p, ms, fallback) {
+  let t = null;
+  const late = new Promise(res => { t = setTimeout(() => res(fallback), ms); if (t.unref) t.unref(); });
+  return Promise.race([p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return fallback; }), late]);
+}
 
 /** Called by every write to the register, so an admin sees their own entry immediately. */
 export function noteAdjustmentsWritten(db) { adjCache.delete(db); }
@@ -149,8 +214,12 @@ async function readAdjustments(db, nowMs) {
   return pending;
 }
 
-export async function adjReceived_(db, user, { from, to }) {
-  const all = await readAdjustments(db);
+export async function adjReceived_(db, user, { from, to, budgetMs = 0 } = {}) {
+  /* `budgetMs` is passed by everything on the call path and by nothing else: a report can wait
+     for its own correction, the phone cannot. See ADJ_BUDGET_MS above. */
+  const all = budgetMs > 0
+    ? await within_(readAdjustments(db), budgetMs, null)
+    : await readAdjustments(db);
   if (all == null) return null;        // db/RUN-ME-015 not run here -- reports are unchanged
   /* THE DATE WINDOW, APPLIED HERE. It used to be a `gte`/`lte` on the wire; on tens of rows
      that is a round trip to save nothing, and it is what stopped the register being shared
@@ -169,7 +238,9 @@ export async function adjReceived_(db, user, { from, to }) {
   const add = (m, k, a) => m.set(k, (m.get(k) || 0) + a);
   for (const r of (rows || [])) {
     const tg = String(r.target);
-    if (!ADJ_RECEIVED_TARGETS.includes(tg)) continue;
+    // All four books now. The arrears pair was parked until somebody said which way it read;
+    // they have -- see ADJ_ARREARS_TARGETS above.
+    if (!ADJ_ALL_TARGETS.includes(tg)) continue;
     const a = num(r.amount);
     if (!r.team) { unattributed += a; continue; }
     if (!teamAllowed(user, r.team)) continue;
@@ -244,6 +315,8 @@ export async function adjReceived_(db, user, { from, to }) {
    Where the migration has not been run, or the read fails, NOTHING is counted. Paying nobody by
    accident is a complaint; paying twice by accident is a loss and an argument. */
 export async function adjCountableRefs_(db, adj, { target, snapshotType, from, to }) {
+  /* Never called from the call path -- the commission board is a portal screen -- so this one
+     has no budget and is allowed to take the time it needs to be right about somebody's pay. */
   const empty = new Set();
   if (!adj) return empty;
   /* Positive only. A negative entry is money going back out -- a correction to a correction --
@@ -365,6 +438,47 @@ export function withAdj_(rows, adj, target, onDate = null, countable = null) {
   }
   return out;
 }
+/* THE SAME FOLD, ON THE ARREARS SIDE. Deliberately its own function rather than a flag on
+   withAdj_: these rows carry `arrears_amt` and nothing else that money touches, and the
+   direction is opposite -- money received makes an arrears figure SMALLER where it makes a
+   collected figure bigger. One function that did both would be one `if` away from applying a
+   payment as a debt, on the number the Monday meeting is read from.
+
+   `onDate` is not optional here and takes no set: recovery is a per-day pairing, and a caller
+   always holds one day's deck when it asks. */
+export function withAdjDef_(rows, adj, target, onDate) {
+  if (!adj || !onDate) return rows;
+  const day = String(onDate).slice(0, 10);
+  const cells = adj.cells(target).filter(c => c.date === day);
+  if (!cells.length) return rows;
+  const out = rows.slice();
+  const at = new Map();
+  for (let i = 0; i < out.length; i++) {
+    const k = K(out[i].team);
+    if (!at.has(k)) at.set(k, i);
+  }
+  for (const c of cells) {
+    const i = at.get(K(c.team));
+    if (i == null) {
+      /* A TEAM-DAY THE DECK NEVER COVERED still gets a cell -- a correction against a book that
+         did not arrive is exactly the case the register exists for. It carries the deck's own
+         shape so whatever sums it cannot tell the difference; `customers` stays 0 because a
+         correction is an amount, not a person, and a headcount must not grow by it. */
+      at.set(K(c.team), out.length);
+      out.push({ snapshot_date: c.date, snapshot_type: null, weekday: null, team: c.team,
+        upload_batch: null, created_at: null, customers: 0,
+        arrears_amt: Math.max(0, -c.amount), adjusted_amt: c.amount });
+    } else {
+      const r = out[i];
+      out[i] = { ...r,
+        // Money received lowers a debt. Clamped: a book cannot owe less than nothing.
+        arrears_amt: Math.max(0, num(r.arrears_amt) - c.amount),
+        adjusted_amt: num(r.adjusted_amt) + c.amount };
+    }
+  }
+  return out;
+}
+
 /** How much of a set of already-corrected rows is correction rather than deck. */
 export const tAdjusted = rows => rows.reduce((s, r) => s + num(r.adjusted_amt), 0);
 /** And how many of its collected CUSTOMERS came from the register rather than the deck -- so a
