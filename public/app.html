@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-05-b';
+var BUILD = '2026-09-05-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5869,6 +5869,16 @@ VIEWS.noaccess = function(){
     + ' tick them under <b>Roles &amp; access</b> in Settings.'
     + '<br><br>Hii haiathiri app ya simu &mdash; endelea kufanya kazi kama kawaida.'
     + ' / This does not affect the phone app: HOPE Calls is unchanged and your teams are all still there.'
+    + '</div>'
+    /* AND A DOOR OUT, not just the news that there is nothing here.
+       Telling somebody their phone app still works and then leaving them on a dead screen makes
+       them find their own way back -- and the way back from a portal that looks broken is
+       usually to close it and stop trusting the whole system. Most people who land here are
+       collection officers whose work is the phone anyway: the sentence above says HOPE Calls is
+       unaffected, so the button under it is the same sentence they can actually press. */
+    + '<div style="padding:0 14px 16px">'
+    + '<a class="btn w" href="/call" style="text-decoration:none;text-align:center;display:block">'
+    + '&#128222; Rudi HOPE Calls / Back to HOPE Calls</a>'
     + '</div></div>';
   return Promise.resolve();
 };

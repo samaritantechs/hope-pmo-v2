@@ -92,6 +92,14 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
   /* And the screen somebody lands on when their role holds nothing at all. Without it an
      unticked role opens a blank app, which is indistinguishable from a broken one. */
   assert.ok(views.has('noaccess'), 'the "access not set yet" screen went missing');
+  /* AND IT MUST OFFER A WAY BACK TO THE PHONE. Most people who land here are collection
+     officers whose actual work is HOPE Calls; the screen already tells them their phone app is
+     unaffected, and a screen that says so while leaving them nowhere to go makes them close the
+     portal and doubt the whole system. The route is /call -- the same one home.html uses. */
+  const noaccessSrc = app.slice(app.indexOf('VIEWS.noaccess'),
+    app.indexOf('VIEWS.', app.indexOf('VIEWS.noaccess') + 10));
+  assert.ok(/href="\/call"/.test(noaccessSrc),
+    'the access-not-set screen is a dead end again -- no way back to HOPE Calls');
   /* THE STAMP THE SERVER READS AND THE ONE THE PAGE REPORTS MUST BE THE SAME STRING.
      A permission that lands on the server and not on the screen is what let an unticked role
      keep its navs, so the page reloads itself when /api/me says it is behind. That handshake
