@@ -8466,7 +8466,13 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
         // between breakfast and lunch, so on the daily board this is noise dressed as news.
         debtCrisis: dailyRecovered ? Math.min(0, b.initial - b.current) : null,
         recovered: rec, pct: pctOf(rec, b.uncollected) };
-    }).sort((a, b) => b.recovered - a.recovered);
+    /* THE NAME SETTLES A TIE, and it has to. Ranking on `recovered` alone leaves every officer
+       who recovered the same amount -- most often nothing at all, early in the day -- sitting
+       in whatever order the rows happened to arrive in. That order is not a fact about the
+       officers: it changed the moment the deck totals started coming out of the cache instead
+       of being added up live, and the board reordered itself with no figure having moved.
+       A board people are ranked on must not depend on which read answered. */
+    }).sort((a, b) => b.recovered - a.recovered || String(a.officer).localeCompare(String(b.officer)));
   }
   const iniToday = onDate(myDef, today, 'initial', wd), curToday = onDate(myDef, today, 'current', wd);
   /* THE DENOMINATOR THE SUBTITLE HAS ALWAYS PROMISED.

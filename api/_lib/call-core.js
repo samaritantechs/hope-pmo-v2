@@ -242,6 +242,8 @@ async function boot(db, [dev], nowMs) {
   // The rotation check, off the teams read above rather than a second one of the same table.
   const me = K(cu.name);
   const expdfOwner = !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me);
+  // Asked the portal's way -- see callSystemAdmin_. Free for an ordinary officer.
+  const systemAdmin = await callSystemAdmin_(db, cu, nowMs);
   return {
     ok: true,
     systemOpen,
@@ -261,7 +263,7 @@ async function boot(db, [dev], nowMs) {
        The same reasoning as the HOPE Loan switch below: being able to press it is not
        permission, the code is. So a handset that registered as an admin and has since been
        demoted gains nothing at all by seeing it. */
-    systemAdmin: K(cu.role || '') === 'ADMIN',
+    systemAdmin,
     userId: cu.user_id, name: cu.name, team: cu.team, role: cu.role,
     leader: !!cu.is_leader,
     // Whether the teams table names this person as a GMO / MANAGER / BIKE officer anywhere --
@@ -707,6 +709,74 @@ const CALL_EXPECTED_COLS = 'ref, full_name, contact, guarantor_name, guarantor_c
    call-core importing portal-core would close an import cycle this codebase has already had to
    break once (see expdf.js). Two modules asking once every fifteen seconds is two reads a
    minute for the whole company, which is not worth a cycle to avoid. */
+/* IS THIS HANDSET AN ADMIN -- ASKED THE WAY THE PORTAL'S OWN DOOR ASKS IT.
+   =====================================================================================
+     "some leaders aint seeing the 🔁 in call app"
+
+   The switch to the portal was revealed by `K(cu.role) === 'ADMIN'`: an EXACT match on the
+   role string copied onto the handset at registration. The portal's door asks something else
+   entirely -- `user.tabs.includes('settings')`, the RESOLVED tab list -- and the two disagree
+   for exactly the people who complained:
+
+     - a leader whose role is not literally spelled ADMIN but whose ROLE grants the settings
+       tab: an administrator to the portal, invisible to the phone;
+     - a leader granted settings on their own access code rather than through a role;
+     - anyone whose role is spelled with different capitals from the row in `roles`.
+
+   That last one is the Tunduru blackout and the roleTabsOf blackout for the third time: an
+   exact-case string comparison standing between a person and their own screen. One rule, one
+   place (CLAUDE.md) -- so the phone now runs the portal's rule instead of a lookalike.
+
+   RULE 1: THIS COSTS AN ORDINARY OFFICER NOTHING. A handset that registered on a TEAM code is
+   not a leader and cannot be an administrator, so it returns before any read. Only a handset
+   that registered with an ACCESS code asks -- a handful of people out of three hundred -- and
+   what it asks for is two config-sized tables, both remembered per database client for a
+   minute and shared by every leader on that instance. Neither is on the list path or the sync
+   path; boot is once per app start.
+
+   A read that fails answers "not an admin", never an error: the switch staying hidden is a
+   button somebody has to ask about, while a boot that fails is an officer who cannot work. */
+const ADMIN_LOOKUP_TTL_MS = 60000;
+const adminLookupCache = new WeakMap();
+
+async function adminTabsSource_(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = adminLookupCache.get(db);
+  if (hit && (at - hit.at) < ADMIN_LOOKUP_TTL_MS) return hit.v;
+  const v = { codes: [], roles: [] };
+  try {
+    const [codes, roles] = await Promise.all([
+      fetchAll(() => db.from('access_codes').select('name, role, tabs')),
+      fetchAll(() => db.from('roles').select('role, tabs')),
+    ]);
+    v.codes = codes || [];
+    v.roles = roles || [];
+  } catch (e) { /* answered as "not an admin" below -- never as a failed boot */ }
+  adminLookupCache.set(db, { at, v });
+  return v;
+}
+
+/** The portal's own admin test, run against what the handset knows. Exported for the test that
+    holds the two doors to the same answer. */
+export function callIsAdmin_(cu, codes, roles) {
+  if (!cu || !cu.is_leader) return false;                 // a team-code handset is never one
+  if (K(cu.role) === 'ADMIN') return true;                // as before, and still true
+  const mine = (codes || []).find(c => K(c.name) === K(cu.name));
+  /* resolveTabs' own two rules, in its own order: an ADMIN role holds every tab whatever its
+     row says, and otherwise the code's tabs and the role's tabs are merged. */
+  if (mine && K(mine.role) === 'ADMIN') return true;
+  const roleRow = (roles || []).find(r => K(r.role) === K((mine && mine.role) || cu.role));
+  const tabs = [...((mine && mine.tabs) || []), ...((roleRow && roleRow.tabs) || [])];
+  return tabs.includes('settings');
+}
+
+async function callSystemAdmin_(db, cu, nowMs) {
+  if (!cu || !cu.is_leader) return false;                 // no read at all for an officer
+  if (K(cu.role) === 'ADMIN') return true;                // no read needed for the obvious case
+  const src = await adminTabsSource_(db, nowMs);
+  return callIsAdmin_(cu, src.codes, src.roles);
+}
+
 const TEAMS_ALL_TTL_MS = 15000;
 const teamsAllCache = new WeakMap();
 
