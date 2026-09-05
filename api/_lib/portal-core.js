@@ -14,7 +14,7 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_, adjCountableRefs_, noteAdjustmentsWritten,
+import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten,
   ADJ_RECEIVED_TARGETS } from './adjustments.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
@@ -2397,12 +2397,25 @@ async function weekly(db, user, { weekOf }, nowMs) {
   const asOf = asOfWeek(nowMs, weekOf);
   const mon = asOf.weekOf;
   const fri = addDaysKey(mon, 4);
-  const [expAll, defAll, loansAll, rcvAll] = await Promise.all([
+  const [expAll, defAll, loansAll, rcvAll, adj] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: fri, teams: user.teams }),
     fetchAll(() => db.from('loans').select('team, principal_amt, loan_amt, approved_date').in('stage', SALES_STAGES).gte('approved_date', mon).lte('approved_date', addDaysKey(mon, 6))),
     fetchAll(() => db.from('received_payments').select('team, amount_paid, paid_at').gte('paid_at', mon).lte('paid_at', addDaysKey(mon, 6))),
+    /* ILIYONASIA over this week -- moved into THIS wave from the second one below, because the
+       arrears books now take corrections too and the day strip is built before that second
+       wave ever runs. Same one small read of a hand-typed register; it just has to arrive
+       before the first figure is worked out rather than after it. */
+    adjReceived_(db, user, { from: mon, to: addDaysKey(mon, 6) }),
   ]);
+  /* ONE DAY'S DECK, RESOLVED AND CORRECTED -- the shape every recovery figure is built from.
+     Batch first, register second, for the reason in withAdj_; and the weekday is fixed by the
+     caller, so the correction lands on "that initial deck or any current available" for the
+     day, whichever weekday's deck that turned out to be. */
+  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
+    pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
+      && r.snapshot_type === type && r.weekday === weekday)),
+    adj, 'defaulter-' + type, date);
   const days = [];
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
@@ -2420,8 +2433,8 @@ async function weekly(db, user, { weekOf }, nowMs) {
        was still here -- which is why the RECOVERED card (which does match on weekday) and
        this row disagreed on the same book. */
     const dwd = WD5[i];
-    const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'initial' && r.weekday === dwd)));
-    const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === date && r.snapshot_type === 'current' && r.weekday === dwd)));
+    const ini = defDay_(scoped(user, defAll), date, 'initial', dwd);
+    const cur = defDay_(scoped(user, defAll), date, 'current', dwd);
     const exp = tExpected(dayRows);
     const col = tCollected(dayRows);
     days.push({
@@ -2438,7 +2451,7 @@ async function weekly(db, user, { weekOf }, nowMs) {
      Recovery and Ongezeko la deni (debt movement). The day strip above answers "how did the
      week go"; these answer "which team". Ongezeko compares Monday's initial deck against the
      week-end current one, so a positive change means debt FELL. */
-  const [teamRows, monIni, endCur, adj] = await Promise.all([
+  const [teamRows, monIni, endCur] = await Promise.all([
     readTeamsAll(db),
     /* THE ONE PART OF THIS REPORT THAT IS NOT A SUM. "Ongezeko la deni" and Count 1-6 compare
        each CUSTOMER's Monday arrears against their arrears at the end of the week, so these two
@@ -2447,9 +2460,6 @@ async function weekly(db, user, { weekOf }, nowMs) {
        columns that are actually read instead of select('*'). */
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon, columns: WEEK_CREDIT_COLS }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { notAfter: addDaysKey(mon, 6), columns: 'ref, team, arrears' }),
-    /* ILIYONASIA over this same week -- see adjReceived_. One small read of a hand-typed
-       register, and null on a deployment that has not built it yet. */
-    adjReceived_(db, user, { from: mon, to: addDaysKey(mon, 6) }),
   ]);
   /* The day strip moves with the team table, for the reason spelled out in adjReceived_. */
   if (adj) {
@@ -2476,8 +2486,8 @@ async function weekly(db, user, { weekOf }, nowMs) {
       b.uncollected += num(r.uncollected_amt);
     }
     // Same population on both sides -- see the note above.
-    const ini = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'initial' && r.weekday === d.weekday)));
-    const cur = pickLatestBatchRows(scoped(user, defAll.filter(r => String(r.snapshot_date) === d.date && r.snapshot_type === 'current' && r.weekday === d.weekday)));
+    const ini = defDay_(scoped(user, defAll), d.date, 'initial', d.weekday);
+    const cur = defDay_(scoped(user, defAll), d.date, 'current', d.weekday);
     if (!ini.length || !cur.length) continue;
     /* TODAY'S OWN RECOVERY, KEPT SEPARATE FROM THE WEEK'S.
        "On wiki report add leo rec b/se we only seeing total week rec at call app without
@@ -2788,6 +2798,11 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   const dailyTargetTeam = weeklyTarget / 5;
   const myExp = scoped(user, expW), myIni = scoped(user, iniW), myDef = scoped(user, defW);
+  /* One day's deck, resolved and corrected -- see the note beside the weekly report's copy. */
+  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
+    pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
+      && r.snapshot_type === type && r.weekday === weekday)),
+    adj, 'defaulter-' + type, date);
   const mySales = scoped(user, loanRows).filter(l => SALES_STAGES.includes(l.stage));
 
   // Which real date each day column looks at: the latest of that weekday, today included.
@@ -2819,8 +2834,8 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
     }
     /* The day's own weekday on both sides -- an initial Monday deck against a current
        Thursday one is two different populations, and their gap is not recovery. */
-    const ini = pickLatestBatchRows(myDef.filter(x => String(x.snapshot_date) === d && x.snapshot_type === 'initial' && x.weekday === dwd));
-    const cur = pickLatestBatchRows(myDef.filter(x => String(x.snapshot_date) === d && x.snapshot_type === 'current' && x.weekday === dwd));
+    const ini = defDay_(myDef, d, 'initial', dwd);
+    const cur = defDay_(myDef, d, 'current', dwd);
     if (ini.length && cur.length) {
       for (const r of ini) { const c = cell(slot(r.team), 'rec', d); c.ini += num(r.arrears_amt); c.paired = 1; }
       for (const r of cur) { const c = cell(slot(r.team), 'rec', d); c.cur += num(r.arrears_amt); c.paired = 1; }
@@ -5947,7 +5962,21 @@ async function adjustments(db, user, p = {}) {
     const ref = String(r.ref || '').trim();
     let countState = 'amount-only', countNote = null;
     if (!book || a <= 0) {
-      countNote = a <= 0
+      /* THE ARREARS BOOKS NOW SAY WHICH WAY THEY MOVE RECOVERY, on the row, before anybody has
+         to work it out. Recovery is initial minus current, and money received lowers whichever
+         deck it is filed against -- so the two targets pull in opposite directions and the one
+         that pulls DOWN is the one somebody will query. It is better read here than argued
+         about on a Monday. */
+      const tg = String(r.target);
+      countNote = tg === 'defaulter-current'
+        ? (a > 0
+            ? 'Deki la jioni linapungua — urejeshaji UNAONGEZEKA. / Comes off the evening deck: recovery goes UP.'
+            : 'Deki la jioni linaongezeka — urejeshaji UNAPUNGUA. / Added to the evening deck: recovery goes DOWN.')
+        : tg === 'defaulter-initial'
+        ? (a > 0
+            ? 'Deki la asubuhi linapungua — urejeshaji UNAPUNGUA. / Comes off the morning deck: recovery goes DOWN.'
+            : 'Deki la asubuhi linaongezeka — urejeshaji UNAONGEZEKA. / Added to the morning deck: recovery goes UP.')
+        : a <= 0
         ? 'Kiasi pekee — hasi haihesabu mteja. / Amount only: a negative entry counts no customer.'
         : 'Kiasi pekee — daftari hili halihesabu wateja. / Amount only: this book pays no per-customer commission.';
     } else if (!ref) {
@@ -6824,11 +6853,17 @@ function adjLedgerCells_(adj, from, to) {
     if (date < from || date > to) return;
     if (!out.has(date)) out.set(date, new Map());
     const m = out.get(date), k = K(team);
-    if (!m.has(k)) m.set(k, { c: 0, ic: 0 });
+    if (!m.has(k)) m.set(k, { c: 0, ic: 0, ri: 0, rc: 0 });
     m.get(k)[field] += amount;
   };
   for (const r of adj.cells('expected-current')) put(r.date, r.team, 'c', r.amount);
   for (const r of adj.cells('expected-initial')) put(r.date, r.team, 'ic', r.amount);
+  /* The arrears pair. Money received lowers a debt, so these SUBTRACT where the two above add
+     -- and the ledger stores the two decks separately (ri, rc) precisely so recovery can still
+     be worked out as initial minus current after the fact. See withAdjDef_ for which way each
+     one moves recovery, and why. */
+  for (const r of adj.cells('defaulter-initial')) put(r.date, r.team, 'ri', r.amount);
+  for (const r of adj.cells('defaulter-current')) put(r.date, r.team, 'rc', r.amount);
   return out;
 }
 const LEDGER_ZERO = { e: 0, c: 0, u: 0, ri: 0, rc: 0, p: 0, ie: 0, ic: 0 };
@@ -6839,10 +6874,15 @@ function ledgerWalk_(days, from, to, adj, fn) {
     const add = extra && extra.get(d);
     for (const T in cellMap) {
       const s = cellMap[T], a = add && add.get(T);
-      fn(T, a ? { ...s, c: num(s.c) + a.c, u: Math.max(0, num(s.u) - a.c), ic: num(s.ic) + a.ic } : s);
+      fn(T, a ? { ...s, c: num(s.c) + a.c, u: Math.max(0, num(s.u) - a.c), ic: num(s.ic) + a.ic,
+        ri: Math.max(0, num(s.ri) - a.ri), rc: Math.max(0, num(s.rc) - a.rc) } : s);
     }
     if (add) for (const [T, a] of add) {
       if (T in cellMap) continue;
+      /* A team-day the decks never covered. `p` stays 0, so an arrears correction on a day
+         where no pair was uploaded contributes NO recovery: "we did not measure recovery" and
+         "recovery was nil" are different facts, and the register cannot turn one into the
+         other. The collected side has no such gate and lands as it always did. */
       fn(T, { ...LEDGER_ZERO, c: a.c, ic: a.ic });
     }
   }
@@ -7399,6 +7439,13 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      performance strip, the Col trend tile, the Orodha's T. and M. columns and the recovery
      denominators all move together or none of them does. */
   const colDay_ = (rows, d) => withAdj_(pickLatestBatchRows(dayRows(rows, d)), adj, 'expected-current', d);
+  /* And the arrears side, the same way. Recovery is initial minus current, so BOTH decks are
+     corrected or neither is -- correcting one and not the other would report the register as
+     recovery. */
+  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
+    pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
+      && r.snapshot_type === type && r.weekday === weekday)),
+    adj, 'defaulter-' + type, date);
 
   /* ---- loan applications per weekday: unassigned + assigned, by the day the admin CHOSE ----
 
@@ -7464,8 +7511,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        recovery. On a real book that produced 2.9 billion recovered on one day and MINUS 1.9
        billion on the next, against a whole book of 2.1 billion. */
     const dwd = WD7[i];
-    const ini = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'initial' && r.weekday === dwd));
-    const cur = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === d && r.snapshot_type === 'current' && r.weekday === dwd));
+    const ini = defDay_(myDefWeek, d, 'initial', dwd);
+    const cur = defDay_(myDefWeek, d, 'current', dwd);
     const from = tArrears(ini);
     const to = tArrears(cur);
     const rec = (ini.length && cur.length) ? from - to : 0;
@@ -7516,8 +7563,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     let measured = false;
     for (let i = 0; i < 7; i++) {
       const d0 = addDaysKey(from, i), dwd = WD7[i];
-      const ini = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d0 && r.snapshot_type === 'initial' && r.weekday === dwd));
-      const cur = pickLatestBatchRows(defRows.filter(r => String(r.snapshot_date) === d0 && r.snapshot_type === 'current' && r.weekday === dwd));
+      const ini = defDay_(defRows, d0, 'initial', dwd);
+      const cur = defDay_(defRows, d0, 'current', dwd);
       if (ini.length && cur.length) { rec += tArrears(ini) - tArrears(cur); measured = true; }
     }
     const p_ = (n, dn) => (dn > 0 ? Math.round((n / dn) * 1000) / 10 : null);
@@ -7565,8 +7612,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   /* Today's own weekday, so the headline counts and the team board describe ONE deck rather
      than whichever two happened to be uploaded last. This is the same rule the RECOVERED card
      has always used -- the card was right and these were not. */
-  const iniToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'initial' && r.weekday === wdToday));
-  const curToday = pickLatestBatchRows(myDefWeek.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'current' && r.weekday === wdToday));
+  const iniToday = defDay_(myDefWeek, today, 'initial', wdToday);
+  const curToday = defDay_(myDefWeek, today, 'current', wdToday);
   const pairedToday = !!(iniToday.length && curToday.length);
 
   const T = {};
@@ -8474,7 +8521,11 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        A board people are ranked on must not depend on which read answered. */
     }).sort((a, b) => b.recovered - a.recovered || String(a.officer).localeCompare(String(b.officer)));
   }
-  const iniToday = onDate(myDef, today, 'initial', wd), curToday = onDate(myDef, today, 'current', wd);
+  /* One day's deck, resolved and CORRECTED -- see withAdjDef_. Recovery is initial minus
+     current, so both decks go through the same door or the register reads as recovery. */
+  const defDay_ = (d, type, weekday) =>
+    withAdjDef_(onDate(myDef, d, type, weekday), adj, 'defaulter-' + type, d);
+  const iniToday = defDay_(today, 'initial', wd), curToday = defDay_(today, 'current', wd);
   /* THE DENOMINATOR THE SUBTITLE HAS ALWAYS PROMISED.
        "At dashboard Recovery — today initial · current · recovered · Rec % ÷ this week's
         uncollected [show yesterday uncollected before today recovered]"
@@ -8491,14 +8542,14 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     // Each day pairs its own initial against its own current, matched on weekday so the two
     // sides are always the same population.
     const dwd = WD7[i];
-    const ini = onDate(myDef, d, 'initial', dwd), cur = onDate(myDef, d, 'current', dwd);
+    const ini = defDay_(d, 'initial', dwd), cur = defDay_(d, 'current', dwd);
     if (!ini.length || !cur.length) continue;
     const per = {};
     for (const r of ini) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) + num(r.arrears_amt);
     for (const r of cur) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) - num(r.arrears_amt);
     for (const k of Object.keys(per)) dailyRec[k] = (dailyRec[k] || 0) + per[k];
   }
-  const iniMon = onDate(myDef, mon, 'initial', 'MON');
+  const iniMon = defDay_(mon, 'initial', 'MON');
   /* The weekly board always divides by the WEEK's uncollected, whatever day it is read on --
      that is what makes it the weekly board rather than a second copy of the daily one. */
   const recWeek = recBoard(iniMon, curToday, dailyRec, uncolWeekBy);

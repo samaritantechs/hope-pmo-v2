@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-04-e';
+var BUILD = '2026-09-05-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5157,7 +5157,12 @@ VIEWS.adjust = function(){
         + '<div class="fld"><label>Aina ya ripoti / Report type</label><select id="adjTarget">'
           + Object.keys(ADJ_TARGET_LABELS).map(function(k){
               return '<option value="'+k+'">'+esc(ADJ_TARGET_LABELS[k])+'</option>'; }).join('')
-          + '</select></div>'
+          + '</select>'
+          /* WHICH WAY THIS ROW WILL MOVE THE FIGURES, SAID BEFORE IT IS SAVED. The arrears pair
+             pull in opposite directions -- recovery is initial minus current -- and the one
+             that pulls DOWN is the one somebody will query afterwards. Better read here, while
+             the choice is still being made, than argued about on a Monday. */
+          + '<div class="sub" id="adjTargetHint" style="margin-top:4px"></div></div>'
         + '<div class="fld"><label>Timu / Team (hiari / optional)</label><select id="adjTeam">'
           + '<option value="">— kitabu chote / whole book —</option>'
           + (tm.rows||[]).map(function(t){ return '<option>'+esc(t.team)+'</option>'; }).join('')
@@ -8497,6 +8502,31 @@ function wireForms(){
   if (ns) ns.onclick = function(){ settingForm('', ''); };
   var nk = document.getElementById('newCode');
   if (nk) nk.onclick = function(){ codeForm(null); };
+  /* Iliyonasia: which way the chosen book will move the figures, said while the choice is
+     still being made. The arrears pair pull in opposite directions -- recovery is initial
+     minus current -- and the sign flips both, so the hint reads the amount too. */
+  var adjHint = function(){
+    var h = document.getElementById('adjTargetHint');
+    if (!h) return;
+    var t = (document.getElementById('adjTarget') || {}).value;
+    var v = Number((document.getElementById('adjAmt') || {}).value);
+    var up = !(v < 0);                                   // blank or positive reads as received
+    h.textContent =
+      t === 'defaulter-current' ? (up ? 'Urejeshaji utaongezeka / recovery goes UP'
+                                      : 'Urejeshaji utapungua / recovery goes DOWN')
+    : t === 'defaulter-initial' ? (up ? 'Urejeshaji utapungua / recovery goes DOWN'
+                                      : 'Urejeshaji utaongezeka / recovery goes UP')
+    : t === 'expected-current'  ? (up ? 'Makusanyo ya leo yataongezeka / today\u2019s collected goes UP'
+                                      : 'Makusanyo ya leo yatapungua / today\u2019s collected goes DOWN')
+    : t === 'expected-initial'  ? (up ? 'Early col itaongezeka / early collection goes UP'
+                                      : 'Early col itapungua / early collection goes DOWN')
+    : '';
+  };
+  var atg = document.getElementById('adjTarget');
+  if (atg) { atg.onchange = adjHint; }
+  var aam = document.getElementById('adjAmt');
+  if (aam) { aam.oninput = adjHint; }
+  adjHint();
   // Iliyonasia: the new-adjustment form saves and the tab redraws with the row on the board.
   var asv = document.getElementById('adjSave');
   if (asv) asv.onclick = function(){

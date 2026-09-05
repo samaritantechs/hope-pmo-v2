@@ -2558,6 +2558,9 @@ test('the Iliyonasia tab says what the commission side did with every row', asyn
     { id: 'c', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 1000, ref: null },
     { id: 'e', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 1000, ref: '901' },
   ];
+  t.pmo_adjustments.push(
+    { id: 'f', adj_date: TODAY, target: 'defaulter-initial', team: 'KONGOWE', amount: 1000 },
+    { id: 'g', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: -1000 });
   const d = await portalApi(dbWithRpc(t), ADMIN, 'adjustments', {}, NOW);
   const by = {};
   for (const r of d.rows) by[r.id] = r;
@@ -2565,6 +2568,12 @@ test('the Iliyonasia tab says what the commission side did with every row', asyn
   assert.equal(by.b.countState, 'superseded', 'the deck overtook this one -- say so on the row');
   assert.equal(by.c.countState, 'no-ref');
   assert.equal(by.e.countState, 'amount-only', 'the arrears books pay no per-customer commission');
+  /* AND THE ARREARS ROW SAYS WHICH WAY IT MOVES RECOVERY, on the row, before anybody has to
+     work it out. The two targets pull in opposite directions and the one that pulls DOWN is
+     the one somebody will query on a Monday. */
+  assert.match(by.e.countNote, /recovery goes UP/, 'defaulter-current, positive');
+  assert.match(by.f.countNote, /recovery goes DOWN/, 'defaulter-initial, positive -- the other way');
+  assert.match(by.g.countNote, /recovery goes DOWN/, 'and the sign flips it back again');
   assert.equal(d.superseded, 1, 'and the tab can lead with the count that needs a person');
   for (const r of d.rows) assert.ok(r.countNote, 'every row explains itself in words');
 });
@@ -2598,6 +2607,116 @@ test('every field of a register row is editable, and absent means untouched', as
   const r2 = await portalApi(db, ADMIN, 'adjustmentAmend', { id: 'x1', reason: '', ref: '' }, NOW);
   assert.equal(r2.row.reason, null);
   assert.equal(r2.row.ref, null);
+});
+
+/* =====================================================================================
+   THE ARREARS BOOKS, AND WHICH WAY EACH ONE MOVES RECOVERY.
+   =====================================================================================
+     "we have defaulter initial to mark the state of day, and current to mark the
+      progress/end of the day so initial minus current = recovered amount. Per Day."
+     "if an amount is registered wether positive or negative to initial or current even if by
+      team or by customer ref no then it should apply in that inital deck or any current
+      available"
+
+   One rule, both directions: an Iliyonasia is money RECEIVED, money received REDUCES ARREARS,
+   and it comes off whichever deck it was filed against. Recovery is initial minus current, so
+   taking it off the CURRENT deck raises recovery and taking it off the INITIAL deck lowers it.
+   These two tests are the whole of it, and they are the reason the arrears pair sat unapplied
+   until somebody said which way it read. */
+test('a payment the EVENING deck missed raises recovery', async () => {
+  const t = tables();
+  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 200, reason: 'ililipwa, deki la jioni halikuiona' }];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const dayOf = x => x.days.find(r => r.date === TODAY);
+  assert.equal(dayOf(d).recovered, dayOf(plain).recovered + 200,
+    'current falls by what was received, so initial minus current rises by exactly that');
+  const kong = x => x.teams.find(r => r.team === 'KONGOWE');
+  assert.equal(kong(d).recovered, kong(plain).recovered + 200);
+  assert.equal(kong(d).curDebt, kong(plain).curDebt, 'the week-end debt column reads its own deck');
+  // One team, one day. Nobody else moves.
+  assert.equal(x_(d, 'MBAGALA').recovered, x_(plain, 'MBAGALA').recovered);
+});
+const x_ = (d, team) => d.teams.find(r => r.team === team);
+
+test('a MORNING deck that was already wrong lowers recovery', async () => {
+  /* The day started from an overstated position: a payment from the night before never reached
+     the initial sheet. Correcting it means less was recovered during the day than the decks
+     appeared to show -- which is the direction nobody likes and the one that makes the figure
+     true. */
+  const t = tables();
+  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-initial',
+    team: 'KONGOWE', amount: 200 }];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const dayOf = x => x.days.find(r => r.date === TODAY);
+  assert.equal(dayOf(d).recovered, dayOf(plain).recovered - 200);
+});
+
+test('an arrears book cannot be corrected below nothing', async () => {
+  /* A book cannot owe less than nothing, so the correction is clamped at zero per team-day --
+     the same clamp uncollected has always carried. A register row larger than the whole deck
+     it names takes that deck to zero and stops, rather than turning a debt into a credit and
+     reporting the difference as recovery. */
+  const t = tables();
+  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 50000000 }];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const bigger = tables();
+  bigger.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 99000000 }];
+  const d2 = await portalApi(dbWithRpc(bigger), ADMIN, 'weekly', {}, NOW);
+  const kong = x => x.teams.find(r => r.team === 'KONGOWE');
+
+  assert.ok(kong(d).recovered > kong(plain).recovered, 'it does apply');
+  assert.ok(kong(d).recovered < 50000000, 'but never by the registered amount -- the book is smaller');
+  /* THE PROOF THAT IT CLAMPED RATHER THAN SCALED: twice the correction, the same answer,
+     because the deck it names has already been taken to zero. */
+  assert.equal(kong(d2).recovered, kong(d).recovered);
+});
+
+test('the sign is taken as typed on the arrears books too', async () => {
+  const t = tables();
+  // Negative against current: money went back OUT, so the evening book owes more, and less was
+  // recovered. The mirror of the first test, which is what "as typed" has to mean.
+  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: -200 }];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const dayOf = x => x.days.find(r => r.date === TODAY);
+  assert.equal(dayOf(d).recovered, dayOf(plain).recovered - 200);
+});
+
+test('a correction cannot invent recovery on a day nobody paired a deck', async () => {
+  /* "we did not measure recovery" and "recovery was nil" are different facts, and the register
+     must not turn one into the other. MON has no decks at all in this fixture. */
+  const t = tables();
+  t.pmo_adjustments = [{ id: 'r1', adj_date: MON, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 200 }];
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const dayOf = (x, dt) => x.days.find(r => r.date === dt);
+  assert.equal(dayOf(d, MON).recovered, dayOf(plain, MON).recovered,
+    'no pair, no recovery -- the day still contributes nothing');
+  assert.equal(dayOf(d, TODAY).recovered, dayOf(plain, TODAY).recovered, 'and no other day moves');
+});
+
+test('the dashboard and the weekly report agree on a corrected recovery figure', async () => {
+  /* The same drift the collected side was cured of, on the other book: two screens reading one
+     pair of decks by two rules is two answers to one question. */
+  const t = tables();
+  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 200 }];
+  const wk = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  const day = wk.days.find(r => r.date === TODAY);
+  const trend = dash.recTrend.find(r => r.date === TODAY);
+  assert.equal(day.recovered, trend.recovered, 'one day, one recovered figure, whichever asks');
+  // And the shared dashboard the phone's bar is built from reads the same pair.
+  const shared = await portalApi(dbWithRpc(t), ADMIN, 'dashboard', {}, NOW);
+  assert.equal(shared.totals.recovery.recovered, day.recovered);
 });
 
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {
