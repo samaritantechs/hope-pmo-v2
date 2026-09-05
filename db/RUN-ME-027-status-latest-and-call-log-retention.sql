@@ -32,17 +32,20 @@
 -- call_logs is 977,616 rows after one month and it is the fastest-growing table in the book:
 -- three hundred officers, every call, every day.
 --
--- I PREDICTED THIS WOULD LEAVE "roughly forty thousand rows, a table one twenty-fifth the
--- size". IT DID NOT, AND THE REASON MATTERS. Measured on 5 Sep 2026 with the cut at 24 Aug:
+-- WHAT IT ACTUALLY LEAVES. Measured on the live book on 5 Sep 2026, cut at 24 Aug, after the
+-- first clean-out had run all the way to `deleted 0`:
 --
---   977,616 before  ->  about 685,000 after.  292,000 rows removed, thirty per cent, not
---   ninety-six. The table is not spread evenly across the month: early August ran about
---   14,000 calls a day, the last fortnight about 53,000. Call volume roughly quadrupled as
---   officers came onto the app, so nearly all of the table IS the two weeks being kept.
+--   977,616 before  ->  485,590 after.  492,026 rows removed. Almost exactly half.
 --
--- The prune is still worth having -- it caps the table instead of letting it run at twenty
--- million rows a year -- but the honest steady state is around 700,000 rows and climbing with
--- headcount, not forty thousand. Anyone sizing the disk off this file should use that figure.
+-- NOT the "roughly forty thousand rows, a table one twenty-fifth the size" this file predicted
+-- before it was run. The reason is that the table is not spread evenly across the month: the
+-- three weeks pruned away ran about 23,400 calls a day, the fortnight kept about 37,400, as
+-- officers came onto the app. Half the month's rows sit INSIDE the window being kept, so half
+-- was all there was to take.
+--
+-- SO THE STEADY STATE IS ROUGHLY HALF A MILLION ROWS, rising with headcount -- not forty
+-- thousand. Size the disk off that figure. What the prune buys is the CAP: left alone at the
+-- current rate call_logs reaches about fourteen million rows a year and keeps going.
 --
 -- WHAT THIS COSTS, said before it is run: the calls report on the phone lets a leader pick ANY
 -- date range. Ranges reaching before last Monday will come back empty from now on. That is the
