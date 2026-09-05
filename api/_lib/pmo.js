@@ -53,6 +53,31 @@ export const PMO_ROLE_DEFAULT = 'PMO COLLECTION';
     starts unset and the screen says so, rather than showing a number nobody chose. */
 export const PMO_BONUS_KEY = 'PMO_WEEKLY_BONUS';
 
+/* SWITCHED OFF IS NOT THE SAME AS DELETED, AND BOTH ARE NEEDED.
+
+     "admin should have a button to enable or disable bonuses: fix like that to collection the
+      others too"
+
+   Delete removes the rule: there is no bonus, and the amount is gone with it. Disable pauses
+   the rule while KEEPING the amount, which is what a month with no budget for it looks like,
+   or a fortnight while the criteria are being rewritten. Without the switch the only way to
+   pause a bonus is to delete the figure and remember it, and somebody always remembers it
+   wrongly.
+
+   ABSENT MEANS ON, deliberately: every book that already has a bonus set keeps paying it, and
+   nobody has to go and switch on something that was already running. */
+export const PMO_BONUS_ON_KEY = 'PMO_WEEKLY_BONUS_ON';
+export const REC_BONUS_KEY = 'REC_WEEKLY_BONUS';
+export const REC_BONUS_ON_KEY = 'REC_WEEKLY_BONUS_ON';
+
+/** A settings flag reads as ON unless it has been deliberately switched off. '0', 'no' and
+    'false' are all somebody meaning off; anything else, including an empty string and a missing
+    row, is on. */
+export function bonusOn(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return !(s === '0' || s === 'no' || s === 'false' || s === 'off');
+}
+
 const norm = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 
 /* THE ONE DEFINITION OF "IS THIS PERSON A COLLECTION OFFICER", and it has to be one, because

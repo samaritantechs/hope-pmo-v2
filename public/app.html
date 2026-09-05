@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-05-d';
+var BUILD = '2026-09-05-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2293,10 +2293,10 @@ function wireBar(){
   }
   var cmSave = document.getElementById('cmSave');
   if (cmSave) cmSave.onclick = function(){
-    srv('commissionSave', { mode: $('#cmMode').value, yearRates: $('#cmYear').value,
-      statusRates: $('#cmStatus').value, paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
+    srv('commissionSave', { paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
       payText: ($('#cmPayText') ? $('#cmPayText').value : null),
-      weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null) })
+      weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null),
+      bonusEnabled: ($('#cmBonusOn') ? !!$('#cmBonusOn').checked : null) })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
@@ -4616,20 +4616,25 @@ VIEWS.commission = function(){
               ? 'rec ' + money(d.totals.split.recWeek) + ' · early ' + money(d.totals.split.colWeek)
                 + ' · PMO ' + money(d.totals.split.pmoWeek) + ' · Mon–Sun'
               : 'Mon–Sun, summed day by day'), d.totals.week?'good':'')
-      + kpi('Recovery mode', d.mode==='status'?'By status':'By disb year',
-            esc((d.mode==='status'?d.statusRates:d.yearRates) || 'rates not set yet'),
-            (d.mode==='status'?d.statusRates:d.yearRates)?'':'warnc')
+      /* THE LADDER, not a rate mode. Recovery is paid on the percentage now, so the headline
+         says what the bands are worth rather than what percentage of an amount is paid. */
+      + kpi('Recovery pay', 'Kwa asilimia / by %',
+            (d.recoveryBands||[]).map(function(b){ return b.floor + '%+ ' + money(b.tzs); }).join(' · ')
+              || 'ladder not loaded')
       + kpi('Early collection', money(d.paidTzs)+' / '+money(d.overTzs),
             'per PAID / per OVERPAID client', noRates?'warnc':'')
       + '</div>'
       + (d.isAdmin ? '<div class="card"><div class="card-h">Viwango / Rates</div><div class="cmsrates">'
-          + '<div class="fld"><label>Mode</label><select id="cmMode">'
-          + ['year','status'].map(function(m){ return '<option value="'+m+'"'+(d.mode===m?' selected':'')+'>'
-              + (m==='year'?'By disbursement year':'By status')+'</option>'; }).join('') + '</select></div>'
-          + '<div class="fld"><label>Year rates (e.g. 2024:5, 2025:2.5, *:1)</label>'
-            + '<input id="cmYear" value="'+esc(d.yearRates||'')+'"></div>'
-          + '<div class="fld"><label>Status rates (defaulter:… expired:… chronic:…)</label>'
-            + '<input id="cmStatus" value="'+esc(d.statusRates||'')+'"></div>'
+          /* THE RECOVERY LADDER IS NOT EDITABLE HERE and is shown so nobody goes looking for
+             the rate boxes that used to be. It is drawn from the bands the server sent, never
+             retyped into this file: a pay table written twice disagrees with itself the first
+             time one copy is edited. */
+          + '<div class="fld" style="grid-column:1/-1"><label>Recovery — malipo kwa asilimia / paid by percentage</label>'
+            + '<div class="fldnote">' + (d.recoveryBands||[]).map(function(b){
+                return '<b>' + esc(b.label) + '</b> — ' + money(b.tzs) + ' / siku'; }).join(' &middot; ')
+            + ' &middot; ' + esc((d.recoveryBelow && d.recoveryBelow.label) || '') + ' — 0'
+            + '<br>Siku 6 kwa wiki: Jumatatu&ndash;Ijumaa kila siku yake, na wiki nzima kama siku ya 6.'
+            + ' / Six days a week: Monday&ndash;Friday each on its own, and the whole week as the sixth.</div></div>'
           + '<div class="fld"><label>TZS per PAID client</label>'
             + '<input id="cmPaid" type="number" min="0" step="50" value="'+(d.paidTzs||0)+'"></div>'
           + '<div class="fld"><label>TZS per OVERPAID client</label>'
@@ -4645,6 +4650,13 @@ VIEWS.commission = function(){
             + (d.pmoBonus && d.pmoBonus.set
                 ? '<button class="btn sm ghost danger" id="cmBonusDel" style="margin-top:6px">'
                   + 'Futa bonasi / Delete bonus</button>' : '')
+            /* SWITCHED OFF IS NOT DELETED. The amount stays where it is and stops paying, which
+               is what a month with no budget for it looks like -- deleting the figure and
+               remembering it is how somebody remembers it wrongly. */
+            + '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:600">'
+            + '<input type="checkbox" id="cmBonusOn" style="width:auto"'
+            + ((!d.pmoBonus || d.pmoBonus.enabled !== false) ? ' checked' : '') + '>'
+            + 'Bonasi inatumika / Bonus enabled</label>'
             + '<div class="fldnote">Hulipwa kwa kiongozi mmoja anayeongoza kwa asilimia ya wiki NA amepita asilimia yake ya wiki iliyopita. 0 = hakuna bonasi.'
             + ' / Paid to the single leader who tops the week AND beat their own previous week. 0 means no bonus.'
             + (d.pmoBonus && d.pmoBonus.set
@@ -4670,18 +4682,6 @@ VIEWS.commission = function(){
          that days rec". One column pair per band that actually earned today: the year (or
          status) that priced the drop, the amount, and the TZS. Sits where the today table
          stood. */
-      + ((d.recBands && d.recBands.rows && d.recBands.rows.length)
-          ? board('cmRecBands',
-              'Recovery — leo kwa ' + (d.recBands.mode === 'status' ? 'hali / today by status band' : 'mwaka wa disb / today by disbursement year'),
-              'kilichorejeshwa leo na kilicholipwa, kwa kila kundi la kiwango / today’s recovery and its pay, split by the band that priced it',
-              d.recBands.rows,
-              [col('officer','Recovery officer')]
-                .concat((d.recBands.bands||[]).reduce(function(a,l){
-                  return a.concat([col('rec_'+l, l, 'money'), col('tzs_'+l, l+' TZS', 'money')]); }, []))
-                .concat([col('totalRec','Leo rec','money'), col('total','Leo TZS','money')]),
-              sumRow(d.recBands.rows, (d.recBands.bands||[]).reduce(function(a,l){
-                  return a.concat(['rec_'+l,'tzs_'+l]); }, ['totalRec','total'])))
-          : '')
       /* An empty recovery board has THREE different truths behind it, and the note says
          which -- guessing sent somebody to upload the same file a fourth time. The baseline
          counts ride along so a zero can be traced to its stage at a glance. */
@@ -4713,16 +4713,23 @@ VIEWS.commission = function(){
           : '')
       + ((d.recBoard||[]).length
           ? board('cmRecWeek','Recovery — wiki hii / this week',
-              'kilichorejeshwa na kilicholipwa kwa KILA siku · leo ni safu mpya zaidi / recovered amount and what it earned, day by day — today is the newest column'
+              'asilimia ya urejeshaji kwa KILA siku na kundi inayolipa · WK ni wiki nzima, siku ya 6 / the recovery percentage day by day and the band it pays — WK is the whole week, the 6th day'
                 + ((d.recDiag && d.recDiag.iniRows != null)
                     ? ' · kitabu: ' + money(d.recDiag.bookEntries||0) + ' entries, drops ' + money(d.recDiag.dropsSeen||0)
                     : ''),
+              /* SIX RECORDS. Five weekdays, each its own percentage and what that band pays,
+                 then WK -- the week's own percentage, which is the weekend's commission day.
+                 The percentage leads each pair because it is what decides the pay now; the
+                 amount follows it as the thing it was worked out from. */
               d.recBoard, [col('officer','Recovery officer')]
-                .concat(['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
-                  return a.concat([col('rec'+k, k, 'money'), col('tzs'+k, k+' TZS', 'money')]); }, []))
-                .concat([col('weekRecovered','Wiki / Week rec','money'),
+                .concat(['J3','J4','J5','AL','IJ','WK'].reduce(function(a,k){
+                  return a.concat([
+                    {key:'pct'+k, label:(k==='WK'?'Wiki %':k+' %'), kind:'pct', target:'rec'},
+                    col('rec'+k, (k==='WK'?'Wiki rec':k+' rec'), 'money'),
+                    col('tzs'+k, (k==='WK'?'Wiki TZS':k+' TZS'), 'money')]); }, []))
+                .concat([col('weekRecovered','Jumla rec / total','money'),
                   col('weekCommission','Wiki / Week TZS','money')]),
-              sumRow(d.recBoard, ['J3','J4','J5','AL','IJ','J1','J2'].reduce(function(a,k){
+              sumRow(d.recBoard, ['J3','J4','J5','AL','IJ','WK'].reduce(function(a,k){
                   return a.concat(['rec'+k,'tzs'+k]); }, ['weekRecovered','weekCommission'])))
           : '')
       + ((d.colBoard||[]).length
