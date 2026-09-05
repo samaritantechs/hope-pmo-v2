@@ -3437,6 +3437,8 @@ async function commission(db, user, args = {}, nowMs) {
     const days = colDays.map(d => {
       const b = per.get(d);
       return { date: d, pct: pctOfDay(b), n: b ? b.paid + b.over : 0,
+        // The parts, so a grand row works the day out again from the amounts. See below.
+        collected: b ? b.collected : 0, expected: b ? b.expected : 0,
         paid: b ? b.paid : 0, over: b ? b.over : 0,
         tzs: b ? Math.round(b.paid * cfg.paidTzs + b.over * cfg.overTzs) : 0 };
     });
@@ -3451,15 +3453,30 @@ async function commission(db, user, args = {}, nowMs) {
       pct: pctOfDay(tb), paid: tb ? tb.paid : 0, over: tb ? tb.over : 0,
       n: tb ? tb.paid + tb.over : 0,
       commission: tb ? Math.round(tb.paid * cfg.paidTzs + tb.over * cfg.overTzs) : 0,
+      /* THE PARTS, ON THE ROW, FOR EVERY PERCENTAGE THIS BOARD PRINTS.
+         "Collection and early collection averages perfomance of officers ... should be by
+          collected amount vs expected amount of all the current list not average of the
+          percentages by teams"
+         The board's own rows were already ratios of sums -- the week has always been
+         collected-over-expected across the range rather than a mean of five days. It was the
+         GRAND row underneath that had nothing to work with: the amounts were computed here
+         and thrown away, so the bottom line averaged the officers' percentages and an officer
+         with a tiny book counted the same as one carrying millions. */
+      collected: tb ? tb.collected : 0, expected: tb ? tb.expected : 0,
       // Ratio of sums across the range, never an average of the days' percentages.
       weekPct: pctOfDay(tot), weekPaid: tot.paid, weekOver: tot.over,
+      weekCollected: tot.collected, weekExpected: tot.expected,
       weekN: tot.paid + tot.over,
       weekCommission: Math.round(tot.paid * cfg.paidTzs + tot.over * cfg.overTzs),
       days,
     };
     if (scope === 'week') for (const x of days) {
       const k = dayKey7[wdOf(x.date)];
-      if (k) { row['pct' + k] = x.pct; row['n' + k] = x.n; row['ctzs' + k] = x.tzs; }
+      if (k) {
+        row['pct' + k] = x.pct; row['n' + k] = x.n; row['ctzs' + k] = x.tzs;
+        // Each day's own two amounts, so its grand cell is a ratio and not a mean either.
+        row['col' + k] = x.collected; row['exp' + k] = x.expected;
+      }
     }
     return row;
   }).sort((a, b) => b.weekCommission - a.weekCommission
@@ -7757,6 +7774,39 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       recPctMon, recPctYest, recPctWeek,
       recBasis,
       tSalesPct, mSalesPct, tEColPct, mEColPct, tColPct, mColPct, tRecPct, mRecPct,
+      /* AND THE PARTS OF ALL EIGHT, so the GRAND row can work each one out again from the
+         amounts instead of averaging the teams' percentages.
+         =====================================================================================
+           "Collection and early collection averages ... should be by collected amount vs
+            expected amount of all the current list not average of the percentages by teams.
+            e.g teams have 100, 100 and 80% yet those 100 are of a small amount but 80 of a
+            larger amount included in a boosting average%"
+
+         Exactly so, and the example is the whole argument. Three teams at 100%, 100% and 80%
+         average to 93.3% however small the first two books were. Ask it by amount -- 100,000
+         of 100,000, 100,000 of 100,000 and 8,000,000 of 10,000,000 -- and the company
+         collected 8.2m of 10.2m, which is 80.4%. The second number is what was actually
+         collected of what was actually owed; the first is a number about numbers.
+
+         A percentage cannot be added up, so the only honest grand total is the ratio of the
+         totals -- which needs the two amounts on the row. Four of the eight already had them
+         (colBasis/expBasis, colEarly/expEarly); the month side and the two targets did not,
+         so their grand cells fell back to an average of percentages, marked ~ but still
+         printed at the bottom of the board the directors read. */
+      mCol: m ? m.c : null, mExp: m ? m.e : null,
+      mEcol: m ? m.ic : null, mEexp: m ? m.ie : null,
+      /* A month that paired no deck has NOT MEASURED recovery, so it contributes nothing to
+         the grand ratio either -- null on both sides rather than a zero that would drag the
+         company's figure down for a month nobody uploaded. */
+      mRec: (m && m.pairedDays > 0) ? m.rec : null,
+      mUncol: (m && m.pairedDays > 0) ? m.u : null,
+      tSalesAmt: s.salesToday, tSalesTarget: dailyTargetTeam,
+      mSalesAmt: s.salesMonth, mSalesTarget: monthTarget,
+      /* Recovery's denominator changes with the day -- Monday by Monday, Tue-Fri by yesterday,
+         the weekend by the week -- so which one the T. column used is carried rather than
+         guessed at the screen. Same reasoning as colBasis/expBasis above. */
+      tRecovered: recovered,
+      tRecUncol: recBasis === 'week' ? s.uncolWeek : recBasis === 'mon' ? s.uncolMon : s.uncolYest,
       /* The general average, over the percentages that were MEASURED -- the strip's rule,
          not the ranking's: a team whose early sheet has not been uploaded is not a team at
          0% early collection. */

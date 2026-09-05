@@ -206,7 +206,12 @@ const SCREENS = [
    month ledger -- which is agg-only BY DESIGN, because a month of raw rows is the read that
    took the dashboard down. So without the migration those columns are null and the screen
    says the ledger is not ready, and that -- nothing else -- may differ. */
-const LEDGER_KEYS = ['mEColPct', 'mColPct', 'mRecPct', 'mAvg'];
+/* The PARTS of those percentages travel with them now -- a grand total has to work the
+   month out again from the amounts rather than average the teams' percentages ("teams have
+   100, 100 and 80% yet those 100 are of a small amount") -- so they are ledger-derived in
+   exactly the same way and diverge in exactly the same place. */
+const LEDGER_KEYS = ['mEColPct', 'mColPct', 'mRecPct', 'mAvg',
+  'mCol', 'mExp', 'mEcol', 'mEexp', 'mRec', 'mUncol'];
 function withoutLedger(d) {
   if (!d || !Array.isArray(d.teamPerf)) return d;
   const { monthReady, ...rest } = d;
