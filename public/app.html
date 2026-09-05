@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-05-c';
+var BUILD = '2026-09-05-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2298,6 +2298,17 @@ function wireBar(){
       payText: ($('#cmPayText') ? $('#cmPayText').value : null),
       weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null) })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
+      .catch(function(e){ toast(String(e.message || e), true); });
+  };
+  /* THE BONUS DELETE. Asked for once, because it removes a pay rule and the week's board
+     changes underneath whoever is looking at it -- and NOT sent with the rest of the panel,
+     because Save carries the amount box and would write the row straight back. */
+  var cmBonusDel = document.getElementById('cmBonusDel');
+  if (cmBonusDel) cmBonusDel.onclick = function(){
+    if (!confirm('Futa bonasi ya wiki? Sheria itaondoka kabisa hadi utakapoweka nyingine.\n\n'
+      + 'Delete the weekly bonus? The rule goes away entirely until you set a new one.')) return;
+    srv('commissionSave', { clearWeeklyBonus: true })
+      .then(function(){ toast('Bonasi imefutwa. / Bonus deleted.'); render({ force:true }); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   wireClean();
@@ -4628,8 +4639,18 @@ VIEWS.commission = function(){
              showing it and type a number with no context beside it. */
           + '<div class="fld"><label>Bonasi ya wiki / Weekly bonus (TZS)</label>'
             + '<input id="cmBonus" type="number" min="0" step="1000" value="'+(d.pmoBonus && d.pmoBonus.tzs || 0)+'">'
+            /* DELETE, not "type a zero over it". Offered only when there is a bonus to remove:
+               a Delete button beside something already unset is a button that does nothing, and
+               one of those on a pay screen makes an admin wonder what it did. */
+            + (d.pmoBonus && d.pmoBonus.set
+                ? '<button class="btn sm ghost danger" id="cmBonusDel" style="margin-top:6px">'
+                  + 'Futa bonasi / Delete bonus</button>' : '')
             + '<div class="fldnote">Hulipwa kwa kiongozi mmoja anayeongoza kwa asilimia ya wiki NA amepita asilimia yake ya wiki iliyopita. 0 = hakuna bonasi.'
-            + ' / Paid to the single leader who tops the week AND beat their own previous week. 0 means no bonus.</div></div>'
+            + ' / Paid to the single leader who tops the week AND beat their own previous week. 0 means no bonus.'
+            + (d.pmoBonus && d.pmoBonus.set
+                ? ' <b>Futa</b> huondoa sheria kabisa — tumia unapobadilisha vigezo.'
+                  + ' / <b>Delete</b> removes the rule entirely, for when the criteria change.' : '')
+            + '</div></div>'
           + '<div class="fld" style="grid-column:1/-1"><label>Maelezo ya malipo / Payout note shown to officers</label>'
             + '<input id="cmPayText" placeholder="mf. Kamisheni hulipwa kila tarehe 5 ya mwezi" value="'+esc(d.payText||'')+'"></div>'
           + '<button class="btn sm" id="cmSave">Hifadhi / Save &amp; recalculate</button>'

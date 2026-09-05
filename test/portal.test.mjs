@@ -523,6 +523,37 @@ test('commission rates save, and a malformed rate saves nothing', async () => {
   assert.equal(val('CMS_YEAR_RATES'), '2024:5, 2025:2.5');
 });
 
+test('the weekly bonus can be deleted, and deleting is not the same as typing a zero', async () => {
+  /* "as admin, I need a delete button on PMO bonuses since we sometimes change our bonus
+      creteria" -- between two sets of criteria there is no rule, and the settings row should
+     say that by not being there. A 0 left behind cannot be told apart from a bonus somebody
+     deliberately set to nothing. */
+  const db = fakeDb(tables());
+  const row = () => db._dump('settings').find(r => r.key === 'PMO_WEEKLY_BONUS');
+  await portalApi(db, ADMIN, 'commissionSave', { weeklyBonus: 50000 }, NOW);
+  assert.equal(row().value, '50000');
+
+  const out = await portalApi(db, ADMIN, 'commissionSave', { clearWeeklyBonus: true }, NOW);
+  assert.equal(row(), undefined, 'the row is gone, not written as 0');
+  assert.equal(out.weeklyBonus, 0);
+  assert.equal(out.weeklyBonusCleared, true, 'and the screen is told which of the two happened');
+
+  /* THE PANEL SENDS THE AMOUNT BOX ON EVERY SAVE, so a delete arriving with a stale value
+     beside it must not put the row straight back. Exclusive, deliberately. */
+  await portalApi(db, ADMIN, 'commissionSave', { clearWeeklyBonus: true, weeklyBonus: 50000 }, NOW);
+  assert.equal(row(), undefined, 'a stale amount alongside the delete re-created the rule');
+
+  // A missing key reads as no bonus everywhere -- the same path a system runs on before one is
+  // ever set, which is exactly the state deleting returns it to.
+  const d = await portalApi(db, ADMIN, 'commission', {}, NOW);
+  assert.equal(d.pmoBonus.tzs, 0);
+  assert.equal(d.pmoBonus.set, false, 'the board says the rule is not set, not that it is zero');
+
+  // And it is still an admin's button: commissionSave is already gated, delete included.
+  await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { clearWeeklyBonus: true }, NOW),
+    e => e.status === 403);
+});
+
 test('assignments flags customers nobody has followed up', async () => {
   const d = await run('assignments');
   assert.equal(d.count, 3);
