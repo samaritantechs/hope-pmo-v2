@@ -460,6 +460,31 @@ test('every leader with an access code gets the door; an officer on a team code 
   assert.equal(off.systemAdmin, false);
 });
 
+/* =====================================================================================
+   THE CALL LOG IS TRIMMED, AND THE REPORT SAYS SO RATHER THAN SHOWING A QUIET ZERO.
+   =====================================================================================
+     "please always autodelete call logs by keeping only last week and current [2]"
+
+   977,000 rows after one month, on the table the phone reads all day, so the retention is the
+   right call. But a leader can still pick any two dates on this report -- and a range reaching
+   past the cut would come back as every officer at nought calls, which reads as a team that did
+   no work rather than as a book that no longer holds it. Silence reading as success, on people's
+   performance. */
+test('the calls report says when the range reaches before what is kept', async () => {
+  const db = fakeDb(makeTables());
+  await callApi(db, 'api_callRegister', ['bR', '', '', 'LEAD1', '0712999901', ''], NOW);
+
+  // Inside the window: this week and last week, nothing to warn about.
+  const near = await callApi(db, 'api_callReport', ['bR', '2026-07-20', '2026-07-24', '', ''], NOW);
+  assert.equal(near.keepFrom, '2026-07-13', 'the Monday of last week, matching prune_call_logs');
+  assert.ok(!near.prunedNote, 'a range inside the window is not qualified');
+
+  // Reaching back past the cut: the figures are short, and the report has to say why.
+  const far = await callApi(db, 'api_callReport', ['bR', '2026-06-01', '2026-07-24', '', ''], NOW);
+  assert.ok(far.prunedNote, 'a range before the cut is explained, never left looking like nil work');
+  assert.match(far.prunedNote, /2026-07-13/, 'and it names the date the log now starts at');
+});
+
 /* THE BURST. pg_stat_activity on the morning the dashboard would not load: 27 queries active
    at once, nearly all the totals functions, nothing old, nothing blocked -- three hundred
    handsets re-asking for the strip after an upload, every one of them running buildDashboard

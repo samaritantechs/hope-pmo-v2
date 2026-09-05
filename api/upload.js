@@ -1203,6 +1203,29 @@ export default withApi(async (req, res) => {
     try { await beforeDeadline(topUpDeckTotals(supabase, 3000), Math.min(4000, clock.left()), false); }
     catch (e) { /* the window is topped up by the next upload, or by RUN-ME-022 */ }
   }
+  /* AND TRIM THE CALL LOG, IN ONE BOUNDED SLICE.
+       "please always autodelete call logs by keeping only last week and current [2]"
+
+     call_logs is the fastest-growing table in the book -- three hundred officers, every call,
+     every day, 977,000 rows in the first month -- and it is on the path the phone reads all
+     day. Keeping the current week and the one before it holds it at roughly forty thousand.
+
+     ONE SLICE, LAST, ON THE SAME CLOCK as everything else here, so a slow morning simply skips
+     it and the next upload carries on. A day produces about 2,800 calls; a slice of 20,000 is
+     seven days of them, so this keeps up comfortably from one upload a day. The FIRST clean-out
+     is nine hundred thousand rows and is deliberately NOT done here -- RUN-ME-027 section 2b
+     is run by hand until it reports 0, because the one thing this must never do is turn an
+     upload into a mass delete.
+
+     `prune_call_logs` not existing is the ordinary case until RUN-ME-027 is run, and it is
+     caught like every other optional migration: the upload stands and nothing is trimmed. */
+  if (isLastPart && clock.worth(4000)) {
+    try {
+      await beforeDeadline(
+        runQuery(() => supabase.rpc('prune_call_logs', { p_keep_weeks: 2, p_limit: 20000 })),
+        Math.min(3000, clock.left()), null);
+    } catch (e) { /* not installed, or no time -- the next upload trims instead */ }
+  }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.
 
