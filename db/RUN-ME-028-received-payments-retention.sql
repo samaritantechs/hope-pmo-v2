@@ -7,18 +7,18 @@
 --
 -- ONE THING TO SAY BEFORE IT RUNS, because it is not the same trade as the call log.
 --
---   call_logs      977,616 rows after one month, on the path the phone reads all day.
---                  Trimming it to two weeks removed 292,000 -- thirty per cent, not the
---                  ninety-six I predicted. See the correction at the top of RUN-ME-027:
---                  call volume quadrupled during August, so most of the table IS the
---                  fortnight being kept.
---   received_payments   about 69,000 rows, and it prunes the same way for the same reason:
---                  12,900 removed, 56,120 left. Sixteen per cent. It will not move the disk
---                  figure at all -- the disk is the two snapshot tables and call_logs,
+--   call_logs      977,616 rows before, 485,590 after -- 492,026 removed, almost exactly half.
+--                  See the measured figures at the top of RUN-ME-027: half the month's calls
+--                  fall inside the fortnight being kept, so half was all there was to take.
+--   received_payments   56,120 rows left when it finished, from somewhere around 67,000. The
+--                  starting count was never measured exactly, only the finish, so treat the
+--                  "roughly a sixth of it went" as the estimate it is. It will not move the
+--                  disk figure at all -- the disk is the two snapshot tables and call_logs,
 --                  nothing else is close.
 --
--- SO DO THIS FOR THE CAP, NOT FOR TODAY'S SPACE. Neither table shrinks much on the day it is
--- first pruned. What both stop doing is growing without limit, which is the whole point.
+-- SO DO THIS FOR THE CAP, NOT FOR TODAY'S SPACE. Neither table shrinks as much as you would
+-- expect on the day it is first pruned, because most of what is in them is recent by
+-- definition. What both stop doing is growing without limit, which is the whole point.
 --
 -- AND IT COSTS TWO THINGS THAT ARE NOT OBVIOUS:
 --
