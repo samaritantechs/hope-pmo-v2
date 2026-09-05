@@ -6,7 +6,7 @@ import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestD
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
-import { cachedAnswer } from './answer-cache.js';
+import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList, AUDITED } from './audit.js';
@@ -2391,7 +2391,36 @@ const WEEK_DEF_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
    asking defaulter_snapshots for it would fail the WHOLE read rather than return a blank. */
 const WEEK_CREDIT_COLS = 'ref, team, arrears, ds, initial_inst, other_inst, t_payment';
 
-async function weekly(db, user, { weekOf }, nowMs) {
+/* CACHED, LIKE THE THREE SCREENS THAT ALREADY ARE, and for the same reason -- it just never
+   got the treatment.
+   =====================================================================================
+     "what do we have to do for speed everwhere now"
+
+   The Monday meeting is read off this report, so on a Monday morning it is opened by every
+   leader in the company within the same few minutes, and each open recomputed it from scratch:
+   the heaviest read on it is Count 1-6, which compares each CUSTOMER's Monday arrears against
+   their arrears at the end of the week and therefore cannot be a team total. Measured at 90,000
+   rows on a deployment without the totals migration.
+
+   `dashboardFull`, `monthReport` and `officerBoards` have been behind cachedAnswer for months.
+   This one and the two below were simply never added -- not a decision, an omission -- and they
+   are among the most expensive answers in the system.
+
+   KEYED BY THE RESOLVED WEEK AND THE RAW REQUEST, exactly as dashboardFull is: two requests
+   that resolve to the same Monday can still carry different overruled-choice notes
+   (`weekRequested`, `weekFuture`), and handing one person the other's note is a screen telling
+   somebody their choice was honoured when it was not.
+
+   AND IT WRITES FEWER RECORDS, which is a second saving nobody asked for. recordPerformance
+   stamps the week on every open; behind the cache it stamps once a minute instead of once per
+   leader per press. The record is the same -- an upsert on the natural key was always going to
+   settle on the same row -- there is simply far less of it. */
+async function weekly(db, user, args, nowMs) {
+  const asOf0 = asOfWeek(nowMs, args && args.weekOf);
+  return cachedAnswer(db, 'weekly|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
+    user, nowMs, () => weeklyCompute_(db, user, { weekOf: args && args.weekOf }, nowMs));
+}
+async function weeklyCompute_(db, user, { weekOf }, nowMs) {
   // Snapped to its Monday rather than trusted to be one, so a date arrived at any other way
   // reads as the week it falls in instead of as a week starting mid-way through.
   const asOf = asOfWeek(nowMs, weekOf);
@@ -2673,7 +2702,13 @@ async function teamProgress(db, user, _args, nowMs) {
 
     Teams with no one named in a role collect under "(unassigned)" rather than vanishing --
     an unstaffed role is exactly the thing a leader report should make visible. */
-async function leaderReports(db, user, _args, nowMs) {
+/* Cached for the reason above. This one takes no arguments at all, so the key is its name and
+   the scope -- one computation per team-set per minute, however many leaders open the tab. */
+async function leaderReports(db, user, args, nowMs) {
+  return cachedAnswer(db, 'leaderReports', user, nowMs,
+    () => leaderReportsCompute_(db, user, args, nowMs));
+}
+async function leaderReportsCompute_(db, user, _args, nowMs) {
   const tp = await teamProgress(db, user, {}, nowMs);
   const teamRows = await readTeamsAll(db);
   const teamBy = {};
@@ -3107,7 +3142,17 @@ async function deckByWeekday(db, user, { type, notAfter, weekdays, columns }) {
   return { rows: out };
 }
 
+/* Cached for the reason above, and this is the one with the largest read of the lot: 140,000
+   rows on the speed guard, the biggest row budget in that file. The recovery side walks each
+   CUSTOMER's arrears down day by day, which no team total can answer, so it is expensive by
+   nature rather than by accident -- which is exactly what a cache is for.
+   Keyed by SCOPE, because week and month are two different answers from the same walk. */
 async function commission(db, user, args = {}, nowMs) {
+  const scope = args && args.scope === 'month' ? 'month' : 'week';
+  return cachedAnswer(db, 'commission|' + scope, user, nowMs,
+    () => commissionCompute_(db, user, args, nowMs));
+}
+async function commissionCompute_(db, user, args = {}, nowMs) {
   /* TWO SCOPES, ONE COMPUTATION. scope 'week' is the screen; scope 'month' is the record
      behind the blinking dot -- the SAME walk from the month's first day, so the month can
      never disagree with the weeks it is made of. The month range is month-start..today. */
@@ -3637,6 +3682,11 @@ async function commissionSave(db, user, p) {
   const set = async (key, value) => {
     const { error } = await db.from('settings').upsert({ key, value: String(value == null ? '' : value) }, { onConflict: 'key' });
     noteSettingsWritten(db);
+    /* THE BOARD IS CACHED NOW, so the person who just changed a rate has to see it. Remembered
+       for the crowd, dropped for the author -- the same rule noteSettingsWritten above follows,
+       one layer up. Without this an admin sets the payout note, is told "saved", reads the same
+       screen and finds the old note: no way to tell a working system from a broken one. */
+    noteAnswersChanged(db);
     if (error) throw new Error(error.message);
   };
   const out = {};
@@ -6399,7 +6449,12 @@ async function contactsExport(db, user) {
    It reports what it wrote, because a button that says nothing is a button nobody trusts. */
 async function stampWeek(db, user, args, nowMs) {
   requireAdmin(user);
-  const w = await weekly(db, user, { weekOf: args && args.weekOf }, nowMs);
+  /* THE UNCACHED COMPUTATION, DELIBERATELY. Everywhere else a minute-old answer is a good
+     trade; this is an admin pressing "record this week", and what it writes down is kept
+     for ever and never re-derived. A stamp is worth exactly as much as its accuracy, so it
+     pays for its own read rather than capturing whatever the last person to open the report
+     happened to see. */
+  const w = await weeklyCompute_(db, user, { weekOf: args && args.weekOf }, nowMs);
   const leadBy = {};
   for (const t of (w.teamRows || [])) leadBy[K(t.team)] = t;
   const rows = recordsFor(w.teams || [], leadBy, w.weekOf, w.perTarget);
