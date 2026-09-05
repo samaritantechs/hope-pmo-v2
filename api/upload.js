@@ -155,6 +155,52 @@ const uploadBudget = () => Number(process.env.UPLOAD_BUDGET_MS) || UPLOAD_BUDGET
     Starting one with two seconds left buys nothing and risks the clock. */
 const UPLOAD_STEP_MIN_MS = 4000;
 
+/** RETENTION SLICES: how big a bite the trim takes, and how many bites one upload may take.
+    The size is a bite the database finishes in well under a second. The COUNT is what makes the
+    trim keep up, and it is sized against a measured day, not a guessed one -- see the trim
+    itself, below the write, for the arithmetic and for why one slice was not enough. */
+const PRUNE_SLICE_ROWS = 20000;
+const PRUNE_MAX_SLICES = 5;
+
+/** THE RETENTION TRIM, once, for whichever table.
+    `call(limit)` makes one bounded delete and answers `{ data, error }` -- data being how many
+    rows went, which is how the caller knows whether to come back for more.
+
+    WHY THIS IS ONE FUNCTION AND NOT TWO COPIES. Both tables trim on identical terms, and two
+    copies of "how far may an upload chase this" are two answers that can drift apart -- one
+    raised for a busy table, the other left behind, and nobody able to say what the rule is.
+
+    IT STOPS FOR FOUR REASONS AND SAYS WHICH:
+      done    a slice came back SHORT, so there is nothing left older than the cut.
+      capped  maxSlices spent. Ordinary on the Monday the cut advances and a week's rows fall
+              in at once; the next upload takes the rest.
+      no-time the clock will not hold another slice AND the step after it. Always yields.
+      error   the RPC failed, or is not installed because the migration has not been run.
+    None is a failure of the upload: the deck is written long before this runs, every slice is
+    its own committed statement, and whatever is left is taken by the next upload. */
+export async function pruneInSlices(call, clock, opts = {}) {
+  const limit = opts.limit || PRUNE_SLICE_ROWS;
+  const maxSlices = opts.maxSlices || PRUNE_MAX_SLICES;
+  const sliceMs = opts.sliceMs || 3000;
+  const reserveMs = opts.reserveMs || 7000;
+  let deleted = 0, slices = 0, stopped = 'done';
+  while (slices < maxSlices) {
+    let r = null;
+    try { r = await beforeDeadline(call(limit), Math.min(sliceMs, clock.left()), null); }
+    catch (e) { r = null; }
+    slices++;
+    /* No answer means the deadline took it or the call threw; either way stop asking. */
+    if (!r || r.error) { stopped = 'error'; break; }
+    const n = Number(r.data);
+    if (!Number.isFinite(n)) { stopped = 'error'; break; }
+    deleted += n;
+    if (n < limit) break;                                  // short slice: the table is trimmed
+    if (slices >= maxSlices) { stopped = 'capped'; break; }
+    if (!clock.worth(reserveMs)) { stopped = 'no-time'; break; }
+  }
+  return { deleted, slices, stopped };
+}
+
 /** Run `p`, but give up on it after `ms` and answer `fallback` instead. The abandoned work is
     NOT cancelled -- it carries on against the database for as long as the platform lets it, and
     since every step here writes in chunks, whatever it finished stands. */
@@ -1203,41 +1249,50 @@ export default withApi(async (req, res) => {
     try { await beforeDeadline(topUpDeckTotals(supabase, 3000), Math.min(4000, clock.left()), false); }
     catch (e) { /* the window is topped up by the next upload, or by RUN-ME-022 */ }
   }
-  /* AND TRIM THE CALL LOG, IN ONE BOUNDED SLICE.
+  /* AND TRIM THE CALL LOG AND THE PAYMENTS, IN BOUNDED SLICES.
        "please always autodelete call logs by keeping only last week and current [2]"
+       "And always auto delete received payments with 2 weeks lifetime"
 
      call_logs is the fastest-growing table in the book -- three hundred officers, every call,
-     every day, 977,000 rows in the first month -- and it is on the path the phone reads all
-     day. Keeping the current week and the one before it holds it at roughly forty thousand.
+     every day -- and it is on the path the phone reads all day.
 
-     ONE SLICE, LAST, ON THE SAME CLOCK as everything else here, so a slow morning simply skips
-     it and the next upload carries on. A day produces about 2,800 calls; a slice of 20,000 is
-     seven days of them, so this keeps up comfortably from one upload a day. The FIRST clean-out
-     is nine hundred thousand rows and is deliberately NOT done here -- RUN-ME-027 section 2b
-     is run by hand until it reports 0, because the one thing this must never do is turn an
-     upload into a mass delete.
+     WHY THIS TAKES SEVERAL SLICES AND NOT ONE. It used to take exactly one, on the reasoning
+     that "a day produces about 2,800 calls, so a slice of 20,000 is seven days of them and one
+     upload a day keeps up comfortably". THAT NUMBER WAS A GUESS AND IT WAS WRONG BY A FACTOR OF
+     THIRTEEN. Measured on the live book after the first clean-out: 485,590 rows across the
+     fortnight kept, about 38,000 CALLS A DAY. One slice of 20,000 is HALF a day, so a single
+     slice per upload deletes less than the officers add and the table grows anyway -- the exact
+     failure this step exists to prevent, dressed up as a fix.
+
+     The cut is a week boundary, so the eligible rows do not trickle in: they arrive in a lump
+     of about a quarter of a million every Monday when the cut advances. Five slices is 100,000
+     an upload, which clears that lump within the week from a handful of uploads and keeps up
+     from ONE a day with room to spare.
+
+     IT IS STILL BOUNDED THE SAME WAY, and that is what makes it safe: each slice is its own
+     committed statement, the loop stops the moment a slice comes back short (nothing left to
+     take), and it stops on the clock -- keeping enough back that the payments trim after it can
+     still start. A slow morning takes one slice, or none, and the next upload carries on. The
+     FIRST clean-out is half a million rows and is deliberately NOT done here: RUN-ME-027
+     section 2b is run by hand until it reports 0, because the one thing this must never do is
+     turn an upload into a mass delete.
 
      `prune_call_logs` not existing is the ordinary case until RUN-ME-027 is run, and it is
      caught like every other optional migration: the upload stands and nothing is trimmed. */
   if (isLastPart && clock.worth(4000)) {
-    try {
-      await beforeDeadline(
-        runQuery(() => supabase.rpc('prune_call_logs', { p_keep_weeks: 2, p_limit: 20000 })),
-        Math.min(3000, clock.left()), null);
-    } catch (e) { /* not installed, or no time -- the next upload trims instead */ }
+    /* reserveMs keeps back room for another slice AND the payments trim below, so the call log
+       -- much the bigger table -- can never spend the whole tail of the clock on itself. */
+    await pruneInSlices(limit => runQuery(() => supabase.rpc('prune_call_logs',
+      { p_keep_weeks: 2, p_limit: limit })), clock, { sliceMs: 3000, reserveMs: 7000 });
   }
-  /* AND RECEIVED PAYMENTS, on the same terms -- "always auto delete received payments with 2
-     weeks lifetime". A far smaller table than the call log (about 67,000 rows against 977,000)
-     so it buys much less, but it was asked for plainly and it is one more bounded slice at the
-     very end of the clock. What it costs is on the screens, not hidden: the phone's customer
-     sheet and the abnormal payments tab both now say what is no longer kept -- see
-     RUN-ME-028, and see `keptFrom` in call-core.js and portal-core.js. */
+  /* AND RECEIVED PAYMENTS, on the same terms. A far smaller table than the call log -- 56,120
+     rows against half a million -- so it buys much less, but it was asked for plainly and it is
+     the same bounded loop at the very end of the clock. What it costs is on the screens, not
+     hidden: the phone's customer sheet and the abnormal payments tab both now say what is no
+     longer kept -- see RUN-ME-028, and see `keptFrom` in call-core.js and portal-core.js. */
   if (isLastPart && clock.worth(3000)) {
-    try {
-      await beforeDeadline(
-        runQuery(() => supabase.rpc('prune_received_payments', { p_keep_weeks: 2, p_limit: 20000 })),
-        Math.min(2000, clock.left()), null);
-    } catch (e) { /* not installed, or no time -- the next upload trims instead */ }
+    await pruneInSlices(limit => runQuery(() => supabase.rpc('prune_received_payments',
+      { p_keep_weeks: 2, p_limit: limit })), clock, { sliceMs: 2000, reserveMs: 5000 });
   }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.
