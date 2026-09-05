@@ -100,6 +100,30 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
     app.indexOf('VIEWS.', app.indexOf('VIEWS.noaccess') + 10));
   assert.ok(/href="\/call"/.test(noaccessSrc),
     'the access-not-set screen is a dead end again -- no way back to HOPE Calls');
+  /* THE SIGN-IN SCREEN ASKS FOR A CODE AND NOTHING ELSE.
+
+       "at logging in: weka msimbo should not even have a hopecalls card below if someone
+        puts code through app take them directly to hopecalls, they'll access the system by
+        the switch whenever they need to"
+
+     Every code already lands on Calls -- a team code through tryTeamCode, a leader's through
+     renderHome -- so a tile offering Calls as the OTHER choice made the screen look like a fork
+     when both paths end in the same place. But the way through must survive: this page is what
+     the Android WebView opens, and an officer with a mistyped or missing team code sitting at a
+     box they cannot fill is the call app being down for that person. A plain link is the floor,
+     a tile is the thing that was asked to go. */
+  const home = readFileSync(new URL('../public/home.html', import.meta.url), 'utf8');
+  const signIn = home.slice(home.indexOf('function renderSignIn'), home.indexOf('function readJson_'));
+  assert.ok(!/tile\('\/call'/.test(signIn), 'the HOPE Calls TILE is back on the sign-in screen');
+  assert.ok(/href="\/call"/.test(signIn),
+    'the sign-in screen has no way through to Calls at all -- an officer without a code is stranded');
+  /* AND A VALID CODE STILL GOES STRAIGHT THERE, which is the half of the ask that was already
+     true and must not be quietly undone by a later tidy-up of this screen. */
+  assert.ok(/window\.location\.replace\('\/call'\)/.test(home),
+    'a signed-in code no longer lands on HOPE Calls');
+  assert.ok(/window\.location\.href = '\/call'/.test(home),
+    'a team code no longer lands on HOPE Calls');
+
   /* THE STAMP THE SERVER READS AND THE ONE THE PAGE REPORTS MUST BE THE SAME STRING.
      A permission that lands on the server and not on the screen is what let an unticked role
      keep its navs, so the page reloads itself when /api/me says it is behind. That handshake
