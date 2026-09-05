@@ -402,10 +402,18 @@ test('team progress pairs initial and current decks per team', async () => {
 
 test('commission pays the recovery officer a % and the early officer a flat rate', async () => {
   const d = await run('commission');
-  assert.equal(d.mode, 'status');
-  // Recovery: KONGOWE's officer earns on 111 (500->300) and 555 (700->600) = 300 at 10%.
+  assert.equal(d.mode, undefined, 'the disb-year and status rate modes are gone, not switched off');
+  /* RECOVERY IS PAID ON THE PERCENTAGE NOW, NOT THE AMOUNT.
+
+       "a team can default 30m and rec off gets 20m then another team def 21m rec off gets 19m
+        then at payment the worsrt perfomer earns more"
+
+     KONGOWE's books entered today holding 500 + 700 = 1,200 and gave up 300: 25%, which is
+     below the 50% floor and therefore pays nothing. Under the old rule the same 300 paid 30
+     shillings regardless of whether it came off a book of 1,200 or a book of 310. */
   const juma = d.day.find(r => r.officer === 'JUMA G');
-  assert.equal(juma.recovered, 300); assert.equal(juma.recComm, 30);
+  assert.equal(juma.recovered, 300, 'the amount is still reported -- it is just not what pays');
+  assert.equal(juma.recComm, 0, '25% is below the floor, so the day pays nothing');
   // MBAGALA names no recovery officer, so its 100 recovered is still counted, unassigned.
   assert.equal(d.day.find(r => r.officer === '(unassigned)').recovered, 100);
   /* THE WEEKLY % ON THE COMBINED TABLE -- "have a last colomn of their weekly performance
@@ -414,14 +422,14 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   const juWeek = d.week.find(r => r.officer === 'JUMA G');
   assert.equal(juWeek.pct, 25, 'rec % = recovered over what the observed books held entering the range');
 
-  /* TODAY BY BAND -- "how much each person earned from each disb year band in that days
-     rec". Status mode here, so the band is the status; both of today's drops are Defaulter
-     rows, so one DEFAULTER column carries the whole day. */
-  assert.deepEqual(d.recBands.bands, ['DEFAULTER']);
-  const jb = d.recBands.rows.find(r => r.officer === 'JUMA G');
-  assert.equal(jb.rec_DEFAULTER, 300, 'the band carries today\'s recovered amount');
-  assert.equal(jb.tzs_DEFAULTER, 30, 'and what it earned at that band\'s rate');
-  assert.equal(jb.total, 30);
+  /* THE BAND BOARD BY DISBURSEMENT YEAR IS GONE WITH THE MODES IT SPLIT BY. What replaces it
+     is the ladder, sent from its one definition so the screen cannot draw a different one. */
+  assert.equal(d.recBands, undefined, 'the disb-year band board went with the rates');
+  assert.equal(d.recoveryBands[0].floor, 90);
+  assert.equal(d.recoveryBands[0].tzs, 60000);
+  assert.equal(d.recoveryBands[0].label, '90%+ MAFANIKIO', 'the top band has no ceiling');
+  assert.equal(d.recoveryBands[d.recoveryBands.length - 1].floor, 50);
+  assert.equal(d.recoveryBelow.tzs, 0, 'below the floor pays nothing, and that is intended');
 
   /* Early collection: the fixture has only a TODAY sheet, and the early scheme reads the
      INITIAL file ONLY -- "its initial file only no other fallback". No initial, no pay. */
@@ -435,9 +443,14 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   const recJuma = d.recBoard.find(r => r.officer === 'JUMA G');
   assert.ok(recJuma, 'the recovery officer has their own board row');
   assert.equal(recJuma.weekRecovered, 300);
-  assert.equal(recJuma.weekCommission, 30);
-  assert.ok(Array.isArray(recJuma.days) && recJuma.days.length >= 1, 'day-by-day record rides along');
-  assert.equal(recJuma.days.reduce((s, x) => s + x.recovered, 0), 300, 'the days add up to the week');
+  assert.equal(recJuma.weekPct, 25, '300 off a book that opened at 1,200');
+  assert.equal(recJuma.weekCommission, 0, 'every record is under the floor, so the week pays nothing');
+  /* SIX RECORDS, NOT SEVEN DAYS: Monday to Friday, then the week itself as the sixth -- the
+     weekend's commission day. */
+  assert.equal(recJuma.records.length, 6);
+  assert.deepEqual(recJuma.records.map(r => r.key), ['J3', 'J4', 'J5', 'AL', 'IJ', 'WK']);
+  assert.equal(recJuma.records[5].weekly, true, 'the sixth is the week, not a day');
+  assert.equal(recJuma.records[5].pct, 25, 'and it carries the week\'s own percentage');
   assert.equal(d.colBoard.find(r => r.officer === 'EARLY E'), undefined,
     'the early board stays empty without the initial file -- never filled off the today sheet');
 
@@ -504,23 +517,117 @@ test('commission baseline: each book is brought forward by its own last current,
   const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
   const juma = d.recBoard.find(r => r.officer === 'JUMA G');
   assert.ok(juma, 'the recovery officer appears on the board');
-  const monday = (juma.days || []).find(x => x.date === '2026-07-20');
+  const monday = (juma.records || []).find(x => x.date === '2026-07-20');
   assert.ok(monday, 'Monday was observed');
   assert.equal(monday.recovered, 300,
     '800 -> 500 against the book\'s OWN last current pays 300 -- not zero (starved baseline) and not 500 (initial-based)');
+  /* AND THE DAY IS NOW A PERCENTAGE OF WHAT THAT DAY HELD. The Monday deck opened at 800 and
+     gave up 300: 37.5%, under the floor. The baseline this test defends is the DENOMINATOR now
+     as well as the numerator -- starve it and the percentage is wrong in the other direction. */
+  assert.equal(monday.base, 800, 'the day is scored against what the book held that morning');
+  assert.equal(monday.pct, 37.5);
+  assert.equal(monday.tzs, 0, 'below 50% pays nothing');
 });
 
-test('commission rates save, and a malformed rate saves nothing', async () => {
+test('the recovery rate modes are removed from settings, not left switched off', async () => {
+  /* A rate table still sitting in Settings is a rate table somebody turns back on, and it
+     would silently outrank the ladder. The panel's Save drops all three keys. */
   const db = fakeDb(tables());
-  await portalApi(db, ADMIN, 'commissionSave', { mode: 'year', yearRates: '2024:5, 2025:2.5', paidTzs: 800 }, NOW);
-  const val = k => db._dump('settings').find(r => r.key === k).value;
-  assert.equal(val('CMS_MODE'), 'year');
-  assert.equal(val('CMS_YEAR_RATES'), '2024:5, 2025:2.5');
-  assert.equal(val('CMS_PAID_TZS'), '800');
-  // Validation happens before ANY write, so a bad list cannot half-save over a good one.
-  await assert.rejects(() => portalApi(db, ADMIN, 'commissionSave', { yearRates: 'nonsense!!' }, NOW),
-    e => e.status === 400);
-  assert.equal(val('CMS_YEAR_RATES'), '2024:5, 2025:2.5');
+  const has = k => db._dump('settings').some(r => r.key === k);
+  assert.ok(has('CMS_MODE') && has('CMS_STATUS_RATES'), 'the fixture starts with the old keys');
+  const out = await portalApi(db, ADMIN, 'commissionSave', { mode: 'year', paidTzs: 800 }, NOW);
+  assert.equal(out.ratesRemoved, true);
+  assert.equal(has('CMS_MODE'), false);
+  assert.equal(has('CMS_YEAR_RATES'), false);
+  assert.equal(has('CMS_STATUS_RATES'), false);
+  // The flat early-collection rates are a different scheme and are untouched.
+  assert.equal(db._dump('settings').find(r => r.key === 'CMS_PAID_TZS').value, '800');
+});
+
+test('the recovery ladder pays the percentage, and the sixth record is the week', async () => {
+  const { recoveryWeek, recoveryBand, RECOVERY_BANDS } = await import('../api/_lib/recovery-pay.js');
+
+  /* THE CASE THAT ENDED THE AMOUNT MODES.
+
+       "AN OFFICER A WHO HAS CURRENT 30M DEFAULTS AND RECOVERS 20M, ANOTHER OFFICER B HAS
+        CURRENT DEFAULTS OF 21M AND RECOVERS 19M. USING AMOUNTS MODE, OFFICER A WITH WORST
+        PERFORMANCE EARNS MORE"
+
+     A takes more money and less of the book. On the ladder B is paid more, which is the
+     entire point of the change. */
+  const A = recoveryBand(Math.round((20 / 30) * 1000) / 10);   // 66.7%
+  const B = recoveryBand(Math.round((19 / 21) * 1000) / 10);   // 90.5%
+  assert.equal(A.tzs, 25000, 'the bigger book, the smaller share: band (b)');
+  assert.equal(B.tzs, 60000, 'the smaller book worked harder: MAFANIKIO');
+  assert.ok(B.tzs > A.tzs, 'and the better performer is now the one who earns more');
+
+  /* THE TOP BAND HAS NO CEILING -- "the last band is 90 to 100+ you know their is 100%+ rec".
+     A book can give up more than it opened with when arrears are added and cleared in the
+     same week, and that officer must not fall off the end of the ladder. */
+  assert.equal(recoveryBand(100).tzs, 60000);
+  assert.equal(recoveryBand(137.4).tzs, 60000, '137% is still MAFANIKIO, not unpriced');
+  assert.equal(RECOVERY_BANDS[0].label, '90%+ MAFANIKIO');
+
+  // Below the floor pays nothing, and a day with nothing to recover is not a failure.
+  assert.equal(recoveryBand(49.9).tzs, 0);
+  assert.equal(recoveryBand(null), null, 'no arrears to work is not 0% -- it is no percentage');
+
+  /* THE PLAN'S OWN WORKED EXAMPLE, verbatim:
+       "in default of 1m mon-fri rec=200k, then sat-sun rec =300k weekly rec = 50% and that's
+        the 6th day record [the 50%]" */
+  const wk = recoveryWeek([
+    { date: '2026-07-20', recovered: 200000, base: 1000000 },
+    { date: '2026-07-21', recovered: 0, base: 0 },
+    { date: '2026-07-22', recovered: 0, base: 0 },
+    { date: '2026-07-23', recovered: 0, base: 0 },
+    { date: '2026-07-24', recovered: 0, base: 0 },
+  ], { recovered: 500000, base: 1000000 });
+  assert.equal(wk.rows.length, 6, 'five weekdays and the week itself');
+  assert.equal(wk.rows[5].key, 'WK');
+  assert.equal(wk.weekPct, 50, '500k of the week\'s 1m — the sixth day record');
+  assert.equal(wk.rows[5].tzs, 20000, 'which is band (a)');
+  // Monday took 200k of 1m = 20%, under the floor. The week still pays its own record.
+  assert.equal(wk.rows[0].pct, 20);
+  assert.equal(wk.rows[0].tzs, 0);
+  assert.equal(wk.tzs, 20000, 'the six records added, never a band on an average');
+  // A day with nothing to recover pays nothing and is not scored as a failure.
+  assert.equal(wk.rows[1].pct, null);
+  assert.equal(wk.rows[1].tzs, 0);
+
+  /* SIX RECORDS AT 60-69% IS THE 600,000-A-MONTH ANCHOR the plan is built on:
+     25,000 x 6 = 150,000 a week, x 4 = 600,000. */
+  const steady = recoveryWeek(
+    [0, 1, 2, 3, 4].map(i => ({ date: 'd' + i, recovered: 65, base: 100 })),
+    { recovered: 65, base: 100 });
+  assert.equal(steady.tzs, 150000, 'a steady 65% week pays exactly the plan\'s 150,000');
+});
+
+test('a bonus can be switched off without losing the amount', async () => {
+  /* "admin should have a button to enable or disable bonuses"
+
+     Delete removes the rule and the figure with it. Disable pauses the rule and KEEPS the
+     figure -- a month with no budget for the bonus, or a fortnight while the criteria are
+     rewritten. Without both, pausing means deleting a number and remembering it. */
+  const db = fakeDb(tables());
+  const val = k => (db._dump('settings').find(r => r.key === k) || {}).value;
+  await portalApi(db, ADMIN, 'commissionSave', { weeklyBonus: 50000 }, NOW);
+  let d = await portalApi(db, ADMIN, 'commission', { scope: 'week' }, NOW);
+  assert.equal(d.pmoBonus.enabled, true, 'absent means on -- a running bonus keeps running');
+
+  await portalApi(db, ADMIN, 'commissionSave', { bonusEnabled: false }, NOW);
+  assert.equal(val('PMO_WEEKLY_BONUS'), '50000', 'the amount is still there');
+  d = await portalApi(db, ADMIN, 'commission', { scope: 'week' }, NOW);
+  assert.equal(d.pmoBonus.enabled, false);
+  assert.equal(d.pmoBonus.tzs, 50000, 'and the screen still shows what it will pay when it is back on');
+  assert.equal(d.pmoBonus.won, false, 'nobody wins a bonus that is switched off');
+  assert.match(d.pmoBonus.why || '', /switched off/, 'and the board says WHY, not just "no bonus"');
+
+  await portalApi(db, ADMIN, 'commissionSave', { bonusEnabled: true }, NOW);
+  d = await portalApi(db, ADMIN, 'commission', { scope: 'week' }, NOW);
+  assert.equal(d.pmoBonus.enabled, true, 'and back on with the same figure, nothing retyped');
+
+  await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { bonusEnabled: false }, NOW),
+    e => e.status === 403, 'still an admin\'s switch');
 });
 
 test('the weekly bonus can be deleted, and deleting is not the same as typing a zero', async () => {

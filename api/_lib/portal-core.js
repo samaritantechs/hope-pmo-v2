@@ -7,7 +7,9 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
-import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT, PMO_BONUS_KEY } from './pmo.js';
+import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
+  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn } from './pmo.js';
+import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
@@ -3135,58 +3137,42 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
 /** My Commission. Commission is earned by PEOPLE, not teams, and it comes from two separate
     jobs that pay on different rules:
 
-      RECOVERY   the Recovery officer of the customer's team earns a PERCENTAGE of whatever
-                 that customer's arrears fell by that day. The percentage can be set by
-                 disbursement YEAR (older loans pay more so nobody ignores them) or by STATUS
-                 (defaulter / expired / chronic) -- CMS_MODE picks which.
+      RECOVERY   the Recovery officer of the customer's team is paid a BAND ON THEIR RECOVERY
+                 PERCENTAGE -- see recovery-pay.js for the ladder and for the six-day week.
       COLLECTION the Expected officer earns a FLAT TZS amount per client who came in PAID or
                  OVERPAID that day (CMS_PAID_TZS / CMS_OVER_TZS).
 
-    Both are computed day by day and summed, never from a week-level total: a customer who
-    recovered on Tuesday and slipped back on Thursday earned Tuesday's commission, and a
-    week-level subtraction would erase it.
+    Collection is computed day by day and summed, never from a week-level total: a customer who
+    paid on Tuesday and slipped on Thursday earned Tuesday's commission, and a week-level
+    subtraction would erase it. Recovery is the same for its five weekday records, plus the
+    week's own figure as the sixth.
+
+    THE DISBURSEMENT-YEAR AND STATUS RATE MODES ARE GONE, AND THIS IS WHY.
+
+      "We had a scenaria a team can default 30m and rec off gets 20m then another team def 21m
+       rec off gets 19m then at payment the worsrt perfomer earns more thats why we have to
+       move to performance basis for recovery, remove all the previous dib and status modes"
+
+    Twenty million off a thirty-million book is 67%. Nineteen million off a twenty-one million
+    book is 90%. On a percentage OF THE AMOUNT the first officer is paid more for the worse
+    week, every week, and no rate table anywhere can fix that -- it is what paying on amounts
+    means. The officer with the bigger book wins by having the bigger book.
+
+    Teams are dealt out to be of equal difficulty, so the percentage is the only figure that
+    measures the person rather than the allocation. CMS_MODE, CMS_YEAR_RATES and
+    CMS_STATUS_RATES are removed rather than left switched off: a rate table still sitting in
+    Settings is a rate table somebody will one day turn back on.
 
     Officers see only their own row; anyone with settings/upload sees the whole company. */
-function cmsPairs(txt) {
-  const out = {};
-  for (let p of String(txt == null ? '' : txt).split(',')) {
-    p = p.trim(); if (!p) continue;
-    const m = p.match(/^([A-Za-z0-9*]+)[\s:=-]*([0-9]+(?:\.[0-9]+)?)\s*%?$/);
-    if (!m) throw badRequest('Rates must look like "2024:5, 2025:2.5" — could not read "' + p + '".');
-    let k = String(m[1]).toUpperCase();
-    if (k.startsWith('CHRON')) k = 'CHRONIC';
-    else if (k.startsWith('EXPIR')) k = 'EXPIRED';
-    else if (k.startsWith('DEFAULT')) k = 'DEFAULTER';
-    out[k] = parseFloat(m[2]);
-  }
-  return out;
-}
 async function cmsCfg(db) {
   const rows = await fetchAll(() => db.from('settings').select('*'));
   const get = k => { const r = rows.find(x => x.key === k); return r ? r.value : ''; };
-  let mode = String(get('CMS_MODE') || 'year');
-  if (mode !== 'status') mode = 'year';
-  let yearRates = {}, statusRates = {};
-  try { yearRates = cmsPairs(get('CMS_YEAR_RATES')); } catch { /* a malformed rate must not break the page */ }
-  try { statusRates = cmsPairs(get('CMS_STATUS_RATES')); } catch { /* same */ }
-  return { mode, yearRaw: String(get('CMS_YEAR_RATES') || ''), statusRaw: String(get('CMS_STATUS_RATES') || ''),
-    yearRates, statusRates,
+  return {
     paidTzs: num(get('CMS_PAID_TZS')) || 0, overTzs: num(get('CMS_OVER_TZS')) || 0,
     // What an officer is told about WHEN and HOW the money reaches them. A commission figure
     // with no word about payday is the question every officer asks next, and they ask it of
     // somebody rather than of the screen.
     payText: String(get('COMM_PAY_TEXT') || '') };
-}
-function cmsRateFor(cfg, row) {
-  if (cfg.mode === 'status') {
-    const s = K(row.status);
-    if (s.includes('CHRON')) return cfg.statusRates.CHRONIC || 0;
-    if (s.includes('EXPIR')) return cfg.statusRates.EXPIRED || 0;
-    return cfg.statusRates.DEFAULTER || 0;
-  }
-  const y = String(row.disb_date || '').slice(0, 4);
-  if (cfg.yearRates[y] != null) return cfg.yearRates[y];
-  return cfg.yearRates['*'] || 0;
 }
 /* THE COMMISSION BASELINE, READ THE WAY THE DECKS ARE ACTUALLY UPLOADED. A deck is a
    whole-company file per weekday ("the latest current defaulter file is to live until the
@@ -3294,7 +3280,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     expectedTotalsInRange(db, { type: 'initial', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
-    settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY]),
+    settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY, PMO_BONUS_ON_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
        got the previous week". Without last week's figures the condition cannot be checked at
        all, and a bonus awarded without checking it is just a bonus. */
@@ -3362,6 +3348,10 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
 
   const blank = { recovered: 0, recComm: 0, paid: 0, over: 0, colComm: 0 };
+  /* What one officer's ONE DAY of recovery is: what came off, and what was there to come off.
+     Kept apart from `blank` because a day's pay is now a band on the ratio of these two, not a
+     running sum of shillings -- there is nothing to accumulate into a recComm any more. */
+  const blankRec = { recovered: 0, base: 0 };
 
   /* The running state of every book: weekday|ref -> what they owed at the last observation,
      plus the row that carries their rate and team. */
@@ -3387,15 +3377,12 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
 
   /* Walk the week's current decks in date order. Drops land on the date of the deck that
      showed them, which is what makes "today" a real figure rather than a week share. */
-  const recByDay = new Map();                              // date -> officer -> {recovered, recComm}
-  /* TODAY'S RECOVERY, SPLIT BY THE BAND THAT PRICED IT -- "how much each person earned from
-     each disb year band in that days rec". The band is whatever cmsRateFor rates by: the
-     disbursement year in year mode, the status in status mode. */
-  const bandAcc = {};                                      // officer -> { key, bands: {label: {recovered, tzs}} }
-  const bandOf = r => cfg.mode === 'status'
-    ? (K(r && r.status).includes('CHRON') ? 'CHRONIC'
-      : K(r && r.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER')
-    : (String((r && r.disb_date) || '').slice(0, 4) || '*');
+  /* date -> officer -> { recovered, base }. `base` is new and it is what makes the day a
+     PERCENTAGE rather than an amount: the arrears the books observed on that day were holding
+     when the day started, which is what there was to recover. Accumulated in the same walk as
+     the drops -- no extra read, and it could not come from a separate one anyway, since only
+     this loop knows which books were actually observed on which day. */
+  const recByDay = new Map();
   recDiag.dropsSeen = 0;
   const recBase = {}, recBaseSeen = new Set();
   for (let i = 0; ; i++) {
@@ -3428,24 +3415,54 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         recBaseSeen.add(k);
         recBase[K(who)] = (recBase[K(who)] || 0) + before;
       }
+      /* THIS DAY'S DENOMINATOR, counted for every observed book whether it dropped or not.
+         Counting only the books that moved would score an officer on the customers who paid
+         and ignore the ones who did not, which is a percentage that can only ever be 100. */
+      const bd = bucket(acc, who, blankRec);
+      bd.base += before;
       if (drop <= 0) continue;
       recDiag.dropsSeen++;
-      const b = bucket(acc, who, blank);
-      b.recovered += drop;
-      b.recComm += drop * cmsRateFor(cfg, st.rate) / 100;
-      if (d === today) {
-        const bb = bucket(bandAcc, who, { bands: {} });
-        const label = bandOf(st.rate);
-        const cell = bb.bands[label] || (bb.bands[label] = { recovered: 0, tzs: 0 });
-        cell.recovered += drop;
-        cell.tzs += drop * cmsRateFor(cfg, st.rate) / 100;
-      }
+      bd.recovered += drop;
     }
     // First seen mid-week (no initial ever uploaded): enters the book, nothing attributed yet.
     for (const r of rowsD) {
       if (r.ref && r.team && !running.has(bkey(r))) running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
     }
   }
+
+  /* =====================================================================================
+     THE RECOVERY PAY, WORKED OUT ONCE, FOR EVERY BOARD THAT ASKS.
+
+     Three screens want this -- the combined day/week table, the recovery board, and the
+     company total -- and if each worked it out from the raw days they could disagree about
+     somebody's pay. They read this instead. The ladder and the six-day rule live in
+     recovery-pay.js; what this does is hand it the numbers.
+
+     `recBase` is the WEEK's denominator (what each book held when the week first saw it) and
+     the day cells carry their own. No read is added: both were accumulated in the walk above.
+     ===================================================================================== */
+  const recWdDates = [0, 1, 2, 3, 4].map(i => addDaysKey(mon, i));
+  const recPayOf = new Map();
+  {
+    const names = new Set();
+    for (const [, src] of recByDay) for (const n of Object.keys(src)) names.add(n);
+    for (const name of names) {
+      const cell = d => (recByDay.get(d) || {})[name] || { recovered: 0, base: 0 };
+      const weekdays = recWdDates.map(d => ({ date: d, recovered: cell(d).recovered, base: cell(d).base }));
+      let weekRecovered = 0;
+      for (const [, src] of recByDay) if (src[name]) weekRecovered += src[name].recovered;
+      const pay = recoveryWeek(weekdays, { recovered: weekRecovered, base: recBase[K(name)] || 0 });
+      /* TODAY'S OWN RECORD. A weekday pays its own band. On Saturday or Sunday the record that
+         is live is the WEEK's -- "let the weekends stay as they are but weekly recovery is the
+         6th day commisssion day" -- so the weekend shows the sixth record rather than a blank
+         where a day's figure would be. */
+      const idx = recWdDates.indexOf(today);
+      recPayOf.set(name, { ...pay, weekRecovered,
+        todayRow: idx >= 0 ? pay.rows[idx] : pay.rows[5] });
+    }
+  }
+  const recPay = name => recPayOf.get(name)
+    || { rows: [], tzs: 0, weekPct: null, weekRecovered: 0, todayRow: { recovered: 0, base: 0, pct: null, tzs: 0, band: null } };
 
   function colDay(dateKey, acc) {
     for (const r of colRows(dateKey)) {
@@ -3461,11 +3478,16 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     }
   }
   const dayAcc = {}, weekAcc = {};
-  const foldRec = (acc, src) => { for (const [name, v] of Object.entries(src || {})) {
-    const b = bucket(acc, name, blank); b.recovered += v.recovered; b.recComm += v.recComm;
-  } };
-  foldRec(dayAcc, recByDay.get(today));
-  for (const [, src] of recByDay) foldRec(weekAcc, src);
+  /* Pay comes from recPay, not from adding up per-drop shillings, because there are no longer
+     any: a day is worth its band and a week is worth its six records. The AMOUNTS still ride
+     along, because "how much did I actually recover" is a fair question -- it is simply no
+     longer the thing that decides the pay. */
+  for (const [name, pay] of recPayOf) {
+    const d = bucket(dayAcc, name, blank);
+    d.recovered += pay.todayRow.recovered; d.recComm += pay.todayRow.tzs;
+    const w = bucket(weekAcc, name, blank);
+    w.recovered += pay.weekRecovered; w.recComm += pay.tzs;
+  }
   colDay(today, dayAcc);
   for (const d of colDays) colDay(d, weekAcc);
 
@@ -3484,61 +3506,42 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
 
      Recovery and early collection are different people paid on different rules, and one
      combined row per officer buried both stories. Each board now stands alone, day by day
-     across the range like the PMO board: the recovery officer's recovered amount and what
-     it earned PER DAY; the early-collection officer's collection percentage against the
-     day's initial expected book and their PAID+OVERPAID count PER DAY. Built from the
-     figures already computed above -- no new reads. On the week scope the days are also
-     flattened onto the row (recJ3/tzsJ3 ... like the PMO board's pctJ3), so the boards
-     and any export cannot disagree about which day is which; the month record keeps the
-     totals only, because thirty-one columns is not a table anybody reads. */
-  const dayKey7 = ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2'];
+     across the range like the PMO board: the recovery officer's SIX RECORDS and what each
+     one pays; the early-collection officer's collection percentage against the day's initial
+     expected book and their PAID+OVERPAID count PER DAY. Built from the figures already
+     computed above -- no new reads.
+
+     THE RECOVERY WEEK IS SIX RECORDS, NOT SEVEN DAYS. Monday to Friday flatten onto the row
+     as pctJ3/tzsJ3 ... exactly like the PMO board, and the sixth is pctWK/tzsWK -- the week's
+     own percentage, which is the weekend's commission day. The recovered AMOUNT rides along
+     per record because "how much did I actually take" is a fair question; it is simply no
+     longer what decides the pay. */
   const seesOfficer = name => isAdmin || K(name) === K(user.name);
+  /* The early-collection board still runs on seven real days -- it is a different job with a
+     different week, and only recovery's weekend folds into one record. */
+  const dayKey7 = ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2'];
   const wdOf = d => (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7;   // MON=0 .. SUN=6
-  const recDates = [...recByDay.keys()].sort();
-  const recNames = [...new Set(recDates.flatMap(d => Object.keys(recByDay.get(d) || {})))]
-    .filter(seesOfficer);
-  const recBoard = recNames.map(name => {
-    const days = recDates.map(d => {
-      const v = (recByDay.get(d) || {})[name];
-      return { date: d, recovered: v ? v.recovered : 0, tzs: v ? Math.round(v.recComm) : 0 };
-    });
-    const t = (recByDay.get(today) || {})[name];
+  const recBoard = [...recPayOf.keys()].filter(seesOfficer).map(name => {
+    const pay = recPay(name);
     const row = {
       officer: name,
-      recovered: t ? t.recovered : 0, commission: t ? Math.round(t.recComm) : 0,
-      weekRecovered: days.reduce((s, x) => s + x.recovered, 0),
-      weekCommission: days.reduce((s, x) => s + x.tzs, 0),
-      days,
+      // Today's live record: a weekday's own, or the week's on Saturday and Sunday.
+      recovered: pay.todayRow.recovered, base: pay.todayRow.base,
+      pct: pay.todayRow.pct, band: pay.todayRow.band,
+      commission: pay.todayRow.tzs,
+      weekRecovered: pay.weekRecovered, weekBase: recBase[K(name)] || 0,
+      weekPct: pay.weekPct,
+      weekCommission: pay.tzs,
+      records: pay.rows,
     };
-    if (scope === 'week') for (const x of days) {
-      const k = dayKey7[wdOf(x.date)];
-      if (k) { row['rec' + k] = x.recovered; row['tzs' + k] = x.tzs; }
+    if (scope === 'week') for (const r of pay.rows) {
+      row['rec' + r.key] = r.recovered;
+      row['pct' + r.key] = r.pct;
+      row['tzs' + r.key] = r.tzs;
     }
     return row;
-  }).sort((a, b) => b.weekCommission - a.weekCommission || b.weekRecovered - a.weekRecovered);
-
-  /* The band board: one row per officer, one column pair per band that actually earned
-     today. Labels are dynamic -- the disbursement years (or statuses) present in today's
-     drops -- so the screen never draws a column for a band nobody earned in. */
-  const bandLabels = [...new Set(Object.values(bandAcc)
-    .flatMap(b => Object.keys(b.bands)))].sort();
-  const recBands = {
-    mode: cfg.mode, bands: bandLabels,
-    rows: Object.values(bandAcc)
-      .filter(b => seesOfficer(b.key))
-      .map(b => {
-        const row = { officer: b.key, total: 0, totalRec: 0 };
-        for (const label of bandLabels) {
-          const c = b.bands[label] || { recovered: 0, tzs: 0 };
-          row['rec_' + label] = c.recovered;
-          row['tzs_' + label] = Math.round(c.tzs);
-          row.totalRec += c.recovered;
-          row.total += Math.round(c.tzs);
-        }
-        return row;
-      })
-      .sort((a, b) => b.total - a.total || b.totalRec - a.totalRec),
-  };
+  }).sort((a, b) => b.weekCommission - a.weekCommission
+    || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct));
 
   const colOff = new Map();                                // officer -> date -> sums
   for (const d of colDays) {
@@ -3605,6 +3608,9 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   /* ---- PMO COLLECTION: paid on the percentage, and nothing else ---- */
   const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const bonusTzs = pmoCfg.num(PMO_BONUS_KEY, 0);
+  /* The switch, read beside the amount it pauses. Absent means on, so every book already
+     paying a bonus goes on paying it -- see PMO_BONUS_ON_KEY. */
+  const bonusEnabled = bonusOn(pmoCfg.get(PMO_BONUS_ON_KEY, ''));
   const pmoRoster = codeRows
     .filter(c => isPmoRole(c.role, pmoRoleName))
     .filter(c => c.teams && c.teams.length)
@@ -3638,7 +3644,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const leader = ranked.length ? ranked[0] : null;
   const leaderPrev = leader ? prevPct[K(leader.officer)] : null;
   /* The bonus is a WEEKLY rule; the month record shows the days' pay without it. */
-  const bonusWon = scope === 'week' && !!(leader && leaderPrev != null && leader.weekPct > leaderPrev);
+  const bonusWon = bonusEnabled && scope === 'week'
+    && !!(leader && leaderPrev != null && leader.weekPct > leaderPrev);
   const pmo = pmoRows.map(r => ({ ...r,
     prevWeekPct: prevPct[K(r.officer)] == null ? null : prevPct[K(r.officer)],
     isLeader: !!(leader && K(r.officer) === K(leader.officer)),
@@ -3701,14 +3708,21 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     return out.sort((a, b) => b.total - a.total);
   };
 
-  return { mode: cfg.mode, yearRates: cfg.yearRaw, statusRates: cfg.statusRaw,
-    scope, from: mon, to: scope === 'month' ? today : sun,
-    recBoard, colBoard, recDiag, recBands,
+  return { scope, from: mon, to: scope === 'month' ? today : sun,
+    recBoard, colBoard, recDiag,
+    /* The recovery ladder itself, so the screen draws the bands from the one definition rather
+       than repeating them in HTML -- a pay table written twice is a pay table that disagrees
+       with itself the first time one of them is edited. */
+    recoveryBands: RECOVERY_BANDS, recoveryBelow: RECOVERY_BELOW,
     pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
-    pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, won: bonusWon,
+    pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, enabled: bonusEnabled, won: bonusWon,
       leader: leader ? leader.officer : null,
       leaderPct: leader ? leader.weekPct : null, leaderPrevPct: leaderPrev,
-      why: !leader ? 'hakuna takwimu za wiki hii / no figures for this week yet'
+      /* THE SWITCH IS SAID FIRST, before any of the reasons about the week's figures. Told
+         "no figures for this week yet" while the bonus is actually paused, somebody goes
+         looking for a missing upload -- and the upload was never the reason. */
+      why: !bonusEnabled ? 'bonasi imezimwa na admin / the bonus is switched off'
+        : !leader ? 'hakuna takwimu za wiki hii / no figures for this week yet'
         : leaderPrev == null ? 'hakuna wiki iliyopita ya kulinganisha / no previous week to compare against'
         : bonusWon ? null : 'kiongozi hajapita asilimia yake ya wiki iliyopita / the leader has not beaten their own previous week' },
     pmoTotals: { day: pmo.reduce((s, r) => s + r.commission, 0),
@@ -3765,12 +3779,19 @@ async function commissionSave(db, user, p) {
     if (error) throw new Error(error.message);
   };
   const out = {};
-  if (p.mode != null) { out.mode = String(p.mode) === 'status' ? 'status' : 'year'; await set('CMS_MODE', out.mode); }
-  // Validate BEFORE writing anything: a malformed year list must not half-save.
-  if (p.yearRates != null) { cmsPairs(p.yearRates); out.yearRates = String(p.yearRates); }
-  if (p.statusRates != null) { cmsPairs(p.statusRates); out.statusRates = String(p.statusRates); }
-  if (out.yearRates != null) await set('CMS_YEAR_RATES', out.yearRates);
-  if (out.statusRates != null) await set('CMS_STATUS_RATES', out.statusRates);
+  /* THE RECOVERY RATE MODES ARE NOT SAVED HERE ANY MORE BECAUSE THEY NO LONGER EXIST. Recovery
+     is paid on a band of its percentage -- see recovery-pay.js and the header of cmsCfg for the
+     30m/20m against 21m/19m case that ended them. The three keys are dropped from the settings
+     table on the next save rather than left lying there: a rate table still sitting in Settings
+     is a rate table somebody turns back on, and it would silently outrank the ladder. */
+  if (p.mode != null || p.yearRates != null || p.statusRates != null) {
+    const { error } = await db.from('settings').delete()
+      .in('key', ['CMS_MODE', 'CMS_YEAR_RATES', 'CMS_STATUS_RATES']);
+    if (error) throw new Error(error.message);
+    noteSettingsWritten(db);
+    noteAnswersChanged(db);
+    out.ratesRemoved = true;
+  }
   if (p.paidTzs != null) { out.paidTzs = Math.max(0, num(p.paidTzs) || 0); await set('CMS_PAID_TZS', out.paidTzs); }
   if (p.overTzs != null) { out.overTzs = Math.max(0, num(p.overTzs) || 0); await set('CMS_OVER_TZS', out.overTzs); }
   /* THE WEEKLY BONUS BELONGS WHERE THE RATES ARE.
@@ -3799,6 +3820,13 @@ async function commissionSave(db, user, p) {
      Exclusive with the amount on purpose: the panel sends the box's value on every Save, so
      handling both in one request would let a stale 0 in the input re-create the row the same
      request just deleted. */
+  /* THE SWITCH. Separate from the amount so pausing a bonus does not lose the figure, and
+     separate from the delete so switching off is not a decision anybody has to undo by
+     remembering a number -- see PMO_BONUS_ON_KEY. */
+  if (p.bonusEnabled != null) {
+    out.bonusEnabled = !!p.bonusEnabled;
+    await set(PMO_BONUS_ON_KEY, out.bonusEnabled ? '1' : '0');
+  }
   if (p.clearWeeklyBonus) {
     const { error } = await db.from('settings').delete().eq('key', PMO_BONUS_KEY);
     if (error) throw new Error(error.message);
