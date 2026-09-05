@@ -177,10 +177,12 @@ function builtWorld(nowMs) {
   for (let d = from; d <= to; d = addDaysKey(d, 1)) {
     days.push({ kind: 'expected', snapshot_date: d }, { kind: 'defaulter', snapshot_date: d });
   }
-  const calls = { n: 0 };
+  // `spans` records what each live call was actually ASKED FOR, so a test can tell a one-day
+  // gap fill from a whole-range fallback -- which is the difference this cache exists to make.
+  const calls = { n: 0, spans: [] };
   const counted = {};
   for (const [name, fn] of Object.entries(SNAPSHOT_TOTALS_RPC)) {
-    counted[name] = (s, a) => { calls.n++; return fn(s, a); };
+    counted[name] = (s, a) => { calls.n++; calls.spans.push([name, a.p_from, a.p_to]); return fn(s, a); };
   }
   const db = fakeDb({ ...t,
     deck_totals: [...exp.map(r => ({ kind: 'expected', ...r })),
@@ -282,24 +284,45 @@ for (const [label, fn, args] of SCREENS) {
   }
 }
 
-test('a range with one unbuilt day in it is answered live, whole, not short', async () => {
-  /* THE RULE THAT KEEPS A SHORT ANSWER IMPOSSIBLE. A week whose Wednesday has not been built
-     must not come back as four days of figures with nothing to say the other three are missing
-     -- that is a dashboard quietly reporting three-fifths of the company's collections. So the
-     cache answers all of a range or none of it. */
+test('one unbuilt day costs ONE day of live adding up, not the whole range', async () => {
+  /* THE RULE THAT KEEPS A SHORT ANSWER IMPOSSIBLE, and the one that stops it costing the earth.
+
+     A week whose Wednesday has not been built must never come back as four days of figures with
+     nothing to say the fifth is missing -- that is a dashboard quietly reporting four-fifths of
+     the company's collections. So the answer is always whole.
+
+     It used to be made whole by throwing the cache away and adding up the WHOLE range live, and
+     on 5 September that took the system down: one morning's defaulter deck was unbuilt, every
+     screen asks for a range containing today, and thirty-one full aggregates over 1.4 million
+     rows ran side by side while uploading and the phone queued behind them. Now the built days
+     come from the cache and only the GAP is added up. Whole either way; one day instead of a
+     hundred and thirty-six. */
   const { db, calls } = builtWorld(FRIDAY);
   const before = await portalApi(db, ADMIN, 'weekly', {}, FRIDAY);
   assert.equal(calls.n, 0, 'the whole week was served from the cache to begin with');
 
   /* Wednesday's DECKS are no longer built -- through the very call an upload makes, so what is
      under test is the path that actually runs. The expected side of that day stays built, which
-     makes this the mixed case as well: one kind served from the cache, the other added up live,
-     in the same report. */
+     makes this the mixed case as well: one kind served from the cache, the other stitched, in
+     the same report. */
   const { unmarkDeckTotals } = await import('../api/_lib/snapshot-totals.js');
   await unmarkDeckTotals(db, 'defaulter', '2026-07-22');
+  calls.n = 0; calls.spans.length = 0;
   const after = await portalApi(db, ADMIN, 'weekly', {}, FRIDAY);
-  assert.ok(calls.n > 0, 'so the week is added up live instead');
-  assert.deepEqual(after, before, 'and the report is the same report, not a shorter one');
+
+  assert.deepEqual(after, before, 'the report is the same report -- never a shorter one');
+  assert.ok(calls.n > 0, 'the gap really was added up live');
+  /* AND EVERY LIVE CALL WAS FOR THAT ONE DAY. This is the assertion that would have caught the
+     outage: before, each of these asked for the whole week. */
+  for (const [name, f, t] of calls.spans) {
+    assert.equal(f, '2026-07-22', `${name} asked from ${f}, not the unbuilt day`);
+    assert.equal(t, '2026-07-22', `${name} asked to ${t}, not the unbuilt day`);
+  }
+  /* AND THE STALE ROWS OF THAT DAY WERE NOT SERVED BESIDE THE FRESH ONES. unmarkDeckTotals
+     leaves deck_totals alone on purpose, so the cache still HOLDS that day -- counting it as
+     well as the gap call would double it, which is the fault the batch rule exists to stop. */
+  assert.ok(db._dump('deck_totals').some(r => r.kind === 'defaulter' && r.snapshot_date === '2026-07-22'),
+    'the fixture really does still hold the unbuilt day in deck_totals');
 });
 
 test('a day the cache has never heard of is read live, not reported as zero', async () => {

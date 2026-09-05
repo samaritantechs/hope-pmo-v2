@@ -1283,6 +1283,22 @@ $('go').addEventListener('click', function(){
               : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
+          /* THE DECK TOTALS, SAID EITHER WAY. A day whose totals were not added up is read
+             live by every report, which is correct but slower -- and on 5 September a single
+             unbuilt day put thirty-one full aggregates on the database at once. The upload
+             used to say nothing at all when the build did not happen. It says so now, and
+             names the one line that fixes it. */
+          + (res.body.deckTotals && res.body.deckTotals.built === false
+              ? '\n\u26A0 Jumla za deki la ' + res.body.deckTotals.date + ' hazikuhesabiwa'
+                + (res.body.deckTotals.why === 'no-time' ? ' (muda wa upload uliisha)' : ' (ilishindikana)')
+                + ' \u2014 ripoti zitasoma polepole hadi zihesabiwe.'
+                + '\n\u26A0 The deck totals for ' + res.body.deckTotals.date + ' were NOT built'
+                + (res.body.deckTotals.why === 'no-time'
+                    ? ' (the upload ran out of clock -- usually the next upload of this date builds them)'
+                    : ' (the build was tried and failed)')
+                + '. Reports will read that day live until they are. To build them now, run in'
+                + ' the SQL editor:  select * from public.build_deck_totals_recent(60000, 10, 7);'
+              : '')
           + (res.body.message ? '\n' + res.body.message : '');
         loadStatus();          // tick this report off the list without a reload
         /* THE REGISTER REPAIR, AS ITS OWN REQUEST.

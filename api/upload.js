@@ -1275,6 +1275,25 @@ export default withApi(async (req, res) => {
     followupSynced, followupRetired: followupRetired || undefined, behaviour, sameAsToday,
     deferred: (followupDeferred || sweepDeferred)
       ? { retire: followupDeferred || undefined, sweep: sweepDeferred || undefined } : undefined,
+    /* SAY WHAT WAS NOT DONE. This was `deckBuilt || undefined` -- so a build that FAILED sent
+       no field at all, and the page said "Done" with nothing to distinguish it from a build
+       that worked. Silence read as success, on the one thing that had the power to slow the
+       whole company down.
+
+       On 5 September it did: one morning's defaulter day went unbuilt, and because a range
+       served from the cache only when EVERY day in it was built, every screen fell through to
+       the live aggregate over 1.4 million rows -- thirty-one of them at once, with uploading
+       and the phone queueing behind. The cache now stitches around a gap, so a missing day
+       costs one small aggregate instead of the earth. It should still not be invisible.
+
+       Always sent when this upload owed a build, with WHY when it did not happen: `no-time`
+       means the upload's clock had nothing left, which is the budget working as designed and
+       usually corrects itself on the next upload of that date; `failed` means it was tried and
+       did not, which is worth somebody looking at. */
+    deckTotals: (isLastPart && deckKind && meta.date)
+      ? { built: deckBuilt, kind: deckKind, date: meta.date,
+          why: deckBuilt ? null : (clock.worth(6000) ? 'failed' : 'no-time') }
+      : undefined,
     deckBuilt: deckBuilt || undefined,
     stubbed: stubbed || undefined,
     collapsed: collapsed || undefined,
