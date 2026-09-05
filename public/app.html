@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-05-a';
+var BUILD = '2026-09-05-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3945,6 +3945,40 @@ var PCT_FROM = {   // percentage column -> [numerator field, denominator field]
      and 12m collected is 60%, whether the four weeks were 60/60/60/60 or 90/90/30/30 -- and
      those two months are not equally good, which is why the average was misleading. */
   colPct: ['collected', 'expected'], recPct: ['recovered', 'uncollected'],
+  /* THE ORODHA'S EIGHT, AND THE EARLY COLLECTION BOARD'S DAYS.
+     =====================================================================================
+       "Collection and early collection averages perfomance of officers and everywhere on
+        grand averages applicable should be by collected amount vs expected amount of all the
+        current list not average of the percentages by teams. e.g teams have 100, 100 and 80%
+        yet those 100 are of a small amount but 80 of a larger amount included in a boosting
+        average% , yet by amounts we know how much of amount tasked to collect has been
+        collected. as the expected formula does"
+
+     Exactly right, and the example is the whole argument. Three teams at 100%, 100% and 80%
+     average to 93.3% however small the first two books were. Ask it by amount -- 100,000 of
+     100,000, 100,000 of 100,000, and 8,000,000 of 10,000,000 -- and the company collected
+     8.2m of 10.2m: 80.4%. The first number is about numbers; the second is how much of what
+     was owed actually came in, which is the only thing anybody can act on.
+
+     Every one of these fell through to the `~` average before, because the parts were not on
+     the row. They are now (see the Orodha's row build and colBoard in portal-core.js), so
+     every grand cell on the board the directors read is a ratio of the totals. */
+  tColPct: ['colBasis', 'expBasis'], tEColPct: ['colEarly', 'expEarly'],
+  mColPct: ['mCol', 'mExp'], mEColPct: ['mEcol', 'mEexp'],
+  tSalesPct: ['tSalesAmt', 'tSalesTarget'], mSalesPct: ['mSalesAmt', 'mSalesTarget'],
+  tRecPct: ['tRecovered', 'tRecUncol'], mRecPct: ['mRec', 'mUncol'],
+  // Early Collection, day by day and for the week.
+  pctJ3: ['colJ3', 'expJ3'], pctJ4: ['colJ4', 'expJ4'], pctJ5: ['colJ5', 'expJ5'],
+  pctAL: ['colAL', 'expAL'], pctIJ: ['colIJ', 'expIJ'],
+};
+/* AND THE AVERAGE COLUMNS, WHICH ARE AN AVERAGE OF THE OTHER GRAND CELLS -- never an average
+   of the teams' averages. Once the four percentages beside it are each a true ratio of the
+   company's totals, the honest general average is the mean of THOSE four, which is a
+   different number from the mean of what each team averaged and the only one that survives a
+   team with a small book scoring 100%. Filled in a second pass, after the ratios above. */
+var PCT_AVG_OF = {
+  tAvg: ['tSalesPct', 'tEColPct', 'tColPct', 'tRecPct'],
+  mAvg: ['mSalesPct', 'mEColPct', 'mColPct', 'mRecPct'],
 };
 /* THE PERCENTAGE CELLS OF A GRAND TOTAL BAR, filled into whatever total row a board already
    has -- worked out here once so that EVERY board gets them, not only the ones that let
@@ -3971,6 +4005,11 @@ function fillPctTotals(t, rows, cols){
   cols.forEach(function(c){
     if (c.kind !== 'pct') return;
     if (t[c.key] !== undefined && t[c.key] !== null && t[c.key] !== '') return;
+    // The general-average columns are handled in the second pass, over the grand cells this
+    // one produces. Leaving them to fall through here would fill them with a `~` average of
+    // the rows first, and the second pass would then have to overwrite it -- which is exactly
+    // the "never overwrite a cell somebody filled" rule it must not break.
+    if (PCT_AVG_OF[c.key]) return;
     var src = PCT_FROM[c.key];
     if (src){
       var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
@@ -3993,6 +4032,35 @@ function fillPctTotals(t, rows, cols){
     if (!vals.length) return;
     var avg = vals.reduce(function(s, v){ return s + v; }, 0) / vals.length;
     t[c.key] = '~' + Math.round(avg) + '%';
+    did = true;
+  });
+  /* THE SECOND PASS: the general-average columns, over the grand cells just computed rather
+     than over the rows. Runs after, deliberately -- it is averaging the company's four
+     percentages, and those have to exist first. A cell that came back as a `~` average is
+     skipped: averaging an average would put a number on the board that nothing supports. */
+  cols.forEach(function(c){
+    if (c.kind !== 'pct' || !PCT_AVG_OF[c.key]) return;
+    if (t[c.key] !== undefined && t[c.key] !== null && t[c.key] !== '') return;
+    var vals = [];
+    PCT_AVG_OF[c.key].forEach(function(k){
+      var v = t[k];
+      if (typeof v === 'number' && !isNaN(v)) vals.push(v);
+    });
+    if (vals.length){
+      t[c.key] = Math.round((vals.reduce(function(s, v){ return s + v; }, 0) / vals.length) * 10) / 10;
+      did = true;
+      return;
+    }
+    /* None of the four could be worked out from amounts -- an un-migrated month, say. Fall
+       back to the average of the ROWS, marked `~` exactly as the first pass would have, so
+       the cell says something honest rather than going blank beside a row of real figures. */
+    var rowVals = [];
+    rows.forEach(function(r){
+      var v = c.get ? c.get(r) : r[c.key];
+      if (v !== null && v !== undefined && v !== '' && !isNaN(Number(v))) rowVals.push(Number(v));
+    });
+    if (!rowVals.length) return;
+    t[c.key] = '~' + Math.round(rowVals.reduce(function(s, v){ return s + v; }, 0) / rowVals.length) + '%';
     did = true;
   });
   return did;
