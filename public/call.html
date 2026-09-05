@@ -1082,16 +1082,43 @@ function enterApp(d){
   // officer. Showing the tab to everyone would just hand most officers an empty screen.
   $('#tabExpdf').classList.toggle('hide', !d.expdfLeader);
   $('#logoutBtn').classList.toggle('hide', d.logoutEnabled === false);
-  /* The way across to the system, shown only while the admin has the system open. Hidden by
-     default in the markup and revealed here, so a phone that cannot reach the server, or one
-     running an older app than the server, shows no door rather than a dead one. Set both ways
-     round: a system closed at lunchtime has to take the button away, not merely stop adding
-     it. */
-  /* An ADMIN handset keeps the door even while the system is closed -- otherwise the one
-     person who can reopen it is locked out along with everybody else, which is exactly what
-     happened. The portal re-checks the access code either way, so this reveals a button and
-     never a permission. */
-  $('#swapBtn').classList.toggle('hide', d.systemOpen !== true && d.systemAdmin !== true);
+  /* The way across to the system. Hidden by default in the markup and revealed here, so a
+     phone that cannot reach the server, or one running an older app than the server, shows no
+     door rather than a dead one. Set both ways round: a leader demoted at lunchtime has to
+     LOSE the button, not merely fail to gain it. */
+  /* WHO GETS THE DOOR TO THE PORTAL.
+       "some leaders aint seeing the 🔁 in call app"
+       "yes widen it to all leaders with access codes"
+
+     Three ways to have it, and the third is the one that was missing:
+
+       systemOpen    the system is open to everybody -- everyone gets it, as always.
+       systemAdmin   an administrator, asked the PORTAL'S way (resolved tabs, not an
+                     exact-case role string). Keeps the door open for the one person who can
+                     REOPEN a closed system -- otherwise they are locked out by their own
+                     switch, which is exactly what happened once already.
+       leader        registered with an ACCESS CODE rather than a team code. That is the
+                     definition of "has a portal account", so these are the only people the
+                     button could ever be useful to, and hiding it from them was hiding a door
+                     they hold a key to.
+
+     AN ORDINARY OFFICER STILL NEVER SEES IT. `leader` is false for every handset that signed
+     in on a team code -- three hundred of them -- so the switch stays invisible to the people
+     it would only confuse.
+
+     IT REVEALS A BUTTON, NOT A PERMISSION. Pressing it navigates to the portal, which asks for
+     an access code and re-checks it on the server: a leader whose code is not an admin's still
+     meets the closed door, and is told so in words. The title below says that up front rather
+     than letting them find out by being turned away -- and the phone's identity is not the
+     portal's, so a leader who also holds an admin code is not pre-judged here. */
+  const canSwap = d.systemOpen === true || d.systemAdmin === true || d.leader === true;
+  $('#swapBtn').classList.toggle('hide', !canSwap);
+  if (canSwap) {
+    $('#swapBtn').title = (d.systemOpen === true || d.systemAdmin === true)
+      ? 'Nenda kwenye mfumo / Switch to the system'
+      : 'Mfumo umefungwa kwa sasa — utahitaji msimbo wa admin. '
+        + '/ The system is closed for now — an admin code is needed.';
+  }
   /* THE HOPE LOAN SWITCH ON THE PHONE. Offered only to a LEADER handset -- an ordinary
      officer never sees it exists -- and even then it is only an invitation to prove an ADMIN
      access code, which api/call.js re-checks on every request. Being able to press it is not
