@@ -315,6 +315,38 @@ test('a short answer costs exactly one request -- paging must not tax the ordina
   assert.equal(stat.calls, 1, 'one: ' + stat.calls);
 });
 
+test('an aggregate function is executed ONCE, not once per thousand rows it hands back', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  /* PostgREST applies .range() as LIMIT/OFFSET AROUND a function call, so page two does not
+     resume anything: it RE-EXECUTES THE WHOLE FUNCTION and throws away the first thousand rows.
+     On a function that is cheap per row that is merely slow; on one whose cost is an aggregate
+     it is quadratic waste.
+
+     MEASURED ON THE LIVE BOOK, and it was the largest single cost in the database.
+     expected_phone_window -- one `select distinct` over a fortnight of expected sheets, which
+     the phone rebuilds its number index from -- ran 162,762 times against 30,295 rebuilds. Five
+     and a half executions per rebuild, of a query averaging 1,646 ms, to read about 5,400
+     distinct customers a thousand at a time. Seventy-four hours of database time, on the path
+     three hundred handsets sync. */
+  const { db, stat } = cappedRpc(5400, Infinity);
+  const { data } = await rpcAll(db, 'expected_phone_window', { p_from: '2026-08-23' });
+  assert.equal(data.length, 5400, 'every customer in the window, still');
+  assert.equal(stat.calls, 1, 'and the function ran ONCE, not six times: ' + stat.calls);
+});
+
+test('a server ceiling above a thousand is learned, never mistaken for the end of the rows', async () => {
+  const { rpcAll } = await import('../api/_lib/supabase.js');
+  /* Asking for ten thousand from a server that allows five thousand returns a SILENTLY
+     truncated page. Reading that as "the end" would drop every row past it and leave a total
+     that still looks plausible -- which is the failure this file already carries scars from,
+     and the reason the bigger page is only safe with the ceiling learned. */
+  const { db, stat } = cappedRpc(12000, 5000);
+  const { data } = await rpcAll(db, 'f');
+  assert.equal(data.length, 12000, 'nothing dropped past the ceiling: ' + data.length);
+  assert.deepEqual(data[11999], { i: 11999 }, 'including the last row');
+  assert.equal(stat.calls, 4, 'two at the learned size, the remainder, then the empty one: ' + stat.calls);
+});
+
 test('a client that cannot page is answered rather than broken -- and costs nothing extra', async () => {
   const { rpcAll } = await import('../api/_lib/supabase.js');
   /* The first version of rpcAll built a throwaway call purely to look for `.range` on it. On the
