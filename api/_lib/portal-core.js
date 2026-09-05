@@ -5581,12 +5581,18 @@ async function uploadStatus(db, user, { date } = {}, nowMs) {
   } catch (e) { /* function not created yet -- bounded fallback below */ }
 
   const byKey = {};                     // 'source|kind|weekday' -> { latest, total, today, uploads }
-  let lifetime = true;
+  /* WHETHER THE LIFETIME COLUMN IS REAL, decided by what came back rather than by whether the
+     function answered. From db/RUN-ME-026 it deliberately does NOT: those totals were four
+     COUNT(*) over four whole tables -- 2.8 million rows read to fill a column nobody acts on,
+     on the page that must never slow down. The panel has always been able to say "this day
+     only", and that is now the ordinary answer rather than the un-migrated one. */
+  let lifetime = !!(sum && sum.some(r => r.total != null));
   if (sum) {
     for (const r of sum) {
       byKey[`${r.source}|${r.kind || ''}|${r.weekday || ''}`] = {
         latest: r.latest ? String(r.latest).slice(0, 10) : null,
-        total: num(r.total), today: num(r.today), uploads: num(r.uploads),
+        total: r.total == null ? null : num(r.total),
+        today: num(r.today), uploads: num(r.uploads),
       };
     }
   } else {
@@ -5650,9 +5656,17 @@ async function uploadStatus(db, user, { date } = {}, nowMs) {
     // Whether the lifetime columns are real. False means the migration has not been run and
     // the page is answering from the chosen day alone -- which is the whole point of it.
     lifetime,
+    /* SAY WHICH IT IS. "Not counted, on purpose" and "the migration has not been run" are two
+       different facts and the page must not print one when the other is true. `sum` says which:
+       the function answered, it simply no longer counts the whole book. */
     note: lifetime ? null
-      : 'Jumla ya rekodi zote haipatikani — endesha db/migrations/2026-08-10-upload-status.sql. '
-        + '/ Lifetime totals need db/migrations/2026-08-10-upload-status.sql; showing this day only.',
+      : (sum
+        ? 'Jumla ya rekodi zote haihesabiwi — kuihesabu kulikuwa kunasoma kitabu kizima kila '
+          + 'mara, hivyo ukurasa huu unaonyesha siku hii tu. '
+          + '/ Lifetime totals are no longer counted: counting them read the whole book on every '
+          + 'load of this page, so it shows this day only.'
+        : 'Jumla ya rekodi zote haipatikani — endesha db/migrations/2026-08-10-upload-status.sql. '
+          + '/ Lifetime totals need db/migrations/2026-08-10-upload-status.sql; showing this day only.'),
     missing: required.filter(i => !i.loadedToday).map(i => i.label),
     ready: required.every(i => i.loadedToday) };
 }
