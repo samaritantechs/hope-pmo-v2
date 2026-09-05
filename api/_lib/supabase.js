@@ -100,11 +100,32 @@ export async function rpcAll(db, fn, args) {
   if (!db || typeof db.rpc !== 'function') return { data: null, error: new Error('no rpc') };
 
   const out = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
+  /* THE SAME PAGE SIZE fetchAll USES, AND FOR A SHARPER REASON THAN SAVING ROUND TRIPS.
+
+     This paged at a THOUSAND while fetchAll paged at ten, and on a function that is cheap per
+     row that is merely slow. On a function whose cost is in an AGGREGATE it is quadratic waste,
+     because PostgREST applies the range as LIMIT/OFFSET AROUND the call: page two does not
+     resume anything, it RE-EXECUTES THE WHOLE FUNCTION and throws away the first thousand rows.
+
+     Measured on the live book with pg_stat_statements. expected_phone_window -- one `select
+     distinct` over a fortnight of expected sheets, which the phone rebuilds its number index
+     from -- ran 162,762 times against 30,295 rebuilds. FIVE AND A HALF EXECUTIONS PER REBUILD,
+     of a query averaging 1,646 ms, to fetch about 5,400 distinct customers a thousand at a
+     time. 267,860 seconds of database time: seventy-four hours, more than every other query
+     shape in the book put together, and it sits on the path three hundred handsets sync.
+
+     At ten thousand it is ONE execution. Nothing else about it changes.
+
+     THE CEILING IS LEARNED, NOT ASSUMED, exactly as readPages learns it -- because asking for
+     more than the server allows returns a silently truncated page, and reading that truncation
+     as "the end" drops every row past it while the totals still look plausible. That is a worse
+     failure than a slow read, and it is the one this file already carries scars from. */
+  let size = MAX_PAGE;
+  for (let from = 0; ; from += size) {
     let paged = true;
     const { data, error } = await runQuery(() => {
       const q = db.rpc(fn, args);
-      if (q && typeof q.range === 'function') return q.range(from, from + PAGE_SIZE - 1);
+      if (q && typeof q.range === 'function') return q.range(from, from + size - 1);
       paged = false;                       // a client that cannot page: this one call is it
       return q;
     });
@@ -112,8 +133,13 @@ export async function rpcAll(db, fn, args) {
     if (error) return { data: null, error };
     const page = Array.isArray(data) ? data : [];
     out.push(...page);
-    // A short page is the end. An exactly-full one is not, so it asks again.
-    if (page.length < PAGE_SIZE) break;
+    if (page.length < size) {
+      /* A short page is normally the end. One that stops on a ROUND number when we asked for
+         more is more likely a server ceiling: shrink to what arrived and keep going. If it
+         really was the end, the next request comes back empty and costs one round trip. */
+      if (!LIKELY_CAPS.has(page.length)) break;
+      size = page.length;
+    }
     /* The same guard fetchAll has. A function that never returns a short page would otherwise
        spin forever; stopping loudly beats a request that never ends. */
     if (out.length > 500000) throw new Error(`${fn} returned more than 500,000 rows -- refusing to keep paging`);
