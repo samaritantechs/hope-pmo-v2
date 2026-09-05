@@ -44,6 +44,22 @@ export function scopeKey(user, nowMs) {
   return teams + '|' + todayKey(nowMs);
 }
 
+/* AND A WRITE THAT CHANGES THE ANSWER DROPS IT AT ONCE.
+   =====================================================================================
+   A minute is the right promise for an UPLOAD -- it lands on another server and cannot reach
+   in here anyway, so a minute is the floor. It is the wrong promise for a person who has just
+   typed something into THIS server and pressed Save: an admin who sets the commission payout
+   note and is told "saved", then reads the same screen and sees the old note, has no way to
+   tell a working system from a broken one. The same rule `settings` and `teams` already follow
+   (noteSettingsWritten, noteTeamsWritten): remembered for the crowd, dropped for the author.
+
+   The whole bucket goes, not one key. These answers overlap -- the commission board reads the
+   rates, the weekly report stamps the records the history tab reads -- and working out exactly
+   which of them a given write touches is the kind of bookkeeping that is right on the day it
+   is written and wrong six months later. Throwing the lot away costs one recomputation on one
+   request and cannot be subtly wrong. */
+export function noteAnswersChanged(db) { if (db) caches.delete(db); }
+
 /** Run `compute` unless the same question was already answered within the last minute.
     `name` separates one kind of answer from another in the shared map. */
 export async function cachedAnswer(db, name, user, nowMs, compute) {

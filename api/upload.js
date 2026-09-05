@@ -7,6 +7,13 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
 import { deckKindOfTable, unmarkDeckTotals, buildDeckTotals, topUpDeckTotals } from './_lib/snapshot-totals.js';
+/* AN UPLOAD ON THIS SERVER CLEARS THIS SERVER'S ANSWERS AT ONCE.
+   answer-cache.js keeps a screen's answer for a minute and says why: an upload landing on
+   ANOTHER instance cannot reach in, so a minute is the floor for everybody. But an upload
+   landing HERE can, and the person who just pressed Upload is the one person most likely to
+   open the dashboard next and least able to tell a stale figure from a lost file. One line,
+   no read, no write -- it throws away a map. */
+import { noteAnswersChanged } from './_lib/answer-cache.js';
 import { weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
@@ -1176,6 +1183,8 @@ export default withApi(async (req, res) => {
      the top of this function and is simply read live -- which is what every day did before this
      existed, and what every unbuilt day still does. The backfill in RUN-ME-022 catches it, or
      the next upload of that date does. */
+  // The figures on every screen have just changed. See the import note.
+  noteAnswersChanged(supabase);
   let deckBuilt = false;
   if (isLastPart && deckKind && meta.date && clock.worth(6000)) {
     try {

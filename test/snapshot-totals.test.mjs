@@ -307,6 +307,12 @@ test('one unbuilt day costs ONE day of live adding up, not the whole range', asy
      the same report. */
   const { unmarkDeckTotals } = await import('../api/_lib/snapshot-totals.js');
   await unmarkDeckTotals(db, 'defaulter', '2026-07-22');
+  /* The weekly report is behind the answer cache, and an upload clears it -- api/upload.js
+     calls noteAnswersChanged for exactly this reason. unmarkDeckTotals is only half of what an
+     upload does, so the test does the other half; without it the second read would be answered
+     from the first and this would be testing the cache instead of the totals path. */
+  const { noteAnswersChanged } = await import('../api/_lib/answer-cache.js');
+  noteAnswersChanged(db);
   calls.n = 0; calls.spans.length = 0;
   const after = await portalApi(db, ADMIN, 'weekly', {}, FRIDAY);
 
