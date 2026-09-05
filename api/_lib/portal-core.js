@@ -1,7 +1,7 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
-import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey } from './time.js';
+import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
@@ -51,6 +51,54 @@ const STAGES = ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_app
    is the dashboard's own (see appsTrend), and it is here as one function so the list, the
    weekly board and the trend cannot drift into three answers about the same Friday. */
 const loanDay_ = l => String((l && (l.upload_date || l.created_at)) || '').slice(0, 10);
+
+/* =====================================================================================
+   WHICH REPORT A ROW CAME IN, AND WHEN THE APPLICATION ARRIVED, ARE TWO DIFFERENT DAYS.
+
+     "customer service are telling the system aint reading those count one well b/se they
+      have their reports that differ too much"
+
+   loanDay_ above answers the FIRST question: which upload was this row part of. That is the
+   right rule for the list and for Replace -- "redo the 27th" can only mean anything if a row
+   remembers the report it belongs to, and it is the rule that was explicitly asked for:
+   "uploading unassigned and assigned apps should adhere to the chosen date at uploads not the
+   date inside sheet data".
+
+   IT IS THE WRONG RULE FOR COUNTING WHAT CAME IN, and here is why, measured on the live book:
+
+     all_time 9,595 | counted this month 2,033 | FIRST ENTERED this month 1,526
+
+   Five hundred and seven applications first reached the book in AUGUST and are being counted
+   in SEPTEMBER. Nothing is duplicated and nothing is wrong with the data -- upload.js stamps
+   upload_date onto every record in a file, loans upsert by identity, and reconcileLoanIds
+   deliberately redirects an incoming loan onto the row it already matches. So re-uploading the
+   pending list moves every application still sitting in it to the new date. An application
+   that has been waiting since August counts as September the moment August's backlog is
+   re-uploaded, and it will count as October next month.
+
+   For the application stages the file's own dates are not imported at all (importers.js:335,
+   PRE_APPROVAL_STAGES), so upload_date is the only date those rows have and there is nothing
+   else to fall back on -- except created_at, which the upsert never touches because only
+   mapped columns are written. That is what makes the 507 visible, and it is what makes them
+   fixable.
+
+   SO COUNTING USES created_at: the day the book FIRST saw this application, which never moves
+   however many times its sheet is re-uploaded. On the EAT clock, like every other day decision
+   in the system -- a row created at 01:00 in Dar es Salaam is not yesterday's.
+
+   THIS IS NOT A SECOND DEFINITION OF THE SAME RULE. It is one definition each for two
+   questions that were being answered by one date: "what was in this report" (loanDay_) and
+   "when did this application come in" (loanArrived_). The list keeps the first, exactly as
+   asked. The counts -- the pipeline widgets and the weekly board by team, which is all
+   customer service reads -- take the second. */
+const loanArrived_ = l => {
+  const c = l && l.created_at;
+  const t = c ? Date.parse(c) : NaN;
+  if (Number.isFinite(t)) return new Date(t + TZ_OFFSET_MS).toISOString().slice(0, 10);
+  /* No created_at at all -- a row from before the column, or a fake in a test. The report
+     stamp is then the only thing there is, and it beats dropping the row from every window. */
+  return loanDay_(l);
+};
 
 /* EXACTLY THE COLUMNS THE APPLICATIONS TAB DRAWS, and nothing else.
    This was `select('*')` -- every column of the widest table on the book, for every
@@ -148,9 +196,12 @@ async function appsWeekly(db, user, args, nowMs = Date.now()) {
 }
 
 function weeklyFrom_(loanRows, teamRows, user, mon, days, sun) {
+  /* THE DAY IT ARRIVED, not the day its sheet was last uploaded -- see loanArrived_. A team's
+     week would otherwise refill every time the pending list was re-uploaded, and last week's
+     figure would change after the fact. */
   const mine = loanRows.filter(l => {
     if (l.stage !== 'unassigned' && l.stage !== 'assigned') return false;
-    const d = loanDay_(l);
+    const d = loanArrived_(l);
     return d >= mon && d <= sun;
   });
 
@@ -168,7 +219,7 @@ function weeklyFrom_(loanRows, teamRows, user, mon, days, sun) {
   for (const t of teamRows) if (teamAllowed(user, t.team)) slot(t.team);
   const dayOfDate = new Map(days.map(d => [d.date, d.key]));
   for (const l of mine) {
-    const k = dayOfDate.get(loanDay_(l));
+    const k = dayOfDate.get(loanArrived_(l));
     if (!k) continue;
     const r = slot(l.team);
     r[k] += 1;
@@ -221,9 +272,12 @@ function pipelineFrom_(all, args, nowMs) {
   const monthEnd = addDaysKey(addMonthKey_(from), -1);
   const to = monthEnd < today ? monthEnd : today;
 
+  /* THE MONTH IS WHEN THE APPLICATION ARRIVED -- see loanArrived_. On upload_date, 507 of the
+     2,033 this panel reported for September had actually come in during August and were only
+     wearing September's stamp because the pending list was re-uploaded. */
   let undated = 0;
   const rows = all.filter(r => {
-    const d = loanDay_(r);
+    const d = loanArrived_(r);
     if (!d) { undated++; return false; }
     return d >= from && d <= to;
   });

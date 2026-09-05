@@ -1538,6 +1538,56 @@ test('the widgets count this month\'s arrivals, wherever each has reached since'
   assert.equal(dec.total, 1);
 });
 
+test('an application re-uploaded later still counts in the month it arrived', async () => {
+  /* =====================================================================================
+       "customer service are telling the system aint reading those count one well b/se they
+        have their reports that differ too much"
+
+     Measured on the live book the morning this was reported:
+
+       all_time 9,595 | counted this month 2,033 | FIRST ENTERED this month 1,526
+
+     507 applications first reached the book in August and were being counted in September.
+     Nothing duplicated: upload.js stamps upload_date onto every record in a file, loans upsert
+     by identity, and reconcileLoanIds redirects an incoming loan onto the row it matches -- so
+     re-uploading the pending list drags every application still sitting in it to the new date.
+     An application waiting since August became September's, and would have become October's.
+
+     The upload stamp stays the rule for the LIST and for Replace, which is what was asked for.
+     The COUNTS take created_at, which the upsert never writes.
+     ===================================================================================== */
+  const t = tables();
+  t.loans = [
+    // Came in June, still unassigned, and its list was re-uploaded today. On the stamp alone
+    // this reads as a July arrival -- the exact shape of the live book's 507.
+    { id: 'jun', team: 'KONGOWE', stage: 'unassigned', requested_amt: 400,
+      created_at: '2026-06-12T07:00:00Z', upload_date: TODAY },
+    // Arrived this week, in this month. Both are unassigned/assigned, so the weekly board
+    // below separates them on the day they came in and on nothing else.
+    { id: 'jul', team: 'KONGOWE', stage: 'assigned', requested_amt: 100,
+      created_at: '2026-07-22T07:00:00Z', upload_date: TODAY },
+  ];
+  const now = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', {}, NOW);
+  assert.equal(now.total, 1, 'only the application that actually arrived this month');
+  assert.equal(now.requested, 100);
+  const june = await portalApi(fakeDb(t), ADMIN, 'loanPipeline', { month: '2026-06' }, NOW);
+  assert.equal(june.total, 1, 'June keeps its own, however often the pending list is re-uploaded');
+  assert.equal(june.requested, 400);
+
+  /* AND THE WEEKLY BOARD BY TEAM, which is the other thing customer service reads -- they work
+     unassigned and assigned, exactly the pair this board counts. A week whose figure grows
+     every time an old list is re-uploaded is a report that rewrites its own history. */
+  const wk = await portalApi(fakeDb(t), ADMIN, 'appsWeekly', { weekOf: MON }, NOW);
+  const kong = wk.rows.find(r => r.team === 'KONGOWE');
+  assert.equal(kong.total, 1, 'this week is this week\'s arrivals, not what was re-uploaded into it');
+
+  /* THE LIST IS DELIBERATELY UNCHANGED: "uploading unassigned and assigned apps should adhere
+     to the chosen date at uploads not the date inside sheet data". Today's upload is still
+     today's report, and Replace still has a date to work from. */
+  const list = await portalApi(fakeDb(t), ADMIN, 'loans', { from: TODAY, to: TODAY }, NOW);
+  assert.equal(list.count, 2, 'both were in today\'s upload, and the list still says so');
+});
+
 test('every complaint save is written to the audit trail', async () => {
   const db = fakeDb(tables());
   // The complaint_log table existed from the start but nothing wrote to it, so "who changed
