@@ -7386,6 +7386,68 @@ test('an upload with no clock left does its tidying next time rather than dying 
   assert.equal(settled, false, 'and it answered before the slow step finished');
 });
 
+test('the retention trim keeps taking slices until the table is trimmed, not one and done', async () => {
+  const { pruneInSlices, uploadClock } = await import('../api/upload.js');
+  /* THE BUG THIS EXISTS TO STOP COMING BACK. The trim used to take exactly ONE slice of 20,000
+     per upload, sized on a guess of "about 2,800 calls a day". The measured figure is about
+     38,000 a day, so one slice deleted half a day's calls while the officers added a full one
+     and call_logs grew anyway -- the exact failure the step was added to prevent.
+
+     A full slice means there is more behind it, so the trim must come back for it. */
+  const asked = [];
+  const fresh = () => uploadClock(0, 45000, () => 1000);
+  let left = 92000;
+  const call = limit => {
+    asked.push(limit);
+    const n = Math.min(limit, left); left -= n;
+    return Promise.resolve({ data: n, error: null });
+  };
+  const r = await pruneInSlices(call, fresh(), { sliceMs: 50, reserveMs: 7000 });
+  assert.equal(asked.length, 5, 'four full slices and the short one that ends it');
+  assert.equal(r.deleted, 92000, 'the whole backlog within one upload');
+  assert.equal(r.stopped, 'done', 'and it knows it finished rather than ran out');
+
+  /* A SHORT SLICE IS THE STOP SIGN. Nothing older than the cut is left, so asking again is a
+     wasted round trip on the upload path -- the one place round trips are counted. */
+  const once = [];
+  const short = await pruneInSlices(l => { once.push(l); return Promise.resolve({ data: 12, error: null }); },
+    fresh(), { sliceMs: 50 });
+  assert.equal(once.length, 1, 'one ask, because the first answer said the table is clean');
+  assert.deepEqual([short.deleted, short.stopped], [12, 'done']);
+
+  /* AND IT IS STILL CAPPED. An upload may not turn into a mass delete however far behind the
+     table is: five slices, then the next upload takes the rest. */
+  const many = [];
+  const capped = await pruneInSlices(l => { many.push(l); return Promise.resolve({ data: l, error: null }); },
+    fresh(), { sliceMs: 50 });
+  assert.equal(many.length, 5, 'five and no more, whatever is still there');
+  assert.equal(capped.stopped, 'capped', 'said plainly, not mistaken for a finished trim');
+});
+
+test('the retention trim yields the clock rather than letting the host cut the upload off', async () => {
+  const { pruneInSlices, uploadClock } = await import('../api/upload.js');
+  /* Rule one. The deck is already written by the time this runs, so an overrun here does not
+     lose data -- it turns a landed upload into a 504 and the person uploads it all again. */
+  let t = 0;
+  const clock = uploadClock(0, 45000, () => t);
+  const asked = [];
+  const r = await pruneInSlices(l => { asked.push(l); t += 20000; return Promise.resolve({ data: l, error: null }); },
+    clock, { sliceMs: 50, reserveMs: 7000 });
+  assert.equal(asked.length, 2, 'two slices, then the clock will not hold another AND the step after it');
+  assert.equal(r.stopped, 'no-time', 'and what was left undone is named, not silently dropped');
+
+  /* THE MIGRATION NOT BEING RUN IS THE ORDINARY CASE, not an error the upload should carry. */
+  const missing = await pruneInSlices(() => Promise.resolve({ data: null,
+    error: { message: 'function prune_call_logs does not exist' } }), uploadClock(0, 45000, () => 1000), { sliceMs: 50 });
+  assert.deepEqual([missing.deleted, missing.stopped], [0, 'error'], 'nothing trimmed, nothing thrown');
+
+  /* And a slice that overruns is abandoned with the fallback -- beforeDeadline answers null,
+     which must read as "stop", never as "zero rows, so the table is clean". */
+  const slow = await pruneInSlices(() => new Promise(res => setTimeout(res, 5000)),
+    uploadClock(0, 45000, () => 1000), { sliceMs: 20 });
+  assert.equal(slow.stopped, 'error', 'an abandoned slice stops the trim, it does not fake a finish');
+});
+
 test('a deferred retirement is reported in the upload\'s own message, never swallowed', async () => {
   /* "The file is in and one tidying step is a day late" and "the upload failed" are completely
      different facts, and the person at the keyboard can only tell them apart if the result says
