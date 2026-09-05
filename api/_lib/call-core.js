@@ -2207,6 +2207,14 @@ async function customerLookup(db, [ref, verify], nowMs) {
     .filter(p => p.date)
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 40);
+  /* HOW FAR BACK THIS LIST CAN POSSIBLY GO -- "always auto delete received payments with 2
+     weeks lifetime". This screen exists so an officer can answer "did my payment arrive?" for
+     a customer standing in front of them, and it has no date range at all: it shows the newest
+     forty and nothing else. After the trim, a customer asking about last month gets an empty
+     list -- which an officer would reasonably read, and repeat aloud, as "your payment never
+     came". That is the worst sentence this system could put in somebody's mouth.
+     So the sheet carries the date the book now starts at and can say so instead. */
+  const paymentsKeptFrom = addDaysKey(weekMondayKey(nowMs), -7);
 
   const arrears = num(latest ? latest.arrears : f.arrears);
   return {
@@ -2232,7 +2240,7 @@ async function customerLookup(db, [ref, verify], nowMs) {
     // it was written down -- and does not get chased for something already agreed.
     promise: f && f.promise_date
       ? { date: String(f.promise_date).slice(0, 10), amount: num(f.promise_amt) } : null,
-    payments,
+    payments, paymentsKeptFrom,
     // Deliberately absent: contact, guarantor_name, guarantor_contact. See the note above.
   };
 }

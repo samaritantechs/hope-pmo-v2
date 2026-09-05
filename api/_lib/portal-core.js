@@ -2167,6 +2167,13 @@ const ABN_WINDOW_DAYS = 60;
     dashboard tile must never be able to disagree about how far back "flagged" reaches -- two
     different answers to the same question on two screens is exactly the fault the commission
     total had. */
+/* WHAT THE PAYMENT BOOK STILL HOLDS -- "always auto delete received payments with 2 weeks
+   lifetime". The Monday of LAST week, matching prune_received_payments in RUN-ME-028: a week
+   boundary rather than a rolling fortnight, so a Monday morning still has the week the meeting
+   is about. Every screen that takes a date range on this table compares against it, because a
+   range reaching further back now comes back SHORT and a short answer that says nothing is
+   indistinguishable from a quiet fortnight. */
+const receivedKeptFrom_ = nowMs => addDaysKey(weekMondayKey(nowMs), -7);
 function abnormalWindow(nowMs, args) {
   return {
     from: /^\d{4}-\d{2}-\d{2}$/.test(String(args && args.from))
@@ -2282,15 +2289,29 @@ async function abnormal(db, user, args, nowMs) {
     r.pmo_stage = stage;
     filled++;
   }
-  return { ...base, pmoFilled: filled };
+  /* THE WINDOW THIS TAB ASKS FOR IS SIXTY DAYS (ABN_WINDOW_DAYS) and the book now keeps two
+     weeks, so it can only ever find irregular payments inside the fortnight. Said here rather
+     than left as a tab that quietly stopped finding anything older. */
+  const keptFrom = receivedKeptFrom_(nowMs);
+  return { ...base, pmoFilled: filled, keptFrom,
+    ...(String(from) < keptFrom ? { prunedNote:
+      'Malipo huhifadhiwa kwa wiki hii na iliyopita tu — dirisha hili haliwezi kufika kabla ya '
+      + keptFrom + '. / Payments are kept for this week and last week only, so this window '
+      + 'cannot reach before ' + keptFrom + ' however far back it is set.' } : {}) };
 }
 
 async function received(db, user, { from, to }, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : weekMondayKey(nowMs);
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : todayKey(nowMs);
   const rows = scoped(user, await fetchAll(() => db.from('received_payments').select('*').gte('paid_at', fromKey).lte('paid_at', toKey)));
+  const keptFrom = receivedKeptFrom_(nowMs);
   return { from: fromKey, to: toKey, rows, count: rows.length,
-    amount: rows.reduce((s, r) => s + num(r.amount_paid), 0) };
+    amount: rows.reduce((s, r) => s + num(r.amount_paid), 0),
+    keptFrom,
+    ...(fromKey < keptFrom ? { prunedNote:
+      'Malipo huhifadhiwa kwa wiki hii na iliyopita tu — kabla ya ' + keptFrom + ' hayapo tena. '
+      + '/ Payments are kept for this week and last week only; anything before ' + keptFrom
+      + ' has been cleared, so this range is short rather than empty.' } : {}) };
 }
 
 /* ------------------------------------------------------------------ analytics tabs */
