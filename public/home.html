@@ -89,19 +89,15 @@ function renderSignIn(err){
        The HOPE Calls tile used to sit under the code box as the alternative for somebody
        without a code. It stopped being an alternative the day every code started landing on
        Calls: a team code goes there through tryTeamCode, and a leader's code goes there
-       through renderHome. Offering it as a second choice made the screen look like a fork when
-       both paths already end in the same place, which is a decision asked of somebody who has
-       none to make.
+       through boot. Offering it as a second choice made the screen look like a fork when both
+       paths already end in the same place, which is a decision asked of somebody who has none
+       to make.
 
-       So the code box is the only thing on the screen, and the hint says where the code leads
-       and how to get to the rest of the system afterwards -- the switch inside Calls -- rather
-       than making that a tile to be chosen between.
-
-       THE PLAIN LINK STAYS, and it is not the tile in smaller type. This page is the first
-       thing the Android WebView loads, and an officer who has mistyped their team code or not
-       yet been given one would otherwise be sitting at a box they cannot fill, inside the app
-       they work in all day, with no way through. That is the call app being down for that
-       person. One line of text is what stops it.
+       THIS SCREEN IS NOW THE `?menu=1` LAUNCHER'S SIGN-IN AND NOTHING ELSE -- see boot, which
+       sends every ordinary visit to /call without drawing anything. Nobody arrives here by
+       opening the app; an admin arrives here by asking for the launcher. The link below is
+       kept all the same, because a launcher that can only be left by editing the address bar
+       is a dead end for whoever reached it by accident, and it costs the screen nothing.
 
        MKOPO WANGU is still not offered here: the customer self-service door beside a staff
        sign-in invited exactly the confusion it was meant to prevent. /mkopo still answers for
@@ -189,29 +185,9 @@ function tryTeamCode(code, no){
     .catch(no);
 }
 
+/* Only ever reached through `/?menu=1` now -- see boot. The launcher's tile menu is for the
+   office TV and for an admin who wants the upload door without a detour. */
 function renderHome(me){
-  /* =====================================================================================
-     EVERYBODY LANDS ON CALLS.
-
-       "App is default land to call app when code Is inserted, unless one uses the switch
-        button, I want users to focus on calling so do this"
-
-     A valid code -- any code, the admin's included -- goes straight to HOPE Calls. The rest
-     of the system is one press away, not gone: the switch button inside Calls (shown while
-     the system is open) leads to the dashboard, and every screen keeps its own address for
-     anyone who needs it directly. The code is carried across so an unregistered handset
-     finds its sign-in box already filled, the same courtesy the team-code path has always
-     had.
-
-     `/?menu=1` still shows this launcher's tile menu -- the office TV pointing at HOPE Live,
-     or an admin who wants the upload door without a detour, should not need to remember five
-     addresses. */
-  if (!/[?&]menu=1/.test(window.location.search)) {
-    store('hcTeamCode', load('hopeCode'));
-    $('view').innerHTML = '<div class="card" style="text-align:center;color:var(--mut)">Inafungua HOPE Calls…</div>';
-    window.location.replace('/call');
-    return;
-  }
   var scope = me.teams ? (me.teamCount + (me.teamCount === 1 ? ' team' : ' teams')) : 'Timu zote / All teams';
   var initials = String(me.name || '?').trim().split(/\s+/).slice(0, 2).map(function(w){ return w.charAt(0); }).join('').toUpperCase();
   /* When the admin has closed the system, the portal is not merely refused -- it is not
@@ -243,9 +219,41 @@ function renderHome(me){
   $('out').onclick = function(){ store('hopeCode', null); renderSignIn(); };
 }
 
-/* A saved code signs you straight back in, but a stale/revoked one must not strand the
-   launcher on a spinner -- it falls back to the sign-in card with the reason. */
+/* =====================================================================================
+   THE FRONT DOOR IS HOPE CALLS. THERE IS NO OTHER LANDING.
+
+     "the landing page if someone is logout should be that of logging in to hopecalls by
+      team or leader / if already logged in land to customers"
+
+   Signed in already -> Calls opens on the customer list, the tab the officer left it on.
+   Signed out       -> Calls' OWN sign-in, which takes a team code or a leader's access code.
+   Either way the answer is /call, so this page stops deciding and simply goes there.
+
+   WHAT THIS DOES NOT TOUCH, because it is the whole operation and it must keep working:
+     /upload, /dashboard and /portal each carry their own code box and read `hopeCode`
+     themselves -- none of them has ever depended on this screen to sign anybody in, so an
+     uploader's morning is exactly what it was. The switch inside Calls still leads to the
+     portal. /?menu=1 still draws the launcher for the office TV and for an admin who wants
+     the upload door directly. Every address still answers on its own.
+
+   IT ALSO REMOVES A READ FROM THE FIRST THING THE WEBVIEW LOADS. This used to call
+   /api/me before it could decide where to send anybody; now it decides from what is already
+   on the handset and calls nothing. One fewer request on every launch, on the path three
+   hundred officers open all day.
+
+   The code is carried across as before, so an unregistered handset finds Calls' sign-in box
+   already filled rather than asking for the same code twice. */
 (function boot(){
+  if (!/[?&]menu=1/.test(window.location.search)){
+    var code = load('hopeCode');
+    if (code) store('hcTeamCode', code);
+    $('view').innerHTML = '<div class="card" style="text-align:center;color:var(--mut)">Inafungua HOPE Calls&hellip;</div>';
+    window.location.replace('/call');
+    return;
+  }
+  /* From here down is the `?menu=1` launcher only. A saved code signs you straight back in,
+     but a stale or revoked one must not strand it on a spinner -- it falls back to the
+     sign-in card with the reason. */
   var saved = load('hopeCode');
   if (!saved){ renderSignIn(); return; }
   fetch('/api/me?code=' + encodeURIComponent(saved))
