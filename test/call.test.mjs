@@ -378,6 +378,63 @@ test('the phone strip counts a registered Iliyonasia in Col, today and for the w
     'Kesho reads the tomorrow book, which has no adjustment target -- it must not borrow one');
 });
 
+/* =====================================================================================
+   THE SWITCH TO THE PORTAL, REVEALED BY THE PORTAL'S OWN RULE.
+   =====================================================================================
+     "some leaders aint seeing the 🔁 in call app"
+
+   It used to be `K(cu.role) === 'ADMIN'` -- an exact match on the role string copied onto the
+   handset at registration. The portal's door asks `user.tabs.includes('settings')`, the
+   RESOLVED tab list, and the two disagree for exactly the people who complained. */
+test('a leader whose ROLE grants settings sees the switch, whatever the role is called', async () => {
+  const { callIsAdmin_ } = await import('../api/_lib/call-core.js');
+  const codes = [{ name: 'ASHA JUMA', role: 'Management', tabs: [] }];
+  const roles = [{ role: 'MANAGEMENT', tabs: ['dashboard', 'settings'] }];
+  const cu = { name: 'ASHA JUMA', role: 'Management', is_leader: true };
+  assert.equal(callIsAdmin_(cu, codes, roles), true,
+    'an administrator to the portal is an administrator to the phone');
+  /* AND THE CAPITALS DO NOT DECIDE IT. "Management" on the code beside "MANAGEMENT" in the
+     roles table is one role spelled twice -- the Tunduru blackout for the third time. */
+  assert.equal(callIsAdmin_({ ...cu, role: 'management' }, codes, roles), true);
+});
+
+test('a leader granted settings on their own code sees it too, and an officer never does', async () => {
+  const { callIsAdmin_ } = await import('../api/_lib/call-core.js');
+  const roles = [{ role: 'GMO', tabs: ['dashboard'] }];
+  const onCode = [{ name: 'BOSS M', role: 'GMO', tabs: ['settings'] }];
+  assert.equal(callIsAdmin_({ name: 'BOSS M', role: 'GMO', is_leader: true }, onCode, roles), true,
+    'resolveTabs merges the code and the role -- so must this');
+  // A role that grants nothing, on a code that grants nothing, is not an administrator.
+  const plain = [{ name: 'BOSS M', role: 'GMO', tabs: [] }];
+  assert.equal(callIsAdmin_({ name: 'BOSS M', role: 'GMO', is_leader: true }, plain, roles), false);
+  /* AN OFFICER ON A TEAM CODE IS NEVER ONE, and this is the line that keeps rule 1: a handset
+     that is not a leader returns before any read, so three hundred officers pay nothing. */
+  assert.equal(callIsAdmin_({ name: 'BOSS M', role: 'ADMIN', is_leader: false }, onCode, roles), false);
+});
+
+test('the admin switch survives a roles table that will not answer', async () => {
+  const { callIsAdmin_ } = await import('../api/_lib/call-core.js');
+  // Reading fails -> empty lists -> not an admin. A hidden button is somebody asking a
+  // question; a failed boot is an officer who cannot work.
+  assert.equal(callIsAdmin_({ name: 'X', role: 'GMO', is_leader: true }, [], []), false);
+  // ...except the one case that needs no read at all.
+  assert.equal(callIsAdmin_({ name: 'X', role: 'ADMIN', is_leader: true }, [], []), true);
+});
+
+test('boot reveals the switch to a leader the portal would let in', async () => {
+  const t = makeTables();
+  t.access_codes.push({ code: 'MGR1', name: 'ASHA JUMA', role: 'MANAGEMENT', teams: ['KONGOWE'], tabs: [] });
+  t.roles = [{ role: 'MANAGEMENT', tabs: ['dashboard', 'settings'] }];
+  // Closed, which is when the switch is hidden from everybody who is not an administrator.
+  t.settings = t.settings.filter(x => x.key !== 'SYSTEM_OPEN').concat([{ key: 'SYSTEM_OPEN', value: 'NO' }]);
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dv1', '', '', 'MGR1', '0712999801', ''], NOW);
+  const d = await callApi(db, 'api_callBoot', ['dv1'], NOW);
+  assert.equal(d.ok, true);
+  assert.equal(d.systemOpen, false, 'the system really is closed');
+  assert.equal(d.systemAdmin, true, 'and this leader still gets the door to it');
+});
+
 /* THE BURST. pg_stat_activity on the morning the dashboard would not load: 27 queries active
    at once, nearly all the totals functions, nothing old, nothing blocked -- three hundred
    handsets re-asking for the strip after an upload, every one of them running buildDashboard

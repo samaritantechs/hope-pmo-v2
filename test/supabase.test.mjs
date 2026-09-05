@@ -180,6 +180,43 @@ test('a table whose key is not called id still gets a stable order', async () =>
   }
 });
 
+test('the two tables with no id name their real keys instead of being refused first', async () => {
+  const { fakeDb, setPageCap, setUnstableOrder } = await import('./fake-db.mjs');
+  const { fetchAll, pageKeyFor } = await import('../api/_lib/supabase.js');
+  /* THE ERROR STORM. `deck_totals` has no primary key at all and `deck_totals_days` is keyed
+     on (kind, snapshot_date) -- neither has an `id`. Defaulting to one meant every read of
+     them sent Postgres an `order=id.asc` it could only REJECT: PostgREST 400, a line in the
+     Postgres error log, and only then the plain read. Two round trips instead of one, on the
+     deck-totals cache -- which is asked on every totals question in the system, the phone's
+     summary strip included. Twelve thousand Postgres errors a day against thirteen thousand
+     Postgres requests, and this was the loudest part of it. */
+  const db = fakeDb({ deck_totals: [], deck_totals_days: [] });
+  assert.deepEqual(pageKeyFor(db.from('deck_totals_days').select('*')), ['kind', 'snapshot_date']);
+  assert.deepEqual(pageKeyFor(db.from('deck_totals').select('*')),
+    ['kind', 'snapshot_date', 'snapshot_type', 'weekday', 'team', 'upload_batch']);
+
+  /* AND IT IS STILL A REAL TIEBREAKER. A multi-column key that is not unique would be worse
+     than none -- see the note in supabase.js on what an ambiguous order does to a paged read.
+     These are the columns the build GROUPs BY, so two rows cannot share them. */
+  const rows = [];
+  for (let i = 0; i < 2500; i++) {
+    rows.push({ kind: 'expected', snapshot_date: '2026-07-' + String((i % 28) + 1).padStart(2, '0'),
+      snapshot_type: 'today', weekday: 'MON', team: 'T' + (i % 40),
+      upload_batch: 'b' + i, collected_amt: 1 });
+  }
+  const db2 = fakeDb({ deck_totals: rows });
+  setPageCap(1000);
+  setUnstableOrder(true);
+  try {
+    const out = await fetchAll(() => db2.from('deck_totals').select('*'));
+    assert.equal(new Set(out.map(r => r.upload_batch)).size, 2500,
+      'every row exactly once, across three pages, with the server shuffling between them');
+  } finally {
+    setUnstableOrder(false);
+    setPageCap(100000);
+  }
+});
+
 test('a server that will not accept the order still returns the rows', async () => {
   const { fetchAll } = await import('../api/_lib/supabase.js');
   /* An un-migrated table, a view, a renamed column: PostgREST answers 400 and names the

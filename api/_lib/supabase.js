@@ -201,7 +201,27 @@ const LIKELY_CAPS = new Set([1000, 2000, 5000, 10000, 20000, 25000, 50000, 10000
    a time. A tiebreaker that cannot be applied must never turn a working screen into an error. */
 
 /* Tables whose primary key is not called `id`. Everything else that is big enough to page has
-   one that is, so `id` is the default rather than a guess. */
+   one that is, so `id` is the default rather than a guess.
+
+   A VALUE MAY BE SEVERAL COLUMNS, because two tables here have no single unique column at all
+   -- and the "no `id`, so fall back" path below turned out to be a good deal more expensive
+   than "falls back". Every read of those two sent Postgres an `order=id.asc` it can only
+   REJECT: PostgREST answers 400, Postgres LOGS AN ERROR, and only then does the plain read go
+   out. Two round trips instead of one, and a line in the error log, on the deck-totals cache
+   -- which is asked on every totals question in the system, the phone's summary strip
+   included. On a Supabase report that reads as twelve thousand Postgres errors a day against
+   thirteen thousand Postgres requests, and it is the single loudest thing in this book.
+
+   So the fallback stays for a table nobody predicted, and the two we KNOW have no `id` name
+   their real keys instead of discovering it the expensive way, once per read, for ever.
+
+     deck_totals_days   its declared primary key (kind, snapshot_date) -- RUN-ME-022.
+     deck_totals        no primary key at all, but the build writes exactly one row per this
+                        tuple: it is what expected_snapshot_totals / defaulter_snapshot_totals
+                        GROUP BY, so two rows can never share it.
+
+   Unique is the whole point -- see the note above on what an ambiguous order does to a paged
+   read -- so a partial key here would be worse than none. */
 const PAGE_KEY = {
   teams: 'team',
   access_codes: 'code',
@@ -210,6 +230,8 @@ const PAGE_KEY = {
   followup_status: 'ref',
   call_users: 'user_id',
   call_agents: 'user_id',
+  deck_totals_days: ['kind', 'snapshot_date'],
+  deck_totals: ['kind', 'snapshot_date', 'snapshot_type', 'weekday', 'team', 'upload_batch'],
 };
 
 /** The table a built query points at, read off the URL PostgREST is about to be asked for.
@@ -225,13 +247,18 @@ function tableOf(q) {
   } catch { return null; }
 }
 
-/** The unique column that settles the order for this query, or null if we cannot tell which
-    table it reads -- in which case nothing is added and the read behaves as it always did. */
+/** The unique column -- or columns -- that settle the order for this query, or null if we
+    cannot tell which table it reads, in which case nothing is added and the read behaves as it
+    always did. A string for the ordinary single-column case; an array where it takes more than
+    one column to be unique. */
 export function pageKeyFor(q) {
   const t = tableOf(q);
   if (!t) return null;
   return Object.prototype.hasOwnProperty.call(PAGE_KEY, t) ? PAGE_KEY[t] : 'id';
 }
+/** The key as a list, whichever shape it was written in. One place, so the two callers below
+    cannot disagree about what a multi-column key means. */
+const keyCols = k => (k == null ? [] : Array.isArray(k) ? k : [k]);
 
 /** `state.key` is decided from the FIRST query this builds and remembered for the rest of the
     read -- deliberately not by building a throwaway query to look at, because a caller counting
@@ -250,7 +277,11 @@ async function readPages(buildQuery, state) {
     const { data, error } = await runQuery(() => {
       const q = buildQuery();
       if (state.key === undefined) state.key = pageKeyFor(q);
-      return (state.key ? q.order(state.key, { ascending: true }) : q).range(from, from + size - 1);
+      // Added in order, after whatever the caller already sorted by, so the caller's own sort
+      // still decides and these only settle the ties.
+      let out = q;
+      for (const c of keyCols(state.key)) out = out.order(c, { ascending: true });
+      return out.range(from, from + size - 1);
     });
     if (error) throw error;
     const got = data ? data.length : 0;
@@ -279,7 +310,7 @@ export async function fetchAll(buildQuery) {
        hide an outage behind a second doomed attempt. Nor is there anything to retry if no
        tiebreaker was applied in the first place -- that read already failed on its own terms.
        Only a refusal of the ORDER is worth a second, plainer attempt. */
-    if (isTransient(e) || !state.key) throw e;
+    if (isTransient(e) || !keyCols(state.key).length) throw e;
     return readPages(buildQuery, { key: null });
   }
 }
