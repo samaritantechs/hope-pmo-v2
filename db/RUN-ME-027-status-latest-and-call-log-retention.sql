@@ -30,9 +30,19 @@
 --   "please always autodelete call logs by keeping only last week and current [2]"
 --
 -- call_logs is 977,616 rows after one month and it is the fastest-growing table in the book:
--- three hundred officers, every call, every day. Keeping the current week and the one before
--- it leaves roughly forty thousand rows -- a table one twenty-fifth the size, on the path the
--- phone reads all day.
+-- three hundred officers, every call, every day.
+--
+-- I PREDICTED THIS WOULD LEAVE "roughly forty thousand rows, a table one twenty-fifth the
+-- size". IT DID NOT, AND THE REASON MATTERS. Measured on 5 Sep 2026 with the cut at 24 Aug:
+--
+--   977,616 before  ->  about 685,000 after.  292,000 rows removed, thirty per cent, not
+--   ninety-six. The table is not spread evenly across the month: early August ran about
+--   14,000 calls a day, the last fortnight about 53,000. Call volume roughly quadrupled as
+--   officers came onto the app, so nearly all of the table IS the two weeks being kept.
+--
+-- The prune is still worth having -- it caps the table instead of letting it run at twenty
+-- million rows a year -- but the honest steady state is around 700,000 rows and climbing with
+-- headcount, not forty thousand. Anyone sizing the disk off this file should use that figure.
 --
 -- WHAT THIS COSTS, said before it is run: the calls report on the phone lets a leader pick ANY
 -- date range. Ranges reaching before last Monday will come back empty from now on. That is the
