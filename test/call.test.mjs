@@ -435,6 +435,31 @@ test('boot reveals the switch to a leader the portal would let in', async () => 
   assert.equal(d.systemAdmin, true, 'and this leader still gets the door to it');
 });
 
+test('every leader with an access code gets the door; an officer on a team code does not', async () => {
+  /* "yes widen it to all leaders with access codes". `is_leader` is set only on the access-code
+     branch of register(), so it IS the definition of "has a portal account" -- which makes it
+     the right test for a button whose only purpose is to reach the portal. The phone reads
+     `leader` for this; the server has always sent it. Pinned here because the call app now
+     depends on that meaning, and a change to what is_leader means would silently hand three
+     hundred officers a door. */
+  const t = makeTables();
+  t.access_codes.push({ code: 'GMO1', name: 'BOSS M', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  t.roles = [{ role: 'GMO', tabs: ['dashboard'] }];              // no settings: not an admin
+  t.settings = t.settings.filter(x => x.key !== 'SYSTEM_OPEN').concat([{ key: 'SYSTEM_OPEN', value: 'NO' }]);
+  const db = fakeDb(t);
+
+  await callApi(db, 'api_callRegister', ['dv2', '', '', 'GMO1', '0712999802', ''], NOW);
+  const lead = await callApi(db, 'api_callBoot', ['dv2'], NOW);
+  assert.equal(lead.leader, true, 'registered on an access code');
+  assert.equal(lead.systemAdmin, false, 'and NOT an administrator -- the portal would turn them away');
+
+  // An ordinary officer, on the team code. Three hundred of these, and none of them gets it.
+  await callApi(db, 'api_callRegister', ['dv3', 'JUMA ISSA', '', '', '0712999803', 'KON123'], NOW);
+  const off = await callApi(db, 'api_callBoot', ['dv3'], NOW);
+  assert.equal(off.leader, false);
+  assert.equal(off.systemAdmin, false);
+});
+
 /* THE BURST. pg_stat_activity on the morning the dashboard would not load: 27 queries active
    at once, nearly all the totals functions, nothing old, nothing blocked -- three hundred
    handsets re-asking for the strip after an upload, every one of them running buildDashboard
