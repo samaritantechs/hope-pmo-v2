@@ -117,12 +117,32 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
   assert.ok(!/tile\('\/call'/.test(signIn), 'the HOPE Calls TILE is back on the sign-in screen');
   assert.ok(/href="\/call"/.test(signIn),
     'the sign-in screen has no way through to Calls at all -- an officer without a code is stranded');
-  /* AND A VALID CODE STILL GOES STRAIGHT THERE, which is the half of the ask that was already
-     true and must not be quietly undone by a later tidy-up of this screen. */
-  assert.ok(/window\.location\.replace\('\/call'\)/.test(home),
-    'a signed-in code no longer lands on HOPE Calls');
+  /* AND THE LANDING ITSELF IS CALLS, SIGNED IN OR OUT.
+
+       "the landing page if someone is logout should be that of logging in to hopecalls by
+        team or leader / if already logged in land to customers"
+
+     Signed in, Calls opens on the customer list; signed out, on Calls' own sign-in, which
+     takes a team code or a leader's access code. Both answers are /call, so boot goes there
+     without asking the server first -- the redirect must live in boot, not behind a fetch,
+     or the first thing the WebView loads is a round trip it does not need. */
+  const boot = home.slice(home.indexOf('(function boot()'));
+  assert.ok(/window\.location\.replace\('\/call'\)/.test(boot),
+    'the landing page no longer opens HOPE Calls');
+  assert.ok(boot.indexOf("window.location.replace('/call')") < boot.indexOf('fetch('),
+    'the landing waits on /api/me before opening Calls -- that read is not needed to decide');
+  /* The launcher is not gone, it is just no longer the front door: the office TV and an admin
+     wanting /upload directly still reach it, and losing that strands both. */
+  assert.ok(/menu=1/.test(boot), 'the ?menu=1 launcher escape hatch is gone');
   assert.ok(/window\.location\.href = '\/call'/.test(home),
     'a team code no longer lands on HOPE Calls');
+  /* THE OTHER DOORS MUST NOT DEPEND ON THIS SCREEN. Each carries its own code box and reads
+     hopeCode itself; if one ever stopped, this redirect would lock its people out. */
+  for (const page of ['upload.html', 'dashboard.html', 'app.html']) {
+    const src = readFileSync(new URL('../public/' + page, import.meta.url), 'utf8');
+    assert.ok(/hopeCode/.test(src) && /'code'\)|#code/.test(src),
+      page + ' lost its own sign-in -- the landing redirect now strands whoever needs it');
+  }
 
   /* THE STAMP THE SERVER READS AND THE ONE THE PAGE REPORTS MUST BE THE SAME STRING.
      A permission that lands on the server and not on the screen is what let an unticked role
