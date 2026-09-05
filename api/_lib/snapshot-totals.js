@@ -321,6 +321,34 @@ export async function buildDeckTotals(db, kind, date) {
 /** The cached answer to one totals question, or null for "ask the database". Null is not a
     failure -- it is the ordinary answer on a database without the tables, on a range that is
     not fully built, and on any error at all. */
+/* HOW MANY SEPARATE GAPS ARE WORTH FILLING ONE BY ONE. Beyond this the cache is not really
+   helping and one whole-range call is cheaper than several. In practice there is exactly one
+   gap -- today, until the upload builds it. */
+const DECK_MAX_GAPS = 3;
+
+/* WHAT ONE MISSING DAY USED TO COST, AND WHY THAT WAS WRONG.
+   =====================================================================================
+   The rule was all-or-nothing: every day of the range built, or the whole range answered live.
+   It was written for safety -- a range returned SHORT is a figure that is quietly too small,
+   which is worse than a slow one -- and the safety is right. The all-or-nothing part was not.
+
+   ON 5 SEPTEMBER IT TOOK THE SYSTEM DOWN. One day was missing from the cache: that morning's
+   DEFAULTER deck, three hundred and sixteen rows. Every other day of the hundred and thirty-six
+   was built. But every screen asks for a range that INCLUDES TODAY -- this week, this month --
+   so every one of them failed the test and fell through to the live aggregate over 1.4 million
+   rows. Thirty-one of those were running side by side when we looked; nothing was blocked and
+   nothing was stuck, the database was simply doing the same enormous sum thirty-one times.
+   Uploading and the call app were queueing behind it, which is rule 1 broken by a cache that
+   was working perfectly for a hundred and thirty-five days out of a hundred and thirty-six.
+
+   SO THE RANGE IS SPLIT. The built days come from the cache and the GAPS -- usually just today
+   -- are asked of the live function on their own. A missing day now costs one small aggregate
+   over one day instead of one enormous aggregate over four months. Nothing is ever returned
+   short: a gap that cannot be filled sends the whole question back to the live path exactly as
+   it always did.
+
+   Returns null when the cache cannot help at all, or { rows, missing } where `missing` is the
+   list of [from, to] stretches the caller still has to ask for. */
 async function deckTotalsRead(db, fn, args) {
   const kind = DECK_KIND[fn];
   if (!kind) return null;
@@ -332,16 +360,26 @@ async function deckTotalsRead(db, fn, args) {
   if (!built) return null;
   const days = built[kind];
   if (!days || !days.size) return null;
-  /* EVERY day of the range, or none of it -- see point 3 above. A range with one unbuilt day in
-     the middle is answered live in full, rather than returned short. */
-  let n = 0;
+
+  /* Walk the range once, collecting the unbuilt days into contiguous stretches. A span longer
+     than the window is not worth checking day by day and nothing in the system asks for one. */
+  const missing = [];
+  let n = 0, open = null, anyBuilt = false;
   for (let d = from; d <= to; d = addDaysKey(d, 1)) {
     if (++n > BUILT_MAX_SPAN) return null;
-    if (!days.has(d)) return null;
+    if (days.has(d)) {
+      anyBuilt = true;
+      if (open) { missing.push([open, prevDay_(d)]); open = null; }
+    } else if (!open) {
+      open = d;
+    }
   }
+  if (open) missing.push([open, to]);
+  // Nothing built in this range at all, or too fragmented to be worth stitching: live, as before.
+  if (!anyBuilt || missing.length > DECK_MAX_GAPS) return null;
 
   try {
-    return await fetchAll(() => {
+    const rows = await fetchAll(() => {
       let q = db.from(DECK_TOTALS_TABLE).select(DECK_COLS[kind])
         .eq('kind', kind).gte('snapshot_date', from).lte('snapshot_date', to);
       if (args.p_type) q = q.eq('snapshot_type', args.p_type);
@@ -351,10 +389,21 @@ async function deckTotalsRead(db, fn, args) {
       if (Array.isArray(args.p_teams) && args.p_teams.length) q = q.in('team', args.p_teams);
       return q;
     });
+    /* THE STALE ROWS OF AN UNBUILT DAY ARE DROPPED, and this is the line the whole split turns
+       on. unmarkDeckTotals deletes the day from deck_totals_days ONLY -- the rows in
+       deck_totals stay until the rebuild replaces them, which is what makes an interrupted
+       build safe rather than destructive. But it means a plain read of the whole range hands
+       back yesterday's figures for that day, and the gap call is about to return today's: the
+       same day, counted twice, in a system whose entire batch rule exists to stop exactly that.
+       So a row inside a missing stretch is not the cache's to give. */
+    const inGap = d => missing.some(([f, t]) => d >= f && d <= t);
+    const kept = (rows || []).filter(r => !inGap(String(r.snapshot_date).slice(0, 10)));
+    return { rows: kept, missing };
   } catch (e) {
     return null;                                // anything at all goes back to the live path
   }
 }
+const prevDay_ = d => addDaysKey(d, -1);
 
 /** Calls one of the totals functions. Returns the rows, or null when the function is not there
     -- which is the caller's signal to read the rows and fold them instead. A momentary database
@@ -365,8 +414,24 @@ async function callTotals(db, fn, args) {
      it answers nothing else needs to happen at all -- and when it does not, it has cost one
      small read a minute for the whole process. */
   const cached = await deckTotalsRead(db, fn, args);
-  if (cached) return cached;
+  if (cached && !cached.missing.length) return cached.rows;
+  /* THE FUNCTION IS NOT INSTALLED, so the gaps cannot be filled -- and a partial answer is not
+     an answer. The whole question goes back to the fold-it-here path, which is correct at any
+     date, rather than being handed back short. */
   if (knownMissing(db, fn)) return null;
+  if (cached) {
+    /* THE GAPS, ONE SMALL CALL EACH -- usually one, for today. Sequential on purpose: a wave of
+       concurrent requests is the shape that took this system down (see supabase.js), and it is
+       what the whole-range fallback was doing thirty-one times over on the morning this was
+       written. */
+    const out = cached.rows.slice();
+    for (const [f, t] of cached.missing) {
+      const { data, error } = await rpcAll(db, fn, { ...args, p_from: f, p_to: t });
+      if (error) { noteMissing(db, fn); return null; }   // short is never an answer
+      if (Array.isArray(data)) out.push(...data);
+    }
+    return out;
+  }
   /* PAGED. PostgREST caps a function that returns a set exactly as it caps a table read, and
      a week of defaulter decks is nearly four thousand summary rows -- of which a thousand used
      to come back, silently. */
