@@ -37,10 +37,9 @@
   .tile span{display:block;font-size:12.5px;color:var(--mut);margin-top:2px;line-height:1.45}
   .tile .go{margin-left:auto;color:var(--soft);font-size:19px}
   .hint{font-size:12px;color:var(--soft);margin-top:14px;line-height:1.55;text-align:center}
+  .hint a{color:var(--b700);font-weight:700;text-decoration:none}
   .sk{width:18px;height:18px;border:2.5px solid var(--b100);border-top-color:var(--b600);border-radius:50%;animation:sp .7s linear infinite;margin:0 auto}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .sep{display:flex;align-items:center;gap:10px;color:var(--soft);font-size:11.5px;margin:18px 0 4px}
-  .sep:before,.sep:after{content:"";flex:1;height:1px;background:var(--line)}
 </style>
 </head>
 <body>
@@ -81,19 +80,37 @@ function renderSignIn(err){
     + '<button class="btn" id="go">Ingia / Sign in</button>'
     + (err ? '<div class="err">' + esc(err) + '</div>' : '')
     + '</div>'
-    + '<div class="sep">au / or</div>'
-    /* TWO DOORS NOW, AND ONLY ONE OF THEM WANTS A CODE. An officer has a team code and taps
-       HOPE Calls; a leader types the code above.
+    /* ONE DOOR, NOT TWO.
 
-       MKOPO WANGU IS NO LONGER OFFERED HERE. The customer self-service door was the only tile
-       on this screen aimed at somebody who is not staff, and putting it beside the staff
-       sign-in invited exactly the confusion it was meant to prevent. The page at /mkopo still
-       answers for anyone holding its address -- a link in a message, a printed slip -- so
-       nothing that was working stops working; it is simply not advertised on the way in. */
-    + '<div class="tiles">'
-      + tile('/call', '&#128222;', 'HOPE Calls', 'Maafisa wa timu &middot; hauhitaji msimbo / officers, no code needed')
-    + '</div>'
-    + '<div class="hint">Maafisa wa simu hawahitaji msimbo &mdash; bofya HOPE Calls.<br>Field officers do not need a code &mdash; tap HOPE Calls.</div>';
+         "at logging in: weka msimbo should not even have a hopecalls card below if someone
+          puts code through app take them directly to hopecalls, they'll access the system by
+          the switch whenever they need to"
+
+       The HOPE Calls tile used to sit under the code box as the alternative for somebody
+       without a code. It stopped being an alternative the day every code started landing on
+       Calls: a team code goes there through tryTeamCode, and a leader's code goes there
+       through renderHome. Offering it as a second choice made the screen look like a fork when
+       both paths already end in the same place, which is a decision asked of somebody who has
+       none to make.
+
+       So the code box is the only thing on the screen, and the hint says where the code leads
+       and how to get to the rest of the system afterwards -- the switch inside Calls -- rather
+       than making that a tile to be chosen between.
+
+       THE PLAIN LINK STAYS, and it is not the tile in smaller type. This page is the first
+       thing the Android WebView loads, and an officer who has mistyped their team code or not
+       yet been given one would otherwise be sitting at a box they cannot fill, inside the app
+       they work in all day, with no way through. That is the call app being down for that
+       person. One line of text is what stops it.
+
+       MKOPO WANGU is still not offered here: the customer self-service door beside a staff
+       sign-in invited exactly the confusion it was meant to prevent. /mkopo still answers for
+       anyone holding its address. */
+    + '<div class="hint">Msimbo wowote &mdash; wa timu au wa kiongozi &mdash; unafungua HOPE Calls'
+    + ' moja kwa moja. Mfumo unapatikana kwa kitufe cha kubadilisha (&#128260;) ndani ya HOPE Calls.'
+    + '<br>Any code &mdash; team or leader &mdash; opens HOPE Calls. The rest of the system is one'
+    + ' press away, on the switch inside Calls.'
+    + '<br><br>Huna msimbo? / No code? <a href="/call">Fungua HOPE Calls / Open HOPE Calls</a></div>';
   // The form is rebuilt on every error, so the masking is re-applied with it.
   if (window.hopeSecrets) window.hopeSecrets();
   $('code').value = load('hopeCode');
