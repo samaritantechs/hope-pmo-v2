@@ -3778,7 +3778,35 @@ async function commissionSave(db, user, p) {
      PMO_WEEKLY_BONUS -- which meant the one person deciding what a week is worth had to leave
      the board showing it, find a raw key by name, and type a number with no context beside it.
      Every other rate on this panel is set here; this is a rate. */
-  if (p.weeklyBonus != null) {
+  /* DELETING THE BONUS IS NOT THE SAME AS TYPING A ZERO INTO IT.
+
+       "as admin, I need a delete button on PMO bonuses since we sometimes change our bonus
+        creteria"
+
+     Both end at no bonus being paid, and the board already reads 0 as "not set". The difference
+     is what the admin has to do and what the row then means. Typing 0 leaves a settings row
+     saying the weekly bonus is zero shillings -- a figure somebody chose -- and it takes a
+     deliberate edit of a money box to get there. Deleting says there is no bonus rule at
+     present, which is the true state of things between two sets of criteria, and it is one
+     press.
+
+     THE ROW GOES, rather than being written as 0. pmoCfg.num defaults to 0 when the key is
+     absent, so every reader already handles a missing key -- that is the path a system runs on
+     before the bonus is ever set, and it is the one this returns to. Leaving a 0 behind would
+     mean the next admin cannot tell a bonus somebody deliberately zeroed from one nobody has
+     set yet.
+
+     Exclusive with the amount on purpose: the panel sends the box's value on every Save, so
+     handling both in one request would let a stale 0 in the input re-create the row the same
+     request just deleted. */
+  if (p.clearWeeklyBonus) {
+    const { error } = await db.from('settings').delete().eq('key', PMO_BONUS_KEY);
+    if (error) throw new Error(error.message);
+    noteSettingsWritten(db);
+    noteAnswersChanged(db);
+    out.weeklyBonus = 0;
+    out.weeklyBonusCleared = true;
+  } else if (p.weeklyBonus != null) {
     out.weeklyBonus = Math.max(0, num(p.weeklyBonus) || 0);
     await set(PMO_BONUS_KEY, out.weeklyBonus);
   }
