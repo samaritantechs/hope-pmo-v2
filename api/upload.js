@@ -1226,6 +1226,19 @@ export default withApi(async (req, res) => {
         Math.min(3000, clock.left()), null);
     } catch (e) { /* not installed, or no time -- the next upload trims instead */ }
   }
+  /* AND RECEIVED PAYMENTS, on the same terms -- "always auto delete received payments with 2
+     weeks lifetime". A far smaller table than the call log (about 67,000 rows against 977,000)
+     so it buys much less, but it was asked for plainly and it is one more bounded slice at the
+     very end of the clock. What it costs is on the screens, not hidden: the phone's customer
+     sheet and the abnormal payments tab both now say what is no longer kept -- see
+     RUN-ME-028, and see `keptFrom` in call-core.js and portal-core.js. */
+  if (isLastPart && clock.worth(3000)) {
+    try {
+      await beforeDeadline(
+        runQuery(() => supabase.rpc('prune_received_payments', { p_keep_weeks: 2, p_limit: 20000 })),
+        Math.min(2000, clock.left()), null);
+    } catch (e) { /* not installed, or no time -- the next upload trims instead */ }
+  }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.
 

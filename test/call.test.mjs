@@ -485,6 +485,26 @@ test('the calls report says when the range reaches before what is kept', async (
   assert.match(far.prunedNote, /2026-07-13/, 'and it names the date the log now starts at');
 });
 
+test('the customer sheet says how far back the payment book now goes', async () => {
+  /* "always auto delete received payments with 2 weeks lifetime"
+
+     This screen has no date range -- it shows the newest forty payments and nothing else -- and
+     it exists so an officer can answer "did my payment arrive?" for somebody standing in front
+     of them. After the trim, a customer asking about last month gets an empty list, which an
+     officer would reasonably read out as "your payment never came". That is the worst sentence
+     this system could put in anybody's mouth, so the sheet carries the date the book starts at
+     and can say so instead. */
+  const t = makeTables();
+  t.received_payments = [{ id: 'p1', ref_no: '555', team: 'KONGOWE', amount_paid: 5000,
+    paid_at: '2026-07-24', transaction_id: 'TX1' }];
+  const db = fakeDb(t);
+  // The CUSTOMER's own door -- they type their reference number, no handset involved.
+  const sheet = await callApi(db, 'api_customerLookup', ['555', ''], NOW);
+  assert.equal(sheet.paymentsKeptFrom, '2026-07-13',
+    'the Monday of last week, matching prune_received_payments');
+  assert.equal(sheet.payments.length, 1, 'and a payment inside the window is still listed');
+});
+
 /* THE BURST. pg_stat_activity on the morning the dashboard would not load: 27 queries active
    at once, nearly all the totals functions, nothing old, nothing blocked -- three hundred
    handsets re-asking for the strip after an upload, every one of them running buildDashboard
