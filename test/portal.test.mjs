@@ -8564,3 +8564,39 @@ test('the recovery walk in the database answers exactly what the raw walk answer
     'the combined table disagreed between the two paths');
   assert.equal(agg.totals.recovered, raw.totals.recovered, 'and so did the company total');
 });
+
+test('the aggregate is asked one day at a time, and one bad day gives up the lot', async () => {
+  /* Asked for the whole week at once, recovery_day_totals timed out on the live book; asked for
+     one day it answers in milliseconds. The split is safe because A DECK IS A WEEKDAY AND A
+     TEAM: in a Mon-Sun range each deck comes round once, so every book has exactly one
+     observation in the week and its "before" always comes from the baseline, which sits outside
+     the range either way. Nothing crosses a day boundary for the split to lose -- and the
+     equivalence guard above proves that against the raw walk. This one stops somebody putting
+     the range back together for tidiness. */
+  const { RECOVERY_TOTALS_RPC } = await import('./recovery-day-totals-rpc.mjs');
+  const t = tables();
+  const seen = [];
+  const counting = { recovery_day_totals(store, args) {
+    seen.push(String(args.p_from) + '..' + String(args.p_to));
+    return RECOVERY_TOTALS_RPC.recovery_day_totals(store, args);
+  } };
+  const d = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...counting } }),
+    ADMIN, 'commission', { scope: 'week' }, NOW);
+  assert.equal(d.recDiag.aggregated, true);
+  assert.ok(seen.length >= 5, 'asked once for the range, not day by day: ' + seen.join(', '));
+  assert.ok(seen.every(r => r.split('..')[0] === r.split('..')[1]),
+    'a call spanned more than one day: ' + seen.join(', '));
+
+  /* ONE BAD DAY GIVES UP THE WHOLE THING. A recovery figure missing a day is not a slow answer,
+     it is a wrong one, and it would look entirely reasonable on the board. */
+  let n = 0;
+  const flaky = { recovery_day_totals(store, args) {
+    if (++n === 3) throw new Error('the third day fell over');
+    return RECOVERY_TOTALS_RPC.recovery_day_totals(store, args);
+  } };
+  const back = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...flaky } }),
+    ADMIN, 'commission', { scope: 'week' }, NOW);
+  assert.equal(back.recDiag.aggregated, undefined,
+    'a part-answer was kept -- the missing day would read as a day nobody recovered anything');
+  assert.ok(back.recBoard.length, 'and the raw walk still produced the board');
+});
