@@ -498,97 +498,93 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   assert.ok(m.totals.week >= d.totals.week, 'month-to-date pay is never less than this week\'s');
 });
 
-/* THE ZERO-RECOVERY MONDAY. Live, with 532 customers genuinely dropped: the board read zero.
-   Two causes, either alone enough: the 'current' baseline used the working list's whole-table
-   pin (only the last-uploaded weekday's deck came back, every other book got an empty
-   baseline), and the initial book's 45-day lookback silently dropped books whose initial deck
-   is older -- which is most of them, since an initial is drawn up at cycle start. The
-   commission walk now asks for perBook baselines: each team-and-weekday book brought forward
-   by ITS OWN last current, over a lookback long enough for real cycles. */
-test('commission baseline: each book is brought forward by its own last current, however old the initial', async () => {
-  const t = tables();
-  t.defaulter_snapshots.push(
-    // The MON book: initial drawn up 100+ days ago -- outside the old 45-day window.
-    { ref: 'M1', team: 'KONGOWE', full_name: 'MON GUY', arrears: 1000, status: 'Defaulter', disb_date: '2024-05-01',
-      snapshot_type: 'initial', weekday: 'MON', snapshot_date: '2026-04-06', upload_batch: 'im', created_at: '2026-04-06T04:00:00Z' },
-    // Its own last current: LAST week's Monday, 800 still owed.
-    { ref: 'M1', team: 'KONGOWE', arrears: 800,
-      snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-13', upload_batch: 'cm1', created_at: '2026-07-13T04:00:00Z' },
-    // The table-wide NEWEST current before this week is a different weekday's deck -- the
-    // whole-table pin returned only this and starved every other book's baseline.
-    { ref: 'S1', team: 'KONGOWE', arrears: 50,
-      snapshot_type: 'current', weekday: 'SUN', snapshot_date: '2026-07-19', upload_batch: 'cs', created_at: '2026-07-19T04:00:00Z' },
-    // THIS week's Monday deck: M1 dropped 800 -> 500.
-    { ref: 'M1', team: 'KONGOWE', full_name: 'MON GUY', arrears: 500, status: 'Defaulter', disb_date: '2024-05-01',
-      snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-07-20', upload_batch: 'cm2', created_at: '2026-07-20T04:00:00Z' },
-  );
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
-  const juma = d.recBoard.find(r => r.officer === 'JUMA G');
-  assert.ok(juma, 'the recovery officer appears on the board');
-  const monday = (juma.records || []).find(x => x.date === '2026-07-20');
-  assert.ok(monday, 'Monday was observed');
-  assert.equal(monday.recovered, 300,
-    '800 -> 500 against the book\'s OWN last current pays 300 -- not zero (starved baseline) and not 500 (initial-based)');
-  /* THE DENOMINATOR IS THE DAY'S UNCOLLECTED, and this fixture has no expected book at all --
-     so there is nothing to measure the 300 against. That is NOT scored as 0% and dragged under
-     the floor: no expected book means no percentage, and no percentage pays nothing without
-     calling the officer a failure. The recovered amount is still reported in full. */
-  assert.equal(monday.base, 0, 'no expected book that day, so nothing to measure against');
-  assert.equal(monday.pct, null, 'no percentage -- not a zero');
-  assert.equal(monday.tzs, 0);
-});
-
 /* =====================================================================================
-   THE SUPERSEDED COPIES ARE LEFT ON THE DATABASE, AND THE ANSWER DOES NOT MOVE.
+   THE COMMISSION BOARD AND THE DASHBOARD ADD UP TO ONE FIGURE.
    =====================================================================================
-     "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+     "see the total rec reading at dashboards and the one at commissions which is not okay.
+      because I distributed teams without repetition in access code and I expect an exact
+      total"
+     "what we did in dashboard is the correct way"
 
-   Measured on the live book: 118,494 raw rows for the commission week, 109,375 of them in decks
-   that had been uploaded more than once (440 decks of 513). Roughly half the heaviest read in
-   the system was copies that pickLatestBatch discarded the moment they arrived.
-
-   The screen now asks the totals path which upload won -- one small row per deck per batch --
-   and reads only those batches. THAT IS A TRANSFER CUT AND NOT A RULE CHANGE, and this is the
-   test that says so: the same fixture, answered by a database that HAS the totals function and
-   by one that does not, must produce the same board to the shilling. The filter is deliberately
-   a SUPERSET (one upload spans many teams, so a batch that wins one deck may lose another), and
-   pickLatestBatch still runs over whatever arrives -- so the two paths cannot diverge unless
-   the ranking itself does, which is why both sides now call the same batchRank. */
-test('a re-uploaded deck pays the same whether or not the batch filter can be used', async () => {
+   Recovery on a day is the day's INITIAL deck minus the same day's CURRENT deck -- the
+   dashboard's tiles, per team, through recoveryByTeam. The commission board files the same
+   per-team figures under each team's recovery officer, and with every team under exactly one
+   officer (or none) the board's column adds up to the tile, day by day, and its week to the
+   week. This fixture has everything that could make the two drift: a re-uploaded deck, a team
+   with an initial and no current on a measured day, a day with a current and no initial at
+   all, and a team with no officer named. Run on a database with the totals function and on
+   one without, because the two worlds fold the same rows by different code. */
+test('the commission board adds up to the dashboard\'s recovery, day by day, in both worlds', async () => {
   const book = () => {
-    const t = tables();
+    const t = tables();                                   // Friday: KONGOWE 300, MBAGALA 100
+    const on = (date, wd, rows) => rows.map(([ref, team, arrears, type]) => D(ref, team, arrears, type, 45, date, wd));
     t.defaulter_snapshots.push(
-      // The MON book's baseline: last week's Monday, 800 owed.
-      { ref: 'M1', team: 'KONGOWE', arrears: 800, snapshot_type: 'current', weekday: 'MON',
-        snapshot_date: '2026-07-13', upload_batch: 'cm1', created_at: '2026-07-13T04:00:00Z' },
-      /* THIS week's Monday, uploaded TWICE. The first file said 700 -- it is wrong, and it is
-         the file that must never reach the arithmetic. The correction says 500. */
-      { ref: 'M1', team: 'KONGOWE', arrears: 700, snapshot_type: 'current', weekday: 'MON',
-        snapshot_date: '2026-07-20', upload_batch: 'cm2a', created_at: '2026-07-20T04:00:00Z' },
-      { ref: 'M1', team: 'KONGOWE', arrears: 500, snapshot_type: 'current', weekday: 'MON',
-        snapshot_date: '2026-07-20', upload_batch: 'cm2b', created_at: '2026-07-20T09:00:00Z' },
-      /* AND THE BASELINE DECK ITSELF RE-UPLOADED, because deckByWeekday reads that the same
-         way: a superseded 900 sitting beside the 800 that stands. */
-      { ref: 'M1', team: 'KONGOWE', arrears: 900, snapshot_type: 'current', weekday: 'MON',
-        snapshot_date: '2026-07-13', upload_batch: 'cm0', created_at: '2026-07-13T01:00:00Z' },
+      // Monday: both teams paired. KONGOWE 1000 -> 700, MBAGALA 500 -> 500.
+      ...on(MON, 'MON', [['K1', 'KONGOWE', 1000, 'initial'], ['K1', 'KONGOWE', 700, 'current'],
+        ['M1', 'MBAGALA', 500, 'initial'], ['M1', 'MBAGALA', 500, 'current']]),
+      // Tuesday: KONGOWE's current uploaded twice -- 900 first, corrected to 600 later that
+      // morning -- and MBAGALA's initial with no current at all.
+      ...on('2026-07-21', 'TUE', [['K1', 'KONGOWE', 900, 'initial'], ['K1', 'KONGOWE', 900, 'current'],
+        ['M1', 'MBAGALA', 400, 'initial']]),
+      { ...D('K1', 'KONGOWE', 600, 'current', 45, '2026-07-21', 'TUE'), upload_batch: 'fix', created_at: '2026-07-21T09:00:00Z' },
+      // Wednesday: a current deck and no initial anywhere -- not a measured day.
+      ...on('2026-07-22', 'WED', [['M1', 'MBAGALA', 300, 'current']]),
     );
     return t;
   };
-  const withFn = await portalApi(dbWithRpc(book()), ADMIN, 'commission', {}, NOW);
-  const without = await portalApi(fakeDb(book()), ADMIN, 'commission', {}, NOW);
+  const WEEK = ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24'];
+  for (const [world, mk] of [['migrated', t => dbWithRpc(t)], ['no migration', t => fakeDb(t)]]) {
+    const cm = await portalApi(mk(book()), ADMIN, 'commission', {}, NOW);
+    const dash = await portalApi(mk(book()), ADMIN, 'dashboardFull', {}, NOW);
+    const tile = d => dash.recTrend.find(x => x.date === d);
+    for (const d of WEEK) {
+      const column = cm.recBoard.reduce((s, r) => s + ((r.records.find(x => x.date === d) || {}).recovered || 0), 0);
+      assert.equal(column, tile(d).recovered, `${world}: the board's ${d} column is the dashboard's ${d} tile`);
+    }
+    const weekBoard = cm.recBoard.reduce((s, r) => s + r.weekRecovered, 0);
+    const weekTiles = dash.recTrend.reduce((s, x) => s + x.recovered, 0);
+    assert.equal(weekBoard, weekTiles, `${world}: the board's week is the dashboard's week`);
+    assert.equal(weekTiles, 1400, 'and the fixture measures what it says: 300 + 700 + 0 + 0 + 400');
+    assert.equal(cm.totals.recovered, tile(TODAY).recovered, `${world}: today's total is today's tile`);
 
-  const dayOf = d => {
-    const o = (d.recBoard || []).find(r => r.officer === 'JUMA G');
-    assert.ok(o, 'the recovery officer appears on the board');
-    return (o.records || []).find(x => x.date === '2026-07-20');
-  };
-  const a = dayOf(withFn), b = dayOf(without);
-  assert.ok(a && b, 'Monday was observed on both paths');
-  assert.equal(a.recovered, 300,
-    '800 -> 500 is 300: the standing baseline against the standing correction, neither superseded copy');
-  assert.deepEqual(a, b, 'the batch filter changed the transfer and not one figure');
-  // And the whole board, not just the one day -- a divergence anywhere else would be as bad.
-  assert.deepEqual(withFn.recBoard, without.recBoard);
+    /* THE FIGURES THEMSELVES, so the equality above is not two zeros agreeing. Tuesday is the
+       one worth reading twice: the corrected 600 wins over the 900 it replaced (300 for JUMA),
+       and MBAGALA's lone initial counts in full (400, unassigned) -- exactly as the dashboard
+       has always summed a measured day. Wednesday's lone current measures nothing. */
+    const juma = cm.recBoard.find(r => r.officer === 'JUMA G');
+    assert.deepEqual(juma.records.slice(0, 5).map(r => r.recovered), [300, 300, 0, 0, 300], world);
+    const none = cm.recBoard.find(r => r.officer === '(unassigned)');
+    assert.deepEqual(none.records.slice(0, 5).map(r => r.recovered), [0, 400, 0, 0, 100], world);
+
+    // The note says which days were measured and what was left holding one deck.
+    const tue = cm.recDiag.days.find(x => x.date === '2026-07-21');
+    assert.equal(tue.measured, true); assert.equal(tue.paired, 1); assert.equal(tue.initialOnly, 1);
+    const wed = cm.recDiag.days.find(x => x.date === '2026-07-22');
+    assert.equal(wed.measured, false); assert.equal(wed.currentOnly, 1);
+    assert.equal(cm.recDiag.measured, 3, 'Monday, Tuesday and Friday');
+  }
+});
+
+/* The old commission walk paired a current deck against the same weekday's deck from weeks
+   before -- an initial from April against a current in July. The rule is the dashboard's:
+   the same date, or not measured. */
+test('an initial deck dated another day does not pair with this week\'s current', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(
+    { ref: 'M1', team: 'KONGOWE', arrears: 1000, snapshot_type: 'initial', weekday: 'MON',
+      snapshot_date: '2026-04-06', upload_batch: 'im', created_at: '2026-04-06T04:00:00Z' },
+    { ref: 'M1', team: 'KONGOWE', arrears: 500, snapshot_type: 'current', weekday: 'MON',
+      snapshot_date: MON, upload_batch: 'cm', created_at: MON + 'T04:00:00Z' },
+  );
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  const juma = d.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.records.find(x => x.date === MON).recovered, 0,
+    'a current with no initial dated the same day measures nothing -- not 500 against April');
+  const diag = d.recDiag.days.find(x => x.date === MON);
+  assert.equal(diag.measured, false);
+  assert.equal(diag.currentOnly, 1);
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(dash.recTrend.find(x => x.date === MON).recovered, 0, 'and the dashboard reads the same day the same way');
 });
 
 test('the recovery rate modes are removed from settings, not left switched off', async () => {
@@ -8582,86 +8578,3 @@ test('an officer on a mixed-case team sees their rows under either spelling', as
   assert.ok(fu.rows.every(r => ['Tunduru', 'TUNDURU'].includes(r.team)));
 });
 
-test('the recovery walk in the database answers exactly what the raw walk answers', async () => {
-  /* =====================================================================================
-       "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
-       "go postgress battle after solving that please"
-
-     db/RUN-ME-029 moves the recovery walk into Postgres: one row per team per day instead of a
-     quarter of a million raw customer rows. Measured on the live book, the old path read
-     118,494 rows for the week -- 109,375 of them in decks that had been uploaded more than
-     once, 440 decks of 513 -- plus about 126,000 more for the two baselines.
-
-     THIS IS THE GUARD THAT MAKES THAT SAFE. The same fixture, the same screen, both paths, and
-     every recovery figure must match. test/recovery-day-totals-rpc.mjs is the SQL transcribed
-     as SEPARATE arithmetic, never a call back into the walk -- a comparison where both sides
-     run the same code proves nothing.
-     ===================================================================================== */
-  process.env.REC_AGG_ENABLED = '1';
-  const { RECOVERY_TOTALS_RPC } = await import('./recovery-day-totals-rpc.mjs');
-  const t = tables();
-  const raw = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'week' }, NOW);
-  const agg = await portalApi(
-    fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...RECOVERY_TOTALS_RPC } }),
-    ADMIN, 'commission', { scope: 'week' }, NOW);
-
-  assert.equal(agg.recDiag.aggregated, true, 'the aggregate path actually ran');
-  assert.equal(raw.recDiag.aggregated, undefined, 'and the raw walk actually ran on the other');
-  /* A GUARD THAT COMPARES TWO EMPTY BOARDS GUARDS NOTHING, and it would rot into exactly that
-     the first time somebody trimmed the fixture. There has to be recovery in it to agree on. */
-  assert.ok(raw.recBoard.length, 'the fixture has recovery on it to compare');
-  assert.ok(raw.recBoard.some(r => r.weekRecovered > 0), 'and somebody actually recovered something');
-  assert.deepEqual(agg.recBoard, raw.recBoard,
-    'the recovery board changed depending on WHERE the walk happened -- that is somebody\'s pay');
-  assert.deepEqual(agg.week.map(r => [r.officer, r.recovered, r.recComm]),
-    raw.week.map(r => [r.officer, r.recovered, r.recComm]),
-    'the combined table disagreed between the two paths');
-  assert.equal(agg.totals.recovered, raw.totals.recovered, 'and so did the company total');
-  delete process.env.REC_AGG_ENABLED;
-});
-
-test('the aggregate is asked one day at a time, and one bad day gives up the lot', async () => {
-  /* Asked for the whole week at once, recovery_day_totals timed out on the live book; asked for
-     one day it answers in milliseconds. The split is safe because A DECK IS A WEEKDAY AND A
-     TEAM: in a Mon-Sun range each deck comes round once, so every book has exactly one
-     observation in the week and its "before" always comes from the baseline, which sits outside
-     the range either way. Nothing crosses a day boundary for the split to lose -- and the
-     equivalence guard above proves that against the raw walk. This one stops somebody putting
-     the range back together for tidiness. */
-  process.env.REC_AGG_ENABLED = '1';
-  const { RECOVERY_TOTALS_RPC } = await import('./recovery-day-totals-rpc.mjs');
-  const t = tables();
-  const seen = [];
-  const counting = { recovery_day_totals(store, args) {
-    seen.push(String(args.p_from) + '..' + String(args.p_to));
-    return RECOVERY_TOTALS_RPC.recovery_day_totals(store, args);
-  } };
-  const d = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...counting } }),
-    ADMIN, 'commission', { scope: 'week' }, NOW);
-  assert.equal(d.recDiag.aggregated, true);
-  assert.ok(seen.length >= 5, 'asked once for the range, not day by day: ' + seen.join(', '));
-  assert.ok(seen.every(r => r.split('..')[0] === r.split('..')[1]),
-    'a call spanned more than one day: ' + seen.join(', '));
-
-  /* ONE BAD DAY GIVES UP THE WHOLE THING. A recovery figure missing a day is not a slow answer,
-     it is a wrong one, and it would look entirely reasonable on the board. */
-  let n = 0;
-  const flaky = { recovery_day_totals(store, args) {
-    if (++n === 3) throw new Error('the third day fell over');
-    return RECOVERY_TOTALS_RPC.recovery_day_totals(store, args);
-  } };
-  const back = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...flaky } }),
-    ADMIN, 'commission', { scope: 'week' }, NOW);
-  assert.equal(back.recDiag.aggregated, undefined,
-    'a part-answer was kept -- the missing day would read as a day nobody recovered anything');
-  assert.ok(back.recBoard.length, 'and the raw walk still produced the board');
-
-  /* AND IT IS OFF UNLESS SOMEBODY SAYS OTHERWISE. The SQL disagrees with the decks it reads --
-     see the note at the call site -- so production takes the slow answer that has been paying
-     people correctly for months, and this guard stays warm for when it is reconciled. */
-  delete process.env.REC_AGG_ENABLED;
-  const off = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...RECOVERY_TOTALS_RPC } }),
-    ADMIN, 'commission', { scope: 'week' }, NOW);
-  assert.equal(off.recDiag.aggregated, undefined,
-    'the aggregate ran with the switch off -- unverified arithmetic on a payroll screen');
-});

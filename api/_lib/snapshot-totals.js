@@ -38,7 +38,7 @@
  */
 
 import { runQuery, fetchAll , rpcAll } from './supabase.js';
-import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch, batchRank, teamMatchList } from './snapshots.js';
+import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch, teamMatchList } from './snapshots.js';
 import { todayKey, addDaysKey } from './time.js';
 import { collectedOf, num } from './recovery.js';
 
@@ -801,54 +801,75 @@ export const deckKey = (team, weekday) =>
   + String(weekday == null ? '' : weekday).trim().toUpperCase();
 
 /* =====================================================================================
-   WHICH UPLOADS ARE STILL WORTH READING.
+   RECOVERY ON A DAY, PER TEAM -- THE ONE DEFINITION.
    =====================================================================================
-     "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+     "see the total rec reading at dashboards and the one at commissions which is not okay.
+      because I distributed teams without repetition in access code and I expect an exact total"
 
-   The commission screen is the one place left that reads RAW per-customer defaulter rows over a
-   whole week -- it has to, because working out what a customer recovered means pairing today's
-   arrears against yesterday's, and no team total can answer that. What it does NOT have to do
-   is carry the superseded copies. Measured on this book: 118,494 rows for the week, 109,375 of
-   them in decks that had been uploaded more than once (440 decks of 513). Roughly half of the
-   heaviest read in the system is rows that pickLatestBatch throws away the moment they land.
+   Recovery on a day is what the day's INITIAL deck carried minus what the same day's CURRENT
+   deck still carries: start of day against end of day, per team, per weekday. The dashboard's
+   trend tiles have drawn that since v1, the Orodha and the leader reports pair the same way,
+   and recovery.js names it in its header. The commission screen had its own rule -- every
+   CUSTOMER walked against the same weekday's deck from the week before -- and on a book where
+   every deck carries the whole team that counted a week of drops on every day of the week:
+   272 million on that board against 72 on the dashboard for the same seven days. Two
+   definitions of one figure, and the figure was pay.
 
-   The totals path already knows which upload won, one small row per deck per batch, and it
-   already answers from the deck_totals cache with the days an upload touched asked live -- so
-   this costs one cheap call and no new staleness: an upload unmarks its day (see
-   unmarkDeckTotals), and an unmarked day is read from the decks themselves.
+   So there is one, here, and every screen that says "recovered" reads it.
 
-   IT RETURNS null RATHER THAN A SHORT ANSWER, in every case where it cannot be certain:
+     "what we did in dashboard is the correct way"
 
-     the totals function is not installed        -- nothing to resolve from
-     a winning deck has no upload_batch stamp    -- legacy rows, and `in` cannot match NULL
-     the set is implausibly large                -- a URL long enough to be refused is a read
-                                                    that fails, which is worse than a slow one
+   IT IS THE DASHBOARD'S ARITHMETIC, TO THE SHILLING, split by team -- not a stricter cousin of
+   it. The dashboard pairs a DAY: when that date-and-weekday has an initial deck and a current
+   deck anywhere on the book, the day is measured, and recovery is the initial total minus the
+   current total. Split per team that is: each team's initial minus each team's current, a
+   missing one counting as nought. Added back up over the teams it is the dashboard's figure
+   exactly, which is what lets the commission board's total BE the dashboard's total rather
+   than a second number that usually agrees. A day with decks of only one type is not
+   measured at all -- an empty map, never a row of zeros -- the same as the tile reads it.
 
-   A caller handed null reads every batch, exactly as it did before this existed. A caller
-   handed a set still runs pickLatestBatch over what comes back: this narrows the TRANSFER and
-   never the rule. */
-const MAX_BATCH_FILTER = 200;
+   THE COST OF MATCHING EXACTLY, stated so nobody rediscovers it: on a measured day a team that
+   uploaded its initial and not its current reads its whole initial as recovered, and one that
+   uploaded only a current reads negative. That is what the dashboard has always summed; it is
+   kept here on purpose, because the owner's instruction was that the dashboard is right, and
+   a rule that agrees with it on most days is worse than one that agrees on all of them. If
+   that ever changes it changes HERE, once, and both screens follow.
 
-export async function winningBatches(db, { type = null, weekday = null, from, to, teams = null } = {}) {
-  const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
-    { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
-  if (!agg) return null;                       // migration not run -- caller reads unfiltered
-  /* A DECK IS A DATE, A WEEKDAY AND A TEAM -- the same key the raw walk resolves on, and the
-     same ranking, imported rather than restated. */
-  const win = new Map();
-  for (const r of agg) {
-    const d = String(r.snapshot_date || '').slice(0, 10);
-    if (!d) continue;
-    const k = d + '|' + deckKey(r.team, r.weekday);
-    const cur = win.get(k);
-    if (!cur || batchRank(r) > batchRank(cur)) win.set(k, r);
+   `rows` are DEFAULTER TOTALS rows -- one per team per upload batch, either type -- over any
+   range; `date` and `weekday` pick the deck. The winning batch per team is decided by
+   pickLatestBatch, the rule every reader uses. Weekday and team compare through K(), so a
+   deck stamped 'Mon' pairs with one stamped 'MON' -- the exact-case comparison belongs to the
+   database filters, never to arithmetic (see teamMatchList).
+
+   Returns a Map of team key -> { team, initial, current, recovered, paired }, one entry per
+   team that had either deck on a measured day. `recovered` is not clamped: a team whose
+   arrears grew reads negative, exactly as the tile it feeds always has. */
+const K_ = v => String(v == null ? '' : v).trim().toUpperCase();
+
+export function recoveryByTeam(rows, date, weekday) {
+  const d = String(date == null ? '' : date).slice(0, 10), wd = K_(weekday);
+  const deck = type => pickLatestBatch((rows || []).filter(r => String(r.snapshot_date).slice(0, 10) === d
+    && r.snapshot_type === type && K_(r.weekday) === wd));
+  const sumBy = list => {
+    const m = new Map();
+    for (const r of list) {
+      const k = K_(r.team);
+      const e = m.get(k) || m.set(k, { team: r.team, amt: 0 }).get(k);
+      e.amt += num(r.arrears_amt);
+    }
+    return m;
+  };
+  const ini = sumBy(deck('initial')), cur = sumBy(deck('current'));
+  const out = new Map();
+  if (!ini.size || !cur.size) return out;             // the day is not measured
+  for (const [k, a] of ini) out.set(k, { team: a.team, initial: a.amt, current: 0, recovered: a.amt, paired: false });
+  for (const [k, b] of cur) {
+    const e = out.get(k) || out.set(k, { team: b.team, initial: 0, current: 0, recovered: 0, paired: false }).get(k);
+    e.current = b.amt;
+    e.recovered = e.initial - b.amt;
+    e.paired = ini.has(k);
   }
-  const out = new Set();
-  for (const r of win.values()) {
-    if (r.upload_batch == null || r.upload_batch === '') return null;   // legacy deck: read it all
-    out.add(String(r.upload_batch));
-  }
-  return out.size && out.size <= MAX_BATCH_FILTER ? out : null;
+  return out;
 }
 
 export async function deckDatesPerTeam(db, { type = null, weekday = null, from, to, teams = null } = {}) {
