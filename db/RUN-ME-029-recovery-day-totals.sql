@@ -56,6 +56,35 @@
 -- SAFE TO RE-RUN: create or replace. SAFE NOT TO RUN AT ALL: api/_lib/portal-core.js falls
 -- back to the raw walk when the function is missing, exactly as it works today -- slowly.
 -- =====================================================================================
+-- =====================================================================================
+-- WHY THE FIRST VERSION OF THIS TIMED OUT, because the mistake is worth keeping written down.
+--
+--   "Error: SQL query ran into an upstream timeout"
+--
+-- Two faults, and both are the same lesson the upload status panel taught in RUN-ME-027:
+--
+--   1. A CORRELATED SUBQUERY PER ROW. The walk seeded each book's first "before" with
+--      `(select arrears from base where ...)` -- run once for every row of the sequence,
+--      against a CTE that has no index. A hundred thousand rows times fifty thousand baselines
+--      is not a query, it is a nested loop with a five-billion-row worst case. The seed is now
+--      a ROW in the sequence, dated before everything else, so the ordinary lag() picks it up
+--      and there is no subquery at all.
+--
+--   2. TWO SCANS OF THE WHOLE DEFAULTER HISTORY. `distinct on (weekday, team) ... order by
+--      snapshot_date desc` over every current row ever written looks like it should stop at the
+--      first row of each group. IT DOES NOT: POSTGRES HAS NO SKIP SCAN, so it walks the lot.
+--      Exactly what made upload_status_summary take sixteen seconds.
+--
+--      The groups are KNOWN -- they are the decks observed in the range, about seventy-five of
+--      them -- so each baseline is now looked up BY NAME with a lateral `order by ... limit 1`,
+--      which is an index seek that stops at the first row. Seventy-five seeks instead of one
+--      walk of a million rows.
+--
+-- THE LOOKUPS USE THE RAW weekday AND team, not upper(btrim(...)), so idx_def_snap_lookup can
+-- actually be used -- an expression the index does not carry turns a seek back into a scan.
+-- Grouping and joining still normalise, so a team stored in two spellings costs an extra deck
+-- read rather than a dropped one: the failure bends towards reading too much, never too little.
+-- =====================================================================================
 set statement_timeout = '120s';
 
 create or replace function recovery_day_totals(
@@ -68,128 +97,131 @@ language sql
 stable
 as $$
   with
-  /* 1. THE WINNING BATCH of every current deck in the range: one per (date, weekday, TEAM). */
-  cur_win as (
-    select distinct on (d.snapshot_date, upper(btrim(d.weekday)), upper(btrim(d.team)))
-           d.snapshot_date,
-           upper(btrim(d.weekday)) as wd,
-           upper(btrim(d.team))    as tk,
-           d.upload_batch
+  /* THE RANGE, read once. */
+  cur_all as (
+    select d.snapshot_date, d.weekday, d.team, d.ref, d.arrears, d.upload_batch, d.created_at
     from defaulter_snapshots d
-    where d.snapshot_type = 'current'
-      and d.snapshot_date between p_from and p_to
-      and (p_teams is null or upper(btrim(d.team)) = any (select upper(btrim(x)) from unnest(p_teams) x))
-    order by d.snapshot_date, upper(btrim(d.weekday)), upper(btrim(d.team)),
-             d.created_at desc nulls last, d.upload_batch desc nulls last
-  ),
-  /* The rows of those winning batches, and nothing else. This is the half of 118,494 that the
-     JavaScript was keeping; the other half never leaves the database now. */
-  cur as (
-    select d.snapshot_date, w.wd, w.tk, d.team,
-           upper(btrim(d.ref)) as rk, d.arrears
-    from defaulter_snapshots d
-    join cur_win w
-      on w.snapshot_date = d.snapshot_date
-     and w.wd = upper(btrim(d.weekday))
-     and w.tk = upper(btrim(d.team))
-     and w.upload_batch is not distinct from d.upload_batch
     where d.snapshot_type = 'current'
       and d.snapshot_date between p_from and p_to
       and d.ref is not null
+      and (p_teams is null or d.team = any (p_teams))
   ),
-  /* 2. THE DECKS ACTUALLY OBSERVED. A deck is a weekday AND a team, on a date. */
+  /* The winning batch of each deck: per date, per weekday, per TEAM -- pickLatestBatch's rule,
+     with a NULL batch sorting below any uuid. */
+  cur_win as (
+    select distinct on (snapshot_date, upper(btrim(weekday)), upper(btrim(team)))
+           snapshot_date, weekday, team,
+           upper(btrim(weekday)) as wd, upper(btrim(team)) as tk, upload_batch
+    from cur_all
+    order by snapshot_date, upper(btrim(weekday)), upper(btrim(team)),
+             created_at desc nulls last, upload_batch desc nulls last
+  ),
+  cur as (
+    select w.snapshot_date, w.wd, w.tk, w.team, upper(btrim(c.ref)) as rk, c.arrears
+    from cur_all c
+    join cur_win w
+      on w.snapshot_date = c.snapshot_date
+     and w.wd = upper(btrim(c.weekday))
+     and w.tk = upper(btrim(c.team))
+     and w.upload_batch is not distinct from c.upload_batch
+  ),
   decks as (select distinct snapshot_date, wd, tk from cur),
+  /* The decks observed, by NAME, with a raw spelling to seek the index with. */
+  pairs as (
+    select wd, tk, min(weekday) as weekday, min(team) as team
+    from cur_win group by wd, tk
+  ),
 
-  /* 3. THE BASELINE: what each book owed before the range began.
-        The last CURRENT deck for that weekday BEFORE p_from wins; where there has never been
-        one, the latest INITIAL deck for that weekday not after p_to. Same precedence the
-        JavaScript applies when it lays the initial book down and then overwrites it with the
-        pre-range current. */
-  pre_win as (
-    select distinct on (upper(btrim(d.weekday)), upper(btrim(d.team)))
-           upper(btrim(d.weekday)) as wd, upper(btrim(d.team)) as tk,
-           d.snapshot_date, d.upload_batch
-    from defaulter_snapshots d
-    where d.snapshot_type = 'current'
-      and d.snapshot_date < p_from
-      and (p_teams is null or upper(btrim(d.team)) = any (select upper(btrim(x)) from unnest(p_teams) x))
-    order by upper(btrim(d.weekday)), upper(btrim(d.team)),
-             d.snapshot_date desc, d.created_at desc nulls last, d.upload_batch desc nulls last
+  /* THE BASELINE, ONE INDEX SEEK PER DECK. The newest row before the range carries both the
+     date and the winning batch of that date, so one `limit 1` answers both questions. */
+  pre_pick as (
+    select p.wd, p.tk, x.snapshot_date, x.upload_batch
+    from pairs p
+    cross join lateral (
+      select d.snapshot_date, d.upload_batch
+      from defaulter_snapshots d
+      where d.snapshot_type = 'current'
+        and d.weekday = p.weekday and d.team = p.team
+        and d.snapshot_date < p_from
+      order by d.snapshot_date desc, d.created_at desc nulls last, d.upload_batch desc nulls last
+      limit 1
+    ) x
   ),
   pre as (
-    select w.wd, w.tk, d.team, upper(btrim(d.ref)) as rk, d.arrears
-    from defaulter_snapshots d
-    join pre_win w
-      on w.wd = upper(btrim(d.weekday)) and w.tk = upper(btrim(d.team))
-     and w.snapshot_date = d.snapshot_date
-     and w.upload_batch is not distinct from d.upload_batch
-    where d.snapshot_type = 'current' and d.ref is not null
+    select k.wd, k.tk, d.team, upper(btrim(d.ref)) as rk, d.arrears
+    from pre_pick k
+    join defaulter_snapshots d
+      on d.snapshot_type = 'current'
+     and d.snapshot_date = k.snapshot_date
+     and upper(btrim(d.weekday)) = k.wd
+     and upper(btrim(d.team)) = k.tk
+     and d.upload_batch is not distinct from k.upload_batch
+    where d.ref is not null
   ),
-  ini_win as (
-    select distinct on (upper(btrim(d.weekday)), upper(btrim(d.team)))
-           upper(btrim(d.weekday)) as wd, upper(btrim(d.team)) as tk,
-           d.snapshot_date, d.upload_batch
-    from defaulter_snapshots d
-    where d.snapshot_type = 'initial'
-      and d.snapshot_date <= p_to
-      and (p_teams is null or upper(btrim(d.team)) = any (select upper(btrim(x)) from unnest(p_teams) x))
-    order by upper(btrim(d.weekday)), upper(btrim(d.team)),
-             d.snapshot_date desc, d.created_at desc nulls last, d.upload_batch desc nulls last
+  ini_pick as (
+    select p.wd, p.tk, x.snapshot_date, x.upload_batch
+    from pairs p
+    cross join lateral (
+      select d.snapshot_date, d.upload_batch
+      from defaulter_snapshots d
+      where d.snapshot_type = 'initial'
+        and d.weekday = p.weekday and d.team = p.team
+        and d.snapshot_date <= p_to
+      order by d.snapshot_date desc, d.created_at desc nulls last, d.upload_batch desc nulls last
+      limit 1
+    ) x
   ),
   ini as (
-    select w.wd, w.tk, d.team, upper(btrim(d.ref)) as rk, d.arrears
-    from defaulter_snapshots d
-    join ini_win w
-      on w.wd = upper(btrim(d.weekday)) and w.tk = upper(btrim(d.team))
-     and w.snapshot_date = d.snapshot_date
-     and w.upload_batch is not distinct from d.upload_batch
-    where d.snapshot_type = 'initial' and d.ref is not null
+    select k.wd, k.tk, d.team, upper(btrim(d.ref)) as rk, d.arrears
+    from ini_pick k
+    join defaulter_snapshots d
+      on d.snapshot_type = 'initial'
+     and d.snapshot_date = k.snapshot_date
+     and upper(btrim(d.weekday)) = k.wd
+     and upper(btrim(d.team)) = k.tk
+     and d.upload_batch is not distinct from k.upload_batch
+    where d.ref is not null
+  ),
+  /* The pre-range CURRENT wins over the INITIAL, and one book is one baseline: `distinct on`
+     does the precedence and the de-duplication in the same pass. */
+  base_all as (
+    select wd, tk, team, rk, arrears, 0 as pri from pre
+    union all
+    select wd, tk, team, rk, arrears, 1 as pri from ini
   ),
   base as (
-    select wd, tk, team, rk, arrears from pre
-    union all
-    select i.wd, i.tk, i.team, i.rk, i.arrears from ini i
-    where not exists (select 1 from pre p where p.wd = i.wd and p.rk = i.rk)
+    select distinct on (wd, rk) wd, tk, team, rk, arrears
+    from base_all order by wd, rk, pri
   ),
 
-  /* 4. EVERY BOOK AGAINST EVERY DAY ITS OWN DECK CAME ROUND, whether it appeared that day or
-        not -- because a book that has VANISHED from the deck is the fully-recovered case and
-        would otherwise be invisible. */
-  grid as (
-    select k.wd, k.rk, k.team, d.snapshot_date, d.tk,
-           coalesce(c.arrears, 0) as cur
-    from (select distinct wd, rk, tk, team from base) k
-    join decks d on d.wd = k.wd and d.tk = k.tk
-    left join cur c
-      on c.snapshot_date = d.snapshot_date and c.wd = k.wd and c.tk = k.tk and c.rk = k.rk
-  ),
-  /* Books that were never in a baseline still enter here from the day they first appear, and
-     their first day attributes nothing -- see the rules above. */
-  newcomers as (
-    select c.wd, c.rk, c.team, c.snapshot_date, c.tk, c.arrears as cur
-    from cur c
-    where not exists (select 1 from base b where b.wd = c.wd and b.rk = c.rk)
-  ),
+  /* THE SEQUENCE. The baseline is a ROW, dated before everything, so lag() seeds itself and
+     there is no per-row subquery. Then every book against every day its own deck came round --
+     a book the deck no longer names owes nothing, which is the fully-recovered case -- and
+     finally the newcomers, who have no baseline and so attribute nothing on their first day. */
   seq as (
-    select * from grid
+    select b.wd, b.rk, b.team, date '0001-01-01' as sd, b.arrears as cur, true as seed
+    from base b
     union all
-    select * from newcomers
+    select b.wd, b.rk, b.team, d.snapshot_date, coalesce(c.arrears, 0), false
+    from base b
+    join decks d on d.wd = b.wd and d.tk = b.tk
+    left join cur c
+      on c.snapshot_date = d.snapshot_date and c.wd = b.wd and c.rk = b.rk
+    union all
+    select c.wd, c.rk, c.team, c.snapshot_date, c.arrears, false
+    from cur c
+    left join base b on b.wd = c.wd and b.rk = c.rk
+    where b.rk is null
   ),
-  /* 5. THE WALK. `before` is what this book owed at its previous observation; for a book with
-        a baseline the seed is that baseline, and for a newcomer there is none, so its first
-        day yields nothing. */
   walked as (
-    select s.snapshot_date, s.team, s.cur,
-           coalesce(
-             lag(s.cur) over (partition by s.wd, s.rk order by s.snapshot_date),
-             (select b.arrears from base b where b.wd = s.wd and b.rk = s.rk)
-           ) as before
-    from seq s
+    select sd, team, cur, seed,
+           lag(cur) over (partition by wd, rk order by sd) as before
+    from seq
   )
-  select w.snapshot_date, w.team, sum(greatest(w.before - w.cur, 0))::numeric as recovered
+  select w.sd as snapshot_date, w.team, sum(greatest(w.before - w.cur, 0))::numeric as recovered
   from walked w
-  where w.before is not null
-  group by w.snapshot_date, w.team
+  where not w.seed and w.before is not null
+  group by w.sd, w.team
   having sum(greatest(w.before - w.cur, 0)) <> 0;
 $$;
 
@@ -197,22 +229,22 @@ grant execute on function recovery_day_totals(date, date, text[]) to anon, authe
 
 
 -- ================================== DID IT LAND? =====================================
--- 1. It should answer in well under a second, and return a few hundred rows at most.
+-- 1. It should answer in WELL under a second now, and return a few hundred rows at most.
+--    If this still times out, send me the plan and do not install anything else: a payroll
+--    figure is not worth guessing at twice.
 explain (analyze, buffers, timing)
 select * from recovery_day_totals(
   (date_trunc('week', current_date))::date, current_date, null);
 
--- 2. WHAT IT SAYS, so you can eyeball it against the Commission screen before anybody is paid
---    from it. One row per team per day, and the week's total per team.
+-- 2. WHAT IT SAYS, to eyeball against the Commission screen before anybody is paid from it.
 select team, sum(recovered) as week_recovered, count(*) as days
 from recovery_day_totals((date_trunc('week', current_date))::date, current_date, null)
 group by team order by week_recovered desc limit 20;
 
--- 3. THE PROOF THAT MATTERS: this figure against the old path, for ONE team. Put a team name
---    in and compare it with what the Commission board showed for that team's recovery officer
---    before this was installed. They must agree. If they do not, TELL ME rather than paying
---    anybody: a recovery figure that moved without an upload behind it is the one thing on
---    this screen nobody can afford to guess about.
+-- 3. THE PROOF THAT MATTERS. Put ONE real team in and compare the figure with what the
+--    Commission board showed for that team's recovery officer BEFORE this was installed.
+--    They must agree. If they do not, TELL ME rather than paying anybody: a recovery figure
+--    that moved with no upload behind it is the one thing on this screen nobody can guess at.
 --
 --   select sum(recovered) from recovery_day_totals(
 --     (date_trunc('week', current_date))::date, current_date, array['PUT A TEAM HERE']);

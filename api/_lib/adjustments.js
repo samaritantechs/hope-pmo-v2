@@ -126,8 +126,31 @@ export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
    decks were uploaded; a correction on a day with no pair leaves that day contributing nothing,
    because "we did not measure recovery" and "recovery was nil" are different facts and the
    register cannot turn one into the other. */
-export const ADJ_ARREARS_TARGETS = ['defaulter-current', 'defaulter-initial'];
-export const ADJ_ALL_TARGETS = ADJ_RECEIVED_TARGETS.concat(ADJ_ARREARS_TARGETS);
+/* THE ARREARS BOOKS ARE NO LONGER ADJUSTED, AND THE REASON IS THE BEST KIND: the correction
+   arrives on its own.
+
+     "we shouldnt miamala iliyonasia kwenye recovery since ikisolviwa itakuwa recovered as
+      usual so leave only expected in iliyonasia"
+
+   A payment the arrears deck missed is not lost. When it is sorted out, the customer's arrears
+   fall on the next deck and the recovery walk sees the drop -- as recovery, which is what it
+   is. Registering it against the deck as well counted the SAME shilling twice: once as a
+   correction now, and once as recovery when the deck caught up.
+
+   Worse, it moved recovery in whichever direction the register happened to name, and the two
+   arrears targets pulled OPPOSITE ways -- something somebody had to reason about on a Monday
+   morning to know whether a figure was right.
+
+   The expected books keep the register, because there the correction has nowhere else to
+   arrive: an expected sheet is a photograph of one day, and a payment it missed is missed for
+   ever unless somebody says so.
+
+   ROWS ALREADY WRITTEN AGAINST THE ARREARS BOOKS STAY IN THE LEDGER and stop applying. They
+   are named here so the register can SAY that on the row rather than quietly ignoring them --
+   an entry somebody made that silently stopped counting is how a register loses its
+   authority. */
+export const ADJ_RETIRED_TARGETS = ['defaulter-current', 'defaulter-initial'];
+export const ADJ_ALL_TARGETS = ADJ_RECEIVED_TARGETS.slice();
 
 /* ---------------------------------------------------------------- READ IT ONCE, NOT PER SCREEN
    "Mind you we aint interfering app efficiency and speed : postgres issues"

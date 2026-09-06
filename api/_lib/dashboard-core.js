@@ -12,7 +12,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, de
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
 import { recoveryBasis, num } from './recovery.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. */
-import { adjReceived_, withAdj_, withAdjDef_, ADJ_BUDGET_MS } from './adjustments.js';
+import { adjReceived_, withAdj_, ADJ_BUDGET_MS } from './adjustments.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 /* SATURDAY IS A WORKING DAY HERE, AND THE WEEKEND VIEW WAS THROWING IT AWAY.
@@ -132,16 +132,15 @@ async function buildDashboardUncached(db, user, nowMs) {
   const expRows = withAdj_(scoped(expected.rows), adj, 'expected-current', expected.dates || []);
   const sal = scoped(sal0);
   const rcv = scoped(rcv0);
-  /* THE ARREARS BOOKS TAKE THE REGISTER TOO -- money received lowers a debt, so it comes off
-     whichever deck the row names, and recovery is initial minus current. See withAdjDef_ for
-     which way each side moves it and why. BOTH sides go through the same door on the same day
-     or the correction would be reported as recovery. */
-  const defAdj_ = (rows, date, type) => withAdjDef_(scoped(rows), adj, 'defaulter-' + type, date);
+  /* THE ARREARS BOOKS ARE TAKEN AS THEY COME. The register used to correct them too; it no
+     longer does -- see ADJ_RETIRED_TARGETS. A payment the deck missed arrives by itself as
+     recovery when the deck catches up, and registering it here counted it twice. */
+  const defAdj_ = (rows) => scoped(rows);
   const defCurRows = decks.pairs.length
-    ? decks.pairs.flatMap(p => defAdj_(p.cur, p.date, 'current'))
+    ? decks.pairs.flatMap(p => defAdj_(p.cur))
     : scoped(decks.currentRows);
   const deckPairs = decks.pairs.map(p => ({ ...p,
-    ini: defAdj_(p.ini, p.date, 'initial'), cur: defAdj_(p.cur, p.date, 'current') }));
+    ini: defAdj_(p.ini), cur: defAdj_(p.cur) }));
 
   // ---- Recovered: initial arrears minus current arrears, STRICTLY paired decks only.
   // A missing side yields 0 with a note, never +/- the whole book (initial with no current
