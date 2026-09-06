@@ -3213,6 +3213,19 @@ async function commission(db, user, args = {}, nowMs) {
   return cachedAnswer(db, 'commission|' + scope, user, nowMs,
     () => commissionCompute_(db, user, args, nowMs));
 }
+/** The recovery numerator, per team per day, from db/RUN-ME-029.
+
+    Answers null -- never throws, never a partial -- when the function is not installed, so the
+    caller falls back to the raw walk. A recovery figure that is quietly HALF right is far worse
+    than a slow screen: nobody would know to question it. */
+async function recoveryDayTotals_(db, user, from, to) {
+  const teams = teamMatchList(user.teams);
+  const r = await rpcAll(db, 'recovery_day_totals',
+    { p_from: from, p_to: to, p_teams: teams.length ? teams : null });
+  if (!r || r.error || !Array.isArray(r.data)) return null;
+  return r.data;
+}
+
 async function commissionCompute_(db, user, args = {}, nowMs) {
   /* TWO SCOPES, ONE COMPUTATION. scope 'week' is the screen; scope 'month' is the record
      behind the blinking dot -- the SAME walk from the month's first day, so the month can
@@ -3259,6 +3272,35 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      that uploaded nothing that day is simply unobserved, never "all recovered". A customer
      who slips back keeps the commission of the day they recovered, exactly as promised.
      ===================================================================================== */
+  /* =====================================================================================
+     THE RECOVERY WALK, ASKED OF THE DATABASE FIRST.
+
+       "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+
+     Working out what each officer recovered means pairing every customer's arrears against
+     what they owed last time, and that used to be done here -- over a week of RAW per-customer
+     rows. Measured on this book: 118,494 rows for the week, 109,375 of them in decks that had
+     been uploaded more than once (440 decks of 513), plus about 126,000 more for the two
+     baselines. A quarter of a million rows across the wire to produce a table of seventy
+     numbers, which on this instance is more than forty-five seconds. The screen did not answer.
+
+     recovery_day_totals (db/RUN-ME-029) does the same walk in SQL and returns ONE ROW PER TEAM
+     PER DAY -- about 525 for a week. Every rule it has to match is written out beside it there,
+     because two definitions of "which upload wins" or of how a team is keyed is a pay figure
+     nobody can account for.
+
+     ASKED FIRST, ON PURPOSE, and sequentially: when it answers, the three heavy reads below are
+     never issued at all. One small round trip to save a quarter of a million rows is not a
+     trade that needs thinking about.
+
+     THE DENOMINATOR IS NOT IN IT. Recovery percentage is recovered over UNCOLLECTED, which
+     already arrives aggregated on the expected totals -- so the only thing that ever needed
+     per-customer detail is the numerator, and that is all this asks for.
+
+     WITHOUT THE MIGRATION NOTHING BREAKS: recAgg is null, the raw walk runs exactly as it does
+     today, and the screen is slow rather than wrong. Every migration here works that way. */
+  const recAgg = await recoveryDayTotals_(db, user, mon, sun);
+
   const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp, adj] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
@@ -3275,8 +3317,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
 
        This matters most on a SUNDAY, when mon..sun is seven days wide rather than one, which
        is exactly when the screen started timing out. */
-    snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, mon, sun, user.teams,
-      'team, arrears, snapshot_date, weekday, ref'),
+    recAgg ? [] : snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' },
+      mon, sun, user.teams, 'team, arrears, snapshot_date, weekday, ref'),
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
        board. The recovery side above cannot: it works out what each CUSTOMER owed against
        what they still owe, and a team total cannot answer that. */
@@ -3308,7 +3350,9 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      INITIAL file per weekday however old, and the last CURRENT file per weekday from
      before the range began. See deckByWeekday for why this exact shape. */
   const wantedWds = [...new Set(myDef.map(r => K(r.weekday)).filter(Boolean))];
-  const [iniBook, preBook] = await Promise.all([
+  /* The baselines exist only to seed the raw walk. When the database did the walk they are
+     the other 126,000 rows nobody needs to see. */
+  const [iniBook, preBook] = recAgg ? [{ rows: [] }, { rows: [] }] : await Promise.all([
     deckByWeekday(db, user, { type: 'initial', notAfter: today, weekdays: wantedWds,
       columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
     deckByWeekday(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), weekdays: wantedWds,
@@ -3396,7 +3440,26 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const recByDay = new Map();
   recDiag.dropsSeen = 0;
   const recBase = {}, recBaseSeen = new Set();
-  for (let i = 0; ; i++) {
+
+  /* THE DATABASE ALREADY WALKED IT. recovery_day_totals hands back the numerator per team per
+     day; all that is left here is to file it under the team's RECOVERY OFFICER, which is the
+     one thing the database has no business knowing -- who works for whom is the teams table,
+     and it changes without an upload. Same recByDay shape either way, so every board below is
+     untouched by which path produced it. */
+  if (recAgg) {
+    recDiag.aggregated = true;
+    recDiag.aggRows = recAgg.length;
+    for (const r of recAgg) {
+      const d = String(r.snapshot_date || '').slice(0, 10);
+      if (!d || d < mon || d > sun) continue;
+      const acc = recByDay.get(d) || recByDay.set(d, {}).get(d);
+      const drop = num(r.recovered);
+      if (!(drop > 0)) continue;
+      recDiag.dropsSeen++;
+      bucket(acc, officerOf(teamBy, r.team, 'recovery'), blankRec).recovered += drop;
+    }
+  }
+  for (let i = 0; !recAgg; i++) {
     const d = addDaysKey(mon, i);
     if (d > today || d > sun) break;
     /* Resolved per WEEKDAY then per team (inside pickLatestBatch) -- two different weekday

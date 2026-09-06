@@ -8567,3 +8567,39 @@ test('an officer on a mixed-case team sees their rows under either spelling', as
   // THEIR OWN team only, never sideways.
   assert.ok(fu.rows.every(r => ['Tunduru', 'TUNDURU'].includes(r.team)));
 });
+
+test('the recovery walk in the database answers exactly what the raw walk answers', async () => {
+  /* =====================================================================================
+       "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+       "go postgress battle after solving that please"
+
+     db/RUN-ME-029 moves the recovery walk into Postgres: one row per team per day instead of a
+     quarter of a million raw customer rows. Measured on the live book, the old path read
+     118,494 rows for the week -- 109,375 of them in decks that had been uploaded more than
+     once, 440 decks of 513 -- plus about 126,000 more for the two baselines.
+
+     THIS IS THE GUARD THAT MAKES THAT SAFE. The same fixture, the same screen, both paths, and
+     every recovery figure must match. test/recovery-day-totals-rpc.mjs is the SQL transcribed
+     as SEPARATE arithmetic, never a call back into the walk -- a comparison where both sides
+     run the same code proves nothing.
+     ===================================================================================== */
+  const { RECOVERY_TOTALS_RPC } = await import('./recovery-day-totals-rpc.mjs');
+  const t = tables();
+  const raw = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'week' }, NOW);
+  const agg = await portalApi(
+    fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...RECOVERY_TOTALS_RPC } }),
+    ADMIN, 'commission', { scope: 'week' }, NOW);
+
+  assert.equal(agg.recDiag.aggregated, true, 'the aggregate path actually ran');
+  assert.equal(raw.recDiag.aggregated, undefined, 'and the raw walk actually ran on the other');
+  /* A GUARD THAT COMPARES TWO EMPTY BOARDS GUARDS NOTHING, and it would rot into exactly that
+     the first time somebody trimmed the fixture. There has to be recovery in it to agree on. */
+  assert.ok(raw.recBoard.length, 'the fixture has recovery on it to compare');
+  assert.ok(raw.recBoard.some(r => r.weekRecovered > 0), 'and somebody actually recovered something');
+  assert.deepEqual(agg.recBoard, raw.recBoard,
+    'the recovery board changed depending on WHERE the walk happened -- that is somebody\'s pay');
+  assert.deepEqual(agg.week.map(r => [r.officer, r.recovered, r.recComm]),
+    raw.week.map(r => [r.officer, r.recovered, r.recComm]),
+    'the combined table disagreed between the two paths');
+  assert.equal(agg.totals.recovered, raw.totals.recovered, 'and so did the company total');
+});
