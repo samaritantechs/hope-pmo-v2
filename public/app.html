@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-06-b';
+var BUILD = '2026-09-06-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4734,13 +4734,17 @@ VIEWS.commission = function(){
           ? board('cmColWeek','Early Collection — wiki hii / this week',
               'asilimia dhidi ya kitabu cha initial expected na idadi ya PAID+OVERPAID kwa KILA siku'
                 + ' / the col % against the initial expected book and the PAID+OVERPAID count, day by day',
+              /* EACH DAY'S OWN TZS, beside its count -- "collection wiki is not showing what
+                 they earned per day as recovery does". The count is what the day pays on and
+                 the shillings are what it paid; a board that showed only the first left the
+                 officer working the second out by hand. Same shape as the recovery board. */
               d.colBoard, [col('officer','Early col officer')]
                 .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
-                  return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num')]); }, []))
+                  return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num'), col('ctzs'+k, k+' TZS', 'money')]); }, []))
                 .concat([{key:'weekPct', label:'Wiki %', kind:'pct', target:'ecol'}, col('weekN','Wiki P+O','num'),
                   col('weekCommission','Wiki / Week TZS','money')]),
               sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
-                  return a.concat(['n'+k]); }, ['weekN','weekCommission'])))
+                  return a.concat(['n'+k, 'ctzs'+k]); }, ['weekN','weekCommission'])))
           : '<div class="card"><div class="card-h">Early Collection — wiki hii / this week</div>'
             + '<div class="note" style="margin:10px 14px">Hakuna faili la <b>INITIAL expected</b> la wiki hii — '
             + 'bodi hii inasoma faili la INITIAL pekee, hakuna mbadala. Pakia la leo na hujaa yenyewe. '
@@ -4810,12 +4814,18 @@ VIEWS.commission = function(){
          poor Jumanne -- so the five percentages are what tell somebody what they are earning,
          and Week TZS is their sum. The week's own percentage is context, not the basis, which
          is why it sits AFTER them and not in front. */
+      /* AND WHAT EACH DAY PAID, beside its percentage -- "collection wiki is not showing what
+         they earned per day as recovery does". The rate was already on the row (tzsJ3..tzsIJ,
+         see pmoBoard); the table just never drew it, so Week TZS was a sum with no parts. Same
+         shape as the recovery board: the percentage, then the shillings it was worth. */
       d.pmo, [col('officer','PMO'), col('teams','Teams','num'),
         col('weekUncollected','Uncollected','money')]
-        .concat(['J3','J4','J5','AL','IJ'].map(function(k){ return {key:'pct'+k, label:k, kind:'pct', target:'col'}; }))
+        .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
+          return a.concat([{key:'pct'+k, label:k, kind:'pct', target:'col'}, col('tzs'+k, k+' TZS', 'money')]); }, []))
         .concat([{key:'weekPct', label:'Wiki %', kind:'pct', target:'col'},
         {key:'prevWeekPct', label:'Last week %', kind:'pct', target:'col'},
-        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]));
+        col('weekCommission','Week TZS','money'), col('bonus','Bonus','money')]),
+      sumRow(d.pmo, ['J3','J4','J5','AL','IJ'].map(function(k){ return 'tzs'+k; }).concat(['weekCommission','bonus'])));
     S.rows = d.week;
     S.cols = CMS_COLS;
     // "chip the last AIO" -- the combined all-in-one Orodha folds behind a chip; the
