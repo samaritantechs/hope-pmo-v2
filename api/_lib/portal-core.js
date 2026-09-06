@@ -16,7 +16,7 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten,
+import { adjReceived_, withAdj_, adjCountableRefs_, noteAdjustmentsWritten, ADJ_RETIRED_TARGETS,
   ADJ_RECEIVED_TARGETS } from './adjustments.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
@@ -2518,10 +2518,12 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
      Batch first, register second, for the reason in withAdj_; and the weekday is fixed by the
      caller, so the correction lands on "that initial deck or any current available" for the
      day, whichever weekday's deck that turned out to be. */
-  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
+  /* THE ARREARS DECK IS TAKEN AS IT COMES. The register no longer corrects it -- see
+     ADJ_RETIRED_TARGETS: a payment this deck missed shows up as recovery the moment the deck
+     catches up, so adjusting it here counted the same shilling twice. */
+  const defDay_ = (rows, date, type, weekday) =>
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
-      && r.snapshot_type === type && r.weekday === weekday)),
-    adj, 'defaulter-' + type, date);
+      && r.snapshot_type === type && r.weekday === weekday));
   const days = [];
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
@@ -2911,10 +2913,12 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
   const dailyTargetTeam = weeklyTarget / 5;
   const myExp = scoped(user, expW), myIni = scoped(user, iniW), myDef = scoped(user, defW);
   /* One day's deck, resolved and corrected -- see the note beside the weekly report's copy. */
-  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
+  /* THE ARREARS DECK IS TAKEN AS IT COMES. The register no longer corrects it -- see
+     ADJ_RETIRED_TARGETS: a payment this deck missed shows up as recovery the moment the deck
+     catches up, so adjusting it here counted the same shilling twice. */
+  const defDay_ = (rows, date, type, weekday) =>
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
-      && r.snapshot_type === type && r.weekday === weekday)),
-    adj, 'defaulter-' + type, date);
+      && r.snapshot_type === type && r.weekday === weekday));
   const mySales = scoped(user, loanRows).filter(l => SALES_STAGES.includes(l.stage));
 
   // Which real date each day column looks at: the latest of that weekday, today included.
@@ -6211,7 +6215,9 @@ function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
    Gated on its own `adjust` tab (granted like `audit`: admins from the start, the PMO-Data
    person by ticking it on their code). Writing numbers reports lean on is not a default
    power. */
-const ADJ_TARGETS = ['expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current'];
+/* WHAT MAY BE WRITTEN NOW. The two arrears books were removed -- see ADJ_RETIRED_TARGETS in
+   adjustments.js for why a correction that arrives on its own must not also be registered. */
+const ADJ_TARGETS = ['expected-initial', 'expected-current'];
 function requireAdjust(user) {
   const t = (user && user.tabs) || [];
   if (!t.includes('adjust') && !t.includes('settings')) {
@@ -6297,7 +6303,9 @@ async function adjustments(db, user, p = {}) {
   const out = rows.map(r => {
     const a = num(r.amount);
     totals[r.target] = (totals[r.target] || 0) + a;
-    net += a;
+    /* The net is what the register is still MOVING, so a retired book is not in it. Its own
+       total stays above, because the row is still there and its history is still true. */
+    if (!ADJ_RETIRED_TARGETS.includes(String(r.target))) net += a;
     const book = bookOf(String(r.target));
     const ref = String(r.ref || '').trim();
     let countState = 'amount-only', countNote = null;
@@ -6337,7 +6345,15 @@ async function adjustments(db, user, p = {}) {
       countState = 'counted';
       countNote = 'Inahesabika kama mteja mmoja kwenye kamisheni. / Counted as one customer for commission.';
     }
-    return { ...r, countState, countNote };
+    /* A ROW WRITTEN AGAINST AN ARREARS BOOK STILL BELONGS IN THE LEDGER, and it says on its
+       face that it no longer applies -- see ADJ_RETIRED_TARGETS. An entry somebody made that
+       quietly stopped counting is how a register loses the authority it exists to have. */
+    const retired = ADJ_RETIRED_TARGETS.includes(String(r.target));
+    return { ...r, countState, countNote,
+      ...(retired ? { retired: true, retiredNote:
+        'Daftari hili halitumiki tena — likishasuluhishwa linaonekana kama urejeshaji kwenye deki. '
+        + '/ This book is no longer adjusted: once it is sorted out the deck shows it as recovery, '
+        + 'so registering it here counted it twice.' } : {}) };
   });
   return { rows: out, totals, net, ready: true, targets: ADJ_TARGETS.slice(),
     // So the tab can lead with the one thing that needs a person: rows the deck has overtaken.
@@ -7205,7 +7221,8 @@ function adjLedgerCells_(adj, from, to) {
   for (const r of adj.cells('expected-initial')) put(r.date, r.team, 'ic', r.amount);
   /* The arrears pair. Money received lowers a debt, so these SUBTRACT where the two above add
      -- and the ledger stores the two decks separately (ri, rc) precisely so recovery can still
-     be worked out as initial minus current after the fact. See withAdjDef_ for which way each
+     be worked out as initial minus current after the fact. The arrears decks are no longer
+     corrected by the register at all -- see ADJ_RETIRED_TARGETS -- so what each
      one moves recovery, and why. */
   for (const r of adj.cells('defaulter-initial')) put(r.date, r.team, 'ri', r.amount);
   for (const r of adj.cells('defaulter-current')) put(r.date, r.team, 'rc', r.amount);
@@ -7787,10 +7804,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   /* And the arrears side, the same way. Recovery is initial minus current, so BOTH decks are
      corrected or neither is -- correcting one and not the other would report the register as
      recovery. */
-  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
+  /* THE ARREARS DECK IS TAKEN AS IT COMES. The register no longer corrects it -- see
+     ADJ_RETIRED_TARGETS: a payment this deck missed shows up as recovery the moment the deck
+     catches up, so adjusting it here counted the same shilling twice. */
+  const defDay_ = (rows, date, type, weekday) =>
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
-      && r.snapshot_type === type && r.weekday === weekday)),
-    adj, 'defaulter-' + type, date);
+      && r.snapshot_type === type && r.weekday === weekday));
 
   /* ---- loan applications per weekday: unassigned + assigned, by the day the admin CHOSE ----
 
@@ -8899,10 +8918,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        A board people are ranked on must not depend on which read answered. */
     }).sort((a, b) => b.recovered - a.recovered || String(a.officer).localeCompare(String(b.officer)));
   }
-  /* One day's deck, resolved and CORRECTED -- see withAdjDef_. Recovery is initial minus
-     current, so both decks go through the same door or the register reads as recovery. */
-  const defDay_ = (d, type, weekday) =>
-    withAdjDef_(onDate(myDef, d, type, weekday), adj, 'defaulter-' + type, d);
+  /* One day's deck, resolved and taken as it comes -- the register no longer corrects the
+     arrears books, see ADJ_RETIRED_TARGETS. */
+  const defDay_ = (d, type, weekday) => onDate(myDef, d, type, weekday);
   const iniToday = defDay_(today, 'initial', wd), curToday = defDay_(today, 'current', wd);
   /* THE DENOMINATOR THE SUBTITLE HAS ALWAYS PROMISED.
        "At dashboard Recovery — today initial · current · recovered · Rec % ÷ this week's

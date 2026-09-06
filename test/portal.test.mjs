@@ -2451,9 +2451,8 @@ test('a negative Iliyonasia reduces what was received, and an unattributed one i
     /* NO TEAM. It cannot be attributed to one, and inventing an attribution would make the
        team rows stop adding up to the total -- a discrepancy nobody could account for. */
     { id: 'a2', adj_date: MON, target: 'expected-current', team: null, amount: 99000 },
-    /* THE ARREARS BOOKS ARE DELIBERATELY NOT APPLIED. Recovery is initial-minus-current across
-       two decks, so the same +50,000 raises it on one side and lowers it on the other, and
-       guessing which was meant would put a confident wrong number in the Monday meeting. */
+    /* THE ARREARS BOOKS ARE RETIRED and apply to nothing -- see ADJ_RETIRED_TARGETS. Rows
+       written before that stay in the ledger; they must not move a figure. */
     { id: 'a3', adj_date: MON, target: 'defaulter-current', team: 'KONGOWE', amount: 50000 },
     { id: 'a4', adj_date: MON, target: 'defaulter-initial', team: 'KONGOWE', amount: 50000 },
   ];
@@ -2462,7 +2461,7 @@ test('a negative Iliyonasia reduces what was received, and an unattributed one i
   const kong = d.teams.find(x => x.team === 'KONGOWE');
   assert.equal(kong.adjusted, -25000, 'positive adds, negative reduces -- the register\'s own rule');
   assert.equal(kong.recovered, plain.teams.find(x => x.team === 'KONGOWE').recovered,
-    'the defaulter rows change no recovery figure until somebody says which way they read');
+    'a retired arrears row still moved a recovery figure');
   assert.equal(d.teamTotals.adjusted, -25000, 'the unattributed 99,000 is not in the team total');
 });
 
@@ -2765,12 +2764,14 @@ test('the Iliyonasia tab says what the commission side did with every row', asyn
   assert.equal(by.b.countState, 'superseded', 'the deck overtook this one -- say so on the row');
   assert.equal(by.c.countState, 'no-ref');
   assert.equal(by.e.countState, 'amount-only', 'the arrears books pay no per-customer commission');
-  /* AND THE ARREARS ROW SAYS WHICH WAY IT MOVES RECOVERY, on the row, before anybody has to
-     work it out. The two targets pull in opposite directions and the one that pulls DOWN is
-     the one somebody will query on a Monday. */
-  assert.match(by.e.countNote, /recovery goes UP/, 'defaulter-current, positive');
-  assert.match(by.f.countNote, /recovery goes DOWN/, 'defaulter-initial, positive -- the other way');
-  assert.match(by.g.countNote, /recovery goes DOWN/, 'and the sign flips it back again');
+  /* AND EVERY ARREARS ROW SAYS IT HAS RETIRED, on the row. These used to carry a note about
+     which way each one moved recovery; they no longer move it at all, and a row that quietly
+     stopped counting is how a register loses its authority. */
+  for (const id of ['e', 'f', 'g']) {
+    assert.equal(by[id].retired, true, id + ' does not say it has retired');
+    assert.match(by[id].retiredNote, /counted it twice/);
+  }
+  assert.ok(!by.a.retired, 'and the expected books are untouched by any of this');
   assert.equal(d.superseded, 1, 'and the tab can lead with the count that needs a person');
   for (const r of d.rows) assert.ok(r.countNote, 'every row explains itself in words');
 });
@@ -2820,100 +2821,54 @@ test('every field of a register row is editable, and absent means untouched', as
    taking it off the CURRENT deck raises recovery and taking it off the INITIAL deck lowers it.
    These two tests are the whole of it, and they are the reason the arrears pair sat unapplied
    until somebody said which way it read. */
-test('a payment the EVENING deck missed raises recovery', async () => {
+test('the register no longer touches the arrears books, and the ledger says so', async () => {
+  /* =====================================================================================
+       "we shouldnt miamala iliyonasia kwenye recovery since ikisolviwa itakuwa recovered as
+        usual so leave only expected in iliyonasia"
+
+     This replaces four tests that pinned the OPPOSITE behaviour -- an arrears correction
+     raising or lowering recovery depending on which deck it named. They were right about what
+     the code did and wrong about what it should do, and the reason is the best kind: the
+     correction arrives on its own.
+
+     A payment the arrears deck missed is not lost. When it is sorted out the customer's
+     arrears fall on the next deck and the recovery walk sees the drop -- as recovery, because
+     that is what it is. Registering it against the deck as well counted the same shilling
+     twice: once as a correction now, once as recovery when the deck caught up.
+     ===================================================================================== */
   const t = tables();
-  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
-    team: 'KONGOWE', amount: 200, reason: 'ililipwa, deki la jioni halikuiona' }];
+  t.pmo_adjustments = [
+    { id: 'r1', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 200,
+      reason: 'ililipwa, deki la jioni halikuiona' },
+    { id: 'r2', adj_date: TODAY, target: 'defaulter-initial', team: 'KONGOWE', amount: 300 },
+  ];
   const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
   const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
   const dayOf = x => x.days.find(r => r.date === TODAY);
-  assert.equal(dayOf(d).recovered, dayOf(plain).recovered + 200,
-    'current falls by what was received, so initial minus current rises by exactly that');
-  const kong = x => x.teams.find(r => r.team === 'KONGOWE');
-  assert.equal(kong(d).recovered, kong(plain).recovered + 200);
-  assert.equal(kong(d).curDebt, kong(plain).curDebt, 'the week-end debt column reads its own deck');
-  // One team, one day. Nobody else moves.
-  assert.equal(x_(d, 'MBAGALA').recovered, x_(plain, 'MBAGALA').recovered);
-});
-const x_ = (d, team) => d.teams.find(r => r.team === team);
+  assert.equal(dayOf(d).recovered, dayOf(plain).recovered,
+    'an arrears entry moved recovery -- it is counted again when the deck catches up');
 
-test('a MORNING deck that was already wrong lowers recovery', async () => {
-  /* The day started from an overstated position: a payment from the night before never reached
-     the initial sheet. Correcting it means less was recovered during the day than the decks
-     appeared to show -- which is the direction nobody likes and the one that makes the figure
-     true. */
-  const t = tables();
-  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-initial',
-    team: 'KONGOWE', amount: 200 }];
-  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
-  const dayOf = x => x.days.find(r => r.date === TODAY);
-  assert.equal(dayOf(d).recovered, dayOf(plain).recovered - 200);
-});
-
-test('an arrears book cannot be corrected below nothing', async () => {
-  /* A book cannot owe less than nothing, so the correction is clamped at zero per team-day --
-     the same clamp uncollected has always carried. A register row larger than the whole deck
-     it names takes that deck to zero and stops, rather than turning a debt into a credit and
-     reporting the difference as recovery. */
-  const t = tables();
-  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
-    team: 'KONGOWE', amount: 50000000 }];
-  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
-  const bigger = tables();
-  bigger.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
-    team: 'KONGOWE', amount: 99000000 }];
-  const d2 = await portalApi(dbWithRpc(bigger), ADMIN, 'weekly', {}, NOW);
-  const kong = x => x.teams.find(r => r.team === 'KONGOWE');
-
-  assert.ok(kong(d).recovered > kong(plain).recovered, 'it does apply');
-  assert.ok(kong(d).recovered < 50000000, 'but never by the registered amount -- the book is smaller');
-  /* THE PROOF THAT IT CLAMPED RATHER THAN SCALED: twice the correction, the same answer,
-     because the deck it names has already been taken to zero. */
-  assert.equal(kong(d2).recovered, kong(d).recovered);
-});
-
-test('the sign is taken as typed on the arrears books too', async () => {
-  const t = tables();
-  // Negative against current: money went back OUT, so the evening book owes more, and less was
-  // recovered. The mirror of the first test, which is what "as typed" has to mean.
-  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
-    team: 'KONGOWE', amount: -200 }];
-  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
-  const dayOf = x => x.days.find(r => r.date === TODAY);
-  assert.equal(dayOf(d).recovered, dayOf(plain).recovered - 200);
-});
-
-test('a correction cannot invent recovery on a day nobody paired a deck', async () => {
-  /* "we did not measure recovery" and "recovery was nil" are different facts, and the register
-     must not turn one into the other. MON has no decks at all in this fixture. */
-  const t = tables();
-  t.pmo_adjustments = [{ id: 'r1', adj_date: MON, target: 'defaulter-current',
-    team: 'KONGOWE', amount: 200 }];
-  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
-  const dayOf = (x, dt) => x.days.find(r => r.date === dt);
-  assert.equal(dayOf(d, MON).recovered, dayOf(plain, MON).recovered,
-    'no pair, no recovery -- the day still contributes nothing');
-  assert.equal(dayOf(d, TODAY).recovered, dayOf(plain, TODAY).recovered, 'and no other day moves');
-});
-
-test('the dashboard and the weekly report agree on a corrected recovery figure', async () => {
-  /* The same drift the collected side was cured of, on the other book: two screens reading one
-     pair of decks by two rules is two answers to one question. */
-  const t = tables();
-  t.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
-    team: 'KONGOWE', amount: 200 }];
-  const wk = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  /* AND EVERY SCREEN THAT READS RECOVERY AGREES, because they all stopped correcting it
+     together. One day, one recovered figure, whichever asks. */
   const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
-  const day = wk.days.find(r => r.date === TODAY);
-  const trend = dash.recTrend.find(r => r.date === TODAY);
-  assert.equal(day.recovered, trend.recovered, 'one day, one recovered figure, whichever asks');
-  // And the shared dashboard the phone's bar is built from reads the same pair.
+  assert.equal(dayOf(d).recovered, dash.recTrend.find(r => r.date === TODAY).recovered);
   const shared = await portalApi(dbWithRpc(t), ADMIN, 'dashboard', {}, NOW);
-  assert.equal(shared.totals.recovery.recovered, day.recovered);
+  assert.equal(shared.totals.recovery.recovered, dayOf(d).recovered);
+
+  /* A NEW ONE CANNOT BE WRITTEN, and the refusal names what may be. */
+  await assert.rejects(
+    () => portalApi(dbWithRpc(t), ADMIN, 'adjustmentRecord',
+      { date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 50 }, NOW),
+    e => e.status === 400 && /expected-initial, expected-current/.test(e.message),
+    'the arrears books are still offered');
+
+  /* BUT THE ROWS ALREADY WRITTEN STAY IN THE LEDGER. An entry somebody made that silently
+     stopped counting is how a register loses its authority: it is still listed, and it says
+     it no longer applies. */
+  const reg = await portalApi(dbWithRpc(t), ADMIN, 'adjustments', {}, NOW);
+  const old = (reg.rows || []).filter(r => String(r.target).startsWith('defaulter-'));
+  assert.equal(old.length, 2, 'the historical arrears entries vanished from the register');
+  assert.ok(old.every(r => r.retired === true), 'and they do not say that they have retired');
 });
 
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {
@@ -8469,7 +8424,8 @@ test('the customer-care board still names the agent who RECEIVED the application
 /* ILIYONASIA -- the manual, signed, attributable adjustment register.
    "on manual adjustment we have to select date and report type on expected ini/curr or def
     in/cur and put positive or negative amount". A signed figure against one report date and
-   one of the four books, never anonymous: who and why survive beside the number. Gated on
+   one of the EXPECTED books -- the two arrears books have since retired, see
+   ADJ_RETIRED_TARGETS -- never anonymous: who and why survive beside the number. Gated on
    its own granted tab (like audit), because writing numbers reports lean on is not a
    default power. */
 test('Iliyonasia: the register records signed amounts per book, gated on the adjust tab', async () => {
@@ -8494,14 +8450,19 @@ test('Iliyonasia: the register records signed amounts per book, gated on the adj
     { date: TODAY, target: 'expected-current', team: 'kongowe', amount: 250000, reason: 'muamala ulionasa' }, NOW);
   await portalApi(db, DATA, 'adjustmentRecord',
     { date: TODAY, target: 'expected-current', amount: -50000 }, NOW);
+  /* THE ARREARS BOOKS ARE NO LONGER OFFERED -- see ADJ_RETIRED_TARGETS. The refusal names
+     what may be written, so nobody has to guess what changed. */
+  await assert.rejects(() => portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'defaulter-current', amount: -100000, ref: '5215609147' }, NOW),
+    e => e.status === 400 && /expected-initial, expected-current/.test(e.message));
   await portalApi(db, DATA, 'adjustmentRecord',
-    { date: TODAY, target: 'defaulter-current', amount: -100000, ref: '5215609147' }, NOW);
+    { date: TODAY, target: 'expected-initial', amount: -100000, ref: '5215609147' }, NOW);
 
   const d = await portalApi(db, ADMIN, 'adjustments', {}, NOW);   // admins hold the tab from the start
   assert.equal(d.ready, true);
   assert.equal(d.rows.length, 3);
   assert.equal(d.totals['expected-current'], 200000, 'signed amounts net out per book');
-  assert.equal(d.totals['defaulter-current'], -100000);
+  assert.equal(d.totals['expected-initial'], -100000);
   assert.equal(d.net, 100000);
   const first = d.rows.find(r => Number(r.amount) === 250000);
   assert.equal(first.created_by, 'PMO DATA', 'never anonymous');

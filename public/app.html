@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-05-e';
+var BUILD = '2026-09-06-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5195,11 +5195,16 @@ function printHtml(html){
    of the four books it belongs to, put a positive amount to add or a negative one to reduce,
    and the register keeps who/when/why forever. The reason the reports can be made right in
    the SYSTEM instead of patched in somebody's Excel. */
+/* THE TWO ARREARS BOOKS HAVE RETIRED and the server no longer accepts them -- a payment the
+   arrears deck missed arrives on its own as recovery when the deck catches up, so registering
+   it here counted the same shilling twice. Their LABELS stay, because rows written before that
+   are still in the ledger and a row that cannot name its own book is worse than a retired
+   one. `targets` comes from the server, so the picker offers exactly what will be accepted. */
 var ADJ_TARGET_LABELS = {
   'expected-initial':  'Expected — Initial',
   'expected-current':  'Expected — Current',
-  'defaulter-initial': 'Defaulter — Initial',
-  'defaulter-current': 'Defaulter — Current',
+  'defaulter-initial': 'Defaulter — Initial (imestaafu / retired)',
+  'defaulter-current': 'Defaulter — Current (imestaafu / retired)',
 };
 /* What the commission side did with a register row -- the server decides which of these is
    true (see `adjustments` in portal-core.js); this is only the wording. */
@@ -5219,8 +5224,12 @@ VIEWS.adjust = function(){
       + kpi('Marekebisho / Adjustments', money((d.rows||[]).length))
       + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net', (tg['expected-initial']||0) < 0 ? 'bad' : '')
       + kpi('Expected — Current', money(tg['expected-current'] || 0), 'jumla / net', (tg['expected-current']||0) < 0 ? 'bad' : '')
-      + kpi('Defaulter — Initial', money(tg['defaulter-initial'] || 0), 'jumla / net', (tg['defaulter-initial']||0) < 0 ? 'bad' : '')
-      + kpi('Defaulter — Current', money(tg['defaulter-current'] || 0), 'jumla / net', (tg['defaulter-current']||0) < 0 ? 'bad' : '')
+      /* The retired books get a tile only while there is history in them to explain, and it
+         says so rather than sitting there looking like a figure somebody could still move. */
+      + (tg['defaulter-initial'] ? kpi('Defaulter — Initial', money(tg['defaulter-initial']),
+          'imestaafu / retired, no longer applied', 'mut') : '')
+      + (tg['defaulter-current'] ? kpi('Defaulter — Current', money(tg['defaulter-current']),
+          'imestaafu / retired, no longer applied', 'mut') : '')
       + '</div>'
       + (d.ready === false ? '<div class="note bad">' + esc(d.note || '') + '</div>' : '')
       /* THE ONE THING ON THIS TAB THAT NEEDS A PERSON, AT THE TOP.
@@ -5283,10 +5292,12 @@ VIEWS.adjust = function(){
          reading it what to do: counted (nothing), superseded (delete it when tidying), no-ref
          (type the customer number and it starts counting), amount-only (nothing to do). */
       {key:'countState', label:'Kamisheni / Commission', kind:'chip',
-       chip:function(r){ return r.countState === 'superseded' ? 'bad'
+       chip:function(r){ return r.retired ? 'mut'
+         : r.countState === 'superseded' ? 'bad'
          : r.countState === 'counted' ? 'ok'
          : r.countState === 'no-ref' ? 'warn' : 'mut'; },
-       get:function(r){ return ADJ_COUNT_LABELS[r.countState] || r.countState || '—'; }},
+       get:function(r){ return r.retired ? 'Imestaafu / retired'
+         : (ADJ_COUNT_LABELS[r.countState] || r.countState || '—'); }},
       col('reason','Sababu / Reason'),
       col('created_by','Aliyerekebisha / By'), col('created_at','Lini / When','dt')];
     /* A tap on a row opens it, AND THE WHOLE ROW IS EDITABLE -- "the iliyonasia register rows
@@ -8609,8 +8620,8 @@ function wireForms(){
   var nk = document.getElementById('newCode');
   if (nk) nk.onclick = function(){ codeForm(null); };
   /* Iliyonasia: which way the chosen book will move the figures, said while the choice is
-     still being made. The arrears pair pull in opposite directions -- recovery is initial
-     minus current -- and the sign flips both, so the hint reads the amount too. */
+     still being made. The arrears pair used to be here too, pulling in opposite directions;
+     they have retired, and the two books left both move the same way with the sign. */
   var adjHint = function(){
     var h = document.getElementById('adjTargetHint');
     if (!h) return;
@@ -8618,11 +8629,7 @@ function wireForms(){
     var v = Number((document.getElementById('adjAmt') || {}).value);
     var up = !(v < 0);                                   // blank or positive reads as received
     h.textContent =
-      t === 'defaulter-current' ? (up ? 'Urejeshaji utaongezeka / recovery goes UP'
-                                      : 'Urejeshaji utapungua / recovery goes DOWN')
-    : t === 'defaulter-initial' ? (up ? 'Urejeshaji utapungua / recovery goes DOWN'
-                                      : 'Urejeshaji utaongezeka / recovery goes UP')
-    : t === 'expected-current'  ? (up ? 'Makusanyo ya leo yataongezeka / today\u2019s collected goes UP'
+      t === 'expected-current'  ? (up ? 'Makusanyo ya leo yataongezeka / today\u2019s collected goes UP'
                                       : 'Makusanyo ya leo yatapungua / today\u2019s collected goes DOWN')
     : t === 'expected-initial'  ? (up ? 'Early col itaongezeka / early collection goes UP'
                                       : 'Early col itapungua / early collection goes DOWN')
