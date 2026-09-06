@@ -417,10 +417,18 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   // MBAGALA names no recovery officer, so its 100 recovered is still counted, unassigned.
   assert.equal(d.day.find(r => r.officer === '(unassigned)').recovered, 100);
   /* THE WEEKLY % ON THE COMBINED TABLE -- "have a last colomn of their weekly performance
-     percentage". JUMA's observed books entered the week holding 500 + 700 = 1,200 and he
-     recovered 300: rec % = 25. */
+     percentage".
+
+     RECOVERED OVER UNCOLLECTED, which is the rule the plan states and the one the Orodha and
+     TARGET_REC_PCT have always used: "Kilichorejeshwa / kisichokusanywa". It is NOT recovered
+     over the whole defaulter book -- that denominator is far larger than the day's work is
+     measured against, and scoring on it put every officer at 0 or 1% with the whole board
+     under the 50% floor. */
   const juWeek = d.week.find(r => r.officer === 'JUMA G');
-  assert.equal(juWeek.pct, 25, 'rec % = recovered over what the observed books held entering the range');
+  assert.equal(juWeek.pct, 21.4, 'rec % = recovered over UNCOLLECTED, not over the whole default');
+  /* AND IT IS THE SAME FIGURE THE BOARD PAYS ON. One officer's week cannot read one percentage
+     on the combined table and another on the board beside it. */
+  assert.equal(d.recBoard.find(r => r.officer === 'JUMA G').weekPct, juWeek.pct);
 
   /* THE BAND BOARD BY DISBURSEMENT YEAR IS GONE WITH THE MODES IT SPLIT BY. What replaces it
      is the ladder, sent from its one definition so the screen cannot draw a different one. */
@@ -443,14 +451,14 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   const recJuma = d.recBoard.find(r => r.officer === 'JUMA G');
   assert.ok(recJuma, 'the recovery officer has their own board row');
   assert.equal(recJuma.weekRecovered, 300);
-  assert.equal(recJuma.weekPct, 25, '300 off a book that opened at 1,200');
+  assert.equal(recJuma.weekPct, 21.4, '300 recovered against the week\'s uncollected');
   assert.equal(recJuma.weekCommission, 0, 'every record is under the floor, so the week pays nothing');
   /* SIX RECORDS, NOT SEVEN DAYS: Monday to Friday, then the week itself as the sixth -- the
      weekend's commission day. */
   assert.equal(recJuma.records.length, 6);
   assert.deepEqual(recJuma.records.map(r => r.key), ['J3', 'J4', 'J5', 'AL', 'IJ', 'WK']);
   assert.equal(recJuma.records[5].weekly, true, 'the sixth is the week, not a day');
-  assert.equal(recJuma.records[5].pct, 25, 'and it carries the week\'s own percentage');
+  assert.equal(recJuma.records[5].pct, 21.4, 'and it carries the week\'s own percentage');
   assert.equal(d.colBoard.find(r => r.officer === 'EARLY E'), undefined,
     'the early board stays empty without the initial file -- never filled off the today sheet');
 
@@ -521,12 +529,13 @@ test('commission baseline: each book is brought forward by its own last current,
   assert.ok(monday, 'Monday was observed');
   assert.equal(monday.recovered, 300,
     '800 -> 500 against the book\'s OWN last current pays 300 -- not zero (starved baseline) and not 500 (initial-based)');
-  /* AND THE DAY IS NOW A PERCENTAGE OF WHAT THAT DAY HELD. The Monday deck opened at 800 and
-     gave up 300: 37.5%, under the floor. The baseline this test defends is the DENOMINATOR now
-     as well as the numerator -- starve it and the percentage is wrong in the other direction. */
-  assert.equal(monday.base, 800, 'the day is scored against what the book held that morning');
-  assert.equal(monday.pct, 37.5);
-  assert.equal(monday.tzs, 0, 'below 50% pays nothing');
+  /* THE DENOMINATOR IS THE DAY'S UNCOLLECTED, and this fixture has no expected book at all --
+     so there is nothing to measure the 300 against. That is NOT scored as 0% and dragged under
+     the floor: no expected book means no percentage, and no percentage pays nothing without
+     calling the officer a failure. The recovered amount is still reported in full. */
+  assert.equal(monday.base, 0, 'no expected book that day, so nothing to measure against');
+  assert.equal(monday.pct, null, 'no percentage -- not a zero');
+  assert.equal(monday.tzs, 0);
 });
 
 test('the recovery rate modes are removed from settings, not left switched off', async () => {

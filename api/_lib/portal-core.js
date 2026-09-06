@@ -3442,16 +3442,59 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      the day cells carry their own. No read is added: both were accumulated in the walk above.
      ===================================================================================== */
   const recWdDates = [0, 1, 2, 3, 4].map(i => addDaysKey(mon, i));
+
+  /* =====================================================================================
+     THE DENOMINATOR IS UNCOLLECTED, NOT THE WHOLE DEFAULTER BOOK.
+
+       "we weighing recovery vs uncollected of the days/week not total default, is it?"
+       "am seeing 0 and 1% only"
+
+     The first cut of this scored the day against the ARREARS every observed book was holding
+     -- the whole default. That is a far larger number than the day's work is measured against,
+     so every officer read as 0 or 1%, the entire board sat under the 50% floor, and the ladder
+     paid nobody. The plan says what it always said:
+
+       "JUMATATU - IJUMAA RECOVERY = RECOVERY AMOUNT VS UNCOLLECTED [SIKU 5]"
+
+     AND THE SYSTEM ALREADY HAD THIS RULE, which is the part that should have stopped me. The
+     Orodha's recovery percentage is recovered over uncollected (uncolOnDate, further down this
+     file), and the target setting says so in its own note: "Kilichorejeshwa / kisichokusanywa
+     -- Recovered / uncollected". I wrote a second definition of recovery % rather than reading
+     the one that was here, and two definitions of one rule is exactly the drift that makes a
+     figure nobody can account for. There is one now, and this is it.
+
+     uncollected_amt rides on the expected totals this screen ALREADY reads (myExp), so the
+     correction costs no read at all.
+
+     THE SIXTH RECORD TAKES THE WEEK'S UNCOLLECTED -- Monday to Friday added, which is the same
+     window the Orodha's own weekly recovery percentage uses, and it is what the plan's example
+     means by "in default of 1m ... weekly rec = 50%". */
+  const recUncolByDay = new Map();
+  const recUncolWeek = {};
+  for (const d of recWdDates) {
+    const m = {};
+    for (const r of onDate(myExp, d)) {
+      const who = officerOf(teamBy, r.team, 'recovery');
+      m[who] = (m[who] || 0) + num(r.uncollected_amt);
+    }
+    recUncolByDay.set(d, m);
+    for (const k of Object.keys(m)) recUncolWeek[k] = (recUncolWeek[k] || 0) + m[k];
+  }
+
   const recPayOf = new Map();
   {
-    const names = new Set();
+    /* Every officer who had something to recover OR recovered something. An officer with
+       uncollected and no recovery is 0%, which is a real answer and belongs on the board;
+       leaving them off would hide exactly the week somebody needs to see. */
+    const names = new Set(Object.keys(recUncolWeek));
     for (const [, src] of recByDay) for (const n of Object.keys(src)) names.add(n);
     for (const name of names) {
       const cell = d => (recByDay.get(d) || {})[name] || { recovered: 0, base: 0 };
-      const weekdays = recWdDates.map(d => ({ date: d, recovered: cell(d).recovered, base: cell(d).base }));
+      const weekdays = recWdDates.map(d => ({ date: d, recovered: cell(d).recovered,
+        base: (recUncolByDay.get(d) || {})[name] || 0 }));
       let weekRecovered = 0;
       for (const [, src] of recByDay) if (src[name]) weekRecovered += src[name].recovered;
-      const pay = recoveryWeek(weekdays, { recovered: weekRecovered, base: recBase[K(name)] || 0 });
+      const pay = recoveryWeek(weekdays, { recovered: weekRecovered, base: recUncolWeek[name] || 0 });
       /* TODAY'S OWN RECORD. A weekday pays its own band. On Saturday or Sunday the record that
          is live is the WEEK's -- "let the weekends stay as they are but weekly recovery is the
          6th day commisssion day" -- so the weekend shows the sixth record rather than a blank
@@ -3497,7 +3540,12 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     .map(b => ({ officer: b.key, recovered: b.recovered, recComm: Math.round(b.recComm),
       paid: b.paid, over: b.over, colComm: Math.round(b.colComm),
       total: Math.round(b.recComm + b.colComm) }))
-    .sort((a, b) => b.total - a.total);
+    /* THE NAME BREAKS THE TIE, and it has to. Two officers on the same total sorted by
+       whichever happened to be bucketed first, and that order changed the moment the recovery
+       walk started seeing officers in a different sequence -- which is exactly what the
+       deck_totals equivalence guard caught. Same figures, different rows: the kind of
+       difference somebody notices and cannot explain. */
+    .sort((a, b) => b.total - a.total || String(a.officer).localeCompare(String(b.officer)));
 
   const day = pack(dayAcc), week = pack(weekAcc);
 
@@ -3529,7 +3577,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       recovered: pay.todayRow.recovered, base: pay.todayRow.base,
       pct: pay.todayRow.pct, band: pay.todayRow.band,
       commission: pay.todayRow.tzs,
-      weekRecovered: pay.weekRecovered, weekBase: recBase[K(name)] || 0,
+      weekRecovered: pay.weekRecovered, weekBase: recUncolWeek[name] || 0,
       weekPct: pay.weekPct,
       weekCommission: pay.tzs,
       records: pay.rows,
@@ -3541,7 +3589,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     }
     return row;
   }).sort((a, b) => b.weekCommission - a.weekCommission
-    || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct));
+    || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct)
+    || String(a.officer).localeCompare(String(b.officer)));
 
   const colOff = new Map();                                // officer -> date -> sums
   for (const d of colDays) {
@@ -3603,7 +3652,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     }
     return row;
   }).sort((a, b) => b.weekCommission - a.weekCommission
-    || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct));
+    || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct)
+    || String(a.officer).localeCompare(String(b.officer)));
 
   /* ---- PMO COLLECTION: paid on the percentage, and nothing else ---- */
   const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
@@ -3679,8 +3729,12 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      early officer's initial col %, a PMO officer's week %. Precedence follows the money on
      the row; an officer with no percentage keeps an honest null, never a zero. */
   const recPctBy = {}, colPctBy = {}, pmoPctBy = {};
-  for (const [name, v] of Object.entries(weekAcc)) {
-    recPctBy[K(name)] = pctOf(v.recovered, recBase[K(name)] || 0);
+  /* THE SAME RECOVERY PERCENTAGE THE BOARD PAYS ON, not a second one worked out here. This
+     used to divide by the arrears the observed books held, while the board beside it divided
+     by uncollected -- two figures for one officer's week, on one screen. */
+  for (const [name] of Object.entries(weekAcc)) {
+    const pay = recPayOf.get(name);
+    recPctBy[K(name)] = pay ? pay.weekPct : null;
   }
   for (const r of colBoard) colPctBy[K(r.officer)] = r.weekPct == null ? null : r.weekPct;
   for (const r of pmo) pmoPctBy[K(r.officer)] = r.weekPct == null ? null : r.weekPct;
