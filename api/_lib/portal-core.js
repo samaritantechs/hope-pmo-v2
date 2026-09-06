@@ -3224,10 +3224,32 @@ async function commission(db, user, args = {}, nowMs) {
     than a slow screen: nobody would know to question it. */
 async function recoveryDayTotals_(db, user, from, to) {
   const teams = teamMatchList(user.teams);
-  const r = await rpcAll(db, 'recovery_day_totals',
-    { p_from: from, p_to: to, p_teams: teams.length ? teams : null });
-  if (!r || r.error || !Array.isArray(r.data)) return null;
-  return r.data;
+  const p_teams = teams.length ? teams : null;
+  /* ONE CALL PER DAY, AND IT IS NOT AN APPROXIMATION.
+
+     Asked for the whole week at once this timed out; asked for one day it answers in
+     milliseconds. The reason the split is safe is the shape of a deck: A DECK IS A WEEKDAY AND
+     A TEAM, so in a Monday-to-Sunday range the MON deck comes round once, the TUE deck once,
+     and so on. EVERY BOOK THEREFORE HAS EXACTLY ONE OBSERVATION IN THE WEEK, and its "before"
+     always comes from the baseline -- the same weekday's previous deck, which sits outside the
+     range either way. There is no state that crosses a day boundary for the split to lose.
+
+     Sequential, not parallel: firing these together is the wave of concurrent reads that took
+     the whole system down once before (see readPages). Seven small round trips against the
+     quarter of a million rows the raw walk was dragging is still the trade we came for.
+
+     ANY DAY FAILING GIVES UP THE WHOLE THING and falls back to the raw walk. A recovery figure
+     missing one day is not a slow answer, it is a wrong one, and it would look entirely
+     reasonable on the board. */
+  const out = [];
+  for (let i = 0; ; i++) {
+    const d = addDaysKey(from, i);
+    if (d > to) break;
+    const r = await rpcAll(db, 'recovery_day_totals', { p_from: d, p_to: d, p_teams });
+    if (!r || r.error || !Array.isArray(r.data)) return null;
+    for (const row of r.data) out.push(row);
+  }
+  return out;
 }
 
 async function commissionCompute_(db, user, args = {}, nowMs) {
