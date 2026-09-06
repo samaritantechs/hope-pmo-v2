@@ -5,7 +5,8 @@ import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, TZ_OFF
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
-  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey } from './snapshot-totals.js';
+  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
+  winningBatches } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn } from './pmo.js';
@@ -3199,9 +3200,19 @@ async function deckByWeekday(db, user, { type, notAfter, weekdays, columns }) {
     if (error) throw new Error(error.message);
     const d = data && data[0] ? String(data[0].snapshot_date) : null;
     if (!d) continue;
-    const rows = await fetchAll(() => onTeams(db.from('defaulter_snapshots')
-      .select(withBatchKeys(columns)).eq('snapshot_type', type).eq('weekday', wd)
-      .eq('snapshot_date', d), user.teams));
+    /* AND ONLY THE UPLOADS THAT ARE STILL STANDING. A baseline deck is re-uploaded as often as
+       any other, and every superseded copy read here is read only to be discarded a line
+       later. One cheap totals call for this one date, and null -- unfiltered, exactly as
+       before -- whenever it cannot be certain. See winningBatches. */
+    const keep = await winningBatches(db, { type, weekday: wd, from: d, to: d, teams: user.teams });
+    const batchList = keep ? [...keep] : null;
+    const rows = await fetchAll(() => {
+      let q = onTeams(db.from('defaulter_snapshots')
+        .select(withBatchKeys(columns)).eq('snapshot_type', type).eq('weekday', wd)
+        .eq('snapshot_date', d), user.teams);
+      if (batchList) q = q.in('upload_batch', batchList);
+      return q;
+    });
     out.push(...pickLatestBatchRows(rows));
   }
   return { rows: out };
@@ -3351,6 +3362,14 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      by team, the slow answer is the one that gets used. */
   const recAgg = recAggEnabled_() ? await recoveryDayTotals_(db, user, mon, sun) : null;
 
+  /* THE SUPERSEDED COPIES, LEFT WHERE THEY ARE. Asked before the rows and sequentially, for the
+     same reason recAgg is: when it answers, the read below carries about half of what it used
+     to. 109,375 of the week's 118,494 rows were in decks uploaded more than once, and every one
+     of those losers crossed the wire only to be dropped by pickLatestBatch on arrival.
+     null means "could not be sure" and the read is unfiltered, exactly as it was. */
+  const recKeep = recAgg ? null
+    : await winningBatches(db, { type: 'current', from: mon, to: sun, teams: user.teams });
+
   const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp, adj] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
@@ -3368,7 +3387,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
        This matters most on a SUNDAY, when mon..sun is seven days wide rather than one, which
        is exactly when the screen started timing out. */
     recAgg ? [] : snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' },
-      mon, sun, user.teams, 'team, arrears, snapshot_date, weekday, ref'),
+      mon, sun, user.teams, 'team, arrears, snapshot_date, weekday, ref', recKeep),
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
        board. The recovery side above cannot: it works out what each CUSTOMER owed against
        what they still owe, and a team total cannot answer that. */

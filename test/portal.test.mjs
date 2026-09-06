@@ -538,6 +538,59 @@ test('commission baseline: each book is brought forward by its own last current,
   assert.equal(monday.tzs, 0);
 });
 
+/* =====================================================================================
+   THE SUPERSEDED COPIES ARE LEFT ON THE DATABASE, AND THE ANSWER DOES NOT MOVE.
+   =====================================================================================
+     "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+
+   Measured on the live book: 118,494 raw rows for the commission week, 109,375 of them in decks
+   that had been uploaded more than once (440 decks of 513). Roughly half the heaviest read in
+   the system was copies that pickLatestBatch discarded the moment they arrived.
+
+   The screen now asks the totals path which upload won -- one small row per deck per batch --
+   and reads only those batches. THAT IS A TRANSFER CUT AND NOT A RULE CHANGE, and this is the
+   test that says so: the same fixture, answered by a database that HAS the totals function and
+   by one that does not, must produce the same board to the shilling. The filter is deliberately
+   a SUPERSET (one upload spans many teams, so a batch that wins one deck may lose another), and
+   pickLatestBatch still runs over whatever arrives -- so the two paths cannot diverge unless
+   the ranking itself does, which is why both sides now call the same batchRank. */
+test('a re-uploaded deck pays the same whether or not the batch filter can be used', async () => {
+  const book = () => {
+    const t = tables();
+    t.defaulter_snapshots.push(
+      // The MON book's baseline: last week's Monday, 800 owed.
+      { ref: 'M1', team: 'KONGOWE', arrears: 800, snapshot_type: 'current', weekday: 'MON',
+        snapshot_date: '2026-07-13', upload_batch: 'cm1', created_at: '2026-07-13T04:00:00Z' },
+      /* THIS week's Monday, uploaded TWICE. The first file said 700 -- it is wrong, and it is
+         the file that must never reach the arithmetic. The correction says 500. */
+      { ref: 'M1', team: 'KONGOWE', arrears: 700, snapshot_type: 'current', weekday: 'MON',
+        snapshot_date: '2026-07-20', upload_batch: 'cm2a', created_at: '2026-07-20T04:00:00Z' },
+      { ref: 'M1', team: 'KONGOWE', arrears: 500, snapshot_type: 'current', weekday: 'MON',
+        snapshot_date: '2026-07-20', upload_batch: 'cm2b', created_at: '2026-07-20T09:00:00Z' },
+      /* AND THE BASELINE DECK ITSELF RE-UPLOADED, because deckByWeekday reads that the same
+         way: a superseded 900 sitting beside the 800 that stands. */
+      { ref: 'M1', team: 'KONGOWE', arrears: 900, snapshot_type: 'current', weekday: 'MON',
+        snapshot_date: '2026-07-13', upload_batch: 'cm0', created_at: '2026-07-13T01:00:00Z' },
+    );
+    return t;
+  };
+  const withFn = await portalApi(dbWithRpc(book()), ADMIN, 'commission', {}, NOW);
+  const without = await portalApi(fakeDb(book()), ADMIN, 'commission', {}, NOW);
+
+  const dayOf = d => {
+    const o = (d.recBoard || []).find(r => r.officer === 'JUMA G');
+    assert.ok(o, 'the recovery officer appears on the board');
+    return (o.records || []).find(x => x.date === '2026-07-20');
+  };
+  const a = dayOf(withFn), b = dayOf(without);
+  assert.ok(a && b, 'Monday was observed on both paths');
+  assert.equal(a.recovered, 300,
+    '800 -> 500 is 300: the standing baseline against the standing correction, neither superseded copy');
+  assert.deepEqual(a, b, 'the batch filter changed the transfer and not one figure');
+  // And the whole board, not just the one day -- a divergence anywhere else would be as bad.
+  assert.deepEqual(withFn.recBoard, without.recBoard);
+});
+
 test('the recovery rate modes are removed from settings, not left switched off', async () => {
   /* A rate table still sitting in Settings is a rate table somebody turns back on, and it
      would silently outrank the ladder. The panel's Save drops all three keys. */

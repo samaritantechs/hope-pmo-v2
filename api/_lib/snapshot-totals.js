@@ -38,7 +38,7 @@
  */
 
 import { runQuery, fetchAll , rpcAll } from './supabase.js';
-import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch, teamMatchList } from './snapshots.js';
+import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch, batchRank, teamMatchList } from './snapshots.js';
 import { todayKey, addDaysKey } from './time.js';
 import { collectedOf, num } from './recovery.js';
 
@@ -799,6 +799,57 @@ export const tPaidOver    = rows => rows.reduce((s, r) => s + num(r.paid_n) + nu
 export const deckKey = (team, weekday) =>
   String(team == null ? '' : team).trim().toUpperCase() + '|'
   + String(weekday == null ? '' : weekday).trim().toUpperCase();
+
+/* =====================================================================================
+   WHICH UPLOADS ARE STILL WORTH READING.
+   =====================================================================================
+     "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+
+   The commission screen is the one place left that reads RAW per-customer defaulter rows over a
+   whole week -- it has to, because working out what a customer recovered means pairing today's
+   arrears against yesterday's, and no team total can answer that. What it does NOT have to do
+   is carry the superseded copies. Measured on this book: 118,494 rows for the week, 109,375 of
+   them in decks that had been uploaded more than once (440 decks of 513). Roughly half of the
+   heaviest read in the system is rows that pickLatestBatch throws away the moment they land.
+
+   The totals path already knows which upload won, one small row per deck per batch, and it
+   already answers from the deck_totals cache with the days an upload touched asked live -- so
+   this costs one cheap call and no new staleness: an upload unmarks its day (see
+   unmarkDeckTotals), and an unmarked day is read from the decks themselves.
+
+   IT RETURNS null RATHER THAN A SHORT ANSWER, in every case where it cannot be certain:
+
+     the totals function is not installed        -- nothing to resolve from
+     a winning deck has no upload_batch stamp    -- legacy rows, and `in` cannot match NULL
+     the set is implausibly large                -- a URL long enough to be refused is a read
+                                                    that fails, which is worse than a slow one
+
+   A caller handed null reads every batch, exactly as it did before this existed. A caller
+   handed a set still runs pickLatestBatch over what comes back: this narrows the TRANSFER and
+   never the rule. */
+const MAX_BATCH_FILTER = 200;
+
+export async function winningBatches(db, { type = null, weekday = null, from, to, teams = null } = {}) {
+  const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
+    { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
+  if (!agg) return null;                       // migration not run -- caller reads unfiltered
+  /* A DECK IS A DATE, A WEEKDAY AND A TEAM -- the same key the raw walk resolves on, and the
+     same ranking, imported rather than restated. */
+  const win = new Map();
+  for (const r of agg) {
+    const d = String(r.snapshot_date || '').slice(0, 10);
+    if (!d) continue;
+    const k = d + '|' + deckKey(r.team, r.weekday);
+    const cur = win.get(k);
+    if (!cur || batchRank(r) > batchRank(cur)) win.set(k, r);
+  }
+  const out = new Set();
+  for (const r of win.values()) {
+    if (r.upload_batch == null || r.upload_batch === '') return null;   // legacy deck: read it all
+    out.add(String(r.upload_batch));
+  }
+  return out.size && out.size <= MAX_BATCH_FILTER ? out : null;
+}
 
 export async function deckDatesPerTeam(db, { type = null, weekday = null, from, to, teams = null } = {}) {
   const agg = await callTotals(db, DEFAULTER_TOTALS_FN,

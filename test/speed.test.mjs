@@ -253,7 +253,15 @@ const BUDGETS = [
      catches growth rather than a target. Commission's is deliberately generous and still far
      too high to be comfortable: it is here to stop the bleeding while the real fix (moving the
      per-customer arrears comparison into the database, the way the team-day totals already
-     went) is decided. Lowering this number is the goal, not raising it. */
+     went) is decided. Lowering this number is the goal, not raising it.
+
+     THE SUPERSEDED-COPY CUT DOES NOT SHOW HERE, and that is a property of this fixture, not of
+     the change: bigBook uploads every deck exactly once, so there is nothing for the batch
+     filter to leave behind. On the live book -- where 440 decks of 513 had been re-uploaded --
+     it is roughly half the read. The test at the bottom of this file is the one that measures
+     it, on a book that was uploaded twice. What DOES show here is the cost of asking: three
+     more round trips (one for the week, one per weekday per baseline type) on a book with no
+     re-uploads at all, which is the worst case for the trade and still well inside 30. */
   ['Commission',              'commission',     {}, ADMIN, 30, 140000, 30, 140000],
   /* THE ILIYONASIA TAB, which had no budget and just grew a conditional read: for the rows
      that NAME a customer it asks the deck, by ref and status, whether that customer has since
@@ -849,4 +857,61 @@ test('speed [hopeloan]: registering a customer does not scan the customers table
     { full_name: 'NEW PERSON', mobile: '0715000123', team: TEAMS[0], amount: 300000 });
   const { rows } = c.stat();
   assert.ok(rows <= 20, `registration read ${rows} rows -- the serial is scanning the table again`);
+});
+
+/* =====================================================================================
+   THE RE-UPLOADED WEEK, WHICH IS THE ORDINARY WEEK.
+   =====================================================================================
+     "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
+
+   Every budget above is measured on a book where each deck was uploaded exactly once, and the
+   live book is not that book: 440 of the commission week's 513 decks had been uploaded more
+   than once, 109,375 of its 118,494 rows sitting in the losing copies. A guard that never sees
+   a re-upload cannot see the cost of one, and this is where the screen actually broke.
+
+   So: the same book with every defaulter deck sent twice -- the raw table doubled, not one
+   figure changed, because the second file supersedes the first. What must NOT double is what
+   crosses the wire. The totals path is asked which upload won and only those batches are read
+   (winningBatches / snapshotsInRange's `batches`), so the second copy costs a handful of summed
+   rows instead of a second whole book.
+
+   WITHOUT THE MIGRATION IT DOES DOUBLE, and that is honest rather than hidden: there is nothing
+   to resolve the winner from, so every copy is read and pickLatestBatch drops it on arrival,
+   exactly as it always did. Both are measured. */
+function reuploadedBook() {
+  const t = bigBook();
+  /* The correction: same rows, later batch, later created_at. Sent AFTER, so it wins -- and
+     with different arrears, so a path that read the wrong copy would be caught by the portal
+     suite's equivalence test rather than only by a row count. */
+  t.defaulter_snapshots = t.defaulter_snapshots.flatMap(r => [r,
+    { ...r, arrears: r.arrears - 10, upload_batch: r.upload_batch + '-fix',
+      created_at: String(r.created_at).replace('T04:', 'T09:') }]);
+  return t;
+}
+
+const REUPLOAD_WORLDS = [
+  ['migration not run yet', undefined],
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC } }],
+];
+
+test('speed: a week uploaded twice is not read twice', async () => {
+  const cost = async opts => {
+    const once = counting(bigBook(), opts);
+    await portalApi(once.db, ADMIN, 'commission', {}, NOW);
+    const twice = counting(reuploadedBook(), opts);
+    await portalApi(twice.db, ADMIN, 'commission', {}, NOW);
+    return twice.stat().rows - once.stat().rows;      // what the second copy cost to read
+  };
+  const plain = await cost(REUPLOAD_WORLDS[0][1]);
+  const migrated = await cost(REUPLOAD_WORLDS[1][1]);
+  /* WITHOUT THE FUNCTION the second copy is read in full, and that is the honest fallback --
+     stated as a floor so this test fails loudly if the fixture stops re-uploading anything and
+     the comparison below quietly becomes 0 < 0. */
+  assert.ok(plain > 3000,
+    `the un-migrated path reads every copy, as it always did: ${plain.toLocaleString()} extra rows`);
+  assert.ok(migrated < plain / 4,
+    `the superseded copies should not cross the wire: the second upload cost ` +
+    `${migrated.toLocaleString()} rows with the totals function and ${plain.toLocaleString()} without.` +
+    `\n  If this rose, check winningBatches is still resolving -- it hands back null (read` +
+    `\n  everything) whenever it cannot be certain, and a silent null is a silent slowdown.`);
 });
