@@ -8544,6 +8544,7 @@ test('the recovery walk in the database answers exactly what the raw walk answer
      as SEPARATE arithmetic, never a call back into the walk -- a comparison where both sides
      run the same code proves nothing.
      ===================================================================================== */
+  process.env.REC_AGG_ENABLED = '1';
   const { RECOVERY_TOTALS_RPC } = await import('./recovery-day-totals-rpc.mjs');
   const t = tables();
   const raw = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'week' }, NOW);
@@ -8563,6 +8564,7 @@ test('the recovery walk in the database answers exactly what the raw walk answer
     raw.week.map(r => [r.officer, r.recovered, r.recComm]),
     'the combined table disagreed between the two paths');
   assert.equal(agg.totals.recovered, raw.totals.recovered, 'and so did the company total');
+  delete process.env.REC_AGG_ENABLED;
 });
 
 test('the aggregate is asked one day at a time, and one bad day gives up the lot', async () => {
@@ -8573,6 +8575,7 @@ test('the aggregate is asked one day at a time, and one bad day gives up the lot
      the range either way. Nothing crosses a day boundary for the split to lose -- and the
      equivalence guard above proves that against the raw walk. This one stops somebody putting
      the range back together for tidiness. */
+  process.env.REC_AGG_ENABLED = '1';
   const { RECOVERY_TOTALS_RPC } = await import('./recovery-day-totals-rpc.mjs');
   const t = tables();
   const seen = [];
@@ -8599,4 +8602,13 @@ test('the aggregate is asked one day at a time, and one bad day gives up the lot
   assert.equal(back.recDiag.aggregated, undefined,
     'a part-answer was kept -- the missing day would read as a day nobody recovered anything');
   assert.ok(back.recBoard.length, 'and the raw walk still produced the board');
+
+  /* AND IT IS OFF UNLESS SOMEBODY SAYS OTHERWISE. The SQL disagrees with the decks it reads --
+     see the note at the call site -- so production takes the slow answer that has been paying
+     people correctly for months, and this guard stays warm for when it is reconciled. */
+  delete process.env.REC_AGG_ENABLED;
+  const off = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...RECOVERY_TOTALS_RPC } }),
+    ADMIN, 'commission', { scope: 'week' }, NOW);
+  assert.equal(off.recDiag.aggregated, undefined,
+    'the aggregate ran with the switch off -- unverified arithmetic on a payroll screen');
 });

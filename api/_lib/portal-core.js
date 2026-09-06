@@ -3217,6 +3217,12 @@ async function commission(db, user, args = {}, nowMs) {
   return cachedAnswer(db, 'commission|' + scope, user, nowMs,
     () => commissionCompute_(db, user, args, nowMs));
 }
+/* OFF UNLESS REC_AGG_ENABLED=1. See the note at its call site: the function disagrees with the
+   decks it is reading. A switch rather than a deletion because the wiring, the fallback and the
+   equivalence guard are all sound and worth keeping warm -- it is the SQL that is wrong. The
+   tests turn it on deliberately; nothing else does. */
+function recAggEnabled_() { return process.env.REC_AGG_ENABLED === '1'; }
+
 /** The recovery numerator, per team per day, from db/RUN-ME-029.
 
     Answers null -- never throws, never a partial -- when the function is not installed, so the
@@ -3325,7 +3331,25 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
 
      WITHOUT THE MIGRATION NOTHING BREAKS: recAgg is null, the raw walk runs exactly as it does
      today, and the screen is slow rather than wrong. Every migration here works that way. */
-  const recAgg = await recoveryDayTotals_(db, user, mon, sun);
+  /* THE SQL WALK IS OFF UNTIL IT IS PROVEN, and it is off because it is WRONG.
+
+     Checked against one team's own decks, TARIME:
+
+       Sat 05 Sep   baseline 08-29 = 85,860,864 -> 84,724,184, a net fall of 1,136,680
+                    the function answered 1,019,339
+       Sun 06 Sep   baseline 08-30 = 42,858,432 -> 42,337,092, a net fall of   521,340
+                    the function answered 1,019,339
+
+     Two different decks of different sizes, one identical answer to the shilling. And
+     Saturday's answer is BELOW its own net fall, which cannot happen: drops are clamped at
+     zero, so the sum of the positive ones is never less than the net. Two impossible things in
+     one column.
+
+     I do not yet know which clause does it, and that is exactly why this is a switch and not a
+     patch. The raw walk below has been paying people correctly for months; the SQL is four
+     hours old and has already been wrong twice. Until it is reconciled against the board team
+     by team, the slow answer is the one that gets used. */
+  const recAgg = recAggEnabled_() ? await recoveryDayTotals_(db, user, mon, sun) : null;
 
   const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp, adj] = await Promise.all([
     cmsCfg(db),
