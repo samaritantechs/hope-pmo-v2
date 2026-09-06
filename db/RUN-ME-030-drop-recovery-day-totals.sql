@@ -1,0 +1,21 @@
+-- =====================================================================================
+-- RUN-ME-030 -- THE SQL RECOVERY WALK COMES OUT.
+--
+--   "see the total rec reading at dashboards and the one at commissions which is not okay.
+--    because I distributed teams without repetition in access code and I expect an exact total"
+--   "what we did in dashboard is the correct way"
+--
+-- RUN-ME-029 installed recovery_day_totals(date, date, text[]): the commission screen's
+-- per-customer recovery walk, moved into Postgres to save a quarter of a million raw rows per
+-- load. It was never switched on in production (it disagreed with the decks it read), and the
+-- walk it reproduced is now gone from the code as well -- the commission screen reads the same
+-- per-team initial-minus-current the dashboard has always drawn (recoveryByTeam in
+-- api/_lib/snapshot-totals.js), from the same summed deck rows, so there is nothing left for
+-- this function to answer.
+--
+-- Nothing in the code calls it. This only tidies the database; skipping it costs nothing.
+--
+-- Safe to run at any time of day: one DROP of an unused function, no table is touched.
+-- =====================================================================================
+
+drop function if exists public.recovery_day_totals(date, date, text[]);

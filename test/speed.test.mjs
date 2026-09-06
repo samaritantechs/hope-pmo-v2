@@ -250,19 +250,18 @@ const BUDGETS = [
      deadline. Nothing in this file was watching it, so it grew until a person reported it.
 
      These budgets are set a little above what each costs TODAY, so they are a ceiling that
-     catches growth rather than a target. Commission's is deliberately generous and still far
-     too high to be comfortable: it is here to stop the bleeding while the real fix (moving the
-     per-customer arrears comparison into the database, the way the team-day totals already
-     went) is decided. Lowering this number is the goal, not raising it.
+     catches growth rather than a target.
 
-     THE SUPERSEDED-COPY CUT DOES NOT SHOW HERE, and that is a property of this fixture, not of
-     the change: bigBook uploads every deck exactly once, so there is nothing for the batch
-     filter to leave behind. On the live book -- where 440 decks of 513 had been re-uploaded --
-     it is roughly half the read. The test at the bottom of this file is the one that measures
-     it, on a book that was uploaded twice. What DOES show here is the cost of asking: three
-     more round trips (one for the week, one per weekday per baseline type) on a book with no
-     re-uploads at all, which is the worst case for the trade and still well inside 30. */
-  ['Commission',              'commission',     {}, ADMIN, 30, 140000, 30, 140000],
+     COMMISSION CAME DOWN FROM 140,000 ROWS TO 1,500 -- and not by reading the same thing more
+     cleverly. The screen had its own definition of recovery, a per-customer walk against the
+     week before, which is why it needed every raw defaulter row of the week and two baseline
+     decks besides. It now reads the dashboard's definition -- each day's initial deck total
+     minus the same day's current deck total, per team (recoveryByTeam) -- and that needs only
+     the summed deck rows every other board reads. Migrated: 11 trips and 642 rows on this
+     fixture. Un-migrated it folds the week's raw deck rows once, like the dashboard does, and
+     that is the larger budget on the left. If either number has to go back up, the first
+     question is what on this screen is reading customers again. */
+  ['Commission',              'commission',     {}, ADMIN, 20, 18000, 14, 1500],
   /* THE ILIYONASIA TAB, which had no budget and just grew a conditional read: for the rows
      that NAME a customer it asks the deck, by ref and status, whether that customer has since
      been marked PAID -- so the row can say it has been auto-removed from the commission count
@@ -866,18 +865,19 @@ test('speed [hopeloan]: registering a customer does not scan the customers table
 
    Every budget above is measured on a book where each deck was uploaded exactly once, and the
    live book is not that book: 440 of the commission week's 513 decks had been uploaded more
-   than once, 109,375 of its 118,494 rows sitting in the losing copies. A guard that never sees
-   a re-upload cannot see the cost of one, and this is where the screen actually broke.
+   than once, 109,375 of its 118,494 raw rows sitting in the losing copies. A guard that never
+   sees a re-upload cannot see the cost of one, and this is where the screen actually broke.
 
    So: the same book with every defaulter deck sent twice -- the raw table doubled, not one
    figure changed, because the second file supersedes the first. What must NOT double is what
-   crosses the wire. The totals path is asked which upload won and only those batches are read
-   (winningBatches / snapshotsInRange's `batches`), so the second copy costs a handful of summed
-   rows instead of a second whole book.
+   crosses the wire. The commission screen now reads SUMMED deck rows from the totals path,
+   like the dashboard, so a second upload costs one more summed row per team per deck instead
+   of a second whole book of customers.
 
-   WITHOUT THE MIGRATION IT DOES DOUBLE, and that is honest rather than hidden: there is nothing
-   to resolve the winner from, so every copy is read and pickLatestBatch drops it on arrival,
-   exactly as it always did. Both are measured. */
+   WITHOUT THE MIGRATION IT DOES DOUBLE, and that is honest rather than hidden: the totals are
+   then folded here from the raw rows, every copy is read, and pickLatestBatch drops the losers
+   on arrival -- exactly as every other board behaves on an un-migrated database. Both are
+   measured. */
 function reuploadedBook() {
   const t = bigBook();
   /* The correction: same rows, later batch, later created_at. Sent AFTER, so it wins -- and
@@ -912,6 +912,6 @@ test('speed: a week uploaded twice is not read twice', async () => {
   assert.ok(migrated < plain / 4,
     `the superseded copies should not cross the wire: the second upload cost ` +
     `${migrated.toLocaleString()} rows with the totals function and ${plain.toLocaleString()} without.` +
-    `\n  If this rose, check winningBatches is still resolving -- it hands back null (read` +
-    `\n  everything) whenever it cannot be certain, and a silent null is a silent slowdown.`);
+    `\n  If this rose, something on the commission screen is reading raw defaulter rows again.` +
+    `\n  It should read nothing but the summed deck rows the dashboard reads.`);
 });

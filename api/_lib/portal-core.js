@@ -1,12 +1,12 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
-import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, TZ_OFFSET_MS } from './time.js';
+import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
-  winningBatches } from './snapshot-totals.js';
+  recoveryByTeam } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn } from './pmo.js';
@@ -3179,45 +3179,6 @@ async function cmsCfg(db) {
     // somebody rather than of the screen.
     payText: String(get('COMM_PAY_TEXT') || '') };
 }
-/* THE COMMISSION BASELINE, READ THE WAY THE DECKS ARE ACTUALLY UPLOADED. A deck is a
-   whole-company file per weekday ("the latest current defaulter file is to live until the
-   next one"), so the baseline for a weekday's book is simply that weekday's LATEST file at
-   or before the cut-off: one indexed date probe (order desc, limit 1 -- idx_def_snap_lookup
-   leads on type, weekday, date) and one date-read, per weekday the range actually observed.
-
-   Two earlier shapes of this read both failed live: the whole-table pin returned only the
-   last-uploaded weekday's file (every other book got an empty baseline and the board read
-   zero over 532 real drops), and the per-team resolution ran the totals GROUP BY over a
-   YEAR of deck rows, which is the 45-second timeout. This shape reads no aggregate at all
-   and touches only the files the walk will compare against. */
-async function deckByWeekday(db, user, { type, notAfter, weekdays, columns }) {
-  const out = [];
-  for (const wd of weekdays) {
-    const { data, error } = await runQuery(() => onTeams(db.from('defaulter_snapshots')
-      .select('snapshot_date').eq('snapshot_type', type).eq('weekday', wd)
-      .lte('snapshot_date', notAfter)
-      .order('snapshot_date', { ascending: false }).limit(1), user.teams));
-    if (error) throw new Error(error.message);
-    const d = data && data[0] ? String(data[0].snapshot_date) : null;
-    if (!d) continue;
-    /* AND ONLY THE UPLOADS THAT ARE STILL STANDING. A baseline deck is re-uploaded as often as
-       any other, and every superseded copy read here is read only to be discarded a line
-       later. One cheap totals call for this one date, and null -- unfiltered, exactly as
-       before -- whenever it cannot be certain. See winningBatches. */
-    const keep = await winningBatches(db, { type, weekday: wd, from: d, to: d, teams: user.teams });
-    const batchList = keep ? [...keep] : null;
-    const rows = await fetchAll(() => {
-      let q = onTeams(db.from('defaulter_snapshots')
-        .select(withBatchKeys(columns)).eq('snapshot_type', type).eq('weekday', wd)
-        .eq('snapshot_date', d), user.teams);
-      if (batchList) q = q.in('upload_batch', batchList);
-      return q;
-    });
-    out.push(...pickLatestBatchRows(rows));
-  }
-  return { rows: out };
-}
-
 /* Cached for the reason above, and this is the one with the largest read of the lot: 140,000
    rows on the speed guard, the biggest row budget in that file. The recovery side walks each
    CUSTOMER's arrears down day by day, which no team total can answer, so it is expensive by
@@ -3228,47 +3189,6 @@ async function commission(db, user, args = {}, nowMs) {
   return cachedAnswer(db, 'commission|' + scope, user, nowMs,
     () => commissionCompute_(db, user, args, nowMs));
 }
-/* OFF UNLESS REC_AGG_ENABLED=1. See the note at its call site: the function disagrees with the
-   decks it is reading. A switch rather than a deletion because the wiring, the fallback and the
-   equivalence guard are all sound and worth keeping warm -- it is the SQL that is wrong. The
-   tests turn it on deliberately; nothing else does. */
-function recAggEnabled_() { return process.env.REC_AGG_ENABLED === '1'; }
-
-/** The recovery numerator, per team per day, from db/RUN-ME-029.
-
-    Answers null -- never throws, never a partial -- when the function is not installed, so the
-    caller falls back to the raw walk. A recovery figure that is quietly HALF right is far worse
-    than a slow screen: nobody would know to question it. */
-async function recoveryDayTotals_(db, user, from, to) {
-  const teams = teamMatchList(user.teams);
-  const p_teams = teams.length ? teams : null;
-  /* ONE CALL PER DAY, AND IT IS NOT AN APPROXIMATION.
-
-     Asked for the whole week at once this timed out; asked for one day it answers in
-     milliseconds. The reason the split is safe is the shape of a deck: A DECK IS A WEEKDAY AND
-     A TEAM, so in a Monday-to-Sunday range the MON deck comes round once, the TUE deck once,
-     and so on. EVERY BOOK THEREFORE HAS EXACTLY ONE OBSERVATION IN THE WEEK, and its "before"
-     always comes from the baseline -- the same weekday's previous deck, which sits outside the
-     range either way. There is no state that crosses a day boundary for the split to lose.
-
-     Sequential, not parallel: firing these together is the wave of concurrent reads that took
-     the whole system down once before (see readPages). Seven small round trips against the
-     quarter of a million rows the raw walk was dragging is still the trade we came for.
-
-     ANY DAY FAILING GIVES UP THE WHOLE THING and falls back to the raw walk. A recovery figure
-     missing one day is not a slow answer, it is a wrong one, and it would look entirely
-     reasonable on the board. */
-  const out = [];
-  for (let i = 0; ; i++) {
-    const d = addDaysKey(from, i);
-    if (d > to) break;
-    const r = await rpcAll(db, 'recovery_day_totals', { p_from: d, p_to: d, p_teams });
-    if (!r || r.error || !Array.isArray(r.data)) return null;
-    for (const row of r.data) out.push(row);
-  }
-  return out;
-}
-
 async function commissionCompute_(db, user, args = {}, nowMs) {
   /* TWO SCOPES, ONE COMPUTATION. scope 'week' is the screen; scope 'month' is the record
      behind the blinking dot -- the SAME walk from the month's first day, so the month can
@@ -3288,109 +3208,48 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     if (dow >= 1 && dow <= 5) colDays.push(d);
   }
   /* =====================================================================================
-     RECOVERY COMMISSION, ON THE DECK RULE AT LAST.
+     RECOVERY COMMISSION, ON THE RULE THE DASHBOARD HAS ALWAYS DRAWN.
 
-       "Recovery commissions aint adding up though I set values already"
+       "see the total rec reading at dashboards and the one at commissions which is not
+        okay. because I distributed teams without repetition in access code and I expect
+        an exact total"
+       "We already had recovery okay now setting the commissions you want to createe new
+        rules?!"
+       "what we did in dashboard is the correct way"
 
-     Two faults, and either one alone kept the figure at zero:
+     Recovery on a day is what the day's INITIAL deck carried minus what the same day's
+     CURRENT deck still carries -- start of day against end of day, per weekday. The
+     dashboard's trend tiles have drawn exactly that since v1, the Orodha and the leader
+     reports pair the same way, and recovery.js names it in its header.
 
-     1. THE PAIRING. This asked for an initial deck and a current deck ON THE SAME
-        snapshot_date, inside this week. But that is not how decks arrive: the initial deck
-        is uploaded once, when the week's book is drawn up, and the current deck is refreshed
-        through the week -- each at its own date. "A deck is a team AND a weekday, each read
-        at its own date" is the rule every other screen already follows; this one demanded a
-        coincidence and paid nothing when it did not happen.
+     This screen had its own rule. It walked every CUSTOMER against the same weekday's deck
+     from the WEEK BEFORE, and on a book where every deck carries the whole team that counts
+     a week of drops on every day of the week: 272 million on this board against 72 on the
+     dashboard for the same seven days, and officers reading 227%, 519%, 696%. A second
+     definition of recovery, a quarter of a million raw rows to compute it, forty-five
+     seconds to wait for it, and a figure that could not be reconciled with the one on the
+     screen next door. Two definitions of one rule is the drift CLAUDE.md forbids, and this
+     was the worst place in the system to have it: it is pay.
 
-     2. THE RATE. cmsRateFor rates a row by its STATUS (status mode) or its DISB DATE year
-        (year mode) -- and the week read carried NEITHER column, so year mode rated every
-        customer at the '*' fallback or zero, whatever the owner had typed into the rates
-        box. The values were set; nothing ever read the row fields they apply to.
+     It is gone. Recovery here is recoveryByTeam -- the ONE function, the dashboard's own
+     arithmetic split by team -- filed under each team's recovery officer. The two screens
+     add up to the same shilling by construction, and with the officers holding disjoint
+     teams the total of this board IS the dashboard's total. What this screen adds is only
+     what it always owned: the ladder, the six-day week, and who works for whom.
 
-     Now: the baseline is the initial book (each deck at its own date, rate columns aboard),
-     brought forward to the week's start by the last current deck BEFORE Monday -- so
-     recovery already banked last week is not paid twice. Then the week's current decks are
-     walked date by date: each deck observed is compared against the running state of ITS OWN
-     team-and-weekday book, and every positive drop is that day's recovery, at that
-     customer's own rate. A customer gone from their deck entirely is fully recovered; a team
-     that uploaded nothing that day is simply unobserved, never "all recovered". A customer
-     who slips back keeps the commission of the day they recovered, exactly as promised.
+     AND IT READS TEAM TOTALS, like every other board. Subtracting one deck total from
+     another needs nothing per customer, so the heaviest read in the system is simply not
+     made: the range's summed deck rows from the totals path -- deck_totals-backed, about a
+     thousand rows for a week -- where 245,000 raw ones used to cross the wire. It is the
+     read the dashboard makes, so the two cannot even be looking at different decks.
      ===================================================================================== */
-  /* =====================================================================================
-     THE RECOVERY WALK, ASKED OF THE DATABASE FIRST.
-
-       "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
-
-     Working out what each officer recovered means pairing every customer's arrears against
-     what they owed last time, and that used to be done here -- over a week of RAW per-customer
-     rows. Measured on this book: 118,494 rows for the week, 109,375 of them in decks that had
-     been uploaded more than once (440 decks of 513), plus about 126,000 more for the two
-     baselines. A quarter of a million rows across the wire to produce a table of seventy
-     numbers, which on this instance is more than forty-five seconds. The screen did not answer.
-
-     recovery_day_totals (db/RUN-ME-029) does the same walk in SQL and returns ONE ROW PER TEAM
-     PER DAY -- about 525 for a week. Every rule it has to match is written out beside it there,
-     because two definitions of "which upload wins" or of how a team is keyed is a pay figure
-     nobody can account for.
-
-     ASKED FIRST, ON PURPOSE, and sequentially: when it answers, the three heavy reads below are
-     never issued at all. One small round trip to save a quarter of a million rows is not a
-     trade that needs thinking about.
-
-     THE DENOMINATOR IS NOT IN IT. Recovery percentage is recovered over UNCOLLECTED, which
-     already arrives aggregated on the expected totals -- so the only thing that ever needed
-     per-customer detail is the numerator, and that is all this asks for.
-
-     WITHOUT THE MIGRATION NOTHING BREAKS: recAgg is null, the raw walk runs exactly as it does
-     today, and the screen is slow rather than wrong. Every migration here works that way. */
-  /* THE SQL WALK IS OFF UNTIL IT IS PROVEN, and it is off because it is WRONG.
-
-     Checked against one team's own decks, TARIME:
-
-       Sat 05 Sep   baseline 08-29 = 85,860,864 -> 84,724,184, a net fall of 1,136,680
-                    the function answered 1,019,339
-       Sun 06 Sep   baseline 08-30 = 42,858,432 -> 42,337,092, a net fall of   521,340
-                    the function answered 1,019,339
-
-     Two different decks of different sizes, one identical answer to the shilling. And
-     Saturday's answer is BELOW its own net fall, which cannot happen: drops are clamped at
-     zero, so the sum of the positive ones is never less than the net. Two impossible things in
-     one column.
-
-     I do not yet know which clause does it, and that is exactly why this is a switch and not a
-     patch. The raw walk below has been paying people correctly for months; the SQL is four
-     hours old and has already been wrong twice. Until it is reconciled against the board team
-     by team, the slow answer is the one that gets used. */
-  const recAgg = recAggEnabled_() ? await recoveryDayTotals_(db, user, mon, sun) : null;
-
-  /* THE SUPERSEDED COPIES, LEFT WHERE THEY ARE. Asked before the rows and sequentially, for the
-     same reason recAgg is: when it answers, the read below carries about half of what it used
-     to. 109,375 of the week's 118,494 rows were in decks uploaded more than once, and every one
-     of those losers crossed the wire only to be dropped by pickLatestBatch on arrival.
-     null means "could not be sure" and the read is unfiltered, exactly as it was. */
-  const recKeep = recAgg ? null
-    : await winningBatches(db, { type: 'current', from: mon, to: sun, teams: user.teams });
-
   const [cfg, teamRows, defWeek, expWeek, expInit, codeRows, pmoCfg, prevExp, adj] = await Promise.all([
     cmsCfg(db),
     readTeamsAll(db),
-    /* The week's current decks, per customer -- ref to pair, weekday to know which book,
-       status and disb_date so a NEW customer first seen mid-week can still be rated. */
-    /* THE HEAVIEST READ IN THE SYSTEM, AND NOW A NARROWER ONE. A week of raw per-customer
-       defaulter rows -- team totals cannot answer "what did THIS customer owe, and what do
-       they owe now", so this one read cannot be an aggregate.
-
-       status and disb_date came off it with the rate modes that were the only thing reading
-       them (#402 deleted cmsRateFor and the disb-year band board). snapshot_type is constant
-       here -- the filter above already pins it to 'current'. Three columns off every row of
-       the widest read on the book, and two of them text.
-
-       This matters most on a SUNDAY, when mon..sun is seven days wide rather than one, which
-       is exactly when the screen started timing out. */
-    recAgg ? [] : snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' },
-      mon, sun, user.teams, 'team, arrears, snapshot_date, weekday, ref', recKeep),
-    /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
-       board. The recovery side above cannot: it works out what each CUSTOMER owed against
-       what they still owe, and a team total cannot answer that. */
+    /* Every deck in the range, summed per team per upload batch, both types -- the read the
+       dashboard makes for its trend tiles, so this board can only ever add up to those. */
+    defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
+    /* The collection side reads team-day totals the same way; the whole screen is sums now. */
     expectedTotalsInRange(db, { type: 'today', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
     /* THE INITIAL BOOK, for the EARLY scheme -- AND NOTHING ELSE. "its initial file only no
@@ -3414,19 +3273,6 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
-  /* THE BASELINES, READ SECOND AND READ NARROW. The walk only attributes drops for decks
-     OBSERVED in the range, so only those weekdays' books need a baseline: the latest
-     INITIAL file per weekday however old, and the last CURRENT file per weekday from
-     before the range began. See deckByWeekday for why this exact shape. */
-  const wantedWds = [...new Set(myDef.map(r => K(r.weekday)).filter(Boolean))];
-  /* The baselines exist only to seed the raw walk. When the database did the walk they are
-     the other 126,000 rows nobody needs to see. */
-  const [iniBook, preBook] = recAgg ? [{ rows: [] }, { rows: [] }] : await Promise.all([
-    deckByWeekday(db, user, { type: 'initial', notAfter: today, weekdays: wantedWds,
-      columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
-    deckByWeekday(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), weekdays: wantedWds,
-      columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
-  ]);
   const myExpInit = scoped(user, expInit);
   /* THE REGISTER, ON THE COMMISSION BOARDS TOO -- and this is the one worth saying out loud,
      because it is PAY, not a report.
@@ -3455,121 +3301,44 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       from: prevMon, to: sun }),
   ]);
   const colRows = d => withAdj_(onDate(myExpInit, d), adj, 'expected-initial', d, colCount);
-  /* WHAT THE WALK ACTUALLY SAW, said out loud. "I uploaded. recovery still [empty]" -- an
-     empty board has three different truths behind it (no deck in the range; a deck in the
-     range but dated outside it; a deck observed with nothing newly dropped), and the screen
-     must say WHICH, or the person uploads the same file a fourth time. */
-  const seenDates = {};
-  for (const r of myDef) { const dd = String(r.snapshot_date || ''); if (dd) seenDates[dd] = (seenDates[dd] || 0) + 1; }
-  const recDiag = {
-    from: mon, to: sun,
-    inRange: Object.entries(seenDates).sort().map(([date, rows]) => ({ date, rows })),
-    // The newest current deck the BOOK holds from before this range began.
-    preMax: (preBook.rows || []).reduce((m, r) => {
-      const dd = String(r.snapshot_date || ''); return dd > m ? dd : m; }, '') || null,
-  };
   const onDate = (rows, d, type) => pickLatestBatchRows(rows.filter(r =>
     String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
 
   const blank = { recovered: 0, recComm: 0, paid: 0, over: 0, colComm: 0 };
-  /* What one officer's ONE DAY of recovery is: what came off, and what was there to come off.
-     Kept apart from `blank` because a day's pay is now a band on the ratio of these two, not a
-     running sum of shillings -- there is nothing to accumulate into a recComm any more. */
-  const blankRec = { recovered: 0, base: 0 };
+  /* What one officer's ONE DAY of recovery is: the amount, and only that. The day's pay is a
+     band on this over the day's uncollected, which is added up from the expected totals
+     further down -- there is nothing to accumulate into a recComm any more. */
+  const blankRec = { recovered: 0 };
 
-  /* The running state of every book: weekday|ref -> what they owed at the last observation,
-     plus the row that carries their rate and team. */
-  /* Rows with NO TEAM are excluded from the recovery walk on purpose: commission is a payroll
-     figure, paid to a team's recovery officer, and a customer filed under no team can pay
-     nobody. (The '(unassigned)' bucket still exists -- it is for teams whose recovery ROLE is
-     unstaffed, which is a different and fixable fact.) It also keeps the two storage paths --
-     database-resolved decks and the in-memory fallback -- answering identically, because a
-     deck is a TEAM and a weekday, and a row with no team is in no deck. */
-  const running = new Map();
-  const bkey = r => K(r.weekday) + '|' + K(r.ref);
-  for (const r of scoped(user, iniBook.rows || [])) {
-    if (r.ref && r.team) running.set(bkey(r), { arr: num(r.arrears), team: r.team });
-  }
-  recDiag.iniRows = running.size;
-  for (const r of scoped(user, preBook.rows || [])) {
-    if (!r.ref || !r.team) continue;
-    const got = running.get(bkey(r));
-    if (got) got.arr = num(r.arrears);
-    else running.set(bkey(r), { arr: num(r.arrears), team: r.team });
-  }
-  recDiag.bookEntries = running.size;
-
-  /* Walk the week's current decks in date order. Drops land on the date of the deck that
-     showed them, which is what makes "today" a real figure rather than a week share. */
-  /* date -> officer -> { recovered, base }. `base` is new and it is what makes the day a
-     PERCENTAGE rather than an amount: the arrears the books observed on that day were holding
-     when the day started, which is what there was to recover. Accumulated in the same walk as
-     the drops -- no extra read, and it could not come from a separate one anyway, since only
-     this loop knows which books were actually observed on which day. */
+  /* date -> officer -> { recovered }: each day's decks through recoveryByTeam, filed under the
+     team's recovery officer. A team with no officer named falls into '(unassigned)' -- its
+     recovery is still counted, which is what keeps this board's total equal to the
+     dashboard's whoever is or is not staffed. */
   const recByDay = new Map();
-  recDiag.dropsSeen = 0;
-  const recBase = {}, recBaseSeen = new Set();
-
-  /* THE DATABASE ALREADY WALKED IT. recovery_day_totals hands back the numerator per team per
-     day; all that is left here is to file it under the team's RECOVERY OFFICER, which is the
-     one thing the database has no business knowing -- who works for whom is the teams table,
-     and it changes without an upload. Same recByDay shape either way, so every board below is
-     untouched by which path produced it. */
-  if (recAgg) {
-    recDiag.aggregated = true;
-    recDiag.aggRows = recAgg.length;
-    for (const r of recAgg) {
-      const d = String(r.snapshot_date || '').slice(0, 10);
-      if (!d || d < mon || d > sun) continue;
-      const acc = recByDay.get(d) || recByDay.set(d, {}).get(d);
-      const drop = num(r.recovered);
-      if (!(drop > 0)) continue;
-      recDiag.dropsSeen++;
-      bucket(acc, officerOf(teamBy, r.team, 'recovery'), blankRec).recovered += drop;
-    }
-  }
-  for (let i = 0; !recAgg; i++) {
+  /* WHAT WAS PAIRED, said out loud. "I uploaded. recovery still [empty]" -- an empty board has
+     more than one truth behind it (nothing landed; an initial with no current; a current with
+     no initial; decks stamped with a different weekday than their date), and the screen must
+     say WHICH, or the person uploads the same file a fourth time. One line per day of the
+     range: was the day measured, how many teams had both decks, how many were holding one. */
+  const recDiag = { from: mon, to: sun, days: [], measured: 0 };
+  for (let i = 0; ; i++) {
     const d = addDaysKey(mon, i);
     if (d > today || d > sun) break;
-    /* Resolved per WEEKDAY then per team (inside pickLatestBatch) -- two different weekday
-       decks of the same team can land on the same date in two batches, and picking across
-       them would throw one whole deck away. Same order every deck reader uses. */
-    const atD = myDef.filter(r => String(r.snapshot_date) === d);
-    if (!atD.length) continue;
-    const rowsD = [...new Set(atD.map(r => K(r.weekday)))]
-      .flatMap(wd => pickLatestBatchRows(atD.filter(r => K(r.weekday) === wd)));
-    if (!rowsD.length) continue;
-    // A deck is a team AND a weekday: only the books actually uploaded today are observed.
-    const decksHere = new Set(rowsD.map(r => K(r.weekday) + '|' + K(r.team)));
-    const nowArr = new Map();
-    for (const r of rowsD) if (r.ref) nowArr.set(bkey(r), num(r.arrears));
+    const wd = weekdayOfKey(d);
+    const byTeam = recoveryByTeam(myDef, d, wd);
+    const landed = type => new Set(myDef
+      .filter(r => String(r.snapshot_date) === d && r.snapshot_type === type && K(r.weekday) === wd)
+      .map(r => K(r.team)));
+    const ini = landed('initial'), cur = landed('current');
+    recDiag.days.push({ date: d, weekday: wd, measured: byTeam.size > 0,
+      paired: [...byTeam.values()].filter(t => t.paired).length,
+      initialOnly: [...ini].filter(k => !cur.has(k)).length,
+      currentOnly: [...cur].filter(k => !ini.has(k)).length });
+    if (!byTeam.size) continue;
+    recDiag.measured++;
     const acc = recByDay.get(d) || recByDay.set(d, {}).get(d);
-    for (const [k, st] of running) {
-      const wd = k.slice(0, k.indexOf('|'));
-      if (!decksHere.has(wd + '|' + K(st.team))) continue;      // this book was not observed today
-      const cur = nowArr.has(k) ? nowArr.get(k) : 0;            // gone from the deck = recovered
-      const before = st.arr;
-      const drop = before - cur;
-      st.arr = cur;
-      const who = officerOf(teamBy, st.team, 'recovery');
-      /* The rec % denominator: what each observed book held when the range FIRST saw it --
-         the amount that was there to recover. Captured once per book, drop or no drop. */
-      if (!recBaseSeen.has(k)) {
-        recBaseSeen.add(k);
-        recBase[K(who)] = (recBase[K(who)] || 0) + before;
-      }
-      /* THIS DAY'S DENOMINATOR, counted for every observed book whether it dropped or not.
-         Counting only the books that moved would score an officer on the customers who paid
-         and ignore the ones who did not, which is a percentage that can only ever be 100. */
-      const bd = bucket(acc, who, blankRec);
-      bd.base += before;
-      if (drop <= 0) continue;
-      recDiag.dropsSeen++;
-      bd.recovered += drop;
-    }
-    // First seen mid-week (no initial ever uploaded): enters the book, nothing attributed yet.
-    for (const r of rowsD) {
-      if (r.ref && r.team && !running.has(bkey(r))) running.set(bkey(r), { arr: num(r.arrears), team: r.team });
+    for (const t of byTeam.values()) {
+      bucket(acc, officerOf(teamBy, t.team, 'recovery'), blankRec).recovered += t.recovered;
     }
   }
 
@@ -3581,8 +3350,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      somebody's pay. They read this instead. The ladder and the six-day rule live in
      recovery-pay.js; what this does is hand it the numbers.
 
-     `recBase` is the WEEK's denominator (what each book held when the week first saw it) and
-     the day cells carry their own. No read is added: both were accumulated in the walk above.
+     The amounts come from recByDay above and the denominators from the expected totals
+     below. No read is added for either.
      ===================================================================================== */
   const recWdDates = [0, 1, 2, 3, 4].map(i => addDaysKey(mon, i));
 
@@ -3632,7 +3401,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     const names = new Set(Object.keys(recUncolWeek));
     for (const [, src] of recByDay) for (const n of Object.keys(src)) names.add(n);
     for (const name of names) {
-      const cell = d => (recByDay.get(d) || {})[name] || { recovered: 0, base: 0 };
+      const cell = d => (recByDay.get(d) || {})[name] || { recovered: 0 };
       const weekdays = recWdDates.map(d => ({ date: d, recovered: cell(d).recovered,
         base: (recUncolByDay.get(d) || {})[name] || 0 }));
       let weekRecovered = 0;
@@ -7944,7 +7713,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const cur = defDay_(myDefWeek, d, 'current', dwd);
     const from = tArrears(ini);
     const to = tArrears(cur);
-    const rec = (ini.length && cur.length) ? from - to : 0;
+    /* THROUGH THE ONE FUNCTION. recoveryByTeam is this tile's own arithmetic split per team --
+       the same subtraction, the same pairing on date and weekday -- and the commission board
+       reads it too, so the two screens add up to one figure rather than two that happen to
+       agree. See the note on it in snapshot-totals.js. */
+    let rec = 0;
+    for (const t of recoveryByTeam(myDefWeek, d, dwd).values()) rec += t.recovered;
     const unc = tUncollected(colDay_(myExpWeek, d));
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       /* WHAT IS STILL OUT AT THE END OF THE DAY -- which is not the same number as what went
@@ -7991,10 +7765,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     }
     let measured = false;
     for (let i = 0; i < 7; i++) {
-      const d0 = addDaysKey(from, i), dwd = WD7[i];
-      const ini = defDay_(defRows, d0, 'initial', dwd);
-      const cur = defDay_(defRows, d0, 'current', dwd);
-      if (ini.length && cur.length) { rec += tArrears(ini) - tArrears(cur); measured = true; }
+      // The same function the trend tiles and the commission board read -- see recTrend.
+      const byTeam = recoveryByTeam(defRows, addDaysKey(from, i), WD7[i]);
+      if (!byTeam.size) continue;
+      measured = true;
+      for (const t of byTeam.values()) rec += t.recovered;
     }
     const p_ = (n, dn) => (dn > 0 ? Math.round((n / dn) * 1000) / 10 : null);
     const salesPct = p_(salesAmt, weeklyTargetTotal), colPct = p_(c, e);
@@ -9000,15 +8775,12 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const dailyRec = {};
   for (let i = 0; i < 7; i++) {
     const d = addDaysKey(mon, i);
-    // Each day pairs its own initial against its own current, matched on weekday so the two
-    // sides are always the same population.
-    const dwd = WD7[i];
-    const ini = defDay_(d, 'initial', dwd), cur = defDay_(d, 'current', dwd);
-    if (!ini.length || !cur.length) continue;
-    const per = {};
-    for (const r of ini) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) + num(r.arrears_amt);
-    for (const r of cur) per[officerOf(teamBy, r.team, 'recovery')] = (per[officerOf(teamBy, r.team, 'recovery')] || 0) - num(r.arrears_amt);
-    for (const k of Object.keys(per)) dailyRec[k] = (dailyRec[k] || 0) + per[k];
+    // Each day through recoveryByTeam -- the dashboard tiles' and the commission board's own
+    // function, so the wall, the tiles and the pay slip carry one figure per officer.
+    for (const t of recoveryByTeam(myDef, d, WD7[i]).values()) {
+      const who = officerOf(teamBy, t.team, 'recovery');
+      dailyRec[who] = (dailyRec[who] || 0) + t.recovered;
+    }
   }
   const iniMon = defDay_(mon, 'initial', 'MON');
   /* The weekly board always divides by the WEEK's uncollected, whatever day it is read on --

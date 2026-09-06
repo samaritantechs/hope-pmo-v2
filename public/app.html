@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-06-a';
+var BUILD = '2026-09-06-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4682,40 +4682,38 @@ VIEWS.commission = function(){
          that days rec". One column pair per band that actually earned today: the year (or
          status) that priced the drop, the amount, and the TZS. Sits where the today table
          stood. */
-      /* An empty recovery board has THREE different truths behind it, and the note says
-         which -- guessing sent somebody to upload the same file a fourth time. The baseline
-         counts ride along so a zero can be traced to its stage at a glance. */
+      /* An empty recovery board has more than one truth behind it, and the note says which --
+         guessing sent somebody to upload the same file a fourth time. Recovery is the day's
+         INITIAL deck minus the same day's CURRENT deck (the dashboard's own rule, the same
+         function), so the note lists, day by day, whether both landed and who was left
+         holding one. */
       + (!(d.recBoard||[]).length
           ? '<div class="card"><div class="card-h">Recovery — wiki hii / this week</div>'
             + '<div class="note" style="margin:10px 14px">'
-            + ((d.recDiag && d.recDiag.inRange && d.recDiag.inRange.length)
-                ? 'Deki la CURRENT <b>limetua</b> wiki hii ('
-                  + d.recDiag.inRange.map(function(x){ return esc(x.date)+' · '+money(x.rows)+' rows'; }).join(', ')
-                  + ') lakini hakuna aliyeshuka dhidi ya kitabu bado — kamisheni hulipa MADONDOSHO MAPYA ya wiki hii tu;'
-                  + ' yaliyorejeshwa wiki iliyopita yalilipwa wiki iliyopita.'
-                  + ' / A current deck <b>has landed</b> this week (see the dates above) but nothing has newly dropped'
-                  + ' against the book yet — this board pays THIS week’s fresh drops only; last week’s recovery was'
-                  + ' last week’s pay. The cumulative initial-vs-current figure lives on the dashboard.'
-                : 'Hakuna deki la CURRENT lenye tarehe ya wiki hii ('+esc((d.recDiag&&d.recDiag.from)||'')+' → '+esc((d.recDiag&&d.recDiag.to)||'')+').'
-                  + (d.recDiag && d.recDiag.preMax
-                      ? ' Deki jipya zaidi kwenye kitabu lina tarehe <b>'+esc(d.recDiag.preMax)+'</b> — kabla ya wiki hii.'
-                        + ' / No current deck is DATED inside this week; the newest current deck in the book is dated'
-                        + ' <b>'+esc(d.recDiag.preMax)+'</b>, before the week began. If you uploaded today, check the'
-                        + ' file’s own date column — the deck lands on the date it carries, not the date it was uploaded.'
-                      : ' / No current deck is dated inside this week, and the book holds no earlier current deck either'
-                        + ' — upload the initial and current decks and this board fills itself.'))
-            + ((d.recDiag && d.recDiag.iniRows != null)
-                ? '<br><span style="color:var(--mut)">kitabu / baseline: ' + money(d.recDiag.iniRows) + ' initial · '
-                  + money(d.recDiag.bookEntries||0) + ' entries · madondosho yaliyoonekana / drops seen: '
-                  + money(d.recDiag.dropsSeen||0) + '</span>'
+            + 'Urejeshaji wa siku = deki la INITIAL la siku hiyo toa deki la CURRENT la siku hiyo hiyo — kanuni ile ile ya dashibodi.'
+            + ' Hakuna siku ya wiki hii ('+esc((d.recDiag&&d.recDiag.from)||'')+' → '+esc((d.recDiag&&d.recDiag.to)||'')+') yenye deki zote mbili tarehe moja.'
+            + ' / A day’s recovery is that day’s INITIAL deck minus the same day’s CURRENT deck — the dashboard’s rule.'
+            + ' No day this week has both decks on one date, so there is nothing to pay on yet.'
+            + ((d.recDiag && d.recDiag.days && d.recDiag.days.length)
+                ? '<br><span style="color:var(--mut)">' + d.recDiag.days.map(function(x){
+                    return esc(x.date)+' '+esc(x.weekday||'')+': '
+                      + (x.measured ? 'imepimwa / measured' : 'haijapimwa / not measured')
+                      + (x.initialOnly ? ' · initial pekee / initial only: '+money(x.initialOnly)+' team(s)' : '')
+                      + (x.currentOnly ? ' · current pekee / current only: '+money(x.currentOnly)+' team(s)' : '')
+                      + (!x.paired && !x.initialOnly && !x.currentOnly ? ' · hakuna deki / no deck' : '');
+                  }).join('<br>') + '</span>'
                 : '')
             + '</div></div>'
           : '')
       + ((d.recBoard||[]).length
           ? board('cmRecWeek','Recovery — wiki hii / this week',
               'asilimia ya urejeshaji kwa KILA siku na kundi inayolipa · WK ni wiki nzima, siku ya 6 / the recovery percentage day by day and the band it pays — WK is the whole week, the 6th day'
-                + ((d.recDiag && d.recDiag.iniRows != null)
-                    ? ' · kitabu: ' + money(d.recDiag.bookEntries||0) + ' entries, drops ' + money(d.recDiag.dropsSeen||0)
+                /* The same recovery the dashboard tiles draw, per team, filed under the officer --
+                   so the total here IS the dashboard's total, and the note says how many days
+                   actually had both decks to measure. */
+                + ((d.recDiag && d.recDiag.days)
+                    ? ' · rec = initial − current ya siku hiyo hiyo, kama dashibodi / same figure as the dashboard'
+                      + ' · siku zilizopimwa / days measured: ' + money(d.recDiag.measured||0) + ' / ' + money(d.recDiag.days.length)
                     : ''),
               /* SIX RECORDS. Five weekdays, each its own percentage and what that band pays,
                  then WK -- the week's own percentage, which is the weekend's commission day.
