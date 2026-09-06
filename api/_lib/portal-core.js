@@ -3264,8 +3264,19 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     readTeamsAll(db),
     /* The week's current decks, per customer -- ref to pair, weekday to know which book,
        status and disb_date so a NEW customer first seen mid-week can still be rated. */
+    /* THE HEAVIEST READ IN THE SYSTEM, AND NOW A NARROWER ONE. A week of raw per-customer
+       defaulter rows -- team totals cannot answer "what did THIS customer owe, and what do
+       they owe now", so this one read cannot be an aggregate.
+
+       status and disb_date came off it with the rate modes that were the only thing reading
+       them (#402 deleted cmsRateFor and the disb-year band board). snapshot_type is constant
+       here -- the filter above already pins it to 'current'. Three columns off every row of
+       the widest read on the book, and two of them text.
+
+       This matters most on a SUNDAY, when mon..sun is seven days wide rather than one, which
+       is exactly when the screen started timing out. */
     snapshotsInRange(db, 'defaulter_snapshots', { snapshot_type: 'current' }, mon, sun, user.teams,
-      WEEK_DEF_COLS + ', ref, status, disb_date'),
+      'team, arrears, snapshot_date, weekday, ref'),
     /* THE COLLECTION SIDE IS PURE ARITHMETIC, so it reads team-day totals like every other
        board. The recovery side above cannot: it works out what each CUSTOMER owed against
        what they still owe, and a team total cannot answer that. */
@@ -3299,7 +3310,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const wantedWds = [...new Set(myDef.map(r => K(r.weekday)).filter(Boolean))];
   const [iniBook, preBook] = await Promise.all([
     deckByWeekday(db, user, { type: 'initial', notAfter: today, weekdays: wantedWds,
-      columns: 'ref, team, weekday, arrears, status, disb_date, snapshot_date, upload_batch, created_at' }),
+      columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
     deckByWeekday(db, user, { type: 'current', notAfter: addDaysKey(mon, -1), weekdays: wantedWds,
       columns: 'ref, team, weekday, arrears, snapshot_date, upload_batch, created_at' }),
   ]);
@@ -3364,14 +3375,14 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const running = new Map();
   const bkey = r => K(r.weekday) + '|' + K(r.ref);
   for (const r of scoped(user, iniBook.rows || [])) {
-    if (r.ref && r.team) running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
+    if (r.ref && r.team) running.set(bkey(r), { arr: num(r.arrears), team: r.team });
   }
   recDiag.iniRows = running.size;
   for (const r of scoped(user, preBook.rows || [])) {
     if (!r.ref || !r.team) continue;
     const got = running.get(bkey(r));
     if (got) got.arr = num(r.arrears);
-    else running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
+    else running.set(bkey(r), { arr: num(r.arrears), team: r.team });
   }
   recDiag.bookEntries = running.size;
 
@@ -3426,7 +3437,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     }
     // First seen mid-week (no initial ever uploaded): enters the book, nothing attributed yet.
     for (const r of rowsD) {
-      if (r.ref && r.team && !running.has(bkey(r))) running.set(bkey(r), { arr: num(r.arrears), team: r.team, rate: r });
+      if (r.ref && r.team && !running.has(bkey(r))) running.set(bkey(r), { arr: num(r.arrears), team: r.team });
     }
   }
 
