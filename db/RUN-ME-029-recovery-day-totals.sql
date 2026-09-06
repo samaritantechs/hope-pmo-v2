@@ -229,22 +229,35 @@ grant execute on function recovery_day_totals(date, date, text[]) to anon, authe
 
 
 -- ================================== DID IT LAND? =====================================
--- 1. It should answer in WELL under a second now, and return a few hundred rows at most.
---    If this still times out, send me the plan and do not install anything else: a payroll
---    figure is not worth guessing at twice.
-explain (analyze, buffers, timing)
-select * from recovery_day_totals(
-  (date_trunc('week', current_date))::date, current_date, null);
-
--- 2. WHAT IT SAYS, to eyeball against the Commission screen before anybody is paid from it.
-select team, sum(recovered) as week_recovered, count(*) as days
-from recovery_day_totals((date_trunc('week', current_date))::date, current_date, null)
-group by team order by week_recovered desc limit 20;
-
--- 3. THE PROOF THAT MATTERS. Put ONE real team in and compare the figure with what the
---    Commission board showed for that team's recovery officer BEFORE this was installed.
---    They must agree. If they do not, TELL ME rather than paying anybody: a recovery figure
---    that moved with no upload behind it is the one thing on this screen nobody can guess at.
+-- EVERY LINE BELOW IS COMMENTED OUT, AND THAT IS NOT TIDINESS.
 --
+--   "Error: SQL query ran into an upstream timeout"   ... twice, and neither was the function.
+--
+-- The Supabase editor sends everything highlighted as ONE statement. Run this whole file and a
+-- timeout on the verification query at the bottom ROLLS BACK THE CREATE FUNCTION ABOVE IT --
+-- so the function was never installed, and the thing that timed out was my own check. The
+-- warning is written into RUN-ME-027 and 028 and I failed to repeat it here.
+--
+-- So: highlight from `create or replace function` down to the `grant execute` line, run THAT
+-- and nothing else. Then uncomment these one at a time, in order.
+-- =====================================================================================
+
+-- 1. IS IT THERE? (Run this first -- if it comes back empty, step 1 did not commit.)
+--   select proname from pg_proc where proname = 'recovery_day_totals';
+
+-- 2. ONE DAY, ONE TEAM. Picks a real team itself, so there is no name to fill in. This is the
+--    decisive one: if it is quick the structure is sound and only scale is left.
+--   select * from recovery_day_totals(current_date, current_date,
+--     array[(select team from defaulter_snapshots
+--            where snapshot_type = 'current' and snapshot_date = current_date limit 1)]);
+
+-- 3. THE WHOLE WEEK. Only after 2 is quick.
+--   select team, sum(recovered) as week_recovered, count(*) as days
+--   from recovery_day_totals(date_trunc('week', current_date)::date, current_date, null)
+--   group by team order by week_recovered desc limit 20;
+
+-- 4. THE PROOF THAT MATTERS, before anybody is paid from it. One real team, compared with what
+--    the Commission board showed for that team's recovery officer BEFORE this was installed.
+--    They must agree. If they do not, say so rather than paying anybody.
 --   select sum(recovered) from recovery_day_totals(
---     (date_trunc('week', current_date))::date, current_date, array['PUT A TEAM HERE']);
+--     date_trunc('week', current_date)::date, current_date, array['PUT A REAL TEAM HERE']);
