@@ -1081,18 +1081,12 @@ async function list(db, [dev, which, which2], nowMs) {
 async function dailySummary(db, [dev], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  /* THE SCOPE THE OFFICER IS PAID ON, not the one the handset happened to register with.
-       "Handset of Raphael is reading different recovery amount in system and callapp report
-        bar [is less]"
-     A leader's handset carries the leader_teams its access code had on the day it registered;
-     the portal pays a recovery officer on the teams table's recovery column, which the owner
-     keeps current. Raphael's phone had eight teams, the sheet ten, and the strip added up eight
-     teams' recovery while the commission board added ten. The lists on this phone already
-     widen a leader to every team they hold on the sheet (scopeFor); the strip now reads the
-     same scope, so the bar and the board are one figure. One cached read (teamRoleMap, a
-     minute per lambda), inside a strip that is itself cached two minutes per scope. */
-  const base = pseudoUser(cu);
-  return summaryFor(db, { ...base, teams: await scopeFor(db, base) }, nowMs);
+  /* THE ACCESS CODE'S TEAMS ARE THE RIGHT ONES -- "the teams i set in access codes are the
+     ones correct". A leader's handset carries the leader_teams its access code gave it, and
+     that IS the scope the owner maintains; the teams table's role columns are the ones that
+     go stale. So the strip reads the handset's own scope, and the portal was brought to it
+     (readTeamsAll lays the codes over the sheet) rather than the other way round. */
+  return summaryFor(db, pseudoUser(cu), nowMs);
 }
 /** The six numbers on the phone's top strip, for whoever is asking. Split out from
     dailySummary so the widget can serve the same figures to a screen nobody is holding --
@@ -1454,12 +1448,9 @@ async function sync(db, [dev, calls], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   // The same {name, role, teams} shape every other team check in this system uses, so
-  // "is this customer mine" is answered by the one rule rather than by a second one here --
-  // widened to the teams the sheet gives a leader, as the lists and the strip are, so a
-  // recovery officer ringing a customer of a team the sheet gave them last month is not
-  // marked out of portfolio because the handset registered before that. Cached read.
-  const base = pseudoUser(cu);
-  const user = { ...base, teams: await scopeFor(db, base) };
+  // "is this customer mine" is answered by the one rule rather than by a second one here.
+  // The handset's own scope -- its access code's teams -- which the owner keeps correct.
+  const user = pseudoUser(cu);
   calls = calls || [];
   let wm = num(cu.last_ts);
   /* WHY A SYNC CARRIES A NUMBER THAT HAS NOTHING TO DO WITH CALLS.

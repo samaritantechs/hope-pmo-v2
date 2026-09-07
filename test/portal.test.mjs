@@ -757,6 +757,38 @@ test('the PMO collection band amounts are the admin\'s to set too', async () => 
   assert.equal(back.pmo.find(r => r.officer === 'CATHERINE').commission, 60000);
 });
 
+test('the access codes decide who holds which team; the sheet fills in the rest', async () => {
+  /* "the teams i set in access codes are the ones correct now i wonder what yo tellling me".
+     Raphael's sheet named him on ten teams, his code on eight; the board paid him on the ten.
+     A code that lists teams now wins over the sheet's role column for its unit, everywhere a
+     screen asks whose team it is -- readTeamsAll lays the codes over the sheet once. */
+  const t = tables();                                    // sheet: KONGOWE recovery JUMA G, MBAGALA none
+  t.access_codes.push(
+    // JUMA's code gives him MBAGALA as well; the sheet never said so.
+    { code: 'R1', name: 'JUMA G', role: 'PMO RECOVERY', teams: ['MBAGALA'], tabs: [] },
+    // And an early-collection code names a DIFFERENT officer on KONGOWE than the sheet's EARLY E.
+    { code: 'E1', name: 'NEW EARLY', role: 'PMO EXPECTED', teams: ['KONGOWE'], tabs: [] });
+  t.repayment_snapshots.push(E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'));
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  const juma = d.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.weekRecovered, 400, 'KONGOWE\'s 300 from the sheet AND MBAGALA\'s 100 from the code');
+  assert.equal(d.recBoard.find(r => r.officer === '(unassigned)'), undefined, 'nothing is unassigned now');
+  assert.ok(d.colBoard.find(r => r.officer === 'NEW EARLY'), 'the code\'s early officer, not the sheet\'s');
+  assert.equal(d.colBoard.find(r => r.officer === 'EARLY E'), undefined);
+
+  // The Orodha names the same people.
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(dash.teamPerf.find(r => r.team === 'MBAGALA').recovery, 'JUMA G');
+  assert.equal(dash.teamPerf.find(r => r.team === 'KONGOWE').expected, 'NEW EARLY');
+
+  // A code with no teams, or with a role that names no unit, changes nothing.
+  const t2 = tables();
+  t2.access_codes.push({ code: 'X', name: 'SOMEONE', role: 'GMO', teams: ['MBAGALA'], tabs: [] },
+    { code: 'Y', name: 'NOBODY', role: 'PMO RECOVERY', teams: [], tabs: [] });
+  const d2 = await portalApi(dbWithRpc(t2), ADMIN, 'commission', {}, NOW);
+  assert.equal(d2.recBoard.find(r => r.officer === '(unassigned)').weekRecovered, 100, 'MBAGALA still unassigned');
+});
+
 test('the recovery rate modes are removed from settings, not left switched off', async () => {
   /* A rate table still sitting in Settings is a rate table somebody turns back on, and it
      would silently outrank the ladder. The panel's Save drops all three keys. */

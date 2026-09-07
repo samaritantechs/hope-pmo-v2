@@ -337,16 +337,11 @@ const PHONE = [
 
      A number that goes UP here is a number to argue about before it ships, not after.
 
-     30 -> 31: THE STRIP READS THE SCOPE THE SHEET PAYS ON. "Handset of Raphael is reading
-     different recovery amount in system and callapp report bar [is less]" -- his phone had
-     registered with eight leader_teams, the teams table's recovery column names him on ten,
-     and the bar added up eight teams while the commission board added ten. The strip now
-     widens a leader to the teams they hold on the sheet (scopeFor), which the lists on the
-     same phone already did. The one trip is the teams table, cached a minute per lambda
-     (teamRoleMap) behind a strip that is itself cached two minutes per scope -- on a warm
-     lambda it is nought. A bar that disagrees with the pay slip in a recovery officer's hand
-     is the more expensive thing. */
-  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 31, 40000],
+     It went to 31 for one afternoon: the strip was widened to the teams the SHEET gives a
+     leader, to match the commission board. That was the wrong way round -- "the teams i set
+     in access codes are the ones correct" -- so the strip reads the handset's own scope again
+     and the PORTAL was brought to the codes instead (readTeamsAll). Back to 30. */
+  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 30, 40000],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way
