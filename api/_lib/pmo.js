@@ -168,7 +168,11 @@ export function pmoBoard(roster, byDay, today, days) {
     const perDay = days.map(d => {
       const c = collectionOf(pick(d));
       const b = pmoBand(c.pct);
-      return { date: d, pct: c.pct, uncollected: c.uncollected, tzs: b ? b.tzs : 0, band: b ? b.label : null };
+      /* expected and collected ride along so a longer range can be cut into WEEKS again
+         afterwards -- the month record adds days into weeks and needs the parts, because a
+         week's percentage is a ratio of its sums and never a mean of its days. */
+      return { date: d, pct: c.pct, uncollected: c.uncollected, expected: c.expected, collected: c.collected,
+        tzs: b ? b.tzs : 0, band: b ? b.label : null };
     });
     const todayBand = pmoBand(day.pct);
 
