@@ -3843,7 +3843,10 @@ test('on a Monday recovery divides by Monday, and on the weekend by the week', a
    weekend by the week (recoveryDenominator, one place). The commission board and the
    presentation's per-officer boards are a person's pay, and divide a day by that day.
    ===================================================================================== */
-test('the recovery tiles divide by jana on the team rule, and say so', async () => {
+test('the recovery tiles divide by leo -- the day\'s own uncollected -- and say so', async () => {
+  /* "ALL the rec widgets at dashboards divide by leo not jana". The jana rule stays on the
+     phone's summary and the leader reports; on this dashboard a day is scored on its own
+     sheet, which is also what the commission board pays on. */
   const t = tables();
   t.repayment_snapshots = [
     E('111', 'KONGOWE', 1000, 'UNPAID', 0, MON),                  // Monday: 1000 uncollected
@@ -3852,20 +3855,20 @@ test('the recovery tiles divide by jana on the team rule, and say so', async () 
   ];
   const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
   const tile = wd => d.recTrend.find(x => x.weekday === wd);
-  // Monday divides by Monday.
   assert.equal(tile('MON').basis, 'today');
   assert.equal(tile('MON').uncollected, 1000);
-  // Friday divides by Thursday -- and carries its own 600 for the week's total.
-  assert.equal(tile('FRI').basis, 'yesterday');
-  assert.deepEqual(tile('FRI').basisDates, [YEST]);
-  assert.equal(tile('FRI').uncollected, 400, 'jana\'s, not Friday\'s own');
+  // Friday divides by Friday's own 600 -- never Thursday's 400.
+  assert.equal(tile('FRI').basis, 'today');
+  assert.deepEqual(tile('FRI').basisDates, [TODAY]);
+  assert.equal(tile('FRI').uncollected, 600, 'Friday\'s own, not jana\'s');
   assert.equal(tile('FRI').dayUncollected, 600);
   assert.equal(tile('FRI').recovered, 400, 'the shared decks: (500+700+900) - (300+600+800)');
-  assert.equal(tile('FRI').pct, 100, '400 of Thursday\'s 400');
-  assert.equal(tile('FRI').unrecovered, 0);
-  // Tuesday divides by Monday too: jana.
-  assert.equal(tile('TUE').basis, 'yesterday');
-  assert.equal(tile('TUE').uncollected, 1000);
+  assert.equal(tile('FRI').pct, 66.7, '400 of Friday\'s 600');
+  assert.equal(tile('FRI').unrecovered, 200);
+  // Tuesday has no sheet of its own in this fixture: not measured, never Monday's.
+  assert.equal(tile('TUE').basis, 'today');
+  assert.equal(tile('TUE').uncollected, 0);
+  assert.equal(tile('TUE').pct, null);
   /* THE WEEKEND HAS NO COLLECTION SHEET AND SO NO DENOMINATOR AT ALL.
        "am still seeing unrecovered on sat and sun ... WE HAVE NO COL IN SAT AND SUN!"
      The weekend branch of the jana rule (divide by the week) is for a weekend DAY on the
@@ -4402,13 +4405,14 @@ test('the Orodha carries today beside the month for sales, early col, col and re
   // 5 & 6
   assert.equal(k.tColPct, 50, 'today is a weekday: today\'s own sheet');
   assert.equal(k.mColPct, 41.7, 'the month: 1000 collected of 2400 expected (jana expected 400 and collected none)');
-  // 7 & 8 -- Friday divides by jana's uncollected; the month by all its uncollected.
-  assert.equal(k.recBasis, 'yest');
+  // 7 & 8 -- Friday divides by Friday's OWN uncollected ("ALL the rec widgets at dashboards
+  // divide by leo not jana"); the month by all its uncollected.
+  assert.equal(k.recBasis, 'today');
   assert.equal(k.recovered, 300, 'initial 1200 minus current 900, the shared decks');
-  assert.equal(k.tRecPct, 75, '300 of jana\'s 400');
+  assert.equal(k.tRecPct, 30, '300 of today\'s 1000 -- not jana\'s 400');
   assert.equal(k.mRecPct, 21.4, '300 of the month\'s 1400 uncollected');
   // The averages, over what was measured.
-  assert.equal(k.tAvg, 56.3, '(50 + 50 + 50 + 75) / 4');
+  assert.equal(k.tAvg, 45, '(50 + 50 + 50 + 30) / 4');
   assert.equal(k.mAvg, 28.9, '(2.5 + 50 + 41.7 + 21.4) / 4');
   // The cards still carry no month figure -- the directors' rule on amounts stands.
   for (const key of ['salesMonth', 'colMonthPct', 'recMonthPct']) assert.equal(key in d.cards, false);
