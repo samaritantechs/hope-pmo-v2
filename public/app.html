@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-d';
+var BUILD = '2026-09-07-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2960,7 +2960,7 @@ VIEWS.dashboard = function(){
          by the week; each tile says which. The TOTAL comes from the server (recTrendTotal):
          the week's recovered over Monday to Friday's OWN uncollected, once each, which is not
          what adding seven tiles' denominators would give. */
-      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % ÷ jana’s uncollected (Mon ÷ Mon, weekend ÷ the week)', 'gRec',
+      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % ÷ that day’s uncollected · weekend: no col', 'gRec',
           d.recTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : (x.basis === 'none'
@@ -2969,7 +2969,7 @@ VIEWS.dashboard = function(){
                  SAT AND SUN!" */
               ? tcell(wdLabel(x.weekday), [
                   ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
-                  ['hakuna makusanyo / no collection sheet', 'mutl'],
+                  ['no col', 'mutl'],
                   [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']])
               : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
@@ -3110,7 +3110,7 @@ VIEWS.dashboard = function(){
       pc('tColPct','T.Col','Collection % leo / today (the week at the weekend)'),
       pc('mColPct','M.Col','Collection % mwezi huu / month to date'),
       {key:'recovered', label:'Recovered', kind:'money', title:'Recovered TZS leo / today (initial − current)', cls:function(r){ return r.recovered>0?'good':''; }},
-      pc('tRecPct','T.Rec','Recovery % leo / today (Mon ÷ Monday, Tue–Fri ÷ jana, weekend ÷ week)'),
+      pc('tRecPct','T.Rec','Recovery % leo / today ÷ today’s own uncollected (weekend ÷ the week)'),
       pc('mRecPct','M.Rec','Recovery % mwezi huu / month to date'),
       pc('tAvg','T.Avg','Wastani leo / average of today’s four'),
       pc('mAvg','M.Avg','Wastani wa mwezi / average of the month’s four'),

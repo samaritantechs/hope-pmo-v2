@@ -7892,9 +7892,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        and never asked for. So the two weekend tiles carry the recovered amount only -- "full
        recovery" when there is one, no percentage and no unrecovered -- exactly as they read
        before #413. Monday to Friday keep the jana rule. */
+    /* AND MONDAY TO FRIDAY DIVIDE BY LEO -- the day's OWN uncollected.
+         "ALL the rec widgets at dashboards divide by leo not jana"
+       The jana rule (recoveryDenominator) stays where it came from -- the phone's daily
+       summary and the leader reports; on this dashboard every recovery percentage is the
+       day's recovered over the day's own uncollected, which is also what the commission
+       board pays on, so the tile and the pay slip read one figure. */
     const weekend = i >= 5;
-    const basis = weekend ? { kind: 'none', den: 0, dates: [] }
-      : recoveryDenominator(d, dd => tUncollected(colDay_(myExpWeek, dd)));
+    const basis = weekend ? { kind: 'none', den: 0, dates: [] } : { kind: 'today', den: own, dates: [d] };
     const unc = basis.den;
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       basis: basis.kind, basisDates: basis.dates, dayUncollected: own,
@@ -8097,7 +8102,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const dailyTargetTeam = weeklyTarget / 5;
   /* Which recovery denominator TODAY's rule picks -- Monday by Monday, Tuesday to Friday by
      yesterday, the weekend by the week -- the same rule the slide states beside the figure. */
-  const recBasis = weekend ? 'week' : (wdToday === 'MON' ? 'mon' : 'yest');
+  /* LEO, NOT JANA -- "ALL the rec widgets at dashboards divide by leo not jana". A weekday
+     row divides today's recovered by today's own uncollected; the weekend, which has no sheet
+     of its own, by the week's -- the same switch the collection column beside it makes. */
+  const recBasis = weekend ? 'week' : 'today';
   const meanOf_ = vals => {
     const meas = vals.filter(v => v != null);
     return meas.length ? Math.round((meas.reduce((s, v) => s + v, 0) / meas.length) * 10) / 10 : null;
@@ -8114,6 +8122,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const recPctMon = pctOf_(recovered, s.uncolMon);
     const recPctYest = pctOf_(recovered, s.uncolYest);
     const recPctWeek = pctOf_(recovered, s.uncolWeek);
+    const recPctToday = pctOf_(recovered, Math.max(0, s.expToday - s.colToday));
     /* ---- THE ORODHA'S EIGHT, IN PAIRS: today beside the month, for each of the four things
        a team is judged on -- "1&2 (today sales%, monthly sales%), 3&4 (today early col%,
        monthly early col), 5&6 (today col%, monthly col%), 7&8 (today rec%, monthly rec%)
@@ -8124,7 +8133,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const tSalesPct = pctOf_(s.salesToday, dailyTargetTeam);
     const tEColPct = collPctEarly;
     const tColPct = collPct;
-    const tRecPct = recBasis === 'week' ? recPctWeek : recBasis === 'mon' ? recPctMon : recPctYest;
+    // A day with no deck pair has not MEASURED recovery: null, never "0% of today's sheet".
+    const tRecPct = !pairedToday ? null : (recBasis === 'week' ? recPctWeek : recPctToday);
     const mSalesPct = salesPct;
     const mEColPct = m ? pctOf_(m.ic, m.ie) : null;
     const mColPct = m ? pctOf_(m.c, m.e) : null;
