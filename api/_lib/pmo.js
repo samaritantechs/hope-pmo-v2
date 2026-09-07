@@ -32,13 +32,45 @@ export const PMO_BANDS = [
 ];
 export const PMO_BELOW = { floor: 0, tzs: 0, label: 'chini ya 85% / below 85%' };
 
+/* THE AMOUNTS ARE THE ADMIN'S TO SET; THE PERCENTAGES ARE NOT -- "every recovery unit bands
+   too, make those amounts editable". Same shape as the recovery ladder (recovery-pay.js): the
+   setting PMO_BAND_TZS holds the admin's amounts as JSON keyed by the band's floor, laid over
+   the defaults above; a band the setting does not name keeps its default, the band under the
+   ladder (floor 0) can pay too. Floors and labels never move from a setting. */
+export const PMO_BAND_TZS_KEY = 'PMO_BAND_TZS';
+
+export function parsePmoBandTzs(text) {
+  let o = null;
+  try { o = JSON.parse(String(text || '')); } catch (e) { return {}; }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+  const out = {};
+  for (const b of PMO_BANDS.concat([PMO_BELOW])) {
+    const v = o[String(b.floor)];
+    if (v == null || v === '') continue;
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) out[b.floor] = Math.round(n);
+  }
+  return out;
+}
+export function pmoLadder(overrides) {
+  const o = overrides || {};
+  return PMO_BANDS.map(b => ({ ...b, defaultTzs: b.tzs,
+    tzs: Object.prototype.hasOwnProperty.call(o, b.floor) ? o[b.floor] : b.tzs }));
+}
+export function pmoBelowOf(overrides) {
+  const o = overrides || {};
+  return { ...PMO_BELOW, defaultTzs: PMO_BELOW.tzs,
+    tzs: Object.prototype.hasOwnProperty.call(o, 0) ? o[0] : PMO_BELOW.tzs };
+}
+
 /** Which band a collection percentage falls in. A day with nothing expected has no percentage
     at all, and that is NOT a failure — it is a day the officer was given nothing to collect, so
-    it pays nothing and says why rather than being scored as 0%. */
-export function pmoBand(pct) {
+    it pays nothing and says why rather than being scored as 0%. `bands` and `below` are the
+    ladder in force (pmoLadder / pmoBelowOf); both default to the built-in ones. */
+export function pmoBand(pct, bands, below) {
   if (pct == null) return null;
-  for (const b of PMO_BANDS) if (pct >= b.floor) return b;
-  return PMO_BELOW;
+  for (const b of (bands || PMO_BANDS)) if (pct >= b.floor) return b;
+  return below || PMO_BELOW;
 }
 
 /** The role name on an access code that marks somebody as a PMO collection officer. A setting
@@ -149,7 +181,7 @@ export function collectionOf(rows) {
    working week as it is written on every board in every branch. */
 export const PMO_DAY_KEYS = ['J3', 'J4', 'J5', 'AL', 'IJ'];
 
-export function pmoBoard(roster, byDay, today, days) {
+export function pmoBoard(roster, byDay, today, days, bands, below) {
   const rows = roster.map(p => {
     const mine = new Set((p.teams || []).map(t => norm(t)));
     const pick = d => (byDay.get(d) || []).filter(r => mine.has(norm(r.team)));
@@ -167,14 +199,14 @@ export function pmoBoard(roster, byDay, today, days) {
        counted as failures; they simply do not pay. */
     const perDay = days.map(d => {
       const c = collectionOf(pick(d));
-      const b = pmoBand(c.pct);
+      const b = pmoBand(c.pct, bands, below);
       /* expected and collected ride along so a longer range can be cut into WEEKS again
          afterwards -- the month record adds days into weeks and needs the parts, because a
          week's percentage is a ratio of its sums and never a mean of its days. */
       return { date: d, pct: c.pct, uncollected: c.uncollected, expected: c.expected, collected: c.collected,
         tzs: b ? b.tzs : 0, band: b ? b.label : null };
     });
-    const todayBand = pmoBand(day.pct);
+    const todayBand = pmoBand(day.pct, bands, below);
 
     return {
       officer: p.name,

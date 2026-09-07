@@ -8,8 +8,9 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
   recoveryByTeam } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
-import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
-  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord } from './pmo.js';
+import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
+  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord,
+  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf } from './pmo.js';
 import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct, recoveryLadder, recoveryBelowOf,
   parseBandTzs, REC_BAND_TZS_KEY } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
@@ -3180,6 +3181,9 @@ async function cmsCfg(db) {
        screen and the amounts the rates panel edits are one object. */
     recBands: recoveryLadder(parseBandTzs(get(REC_BAND_TZS_KEY))),
     recBelow: recoveryBelowOf(parseBandTzs(get(REC_BAND_TZS_KEY))),
+    // And the PMO collection ladder in force, the same way (PMO_BAND_TZS, see pmo.js).
+    pmoBands: pmoLadder(parsePmoBandTzs(get(PMO_BAND_TZS_KEY))),
+    pmoBelow: pmoBelowOf(parsePmoBandTzs(get(PMO_BAND_TZS_KEY))),
     // What an officer is told about WHEN and HOW the money reaches them. A commission figure
     // with no word about payday is the question every officer asks next, and they ask it of
     // somebody rather than of the screen.
@@ -3670,7 +3674,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const colDay_ = d => withAdj_(onDate(myExp, d), adj, 'expected-current', d, pmoCount);
   for (const d of pmoDays) byDay.set(d, colDay_(d));
   byDay.set(today, colDay_(today));
-  const pmoRows = pmoBoard(pmoRoster, byDay, today, pmoDays);
+  const pmoRows = pmoBoard(pmoRoster, byDay, today, pmoDays, cfg.pmoBands, cfg.pmoBelow);
   /* THE WEEKS ON THE PMO ROW TOO -- pctW1/tzsW1 ... on the month record: each week's ratio of
      its days' sums, and the pay its days' bands added up. Worked out from perDay (weekDays),
      which carries each day's parts for exactly this. */
@@ -3689,7 +3693,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   for (const d of prevDays) prevByDay.set(d,
     withAdj_(pickLatestBatchRows(prevMine.filter(r => String(r.snapshot_date) === d)),
       adj, 'expected-current', d, pmoCount));
-  const prevRows = pmoBoard(pmoRoster, prevByDay, prevDays[0], prevDays);
+  const prevRows = pmoBoard(pmoRoster, prevByDay, prevDays[0], prevDays, cfg.pmoBands, cfg.pmoBelow);
   const prevPct = {};
   for (const r of prevRows) prevPct[K(r.officer)] = r.weekPct;
 
@@ -3778,7 +3782,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     recoveryBands: cfg.recBands, recoveryBelow: cfg.recBelow,
     // Whether any band amount differs from the built-in ladder, so the panel can offer a reset.
     recBandsCustom: cfg.recBands.concat([cfg.recBelow]).some(b => b.tzs !== b.defaultTzs),
-    pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
+    pmo, pmoDiag, pmoBands: cfg.pmoBands, pmoBelow: cfg.pmoBelow, pmoRole: pmoRoleName,
+    pmoBandsCustom: cfg.pmoBands.concat([cfg.pmoBelow]).some(b => b.tzs !== b.defaultTzs),
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, enabled: bonusEnabled, won: bonusWon,
       leader: leader ? leader.officer : null,
       leaderPct: leader ? leader.weekPct : null, leaderPrevPct: leaderPrev,
@@ -3939,6 +3944,29 @@ async function commissionSave(db, user, p) {
     await set(REC_BAND_TZS_KEY, JSON.stringify(bands));
     out.recBands = recoveryLadder(bands);
     out.recBelow = recoveryBelowOf(bands);
+  }
+  /* THE PMO COLLECTION BAND AMOUNTS, the same way -- "every recovery unit bands too". */
+  if (p.resetPmoBands) {
+    const { error } = await db.from('settings').delete().eq('key', PMO_BAND_TZS_KEY);
+    if (error) throw new Error(error.message);
+    noteSettingsWritten(db);
+    noteAnswersChanged(db);
+    out.pmoBands = pmoLadder({});
+    out.pmoBelow = pmoBelowOf({});
+    out.pmoBandsReset = true;
+  } else if (p.pmoBands != null) {
+    if (!p.pmoBands || typeof p.pmoBands !== 'object' || Array.isArray(p.pmoBands)) throw badRequest('pmoBands must be {floor: tzs}');
+    const bands = {};
+    for (const b of PMO_BANDS.concat([PMO_BELOW])) {
+      const v = p.pmoBands[String(b.floor)];
+      if (v == null || String(v).trim() === '') continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw badRequest(`Kiasi cha kundi ${b.floor}%+ (PMO) si sahihi / the amount for the PMO ${b.floor}%+ band must be a number of 0 or more.`);
+      bands[b.floor] = Math.round(n);
+    }
+    await set(PMO_BAND_TZS_KEY, JSON.stringify(bands));
+    out.pmoBands = pmoLadder(bands);
+    out.pmoBelow = pmoBelowOf(bands);
   }
   return out;
 }
@@ -8859,7 +8887,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        repeated in thirty-odd rows. */
     fetchAll(() => db.from('access_codes').select('name, role, teams')),
     // Every setting this screen needs, in ONE journey rather than three.
-    settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY]),
+    settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY, PMO_BAND_TZS_KEY]),
     /* ILIYONASIA over the week these boards are read on -- "everywhere the amount should add
        as stated during manual input". One small read of a hand-typed register, in this wave so
        it costs no wall time, null on a deployment that has not built the table. */
@@ -9246,7 +9274,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   // Corrected the same way the boards above are -- one register, one rule, one figure.
   for (let i = 0; i < 7; i++) { const d = addDaysKey(mon, i); pmoByDay.set(d, myExpDay_(d)); }
   const pmoDays = WD5.map((_w, i) => addDaysKey(mon, i));
-  const pmoRows = pmoBoard(pmoRoster, pmoByDay, today, pmoDays);
+  // The ladder in force -- the admin's amounts -- so the wall bands a day the way the pay slip does.
+  const pmoTzs = parsePmoBandTzs(cfgS.get(PMO_BAND_TZS_KEY, ''));
+  const pmoRows = pmoBoard(pmoRoster, pmoByDay, today, pmoDays, pmoLadder(pmoTzs), pmoBelowOf(pmoTzs));
 
   /* ---- FOLLOW-UP STATUS across ALL defaulters (what the whole book looks like) ---- */
   const real = myFu.filter(r => !(r.status == null && r.arrears == null));
