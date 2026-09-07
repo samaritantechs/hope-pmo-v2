@@ -3919,12 +3919,13 @@ test('recovery divides by yesterday\'s uncollected on a Tuesday-to-Friday', asyn
         commissions, their personal reports and presentation by rec officer"
      A recovery officer's day divides by THAT DAY's uncollected -- Friday's own 9000 -- not by
      jana (the team rule) and no longer by the week (which this board did from 14 Aug, so the
-     same person read one percentage on the wall and another on their pay slip). Yesterday's
-     uncollected still stands as its own column before recovered. */
+     same person read one percentage on the wall and another on their pay slip). And the row
+     carries NO jana figure: "the column in recovery card in dashboard is still uncollected
+     jana" -- the uncollected shown is the one the percentage divides by, nothing else. */
   assert.equal(jumaToday.uncollected, 9000,
     'the DAILY board divides by the day itself, as the commission board does');
-  assert.equal(jumaToday.yUncollected, 1000,
-    'and yesterday\'s uncollected stands as its own column before recovered');
+  assert.equal('yUncollected' in jumaToday, false,
+    'and no jana figure rides along to be shown beside it');
   assert.equal(b.pmoBasis, 'yesterday', 'the PMO board keeps its own day-dependent basis');
 });
 
@@ -3939,8 +3940,6 @@ test('a report uploaded twice no longer halves the recovery percentage', async (
   const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
   assert.equal(b.recWeek.find(r => r.officer === 'JUMA G').uncollected, 1000,
     'one thousand, not two — the re-upload replaces the file, it does not stack on it');
-  assert.equal(b.recToday.find(r => r.officer === 'JUMA G').yUncollected, 1000,
-    'and the jana column on the daily board reads the same single file');
 });
 
 test('on a Monday recovery divides by Monday, and on the weekend by the week', async () => {
@@ -4036,7 +4035,7 @@ test('the recovery tiles divide by leo -- the day\'s own uncollected -- and say 
   const wall = b.recToday.find(r => r.officer === 'JUMA G');
   assert.equal(wall.uncollected, 600, 'the presentation: the same Friday over the same Friday');
   assert.equal(wall.pct, 50, 'one figure for one person on both screens');
-  assert.equal(wall.yUncollected, 400, 'jana shown beside it, never divided by');
+  assert.equal('yUncollected' in wall, false, 'and jana is not on the row at all');
 });
 
 

@@ -119,7 +119,7 @@ Only an admin code sees every officer; any other code sees its own row.
 ### officerBoards — the presentation
 args: `weekOf` · answer: `weekday, weekOf, today, deckWarning, initialCount, currentCount, weekUncollected`,
 `earlyToday[]`, `earlyWeek[{sn, officer, uncollected, paidOver, teams, expected, collected, pct}]` (initial sheets), `earlySource, earlyDate`,
-`recToday[{officer, initial, current, uncollected, yUncollected, debtCrisis, recovered, pct}]`, `recWeek[…]`,
+`recToday[{officer, initial, current, uncollected, debtCrisis, recovered, pct}]` (uncollected is the day's own, the figure pct divides by), `recWeek[…]`,
 `creditToday[]`, `creditWeek[{analyst, apps, amount, salesPct, recPct, perf}]`,
 `callToday[{agent, team, calls, duration, portfolio, customers, unit, connectPct, portfolioPct}]`, `callWeek[…]`, `callWeekWorst[…]`,
 `csToday[]`, `csWeek[{agent, id, unassigned, assigned, brought, amount}]`, `csExcluded{today{…}, week{…}}`,

@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-g';
+var BUILD = '2026-09-07-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3067,15 +3067,16 @@ VIEWS.dashboard = function(){
                     ['teams','uncollected'])
         // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
         // a customer does not fall into default between breakfast and lunch.
-        /* Yesterday's uncollected stands BEFORE today's recovered -- what the officer was
-           chasing, then what they brought in -- and the % divides by TODAY's uncollected
-           (the week's on Saturday and Sunday): the commission board's own record for the
-           officer, so the wall and the pay slip cannot show two figures for one person. */
-        + board('bRecT','Recovery — today','initial · current · jana uncollected · recovered · Rec % ÷ today’s uncollected (the week’s on Sat/Sun), as on the commission board', b.recToday,
+        /* TODAY's uncollected stands BEFORE today's recovered -- what was left out, then what
+           the officer brought back -- and it is the very figure the % divides by (the week's
+           on Saturday and Sunday): the commission board's own record for the officer, so the
+           wall and the pay slip cannot show two figures for one person. No jana column: a
+           figure the percentage does not divide by has no business sitting beside it. */
+        + board('bRecT','Recovery — today','initial · current · leo uncollected · recovered · Rec % ÷ today’s uncollected (the week’s on Sat/Sun), as on the commission board', b.recToday,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
-                     col('yUncollected','Uncol jana','money'),
+                     col('uncollected','Uncol leo','money'),
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recToday, ['initial','current','yUncollected','recovered']))
+                     {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recToday, ['initial','current','uncollected','recovered']))
         + board('bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
                      {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
