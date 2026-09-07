@@ -6901,12 +6901,28 @@ function dateOfWeekday(nowMs, wd) { return addDaysKey(weekMondayKey(nowMs), WD7.
  *  returned as well as the rows, because a board built from a report nobody uploaded should say
  *  so rather than look like a team that collected nothing.
  *
- *  Costs one round trip on the normal path -- the fallback only runs when the first is empty. */
+ *  "TODAY" IS THE LIST FOR TOMORROW.
+ *    "early col today and this week in presentation, today means of tomorrow [you put
+ *     collection there, a mistake]"
+ *  An initial sheet is dated the day it is FOR, and it is uploaded the day before -- that is
+ *  what makes the collection early. This read took the latest initial sheet dated ON OR
+ *  BEFORE today, so on any afternoon with tomorrow's list already in, it looked straight past
+ *  it and showed the list that was worked yesterday: a day already gone, printed under
+ *  "today". The sheet dated after today is asked for FIRST -- tomorrow's, or Monday's when it
+ *  is Friday -- and only a book with no list ahead falls back to the latest one it has. Which
+ *  date came back rides along, so the board can say "kesho" and the date instead of "today".
+ *
+ *  Costs one round trip on the normal path -- each fallback only runs when the one before it
+ *  is empty. */
 async function earlyList(db, { today, teams }) {
-  const ini = await expectedTotalsLatest(db, { type: 'initial', notAfter: today, teams });
-  if (ini.rows.length) return { ...ini, source: 'initial' };
+  /* ONE READ, NOT TWO. The latest initial sheet dated up to three days out IS the list ahead
+     when its date is past today, and the latest one held when it is not -- the same answer a
+     "look ahead first, then fall back" pair would give, for one round trip on a screen the
+     speed guard budgets to the trip. */
+  const ini = await expectedTotalsLatest(db, { type: 'initial', notAfter: addDaysKey(today, 3), teams });
+  if (ini.rows.length) return { ...ini, source: 'initial', ahead: String(ini.date) > today };
   const tmw = await expectedTotalsLatest(db, { type: 'tomorrow', notAfter: today, teams });
-  return { ...tmw, source: tmw.rows.length ? 'tomorrow' : null };
+  return { ...tmw, source: tmw.rows.length ? 'tomorrow' : null, ahead: false };
 }
 
 async function settingStr(db, key, dflt) {
@@ -9196,7 +9212,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        happened to be sitting on the object. */
     pmo: pmoRows.map(pmoPublicRow),
     pmoBasis: basis.kind, pmoBasisLabel: basis.label,
-    earlySource: tomorrow.source, earlyDate: tomorrow.date,
+    earlySource: tomorrow.source, earlyDate: tomorrow.date, earlyAhead: !!tomorrow.ahead,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };
 }
