@@ -10,7 +10,8 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord } from './pmo.js';
-import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct } from './recovery-pay.js';
+import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct, recoveryLadder, recoveryBelowOf,
+  parseBandTzs, REC_BAND_TZS_KEY } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
@@ -3174,6 +3175,11 @@ async function cmsCfg(db) {
   const get = k => { const r = rows.find(x => x.key === k); return r ? r.value : ''; };
   return {
     paidTzs: num(get('CMS_PAID_TZS')) || 0, overTzs: num(get('CMS_OVER_TZS')) || 0,
+    /* THE RECOVERY LADDER IN FORCE: the built-in bands with the admin's amounts laid over them
+       (REC_BAND_TZS, see recovery-pay.js). Read here, once, so the board, the ladder on the
+       screen and the amounts the rates panel edits are one object. */
+    recBands: recoveryLadder(parseBandTzs(get(REC_BAND_TZS_KEY))),
+    recBelow: recoveryBelowOf(parseBandTzs(get(REC_BAND_TZS_KEY))),
     // What an officer is told about WHEN and HOW the money reaches them. A commission figure
     // with no word about payday is the question every officer asks next, and they ask it of
     // somebody rather than of the screen.
@@ -3457,7 +3463,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         for (const [d, src] of recByDay) if (d >= w.from && d <= w.to && src[name]) recovered += src[name].recovered;
         for (const d of w.days5) base += uncolOn(d);
         return { key: w.key, from: w.from, to: w.to, recovered, base,
-          pay: recoveryWeek(weekdays, { recovered, base }) };
+          pay: recoveryWeek(weekdays, { recovered, base }, cfg.recBands, cfg.recBelow) };
       });
       const weekRecovered = perWeek.reduce((s, w) => s + w.recovered, 0);
       const tzs = perWeek.reduce((s, w) => s + w.pay.tzs, 0);
@@ -3769,7 +3775,9 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     /* The recovery ladder itself, so the screen draws the bands from the one definition rather
        than repeating them in HTML -- a pay table written twice is a pay table that disagrees
        with itself the first time one of them is edited. */
-    recoveryBands: RECOVERY_BANDS, recoveryBelow: RECOVERY_BELOW,
+    recoveryBands: cfg.recBands, recoveryBelow: cfg.recBelow,
+    // Whether any band amount differs from the built-in ladder, so the panel can offer a reset.
+    recBandsCustom: cfg.recBands.concat([cfg.recBelow]).some(b => b.tzs !== b.defaultTzs),
     pmo, pmoDiag, pmoBands: PMO_BANDS, pmoRole: pmoRoleName,
     pmoBonus: { tzs: bonusTzs, set: bonusTzs > 0, enabled: bonusEnabled, won: bonusWon,
       leader: leader ? leader.officer : null,
@@ -3904,6 +3912,34 @@ async function commissionSave(db, user, p) {
   // The payout note officers read under their own figure. Capped so a settings box cannot
   // become a place to paste a page of text onto everybody's commission screen.
   if (p.payText != null) { out.payText = String(p.payText).slice(0, 300); await set('COMM_PAY_TEXT', out.payText); }
+  /* THE RECOVERY BAND AMOUNTS -- "the commision amounts editable by admin on the % bands
+     payment". `recBands` arrives as {floor: tzs}; only the five known floors are read, each
+     amount must be a number of nought or more (a blank leaves that band at its default), and
+     the lot is stored as one setting so the ladder is always whole. `resetRecBands` drops the
+     setting and the built-in ladder is back. The floors themselves cannot be moved from here. */
+  if (p.resetRecBands) {
+    const { error } = await db.from('settings').delete().eq('key', REC_BAND_TZS_KEY);
+    if (error) throw new Error(error.message);
+    noteSettingsWritten(db);
+    noteAnswersChanged(db);
+    out.recBands = recoveryLadder({});
+    out.recBelow = recoveryBelowOf({});
+    out.recBandsReset = true;
+  } else if (p.recBands != null) {
+    if (!p.recBands || typeof p.recBands !== 'object' || Array.isArray(p.recBands)) throw badRequest('recBands must be {floor: tzs}');
+    const bands = {};
+    // The five bands and the one under them (floor 0) -- "add 0% - 49% payment 15,000/=".
+    for (const b of RECOVERY_BANDS.concat([RECOVERY_BELOW])) {
+      const v = p.recBands[String(b.floor)];
+      if (v == null || String(v).trim() === '') continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw badRequest(`Kiasi cha kundi ${b.floor}%+ si sahihi / the amount for the ${b.floor}%+ band must be a number of 0 or more.`);
+      bands[b.floor] = Math.round(n);
+    }
+    await set(REC_BAND_TZS_KEY, JSON.stringify(bands));
+    out.recBands = recoveryLadder(bands);
+    out.recBelow = recoveryBelowOf(bands);
+  }
   return out;
 }
 

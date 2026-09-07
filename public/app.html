@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-e';
+var BUILD = '2026-09-07-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2308,11 +2308,27 @@ function wireBar(){
   }
   var cmSave = document.getElementById('cmSave');
   if (cmSave) cmSave.onclick = function(){
+    // The recovery band amounts, one per band box, keyed by the band's floor.
+    var bandEls = document.querySelectorAll('.cmBand');
+    var recBands = null;
+    if (bandEls.length) {
+      recBands = {};
+      Array.prototype.forEach.call(bandEls, function(el){ recBands[el.getAttribute('data-floor')] = el.value; });
+    }
     srv('commissionSave', { paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
       payText: ($('#cmPayText') ? $('#cmPayText').value : null),
       weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null),
-      bonusEnabled: ($('#cmBonusOn') ? !!$('#cmBonusOn').checked : null) })
+      bonusEnabled: ($('#cmBonusOn') ? !!$('#cmBonusOn').checked : null),
+      recBands: recBands })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
+      .catch(function(e){ toast(String(e.message || e), true); });
+  };
+  var cmBandsReset = document.getElementById('cmBandsReset');
+  if (cmBandsReset) cmBandsReset.onclick = function(){
+    if (!confirm('Rudisha viwango vya kamisheni ya recovery kwenye chaguo-msingi (0 / 20,000 / 25,000 / 30,000 / 40,000 / 60,000)?\n\n'
+      + 'Reset the recovery band amounts to the built-in ladder?')) return;
+    srv('commissionSave', { resetRecBands: true })
+      .then(function(){ toast('Viwango vimerudishwa. / Amounts reset.'); render({ force:true }); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   /* THE BONUS DELETE. Asked for once, because it removes a pay rule and the week's board
@@ -4691,16 +4707,28 @@ VIEWS.commission = function(){
             'per PAID / per OVERPAID client', noRates?'warnc':'')
       + '</div>'
       + (d.isAdmin ? '<div class="card"><div class="card-h">Viwango / Rates</div><div class="cmsrates">'
-          /* THE RECOVERY LADDER IS NOT EDITABLE HERE and is shown so nobody goes looking for
-             the rate boxes that used to be. It is drawn from the bands the server sent, never
-             retyped into this file: a pay table written twice disagrees with itself the first
-             time one copy is edited. */
-          + '<div class="fld" style="grid-column:1/-1"><label>Recovery — malipo kwa asilimia / paid by percentage</label>'
-            + '<div class="fldnote">' + (d.recoveryBands||[]).map(function(b){
-                return '<b>' + esc(b.label) + '</b> — ' + money(b.tzs) + ' / siku'; }).join(' &middot; ')
-            + ' &middot; ' + esc((d.recoveryBelow && d.recoveryBelow.label) || '') + ' — 0'
-            + '<br>Siku 6 kwa wiki: Jumatatu&ndash;Ijumaa kila siku yake, na wiki nzima kama siku ya 6.'
-            + ' / Six days a week: Monday&ndash;Friday each on its own, and the whole week as the sixth.</div></div>'
+          /* THE RECOVERY LADDER: the PERCENTAGES are fixed, the AMOUNTS are the admin's.
+               "i want to have the commision amounts editable by admin on the % bands payment"
+             One box per band, drawn from the bands the server sent (never retyped here), each
+             showing its built-in amount beside it so a change can be seen and undone. */
+          + '<div class="fld" style="grid-column:1/-1"><label>Recovery — malipo kwa asilimia / paid by percentage — TZS kwa siku / per day</label>'
+            + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin:6px 0">'
+            /* The five bands and the one under them -- "add 0% - 49% payment 15,000/=" -- the
+               last box, nought unless the admin says otherwise. */
+            + (d.recoveryBands||[]).concat(d.recoveryBelow ? [d.recoveryBelow] : []).map(function(b){
+                return '<div class="fld" style="margin:0"><label>' + esc(b.label) + '</label>'
+                  + '<input class="cmBand" data-floor="' + b.floor + '" type="number" min="0" step="1000" value="' + (b.tzs||0) + '">'
+                  + (b.defaultTzs != null && b.defaultTzs !== b.tzs
+                      ? '<div class="fldnote">chaguo-msingi / default ' + money(b.defaultTzs) + '</div>' : '')
+                  + '</div>'; }).join('')
+            + '</div>'
+            + '<div class="fldnote">Asilimia hazibadiliki hapa; kiasi cha kila kundi ndicho kinachowekwa. / The percentages are fixed; the amount of each band is yours to set.'
+            + ' Siku 6 kwa wiki: Jumatatu&ndash;Ijumaa kila siku yake, na wiki nzima kama siku ya 6.'
+            + ' / Six days a week: Monday&ndash;Friday each on its own, and the whole week as the sixth.'
+            + (d.recBandsCustom
+                ? ' <button class="btn sm ghost" id="cmBandsReset" style="margin-left:6px">Rudisha chaguo-msingi / Reset to defaults</button>'
+                : '')
+            + '</div></div>'
           + '<div class="fld"><label>TZS per PAID client</label>'
             + '<input id="cmPaid" type="number" min="0" step="50" value="'+(d.paidTzs||0)+'"></div>'
           + '<div class="fld"><label>TZS per OVERPAID client</label>'

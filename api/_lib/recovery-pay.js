@@ -85,16 +85,63 @@ export const RECOVERY_BANDS = [
 ];
 export const RECOVERY_BELOW = { floor: 0, tzs: 0, label: 'chini ya 50% / below 50%' };
 
+/* THE AMOUNTS ARE THE ADMIN'S TO SET; THE PERCENTAGES ARE NOT.
+     "i want to have the commision amounts editable by admin on the % bands payment, the 25k,
+      30k - 60k"
+   The ladder above is the DEFAULT. The setting REC_BAND_TZS holds the admin's amounts as JSON
+   keyed by the band's floor -- {"90":60000,"80":40000,...} -- and recoveryLadder lays them
+   over the defaults: a band the setting does not name keeps its default, a band it names
+   takes the amount as typed, nought included. The floors and labels never move: the rule is
+   "what is 70-79% worth", not "where does 70-79% start", and an editable floor is a ladder
+   two people can read differently. */
+export const REC_BAND_TZS_KEY = 'REC_BAND_TZS';
+
+/** The setting's text as {floor: tzs}, or {} for anything unreadable -- a bad value falls back
+    to the defaults rather than to a ladder with holes in it. */
+export function parseBandTzs(text) {
+  let o = null;
+  try { o = JSON.parse(String(text || '')); } catch (e) { return {}; }
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+  const out = {};
+  for (const b of RECOVERY_BANDS.concat([RECOVERY_BELOW])) {
+    const v = o[String(b.floor)];
+    if (v == null || v === '') continue;
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) out[b.floor] = Math.round(n);
+  }
+  return out;
+}
+
+/** The ladder with the admin's amounts laid over the defaults. Each band carries `defaultTzs`
+    beside `tzs`, so a screen can say what was changed. */
+export function recoveryLadder(overrides) {
+  const o = overrides || {};
+  return RECOVERY_BANDS.map(b => ({ ...b, defaultTzs: b.tzs,
+    tzs: Object.prototype.hasOwnProperty.call(o, b.floor) ? o[b.floor] : b.tzs }));
+}
+
+/** THE BAND UNDER THE LADDER CAN PAY TOO -- "add 0% - 49% payment 15,000/=". Below 50% is
+    nought by default and stays a band of its own (floor 0), so an admin who wants the poorest
+    days to carry something sets its amount like any other band's. */
+export function recoveryBelowOf(overrides) {
+  const o = overrides || {};
+  return { ...RECOVERY_BELOW, defaultTzs: RECOVERY_BELOW.tzs,
+    tzs: Object.prototype.hasOwnProperty.call(o, 0) ? o[0] : RECOVERY_BELOW.tzs };
+}
+
 /** Which band a recovery percentage falls in.
 
     A day with NOTHING TO RECOVER has no percentage at all, and that is not a failure — it is a
     day the officer was given no arrears to work, so it pays nothing and says why rather than
     being scored as 0% and dragged to the bottom of the board. Same rule as pmoBand, and it has
-    to be: an officer whose team had a clean day must not read as an officer who did nothing. */
-export function recoveryBand(pct) {
+    to be: an officer whose team had a clean day must not read as an officer who did nothing.
+
+    `bands` is the ladder in force -- recoveryLadder(...) with the admin's amounts -- and
+    `below` the band under it (recoveryBelowOf); both default to the built-in ones. */
+export function recoveryBand(pct, bands, below) {
   if (pct == null) return null;
-  for (const b of RECOVERY_BANDS) if (pct >= b.floor) return b;
-  return RECOVERY_BELOW;
+  for (const b of (bands || RECOVERY_BANDS)) if (pct >= b.floor) return b;
+  return below || RECOVERY_BELOW;
 }
 
 /* Jumatatu, Jumanne, Jumatano, Alhamisi, Ijumaa -- then WIKENDI, which is one slot and not two.
@@ -120,17 +167,17 @@ export function recPct(recovered, base) {
     Returns the six rows in order and what they add up to. Deliberately pure: the pay rule is
     testable without a database, and the board, the export and any slide all read the same six
     numbers rather than each working them out again. */
-export function recoveryWeek(weekdays, week) {
+export function recoveryWeek(weekdays, week, bands, below) {
   const rows = (weekdays || []).slice(0, 5).map((d, i) => {
     const pct = recPct(d.recovered, d.base);
-    const band = recoveryBand(pct);
+    const band = recoveryBand(pct, bands, below);
     return { key: RECOVERY_DAY_KEYS[i], date: d.date, recovered: d.recovered, base: d.base,
       pct, band: band ? band.label : null, tzs: band ? band.tzs : 0 };
   });
   /* THE SIXTH RECORD. Not the weekend's own percentage -- the WEEK's, which is the whole point
      of the rule: "weekly recovered vs weekly defaulted ... and that's the 6th day record". */
   const wPct = recPct(week && week.recovered, week && week.base);
-  const wBand = recoveryBand(wPct);
+  const wBand = recoveryBand(wPct, bands, below);
   rows.push({ key: RECOVERY_WEEKEND_KEY, date: null,
     recovered: (week && week.recovered) || 0, base: (week && week.base) || 0,
     pct: wPct, band: wBand ? wBand.label : null, tzs: wBand ? wBand.tzs : 0,
