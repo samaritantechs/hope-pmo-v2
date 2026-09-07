@@ -3918,6 +3918,46 @@ test('early collection reads the INITIAL list, and says which list it read', asy
   assert.equal(e.sn, 1);
 });
 
+test('"today" on the early board is the list for TOMORROW, when it is in', async () => {
+  /* "early col today and this week in presentation, today means of tomorrow [you put
+      collection there, a mistake]". An initial sheet is dated the day it is FOR and uploaded
+     the day before. The read took the latest sheet dated on or before today and so, with
+     tomorrow's list already in, showed yesterday's work under "today". */
+  const tomorrow = '2026-07-25';
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),        // today's list: worked yesterday
+    E('222', 'KONGOWE', 1000, 'UNPAID', 0, tomorrow, 'initial'),   // tomorrow's list: being worked now
+    E('223', 'KONGOWE', 1000, 'PAID', 0, tomorrow, 'initial'),
+  ];
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.earlyDate, tomorrow, 'the sheet dated after today is the one read');
+  assert.equal(b.earlyAhead, true);
+  const e = b.earlyToday.find(r => r.officer === 'EARLY E');
+  assert.equal(e.pct, 50, 'tomorrow\'s list: one of two paid -- not today\'s 100%');
+  assert.equal(e.uncollected, 1000);
+  // The dashboard's Orodha reads the same list.
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  assert.equal(d.teamPerf.find(r => r.team === 'KONGOWE').tEColPct, 50);
+
+  // Friday afternoon: Monday's list is the one ahead, three days out.
+  const monday = '2026-07-27';
+  const t2 = tables();
+  t2.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('331', 'KONGOWE', 1000, 'UNPAID', 0, monday, 'initial'),
+  ];
+  const b2 = await run('officerBoards', {}, ADMIN, fakeDb(t2));
+  assert.equal(b2.earlyDate, monday);
+  assert.equal(b2.earlyToday.find(r => r.officer === 'EARLY E').pct, 0);
+
+  // Nothing ahead yet: the latest list held, and the board says it is not the day ahead's.
+  const t3 = tables();
+  t3.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial')];
+  const b3 = await run('officerBoards', {}, ADMIN, fakeDb(t3));
+  assert.equal(b3.earlyDate, TODAY); assert.equal(b3.earlyAhead, false);
+});
+
 test('a company that uploads Tomorrow instead still gets its board', async () => {
   const t = tables();
   t.repayment_snapshots = [

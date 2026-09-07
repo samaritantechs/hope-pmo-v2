@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-b';
+var BUILD = '2026-09-07-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3018,7 +3018,10 @@ VIEWS.dashboard = function(){
            panel beside the money they produce, not on the dashboard where they read as a
            performance figure they are not. What an early-collection officer is judged on is
            the percentage, over the teams they cover. */
-        + boardPair('bEarlyT','Early collection by officer — today','teams · uncollected · collection %', b.earlyToday,
+        /* "TODAY" IS THE LIST FOR TOMORROW -- the initial sheet dated after today, which is
+           what the early officers are working now. The title names the date it is for. */
+        + boardPair('bEarlyT','Early collection by officer — kesho / the next list' + (b.earlyDate ? ' (' + esc(b.earlyDate) + ')' : ''),
+                    'teams · uncollected · collection % · kitabu cha INITIAL cha ' + (b.earlyAhead ? 'kesho / for the day ahead' : 'siku ya mwisho / the latest one held'), b.earlyToday,
                     'bEarlyW','Early collection — this week','Mon–Fri · kitabu cha INITIAL pekee / the INITIAL sheets only, as the commission board pays', b.earlyWeek,
                     [col('officer','Officer'), col('teams','Teams','num'),
                      col('uncollected','Uncollected','money'),
@@ -6610,10 +6613,13 @@ function presSlides(){
       var w = earlyW[x.officer] || {};
       return { ...x, wUncollected: w.uncollected, wPct: w.pct }; });
     slides.push({ id:'early', kind:'table',
-      title:'Early collection — today and this week' + (b.earlySource === 'tomorrow' ? ' (kesho)' : ''),
+      /* "today means of tomorrow": the first pair is the list for the day AHEAD (its date in
+         the title), the second the week's initial sheets -- each day's latest upload, the
+         ratio of their sums. */
+      title:'Early collection — kesho / next list' + (b.earlyDate ? ' (' + b.earlyDate + ')' : '') + ' and this week',
       rows: earlyRows.slice(0,12),
       cols:[col('officer','Officer'), col('teams','Teams','num'),
-        col('uncollected','Uncollected (today)','money'), {key:'pct', label:'Coll % (today)', kind:'pct', target:'ecol'},
+        col('uncollected','Uncollected (kesho)','money'), {key:'pct', label:'Coll % (kesho)', kind:'pct', target:'ecol'},
         col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}] });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
