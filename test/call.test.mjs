@@ -378,14 +378,14 @@ test('the phone strip counts a registered Iliyonasia in Col, today and for the w
     'Kesho reads the tomorrow book, which has no adjustment target -- it must not borrow one');
 });
 
-test('a leader\'s strip reads the teams the SHEET gives them, not only the ones the handset registered with', async () => {
-  /* "Handset of Raphael is reading different recovery amount in system and callapp report bar
-      [is less]". His phone registered with eight leader_teams; the teams table's recovery
-     column names him on ten. The portal pays him on the ten; the strip added up the eight. */
+test('a leader\'s strip is the scope of their ACCESS CODE, whatever the sheet says', async () => {
+  /* "the teams i set in access codes are the ones correct". A handset's leader_teams come
+     from its access code and that is the scope the owner maintains; the teams table's role
+     columns go stale. A sheet that names ASHA JUMA on a second team her code does not carry
+     must not widen her strip -- the portal is brought to the codes instead (readTeamsAll). */
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   const t = makeTables();
-  // The sheet gives ASHA JUMA a second team her access code does not carry, with a deck of its own.
-  t.teams[1] = { ...t.teams[1], recovery: 'ASHA JUMA' };
+  t.teams[1] = { ...t.teams[1], recovery: 'ASHA JUMA' };                 // stale on the sheet
   t.defaulter_snapshots.push(
     { ref: '777', team: 'MBAGALA', arrears: 900, snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'mi', created_at: '2026-07-24T04:00:00Z' },
     { ref: '777', team: 'MBAGALA', arrears: 800, snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'mc', created_at: '2026-07-24T04:00:00Z' });
@@ -393,11 +393,7 @@ test('a leader\'s strip reads the teams the SHEET gives them, not only the ones 
   _clearWidgetCache(); _clearSummaryCache();
   await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
   const d = await callApi(db, 'api_callDailySummary', ['d2'], NOW);
-  assert.equal(d.recovery.num, 250, 'KONGOWE\'s 150 AND MBAGALA\'s 100 -- the scope the sheet gives her, as the commission board pays');
-
-  // And a call to that second team's customer is portfolio work, not somebody else's book.
-  const s = await callApi(db, 'api_callSync', ['d2', [{ num: '0712000003', dur: 30, ts: NOW, outcome: 'CONNECTED', dir: 'out' }]], NOW);
-  assert.equal(s.portfolio, 1, 'the MBAGALA customer is hers');
+  assert.equal(d.recovery.num, 150, 'KONGOWE only -- the code\'s teams, not the sheet\'s');
 });
 
 /* =====================================================================================

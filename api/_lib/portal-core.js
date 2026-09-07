@@ -2905,7 +2905,7 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
     defaulterTotalsInRange(db, { from, to: today, teams: user.teams }),
     fetchAll(() => onTeams(db.from('loans').select('team, stage, approved_date, principal_amt, loan_amt')
       .gte('approved_date', from).lte('approved_date', today), user.teams)),
-    fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
+    readCodesAll(db),
     settingsMany(db, [PMO_ROLE_KEY]),
     earlyList(db, { today, teams: user.teams }),
     /* ILIYONASIA over the same eight days -- see adjReceived_. A hand-typed register of tens
@@ -3316,7 +3316,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
        than paying nothing loudly. PMO Collection stays on the today sheet, unchanged. */
     expectedTotalsInRange(db, { type: 'initial', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
-    fetchAll(() => db.from('access_codes').select('name, role, teams')),
+    readCodesAll(db),
     settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY, PMO_BONUS_ON_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
        got the previous week". Without last week's figures the condition cannot be checked at
@@ -4646,6 +4646,7 @@ async function saveStaffTeams(db, user, p) {
     const teams = [...want].sort();
     const { error } = await db.from('access_codes').update({ teams }).eq('code', row.code);
     if (error) throw new Error(error.message);
+    noteCodesWritten(db);                     // the codes lay over the sheet: every board re-reads
     return { role, name: row.name || name, teams, changed: 1, cleared: 0 };
   }
 
@@ -4654,7 +4655,7 @@ async function saveStaffTeams(db, user, p) {
       + STAFF_TEAM_ROLES.concat([STAFF_COLLECTION_ROLE]).join(', '));
   }
 
-  const teamRows = await readTeamsAll(db);
+  const teamRows = await readTeamsRaw(db);  // writers see the sheet as stored, not the code overlay
   const writes = [];
   let cleared = 0;
   for (const t of teamRows) {
@@ -5042,6 +5043,7 @@ async function saveAccessCode(db, user, p) {
     teams: nextTeams, tabs: list(p.tabs) || [],
   }, { onConflict: 'code' });
   if (error) throw new Error(error.message);
+  noteCodesWritten(db);                       // the codes lay over the sheet: every board re-reads
   if (oldCode && oldCode !== code) {
     // Only after the new row exists -- a failure here leaves a duplicate, which an admin can
     // see and delete, rather than deleting the old one first and locking someone out entirely.
@@ -5118,7 +5120,7 @@ async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
   if (!renamed && !explicit) return null;
 
   const want = explicit ? new Set(upperTeams(teams)) : null;
-  const teamRows = await readTeamsAll(db);
+  const teamRows = await readTeamsRaw(db);  // writers see the sheet as stored, not the code overlay
   const writes = [];
   let renamedOn = 0, added = 0, cleared = 0;
   for (const t of teamRows) {
@@ -5152,6 +5154,7 @@ async function deleteAccessCode(db, user, p) {
   if (code === user.code) throw badRequest('You cannot delete the code you are signed in with.');
   const { error } = await db.from('access_codes').delete().eq('code', code);
   if (error) throw new Error(error.message);
+  noteCodesWritten(db);                       // the codes lay over the sheet: every board re-reads
   return { code };
 }
 
@@ -7043,13 +7046,86 @@ async function branchByTeam(db, nowMs) {
   return by;
 }
 
+/* THE ACCESS CODES LAY OVER THE SHEET -- "the teams i set in access codes are the ones correct".
+
+   Who holds which team is maintained on the ACCESS CODES: a recovery officer's code lists the
+   teams they recover, an early-collection officer's the teams they collect ahead of the day,
+   a PMO collection officer's the teams they collect. The teams table's role columns were the
+   original home of that answer and they go stale -- Raphael's sheet named him on ten teams
+   while his code, the one the owner keeps, carried eight -- and every board that resolved an
+   officer off the sheet paid him on the ten.
+
+   So the sheet is read here, ONCE, with the codes laid over it: a team a code names gets that
+   code's officer in the matching column, and a team no code names keeps whatever the sheet
+   says. Every screen that asks "whose team is this" reads readTeamsAll, so every one of them
+   -- the commission board, the presentation, the Orodha, the leader reports, the rotation --
+   answers from the codes, which is one rule in one place. The phone's own scope is its code's
+   teams already (pseudoUser), so the two sides meet.
+
+   Which column a code writes is read off its ROLE: a role that says RECOVER... is the recovery
+   column, EXPECT.../EARLY... the early-collection column, and a role with the collection word
+   the collection column. A code with no teams, or a role that says none of those, changes
+   nothing. The writers -- saveTeam, the export, the roster -- read the table themselves and
+   never through this, so nothing a code says is ever written back into the sheet. */
+function codeColumn_(role) {
+  const r = K(role);
+  if (!r) return null;
+  if (r.includes('RECOVER')) return 'recovery';
+  if (r.includes('EXPECT') || r.includes('EARLY')) return 'expected';
+  if (hasCollectionWord(role)) return 'collection';
+  return null;
+}
+function overlayCodes_(rows, codes) {
+  const by = new Map();
+  const out = rows.map(t => ({ ...t }));
+  for (const t of out) if (t.team) by.set(K(t.team), t);
+  for (const c of codes || []) {
+    const col = codeColumn_(c.role);
+    const name = String(c.name || '').trim();
+    if (!col || !name || !Array.isArray(c.teams) || !c.teams.length) continue;
+    for (const team of c.teams) {
+      const t = by.get(K(team));
+      if (t) t[col] = name;
+    }
+  }
+  return out;
+}
+/* ONE READ EVEN WHEN ASKED TWICE AT ONCE. A screen fires its reads in one wave, and two of
+   them can now want the same table -- readTeamsAll needs the codes, and the board beside it
+   reads the codes for its roster. On a cold memo both would go to the database; the memo
+   holds the read IN FLIGHT as well as the answer, so the second asker waits on the first. */
+function memoRead_(cache, db, at, read) {
+  const hit = cache.get(db);
+  if (hit && hit.rows && (at - hit.at) < TEAMS_TTL_MS) return Promise.resolve(hit.rows);
+  if (hit && hit.pending) return hit.pending;
+  const pending = read().then(rows => { cache.set(db, { at, rows }); return rows; },
+    e => { if (cache.get(db) && cache.get(db).pending === pending) cache.delete(db); throw e; });
+  cache.set(db, { at, pending });
+  return pending;
+}
+/** THE SHEET AS STORED, for the places that WRITE it -- saveTeam, the staff form and the
+    code-to-sheet sync. They compare what is on the table against what should be, and must not
+    be shown the codes' overlay as if the table already carried it: that is how a rename would
+    find "nothing to do" and leave the old spelling in the sheet. Never memoised. */
+async function readTeamsRaw(db) { return fetchAll(() => db.from('teams').select('*')); }
 async function readTeamsAll(db, nowMs) {
   const at = nowMs || Date.now();
-  const hit = teamsCache.get(db);
-  if (hit && (at - hit.at) < TEAMS_TTL_MS) return hit.rows;
-  const rows = await fetchAll(() => db.from('teams').select('*'));
-  teamsCache.set(db, { at, rows });
-  return rows;
+  return memoRead_(teamsCache, db, at, async () => {
+    const [raw, codes] = await Promise.all([
+      fetchAll(() => db.from('teams').select('*')),
+      readCodesAll(db, nowMs),
+    ]);
+    return overlayCodes_(raw, codes);
+  });
+}
+/* The access codes, memoised beside the teams they lay over -- one read per instance per
+   fifteen seconds however many boards ask, and the same read those boards used to make for
+   themselves (the PMO roster, the customer-care roster). A code edit drops it. */
+const codesCache = new WeakMap();
+export function noteCodesWritten(db) { codesCache.delete(db); teamsCache.delete(db); }
+async function readCodesAll(db, nowMs) {
+  const at = nowMs || Date.now();
+  return memoRead_(codesCache, db, at, () => fetchAll(() => db.from('access_codes').select('name, code, role, teams')));
 }
 
 const SETTINGS_TTL_MS = 20000;
@@ -7388,7 +7464,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
       .select('team, stage, created_at, upload_date, created_by, track_no, requested_amt, principal_amt')
       .or(`created_at.gte.${monthStart},upload_date.gte.${monthStart}`), user.teams)),
     // The collection officers live on their access codes, as on the Orodha.
-    fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
+    readCodesAll(db),
     settingsMany(db, [PMO_ROLE_KEY]),
     fetchAll(() => db.from('call_agents').select('user_id, names')),
     /* ILIYONASIA over this month -- laid over the ledger on READ, never baked into it; see
@@ -7806,7 +7882,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        officer is not an app user. So the Orodha's Col column is resolved the way the
        commission board and the staff roster resolve it -- codes with the collection role,
        by the teams they hold -- with the sheet's column as the fallback. */
-    fetchAll(() => db.from('access_codes').select('name, code, role, teams')),
+    readCodesAll(db),
     settingsMany(db, [PMO_ROLE_KEY]),
     /* ILIYONASIA -- ONE MORE READ ON THIS SCREEN, AND THE REASON IT IS WORTH IT.
        Rule 1 in CLAUDE.md counts reads on /api/upload and /api/call; this is neither, and the
@@ -8469,7 +8545,7 @@ async function saveTeam(db, user, p) {
     const v = String(p[c] || '').trim();
     row[c] = PHONE_COLS.has(c) ? (pnorm(v) || null) : (v || null);
   }
-  const existing = (await readTeamsAll(db)) || [];
+  const existing = (await readTeamsRaw(db)) || [];
   /* A DATABASE THAT HAS NOT HAD THE MIGRATION MUST STILL SAVE THE REST. Migrations here are run
      by hand, so a column no existing row has ever carried is dropped rather than sent --
      otherwise adding a field to the form would break saving a team for everybody until
@@ -8885,7 +8961,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     /* The PMO collection officers. They are ACCESS CODES with a role, not a column on the teams
        table -- one officer holds thirty-odd teams, which is a list on the person, not a name
        repeated in thirty-odd rows. */
-    fetchAll(() => db.from('access_codes').select('name, role, teams')),
+    readCodesAll(db),
     // Every setting this screen needs, in ONE journey rather than three.
     settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY, PMO_BAND_TZS_KEY]),
     /* ILIYONASIA over the week these boards are read on -- "everywhere the amount should add
