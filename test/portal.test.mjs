@@ -714,6 +714,49 @@ test('the recovery band amounts are the admin\'s to set; the percentages are not
   assert.equal(back.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 120000);
 });
 
+test('the PMO collection band amounts are the admin\'s to set too', async () => {
+  /* "every recovery unit bands too, make those amounts editable". A PMO officer over KONGOWE
+     with a 100% Friday: the top band, 60,000 by default. */
+  const t = tables();
+  t.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  t.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'PAID', 0), E('222', 'KONGOWE', 1000, 'PAID', 0)];
+  const db = dbWithRpc(t);
+  const before = await portalApi(db, ADMIN, 'commission', {}, NOW);
+  const cath0 = before.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(cath0.pct, 100); assert.equal(cath0.commission, 60000);
+  assert.equal(before.pmoBandsCustom, false);
+
+  const saved = await portalApi(db, ADMIN, 'commissionSave', { pmoBands: { 97: 70000, 0: 5000 } }, NOW);
+  assert.equal(saved.pmoBands[0].tzs, 70000); assert.equal(saved.pmoBands[0].defaultTzs, 60000);
+  assert.equal(saved.pmoBands[1].tzs, 40000, 'a band not named keeps its default');
+  assert.equal(saved.pmoBelow.tzs, 5000);
+  const after = await portalApi(db, ADMIN, 'commission', {}, NOW + 61000);
+  const cath = after.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(cath.commission, 70000, 'the board pays the amount the admin set');
+  assert.equal(cath.tzsIJ, 70000);
+  assert.equal(after.pmoBands[0].tzs, 70000, 'and the chips on the screen say so');
+  assert.equal(after.pmoBandsCustom, true);
+
+  // The band under the ladder pays a 50% day that paid nothing.
+  const t2 = tables();
+  t2.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  t2.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'PAID', 0), E('222', 'KONGOWE', 1000, 'UNPAID', 0)];
+  const db2 = dbWithRpc(t2);
+  await portalApi(db2, ADMIN, 'commissionSave', { pmoBands: { 0: 5000 } }, NOW);
+  const low = await portalApi(db2, ADMIN, 'commission', {}, NOW + 61000);
+  const c2 = low.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(c2.pct, 50); assert.equal(c2.commission, 5000);
+
+  // Validation and the reset, as for recovery.
+  await assert.rejects(() => portalApi(db, ADMIN, 'commissionSave', { pmoBands: { 93: -1 } }, NOW), /93%/);
+  await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { pmoBands: { 97: 1 } }, NOW), e => e.status === 403);
+  const reset = await portalApi(db, ADMIN, 'commissionSave', { resetPmoBands: true }, NOW);
+  assert.equal(reset.pmoBandsReset, true); assert.equal(reset.pmoBands[0].tzs, 60000);
+  assert.equal(db._dump('settings').some(r => r.key === 'PMO_BAND_TZS'), false);
+  const back = await portalApi(db, ADMIN, 'commission', {}, NOW + 122000);
+  assert.equal(back.pmo.find(r => r.officer === 'CATHERINE').commission, 60000);
+});
+
 test('the recovery rate modes are removed from settings, not left switched off', async () => {
   /* A rate table still sitting in Settings is a rate table somebody turns back on, and it
      would silently outrank the ladder. The panel's Save drops all three keys. */

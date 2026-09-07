@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-f';
+var BUILD = '2026-09-07-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2315,12 +2315,26 @@ function wireBar(){
       recBands = {};
       Array.prototype.forEach.call(bandEls, function(el){ recBands[el.getAttribute('data-floor')] = el.value; });
     }
+    var pmoEls = document.querySelectorAll('.cmPmoBand');
+    var pmoBands = null;
+    if (pmoEls.length) {
+      pmoBands = {};
+      Array.prototype.forEach.call(pmoEls, function(el){ pmoBands[el.getAttribute('data-floor')] = el.value; });
+    }
     srv('commissionSave', { paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
       payText: ($('#cmPayText') ? $('#cmPayText').value : null),
       weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null),
       bonusEnabled: ($('#cmBonusOn') ? !!$('#cmBonusOn').checked : null),
-      recBands: recBands })
+      recBands: recBands, pmoBands: pmoBands })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
+      .catch(function(e){ toast(String(e.message || e), true); });
+  };
+  var cmPmoBandsReset = document.getElementById('cmPmoBandsReset');
+  if (cmPmoBandsReset) cmPmoBandsReset.onclick = function(){
+    if (!confirm('Rudisha viwango vya PMO Collection kwenye chaguo-msingi (0 / 20,000 / 25,000 / 30,000 / 40,000 / 60,000)?\n\n'
+      + 'Reset the PMO Collection band amounts to the built-in ladder?')) return;
+    srv('commissionSave', { resetPmoBands: true })
+      .then(function(){ toast('Viwango vimerudishwa. / Amounts reset.'); render({ force:true }); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   var cmBandsReset = document.getElementById('cmBandsReset');
@@ -4727,6 +4741,22 @@ VIEWS.commission = function(){
             + ' / Six days a week: Monday&ndash;Friday each on its own, and the whole week as the sixth.'
             + (d.recBandsCustom
                 ? ' <button class="btn sm ghost" id="cmBandsReset" style="margin-left:6px">Rudisha chaguo-msingi / Reset to defaults</button>'
+                : '')
+            + '</div></div>'
+          /* THE PMO COLLECTION LADDER, the same way -- "every recovery unit bands too, make those
+             amounts editable". Per day, five bands and the one under them. */
+          + '<div class="fld" style="grid-column:1/-1"><label>PMO Collection — malipo kwa asilimia / paid by percentage — TZS kwa siku / per day</label>'
+            + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin:6px 0">'
+            + (d.pmoBands||[]).concat(d.pmoBelow ? [d.pmoBelow] : []).map(function(b){
+                return '<div class="fld" style="margin:0"><label>' + esc(b.label) + '</label>'
+                  + '<input class="cmPmoBand" data-floor="' + b.floor + '" type="number" min="0" step="1000" value="' + (b.tzs||0) + '">'
+                  + (b.defaultTzs != null && b.defaultTzs !== b.tzs
+                      ? '<div class="fldnote">chaguo-msingi / default ' + money(b.defaultTzs) + '</div>' : '')
+                  + '</div>'; }).join('')
+            + '</div>'
+            + '<div class="fldnote">Kila siku kwa kundi lake, zimejumlishwa kwa wiki. / Each day banded on its own percentage, added up for the week.'
+            + (d.pmoBandsCustom
+                ? ' <button class="btn sm ghost" id="cmPmoBandsReset" style="margin-left:6px">Rudisha chaguo-msingi / Reset to defaults</button>'
                 : '')
             + '</div></div>'
           + '<div class="fld"><label>TZS per PAID client</label>'
