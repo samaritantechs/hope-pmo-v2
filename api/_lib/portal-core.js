@@ -9,8 +9,8 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   recoveryByTeam } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
-  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn } from './pmo.js';
-import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek } from './recovery-pay.js';
+  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord } from './pmo.js';
+import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
@@ -3185,18 +3185,46 @@ async function cmsCfg(db) {
    nature rather than by accident -- which is exactly what a cache is for.
    Keyed by SCOPE, because week and month are two different answers from the same walk. */
 async function commission(db, user, args = {}, nowMs) {
-  const scope = args && args.scope === 'month' ? 'month' : 'week';
-  return cachedAnswer(db, 'commission|' + scope, user, nowMs,
-    () => commissionCompute_(db, user, args, nowMs));
+  const a = args || {};
+  const scope = a.scope === 'month' ? 'month' : 'week';
+  // Keyed by the range asked for as well: last week's board and this week's are two answers.
+  const pick = scope === 'month' ? String(a.month || '') : String(a.weekOf || '');
+  return cachedAnswer(db, 'commission|' + scope + '|' + pick, user, nowMs,
+    () => commissionCompute_(db, user, a, nowMs));
+}
+/** 'yyyy-mm-01' plus n months, on the first of the month -- pure date-key arithmetic. */
+function addMonthsKey_(key, n) {
+  const d = new Date(String(key).slice(0, 10) + 'T12:00:00Z');
+  d.setUTCMonth(d.getUTCMonth() + n);
+  return d.toISOString().slice(0, 10);
 }
 async function commissionCompute_(db, user, args = {}, nowMs) {
   /* TWO SCOPES, ONE COMPUTATION. scope 'week' is the screen; scope 'month' is the record
      behind the blinking dot -- the SAME walk from the month's first day, so the month can
      never disagree with the weeks it is made of. The month range is month-start..today. */
-  const scope = args && args.scope === 'month' ? 'month' : 'week';
-  const today = todayKey(nowMs), wkMon = weekMondayKey(nowMs);
-  const mon = scope === 'month' ? today.slice(0, 7) + '-01' : wkMon;
-  const sun = scope === 'month' ? today : addDaysKey(mon, 6);
+  const a = args || {};
+  const scope = a.scope === 'month' ? 'month' : 'week';
+  const today0 = todayKey(nowMs);
+  /* WHICH WEEK, WHICH MONTH.
+       "back and foward weeks in commission and back and foward months in the blinking dot too"
+     A week is chosen the way the dashboard chooses one (asOfWeek: any date snaps to its
+     Monday; a past week and an upcoming one both read), a month as yyyy-mm. `today` below is
+     the live day INSIDE the chosen range -- the real today when the range holds it, the last
+     collection day of a finished week or month, the first day of one that has not started --
+     and every "leo" cell on the screen keys off it. */
+  const asOf = scope === 'week' ? asOfWeek(nowMs, a.weekOf) : null;
+  const monthKey = scope === 'month'
+    ? (/^\d{4}-\d{2}$/.test(String(a.month || '')) ? String(a.month) : today0.slice(0, 7)) : null;
+  const monthEnd = monthKey ? addDaysKey(addMonthsKey_(monthKey + '-01', 1), -1) : null;
+  const mon = scope === 'month' ? monthKey + '-01' : asOf.weekOf;
+  const sun = scope === 'month'
+    ? (monthEnd < today0 ? monthEnd : (today0 < mon ? mon : today0))
+    : addDaysKey(mon, 6);
+  const today = scope === 'month'
+    ? (today0 > sun ? sun : (today0 < mon ? mon : today0))
+    : (asOf.past ? addDaysKey(mon, 4) : (asOf.future ? mon : today0));
+  // The live week inside the range: the chosen week itself, or the month's week that holds `today`.
+  const wkMon = scope === 'week' ? mon : weekMondayKey(Date.parse(today + 'T09:00:00Z'));
   const fri = addDaysKey(wkMon, 4);
   const prevMon = addDaysKey(wkMon, -7), prevFri = addDaysKey(prevMon, 4);
   /* The collection days of the range: Monday to Friday, week or month alike. */
@@ -3206,6 +3234,24 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     if (d > (scope === 'month' ? today : fri)) break;
     const dow = new Date(d + 'T12:00:00Z').getUTCDay();
     if (dow >= 1 && dow <= 5) colDays.push(d);
+  }
+  /* THE WEEKS OF THE RANGE -- one for the week scope, and the month's for the month record.
+       "we should have weekly progress to month there with the same columns for each PMO
+        Unit among the 3 as we had daily to weekly on the landing nav page"
+     A month is paid as the sum of its weeks, because every scheme's rule is a WEEK rule: the
+     recovery officer's six records, the early officer's five days, the PMO officer's five
+     bands. So the month record is those weeks worked out one by one -- W1, W2 ... -- and added,
+     never the month scored once as if it were a long week. A week straddling the month's
+     edge is clipped to the days inside it; the days outside belong to the other month's pay.
+     `days5` is the week's five weekdays whatever the range, so a clipped week still has its
+     five records, the missing days simply holding nothing. */
+  const dow0_ = d => (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7;      // MON=0 .. SUN=6
+  const weeks = [];
+  for (let w = addDaysKey(mon, -dow0_(mon)), i = 1; w <= sun; w = addDaysKey(w, 7), i++) {
+    const wEnd = addDaysKey(w, 6);
+    weeks.push({ key: scope === 'week' ? 'WK' : 'W' + i, mon: w,
+      from: w < mon ? mon : w, to: wEnd > sun ? sun : wEnd,
+      days5: [0, 1, 2, 3, 4].map(k => addDaysKey(w, k)) });
   }
   /* =====================================================================================
      RECOVERY COMMISSION, ON THE RULE THE DASHBOARD HAS ALWAYS DRAWN.
@@ -3353,8 +3399,6 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      The amounts come from recByDay above and the denominators from the expected totals
      below. No read is added for either.
      ===================================================================================== */
-  const recWdDates = [0, 1, 2, 3, 4].map(i => addDaysKey(mon, i));
-
   /* =====================================================================================
      THE DENOMINATOR IS UNCOLLECTED, NOT THE WHOLE DEFAULTER BOOK.
 
@@ -3383,7 +3427,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      means by "in default of 1m ... weekly rec = 50%". */
   const recUncolByDay = new Map();
   const recUncolWeek = {};
-  for (const d of recWdDates) {
+  for (const d of colDays) {
     const m = {};
     for (const r of onDate(myExp, d)) {
       const who = officerOf(teamBy, r.team, 'recovery');
@@ -3402,18 +3446,37 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     for (const [, src] of recByDay) for (const n of Object.keys(src)) names.add(n);
     for (const name of names) {
       const cell = d => (recByDay.get(d) || {})[name] || { recovered: 0 };
-      const weekdays = recWdDates.map(d => ({ date: d, recovered: cell(d).recovered,
-        base: (recUncolByDay.get(d) || {})[name] || 0 }));
-      let weekRecovered = 0;
-      for (const [, src] of recByDay) if (src[name]) weekRecovered += src[name].recovered;
-      const pay = recoveryWeek(weekdays, { recovered: weekRecovered, base: recUncolWeek[name] || 0 });
+      const uncolOn = d => (recUncolByDay.get(d) || {})[name] || 0;
+      /* EACH WEEK ON ITS OWN RULE: five day records on the day's own uncollected, and the
+         sixth on the week's recovered over the week's Monday-to-Friday uncollected. One week
+         for the week screen; every week of the month for the month record, each clipped to
+         the days inside the range (uncolOn and cell hold nothing outside it). */
+      const perWeek = weeks.map(w => {
+        const weekdays = w.days5.map(d => ({ date: d, recovered: cell(d).recovered, base: uncolOn(d) }));
+        let recovered = 0, base = 0;
+        for (const [d, src] of recByDay) if (d >= w.from && d <= w.to && src[name]) recovered += src[name].recovered;
+        for (const d of w.days5) base += uncolOn(d);
+        return { key: w.key, from: w.from, to: w.to, recovered, base,
+          pay: recoveryWeek(weekdays, { recovered, base }) };
+      });
+      const weekRecovered = perWeek.reduce((s, w) => s + w.recovered, 0);
+      const tzs = perWeek.reduce((s, w) => s + w.pay.tzs, 0);
+      // The range's own percentage: its recovered over its Monday-to-Friday uncollected.
+      const weekPct = recPct(weekRecovered, recUncolWeek[name] || 0);
       /* TODAY'S OWN RECORD. A weekday pays its own band. On Saturday or Sunday the record that
          is live is the WEEK's -- "let the weekends stay as they are but weekly recovery is the
          6th day commisssion day" -- so the weekend shows the sixth record rather than a blank
-         where a day's figure would be. */
-      const idx = recWdDates.indexOf(today);
-      recPayOf.set(name, { ...pay, weekRecovered,
-        todayRow: idx >= 0 ? pay.rows[idx] : pay.rows[5] });
+         where a day's figure would be. On the month record the live week is the one holding
+         today. */
+      const live = perWeek[perWeek.length - 1];
+      const idx = live.pay.rows.findIndex(r => r.date === today);
+      const todayRow = idx >= 0 ? live.pay.rows[idx] : live.pay.rows[5];
+      /* The records the board draws: the six of the week, or one per week of the month --
+         each week's own percentage, recovered and pay, the shape the day columns have. */
+      const rows = scope === 'week' ? live.pay.rows
+        : perWeek.map(w => ({ key: w.key, from: w.from, to: w.to, recovered: w.recovered, base: w.base,
+            pct: w.pay.weekPct, band: w.pay.rows[5].band, tzs: w.pay.tzs, weekly: true }));
+      recPayOf.set(name, { rows, tzs, weekPct, weekRecovered, todayRow });
     }
   }
   const recPay = name => recPayOf.get(name)
@@ -3494,7 +3557,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       weekCommission: pay.tzs,
       records: pay.rows,
     };
-    if (scope === 'week') for (const r of pay.rows) {
+    // J3..IJ and WK on the week; W1..Wn on the month -- the same three cells per record.
+    for (const r of pay.rows) {
       row['rec' + r.key] = r.recovered;
       row['pct' + r.key] = r.pct;
       row['tzs' + r.key] = r.tzs;
@@ -3525,6 +3589,17 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         collected: b ? b.collected : 0, expected: b ? b.expected : 0,
         paid: b ? b.paid : 0, over: b ? b.over : 0,
         tzs: b ? Math.round(b.paid * cfg.paidTzs + b.over * cfg.overTzs) : 0 };
+    });
+    /* THE WEEKS, from the days -- the month record's columns. A week's percentage is the
+       ratio of its sums and its pay is its counts at the flat rates, never a mean of days. */
+    const byWeek = weeks.map(w => {
+      const t = { expected: 0, collected: 0, paid: 0, over: 0 };
+      for (const x of days) if (x.date >= w.from && x.date <= w.to) {
+        t.expected += x.expected; t.collected += x.collected; t.paid += x.paid; t.over += x.over;
+      }
+      return { key: w.key, from: w.from, to: w.to, pct: pctOfDay(t), n: t.paid + t.over,
+        collected: t.collected, expected: t.expected, paid: t.paid, over: t.over,
+        tzs: Math.round(t.paid * cfg.paidTzs + t.over * cfg.overTzs) };
     });
     const tot = { expected: 0, collected: 0, paid: 0, over: 0 };
     for (const b of per.values()) {
@@ -3562,6 +3637,12 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         row['col' + k] = x.collected; row['exp' + k] = x.expected;
       }
     }
+    // The month: one column set per week, the same cells the day columns carry.
+    if (scope === 'month') for (const x of byWeek) {
+      row['pct' + x.key] = x.pct; row['n' + x.key] = x.n; row['ctzs' + x.key] = x.tzs;
+      row['col' + x.key] = x.collected; row['exp' + x.key] = x.expected;
+    }
+    row.weeks = byWeek;
     return row;
   }).sort((a, b) => b.weekCommission - a.weekCommission
     || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct)
@@ -3584,6 +3665,15 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   for (const d of pmoDays) byDay.set(d, colDay_(d));
   byDay.set(today, colDay_(today));
   const pmoRows = pmoBoard(pmoRoster, byDay, today, pmoDays);
+  /* THE WEEKS ON THE PMO ROW TOO -- pctW1/tzsW1 ... on the month record: each week's ratio of
+     its days' sums, and the pay its days' bands added up. Worked out from perDay (weekDays),
+     which carries each day's parts for exactly this. */
+  for (const r of pmoRows) for (const w of weeks) {
+    const wd = (r.weekDays || []).filter(x => x.date >= w.from && x.date <= w.to);
+    const e = wd.reduce((s, x) => s + num(x.expected), 0), c = wd.reduce((s, x) => s + num(x.collected), 0);
+    r['pct' + w.key] = e > 0 ? Math.round((c / e) * 1000) / 10 : null;
+    r['tzs' + w.key] = wd.reduce((s, x) => s + num(x.tzs), 0);
+  }
 
   /* Last week's percentage per officer, so "beat your own previous week" can be checked rather
      than assumed. Same computation, a week earlier. */
@@ -3694,7 +3784,14 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     pmoTotals: { day: pmo.reduce((s, r) => s + r.commission, 0),
       week: pmo.reduce((s, r) => s + r.weekCommission + r.bonus, 0) },
     paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText, isAdmin, me: user.name,
-    weekday: currentWeekday(nowMs), date: today, weekOf: mon,
+    weekday: currentWeekday(scope === 'week' && asOf ? asOf.ms : nowMs), date: today, weekOf: mon,
+    /* WHICH RANGE THIS IS, said the way the dashboard says it, so the same week bar works
+       here: a finished week, an upcoming one, or this one; the month as yyyy-mm. */
+    weekEnd: sun, asOfDate: today,
+    pastWeek: asOf ? asOf.past : false, weekFuture: asOf ? asOf.future : false,
+    weekRequested: asOf ? asOf.requested : null,
+    month: monthKey, monthEnd,
+    weeks: weeks.map(w => ({ key: w.key, from: w.from, to: w.to })),
     day: withPmo(day, r => r.commission),
     week: withPmo(week, r => num(r.weekCommission) + num(r.bonus)),
     /* THE COMPANY TOTAL HAD A WHOLE BOARD MISSING FROM IT.
@@ -4238,14 +4335,50 @@ async function smsGaps(db, user, { audience = 'defaulters' } = {}, nowMs) {
     agent id, and this counts what each of them brought in. The per-agent PHONE statistics are
     a different question entirely and live on the Call Reports tab.
 
-    Only TRACK# 1 customers count. A track of 2 or more is a repeat customer, and an agent did
-    not win that application -- crediting it would reward the same relationship twice. A blank
-    track counts, because the earliest reports had no such column. */
+    THE STRICT RULE, IN ONE PLACE -- "the strict rule is track 1 created by call agent".
+
+      "customer service are complaining the dashboard widget of their registrations for
+       track 1 customers aint okay and not fair since we using it to give bonuses and the
+       numbers they see we aint sure if its multi loan or what"
+
+    A bonus is paid off this count, so it has to be a count somebody can defend line by line:
+
+      TRACK# must READ 1.   A track of 2 or more is a repeat customer -- nobody won that
+                            application. And a BLANK track no longer counts: it used to, on
+                            the grounds that the earliest reports had no such column, and
+                            that is exactly how a repeat loan with the column left empty was
+                            being paid as a new customer. Blank is "unknown", and unknown is
+                            not "one".
+      CREATED BY a CALL AGENT.  The id on the application must be on the customer-care
+                            roster (call_agents). An id nobody has registered was being shown
+                            as a bare id AND counted; now it is shown and NOT counted, so an
+                            agent missing from the roster is added rather than quietly paid or
+                            quietly dropped.
+
+    Every board that counts an agent's registrations -- the dashboard's Call Agents board, the
+    presentation's slide and the month report -- reads this one rule through csRule_, and each
+    carries `excluded` so the screen can say what was left out and why. Three boards, three
+    windows (the live pipeline, the week, the month); one rule. */
 const CS_STAGES = ['unassigned', 'assigned'];
-function isTrack1(r) {
-  const v = r.track_no;
-  if (v == null || String(v).trim() === '') return true;
-  return (num(v) || 0) < 2;
+function csRule_(rosterRows) {
+  const roster = new Set((rosterRows || []).map(a => K(a.user_id)).filter(Boolean));
+  const why = { noTrack: 0, repeat: 0, notAgent: {} };
+  const ok = l => {
+    const v = l.track_no;
+    if (v == null || String(v).trim() === '') { why.noTrack++; return false; }
+    if (num(v) !== 1) { why.repeat++; return false; }
+    const raw = String(l.created_by || '').trim(), id = K(raw);
+    if (!id || !roster.has(id)) {
+      const k = id || '—';
+      const e = why.notAgent[k] || (why.notAgent[k] = { id: raw || '—', n: 0 });   // as written, not uppercased
+      e.n++;
+      return false;
+    }
+    return true;
+  };
+  const excluded = () => ({ noTrack: why.noTrack, repeat: why.repeat,
+    notAgent: Object.values(why.notAgent).map(e => ({ id: e.id, n: e.n })).sort((a, b) => b.n - a.n || a.id.localeCompare(b.id)) });
+  return { ok, excluded };
 }
 async function callAgents(db, user) {
   const [loanRows, agentRows] = await Promise.all([
@@ -4254,10 +4387,11 @@ async function callAgents(db, user) {
   ]);
   const names = {};
   for (const a of agentRows) names[K(a.user_id)] = a.names || '';
+  const rule = csRule_(agentRows);
   const by = {};
   for (const l of scoped(user, loanRows)) {
-    if (!isTrack1(l)) continue;
-    const id = String(l.created_by || '').trim() || '—';
+    if (!rule.ok(l)) continue;
+    const id = String(l.created_by || '').trim();
     const b = bucket(by, K(id), { id, unassigned: 0, assigned: 0, amount: 0 });
     if (l.stage === 'assigned') b.assigned++; else b.unassigned++;
     b.amount += num(l.requested_amt) || num(l.principal_amt);
@@ -4266,12 +4400,15 @@ async function callAgents(db, user) {
     unassigned: b.unassigned, assigned: b.assigned, total: b.unassigned + b.assigned,
     amount: b.amount })).sort((a, b) => b.total - a.total);
   const sum = f => rows.reduce((s, r) => s + r[f], 0);
+  const excluded = rule.excluded();
   return { rows, count: rows.length, agents: agentRows,
     totals: { unassigned: sum('unassigned'), assigned: sum('assigned'),
       total: sum('total'), amount: sum('amount') },
-    // An id that appears on applications but is not in the roster shows as bare id, which is
-    // the signal to add them rather than a reason to hide the row.
-    unnamed: rows.filter(r => !r.names && r.id !== '—').map(r => r.id) };
+    /* What the strict rule left out, so the board can say so: an id on applications that is
+       not on the roster is listed here with its count -- the signal to add them, and until
+       then not a registration anybody is paid for. */
+    excluded,
+    unnamed: excluded.notAgent.filter(x => x.id !== '—').map(x => x.id) };
 }
 /** Removing a complaint entirely. Every other register can lose a row -- teams, roles, access
     codes, officer accounts, call agents -- and this one could not, so a complaint logged
@@ -7194,9 +7331,10 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   const agentNames = {};
   for (const a of agentRows) agentNames[K(a.user_id)] = a.names || '';
   const agentBy = {};
+  const csRule = csRule_(agentRows);                   // the strict rule -- see csRule_
   for (const l of appRows) {
-    if (!isTrack1(l)) continue;
-    const id = String(l.created_by || '').trim() || '—';
+    if (!csRule.ok(l)) continue;
+    const id = String(l.created_by || '').trim();
     const b = bucket(agentBy, K(id), { id, unassigned: 0, assigned: 0, advanced: 0, amount: 0 });
     if (l.stage === 'unassigned') b.unassigned += 1;
     else if (l.stage === 'assigned') b.assigned += 1;
@@ -7210,7 +7348,8 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   const agentSum = f => agentRowsOut.reduce((s, r) => s + r[f], 0);
   const agents = { rows: agentRowsOut, total: agentSum('total'),
     totals: { unassigned: agentSum('unassigned'), assigned: agentSum('assigned'),
-      advanced: agentSum('advanced'), total: agentSum('total'), amount: agentSum('amount') } };
+      advanced: agentSum('advanced'), total: agentSum('total'), amount: agentSum('amount') },
+    excluded: csRule.excluded() };
   const amtOf = l => num(l.principal_amt) || num(l.loan_amt);
   const pct = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
   /* One PERFORMANCE number wherever three percentages sit together -- the average, under
@@ -8613,7 +8752,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
-         codeRows, cfgS, adj] = await Promise.all([
+         codeRows, cfgS, adj, expInitWeek] = await Promise.all([
     readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     earlyList(db, { today, teams: user.teams }),
@@ -8641,7 +8780,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        reports. call_users is the HOPE Calls app roster -- field officers with a phone. They do
        different jobs and are measured on different things. */
     fetchAll(() => db.from('call_agents').select('user_id, names')),
-    fetchAll(() => onTeams(db.from('call_users').select('user_id, name, team, active'), user.teams)),
+    fetchAll(() => onTeams(db.from('call_users').select('user_id, name, team, role, active'), user.teams)),
     /* The PMO collection officers. They are ACCESS CODES with a role, not a column on the teams
        table -- one officer holds thirty-odd teams, which is a list on the person, not a name
        repeated in thirty-odd rows. */
@@ -8652,11 +8791,15 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        as stated during manual input". One small read of a hand-typed register, in this wave so
        it costs no wall time, null on a deployment that has not built the table. */
     adjReceived_(db, user, { from: mon, to: sun }),
+    /* THE WEEK'S INITIAL SHEETS, for the early-collection week board -- see earlyWeek below.
+       Team-day totals like the day sheets beside them: one small read. */
+    expectedTotalsInRange(db, { type: 'initial', from: mon, to: fri, teams: user.teams }),
   ]);
   const pmoRoleName = cfgS.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myExp = scoped(user, expWeek), myDef = scoped(user, defWeek);
+  const myExpInit = scoped(user, expInitWeek);
   const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
   const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
   const myPhoneUsers = scoped(user, phoneUsers);
@@ -8705,20 +8848,24 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      and an initial-sheet correction laid over a tomorrow sheet is one book's figure printed
      against another.
 
-     `earlyWeek` reads the week's DAY sheets, so it takes `expected-current` -- and taking it
-     meant resolving the week per day first, which this board was not doing. It summed EVERY
-     batch, so a day somebody uploaded twice counted twice here while the same day counted once
-     on every other screen. That is the rule from snapshots.js, and it is not optional; a
-     correction cannot be applied honestly on top of a figure that is already doubled. So this
-     board now resolves each day the way the rest of the system does, and the number it prints
-     may drop on a week that carried a re-upload. That is the figure being right, not a loss. */
+     `earlyWeek` READS THE WEEK'S INITIAL SHEETS, and only those.
+       "at presentation, early col seems like displaying today's"
+     It did: it added up the week's DAY sheets (the 'today' book), which is the PMO
+     collection officers' book, not the early officers'. The early scheme is judged on the
+     INITIAL file -- "its initial file only no other fallback" -- and that is what the
+     commission board pays on, so the wall showed one week and the pay slip another for the
+     same person. Now both read the initial sheets, each day resolved on its own batch and
+     corrected from the register's own `expected-initial` book, exactly as the commission's
+     early board does. A week with no initial file is an empty board, which is the truth, and
+     the subtitle beside it says which book it reads. */
+  const myIniDay_ = d => withAdj_(onDate(myExpInit, d), adj, 'expected-initial', d);
+  // The DAY sheets, resolved and corrected the same way, for the PMO collection board below.
   const myExpDay_ = d => withAdj_(onDate(myExp, d), adj, 'expected-current', d);
   const weekDays_ = WD5.map((_w, i) => addDaysKey(mon, i));
-  const myExpWeekResolved = weekDays_.flatMap(myExpDay_);
   const earlyToday = earlyBoard(tomorrow.source === 'initial'
     ? withAdj_(myTmrw, adj, 'expected-initial', tomorrow.date)
     : myTmrw);
-  const earlyWeek = earlyBoard(myExpWeekResolved);
+  const earlyWeek = earlyBoard(weekDays_.flatMap(myIniDay_));
 
   /* ---- RECOVERY: per Recovery officer. ----
 
@@ -8885,36 +9032,38 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      of people, presented as the performance of another. Nobody records talk time or a team for
      a customer care agent; what they are judged on is what they brought in.
 
-     Only TRACK# 1 counts, exactly as the Call Agents tab already counts it: a track of 2 or
-     more is a repeat customer, and nobody won that application. The same rule in both places,
-     read from the same isTrack1 -- a second copy of it would drift.
+     THE STRICT RULE -- TRACK# reads 1 AND created by an agent on the roster -- exactly as the
+     Call Agents tab and the month report count it, read from the same csRule_. A second copy
+     of it would drift, and this count pays a bonus.
 
      An application report carries no date of its own -- one pulled on the 27th is full of June
      applications -- so the week is measured on the upload stamp, which is the person uploading
      saying "this is the report FOR this date". That is the only honest handle there is. */
   function csBoard(from, to) {
     const m = {};
+    const rule = csRule_(csRoster);
     for (const l of myLoans) {
       if (!CS_STAGES.includes(String(l.stage || ''))) continue;
-      if (!isTrack1(l)) continue;
       const d = String(l.upload_date || '').slice(0, 10);
       if (!d || d < from || d > to) continue;
-      const b = bucket(m, K(String(l.created_by || '').trim() || '—'),
-        { id: String(l.created_by || '').trim() || '—', unassigned: 0, assigned: 0, amount: 0 });
+      if (!rule.ok(l)) continue;
+      const id = String(l.created_by || '').trim();
+      const b = bucket(m, K(id), { id, unassigned: 0, assigned: 0, amount: 0 });
       if (l.stage === 'assigned') b.assigned++; else b.unassigned++;
       b.amount += num(l.requested_amt) || num(l.principal_amt);
     }
     const names = {};
     for (const a of csRoster) names[K(a.user_id)] = a.names || '';
-    return Object.values(m).map(b => ({
-      // The roster's name where there is one, the bare id where there is not -- an unnamed id
-      // is the signal to add them to the roster, not a reason to drop the row.
+    const rows = Object.values(m).map(b => ({
       agent: names[b.key] || b.id, id: b.id,
       unassigned: b.unassigned, assigned: b.assigned, brought: b.unassigned + b.assigned,
       amount: b.amount })).sort((a, b) => b.brought - a.brought);
+    rows.excluded = rule.excluded();
+    return rows;
   }
   const csToday = csBoard(today, today);
   const csWeek = csBoard(mon, sun);
+  const csExcluded = { today: csToday.excluded, week: csWeek.excluded };
 
   /* ---- HOPE CALLS APP OFFICERS: who is actually on the phone ----
 
@@ -8939,6 +9088,29 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   // needs its team lists. This only needs the NAMES, and reaching forward for a const that
   // does not exist yet would throw before a single slide was drawn.
   for (const c of codeRows) if (c.name && isPmoRole(c.role, pmoRoleName)) unitBy[K(c.name)] = 'COLLECTION';
+  /* AND THE HANDSET'S OWN ROLE, where the name on the phone is not the name on the sheet.
+       "some recovery officers's phones aint reflecting calls in ripoti nor row appearance in
+        presentation"
+     The unit was decided by NAME alone -- the teams table's recovery column against the name
+     the handset registered under -- and a phone registered as "RAPHAEL" beside a sheet that
+     says "RAPHAEL MGIMWA" is a recovery officer with no unit, which the calls slide then
+     filters off. The registration copied the access code's ROLE onto call_users (see
+     call-core.js register), so the role says what the name could not: a role that reads
+     RECOVER... is the recovery unit, EXPECT.../EARLY... the early one, and the PMO collection
+     role word the collection one. The teams table still wins where the name does match;
+     this only fills in the people it missed. */
+  const unitOfRole = role => {
+    const r = K(role);
+    if (!r) return null;
+    if (r.includes('RECOVER')) return 'RECOVERY';
+    if (r.includes('EXPECT') || r.includes('EARLY')) return 'EXPECTED';
+    if (isPmoRole(role, pmoRoleName) || hasCollectionWord(role)) return 'COLLECTION';
+    return null;
+  };
+  for (const u of myPhoneUsers) {
+    const un = unitOfRole(u.role);
+    if (un && u.name && !unitBy[K(u.name)]) unitBy[K(u.name)] = un;
+  }
   const unitOf = name => unitBy[K(name)] || null;
 
   function callBoard(from, to) {
@@ -9016,7 +9188,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   return { weekday: wd, weekOf: mon, today, deckWarning,
     initialCount: iniCustomers, currentCount: curCustomers,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
-    callToday, callWeek, callWeekWorst, csToday, csWeek,
+    callToday, callWeek, callWeekWorst, csToday, csWeek, csExcluded,
     /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission
        belongs on the commission panel where the person it concerns can see their own figure;
        a projector in a meeting room is the wrong place for anybody's pay. Building the row

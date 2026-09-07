@@ -554,6 +554,10 @@ function toast(m, bad){ var t=$('#toast'); t.textContent=m; t.className='toast'+
   t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(function(){t.style.display='none';},3200); }
 function today(){ var d=new Date(Date.now()+3*3600*1000); return d.toISOString().slice(0,10); }   // EAT
 function addDays(key,n){ var d=new Date(key+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+/* Today as the server counts it -- on the Dar es Salaam clock, never the browser's timezone. */
+function todayKeyClient(){ return new Date(Date.now() + 3*3600*1000).toISOString().slice(0,10); }
+/* 'yyyy-mm' plus n months. */
+function addMonths(ym, n){ var d=new Date(ym+'-01T12:00:00Z'); d.setUTCMonth(d.getUTCMonth()+n); return d.toISOString().slice(0,7); }
 
 var WDFULL = { MON:'Monday', TUE:'Tuesday', WED:'Wednesday', THU:'Thursday', FRI:'Friday', SAT:'Saturday', SUN:'Sunday' };
 var WD7 = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];   // calendar order, Monday first
@@ -597,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-a';
+var BUILD = '2026-09-07-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2160,6 +2164,17 @@ function wireBar(){
     }
     el.onchange = function(){ S.args[el.getAttribute('data-arg')] = el.value; render(); };
   });
+  /* A button that sets SEVERAL args at once -- data-args carries them as JSON. The Loan
+     Applications day arrows move From and To together; one arg at a time would render the
+     tab twice, the first time on a window a day wide at one end and two at the other. */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-args]'), function(el){
+    el.onclick = function(){
+      var o = {};
+      try { o = JSON.parse(el.getAttribute('data-args') || '{}'); } catch(e) { o = {}; }
+      Object.keys(o).forEach(function(k){ S.args[k] = o[k]; });
+      render();
+    };
+  });
   /* A button that OPENS ANOTHER TAB. data-carry names the args that ride along -- the
      month-report chip carries the dashboard's chosen week, so a past week opens THAT month's
      report -- because go() clears S.args on purpose for every ordinary switch. */
@@ -2808,6 +2823,25 @@ function mondayOf(key){
   d.setUTCDate(d.getUTCDate() - ((u + 6) % 7));  // back to Monday
   return d.toISOString().slice(0, 10);
 }
+/* WHAT THE STRICT RULE LEFT OUT, under every board that pays a customer-service bonus.
+     "the strict rule is track 1 created by call agent"
+   A count somebody is paid on has to say what it did NOT count: applications with no TRACK#
+   (unknown is not one), repeat customers (TRACK# 2+), and ids that are not on the call-agents
+   roster -- listed by id with their counts, so a real agent missing from the roster is added
+   rather than quietly unpaid. Nothing here when nothing was left out. */
+function csExcludedNote(x){
+  if (!x) return '';
+  var parts = [];
+  if (x.noTrack) parts.push(money(x.noTrack) + ' bila TRACK# / with no TRACK# (unknown is not 1)');
+  if (x.repeat) parts.push(money(x.repeat) + ' wateja wa marudio / repeat customers (TRACK# 2+)');
+  var na = (x.notAgent || []).filter(function(a){ return a.id !== '—'; });
+  var blank = (x.notAgent || []).find(function(a){ return a.id === '—'; });
+  if (na.length) parts.push(na.map(function(a){ return esc(a.id) + ' (' + money(a.n) + ')'; }).join(', ')
+    + ' — si kwenye orodha ya call agents / not on the call-agents roster; add them in Teams & Staff if they are');
+  if (blank) parts.push(money(blank.n) + ' bila CREATED BY / with no CREATED BY');
+  if (!parts.length) return '';
+  return '<div class="note" style="margin:6px 0 10px"><b>Hazikuhesabiwa / not counted:</b> ' + parts.join(' · ') + '</div>';
+}
 function weekBar(d, extra){
   var shown = d.weekOf || '';
   var asked = d.weekRequested || '';
@@ -2985,7 +3019,7 @@ VIEWS.dashboard = function(){
            performance figure they are not. What an early-collection officer is judged on is
            the percentage, over the teams they cover. */
         + boardPair('bEarlyT','Early collection by officer — today','teams · uncollected · collection %', b.earlyToday,
-                    'bEarlyW','Early collection — this week','Mon–Fri', b.earlyWeek,
+                    'bEarlyW','Early collection — this week','Mon–Fri · kitabu cha INITIAL pekee / the INITIAL sheets only, as the commission board pays', b.earlyWeek,
                     [col('officer','Officer'), col('teams','Teams','num'),
                      col('uncollected','Uncollected','money'),
                      {key:'pct', label:'Collection %', kind:'pct', target:'ecol'}],
@@ -3015,7 +3049,7 @@ VIEWS.dashboard = function(){
         // each application carries a CREATED BY agent id. How many phone calls a field
         // officer made is a different question and lives on the Call Reports tab.
         + board('bCS','Call agents — applications brought in',
-                'CREATED BY on the application reports · TRACK# 1 only (repeat customers are not a new win)',
+                'CREATED BY on the application reports · TRACK# reads 1 · roster agents only (the strict rule)',
                 (S.csAgents && S.csAgents.rows) || [],
                 [{key:'id', label:'Agent'},
                  {key:'names', label:'Who', cls:function(r){ return r.names?'':'bad'; },
@@ -3024,6 +3058,7 @@ VIEWS.dashboard = function(){
                  col('total','Total apps','num'), col('amount','Requested','money')],
                 (S.csAgents && S.csAgents.totals)
                   ? Object.assign({ id:'', names:'' }, S.csAgents.totals) : null)
+        + csExcludedNote(S.csAgents && S.csAgents.excluded)
         + board('bFu','Follow-up status — all defaulters', money(b.fuTotal)+' customers', b.fuStatus,
                 [col('status','Status'), col('customers','Customers','num'),
                  {key:'pct', label:'% of book', kind:'pct', lowGood:true}, col('arrears','Arrears','money')],
@@ -3237,7 +3272,7 @@ VIEWS.monthreport = function(){
     var ag = d.agents || {};
     HEAD += board('mrWeeks', 'Wiki kwa wiki / Week by week — jedwali / table', d.month, rows, weekCols, weekTot)
       + board('mrAgents', 'Maombi ya mikopo / Loan applications — mwezi huu / this month',
-          'CS agents · TRACK# 1 only · kwa siku ya ripoti / by the report\'s day · ' + money(ag.total || 0) + ' apps',
+          'CS agents · TRACK# reads 1 · roster agents only · kwa siku ya ripoti / by the report\'s day · ' + money(ag.total || 0) + ' apps',
           ag.rows || [],
           [{key:'id', label:'Agent'},
            {key:'names', label:'Who', cls:function(r){ return r.names?'':'bad'; },
@@ -3245,6 +3280,7 @@ VIEWS.monthreport = function(){
            col('total','Apps','num'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
            col('advanced','Approved+','num'), col('amount','Requested','money')],
           ag.totals ? Object.assign({ id:'', names:'' }, ag.totals) : undefined)
+      + csExcludedNote(ag.excluded)
       /* The role filter narrows the leaders list below, the same way a team filter narrows
          any other list. */
       + bar('<select data-filter="role"><option value="">Nafasi zote / All roles</option>'
@@ -3362,6 +3398,18 @@ VIEWS.apps = function(){
             return '<option value="'+s+'"'+(s===d.stage?' selected':'')+'>'+s.replace(/_/g,' ')+'</option>'; }).join('') + '</select>'
         /* BOTH ENDS, EDITABLE. Clearing them both is "no window" and gives the whole pipeline
            back -- nothing is put out of reach by the default. */
+        /* A DAY BACK, TODAY, A DAY FORWARD -- "back and foward dates at Loan Applications".
+           The arrows move BOTH ends by one day, so a one-day window stays one day wide and a
+           wider window slides as a whole; Leo puts both ends on today. With no window set
+           (both boxes blank) the arrows start from today. */
+        + (function(){
+            var leo = todayKeyClient();
+            var f = d.from || leo, t = d.to || f;
+            var shift = function(n){ return JSON.stringify({ from: addDays(f, n), to: addDays(t, n) }); };
+            return '<button class="btn sm ghost" data-args=\'' + shift(-1) + '\' title="Siku iliyopita / previous day">◀</button>'
+              + '<button class="btn sm ghost" data-args=\'' + JSON.stringify({ from: leo, to: leo }) + '\' title="Leo / today">Leo</button>'
+              + '<button class="btn sm ghost" data-args=\'' + shift(1) + '\' title="Siku inayofuata / next day">▶</button>';
+          })()
         + '<label style="font-size:12px;color:var(--mut)">Kuanzia / From</label>'
         + '<input type="date" data-arg="from" value="'+esc(d.from||'')+'">'
         + '<label style="font-size:12px;color:var(--mut)">Hadi / To</label>'
@@ -4596,13 +4644,17 @@ var CMS_COLS = [col('officer','Officer'), col('recovered','Recovered','money'),
      recovery officers, initial col % for early, week % for PMO. Sortable like every header. */
   col('pct','Wiki % / Weekly %','pct')];
 VIEWS.commission = function(){
-  return srv('commission').then(function(d){
+  /* THE WEEK IS CHOSEN HERE TOO -- "back and foward weeks in commission". The same week bar
+     the dashboard and the presentation use, so a finished week's pay can be read back and an
+     upcoming one previewed; the server says which week it answered for. */
+  return srv('commission', { weekOf: S.args.weekOf || '' }).then(function(d){
     var noRates = !d.paidTzs && !d.overTzs;
     /* THE BLINKING DOT, exactly as the dashboard's: a quiet pulse that opens the MONTH
        record. "each commission has daily and weekly record with a blinking dot for monthly
-       record as the dot in dashboard". */
-    HEAD = bar('<span class="chip mut">Wiki hii / this week &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
-        + '<button class="syncdot" data-go="cmmonth" title=""></button>')
+       record as the dot in dashboard". It carries the chosen week, so a past week opens
+       THAT month's record. */
+    HEAD = weekBar(d, '<span class="chip mut">' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
+        + '<button class="syncdot" data-go="cmmonth" data-carry="weekOf" title=""></button>')
       + '<div class="kpis">'
       /* THE SPLIT, BESIDE THE TOTAL. Three schemes pay three different people here --
          recovery on a percentage, early collection per PAID/OVERPAID, and PMO collection on a
@@ -4838,7 +4890,7 @@ VIEWS.commission = function(){
     // show monthly".
     S.foldMain = 'cmlist';
     S.foldLabel = 'Orodha / List — wiki hii / weekly progress';
-    S.foldDot = '<button class="syncdot" data-go="cmmonth" title=""></button>';
+    S.foldDot = '<button class="syncdot" data-go="cmmonth" data-carry="weekOf" title=""></button>';
     ONROW = null;
     S.foot = 'Wiki hii / this week (Mon–Sun): TZS ' + money(d.totals.week)
       + ((d.pmo && d.pmo.length) ? ' · PMO Collection: TZS ' + money(d.pmoTotals.week) : '');
@@ -4851,10 +4903,31 @@ VIEWS.commission = function(){
    day columns is not a table anybody reads. The weekly bonus is a weekly rule and is
    deliberately absent here. */
 VIEWS.cmmonth = function(){
-  return srv('commission', { scope: 'month' }).then(function(d){
+  /* WHICH MONTH -- "back and foward months in the blinking dot too". Chosen outright, or
+     taken from the week the dot was pressed on, or this month. */
+  var month = S.args.month || (S.args.weekOf ? String(S.args.weekOf).slice(0, 7) : '');
+  return srv('commission', { scope: 'month', month: month }).then(function(d){
     var sp = d.totals.split || {};
+    var m = d.month || month || todayKeyClient().slice(0, 7);
+    var thisM = todayKeyClient().slice(0, 7);
+    /* THE WEEKS OF THE MONTH AS COLUMNS -- "weekly progress to month there with the same
+       columns for each PMO Unit among the 3 as we had daily to weekly on the landing nav
+       page". W1, W2 ... each carrying the cells its day columns carry on the week page; the
+       month's own figures close the row. The server says which weeks the month has and which
+       days each covers, so a week clipped by the month's edge is labelled with its real days. */
+    var wks = d.weeks || [];
+    var wkCols = function(mk){ return wks.reduce(function(a, w){ return a.concat(mk(w)); }, []); };
+    var span = function(w){ return esc(w.from) + ' → ' + esc(w.to); };
     HEAD = bar('<button class="pill" data-go="commission">&larr; Kamisheni / Commission</button>'
-        + '<span class="chip mut">Mwezi / month &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>')
+        + '<label style="font-size:12px;color:var(--mut)">Mwezi / Month</label>'
+        + '<button class="btn sm ghost" data-arg="month" data-val="' + esc(addMonths(m, -1)) + '" title="Mwezi uliopita / previous month">&#9664;</button>'
+        + '<input type="month" data-arg="month" value="' + esc(m) + '">'
+        + '<button class="btn sm ghost" data-arg="month" data-val="' + esc(addMonths(m, 1)) + '" title="Mwezi ujao / next month">&#9654;</button>'
+        + (m === thisM
+            ? '<span class="chip mut">Mwezi huu / this month &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
+            : '<span class="chip warn">' + (m < thisM ? 'Mwezi uliopita / past month' : 'Mwezi ujao / upcoming month')
+              + ' &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
+              + ' <button class="btn sm ghost" data-arg="month" data-val="' + esc(thisM) + '">Rudi mwezi huu / Back to this month</button>'))
       + '<div class="kpis">'
       + kpi(d.isAdmin ? 'Company total — month to date' : 'My commission — month to date',
           money(d.totals.week),
@@ -4869,21 +4942,42 @@ VIEWS.cmmonth = function(){
       + '</div>'
       + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
           + esc(d.payText) + '</div>' : '')
-      + board('cmMRec','Recovery — mwezi / month to date', null, d.recBoard,
-          [col('officer','Recovery officer'), col('weekRecovered','Recovered','money'),
-           col('weekCommission','Month TZS','money')],
-          sumRow(d.recBoard||[], ['weekRecovered','weekCommission']))
-      + board('cmMCol','Early Collection — mwezi / month to date',
-          'asilimia ni ya mwezi mzima dhidi ya kitabu cha initial / the month’s ratio of sums, never an average of days',
+      /* RECOVERY: each week's percentage, recovered and TZS (the six records added), then the
+         month -- the shape the week page has per day. */
+      + board('cmMRec','Recovery — mwezi / month',
+          'kila wiki: asilimia ya wiki, kilichorejeshwa na TZS ya rekodi 6 · Mwezi = jumla ya wiki / each week: its %, recovered and the six records’ TZS · the month is the weeks added',
+          d.recBoard,
+          [col('officer','Recovery officer')]
+            .concat(wkCols(function(w){ return [
+              {key:'pct'+w.key, label:w.key+' %', kind:'pct', target:'rec', title: span(w)},
+              {key:'rec'+w.key, label:w.key+' rec', kind:'money', title: span(w)},
+              {key:'tzs'+w.key, label:w.key+' TZS', kind:'money', title: span(w)}]; }))
+            .concat([{key:'weekPct', label:'Mwezi %', kind:'pct', target:'rec'},
+              col('weekRecovered','Mwezi rec','money'), col('weekCommission','Mwezi / Month TZS','money')]),
+          sumRow(d.recBoard||[], wks.reduce(function(a,w){ return a.concat(['rec'+w.key,'tzs'+w.key]); }, ['weekRecovered','weekCommission'])))
+      /* EARLY COLLECTION: each week's initial col %, PAID+OVER count and TZS, then the month. */
+      + board('cmMCol','Early Collection — mwezi / month',
+          'kila wiki: asilimia dhidi ya kitabu cha initial, idadi ya PAID+OVERPAID na TZS · Mwezi = jumla / each week: the initial col %, the PAID+OVERPAID count and its TZS · the month is the sum',
           d.colBoard,
-          [col('officer','Early col officer'), {key:'weekPct', label:'Col %', kind:'pct', target:'ecol'},
-           col('weekPaid','Paid','num'), col('weekOver','Overpaid','num'),
-           col('weekCommission','Month TZS','money')],
-          sumRow(d.colBoard||[], ['weekPaid','weekOver','weekCommission']))
-      + ((d.pmo && d.pmo.length) ? board('cmMPmo','PMO Collection — mwezi / month to date',
-          'kila siku kwa kundi lake, zimejumlishwa / each day banded on its own percentage, added up',
-          d.pmo, [col('officer','PMO'), col('weekUncollected','Uncollected','money'),
-            {key:'weekPct', label:'Col %', kind:'pct', target:'ecol'}, col('weekCommission','Month TZS','money')]) : '');
+          [col('officer','Early col officer')]
+            .concat(wkCols(function(w){ return [
+              {key:'pct'+w.key, label:w.key+' %', kind:'pct', target:'ecol', title: span(w)},
+              {key:'n'+w.key, label:w.key+' P+O', kind:'num', title: span(w)},
+              {key:'ctzs'+w.key, label:w.key+' TZS', kind:'money', title: span(w)}]; }))
+            .concat([{key:'weekPct', label:'Mwezi %', kind:'pct', target:'ecol'},
+              col('weekPaid','Paid','num'), col('weekOver','Overpaid','num'),
+              col('weekN','Mwezi P+O','num'), col('weekCommission','Mwezi / Month TZS','money')]),
+          sumRow(d.colBoard||[], wks.reduce(function(a,w){ return a.concat(['n'+w.key,'ctzs'+w.key]); }, ['weekPaid','weekOver','weekN','weekCommission'])))
+      /* PMO COLLECTION: each week's percentage and its days' bands added, then the month. */
+      + ((d.pmo && d.pmo.length) ? board('cmMPmo','PMO Collection — mwezi / month',
+          'kila wiki: asilimia ya wiki na TZS ya siku zake (kila siku kwa kundi lake) · Mwezi = jumla / each week: its % and its days’ bands added · the month is the sum',
+          d.pmo, [col('officer','PMO'), col('teams','Teams','num')]
+            .concat(wkCols(function(w){ return [
+              {key:'pct'+w.key, label:w.key+' %', kind:'pct', target:'col', title: span(w)},
+              {key:'tzs'+w.key, label:w.key+' TZS', kind:'money', title: span(w)}]; }))
+            .concat([col('weekUncollected','Uncollected','money'),
+              {key:'weekPct', label:'Mwezi %', kind:'pct', target:'col'}, col('weekCommission','Mwezi / Month TZS','money')]),
+          sumRow(d.pmo||[], wks.map(function(w){ return 'tzs'+w.key; }).concat(['weekUncollected','weekCommission']))) : '');
     S.rows = d.week || [];
     S.cols = CMS_COLS;
     S.foldMain = 'cmlist';
@@ -6416,15 +6510,40 @@ VIEWS.present = function(){
   // BOTH halves take the same week, or the slides would pair one week's cards against another
   // week's officer boards -- which is the sort of thing nobody notices in a dark room.
   var wk = { weekOf: S.args.weekOf || '' };
+  S.presWk = wk;
   return Promise.all([srv('dashboardFull', wk), srv('officerBoards', wk)]).then(function(r){
     /* KEPT, so ticking a segment box does not go back to the server. Rebuilding this screen is
        the most expensive thing the system does -- the dashboard AND the officer boards, a
        hundred-odd round trips -- and it was being done again on every tick of every checkbox.
        The figures do not change because somebody chose not to project a slide. */
     S.presData = { d: r[0], b: r[1] };
+    S.presUpdated = new Date();
     return presRender();
   });
 };
+
+/* THE DECK KEEPS UP WITH THE DAY -- "Hopecalls in presentation aint autoupdating".
+   The figures were fetched once, when the tab opened, and then the deck ran on them all
+   morning: the calls slide showed the office the calls of whatever minute somebody pressed
+   Play. While the deck is PLAYING it now asks again every few minutes -- the same two calls
+   the tab makes, both cached on the server for a minute, so an office television costs the
+   database what one person opening the tab would -- rebuilds the slides in place and stays
+   on the slide it was on. The header says when the figures were last fetched, so a room can
+   tell a live deck from a frozen one. Stopped when the deck stops. */
+var PRES_REFRESH_MS = 3 * 60 * 1000;
+function presRefetch(){
+  if (document.getElementById('pres').style.display !== 'block') return;
+  var wk = S.presWk || { weekOf: S.args.weekOf || '' };
+  Promise.all([srv('dashboardFull', wk), srv('officerBoards', wk)]).then(function(r){
+    if (!r[0] || !r[1]) return;
+    S.presData = { d: r[0], b: r[1] };
+    S.presUpdated = new Date();
+    var keep = S.presI;
+    presApply();
+    S.presI = Math.min(keep, Math.max(0, S.slides.length - 1));
+    if (document.getElementById('pres').style.display === 'block') presDraw();
+  }).catch(function(){ /* a missed refresh keeps the last figures; the stamp says how old they are */ });
+}
 
 /** Build every slide from the figures already in hand. Filtering (which segments, which team)
     happens afterwards in presApply, so a choice never costs a request. */
@@ -6529,8 +6648,18 @@ function presSlides(){
         need it to always be sum of weekly from mon to sun"
        csWeek is already the Mon-Sun sum -- the title said neither which days nor that it was a
        sum, so on a Tuesday the room read it as Tuesday's. Now it says so. */
+    /* THE STRICT RULE ON THE WALL TOO: TRACK# reads 1, created by a roster agent. What was
+       left out is said in the title, because this slide pays a bonus and a room reading it
+       should know the count is the strict one. */
+    var csx = (b.csExcluded && b.csExcluded.week) || null;
+    var csxNote = csx && (csx.noTrack || csx.repeat || (csx.notAgent||[]).length)
+      ? ' · hazikuhesabiwa / not counted: ' + [csx.noTrack ? money(csx.noTrack) + ' no TRACK#' : '',
+          csx.repeat ? money(csx.repeat) + ' repeat' : '',
+          (csx.notAgent||[]).length ? money((csx.notAgent||[]).reduce(function(s,a){ return s + a.n; }, 0)) + ' not on the roster' : '']
+          .filter(Boolean).join(', ')
+      : '';
     slides.push({ id:'cs', kind:'table',
-      title:'Call agents — applications brought in · jumla ya wiki Jumatatu–Jumapili / week total Mon–Sun',
+      title:'Call agents — applications brought in · TRACK# 1 · jumla ya wiki Jumatatu–Jumapili / week total Mon–Sun' + csxNote,
       rows:b.csWeek.slice(0,12),
       cols:[col('agent','Agent'), col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
         col('brought','Brought in','num'), col('amount','Amount','money')] });
@@ -6667,11 +6796,14 @@ function presStart(from){
   clearInterval(S.presTimer);
   S.presTimer = setInterval(function(){ S.presI = (S.presI + 1) % S.slides.length; presDraw(); },
     Math.max(5, Math.min(300, Number(S.presSecs) || 15)) * 1000);
+  clearInterval(S.presRefresh);
+  S.presRefresh = setInterval(presRefetch, PRES_REFRESH_MS);
   // Real full screen: on the office TV the browser chrome should not be part of the picture.
   if (el.requestFullscreen) { try { el.requestFullscreen(); } catch(e){} }
 }
 function presStop(){
   clearInterval(S.presTimer);
+  clearInterval(S.presRefresh); S.presRefresh = null;
   document.getElementById('pres').style.display = 'none';
   if (document.fullscreenElement && document.exitFullscreen) { try { document.exitFullscreen(); } catch(e){} }
 }
@@ -6701,7 +6833,10 @@ function presDraw(){
   }
   document.getElementById('pres').innerHTML =
     '<div class="phead"><span>'+esc(s.title)+'</span>'
-    + '<span class="pnum">'+(S.presI+1)+' / '+S.slides.length+'</span>'
+    + '<span class="pnum">'+(S.presI+1)+' / '+S.slides.length
+      + (S.presUpdated ? ' <span style="font-size:.6em;opacity:.7" title="Takwimu zilipatikana / figures fetched">· '
+          + esc(String(S.presUpdated.getHours()).padStart(2,'0') + ':' + String(S.presUpdated.getMinutes()).padStart(2,'0')) + '</span>' : '')
+      + '</span>'
     /* A LABEL, NOT A DOT. This was a bare filled circle beside the close cross, which reads as
        decoration rather than a button -- the person it was built for looked at the deck and did
        not see it. It says what it does now. */

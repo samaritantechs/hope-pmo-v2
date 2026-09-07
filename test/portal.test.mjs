@@ -499,6 +499,72 @@ test('commission pays the recovery officer a % and the early officer a flat rate
 });
 
 /* =====================================================================================
+   THE MONTH IS ITS WEEKS ADDED, AND ANY WEEK OR MONTH CAN BE OPENED.
+     "we should have weekly progress to month there with the same columns for each PMO
+      Unit among the 3 as we had daily to weekly on the landing nav page"
+     "back and foward weeks in commission and back and foward months in the blinking dot too"
+   ===================================================================================== */
+test('the month record is the weeks worked out one by one and added, with a column set per week', async () => {
+  const t = tables();
+  // A week earlier (W3, 13-19 July): Friday's decks 2000 -> 1000 against 1000 uncollected --
+  // a 100% day and a 100% week, both on the top band.
+  t.defaulter_snapshots.push(
+    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-17', 'FRI'),
+    D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'));
+  t.repayment_snapshots.push(E('711', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'));
+  const m = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month' }, NOW);
+  assert.equal(m.from, '2026-07-01'); assert.equal(m.to, TODAY);
+  assert.deepEqual(m.weeks.map(w => w.key), ['W1', 'W2', 'W3', 'W4']);
+  assert.deepEqual(m.weeks[0], { key: 'W1', from: '2026-07-01', to: '2026-07-05' }, 'the first week is clipped to the month');
+  assert.deepEqual(m.weeks[3], { key: 'W4', from: MON, to: TODAY }, 'the live week ends today');
+  const juma = m.recBoard.find(r => r.officer === 'JUMA G');
+  // W3: Friday 100% (60,000) + the week 100% (60,000). W4: 300 of 1,000 on Friday, 21.4% for
+  // the week -- both under the floor. The month is the two added, never the month scored once.
+  assert.equal(juma.pctW3, 100); assert.equal(juma.recW3, 1000); assert.equal(juma.tzsW3, 120000);
+  assert.equal(juma.pctW4, 21.4); assert.equal(juma.recW4, 300); assert.equal(juma.tzsW4, 0);
+  assert.equal(juma.tzsW1, 0); assert.equal(juma.pctW1, null, 'a week with nothing in it is not a zero per cent');
+  assert.equal(juma.weekRecovered, 1300);
+  assert.equal(juma.weekCommission, 120000, 'the month pays what its weeks paid');
+  assert.equal(juma.weekPct, 54.2, '1,300 over the month\'s 2,400 uncollected');
+  assert.equal(m.totals.split.recWeek, 120000);
+  assert.equal(juma.records.length, 4, 'one record per week of the month');
+  assert.equal(juma.records[2].key, 'W3'); assert.equal(juma.records[2].weekly, true);
+});
+
+test('the commission screen opens any week, and the month record any month', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(
+    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-17', 'FRI'),
+    D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'));
+  t.repayment_snapshots.push(E('711', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'));
+  // Any date in the week: a Wednesday snaps to its Monday, and the week reads as finished.
+  const w = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: '2026-07-15' }, NOW);
+  assert.equal(w.from, '2026-07-13'); assert.equal(w.to, '2026-07-19');
+  assert.equal(w.pastWeek, true); assert.equal(w.weekRequested, '2026-07-13');
+  assert.equal(w.asOfDate, '2026-07-17', 'a finished week is read as of its Friday');
+  const juma = w.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.pctIJ, 100); assert.equal(juma.tzsIJ, 60000);
+  assert.equal(juma.pctWK, 100); assert.equal(juma.weekCommission, 120000);
+  assert.equal(juma.commission, 60000, 'the live record of a finished week is its Friday\'s');
+  // This week, asked for by its Monday, is the ordinary screen.
+  const now = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: MON }, NOW);
+  assert.equal(now.pastWeek, false); assert.equal(now.to, addDaysT_(MON, 6));
+  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 0);
+  // Last month: the whole of June, five weeks, nothing in it.
+  const jun = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month', month: '2026-06' }, NOW);
+  assert.equal(jun.from, '2026-06-01'); assert.equal(jun.to, '2026-06-30'); assert.equal(jun.month, '2026-06');
+  assert.deepEqual(jun.weeks.map(x => x.key), ['W1', 'W2', 'W3', 'W4', 'W5']);
+  assert.equal(jun.weeks[0].from, '2026-06-01'); assert.equal(jun.weeks[4].to, '2026-06-30');
+  assert.equal(jun.totals.week, 0);
+  // A different week is a different answer: the cache must key on it.
+  const db = dbWithRpc(t);
+  const a1 = await portalApi(db, ADMIN, 'commission', { weekOf: '2026-07-15' }, NOW);
+  const a2 = await portalApi(db, ADMIN, 'commission', {}, NOW);
+  assert.notEqual(a1.from, a2.from, 'two weeks asked of one database in one minute are two answers');
+});
+const addDaysT_ = (k, n) => { const d = new Date(k + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+/* =====================================================================================
    THE COMMISSION BOARD AND THE DASHBOARD ADD UP TO ONE FIGURE.
    =====================================================================================
      "see the total rec reading at dashboards and the one at commissions which is not okay.
@@ -3140,12 +3206,17 @@ test('officer accounts can be deleted outright, taking their call history with t
 });
 
 test('call agents are the CREATED BY agents on applications, TRACK# 1 only', async () => {
+  /* THE STRICT RULE -- "the strict rule is track 1 created by call agent". This count pays a
+     bonus, and customer service reported it as unfair: "we aint sure if its multi loan or
+     what". Two things used to slip through -- a BLANK track (counted as 1 on the grounds that
+     old reports had no column) and an id that is on no roster (counted, and merely named as
+     missing). Neither counts now, and both are SAID on the answer. */
   const t = tables();
   const L = (id, stage, created_by, track, amt) => ({ id, team: 'KONGOWE', stage, created_by,
     track_no: track, requested_amt: amt, full_name: 'C' + id });
   t.loans = [
     L('a', 'unassigned', 'Callagent1', 1, 100000),
-    L('b', 'assigned',   'Callagent1', '', 200000),   // blank track counts: old reports had no column
+    L('b', 'assigned',   'Callagent1', '', 200000),   // blank track: UNKNOWN is not 1 -- not counted
     L('c', 'assigned',   'Callagent2', 1, 300000),
     L('d', 'unassigned', 'Callagent2', 3, 900000),    // repeat customer -- not a new win
     L('e', 'approved',   'Callagent1', 1, 500000),    // past the two stages this board counts
@@ -3159,9 +3230,9 @@ test('call agents are the CREATED BY agents on applications, TRACK# 1 only', asy
 
   const one = d.rows.find(r => r.id === 'Callagent1');
   assert.equal(one.unassigned, 1);
-  assert.equal(one.assigned, 1);
-  assert.equal(one.total, 2);
-  assert.equal(one.amount, 300000);
+  assert.equal(one.assigned, 0, 'the blank-track application is not a track-1 registration');
+  assert.equal(one.total, 1);
+  assert.equal(one.amount, 100000);
   assert.equal(one.names, 'Amina Mustafa, Nadhir Msangi');
 
   // TRACK# 3 is a repeat customer, so Callagent2 keeps only the assigned one.
@@ -3169,9 +3240,13 @@ test('call agents are the CREATED BY agents on applications, TRACK# 1 only', asy
   assert.equal(two.total, 1);
   assert.equal(two.amount, 300000);
 
-  // An id with no roster entry is still counted and is NAMED as missing, not hidden.
+  // An id with no roster entry is NOT counted -- and is named, with its count, so a real agent
+  // missing from the roster gets added rather than quietly unpaid.
+  assert.equal(d.rows.find(r => r.id === 'Callagent9'), undefined);
   assert.deepEqual(d.unnamed, ['Callagent9']);
-  assert.equal(d.totals.total, 4);
+  assert.equal(d.totals.total, 2);
+  assert.deepEqual(d.excluded, { noTrack: 1, repeat: 1, notAgent: [{ id: 'Callagent9', n: 1 }] },
+    'what the strict rule left out is said, line by line');
 
   // The roster is editable without SQL.
   const db = fakeDb(t);
@@ -3263,7 +3338,15 @@ test('expdf says WHY it is empty, and shows the book when the deck has no DISB D
    missing one shows up here as a zero rather than as a blank slide on the wall. */
 
 test('presentation boards: recovery, early collection, credit, calls and follow-up', async () => {
-  const b = await run('officerBoards');
+  /* THE EARLY BOARD READS THE INITIAL SHEETS -- "at presentation, early col seems like
+     displaying today's". It did: it summed the week's DAY sheets. The early scheme is judged
+     on the INITIAL file only, as the commission board pays, so the fixture gets one and the
+     board is read off it; the day sheets beside it must not leak in. */
+  const t = tables();
+  t.repayment_snapshots.push(
+    E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('882', 'KONGOWE', 600, 'UNPAID', 0, TODAY, 'initial'));
+  const b = await run('officerBoards', {}, ADMIN, dbWithRpc(t));
   assert.equal(b.weekday, 'FRI');
   assert.equal(b.weekOf, MON);
 
@@ -3277,12 +3360,17 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(b.currentCount, 3);
   assert.equal(b.deckWarning, null, 'matched deck sizes raise no warning');
 
-  // Early collection is judged per the team's Expected officer, on payment_expected vs paid.
+  // Early collection is judged per the team's Expected officer, on the INITIAL sheet.
   const early = b.earlyWeek.find(r => r.officer === 'EARLY E');
-  assert.equal(early.expected, 1900);                         // 1000 + 500 + 400 (KONGOWE, Mon-Fri)
-  assert.equal(early.collected, 500);                         // the one PAID row
-  assert.equal(early.uncollected, 1400);
+  assert.equal(early.expected, 1600, 'the initial sheet: 1000 + 600 -- not the day sheets\' 1900');
+  assert.equal(early.collected, 1000);                        // the one PAID row on the initial sheet
+  assert.equal(early.uncollected, 600);
   assert.equal(early.paidOver, 1);
+  assert.equal(early.pct, 62.5);
+  // Without an initial sheet the board is EMPTY -- the day sheets are never a fallback.
+  const bare = await run('officerBoards', {}, ADMIN, dbWithRpc(tables()));
+  assert.equal(bare.earlyWeek.find(r => r.officer === 'EARLY E'), undefined,
+    'no initial file, no early-collection week -- the day sheets are the PMO collection book');
 
   // Credit analysts: applications they processed, with an amount attached.
   // Counted on the date they were approved, whatever became of them afterwards -- l3 was
@@ -3368,7 +3456,7 @@ function csTables() {
     { id: 'a2', team: 'KONGOWE', stage: 'assigned', requested_amt: 200000, track_no: '1', created_by: 'CS1', upload_date: MON, full_name: 'A2' },
     // TRACK# 3 is a repeat customer -- nobody won that application.
     { id: 'a3', team: 'KONGOWE', stage: 'unassigned', requested_amt: 900000, track_no: '3', created_by: 'CS1', upload_date: TODAY, full_name: 'A3 repeat' },
-    // A blank track counts: the earliest reports had no such column.
+    // A blank track is UNKNOWN, not 1 -- the strict rule leaves it out (and CS2 is on no roster).
     { id: 'a4', team: 'MBAGALA', stage: 'unassigned', requested_amt: 150000, track_no: '', created_by: 'CS2', upload_date: TODAY, full_name: 'A4' },
     { id: 'a5', team: 'KONGOWE', stage: 'unassigned', requested_amt: 500000, track_no: '1', created_by: 'CS1', upload_date: '2026-07-10', full_name: 'A5 last month' },
   ]);
@@ -3387,10 +3475,10 @@ test('call agents are measured on applications brought in, TRACK# 1 only', async
   assert.equal(neema.amount, 600000);
   assert.equal(neema.agent, 'NEEMA CS', 'the roster supplies the name');
 
-  // A blank track counts -- the earliest reports had no such column.
-  const cs2 = b.csWeek.find(r => r.id === 'CS2');
-  assert.equal(cs2.brought, 1);
-  assert.equal(cs2.agent, 'CS2', 'an id with no roster entry shows as the bare id, not hidden');
+  // A blank track is unknown, not 1: a4 is not counted, and CS2 -- on no roster -- has no row.
+  assert.equal(b.csWeek.find(r => r.id === 'CS2'), undefined, 'a blank track is not a track-1 win');
+  assert.deepEqual(b.csExcluded.week, { noTrack: 1, repeat: 1, notAgent: [] },
+    'the week says what the strict rule left out (a4 fails on its track before its id is asked)');
 
   // Nothing about talking on the phone appears on this board at all.
   assert.equal('duration' in neema, false);
@@ -3429,11 +3517,35 @@ test('the call app board counts everybody who should be calling, including the o
 });
 
 test('both agent boards stay inside the caller\'s teams', async () => {
-  const b = await run('officerBoards', {}, GMO, fakeDb(csTables()));
+  const t = csTables();
+  // Give CS2 a roster entry and a real track, so the only thing keeping it off is the scope.
+  t.call_agents.push({ user_id: 'CS2', names: 'ZAINAB CS' });
+  t.loans.find(l => l.id === 'a4').track_no = '1';
+  const all = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.ok(all.csWeek.find(r => r.id === 'CS2'), 'an admin sees MBAGALA\'s agent');
+  const b = await run('officerBoards', {}, GMO, fakeDb(t));
   // CS2's only application is MBAGALA's.
   assert.equal(b.csWeek.find(r => r.id === 'CS2'), undefined);
   assert.equal(b.csWeek.length, 1);
   assert.equal(b.csWeek[0].id, 'CS1');
+});
+
+test('a handset whose name is not on the sheet still gets its unit from its role', async () => {
+  /* "some recovery officers's phones aint reflecting calls in ripoti nor row appearance in
+     presentation" -- the calls slide shows the three PMO units only, and the unit was decided
+     by NAME against the teams table. A phone registered as "RAPHAEL" beside a sheet that says
+     "RAPHAEL MGIMWA" had no unit and fell off the slide. The role the registration copied
+     from the access code says what the name could not. */
+  const t = tables();
+  t.call_users.push(
+    { user_id: 'U5', name: 'RAPHAEL', team: 'KONGOWE', role: 'PMO RECOVERY', is_leader: false },
+    { user_id: 'U6', name: 'EARLY BIRD', team: 'KONGOWE', role: 'EARLY COLLECTION', is_leader: false },
+    { user_id: 'U7', name: 'NOBODY N', team: 'KONGOWE', role: 'OFFICER', is_leader: false });
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  assert.equal(b.callWeek.find(r => r.agent === 'JUMA G').unit, 'RECOVERY', 'the teams table still decides where the name matches');
+  assert.equal(b.callWeek.find(r => r.agent === 'RAPHAEL').unit, 'RECOVERY', 'the role fills in where the name does not');
+  assert.equal(b.callWeek.find(r => r.agent === 'EARLY BIRD').unit, 'EXPECTED');
+  assert.equal(b.callWeek.find(r => r.agent === 'NOBODY N').unit, null, 'a plain officer is still no unit');
 });
 
 test('the call report puts a silent officer on the list at zero', async () => {
