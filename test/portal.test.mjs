@@ -3866,10 +3866,18 @@ test('the recovery tiles divide by jana on the team rule, and say so', async () 
   // Tuesday divides by Monday too: jana.
   assert.equal(tile('TUE').basis, 'yesterday');
   assert.equal(tile('TUE').uncollected, 1000);
-  // The weekend divides by the week, Monday to Friday once each.
-  assert.equal(tile('SAT').basis, 'week');
-  assert.equal(tile('SAT').uncollected, 2000, '1000 + 400 + 600');
-  assert.deepEqual(tile('SAT').basisDates, [MON, '2026-07-21', '2026-07-22', YEST, TODAY]);
+  /* THE WEEKEND HAS NO COLLECTION SHEET AND SO NO DENOMINATOR AT ALL.
+       "am still seeing unrecovered on sat and sun ... WE HAVE NO COL IN SAT AND SUN!"
+     The weekend branch of the jana rule (divide by the week) is for a weekend DAY on the
+     Orodha and the phone. A Saturday tile shows what came back on Saturday and nothing else:
+     no percentage, no "Unrecovered" -- never the week's uncollected printed under Saturday. */
+  for (const wd of ['SAT', 'SUN']) {
+    assert.equal(tile(wd).basis, 'none');
+    assert.equal(tile(wd).uncollected, 0);
+    assert.equal(tile(wd).unrecovered, 0, 'nothing is "unrecovered" on a day with no sheet');
+    assert.equal(tile(wd).pct, null);
+    assert.deepEqual(tile(wd).basisDates, []);
+  }
   /* THE TOTAL IS NOT THE SUM OF THE TILES' DENOMINATORS -- Monday's 1000 would be counted
      under Monday and Tuesday, the week's 2000 under both weekend tiles. It is the week's
      recovered over Monday to Friday's own sheets, once each. */
