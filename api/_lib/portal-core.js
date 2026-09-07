@@ -7883,7 +7883,18 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        of these: jana's figure appears under two tiles and the week's under both weekend
        ones. */
     const own = tUncollected(colDay_(myExpWeek, d));
-    const basis = recoveryDenominator(d, dd => tUncollected(colDay_(myExpWeek, dd)));
+    /* SATURDAY AND SUNDAY HAVE NO COLLECTION SHEET, AND SO NO DENOMINATOR.
+         "am still seeing unrecovered on sat and sun ... WE HAVE NO COL IN SAT AND SUN!"
+       The jana rule's weekend branch -- divide by the week -- is for the Orodha and the phone
+       on a weekend DAY, where the question is "how is the week going". A weekend TILE is a
+       different question: what came back on Saturday. Dividing that by the whole week printed
+       the week's uncollected under Saturday as "Unrecovered", which the owner has never had
+       and never asked for. So the two weekend tiles carry the recovered amount only -- "full
+       recovery" when there is one, no percentage and no unrecovered -- exactly as they read
+       before #413. Monday to Friday keep the jana rule. */
+    const weekend = i >= 5;
+    const basis = weekend ? { kind: 'none', den: 0, dates: [] }
+      : recoveryDenominator(d, dd => tUncollected(colDay_(myExpWeek, dd)));
     const unc = basis.den;
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       basis: basis.kind, basisDates: basis.dates, dayUncollected: own,

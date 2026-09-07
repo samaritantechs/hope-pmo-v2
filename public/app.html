@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-c';
+var BUILD = '2026-09-07-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2963,7 +2963,15 @@ VIEWS.dashboard = function(){
       + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % ÷ jana’s uncollected (Mon ÷ Mon, weekend ÷ the week)', 'gRec',
           d.recTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
-            : tcell(wdLabel(x.weekday), [
+            : (x.basis === 'none'
+              /* SATURDAY AND SUNDAY: no collection sheet, so no "Unrecovered" and no percentage
+                 -- what came back, and "full recovery" when something did. "WE HAVE NO COL IN
+                 SAT AND SUN!" */
+              ? tcell(wdLabel(x.weekday), [
+                  ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
+                  ['hakuna makusanyo / no collection sheet', 'mutl'],
+                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']])
+              : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
                UNRECOVERED IS WHAT IS STILL OUT: the basis day's uncollected MINUS what came
@@ -2972,7 +2980,7 @@ VIEWS.dashboard = function(){
             ['Unrecovered TZS '+money(x.unrecovered), 'badl'],
             [x.pct != null
               ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
-              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']]); }),
+              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']])); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
             ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0), 'badl'],
             ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot'))
