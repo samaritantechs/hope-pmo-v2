@@ -653,6 +653,67 @@ test('an initial deck dated another day does not pair with this week\'s current'
   assert.equal(dash.recTrend.find(x => x.date === MON).recovered, 0, 'and the dashboard reads the same day the same way');
 });
 
+test('the recovery band amounts are the admin\'s to set; the percentages are not', async () => {
+  /* "i want to have the commision amounts editable by admin on the % bands payment, the 25k,
+      30k - 60k". The fixture's Friday (initial 2000 -> 1000 against 1000 uncollected) is a
+     100% day and a 100% week: two records on the top band. */
+  const t = tables();
+  // Only these decks and this sheet, so the day is exactly 1,000 of 1,000.
+  t.defaulter_snapshots = [
+    D('711', 'KONGOWE', 2000, 'initial', 45, TODAY, 'FRI'),
+    D('711', 'KONGOWE', 1000, 'current', 45, TODAY, 'FRI')];
+  t.repayment_snapshots = [E('711', 'KONGOWE', 1000, 'UNPAID', 0, TODAY)];
+  const db = dbWithRpc(t);
+  const before = await portalApi(db, ADMIN, 'commission', {}, NOW);
+  const juma0 = before.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(juma0.tzsIJ, 60000); assert.equal(juma0.weekCommission, 120000);
+  assert.equal(before.recBandsCustom, false);
+
+  // The top band is worth 75,000 now; the others are left blank and keep their defaults.
+  const saved = await portalApi(db, ADMIN, 'commissionSave',
+    { recBands: { 90: '75000', 80: '', 70: '', 60: '', 50: '' } }, NOW);
+  assert.equal(saved.recBands[0].tzs, 75000);
+  assert.equal(saved.recBands[0].defaultTzs, 60000, 'the built-in amount is still known');
+  assert.equal(saved.recBands[1].tzs, 40000, 'a blank box leaves that band at its default');
+  const after = await portalApi(db, ADMIN, 'commission', {}, NOW + 61000);
+  const juma = after.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.tzsIJ, 75000, 'the board pays the amount the admin set');
+  assert.equal(juma.weekCommission, 150000);
+  assert.equal(after.recoveryBands[0].tzs, 75000, 'and the ladder on the screen says so');
+  assert.equal(after.recoveryBands[0].floor, 90, 'the percentage did not move');
+  assert.equal(after.recBandsCustom, true);
+
+  // Nought is an amount; a negative or a word is not.
+  const zero = await portalApi(db, ADMIN, 'commissionSave', { recBands: { 50: 0 } }, NOW);
+  assert.equal(zero.recBands[4].tzs, 0);
+
+  /* THE BAND UNDER THE LADDER -- "add 0% - 49% payment 15,000/=". Below 50% is nought by
+     default; set, it pays. JUMA's base fixture Friday is 300 of 1,000 -- 30% -- which the
+     ladder leaves unpaid until this. */
+  const low = await portalApi(db, ADMIN, 'commissionSave', { recBands: { 90: 75000, 0: 15000 } }, NOW);
+  assert.equal(low.recBelow.tzs, 15000); assert.equal(low.recBelow.defaultTzs, 0);
+  const t2 = tables();
+  const d2 = fakeDb(t2, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } });
+  await portalApi(d2, ADMIN, 'commissionSave', { recBands: { 0: 15000 } }, NOW);
+  const paid = await portalApi(d2, ADMIN, 'commission', {}, NOW + 61000);
+  const j2 = paid.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(j2.pctIJ, 30); assert.equal(j2.tzsIJ, 15000, '30% is under the ladder and now pays the below-band amount');
+  assert.equal(paid.recoveryBelow.tzs, 15000, 'and the screen\'s ladder says so');
+  assert.equal(paid.recBandsCustom, true);
+  await assert.rejects(() => portalApi(db, ADMIN, 'commissionSave', { recBands: { 70: -5 } }, NOW), /70%/);
+  await assert.rejects(() => portalApi(db, ADMIN, 'commissionSave', { recBands: { 70: 'many' } }, NOW), /70%/);
+  // Not an officer's to change.
+  await assert.rejects(() => portalApi(db, GMO, 'commissionSave', { recBands: { 90: 1 } }, NOW), e => e.status === 403);
+
+  // Reset puts the built-in ladder back.
+  const reset = await portalApi(db, ADMIN, 'commissionSave', { resetRecBands: true }, NOW);
+  assert.equal(reset.recBandsReset, true);
+  assert.equal(reset.recBands[0].tzs, 60000);
+  assert.equal(db._dump('settings').some(r => r.key === 'REC_BAND_TZS'), false, 'the setting is gone, not zeroed');
+  const back = await portalApi(db, ADMIN, 'commission', {}, NOW + 122000);
+  assert.equal(back.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 120000);
+});
+
 test('the recovery rate modes are removed from settings, not left switched off', async () => {
   /* A rate table still sitting in Settings is a rate table somebody turns back on, and it
      would silently outrank the ladder. The panel's Save drops all three keys. */
