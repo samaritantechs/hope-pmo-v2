@@ -9070,26 +9070,28 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     for (const k of Object.keys(from)) into[k] = (into[k] || 0) + from[k].amt;
     return into;
   };
-  // Per officer: yesterday feeds its own column, the week feeds the denominator. The PMO
-  // board keeps its own day-dependent basis (recoveryBasis) -- that is a different scheme
-  // paying a different person, and only its LABEL is read from here.
+  // Per officer: the day feeds the daily board's denominator, the week feeds the weekly one's.
+  // The PMO board keeps its own day-dependent basis (recoveryBasis) -- that is a different
+  // scheme paying a different person, and only its LABEL is read from here.
   const basis = recoveryBasis(isoWeekday(nowMs));
-  const uncolYesterday = addUncol({}, uncolOnDate(addDaysKey(today, -1)));
   const uncolWeekBy = WD5.reduce((acc, _w, i) => addUncol(acc, uncolOnDate(addDaysKey(mon, i))), {});
   const weekUncol = Object.values(uncolWeekBy).reduce((s, v) => s + v, 0);
 
-  function recBoard(iniRows, curRows, dailyRecovered, uncolBy, yesterdayBy) {
+  /* NO JANA COLUMN. The daily board used to carry yesterday's uncollected as a column of its
+     own beside the one it divides by, and the wall read "Uncol jana" under a percentage that
+     was leo's -- two figures for one denominator, and the one with the label was the wrong one.
+       "tHe column in recovery card in dashboard column is still uncollected jana"
+     The uncollected on a row IS what the percentage beside it divides by, and nothing else. */
+  function recBoard(iniRows, curRows, dailyRecovered, uncolBy) {
     const m = {};
-    const blank = { initial: 0, current: 0, recovered: 0, uncollected: 0, yUncollected: 0 };
+    const blank = { initial: 0, current: 0, recovered: 0, uncollected: 0 };
     for (const r of iniRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).initial += num(r.arrears_amt);
     for (const r of curRows) bucket(m, officerOf(teamBy, r.team, 'recovery'), blank).current += num(r.arrears_amt);
     for (const k of Object.keys(uncolBy)) bucket(m, k, blank).uncollected += uncolBy[k];
-    if (yesterdayBy) for (const k of Object.keys(yesterdayBy)) bucket(m, k, blank).yUncollected += yesterdayBy[k];
     if (dailyRecovered) for (const k of Object.keys(dailyRecovered)) bucket(m, k, blank).recovered += dailyRecovered[k];
     return Object.values(m).map(b => {
       const rec = dailyRecovered ? b.recovered : (b.initial - b.current);
       return { officer: b.key, initial: b.initial, current: b.current, uncollected: b.uncollected,
-        yUncollected: yesterdayBy ? b.yUncollected : null,
         // Debt crisis only means something across a WEEK: a customer cannot fall into default
         // between breakfast and lunch, so on the daily board this is noise dressed as news.
         debtCrisis: dailyRecovered ? Math.min(0, b.initial - b.current) : null,
@@ -9113,11 +9115,11 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      the commission board pays on -- and on Saturday and Sunday it is the week's, which is the
      record that is live then ("let the weekends stay as they are but weekly recovery is the
      6th day commission day"). It used to divide by the week every day, so the same officer
-     read one percentage here and another on their pay slip. Yesterday's uncollected still
-     stands as its own column before recovered: what they were chasing, then what came in. */
+     read one percentage here and another on their pay slip. The uncollected shown on the row
+     is the day's own -- the figure the percentage divides by -- and no other. */
   const uncolTodayBy = addUncol({}, uncolOnDate(today));
   const recToday = recBoard(iniToday, curToday, null,
-    isoWeekday(nowMs) >= 6 ? uncolWeekBy : uncolTodayBy, uncolYesterday);
+    isoWeekday(nowMs) >= 6 ? uncolWeekBy : uncolTodayBy);
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
   for (let i = 0; i < 7; i++) {
