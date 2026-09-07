@@ -597,7 +597,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-06-c';
+var BUILD = '2026-09-07-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2921,25 +2921,27 @@ VIEWS.dashboard = function(){
           tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
             ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
-      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % of that day’s uncollected', 'gRec',
+      /* THE DENOMINATOR IS JANA'S -- "everywhere uses jana except only where there is recovery
+         officers". Monday divides by Monday, Tuesday to Friday by the day before, the weekend
+         by the week; each tile says which. The TOTAL comes from the server (recTrendTotal):
+         the week's recovered over Monday to Friday's OWN uncollected, once each, which is not
+         what adding seven tiles' denominators would give. */
+      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % ÷ jana’s uncollected (Mon ÷ Mon, weekend ÷ the week)', 'gRec',
           d.recTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
-               UNRECOVERED IS WHAT IS STILL OUT: the day's uncollected MINUS what came back.
-               It showed the uncollected itself, under a heading that means something else --
-               so a Tuesday leaving 8m behind, with 2m recovered, read as 8m still out rather
-               than 6m. Worked out on the server beside the figures it comes from, so the tile
+               UNRECOVERED IS WHAT IS STILL OUT: the basis day's uncollected MINUS what came
+               back. Worked out on the server beside the figures it comes from, so the tile
                and the total cannot drift from it. */
             ['Unrecovered TZS '+money(x.unrecovered), 'badl'],
-            [x.full ? '<span class="good">full recovery</span>' : ('Rec '+pct(x.pct)), 'good']]); }),
-          tcell('TOTAL', [['<b>TZS '+money(d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
-            /* The sum of what the tiles show, so the column adds up on screen. A day nobody
-               uploaded a deck for still counts: the money is out whether or not anybody
-               measured the recovery on it. */
-            ['Unrecovered TZS '+money(d.recTrend.reduce(function(s,x){return s+(x.unrecovered||0);},0)), 'badl'],
-            ['Rec '+pct((function(){var u=d.recTrend.reduce(function(s,x){return s+x.uncollected;},0),r=d.recTrend.reduce(function(s,x){return s+x.recovered;},0);return u>0?Math.round(1000*r/u)/10:null;})()), 'good']], 'tot'))
+            [x.pct != null
+              ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
+              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']]); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
+            ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0), 'badl'],
+            ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot'))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){
           var max = Math.max.apply(null, d.funnel.map(function(x){ return x.count; }).concat([1]));
@@ -2991,9 +2993,10 @@ VIEWS.dashboard = function(){
         // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
         // a customer does not fall into default between breakfast and lunch.
         /* Yesterday's uncollected stands BEFORE today's recovered -- what the officer was
-           chasing, then what they brought in -- and the % divides by the week's uncollected,
-           which is what this caption has always claimed. */
-        + board('bRecT','Recovery — today','initial · current · jana uncollected · recovered · Rec % ÷ this week’s uncollected', b.recToday,
+           chasing, then what they brought in -- and the % divides by TODAY's uncollected
+           (the week's on Saturday and Sunday): the commission board's own record for the
+           officer, so the wall and the pay slip cannot show two figures for one person. */
+        + board('bRecT','Recovery — today','initial · current · jana uncollected · recovered · Rec % ÷ today’s uncollected (the week’s on Sat/Sun), as on the commission board', b.recToday,
                     [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
                      col('yUncollected','Uncol jana','money'),
                      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
