@@ -24,7 +24,7 @@ import { adjReceived_, withAdj_, adjCountableRefs_, noteAdjustmentsWritten, ADJ_
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
     stopped working must not become a data leak -- but by then there is little left to drop. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
-import { collectedOf, uncollectedOf, num, recoveryBasis } from './recovery.js';
+import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } from './recovery.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf } from './call-core.js';
@@ -7719,8 +7719,19 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        agree. See the note on it in snapshot-totals.js. */
     let rec = 0;
     for (const t of recoveryByTeam(myDefWeek, d, dwd).values()) rec += t.recovered;
-    const unc = tUncollected(colDay_(myExpWeek, d));
+    /* THE DENOMINATOR IS JANA'S, on the basis rule -- Monday by Monday, Tuesday to Friday by
+       the day before, the weekend by the week.
+         "everywhere uses jana except only where there is recovery officers"
+       These tiles are the company's week, not an officer's, so they take the team rule the
+       Orodha and the phone already follow (recoveryDenominator, one place). The day's OWN
+       uncollected rides along as dayUncollected for the week's total, which cannot be a sum
+       of these: jana's figure appears under two tiles and the week's under both weekend
+       ones. */
+    const own = tUncollected(colDay_(myExpWeek, d));
+    const basis = recoveryDenominator(d, dd => tUncollected(colDay_(myExpWeek, dd)));
+    const unc = basis.den;
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
+      basis: basis.kind, basisDates: basis.dates, dayUncollected: own,
       /* WHAT IS STILL OUT AT THE END OF THE DAY -- which is not the same number as what went
          uncollected at the start of it, and the tile was showing the second under the first
          one's name. Tuesday leaves 8m uncollected, the officers get 2m of it back, so 6m is
@@ -7736,6 +7747,15 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
   });
+  /* THE WEEK'S OWN TOTAL, worked out beside the tiles it sums. Recovered is every tile's;
+     uncollected is Monday to Friday's OWN sheets, once each -- the weekend branch of the same
+     rule -- which is not what adding the seven tiles' denominators would give. */
+  const recTrendTotal = (() => {
+    const recovered = recTrend.reduce((s, x) => s + x.recovered, 0);
+    const uncollected = recTrend.slice(0, 5).reduce((s, x) => s + x.dayUncollected, 0);
+    return { recovered, uncollected, unrecovered: Math.max(0, uncollected - recovered),
+      pct: uncollected > 0 ? Math.round((recovered / uncollected) * 1000) / 10 : null };
+  })();
 
   /* ---- THE PERFORMANCE STRIP: three percentages, their average, and which way each moves.
      "weekly and monthly dashboard should all show average of sales%, col% and recovery%
@@ -8038,7 +8058,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),
     },
-    appsTrend, salesTrend, colTrend, recTrend, funnel,
+    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel,
     teamPerf: teams,
     paired: pairedToday,
     /* Whether the M. columns on the Orodha are real this load, or still filling. The screen
@@ -8762,15 +8782,18 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      arrears books, see ADJ_RETIRED_TARGETS. */
   const defDay_ = (d, type, weekday) => onDate(myDef, d, type, weekday);
   const iniToday = defDay_(today, 'initial', wd), curToday = defDay_(today, 'current', wd);
-  /* THE DENOMINATOR THE SUBTITLE HAS ALWAYS PROMISED.
-       "At dashboard Recovery — today initial · current · recovered · Rec % ÷ this week's
-        uncollected [show yesterday uncollected before today recovered]"
-     The board's own caption said "÷ this week's uncollected" while the figure divided by a
-     day-dependent basis -- so the label and the arithmetic disagreed, which is the exact kind
-     of drift the weekly report was cured of. Now it divides by the week, as written, and
-     yesterday's uncollected stands as its own column before today's recovered: what the
-     officer was chasing, then what they brought in. */
-  const recToday = recBoard(iniToday, curToday, null, uncolWeekBy, uncolYesterday);
+  /* THE PER-OFFICER TODAY BOARD IS THE COMMISSION BOARD'S OWN FIGURE.
+       "everywhere uses jana except only where there is recovery officers like in their
+        commissions, their personal reports and presentation by rec officer"
+     A recovery officer's day is that day's recovery over THAT DAY's uncollected -- the record
+     the commission board pays on -- and on Saturday and Sunday it is the week's, which is the
+     record that is live then ("let the weekends stay as they are but weekly recovery is the
+     6th day commission day"). It used to divide by the week every day, so the same officer
+     read one percentage here and another on their pay slip. Yesterday's uncollected still
+     stands as its own column before recovered: what they were chasing, then what came in. */
+  const uncolTodayBy = addUncol({}, uncolOnDate(today));
+  const recToday = recBoard(iniToday, curToday, null,
+    isoWeekday(nowMs) >= 6 ? uncolWeekBy : uncolTodayBy, uncolYesterday);
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
   for (let i = 0; i < 7; i++) {

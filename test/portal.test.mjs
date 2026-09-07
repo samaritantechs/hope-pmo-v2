@@ -3666,12 +3666,15 @@ test('recovery divides by yesterday\'s uncollected on a Tuesday-to-Friday', asyn
     'the WEEKLY board always divides by the whole week: 7000 Mon + 1000 Thu + 9000 Fri');
 
   const jumaToday = b.recToday.find(r => r.officer === 'JUMA G');
-  /* CHANGED 14 Aug on the owner's instruction: "Recovery — today ... Rec % ÷ this week's
-     uncollected [show yesterday uncollected before today recovered]". The daily board's own
-     caption had always SAID "÷ this week's uncollected" while dividing by a day-dependent
-     basis; the caption's rule now runs, and yesterday stands as its own column instead. */
-  assert.equal(jumaToday.uncollected, 17000,
-    'the DAILY board divides by the week, exactly as its caption has always claimed');
+  /* THE PER-OFFICER TODAY BOARD IS THE COMMISSION BOARD'S OWN RECORD.
+       "everywhere uses jana except only where there is recovery officers like in their
+        commissions, their personal reports and presentation by rec officer"
+     A recovery officer's day divides by THAT DAY's uncollected -- Friday's own 9000 -- not by
+     jana (the team rule) and no longer by the week (which this board did from 14 Aug, so the
+     same person read one percentage on the wall and another on their pay slip). Yesterday's
+     uncollected still stands as its own column before recovered. */
+  assert.equal(jumaToday.uncollected, 9000,
+    'the DAILY board divides by the day itself, as the commission board does');
   assert.equal(jumaToday.yUncollected, 1000,
     'and yesterday\'s uncollected stands as its own column before recovered');
   assert.equal(b.pmoBasis, 'yesterday', 'the PMO board keeps its own day-dependent basis');
@@ -3686,8 +3689,10 @@ test('a report uploaded twice no longer halves the recovery percentage', async (
   const redo = { ...E('111', 'KONGOWE', 1000, 'UNPAID', 0, YEST), upload_batch: 'b2', created_at: YEST + 'T09:00:00Z' };
   t.repayment_snapshots = [first, redo];
   const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
-  assert.equal(b.recToday.find(r => r.officer === 'JUMA G').uncollected, 1000,
+  assert.equal(b.recWeek.find(r => r.officer === 'JUMA G').uncollected, 1000,
     'one thousand, not two — the re-upload replaces the file, it does not stack on it');
+  assert.equal(b.recToday.find(r => r.officer === 'JUMA G').yUncollected, 1000,
+    'and the jana column on the daily board reads the same single file');
 });
 
 test('on a Monday recovery divides by Monday, and on the weekend by the week', async () => {
@@ -3700,16 +3705,79 @@ test('on a Monday recovery divides by Monday, and on the weekend by the week', a
   // Monday 2026-07-20, noon EAT.
   const monday = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, Date.parse('2026-07-20T09:00:00Z'));
   assert.equal(monday.pmoBasis, 'today', 'the PMO board keeps its own day-dependent basis');
-  // Since 14 Aug the recovery board divides by the week on every day -- see the test above.
-  assert.equal(monday.recToday.find(r => r.officer === 'JUMA G').uncollected, 2000,
-    'the week as uploaded: 1000 Mon + 400 Tue + 600 Wed');
+  // The per-officer daily board divides by the day itself -- Monday by Monday's own 1000.
+  assert.equal(monday.recToday.find(r => r.officer === 'JUMA G').uncollected, 1000,
+    'Monday\'s own sheet, the record the commission board pays on');
+  assert.equal(monday.recWeek.find(r => r.officer === 'JUMA G').uncollected, 2000,
+    'the weekly board is the week as uploaded: 1000 Mon + 400 Tue + 600 Wed');
 
-  // Saturday 2026-07-25.
+  // Saturday 2026-07-25: the record that is live on a weekend is the WEEK's.
   const sat = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, Date.parse('2026-07-25T09:00:00Z'));
   assert.equal(sat.pmoBasis, 'week');
   assert.equal(sat.recToday.find(r => r.officer === 'JUMA G').uncollected, 2000,
-    'the weekend reconciles Monday to Friday: 1000 + 400 + 600');
+    'the weekend reconciles Monday to Friday: 1000 + 400 + 600 -- the sixth record');
   assert.equal(sat.recWeek.find(r => r.officer === 'JUMA G').uncollected, 2000);
+});
+
+/* =====================================================================================
+   THE TILES DIVIDE BY JANA; THE OFFICER DIVIDES BY THE DAY.
+   =====================================================================================
+     "everywhere uses jana except only where there is recovery officers like in their
+      commissions, their personal reports and presentation by rec officer"
+
+   Two questions with two denominators, and the rule for which is which is the owner's. The
+   dashboard's recovery tiles are the company's week, so they follow the team rule the Orodha
+   and the phone already follow -- Monday by Monday, Tuesday to Friday by the day before, the
+   weekend by the week (recoveryDenominator, one place). The commission board and the
+   presentation's per-officer boards are a person's pay, and divide a day by that day.
+   ===================================================================================== */
+test('the recovery tiles divide by jana on the team rule, and say so', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0, MON),                  // Monday: 1000 uncollected
+    E('222', 'KONGOWE', 400, 'UNPAID', 0, YEST),                  // Thursday: 400
+    E('333', 'KONGOWE', 600, 'UNPAID', 0, TODAY),                 // Friday: 600
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  const tile = wd => d.recTrend.find(x => x.weekday === wd);
+  // Monday divides by Monday.
+  assert.equal(tile('MON').basis, 'today');
+  assert.equal(tile('MON').uncollected, 1000);
+  // Friday divides by Thursday -- and carries its own 600 for the week's total.
+  assert.equal(tile('FRI').basis, 'yesterday');
+  assert.deepEqual(tile('FRI').basisDates, [YEST]);
+  assert.equal(tile('FRI').uncollected, 400, 'jana\'s, not Friday\'s own');
+  assert.equal(tile('FRI').dayUncollected, 600);
+  assert.equal(tile('FRI').recovered, 400, 'the shared decks: (500+700+900) - (300+600+800)');
+  assert.equal(tile('FRI').pct, 100, '400 of Thursday\'s 400');
+  assert.equal(tile('FRI').unrecovered, 0);
+  // Tuesday divides by Monday too: jana.
+  assert.equal(tile('TUE').basis, 'yesterday');
+  assert.equal(tile('TUE').uncollected, 1000);
+  // The weekend divides by the week, Monday to Friday once each.
+  assert.equal(tile('SAT').basis, 'week');
+  assert.equal(tile('SAT').uncollected, 2000, '1000 + 400 + 600');
+  assert.deepEqual(tile('SAT').basisDates, [MON, '2026-07-21', '2026-07-22', YEST, TODAY]);
+  /* THE TOTAL IS NOT THE SUM OF THE TILES' DENOMINATORS -- Monday's 1000 would be counted
+     under Monday and Tuesday, the week's 2000 under both weekend tiles. It is the week's
+     recovered over Monday to Friday's own sheets, once each. */
+  assert.equal(d.recTrendTotal.recovered, 400);
+  assert.equal(d.recTrendTotal.uncollected, 2000);
+  assert.equal(d.recTrendTotal.pct, 20);
+  assert.equal(d.recTrendTotal.unrecovered, 1600);
+
+  /* AND THE OFFICER IS NOT DIVIDED BY JANA. The same book, the same Friday: JUMA G's
+     commission record and presentation row divide by Friday's own 600. */
+  const cm = await run('commission', {}, ADMIN, fakeDb(t));
+  const fri = cm.recBoard.find(r => r.officer === 'JUMA G').records.find(r => r.date === TODAY);
+  assert.equal(fri.base, 600, 'the commission board: Friday over Friday');
+  assert.equal(fri.recovered, 300);
+  assert.equal(fri.pct, 50);
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(t));
+  const wall = b.recToday.find(r => r.officer === 'JUMA G');
+  assert.equal(wall.uncollected, 600, 'the presentation: the same Friday over the same Friday');
+  assert.equal(wall.pct, 50, 'one figure for one person on both screens');
+  assert.equal(wall.yUncollected, 400, 'jana shown beside it, never divided by');
 });
 
 
