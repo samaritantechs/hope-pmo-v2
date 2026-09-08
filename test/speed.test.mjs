@@ -340,8 +340,20 @@ const PHONE = [
      It went to 31 for one afternoon: the strip was widened to the teams the SHEET gives a
      leader, to match the commission board. That was the wrong way round -- "the teams i set
      in access codes are the ones correct" -- so the strip reads the handset's own scope again
-     and the PORTAL was brought to the codes instead (readTeamsAll). Back to 30. */
-  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 30, 40000],
+     and the PORTAL was brought to the codes instead (readTeamsAll). Back to 30.
+
+     30 -> 31 ON 2026-09-08, AND THE ONE TRIP IS THE TEAMS TABLE, READ FOR THE SCOPE. "Some
+     users i assigned tunduru to e.g Catherine PMO Collection ... aint seeing it": a handset's
+     scope reached the database in capitals (TUNDURU) and the book is filed as the registry
+     spells it (Tunduru), so the strip showed her zeros. The scope is now resolved against the
+     teams table at the door (registrySpellings), and the strip is the one phone screen that
+     reads no teams anywhere else, so it cannot share the read -- the lists, sync and the bell
+     all find it warm. Memoised fifteen seconds per instance and shared by every handset on it,
+     and the strip itself is kept two minutes per scope, so in the field it is one small read
+     per instance per quarter-minute, not one per officer. Could the database do it instead?
+     Only by comparing team names without regard to case inside the totals functions, which
+     is a migration to every one of them; this is one indexed read of eighty rows. */
+  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 31, 40000],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way

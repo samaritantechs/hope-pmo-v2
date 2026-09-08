@@ -915,10 +915,18 @@ export default withApi(async (req, res) => {
          spelling the database already uses, so the rows land on the real team's book. */
       const { data: existingTeams, error: teamErr } = await supabase.from('teams').select('team');
       if (teamErr) throw new Error('Could not verify team names: ' + teamErr.message);
-      const bySpelling = new Map((existingTeams || []).map(t => [String(t.team || '').toUpperCase(), t.team]));
+      /* Keyed on trim + uppercase, and an exact spelling wins over a twin: a registry row that
+         ends in a space ("some have space after") is the SAME team as the file's trimmed
+         name, and matching on case alone was auto-creating the spaceless twin beside it. */
+      const bySpelling = new Map();
+      for (const t of (existingTeams || [])) {
+        const s = String(t.team || ''), k = s.trim().toUpperCase();
+        if (!k) continue;
+        if (!bySpelling.has(k) || s === k) bySpelling.set(k, s);
+      }
       for (const r of records) {
         if (!r.team) continue;
-        const kept = bySpelling.get(String(r.team).toUpperCase());
+        const kept = bySpelling.get(String(r.team).trim().toUpperCase());
         if (kept && kept !== r.team) r.team = kept;
       }
       const known = new Set(bySpelling.values());

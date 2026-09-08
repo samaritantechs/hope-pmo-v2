@@ -72,6 +72,28 @@ async function registeredDb() {
   return db;
 }
 
+/* THE PHONE ON THE MIXED-CASE TEAM. pseudoUser uppercased the handset's team, so an officer
+   registered on Tunduru asked for TUNDURU and opened onto nothing; a leader whose code said
+   TUNDURU fared the same. The scope now reaches the database as the registry spells it. */
+test('a handset on Tunduru, or a leader whose code spells it in capitals, sees its book', async () => {
+  const t = makeTables();
+  t.teams.push({ team: 'Tunduru', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null, team_code: 'TUN789' });
+  // One count behind, so the collection officer's own narrowing (single counts) keeps them.
+  t.followup_status.push({ ref: 'T55', team: 'Tunduru', full_name: 'MTEJA WA TUNDURU', contact: '0714000009', guarantor_name: '', guarantor_contact: '', arrears: 700, rejesho: 100, status: 'Defaulter', fu_status: '', ds: '5-6', days_elapsed: 12 });
+  t.access_codes.push({ code: 'CATH1', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['TUNDURU'], tabs: [] });
+  const db = fakeDb(t);
+
+  await callApi(db, 'api_callRegister', ['d5', 'MUSA T', '', '', '0712999955', 'TUN789'], NOW);
+  const off = await callApi(db, 'api_callList', ['d5', 'defaulters'], NOW);
+  assert.deepEqual(off.rows.map(r => r.ref), ['T55'], 'the officer sees their own team');
+
+  await callApi(db, 'api_callRegister', ['d6', '', '', 'CATH1', '0788111255'], NOW);
+  assert.deepEqual(db._dump('call_users').find(u => u.device_id === 'd6').leader_teams, ['Tunduru'],
+    'the handset carries the registry spelling, whatever the code says');
+  const lead = await callApi(db, 'api_callList', ['d6', 'defaulters'], NOW);
+  assert.deepEqual(lead.rows.map(r => r.ref), ['T55'], 'and so does the leader');
+});
+
 test('boot on an unknown device gives branding only, never the team list', async () => {
   const db = fakeDb(makeTables());
   const d = await callApi(db, 'api_callBoot', ['dev-x'], NOW);
