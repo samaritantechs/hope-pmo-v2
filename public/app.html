@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-07-h';
+var BUILD = '2026-09-08-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3033,7 +3033,7 @@ VIEWS.dashboard = function(){
        broken -- and the reason is the only part anybody can act on. */
     var boardsWhy = '';
     Promise.all([srv('officerBoards').catch(function(e){ boardsWhy = String((e && e.message) || e); return null; }),
-                 srv('callAgents').catch(function(){ return null; }),
+                 srv('callAgents', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; }),
                  srv('recoveryByCredit', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; })])
       .then(function(r){
       /* An empty shape rather than null, so every board below draws its (empty) self instead of
@@ -3090,12 +3090,16 @@ VIEWS.dashboard = function(){
         // "Call agents" here means the CUSTOMER SERVICE agents named on loan applications --
         // each application carries a CREATED BY agent id. How many phone calls a field
         // officer made is a different question and lives on the Call Reports tab.
-        + board('bCS','Call agents — applications brought in',
-                'CREATED BY on the application reports · TRACK# reads 1 · roster agents only (the strict rule)',
+        /* THE WEEK'S, by upload date -- not the whole pipeline. One Monday file of 132
+           applications was reading as two and a half thousand here, because the card counted
+           every application still sitting unassigned or assigned, however old. */
+        + board('bCS','Call agents — applications brought in' + (S.csAgents && S.csAgents.weekOf ? ' · wiki ya / week of ' + esc(S.csAgents.weekOf) : ''),
+                'CREATED BY on the application reports · TRACK# reads 1 · roster agents only (the strict rule) · tarehe ya kupakia / by the UPLOAD date, Mon–Sun',
                 (S.csAgents && S.csAgents.rows) || [],
                 [{key:'id', label:'Agent'},
-                 {key:'names', label:'Who', cls:function(r){ return r.names?'':'bad'; },
-                  get:function(r){ return r.names || 'not named — add in Teams & Staff'; }},
+                 // The TOTAL row has no agent, so it has nobody to be "not named".
+                 {key:'names', label:'Who', cls:function(r){ return (r.names || !r.id)?'':'bad'; },
+                  get:function(r){ return !r.id ? '' : (r.names || 'not named — add in Teams & Staff'); }},
                  col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
                  col('total','Total apps','num'), col('amount','Requested','money')],
                 (S.csAgents && S.csAgents.totals)

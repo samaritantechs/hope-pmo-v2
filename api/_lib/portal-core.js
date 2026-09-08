@@ -4422,7 +4422,18 @@ async function smsGaps(db, user, { audience = 'defaulters' } = {}, nowMs) {
     Every board that counts an agent's registrations -- the dashboard's Call Agents board, the
     presentation's slide and the month report -- reads this one rule through csRule_, and each
     carries `excluded` so the screen can say what was left out and why. Three boards, three
-    windows (the live pipeline, the week, the month); one rule. */
+    windows (the week, the day, the month); one rule.
+
+    AND A WINDOW. The dashboard card used to count the WHOLE pipeline -- every unassigned and
+    assigned application ever uploaded and not yet moved on -- so on a Monday, with one file of
+    132 applications in, it read two and a half thousand:
+      "I uploaded loan apps of Monday and got a summary of 132 apps yet their card that should
+       have had lesser / only count 1s shows 2k and it's just start of the week"
+    A bonus is paid by the week, so the card is the WEEK's, Monday to Sunday, measured on the
+    UPLOAD date exactly as the presentation's board measures it (csBoard): an application
+    report carries no date of its own, and the upload stamp is the person uploading saying
+    "this is the report FOR this day". The window is applied at the database, on the indexed
+    column, so the read shrinks from the whole pipeline to one week of it. */
 const CS_STAGES = ['unassigned', 'assigned'];
 function csRule_(rosterRows) {
   const roster = new Set((rosterRows || []).map(a => K(a.user_id)).filter(Boolean));
@@ -4444,9 +4455,14 @@ function csRule_(rosterRows) {
     notAgent: Object.values(why.notAgent).map(e => ({ id: e.id, n: e.n })).sort((a, b) => b.n - a.n || a.id.localeCompare(b.id)) });
   return { ok, excluded };
 }
-async function callAgents(db, user) {
+async function callAgents(db, user, args, nowMs = Date.now()) {
+  // The dashboard's chosen week, or this one -- the same arrows every other card follows.
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  const mon = asOf.weekOf, sun = addDaysKey(mon, 6);
   const [loanRows, agentRows] = await Promise.all([
-    fetchAll(() => db.from('loans').select('team, stage, track_no, created_by, principal_amt, loan_amt, requested_amt').in('stage', CS_STAGES)),
+    fetchAll(() => db.from('loans')
+      .select('team, stage, track_no, created_by, principal_amt, loan_amt, requested_amt, upload_date')
+      .in('stage', CS_STAGES).gte('upload_date', mon).lte('upload_date', sun)),
     fetchAll(() => db.from('call_agents').select('*').order('user_id', { ascending: true })),
   ]);
   const names = {};
@@ -4465,7 +4481,7 @@ async function callAgents(db, user) {
     amount: b.amount })).sort((a, b) => b.total - a.total);
   const sum = f => rows.reduce((s, r) => s + r[f], 0);
   const excluded = rule.excluded();
-  return { rows, count: rows.length, agents: agentRows,
+  return { weekOf: mon, weekEnd: sun, pastWeek: asOf.past, rows, count: rows.length, agents: agentRows,
     totals: { unassigned: sum('unassigned'), assigned: sum('assigned'),
       total: sum('total'), amount: sum('amount') },
     /* What the strict rule left out, so the board can say so: an id on applications that is
