@@ -43,8 +43,8 @@ The same rules of arithmetic apply everywhere and are written down once each:
 | Figure | Rule | Where it lives |
 |---|---|---|
 | Recovery on a day | the day's INITIAL deck total minus the same day's CURRENT deck total, per team | `api/_lib/snapshot-totals.js` — `recoveryByTeam` |
-| Recovery % (teams, company) | Monday ÷ Monday's uncollected · Tue–Fri ÷ **yesterday's** · Sat/Sun ÷ the week's | `api/_lib/recovery.js` — `recoveryDenominator` |
-| Recovery % (a recovery officer) | the day's recovered ÷ **that day's** uncollected; the week ÷ Mon–Fri's | commission board, presentation |
+| Recovery % (dashboard, Orodha, commission, presentation) | the day's recovered ÷ **that day's own** uncollected (leo); Saturday and Sunday have no collection sheet, so no percentage; the week ÷ Mon–Fri's | `dashboardFull` recTrend, `commission`, `officerBoards` |
+| Recovery % (phone strip, leader reports) | Monday ÷ Monday's uncollected · Tue–Fri ÷ **yesterday's** (jana) · Sat/Sun ÷ the week's | `api/_lib/recovery.js` — `recoveryDenominator` |
 | Collection % | collected ÷ expected, per day, ratio of sums over a range | everywhere |
 | Which upload counts | the latest upload batch **per team** within a date | `api/_lib/snapshots.js` — `pickLatestBatch` |
 | Customer-service registration | TRACK# reads 1 **and** CREATED BY is on the call-agents roster | `api/_lib/portal-core.js` — `csRule_` |
