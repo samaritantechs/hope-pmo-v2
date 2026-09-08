@@ -2,7 +2,7 @@ import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
-import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
@@ -1436,7 +1436,8 @@ async function followupReport(db, user, { from, to }, nowMs) {
 async function listTable(db, user, table, order = 'created_at') {
   const rows = await fetchAll(() => {
     let q = db.from(table).select('*').order(order, { ascending: false });
-    if (user && user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+    // As stored and in capitals, never capitals alone -- see teamMatchList for Tunduru.
+    if (user && user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
     return q;
   });
   const mine = scoped(user, rows);
@@ -2315,7 +2316,7 @@ async function abnormal(db, user, args, nowMs) {
   const [fu, exp, teamRows] = await Promise.all([
     fetchAll(() => {
       let q = db.from('followup_status').select('ref, status, team');
-      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
       return q;
     }),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' },
@@ -3991,11 +3992,11 @@ async function assignments(db, user, _args, nowMs) {
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs) }),
     /* SCOPED AT THE DATABASE, like every other read in this system. This one was not: an
        officer with one team read the follow-up register for all forty and threw away
-       thirty-nine. `team` is stored uppercase on every write path, so this matches exactly
-       what the JS filter downstream would have kept -- it just no longer downloads the rest. */
+       thirty-nine. Both spellings, as stored and in capitals -- a team is filed under the
+       registry's own spelling (Tunduru), and capitals alone asked for a team that has no rows. */
     fetchAll(() => {
       let q = db.from('followup_status').select('ref, fu_status, comment_by, comment_at, promise_date, team');
-      if (user.teams && user.teams.length) q = q.in('team', upperTeams(user.teams));
+      if (user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
       return q;
     }),
     readTeamsAll(db),
@@ -4659,7 +4660,10 @@ async function saveStaffTeams(db, user, p) {
         + 'A collection officer is an access code with that role -- create the code first, '
         + 'under Settings, then set their teams here.');
     }
-    const teams = [...want].sort();
+    /* WRITTEN IN THE REGISTRY'S SPELLING, never in capitals. This editor used to store TUNDURU
+       on the code, and the code's list is the scope the database is asked for -- so the one
+       mixed-case team was filed out of her book by the very screen that gave it to her. */
+    const teams = registrySpellings([...want], await readTeamsRaw(db)).sort();
     const { error } = await db.from('access_codes').update({ teams }).eq('code', row.code);
     if (error) throw new Error(error.message);
     noteCodesWritten(db);                     // the codes lay over the sheet: every board re-reads
@@ -5046,7 +5050,10 @@ async function saveAccessCode(db, user, p) {
      key on a table of a few dozen rows, and only when there is something for it to feed. */
   const nextName = String(p.name).trim();
   const nextRole = String(p.role).trim();
-  const nextTeams = list(p.teams);
+  /* The list as the REGISTRY spells each team -- "Tunduru", "KONGOWE " with its space -- not as
+     the admin typed it. The code's list is the scope every query is filtered on, exactly. */
+  const typed = list(p.teams);
+  const nextTeams = typed ? registrySpellings(typed, await readTeamsRaw(db)) : null;
   let prevName = null;
   if (roleColumnOf(nextRole)) {
     const { data: was } = await db.from('access_codes').select('name')
@@ -6939,12 +6946,25 @@ export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
       + '/ This is a view-only code: it can open every screen but never change anything. '
       + '(' + fn + ' was refused.)');
   }
+  /* THE SCOPE, IN THE REGISTRY'S SPELLING, resolved once at the one door rather than at each
+     of a hundred filters. See registrySpellings: Catherine's code said TUNDURU, the book is
+     filed under Tunduru, and she saw nothing. One memoised read of the teams table -- the same
+     read nearly every screen makes for itself a moment later and now finds warm. */
+  const u = await scopedUser_(db, user, nowMs);
   /* THE ONE DOOR, so the audit log has one place to be written from. A log that has to be
      remembered at each of a hundred call sites is a log with holes in it, and a log with holes
      invites the conclusion that what is missing did not happen. Reads pass straight through --
      see api/_lib/audit.js for why only the writes are recorded, and why the arguments are
      reduced to a few identifying fields rather than stored whole. */
-  return audited(db, user, fn, args || {}, () => h(db, user, args || {}, nowMs));
+  return audited(db, u, fn, args || {}, () => h(db, u, args || {}, nowMs));
+}
+async function scopedUser_(db, user, nowMs) {
+  if (!user || !user.teams || !user.teams.length) return user;       // ALL teams: nothing to resolve
+  /* Stamped with the wall clock, not the request's nowMs: the screens behind this door read the
+     same memo with either clock (a test pins nowMs to a Friday in July), and a stamp from the
+     pinned clock would make the wall-clock caller miss and pay the read twice. */
+  const rows = await readTeamsRawMemo_(db);
+  return { ...user, teams: registrySpellings(user.teams, rows) };
 }
 
 export { assignFor };
@@ -7047,7 +7067,7 @@ async function settingStr(db, key, dflt) {
 const TEAMS_TTL_MS = 15000;
 const teamsCache = new WeakMap();
 
-export function noteTeamsWritten(db) { teamsCache.delete(db); }
+export function noteTeamsWritten(db) { teamsCache.delete(db); teamsRawCache.delete(db); }
 
 /** Every per-team board reads readTeamsAll's own 20-second cache, so this almost never costs a
     round trip of its own -- whatever report called it has usually already warmed the cache
@@ -7124,11 +7144,19 @@ function memoRead_(cache, db, at, read) {
     be shown the codes' overlay as if the table already carried it: that is how a rename would
     find "nothing to do" and leave the old spelling in the sheet. Never memoised. */
 async function readTeamsRaw(db) { return fetchAll(() => db.from('teams').select('*')); }
+/* The same sheet, memoised, for the READERS: the door resolves every scope against it
+   (scopedUser_), and readTeamsAll lays the codes over it. One read serves both, so a screen
+   that reads the teams pays nothing extra for the door having read them first. Dropped with the
+   overlay by noteTeamsWritten. */
+const teamsRawCache = new WeakMap();
+async function readTeamsRawMemo_(db, nowMs) {
+  return memoRead_(teamsRawCache, db, nowMs || Date.now(), () => fetchAll(() => db.from('teams').select('*')));
+}
 async function readTeamsAll(db, nowMs) {
   const at = nowMs || Date.now();
   return memoRead_(teamsCache, db, at, async () => {
     const [raw, codes] = await Promise.all([
-      fetchAll(() => db.from('teams').select('*')),
+      readTeamsRawMemo_(db, nowMs),
       readCodesAll(db, nowMs),
     ]);
     return overlayCodes_(raw, codes);
@@ -7138,7 +7166,7 @@ async function readTeamsAll(db, nowMs) {
    fifteen seconds however many boards ask, and the same read those boards used to make for
    themselves (the PMO roster, the customer-care roster). A code edit drops it. */
 const codesCache = new WeakMap();
-export function noteCodesWritten(db) { codesCache.delete(db); teamsCache.delete(db); }
+export function noteCodesWritten(db) { codesCache.delete(db); teamsCache.delete(db); teamsRawCache.delete(db); }
 async function readCodesAll(db, nowMs) {
   const at = nowMs || Date.now();
   return memoRead_(codesCache, db, at, () => fetchAll(() => db.from('access_codes').select('name, code, role, teams')));

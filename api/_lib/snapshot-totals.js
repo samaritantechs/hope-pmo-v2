@@ -527,7 +527,7 @@ async function summaryRows(db, kind, { from, to, type = null, weekday = null, te
         .gte('snapshot_date', from).lte('snapshot_date', to);
       if (type) q = q.eq('snapshot_type', type);
       if (weekday) q = q.eq('weekday', weekday);
-      const t = upperTeams(teams);
+      const t = teamMatchList(teams);           // as stored, and in capitals -- see teamMatchList
       if (t.length) q = q.in('team', t);        // team scoping at the database, like every read
       return q;
     });

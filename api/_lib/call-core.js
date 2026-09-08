@@ -1,7 +1,7 @@
 import { fetchAll, runQuery, rpcAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
-import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams, teamMatchList } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams, teamMatchList, registrySpellings } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, tCustomers, tExpected, tCollected } from './snapshot-totals.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { collectedOf } from './recovery.js';
@@ -178,10 +178,27 @@ export function pseudoUser(cu) {
      scoped them to a team name that does not exist, so every figure came back zero -- which is
      how the performance strip showed dashes for the one person most likely to be looking at it.
      The lists escaped it because they take their own path; the strip did not. */
-  const teams = !cu.is_leader ? (K(cu.team) ? [K(cu.team)] : null)
+  /* AS STORED, NOT IN CAPITALS. call_users.team is a foreign key into the registry, so it IS
+     the registry's spelling; uppercasing it here turned Tunduru into TUNDURU, a team with no
+     rows, and every handset on the one mixed-case team opened onto an empty list. Comparisons
+     go through teamAllowed (trim + uppercase); the database is asked for the spelling. */
+  const T = t => String(t == null ? '' : t).trim();
+  const teams = !cu.is_leader ? (T(cu.team) ? [T(cu.team)] : null)
     : (!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null
-    : lt.map(t => K(t)).filter(Boolean);
+    : lt.map(T).filter(Boolean);
   return { name: cu.name, role: cu.role, teams };
+}
+/** pseudoUser, with the scope resolved against the registry -- "its the only case sensitive
+    team Tunduru so we treat all team names sensitive to letter cases and spaces". A leader's
+    leader_teams came off an access code a person typed, so TUNDURU on the code must reach the
+    database as the Tunduru it is filed under. Off the role-column read the lists already make
+    (one a minute per instance, shared by every handset), so a list pays nothing for it; the
+    strip, sync and the bell pay one small read a minute, written down in test/speed.test.mjs. */
+async function scopedUser(db, cu, nowMs) {
+  const u = pseudoUser(cu);
+  if (!u.teams) return u;
+  const rows = await readTeamsAll(db, nowMs);
+  return { ...u, teams: registrySpellings(u.teams, rows) };
 }
 /** The rotation names people by the teams table's role columns, so holding one of those
     columns anywhere is what counts -- not the role on their access code. */
@@ -348,7 +365,9 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
     }
     leader = true;
     role = u.role || 'LEADER';
-    leaderTeams = (u.teams && u.teams.length) ? u.teams : null;   // null = ALL, same convention as auth.js
+      // null = ALL, same convention as auth.js; otherwise the registry's own spelling of each
+    // team, so TUNDURU typed on the code reaches the handset as the Tunduru the book is under.
+    leaderTeams = (u.teams && u.teams.length) ? registrySpellings(u.teams, teams) : null;
     // call_users.team is a FOREIGN KEY into teams -- it is the leader's display-only "home"
     // team, never their scope (that's leader_teams). An ALL-teams code has no home team, and
     // writing the literal 'ALL' there violated the constraint and blocked admin registration
@@ -805,10 +824,18 @@ export function noteCallTeamsWritten(db) { teamsAllCache.delete(db); }
 async function readTeamsAll(db, nowMs) {
   const at = nowMs || Date.now();
   const hit = teamsAllCache.get(db);
-  if (hit && (at - hit.at) < TEAMS_ALL_TTL_MS) return hit.rows;
-  const rows = await fetchAll(() => db.from('teams').select('*'));
-  teamsAllCache.set(db, { at, rows });
-  return rows;
+  if (hit && hit.rows && (at - hit.at) < TEAMS_ALL_TTL_MS) return hit.rows;
+  // In flight already? Share it -- the door and the screen behind it ask in the same breath.
+  if (hit && hit.pending) return hit.pending;
+  /* Stamped with the WALL clock. Callers arrive with either clock (a request's nowMs, or none),
+     and a stamp taken from a pinned clock would make the wall-clock caller miss and read the
+     table again a moment after the door read it. */
+  const pending = fetchAll(() => db.from('teams').select('*')).then(rows => {
+    teamsAllCache.set(db, { at: Date.now(), rows });
+    return rows;
+  }, e => { if (teamsAllCache.get(db) && teamsAllCache.get(db).pending === pending) teamsAllCache.delete(db); throw e; });
+  teamsAllCache.set(db, { at, pending });
+  return pending;
 }
 
 const TEAM_ROLE_TTL_MS = 60000;
@@ -818,10 +845,12 @@ async function teamRoleMap(db, nowMs) {
   const at = nowMs || Date.now();
   const hit = teamRoleCache.get(db);
   if (hit && (at - hit.at) < TEAM_ROLE_TTL_MS) return hit.map;
-  /* `collection` is optional -- it arrived in a later migration and migrations here are run by
-     hand -- so asking for it must not take the other columns down with it. */
-  const rows = await fetchAll(() => db.from('teams').select('team, ' + POS_ORDER.join(', ') + ', collection'))
-    .catch(() => fetchAll(() => db.from('teams').select('team, ' + POS_ORDER.join(', '))));
+  /* OFF THE SAME READ AS EVERY OTHER TEAMS QUESTION ON THE PHONE. This used to ask for the role
+     columns by name (with a fallback for a deployment whose `collection` column is not there
+     yet); the whole sheet is the same handful of rows, and reading it through readTeamsAll
+     means the door's scope resolution, the lists' held-teams map and the strip's dashboard all
+     find one warm memo instead of each paying for its own shape of the same table. */
+  const rows = await readTeamsAll(db, nowMs);
   const cols = POS_ORDER.concat(['collection']);
   const map = new Map();
   map._rows = rows;                            // the same read, for the callers that want it raw
@@ -865,7 +894,7 @@ export async function scopeFor(db, user) {
 async function list(db, [dev, which, which2], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const base = pseudoUser(cu);
+  const base = await scopedUser(db, cu, nowMs);
   /* Widened BEFORE anything is read, because the widening is what decides which rows to ask the
      database for -- doing it afterwards would mean fetching one team's customers and then
      filtering thirty teams' worth of nothing. */
@@ -1086,7 +1115,7 @@ async function dailySummary(db, [dev], nowMs) {
      that IS the scope the owner maintains; the teams table's role columns are the ones that
      go stale. So the strip reads the handset's own scope, and the portal was brought to it
      (readTeamsAll lays the codes over the sheet) rather than the other way round. */
-  return summaryFor(db, pseudoUser(cu), nowMs);
+  return summaryFor(db, await scopedUser(db, cu, nowMs), nowMs);
 }
 /** The six numbers on the phone's top strip, for whoever is asking. Split out from
     dailySummary so the widget can serve the same figures to a screen nobody is holding --
@@ -1449,8 +1478,9 @@ async function sync(db, [dev, calls], nowMs) {
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
   // The same {name, role, teams} shape every other team check in this system uses, so
   // "is this customer mine" is answered by the one rule rather than by a second one here.
-  // The handset's own scope -- its access code's teams -- which the owner keeps correct.
-  const user = pseudoUser(cu);
+  // The handset's own scope -- its access code's teams -- which the owner keeps correct,
+  // in the registry's spelling so "mine" matches the rows the customer is filed under.
+  const user = await scopedUser(db, cu, nowMs);
   calls = calls || [];
   let wm = num(cu.last_ts);
   /* WHY A SYNC CARRIES A NUMBER THAT HAS NOTHING TO DO WITH CALLS.
@@ -2278,7 +2308,7 @@ async function teamCode(db, [code]) {
 async function callNotifications(db, [dev], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const d = await notifCore(db, pseudoUser(cu), notifKeyFor(cu.user_id), nowMs);
+  const d = await notifCore(db, await scopedUser(db, cu, nowMs), notifKeyFor(cu.user_id), nowMs);
   return { ok: true, ...d };
 }
 async function callNotifSeen(db, [dev], nowMs) {

@@ -8950,3 +8950,40 @@ test('an officer on a mixed-case team sees their rows under either spelling', as
   assert.ok(fu.rows.every(r => ['Tunduru', 'TUNDURU'].includes(r.team)));
 });
 
+/* THE SCOPE IS RESOLVED AGAINST THE REGISTRY AT THE DOOR.
+     "Some users i assigned tunduru to e.g Catherine PMO Collection and other roles, aint
+      seeing it [in the customers lists] ... its the only case sensitive team Tunduru so we
+      treat all team names sensitive to letter cases and spaces, some have space after"
+   Both spellings only helped when the code carried the mixed-case one. The staff editor wrote
+   TUNDURU on Catherine's code, so both spellings were TUNDURU and TUNDURU, and the book under
+   Tunduru stayed invisible. Now whatever a code says is resolved to the spelling the teams
+   table stores -- capitals, a missing trailing space -- before any query is built. */
+test('a code that spells a team differently from the registry still opens its book', async () => {
+  const t = tables();
+  t.teams.push({ team: 'Tunduru', team_code: 'DH6E47' });
+  t.teams.push({ team: 'MTWARA ', team_code: 'MTW001' });             // a trailing space, as stored
+  t.followup_status.push(
+    { ref: 'TN1', team: 'Tunduru', full_name: 'MTEJA WA TUNDURU', contact: '0710000001', arrears: 5000, status: 'Defaulter', fu_status: '', ds: '3-6', days_elapsed: 9 },
+    { ref: 'MT1', team: 'MTWARA ', full_name: 'MTEJA WA MTWARA', contact: '0710000003', arrears: 2000, status: 'Defaulter', fu_status: '', ds: '3-6', days_elapsed: 9 },
+  );
+  t.repayment_snapshots.push(
+    { ref: 'TN1', team: 'Tunduru', full_name: 'MTEJA WA TUNDURU', payment_expected: 1000, todays_status: 'UNPAID',
+      arrears: 0, snapshot_type: 'today', snapshot_date: TODAY, upload_batch: 'tb', created_at: TODAY + 'T04:00:00Z' },
+  );
+  // In capitals, as the staff editor wrote it; without its space, as the admin typed it.
+  const CATH = { code: 'C', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['TUNDURU', 'MTWARA'], tabs: USER_TABS.slice() };
+
+  const fu = await portalApi(fakeDb(t), CATH, 'followup', {}, NOW);
+  assert.deepEqual(fu.rows.map(r => r.ref).sort(), ['MT1', 'TN1'], 'both teams, under the spelling the book uses');
+  const exp = await portalApi(fakeDb(t), CATH, 'expectedDay', {}, NOW);
+  assert.deepEqual(exp.rows.map(r => r.ref), ['TN1']);
+  const asg = await portalApi(fakeDb(t), CATH, 'assignments', {}, NOW);
+  assert.ok(asg, 'the assignments screen, which filtered in capitals on its own, opens too');
+
+  // And the registers are WRITTEN in the registry's spelling from now on, so the door has less
+  // to undo: the code screen and the staff-by-person editor both.
+  const db = fakeDb(t);
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'C2', name: 'CATHERINE', role: 'PMO COLLECTION', teams: 'TUNDURU, MTWARA' }, NOW);
+  assert.deepEqual(db._dump('access_codes').find(c => c.code === 'C2').teams, ['Tunduru', 'MTWARA ']);
+});
+
