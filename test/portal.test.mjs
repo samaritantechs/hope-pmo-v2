@@ -3348,8 +3348,8 @@ test('call agents are the CREATED BY agents on applications, TRACK# 1 only', asy
      old reports had no column) and an id that is on no roster (counted, and merely named as
      missing). Neither counts now, and both are SAID on the answer. */
   const t = tables();
-  const L = (id, stage, created_by, track, amt) => ({ id, team: 'KONGOWE', stage, created_by,
-    track_no: track, requested_amt: amt, full_name: 'C' + id });
+  const L = (id, stage, created_by, track, amt, day = TODAY) => ({ id, team: 'KONGOWE', stage, created_by,
+    track_no: track, requested_amt: amt, full_name: 'C' + id, upload_date: day });
   t.loans = [
     L('a', 'unassigned', 'Callagent1', 1, 100000),
     L('b', 'assigned',   'Callagent1', '', 200000),   // blank track: UNKNOWN is not 1 -- not counted
@@ -3357,12 +3357,17 @@ test('call agents are the CREATED BY agents on applications, TRACK# 1 only', asy
     L('d', 'unassigned', 'Callagent2', 3, 900000),    // repeat customer -- not a new win
     L('e', 'approved',   'Callagent1', 1, 500000),    // past the two stages this board counts
     L('f', 'unassigned', 'Callagent9', 1, 50000),     // on applications but not in the roster
+    /* THE WEEK, NOT THE PIPELINE. "I uploaded loan apps of Monday and got a summary of 132
+       apps yet their card shows 2k and it's just start of the week". An application uploaded
+       LAST week is still sitting unassigned, and it is not this week's registration. */
+    L('g', 'unassigned', 'Callagent1', 1, 700000, '2026-07-17'),   // last week's Friday
   ];
   t.call_agents = [
     { user_id: 'Callagent1', names: 'Amina Mustafa, Nadhir Msangi' },
     { user_id: 'Callagent2', names: 'Salehe Hamad' },
   ];
   const d = await portalApi(fakeDb(t), ADMIN, 'callAgents', {}, NOW);
+  assert.equal(d.weekOf, MON, 'the card is the week\'s, by upload date');
 
   const one = d.rows.find(r => r.id === 'Callagent1');
   assert.equal(one.unassigned, 1);

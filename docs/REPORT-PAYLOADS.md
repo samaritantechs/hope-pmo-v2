@@ -102,6 +102,11 @@ args: `weekOf` (any date inside the month) · answer: `month, monthStart, monthE
 `agents{rows[{id, names, unassigned, assigned, advanced, total, amount}], total, totals{…}, excluded{noTrack, repeat, notAgent[{id, n}]}}` (customer service, strict rule),
 `leaders[{sn, role, roleKey, name, teams, sales, salesPct, ecolPct, colPct, recPct, avgPct, avgOn}]`, `leaderRoles[]`
 
+### callAgents — the dashboard's customer-service card
+args: `weekOf` · answer: `weekOf, weekEnd, pastWeek`, `rows[{id, names, unassigned, assigned, total, amount}]`, `count`,
+`totals{unassigned, assigned, total, amount}`, `excluded{noTrack, repeat, notAgent[{id, n}]}`, `unnamed[]`, `agents[]` (the roster).
+The week Mon–Sun by UPLOAD date, unassigned and assigned stages, the strict rule (TRACK# 1, created by a roster agent).
+
 ### commission — the three pay schemes
 args: `scope` = `"week"` (default) or `"month"`; `weekOf` for a week, `month` (`yyyy-mm`) for a month · answer:
 `scope, from, to, weekOf, weekEnd, asOfDate, pastWeek, weekFuture, month, monthEnd, weekday, date, me, isAdmin`,
