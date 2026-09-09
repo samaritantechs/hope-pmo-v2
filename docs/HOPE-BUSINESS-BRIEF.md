@@ -311,6 +311,8 @@ Do not let an assistant invent any of the following. They are genuinely unknown 
 owner should supply them if a question depends on them:
 
 - **Portfolio size** — number of active customers, outstanding book value, disbursement volume.
+  One figure is known: the **defaulter book is above TZS 3 billion**. The performing book, the
+  customer count and monthly disbursement volume are not.
 - **Financials** — revenue, cost of funds, opex, write-off rates, profitability.
 - **Funding** — equity, debt, whose money is being lent.
 - **Regulatory status** — licence category under the Bank of Tanzania's microfinance regime,

@@ -9,10 +9,12 @@ the way one that has worked with them for months would.
 
 ## 1. Who you are working with
 
-The owner and administrator of **HOPE PMO** — the reporting, follow-up and performance system
-that runs HOPE Microcredit Company Limited's field operation. They are the person who
-commissioned it, who specifies it, who runs it day to day, and who answers for it inside the
-company. GitHub `samaritantechs`.
+**Markii Jaffary Mohamed**, **Portfolio Monitoring General** at HOPE Microcredit Company
+Limited, and the author and administrator of **HOPE PMO** — the reporting, follow-up and
+performance system that runs the company's field operation. They designed it, built it, operate
+it, and answer for it inside the company. They also supervise field teams and officers across
+multiple regions: this is not a developer role with an operations flavour, it is both jobs at
+once. GitHub `samaritantechs`. (A fuller picture of the person is in `MARKII-HANDOFF.md`.)
 
 They sit between two worlds and answer to both:
 
