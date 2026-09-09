@@ -4446,6 +4446,142 @@ test('the month report cuts the month into clipped weeks and agrees with the car
   assert.equal(bare2.rows[3].expected, null, 'null means "not available", never zero');
 });
 
+/* THE GM'S GOOD AND BAD PERFORMING TEAMS.
+     "GM needs monthly Good and Bad performing teams trend by sales, collection and recovery
+      ... Team, w1%, w2%, w3%... Avrg% (autosorted by general high to low ...)"
+   One row per team, one column per week of the month, three boards. It rides on the month
+   report's own reads -- the same ledger, the same loans, the same clipped weeks -- because two
+   derivations of "how did KONGOWE collect in week 3" are two answers that can disagree. */
+test('the month report carries a per-team weekly trend for sales, collection and recovery', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 'm1', team: 'KONGOWE', stage: 'approved', principal_amt: 400, approved_date: TODAY },
+    { id: 'm2', team: 'MBAGALA', stage: 'disbursed', principal_amt: 100, approved_date: TODAY },
+    { id: 'm3', team: 'MBAGALA', stage: 'approved', principal_amt: 9999, approved_date: '2026-06-15' },
+  ];
+  t.repayment_snapshots = [E('111', 'KONGOWE', 1000, 'UNPAID', 0), E('333', 'MBAGALA', 1000, 'PAID', 0)];
+  const d = await run('monthReport', {}, ADMIN, dbWithRpc(t));
+  const tt = d.teamTrend;
+
+  // The columns are the report's OWN weeks -- same five, same clipping, named W1..W5.
+  assert.deepEqual(tt.weeks.map(w => w.key), ['W1', 'W2', 'W3', 'W4', 'W5']);
+  assert.deepEqual(tt.weeks.map(w => [w.from, w.to]), d.rows.map(r => [r.from, r.to]));
+  assert.equal(tt.weeks[4].started, false, 'a week that has not happened is marked so');
+  assert.equal(tt.weeklyTarget, 1000, 'the sales column divides by the team\'s own weekly target');
+
+  /* SALES: TODAY sits in week 4, so KONGOWE's 400 is 40% of its 1,000 week and MBAGALA's 100
+     is 10%. June's 9,999 is another month and is not here. The quiet weeks are a real 0%, not
+     a blank: nothing was sold and the team's target still stood. */
+  const kSales = tt.sales.find(r => r.team === 'KONGOWE');
+  assert.deepEqual([kSales.W1, kSales.W2, kSales.W3, kSales.W4, kSales.W5], [0, 0, 0, 40, null]);
+  assert.equal(kSales.avg, 10, 'the mean of the four weeks that have happened');
+  assert.equal(kSales.on, 4);
+  assert.equal(tt.sales.find(r => r.team === 'MBAGALA').W4, 10);
+  assert.deepEqual(tt.sales.map(r => r.team), ['KONGOWE', 'MBAGALA'], 'best average first');
+  assert.equal(tt.sales[0].sn, 1);
+
+  /* COLLECTION: only week 4 has an Expected sheet, so the other weeks are NULL -- "we did not
+     collect" and "there was nothing to collect" are different facts. MBAGALA collected its
+     whole 1,000 and leads; KONGOWE collected none of its 1,000. */
+  const kCol = tt.collection.find(r => r.team === 'KONGOWE');
+  assert.deepEqual([kCol.W1, kCol.W2, kCol.W3, kCol.W4], [null, null, null, 0]);
+  assert.equal(kCol.avg, 0);
+  assert.equal(kCol.on, 1, 'averaged over the one week that was measured');
+  assert.deepEqual(tt.collection.map(r => r.team), ['MBAGALA', 'KONGOWE']);
+  assert.equal(tt.collection[0].W4, 100);
+
+  /* RECOVERY: KONGOWE's decks pair on 1,200 initial against 900 current over 1,000
+     uncollected -- 30%. MBAGALA recovered 100 but had nothing uncollected to measure it
+     against, so it is null and sorts last, never a 0% it did not earn. */
+  const kRec = tt.recovery.find(r => r.team === 'KONGOWE');
+  assert.equal(kRec.W4, 30);
+  assert.equal(kRec.avg, 30);
+  const mRec = tt.recovery.find(r => r.team === 'MBAGALA');
+  assert.equal(mRec.avg, null);
+  assert.equal(mRec.on, 0);
+  assert.deepEqual(tt.recovery.map(r => r.team), ['KONGOWE', 'MBAGALA'], 'unmeasured sorts last');
+
+  /* WITHOUT THE TOTALS FUNCTIONS the ledger stands down, so collection and recovery say
+     nothing at all -- and sales, which read the loans table, still answer in full. */
+  const bare = await run('monthReport', {}, ADMIN, fakeDb(t));
+  assert.equal(bare.teamTrend.sales.find(r => r.team === 'KONGOWE').W4, 40);
+  assert.equal(bare.teamTrend.collection.find(r => r.team === 'KONGOWE').W4, null);
+  assert.equal(bare.teamTrend.recovery.find(r => r.team === 'KONGOWE').avg, null);
+});
+
+test('a scoped officer sees only their own team on the trend', async () => {
+  /* The same wall every other board stands behind: the trend is built out of the ledger and
+     the loans this viewer may see, so a one-team officer gets one row, not forty greyed out. */
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  const d = await run('monthReport', {}, GMO, dbWithRpc(t));
+  assert.deepEqual(d.teamTrend.sales.map(r => r.team), ['KONGOWE']);
+  assert.deepEqual(d.teamTrend.collection.map(r => r.team), ['KONGOWE']);
+  assert.deepEqual(d.teamTrend.recovery.map(r => r.team), ['KONGOWE']);
+});
+
+/* THE CREDIT INFO REPORT -- "we need to add export CREDIT INFO REPORT from our download page".
+   The whole current book as one sheet, and the stats pane in the system reads the SAME answer,
+   so the file somebody emails out and the screen somebody reads cannot disagree. */
+test('the credit info report carries every current defaulter and their standing', async () => {
+  const d = await run('creditInfo', {}, ADMIN, fakeDb(tables()));
+
+  // The sheet's shape: one heading per key, in one order, from one list.
+  assert.equal(d.headers.length, d.keys.length);
+  assert.equal(d.keys[0], 'ref');
+  assert.equal(d.headers[0], 'REF#');
+  assert.ok(d.keys.includes('analyst') && d.keys.includes('state') && d.keys.includes('guarantor_contact'),
+    'who answers for them, how they are doing, and the second number to ring');
+
+  // Biggest debt first, so the sheet opens on the customers who matter most.
+  assert.deepEqual(d.rows.map(r => r.ref), ['999', '555', '111']);
+  const one = d.rows.find(r => r.ref === '111');
+  assert.equal(one.team, 'KONGOWE');
+  assert.equal(one.analyst, 'ANALYST A', 'named from the teams sheet, never an ID');
+  assert.equal(one.initArr, 500);
+  assert.equal(one.curArr, 300);
+  assert.equal(one.recovered, 200);
+  assert.equal(one.state, 'Reduced', 'the same four states the Credit Analysts screen ranks on');
+  assert.equal(one.guarantor_contact, '07150000111');
+  assert.equal(one.paid, 0);
+  // A team with nobody in its credit column says so rather than leaving the cell blank.
+  assert.equal(d.rows.find(r => r.ref === '999').analyst, '(unassigned)');
+
+  /* Monday's deck was never uploaded in this fixture, so the baseline fell back to the latest
+     initial one -- and the answer SAYS so, because "recovered since Monday" and "recovered
+     since some Thursday" are different sentences. */
+  assert.equal(d.usedMondayBaseline, false);
+  assert.equal(d.baselineDate, TODAY);
+  assert.equal(d.hasCurrent, true);
+
+  const s = d.stats;
+  assert.equal(s.totals.customers, 3);
+  assert.equal(s.totals.curArr, 1700, '800 + 600 + 300');
+  assert.equal(s.totals.recovered, 400, 'the same 400 the dashboard and the month report read');
+  assert.equal(s.totals.reduced, 3);
+  assert.equal(s.totals.success, 100);
+  assert.equal(s.c16, 3, 'all three are still inside count 1-6');
+  assert.deepEqual(s.byState.map(x => x.state), ['Cleared', 'Reduced', 'Static', 'Bad']);
+  assert.equal(s.byState.find(x => x.state === 'Reduced').customers, 3);
+  const an = s.byAnalyst.find(x => x.analyst === 'ANALYST A');
+  assert.equal(an.customers, 2);
+  assert.equal(an.recovered, 300);
+  assert.equal(an.success, 100);
+});
+
+test('the credit info report is team-scoped and gated on the Credit Analysts tab', async () => {
+  const scopedAns = await run('creditInfo', {}, GMO, fakeDb(tables()));
+  assert.deepEqual(scopedAns.rows.map(r => r.ref), ['555', '111'], 'MBAGALA is not this officer\'s book');
+  assert.equal(scopedAns.stats.totals.customers, 2);
+
+  // Somebody without the Credit Analysts tab is refused at the door, not shown an empty sheet.
+  const NOCREDIT = { code: 'N', name: 'NO CREDIT', role: 'CLERK', teams: ['KONGOWE'],
+    tabs: USER_TABS.filter(t => t !== 'credit') };
+  await assert.rejects(() => portalApi(fakeDb(tables()), NOCREDIT, 'creditInfo', {}, NOW),
+    e => e.status === 403 && /creditInfo/.test(e.message));
+});
+
 test('recovery % is shown against all three denominators', async () => {
   const t = tables();
   t.repayment_snapshots = [

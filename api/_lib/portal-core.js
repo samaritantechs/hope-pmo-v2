@@ -4189,6 +4189,151 @@ async function credit(db, user, _args, nowMs) {
 }
 
 /* =====================================================================================
+   THE CREDIT INFO REPORT -- the whole current defaulter book as one sheet, a row per
+   customer, carrying the credit standing somebody outside this system has to be able to read
+   without asking anybody a question.
+
+     "we need to add export CREDIT INFO REPORT from our download page"
+
+   WHAT IT IS. Every customer on the latest CURRENT defaulter deck the caller may see, with:
+   who they are and who to ring (the guarantor included -- a credit file with no second number
+   is a file nobody can act on), where they sit (branch, team), WHO ANSWERS FOR THEM (the
+   team's credit analyst, by name -- there are no analyst IDs anywhere in this system), how far
+   through their twelve they are, what they owed at Monday's baseline, what they owe now, what
+   came back, and which of the four states that puts them in.
+
+   ONE DEFINITION, NOT A SECOND ONE. The four states are creditState, the same function the
+   Credit Analysts screen is ranked by; the installments paid are paidCount; the analyst is
+   officerOf(...,'credit'). A report that computed "Cleared" its own way would be a second
+   opinion about whether somebody has paid, and the two would drift the first week they
+   disagreed.
+
+   THE BASELINE IS MONDAY'S INITIAL DECK, falling back to the latest initial deck when Monday
+   has not been uploaded -- and the answer SAYS which it used (usedMondayBaseline,
+   baselineDate), because "recovered 40,000 since Monday" and "recovered 40,000 since some
+   Thursday" are different sentences and the sheet must not print the first while meaning the
+   second.
+
+   ONE ANSWER, TWO CONSUMERS. The download page turns `headers` + `keys` + `rows` into the
+   workbook; the Credit Info screen in the portal draws the same rows and the same `stats`.
+   Neither computes anything of its own, so the file somebody emails out and the pane somebody
+   reads on the wall cannot disagree.
+   ===================================================================================== */
+/** The sheet's columns, in order: the key each row carries, and the heading it is written
+    under. One list, so the workbook, the screen and the payload note cannot fall out of step. */
+const CREDIT_INFO_COLS = [
+  ['ref', 'REF#'],
+  ['full_name', 'Jina la mteja / Customer'],
+  ['contact', 'Namba / Contact'],
+  ['guarantor_name', 'Mdhamini / Guarantor'],
+  ['guarantor_contact', 'Namba ya mdhamini / Guarantor contact'],
+  ['branch', 'Branch'],
+  ['team', 'Timu / Team'],
+  ['analyst', 'Mchambuzi / Credit analyst'],
+  ['paid', 'Zilizolipwa / Installments paid'],
+  ['ds', 'D.S'],
+  ['days', 'Siku / Days in arrears'],
+  ['status', 'Hadhi / Status'],
+  ['initArr', 'Deni la msingi / Baseline arrears'],
+  ['curArr', 'Deni la sasa / Current arrears'],
+  ['recovered', 'Kilichorejeshwa / Recovered'],
+  ['state', 'Hali / State'],
+  ['balance', 'Salio / Balance'],
+  ['principal', 'Mkopo / Principal'],
+  ['disb_date', 'Tarehe ya mkopo / Disbursed'],
+];
+async function creditInfo(db, user, _args, nowMs) {
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs);
+  /* The same four reads the Credit Analysts screen makes, minus its loans book -- this report
+     is about standing, not about sales. A download-page report, asked for by hand a few times
+     a day, never on the upload or call paths. */
+  const [teamRows, curSnap, monSnap, todaySnap] = await Promise.all([
+    readTeamsAll(db),
+    defaulterBook(db, user, { type: 'current', notAfter: today }),
+    defaulterBook(db, user, { type: 'initial', onDate: mon }),
+    defaulterBook(db, user, { type: 'initial', notAfter: today }),
+  ]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const usedMonday = monSnap.rows.length > 0;
+  const baseRows = usedMonday ? scoped(user, monSnap.rows) : scoped(user, todaySnap.rows);
+  const baseArr = {};
+  for (const d of baseRows) baseArr[K(d.ref)] = num(d.arrears);
+
+  const rows = scoped(user, curSnap.rows).map(d => {
+    const k = K(d.ref), cur = num(d.arrears);
+    /* A CUSTOMER WITH NO BASELINE IS NEW SINCE IT WAS TAKEN, not a customer who has recovered
+       everything. Their baseline is their own current arrears, so Recovered reads 0 rather
+       than the whole debt. */
+    const initA = Object.prototype.hasOwnProperty.call(baseArr, k) ? baseArr[k] : cur;
+    const t = teamBy[K(d.team)] || {};
+    return {
+      ref: d.ref, full_name: d.full_name, contact: d.contact,
+      guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
+      branch: t.branch || null, team: d.team,
+      analyst: officerOf(teamBy, d.team, 'credit'),
+      paid: paidCount(d), ds: d.ds == null ? (d.due_summary == null ? null : d.due_summary) : d.ds,
+      days: num(d.days_elapsed) || num(d.dc) || null,
+      status: d.status || null,
+      initArr: initA, curArr: cur, recovered: Math.max(0, initA - cur),
+      state: creditState(initA, cur, true),
+      balance: num(d.balance), principal: principalOf(d),
+      disb_date: d.disb_date || null,
+    };
+  }).sort((a, b) => b.curArr - a.curArr || String(a.ref).localeCompare(String(b.ref)));
+
+  /* THE STATS THE PANE READS, worked out here beside the rows they describe rather than in the
+     browser -- so the figure on the screen and the figure somebody sums in the workbook come
+     from the same arithmetic. */
+  const group = (keyOf, label) => {
+    const m = {};
+    for (const r of rows) {
+      const g = keyOf(r) || '(—)';
+      const b = m[g] || (m[g] = { [label]: g, customers: 0, initArr: 0, curArr: 0, recovered: 0,
+        cleared: 0, reduced: 0, stat: 0, bad: 0 });
+      b.customers++; b.initArr += r.initArr; b.curArr += r.curArr; b.recovered += r.recovered;
+      if (r.state === 'Cleared') b.cleared++;
+      else if (r.state === 'Reduced') b.reduced++;
+      else if (r.state === 'Static') b.stat++;
+      else b.bad++;
+    }
+    return Object.values(m).map(b => ({ ...b, success: pctOf(b.cleared + b.reduced, b.customers) }))
+      .sort((a, b) => b.curArr - a.curArr);
+  };
+  const byState = ['Cleared', 'Reduced', 'Static', 'Bad'].map(s => {
+    const list = rows.filter(r => r.state === s);
+    return { state: s, customers: list.length,
+      curArr: list.reduce((t, r) => t + r.curArr, 0),
+      recovered: list.reduce((t, r) => t + r.recovered, 0) };
+  });
+  const sum = f => rows.reduce((t, r) => t + (Number(r[f]) || 0), 0);
+  const totals = { customers: rows.length, initArr: sum('initArr'), curArr: sum('curArr'),
+    recovered: sum('recovered'), balance: sum('balance'), principal: sum('principal'),
+    cleared: byState[0].customers, reduced: byState[1].customers,
+    stat: byState[2].customers, bad: byState[3].customers };
+  totals.success = pctOf(totals.cleared + totals.reduced, totals.customers);
+  /* COUNT 1-6 is the half of this book an analyst is actually judged on, so the pane says how
+     much of the report it covers rather than leaving somebody to filter and count. */
+  const c16 = rows.filter(r => r.paid < CREDIT_HALF).length;
+
+  return {
+    headers: CREDIT_INFO_COLS.map(c => c[1]),
+    keys: CREDIT_INFO_COLS.map(c => c[0]),
+    rows, count: rows.length,
+    stats: { totals, byState, byAnalyst: group(r => r.analyst, 'analyst'),
+      byBranch: group(r => r.branch, 'branch'), byTeam: group(r => r.team, 'team'), c16 },
+    asOf: curSnap.date || null,
+    baselineDate: usedMonday ? monSnap.date : todaySnap.date,
+    usedMondayBaseline: usedMonday,
+    /* Said rather than assumed: an empty report because nothing was uploaded reads exactly
+       like an empty report because nobody is in arrears, and they are not the same news. */
+    hasCurrent: curSnap.rows.length > 0,
+    hasBaseline: baseRows.length > 0,
+    threshold: CREDIT_HALF - 1,
+  };
+}
+
+/* =====================================================================================
    BULK SMS EXPORT -- one Excel sheet, shaped for the outside SMS gateway this company
    already pastes a mail-merge sheet into.
 
@@ -6546,7 +6691,7 @@ const FN = {
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
-  par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit,
+  par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, callAgents, saveCallAgent, settings: settingsList, settingSet,
@@ -6890,7 +7035,10 @@ const WRITE_FNS = new Set([...AUDITED, 'stampWeek', 'rebuildFollowup']);
 const FN_TAB = {
   dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
-  recoveryByCredit: ['dashboard'], monthReport: ['dashboard'],
+  recoveryByCredit: ['dashboard'],
+  /* The month report answers TWO dots now -- the dashboard's, and the weekly tab's, which
+     opens the GM's team trend off this same answer. Whoever holds either screen may open it. */
+  monthReport: ['dashboard', 'weekly'],
   loans: ['apps'], loanPipeline: ['apps'], appsWeekly: ['apps'], appsTab: ['apps'],
   expected: ['expected'], expectedDay: ['expected'],
   expectedDefaulters: ['defexp'],
@@ -6912,7 +7060,10 @@ const FN_TAB = {
   adjustments: ['adjust'], adjustmentRecord: ['adjust'], adjustmentAmend: ['adjust'],
   adjustmentDelete: ['adjust'],
   abnormal: ['abnormal'], received: ['abnormal'],
-  credit: ['credit'],
+  /* The credit info report and its stats pane ride on the Credit Analysts tab rather than
+     asking the admin to tick a new permission for a second view onto a book somebody already
+     holds. The download page and the pane both come through here. */
+  credit: ['credit'], creditInfo: ['credit'],
   perfHistory: ['perf'],
   defaulters: ['defexp', 'followup'],
   teams: ['teams', 'settings', 'adjust'], staffRoster: ['teams'], callAgents: ['teams', 'dashboard'],
@@ -7682,12 +7833,93 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   let ieAll = 0, icAll = 0;
   if (monthByTeam) for (const T in monthByTeam) if (teamAllowed(user, T)) { ieAll += monthByTeam[T].ie; icAll += monthByTeam[T].ic; }
 
+  /* ---- WHICH TEAMS ARE CLIMBING AND WHICH ARE SLIDING, WEEK BY WEEK.
+       "GM needs monthly Good and Bad performing teams trend by sales, collection and recovery
+        ... sales progress by weeks with columns: Team, w1%, w2%, w3%... Avrg% (autosorted by
+        general high to low ...)"
+
+     One row per team, one column per week of the month, three boards -- sales, collection,
+     recovery -- and the average of the weeks that were MEASURED, which is what the list is
+     ranked on. A month tells you a team's direction; a single week only tells you its news.
+
+     IT COSTS NOTHING TO READ. Every figure here is already in this function's hands: the
+     month ledger (one shared store, per team per day) walked once per week, and the month's
+     approved loans bucketed by team. No new query, on a report that is already the most
+     expensive answer in the system.
+
+     THE PERCENTAGES ARE THE ONES THE REST OF THE SYSTEM PAYS AND RANKS ON, taken over a
+     week's stretch instead of a day's:
+       sales       the team's approved principal over its own weekly target
+       collection  collected over expected, the days of that week
+       recovery    initial minus current over the uncollected, over the days that PAIRED --
+                   a week with no paired deck is null, never 0%, exactly as everywhere else.
+     A short first or last week (a month opening midweek) is judged against the same weekly
+     sales target as a full one, which is the convention the month rows above already use. */
+  const trendWeeks = rows.map(r => ({ key: 'W' + r.week, week: r.week, from: r.from, to: r.to, started: r.started }));
+  const teamTrend = (() => {
+    const seed = () => ({ sales: {}, collection: {}, recovery: {} });
+    const byTeam = new Map();
+    const nameOf = new Map(), branchOf = new Map();
+    for (const t of myTeams) {
+      byTeam.set(K(t.team), seed());
+      nameOf.set(K(t.team), t.team);
+      branchOf.set(K(t.team), t.branch || null);
+    }
+    const reach = T => {
+      if (!byTeam.has(T)) { byTeam.set(T, seed()); if (!nameOf.has(T)) nameOf.set(T, T); }
+      return byTeam.get(T);
+    };
+    for (const w of trendWeeks) {
+      if (!w.started) continue;
+      const done = w.to <= today ? w.to : today;
+      const wkSales = {};
+      for (const l of sales) {
+        const d = String(l.approved_date || '').slice(0, 10);
+        if (d >= w.from && d <= done) wkSales[K(l.team)] = (wkSales[K(l.team)] || 0) + amtOf(l);
+      }
+      for (const T in wkSales) reach(T).sales[w.key] = pct(wkSales[T], weeklyTarget);
+      for (const T of byTeam.keys()) if (!(w.key in byTeam.get(T).sales)) byTeam.get(T).sales[w.key] = pct(0, weeklyTarget);
+      if (!days) continue;
+      const wk = ledgerByTeam_(days, w.from, done, adj);
+      for (const T in wk) {
+        if (!teamAllowed(user, T)) continue;
+        const m = wk[T], s = reach(T);
+        s.collection[w.key] = pct(m.c, m.e);
+        s.recovery[w.key] = m.pairedDays > 0 ? pct(m.rec, m.u) : null;
+      }
+    }
+    /* The average is of the weeks that HAVE a percentage, and `on` says how many -- the same
+       rule the week rows and the leader list follow, so a team whose decks were never paired
+       is not quietly averaged against zeros it never earned. */
+    const board = which => [...byTeam.keys()].map(T => {
+      const row = { team: nameOf.get(T) || T, branch: branchOf.get(T) || null };
+      const got = [];
+      for (const w of trendWeeks) {
+        const v = w.started ? (byTeam.get(T)[which][w.key] == null ? null : byTeam.get(T)[which][w.key]) : null;
+        row[w.key] = v;
+        if (v != null) got.push(v);
+      }
+      row.avg = got.length ? Math.round((got.reduce((s, v) => s + v, 0) / got.length) * 10) / 10 : null;
+      row.on = got.length;
+      return row;
+    }).sort((a, b) => (b.avg == null ? -1 : b.avg) - (a.avg == null ? -1 : a.avg)
+      || String(a.team).localeCompare(String(b.team)))
+      .map((r, i) => ({ sn: i + 1, ...r }));
+    return { weeks: trendWeeks, sales: board('sales'), collection: board('collection'),
+      recovery: board('recovery'), weeklyTarget };
+  })();
+
   return {
     /* "the monthly cards for csagents loan apps, credit analysts, early col, col and rec" */
     cards: { apps, ecolPct: monthByTeam ? pct(icAll, ieAll) : null },
     agents,
     leaders,
     leaderRoles: Object.values(ROLE_LABEL),
+    /* The GM's good-and-bad board, three metrics deep -- see the note above it. Sent with the
+       month report rather than computed a second time behind its own function: it is the same
+       ledger, the same loans and the same week list, and two derivations of "how did KONGOWE
+       collect in week 3" are two answers that can disagree. */
+    teamTrend,
     month: monthStart.slice(0, 7), monthStart, monthEnd,
     // The week-bar fields, same names the dashboard sends, so the client's one week bar
     // works here unchanged and stepping it across a month boundary changes the month.

@@ -100,12 +100,34 @@ args: `weekOf` (any date inside the month) · answer: `month, monthStart, monthE
 `cards{…}`, `rows[{week, from, to, started, sales, loans, salesPct, expected, collected, colPct, uncollected, recovered, recPct, perf, …}]` (one per week),
 `totals{…}`,
 `agents{rows[{id, names, unassigned, assigned, advanced, total, amount}], total, totals{…}, excluded{noTrack, repeat, notAgent[{id, n}]}}` (customer service, strict rule),
-`leaders[{sn, role, roleKey, name, teams, sales, salesPct, ecolPct, colPct, recPct, avgPct, avgOn}]`, `leaderRoles[]`
+`leaders[{sn, role, roleKey, name, teams, sales, salesPct, ecolPct, colPct, recPct, avgPct, avgOn}]`, `leaderRoles[]`,
+`teamTrend{weeks[{key, week, from, to, started}], sales[{sn, team, branch, W1, W2, …, avg, on}], collection[…], recovery[…], weeklyTarget}`
+
+`teamTrend` is the good-and-bad teams board: one row per team, one field per week of the month keyed
+`W1`…`Wn` (the same weeks as `rows`), ranked by `avg` — the mean of the weeks that were measured, with `on`
+saying how many. Sales divides by the team's own `weeklyTarget`, collection by that week's expected,
+recovery by its uncollected over the days a deck actually paired. A week that was not measured is `null`,
+never `0`, and stays out of the average.
 
 ### callAgents — the dashboard's customer-service card
 args: `weekOf` · answer: `weekOf, weekEnd, pastWeek`, `rows[{id, names, unassigned, assigned, total, amount}]`, `count`,
 `totals{unassigned, assigned, total, amount}`, `excluded{noTrack, repeat, notAgent[{id, n}]}`, `unnamed[]`, `agents[]` (the roster).
 The week Mon–Sun by UPLOAD date, unassigned and assigned stages, the strict rule (TRACK# 1, created by a roster agent).
+
+### creditInfo — the CREDIT INFO REPORT
+args: none · answer:
+`headers[]` (the column headings, in order), `keys[]` (the row key behind each heading, same order),
+`rows[{ref, full_name, contact, guarantor_name, guarantor_contact, branch, team, analyst, paid, ds, days, status, initArr, curArr, recovered, state, balance, principal, disb_date}]`, `count`,
+`stats{totals{customers, initArr, curArr, recovered, balance, principal, cleared, reduced, stat, bad, success}, byState[{state, customers, curArr, recovered}], byAnalyst[…], byBranch[…], byTeam[…], c16}`,
+`asOf` (the current deck's date), `baselineDate`, `usedMondayBaseline`, `hasCurrent`, `hasBaseline`, `threshold`.
+
+One row per customer on the latest CURRENT defaulter deck the calling code may see, biggest debt first.
+`state` is one of `Cleared` / `Reduced` / `Bad` / `Static`, measured against the baseline — Monday's initial
+deck, or the latest one where Monday is missing, and `usedMondayBaseline` says which. `analyst` is the team's
+credit analyst by name, `(unassigned)` where the team names nobody. `c16` counts the rows still inside
+count 1–6. Needs the **Credit Analysts** tab. Build a workbook by walking `keys` against each row, so a
+column added to the report needs no change at the reader's end. The same answer feeds the Upload page's
+**Credit info report** download and the portal's **Credit Info · takwimu** pane.
 
 ### commission — the three pay schemes
 args: `scope` = `"week"` (default) or `"month"`; `weekOf` for a week, `month` (`yyyy-mm`) for a month · answer:
