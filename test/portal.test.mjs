@@ -4521,6 +4521,67 @@ test('a scoped officer sees only their own team on the trend', async () => {
   assert.deepEqual(d.teamTrend.recovery.map(r => r.team), ['KONGOWE']);
 });
 
+/* THE CREDIT INFO REPORT -- "we need to add export CREDIT INFO REPORT from our download page".
+   The whole current book as one sheet, and the stats pane in the system reads the SAME answer,
+   so the file somebody emails out and the screen somebody reads cannot disagree. */
+test('the credit info report carries every current defaulter and their standing', async () => {
+  const d = await run('creditInfo', {}, ADMIN, fakeDb(tables()));
+
+  // The sheet's shape: one heading per key, in one order, from one list.
+  assert.equal(d.headers.length, d.keys.length);
+  assert.equal(d.keys[0], 'ref');
+  assert.equal(d.headers[0], 'REF#');
+  assert.ok(d.keys.includes('analyst') && d.keys.includes('state') && d.keys.includes('guarantor_contact'),
+    'who answers for them, how they are doing, and the second number to ring');
+
+  // Biggest debt first, so the sheet opens on the customers who matter most.
+  assert.deepEqual(d.rows.map(r => r.ref), ['999', '555', '111']);
+  const one = d.rows.find(r => r.ref === '111');
+  assert.equal(one.team, 'KONGOWE');
+  assert.equal(one.analyst, 'ANALYST A', 'named from the teams sheet, never an ID');
+  assert.equal(one.initArr, 500);
+  assert.equal(one.curArr, 300);
+  assert.equal(one.recovered, 200);
+  assert.equal(one.state, 'Reduced', 'the same four states the Credit Analysts screen ranks on');
+  assert.equal(one.guarantor_contact, '07150000111');
+  assert.equal(one.paid, 0);
+  // A team with nobody in its credit column says so rather than leaving the cell blank.
+  assert.equal(d.rows.find(r => r.ref === '999').analyst, '(unassigned)');
+
+  /* Monday's deck was never uploaded in this fixture, so the baseline fell back to the latest
+     initial one -- and the answer SAYS so, because "recovered since Monday" and "recovered
+     since some Thursday" are different sentences. */
+  assert.equal(d.usedMondayBaseline, false);
+  assert.equal(d.baselineDate, TODAY);
+  assert.equal(d.hasCurrent, true);
+
+  const s = d.stats;
+  assert.equal(s.totals.customers, 3);
+  assert.equal(s.totals.curArr, 1700, '800 + 600 + 300');
+  assert.equal(s.totals.recovered, 400, 'the same 400 the dashboard and the month report read');
+  assert.equal(s.totals.reduced, 3);
+  assert.equal(s.totals.success, 100);
+  assert.equal(s.c16, 3, 'all three are still inside count 1-6');
+  assert.deepEqual(s.byState.map(x => x.state), ['Cleared', 'Reduced', 'Static', 'Bad']);
+  assert.equal(s.byState.find(x => x.state === 'Reduced').customers, 3);
+  const an = s.byAnalyst.find(x => x.analyst === 'ANALYST A');
+  assert.equal(an.customers, 2);
+  assert.equal(an.recovered, 300);
+  assert.equal(an.success, 100);
+});
+
+test('the credit info report is team-scoped and gated on the Credit Analysts tab', async () => {
+  const scopedAns = await run('creditInfo', {}, GMO, fakeDb(tables()));
+  assert.deepEqual(scopedAns.rows.map(r => r.ref), ['555', '111'], 'MBAGALA is not this officer\'s book');
+  assert.equal(scopedAns.stats.totals.customers, 2);
+
+  // Somebody without the Credit Analysts tab is refused at the door, not shown an empty sheet.
+  const NOCREDIT = { code: 'N', name: 'NO CREDIT', role: 'CLERK', teams: ['KONGOWE'],
+    tabs: USER_TABS.filter(t => t !== 'credit') };
+  await assert.rejects(() => portalApi(fakeDb(tables()), NOCREDIT, 'creditInfo', {}, NOW),
+    e => e.status === 403 && /creditInfo/.test(e.message));
+});
+
 test('recovery % is shown against all three denominators', async () => {
   const t = tables();
   t.repayment_snapshots = [

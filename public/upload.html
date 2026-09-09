@@ -284,6 +284,24 @@
         Import at contacts.google.com → Import, or straight on the new phone's Contacts app.
         Admin only.</div>
     </div>
+
+    <!-- CREDIT INFO REPORT -- "we need to add export CREDIT INFO REPORT from our download
+         page". The whole current defaulter book as one sheet: who the customer is, who to ring
+         (the guarantor included), which analyst answers for them, what they owed at the
+         baseline, what they owe now, and which of the four states that puts them in. The same
+         answer the Credit Info pane in the system draws, so the file and the screen cannot
+         disagree. -->
+    <div style="border-top:1px solid var(--line);margin-top:12px;padding-top:10px">
+      <label style="margin-bottom:4px">Credit info report</label>
+      <button type="button" id="creditInfoBtn">Pakua CREDIT INFO / Download credit info report</button>
+      <div class="hint">Kila mdaiwa wa sasa: REF#, jina, namba, mdhamini, tawi, timu, mchambuzi,
+        deni la msingi, deni la sasa, kilichorejeshwa, hali (Cleared / Reduced / Static / Bad),
+        salio na tarehe ya mkopo. Msingi ni kitabu cha Jumatatu — kikikosekana kinatumika cha
+        mwisho, na faili linasema kilichotumika.
+        / Every current defaulter with their credit standing. The baseline is Monday's initial
+        deck; where that is missing the latest one stands in and the file says so. Team-scoped
+        to your access code, and it needs the Credit Analysts tab.</div>
+    </div>
   </div>
 
   <div class="card">
@@ -795,6 +813,59 @@ $('contactsExportBtn').onclick = function(){
     btn.disabled = false;
     if (!d.count){ alert('Hakuna waliojisajili bado. / Nobody has registered on HOPE Calls yet.'); return; }
     saveContactsCsv_(d);
+  }).catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
+};
+
+/* THE CREDIT INFO WORKBOOK. The server sends the headings, the key behind each heading and the
+   rows as objects -- so the sheet's column order is decided in ONE place (CREDIT_INFO_COLS in
+   portal-core.js) and this page never has to be edited when a column is added to it. A first
+   sheet of the stats rides along, because the person who opens this file is usually about to
+   count exactly those four states by hand. */
+function saveCreditInfoXlsx_(d){
+  var keys = d.keys || [];
+  var aoa = [d.headers].concat((d.rows || []).map(function(r){
+    return keys.map(function(k){ var v = r[k]; return v == null ? '' : v; });
+  }));
+  var s = d.stats || {}, tot = s.totals || {};
+  var summary = [
+    ['CREDIT INFO REPORT'],
+    ['Imetolewa / Generated', eatToday_()],
+    ['Kitabu cha sasa / Current deck', d.asOf || '—'],
+    ['Msingi / Baseline', (d.baselineDate || '—') + (d.usedMondayBaseline ? ' (Jumatatu / Monday)' : ' (si Jumatatu / not Monday)')],
+    [],
+    ['Wateja / Customers', tot.customers || 0],
+    ['Count 1-6', s.c16 || 0],
+    ['Deni la msingi / Baseline arrears', tot.initArr || 0],
+    ['Deni la sasa / Current arrears', tot.curArr || 0],
+    ['Kilichorejeshwa / Recovered', tot.recovered || 0],
+    ['Success %', tot.success == null ? '—' : tot.success],
+    [],
+    ['Hali / State', 'Wateja / Customers', 'Deni la sasa / Current', 'Kilichorejeshwa / Recovered'],
+  ].concat((s.byState || []).map(function(x){ return [x.state, x.customers, x.curArr, x.recovered]; }))
+   .concat([[], ['Mchambuzi / Analyst', 'Wateja', 'Deni la sasa', 'Kilichorejeshwa', 'Success %']])
+   .concat((s.byAnalyst || []).map(function(x){ return [x.analyst, x.customers, x.curArr, x.recovered, x.success]; }));
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Muhtasari');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Credit info');
+  saveBytes_('credit-info-' + eatToday_() + '.xlsx',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    new Uint8Array(XLSX.write(wb, { bookType: 'xlsx', type: 'array' })));
+}
+$('creditInfoBtn').onclick = function(){
+  var code = $('code').value.trim();
+  if (!code){ alert('Weka msimbo wako kwanza. / Enter your access code first.'); return; }
+  var btn = $('creditInfoBtn'); btn.disabled = true;
+  portalCall_(code, 'creditInfo', {}).then(function(d){
+    btn.disabled = false;
+    /* AN EMPTY BOOK IS NOT A BROKEN BUTTON, and the two reasons for it are different news --
+       so the message says which one this is rather than downloading a sheet of headings. */
+    if (!d.count){
+      alert(d.hasCurrent
+        ? 'Hakuna wadaiwa kwenye timu zako kwa sasa. / No current defaulters on your teams.'
+        : 'Kitabu cha wadaiwa (Current Defaulters) hakijapakiwa bado. / The current defaulter deck has not been uploaded yet.');
+      return;
+    }
+    saveCreditInfoXlsx_(d);
   }).catch(function(e){ btn.disabled = false; alert(String((e && e.message) || e)); });
 };
 
