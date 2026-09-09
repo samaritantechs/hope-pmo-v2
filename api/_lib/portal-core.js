@@ -6890,7 +6890,10 @@ const WRITE_FNS = new Set([...AUDITED, 'stampWeek', 'rebuildFollowup']);
 const FN_TAB = {
   dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
-  recoveryByCredit: ['dashboard'], monthReport: ['dashboard'],
+  recoveryByCredit: ['dashboard'],
+  /* The month report answers TWO dots now -- the dashboard's, and the weekly tab's, which
+     opens the GM's team trend off this same answer. Whoever holds either screen may open it. */
+  monthReport: ['dashboard', 'weekly'],
   loans: ['apps'], loanPipeline: ['apps'], appsWeekly: ['apps'], appsTab: ['apps'],
   expected: ['expected'], expectedDay: ['expected'],
   expectedDefaulters: ['defexp'],
@@ -7682,12 +7685,93 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   let ieAll = 0, icAll = 0;
   if (monthByTeam) for (const T in monthByTeam) if (teamAllowed(user, T)) { ieAll += monthByTeam[T].ie; icAll += monthByTeam[T].ic; }
 
+  /* ---- WHICH TEAMS ARE CLIMBING AND WHICH ARE SLIDING, WEEK BY WEEK.
+       "GM needs monthly Good and Bad performing teams trend by sales, collection and recovery
+        ... sales progress by weeks with columns: Team, w1%, w2%, w3%... Avrg% (autosorted by
+        general high to low ...)"
+
+     One row per team, one column per week of the month, three boards -- sales, collection,
+     recovery -- and the average of the weeks that were MEASURED, which is what the list is
+     ranked on. A month tells you a team's direction; a single week only tells you its news.
+
+     IT COSTS NOTHING TO READ. Every figure here is already in this function's hands: the
+     month ledger (one shared store, per team per day) walked once per week, and the month's
+     approved loans bucketed by team. No new query, on a report that is already the most
+     expensive answer in the system.
+
+     THE PERCENTAGES ARE THE ONES THE REST OF THE SYSTEM PAYS AND RANKS ON, taken over a
+     week's stretch instead of a day's:
+       sales       the team's approved principal over its own weekly target
+       collection  collected over expected, the days of that week
+       recovery    initial minus current over the uncollected, over the days that PAIRED --
+                   a week with no paired deck is null, never 0%, exactly as everywhere else.
+     A short first or last week (a month opening midweek) is judged against the same weekly
+     sales target as a full one, which is the convention the month rows above already use. */
+  const trendWeeks = rows.map(r => ({ key: 'W' + r.week, week: r.week, from: r.from, to: r.to, started: r.started }));
+  const teamTrend = (() => {
+    const seed = () => ({ sales: {}, collection: {}, recovery: {} });
+    const byTeam = new Map();
+    const nameOf = new Map(), branchOf = new Map();
+    for (const t of myTeams) {
+      byTeam.set(K(t.team), seed());
+      nameOf.set(K(t.team), t.team);
+      branchOf.set(K(t.team), t.branch || null);
+    }
+    const reach = T => {
+      if (!byTeam.has(T)) { byTeam.set(T, seed()); if (!nameOf.has(T)) nameOf.set(T, T); }
+      return byTeam.get(T);
+    };
+    for (const w of trendWeeks) {
+      if (!w.started) continue;
+      const done = w.to <= today ? w.to : today;
+      const wkSales = {};
+      for (const l of sales) {
+        const d = String(l.approved_date || '').slice(0, 10);
+        if (d >= w.from && d <= done) wkSales[K(l.team)] = (wkSales[K(l.team)] || 0) + amtOf(l);
+      }
+      for (const T in wkSales) reach(T).sales[w.key] = pct(wkSales[T], weeklyTarget);
+      for (const T of byTeam.keys()) if (!(w.key in byTeam.get(T).sales)) byTeam.get(T).sales[w.key] = pct(0, weeklyTarget);
+      if (!days) continue;
+      const wk = ledgerByTeam_(days, w.from, done, adj);
+      for (const T in wk) {
+        if (!teamAllowed(user, T)) continue;
+        const m = wk[T], s = reach(T);
+        s.collection[w.key] = pct(m.c, m.e);
+        s.recovery[w.key] = m.pairedDays > 0 ? pct(m.rec, m.u) : null;
+      }
+    }
+    /* The average is of the weeks that HAVE a percentage, and `on` says how many -- the same
+       rule the week rows and the leader list follow, so a team whose decks were never paired
+       is not quietly averaged against zeros it never earned. */
+    const board = which => [...byTeam.keys()].map(T => {
+      const row = { team: nameOf.get(T) || T, branch: branchOf.get(T) || null };
+      const got = [];
+      for (const w of trendWeeks) {
+        const v = w.started ? (byTeam.get(T)[which][w.key] == null ? null : byTeam.get(T)[which][w.key]) : null;
+        row[w.key] = v;
+        if (v != null) got.push(v);
+      }
+      row.avg = got.length ? Math.round((got.reduce((s, v) => s + v, 0) / got.length) * 10) / 10 : null;
+      row.on = got.length;
+      return row;
+    }).sort((a, b) => (b.avg == null ? -1 : b.avg) - (a.avg == null ? -1 : a.avg)
+      || String(a.team).localeCompare(String(b.team)))
+      .map((r, i) => ({ sn: i + 1, ...r }));
+    return { weeks: trendWeeks, sales: board('sales'), collection: board('collection'),
+      recovery: board('recovery'), weeklyTarget };
+  })();
+
   return {
     /* "the monthly cards for csagents loan apps, credit analysts, early col, col and rec" */
     cards: { apps, ecolPct: monthByTeam ? pct(icAll, ieAll) : null },
     agents,
     leaders,
     leaderRoles: Object.values(ROLE_LABEL),
+    /* The GM's good-and-bad board, three metrics deep -- see the note above it. Sent with the
+       month report rather than computed a second time behind its own function: it is the same
+       ledger, the same loans and the same week list, and two derivations of "how did KONGOWE
+       collect in week 3" are two answers that can disagree. */
+    teamTrend,
     month: monthStart.slice(0, 7), monthStart, monthEnd,
     // The week-bar fields, same names the dashboard sends, so the client's one week bar
     // works here unchanged and stepping it across a month boundary changes the month.
