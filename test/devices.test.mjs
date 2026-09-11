@@ -375,6 +375,89 @@ test('the beat pace is the office\'s to set, with a floor it cannot type away', 
   assert.equal(pending.nextBeatSeconds, 25, 'a pending pace below ten seconds is read as the typo it is');
 });
 
+/* WHERE A HANDSET LAST WAS -- "add location tracking too, GM will want it."
+   The care in this feature is not the coordinate, it is the SECOND fact beside it: the phone
+   reports its LAST KNOWN position rather than waking the GPS every beat, so the fix can be
+   hours older than the beat carrying it. A register that collapses the two claims a phone is
+   somewhere it left on Tuesday, and somebody drives there. */
+test('a position is kept with the age of its own fix, never the age of the beat', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '361000000000001' });
+  const token = e.provision[0].token;
+  const fixAt = NOW - 3 * 3600 * 1000;                     // taken three hours before it spoke
+
+  await deviceApi(db, 'dev_beat',
+    [{ token, locked: false, lat: -6.7924, lng: 39.2083, locAcc: 18, locAt: fixAt }], NOW);
+  const row = db._dump('devices')[0];
+  assert.equal(row.last_lat, -6.7924);
+  assert.equal(row.last_lng, 39.2083);
+  assert.equal(row.last_loc_acc, 18);
+  assert.equal(Date.parse(row.last_loc_at), fixAt, 'the FIX\'s time, not the beat\'s');
+  assert.notEqual(Date.parse(row.last_loc_at), Date.parse(row.last_seen));
+
+  const list = await run(db, LOCKER, 'deviceList', {});
+  assert.equal(list.rows[0].lat, -6.7924);
+  assert.equal(list.rows[0].locAcc, 18);
+  assert.equal(Date.parse(list.rows[0].locAt), fixAt);
+});
+
+test('half a coordinate, a nonsense one, or a wrong clock never reaches the register', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '361000000000002' });
+  const token = e.provision[0].token;
+  const at = () => db._dump('devices')[0];
+
+  // Half a fix is a point in the sea, so it is dropped WHOLE.
+  await deviceApi(db, 'dev_beat', [{ token, lat: -6.79 }], NOW);
+  assert.equal(at().last_lat, undefined);
+  // 0,0 is the Gulf of Guinea: what a handset sends when it has no fix at all.
+  await deviceApi(db, 'dev_beat', [{ token, lat: 0, lng: 0 }], NOW);
+  assert.equal(at().last_lat, undefined);
+  // Off the globe entirely.
+  await deviceApi(db, 'dev_beat', [{ token, lat: 91, lng: 200 }], NOW);
+  assert.equal(at().last_lat, undefined);
+
+  /* A FIX STAMPED IN THE FUTURE tells us the phone's CLOCK is wrong, not where it is. The
+     position still lands -- it is probably fine -- but the beat's own time stands in, so the
+     age on the screen is honest about what we actually know. */
+  await deviceApi(db, 'dev_beat',
+    [{ token, lat: -6.79, lng: 39.2, locAt: NOW + 40 * 24 * 3600 * 1000 }], NOW);
+  assert.equal(at().last_lat, -6.79);
+  assert.equal(Date.parse(at().last_loc_at), NOW);
+  // And an accuracy nobody sent is null rather than a number somebody might believe.
+  assert.equal(at().last_loc_acc, null);
+});
+
+test('a beat still lands on a register that has not taken the location columns yet', async () => {
+  /* The migration is pasted in by hand like every other, and the location one is SEPARATE
+     from the register's own. A handset reporting a position against a register without those
+     columns must not lose its beat over it: a phone that cannot report its state is a phone
+     the office has lost, while one that cannot report where it was is merely one somebody
+     cannot go and find. */
+  const inner = fakeDb(tables());
+  let stripped = false;
+  const db = { ...inner, from(name) {
+    const q = inner.from(name);
+    if (name !== 'devices') return q;
+    const realUpdate = q.update.bind(q);
+    q.update = function (patch) {
+      if ('last_lat' in patch) {
+        stripped = true;
+        return { eq: () => ({ error: { message: 'column devices.last_lat does not exist' } }) };
+      }
+      return realUpdate(patch);
+    };
+    return q;
+  } };
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '361000000000003' });
+  const beat = await deviceApi(db, 'dev_beat',
+    [{ token: e.provision[0].token, locked: true, battery: 40, lat: -6.79, lng: 39.2 }], NOW);
+  assert.equal(stripped, true, 'the first write was refused for the missing column');
+  assert.equal(beat.command, 'unlock');
+  assert.equal(inner._dump('devices')[0].reported, 'locked', 'and the beat landed anyway');
+  assert.equal(inner._dump('devices')[0].battery, 40);
+});
+
 test('the lock screen\'s words come from settings, and a missing number promises nothing', async () => {
   const t = tables();
   t.settings = [{ key: 'DEVICE_LOCK_BRAND', value: 'HOPE MICROCREDIT CO. LTD' },
