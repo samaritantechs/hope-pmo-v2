@@ -444,6 +444,40 @@ async function hello(db, [payload], nowMs) {
    an oracle for asking the office which IMEIs it is holding. */
 const BATCH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
+/* SAY NOTHING TO THE HANDSET, WRITE IT DOWN FOR THE OFFICE.
+   =====================================================================================
+   The refusal above is deliberately opaque and must stay that way. But the person it is
+   actually about is at a bench with the phone on a cable, and until now the system told
+   them nothing either: the claim writes no row, the handset has no row, and the register
+   shows no trace of a phone that tried to enrol and was turned away. Three hundred handsets
+   go through this, and the commonest bench failure of all -- the IMEI on the stock sheet is
+   not the IMEI in the phone -- produced a dead end with no thread to pull.
+
+   So a refused claim is filed in device_events, where the Locking pane reads it back (see
+   deviceList). It carries THE IMEI THE HANDSET PRESENTED, which is the one fact the operator
+   cannot obtain any other way and the one that ends the hunt in a glance.
+
+   WHY THIS IS NOT A WRITE ANYBODY CAN PROVOKE. It runs only after the batch has been proved
+   REAL AND LIVE -- a 32-hex secret minted by the office and good for a day -- so the only
+   party who can cause a row here is the bench that was handed it, writing one row per
+   broadcast it runs. An unknown or stale batch is still refused with nothing written at all,
+   which is what keeps /api/device from being a table anyone can fill.
+
+   AND IT NEVER CHANGES THE ANSWER. The insert is wrapped because bookkeeping that fails must
+   not turn a 403 into a 500: the handset would then read "THE OFFICE REFUSED THIS PHONE
+   (HTTP 500)" and the operator would go looking for a broken server instead of a wrong
+   number. */
+async function noteRefusal_(db, said, why, nowMs) {
+  try {
+    await db.from('device_events').insert([{
+      imei: said[0], event: 'claim-refused', actor: 'device',
+      reason: 'simu ilijitambulisha / handset presented: ' + said.join(', ').slice(0, 120)
+        + ' — ' + why,
+      at: new Date(nowMs).toISOString(),
+    }]);
+  } catch (ignored) { /* deliberately swallowed -- see the note above */ }
+}
+
 async function claim(db, [payload], nowMs) {
   const p = payload || {};
   const batch = S(p && p.batch);
@@ -474,8 +508,19 @@ async function claim(db, [payload], nowMs) {
   const issued = rows.map(r => Date.parse(r.enrol_batch_at || '')).filter(t => !isNaN(t));
   if (!issued.length || nowMs - Math.max(...issued) > BATCH_MAX_AGE_MS) refuse();
 
+  /* PAST HERE THE BATCH IS GENUINE AND STILL OPEN, so a refusal is a bench problem rather
+     than a stranger knocking -- and that is exactly the one worth filing. */
   const dev = rows.find(r => said.includes(S(r.imei)));
-  if (!dev || !S(dev.enrol_token)) refuse();
+  if (!dev) {
+    await noteRefusal_(db, said, 'haipo kwenye batch hii / not one of the IMEIs in this batch',
+      nowMs);
+    refuse();
+  }
+  if (!S(dev.enrol_token)) {
+    await noteRefusal_(db, said, 'ipo kwenye batch lakini haina token / in the batch but its '
+      + 'row carries no token', nowMs);
+    refuse();
+  }
   return { ok: true, token: S(dev.enrol_token) };
 }
 

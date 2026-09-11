@@ -108,6 +108,39 @@ history, and six months from now "why is this locked" has to have an answer.
   Take it back to the bench. No other screen can show you this.
 - **Kimya / quiet** — has not spoken in six hours. A phone in a drawer is quiet and perfectly
   fine.
+- **Zimejaribu kujisajili zikakataliwa / tried to enrol and were refused** — the red strip
+  under the counts. See §4a; it is the answer to the commonest bench failure there is.
+
+### 4a. When the broadcast says the office refused the phone
+
+```
+Broadcast completed: result=5, data="THE OFFICE REFUSED THIS PHONE (HTTP 403) ..."
+```
+
+**result=5 with a 403 means everything worked except the identity.** The phone is Device Owner,
+it reached the server and the server answered — the only thing that went wrong is that the IMEI
+the handset read off itself is not one the batch was made for. The message on the phone names
+three possible causes because the endpoint deliberately tells a handset nothing; **the Locking
+pane names the one that actually happened.**
+
+Refresh **Kufunga simu** and read the red strip. It prints **the IMEI the handset gave for
+itself**, which is the one number the bench cannot get any other way, and then says which of two
+things to do:
+
+- **Haipo kwenye rejista / not on the register** — that number was never enrolled, so what was
+  pasted was a different phone. Almost always the stock sheet or the box label, and on a dual-SIM
+  handset the other slot. **Enrol the IMEI printed in the strip** and run the command again.
+- **Ipo kwenye rejista / on the register** — the phone is enrolled, but the command carried a
+  batch it was not in; an old command copied out of yesterday's terminal does exactly this. Open
+  **+ Sajili simu** again, paste the IMEIs, take the fresh command.
+
+To check a handset's real IMEI without the register: dial **`*#06#`** on the phone, or Settings →
+About phone. A dual-SIM shows two and **either** may be enrolled — the phone offers both when it
+claims, so enrolling one of them is enough.
+
+A claim against a batch the office never minted, or one over a day old, is refused with nothing
+written at all — so an empty strip after a refusal means the batch itself was wrong, not the
+IMEI.
 
 ---
 

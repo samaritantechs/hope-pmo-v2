@@ -6783,7 +6783,7 @@ async function deviceRows_(db, select = '*') {
   }
 }
 const DEVICE_NOT_READY = {
-  ok: true, ready: false, rows: [], total: 0,
+  ok: true, ready: false, rows: [], total: 0, refused: [],
   counts: { enrolled: 0, locked: 0, lockPending: 0, released: 0, lost: 0, neverSeen: 0, stale: 0 },
   note: 'Rejista ya simu haijaundwa bado — endesha ' + DEVICE_MIGRATION + ' kwenye Supabase SQL editor. '
     + '/ The phone register has not been created yet — run ' + DEVICE_MIGRATION + ' in the Supabase SQL editor.',
@@ -6831,6 +6831,53 @@ function deviceRow_(r, nowMs) {
   };
 }
 
+/* THE PHONES THAT TRIED TO ENROL AND WERE TURNED AWAY.
+   -------------------------------------------------------------------------------------
+   A claim that is refused leaves no mark on any handset's row, because the whole point is
+   that the office does not have a row for that phone. device-core.js files the attempt
+   instead, and this is the only screen it can reach.
+
+   THE ONE FACT THAT ENDS THE HUNT is `onRegister`. An IMEI that is NOT on the register is
+   the handset telling you its real number: whatever was pasted off the stock sheet or the
+   box was a different phone, or a different one of a dual-SIM's two. An IMEI that IS on the
+   register was simply not in the batch that command carried -- a stale command, or the phone
+   was enrolled in an earlier session -- and re-opening Sajili simu fixes it. Those are two
+   completely different next moves, and the 403 the bench sees names neither.
+
+   ONE EXTRA READ, AND ONLY FOR THE PANE THAT ENROLS. Kufungua simu never provisions
+   anything, so it does not ask and does not pay. device_events holds transitions only --
+   never heartbeats, see the note beside BEAT_COLS -- so this is a few thousand rows at the
+   fleet's full size, read by two people a handful of times a day. It is not on /api/upload
+   or /api/call and comes nowhere near them. */
+const DEVICE_REFUSAL_WINDOW_MS = 24 * 60 * 60 * 1000;   // a bench session, same as a batch's life
+async function refusals_(db, a, all, nowMs) {
+  if (!a || !a.refused) return [];
+  let evs = [];
+  try {
+    const since = new Date(nowMs - DEVICE_REFUSAL_WINDOW_MS).toISOString();
+    evs = await fetchAll(() => db.from('device_events')
+      .select('imei, at').eq('event', 'claim-refused').gte('at', since));
+  } catch (e) {
+    // The register may predate the migration. A pane that cannot show refusals still works.
+    return [];
+  }
+  const byImei = new Map();
+  for (const e of evs) {
+    const imei = String((e && e.imei) || '').trim();
+    if (!imei) continue;
+    const when = Date.parse((e && e.at) || '') || 0;
+    const cur = byImei.get(imei) || { imei, at: null, when: -1, tries: 0 };
+    cur.tries += 1;
+    if (when > cur.when) { cur.when = when; cur.at = e.at || null; }
+    byImei.set(imei, cur);
+  }
+  const known = new Set((all || []).map(r => String(r.imei)));
+  return [...byImei.values()]
+    .sort((x, y) => y.when - x.when)
+    .slice(0, 20)
+    .map(x => ({ imei: x.imei, at: x.at, tries: x.tries, onRegister: known.has(x.imei) }));
+}
+
 /** The register, for both panes. */
 async function deviceList(db, user, args, nowMs = Date.now()) {
   requireDeviceNav_(user);
@@ -6871,7 +6918,7 @@ async function deviceList(db, user, args, nowMs = Date.now()) {
   const all = got.rows.map(r => deviceRow_(r, nowMs));
   const count = f => all.filter(f).length;
   return { ok: true, ready: true, rows: rows.slice(0, 500), total: rows.length,
-    q: find, searching: !!find,
+    q: find, searching: !!find, refused: await refusals_(db, a, all, nowMs),
     counts: {
       enrolled: count(r => r.state === 'enrolled'),
       locked: count(r => r.state === 'locked'),
