@@ -379,3 +379,16 @@ test('every setting the locked screen reads can be found on the Settings page', 
       k + ' is read on every beat but cannot be edited anywhere on the Settings page');
   }
 });
+
+/* SAME RULE, ONE MORE SETTING: DEVICE_SHIFT_PARTNER.
+   Not a LOCK_SETTINGS key -- deviceList reads it, not the beat -- so the guard above never
+   sees it. Written by hand rather than folding it into that scanner, because this is the
+   only setting of its kind so far and a second scanner earns its keep once there are two. */
+test('the shift partner address can be edited on the Settings page', () => {
+  const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(core.includes("'DEVICE_SHIFT_PARTNER'"), 'deviceList should still read this setting');
+  const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
+  assert.ok(groups.includes("key:'DEVICE_SHIFT_PARTNER'"),
+    'DEVICE_SHIFT_PARTNER is read by the server but cannot be edited anywhere on the Settings page');
+});
