@@ -45,6 +45,7 @@
    about data cost and database load, and it must never need an app release to revisit.
    ======================================================================================= */
 import { fetchAll } from './supabase.js';
+import { LOCK_LOGO } from './lock-logo.js';
 
 /* A beat is cheap and constant; an event row is not. Writing history on every heartbeat
    would bury the state changes that matter under thousands of "still locked, still 84%"
@@ -91,7 +92,7 @@ export function commandFor(state) {
    substitution, on a machine we can fix, instead of the same little parser in every build of
    the app that is already out there. */
 const LOCK_SETTINGS = ['DEVICE_LOCK_BRAND', 'DEVICE_LOCK_MESSAGE', 'DEVICE_HELP_PHONE',
-  'DEVICE_LOCK_REASON'];
+  'DEVICE_LOCK_REASON', 'DEVICE_LOCK_LOGO'];
 
 const DEFAULT_BRAND = 'HOPE MICROCREDIT';
 
@@ -152,7 +153,45 @@ async function lockWords(db) {
        never given words by anybody, and a blank reason on the screen is worse than a dull
        sentence from settings. */
     fallbackReason: get('DEVICE_LOCK_REASON'),
+    ...logoFor(get('DEVICE_LOCK_LOGO')),
   };
+}
+
+/* THE MARK ON THE LOCKED SCREEN, SENT RATHER THAN COMPILED IN.
+   =====================================================================================
+     "For hope phones this is the logo, so the logos differ"
+
+   HOPE runs Hoop's signed APK deliberately, so that no second build has to be kept, signed
+   and distributed (docs/DEVICE-LOCKING.md section 5). Every WORD on the lock screen already
+   comes from here, so it reads HOPE. The wordmark did not: it was compiled into the APK, so
+   a locked HOPE handset drew HOOP's mark directly above the words "HOPE MICROCREDIT".
+
+   Two companies on one screen is worse than no logo at all. The officer holding that phone
+   is deciding whether this is their employer or somebody's scam, and the mark is what they
+   read before any sentence.
+
+   A PATH, NOT A URL, and that is the part that makes one APK serve both companies: the
+   handset resolves this against the server it was provisioned against, so HOPE's phones
+   fetch HOPE's mark from HOPE and Hoop's fetch Hoop's from Hoop, off identical code. The
+   setting may still carry an absolute URL for anyone who needs one.
+
+   FETCHED ON CHANGE, NOT ON SHOW. A locked phone in a dead spot has to draw this screen with
+   no network at all, so the handset caches the file and redraws from disk; `logoVersion` is
+   what tells it the bytes moved. That keeps the beat itself at about forty bytes more than
+   before -- roughly a megabyte a day across three hundred handsets, against the ~17 MB a
+   month each already costs -- and the 16 KB image is paid once per change rather than
+   ninety-six times a day. Sending the picture inline would have cost about 480 MB a month
+   across the fleet, on data the company pays for.
+
+   `none` TURNS IT OFF PROPERLY. It means no mark at all, not "fall back to whatever is baked
+   into the APK" -- falling back is how HOOP's logo ends up on a HOPE phone, which is the one
+   outcome this exists to prevent. */
+function logoFor(setting) {
+  const want = S(setting).trim();
+  if (/^(none|hakuna|-)$/i.test(want)) return { logo: null, logoVersion: null };
+  // An office-supplied address is its own version: change the address, change the version.
+  if (want) return { logo: want, logoVersion: want };
+  return { logo: LOCK_LOGO.path, logoVersion: LOCK_LOGO.version };
 }
 
 /* THE PACE. Both numbers live on the server rather than in the APK, which is what makes this
@@ -364,7 +403,10 @@ async function beat(db, [payload], nowMs) {
      WITH ONE EXCEPTION: a phone being handed back for good gets no words at all. It is about
      to unharden, stop being Device Owner and stop calling home, and leaving our lock message
      in a former employee's storage is the opposite of releasing it. */
-  const words = retire ? { brand: null, message: null, helpPhone: null, fallbackReason: '' }
+  /* A RELEASED PHONE GETS NO MARK EITHER, for the same reason it gets no words: leaving our
+     logo cached on a former employee's handset is the opposite of handing it back. */
+  const words = retire ? { brand: null, message: null, helpPhone: null, fallbackReason: '',
+                           logo: null, logoVersion: null }
                        : await lockWords(db);
   const grace = await graceFor(db, dev);
   const boot = retire ? { minutes: 0, everyHours: 0 } : await bootGraceFor(db);
@@ -390,6 +432,13 @@ async function beat(db, [payload], nowMs) {
     brand: words.brand,
     message: words.message,
     helpPhone: words.helpPhone,
+    /* THE MARK TRAVELS WITH THE WORDS, and for the same reason -- see logoFor(). Only the
+       address and a version ride on the beat; the picture itself the handset fetches once,
+       when the version it holds stops matching. An APK that predates this ignores two
+       unknown fields and keeps drawing the mark compiled into it, which is the whole reason
+       this could ship before the app did. */
+    logo: words.logo,
+    logoVersion: words.logoVersion,
     // -1 rather than null: the handset parses this into an int, and "never" has to survive
     // that trip as a value it can act on rather than as a missing field it has to guess at.
     graceHours: grace == null ? -1 : grace,
