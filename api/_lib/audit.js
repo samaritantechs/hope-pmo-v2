@@ -55,7 +55,7 @@ export const AUDITED = new Set([
      half -- that a person holding a code did it, from the one door every write passes -- so
      "who ordered this lock" is answerable from the audit log as well as from the register,
      and remains answerable if the device row is later deleted. */
-  'deviceEnrol', 'deviceSetState', 'deviceIssue', 'deviceDelete',
+  'deviceEnrol', 'deviceSetState', 'deviceIssue', 'deviceDelete', 'deviceShift',
 ]);
 
 /** The ONLY argument fields that ever reach the table. Anything not named here is dropped --

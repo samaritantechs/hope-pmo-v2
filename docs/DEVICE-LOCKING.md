@@ -16,8 +16,12 @@ safe to re-run.
 
 1. `db/RUN-ME-2026-09-11-devices.sql` — creates `devices` and `device_events`. Until it runs,
    both panes open and say so, naming the file.
-2. `db/RUN-ME-2026-09-11b-device-location.sql` — adds the four position columns (§7). Until it
+2. `db/RUN-ME-2026-09-11b-device-location.sql` — adds the four position columns (§8). Until it
    runs, handsets still beat and still lock; they simply report no position.
+3. `db/RUN-ME-2026-09-11c-device-shift.sql` — adds the three columns Shift needs (§9). Until it
+   runs, Shift does nothing at all — not fails, does nothing: `deviceShift` writes them,
+   `beat()` reads them back with the same pre-migration fallback every other device column
+   after the first has.
 
 These are `.sql` files for the SQL editor. `DEVICE-LOCKING.md` — this file — is for reading.
 
@@ -429,3 +433,79 @@ trace, it is not a movement history — only the latest fix is kept — and on a
 be read as an answer to "where do we go to collect this handset", not as an account of somebody's
 day. If the GM wants a history of positions rather than the last one, that is a different table
 and worth asking for deliberately.
+
+---
+
+## 9. Shift — moving a handset to the other company
+
+> "another button for shift so that hoop can shift a device to hope and viceversa saving
+> re-enlorrment energy"
+
+One signed APK serves both companies. Until Shift, moving a handset from one to the other
+meant **Achia**, and Achia gives up Device Owner. Taking it back is refused while any
+account is signed in — a handset that has been in an officer's or an agent's hand for
+months has one — so achia-then-enrol meant a **factory reset**, every time, just to change
+which office a phone answers to.
+
+Shift never lets go of ownership. The phone reads the order on its own next beat, over the
+address already written into its storage, and moves itself.
+
+### What it costs, and what it saves
+
+|  | Achia, then enrol elsewhere | Shift |
+|---|---|---|
+| Device Owner | given up, then refused on re-take | **kept throughout** |
+| What it needs | a factory reset, on a used phone | one drawer, one press |
+| Data on the phone | wiped | untouched |
+
+### Doing it
+
+**On the receiving office's portal first.** Open **+ Sajili simu / Enrol** there, paste the
+same IMEIs, and copy the **batch** it hands back — not the whole bench command, just the
+32-character batch. That is the only thing the sending office needs from the other side;
+there is no login shared between the two companies and none is created for this.
+
+**Then on the sending office's Kufunga simu.** **↔️ Hamisha / Shift** — on the bar for a
+tick-selected group, or on one phone's own row. Paste the other office's **address**
+(`https://…`) and the **batch** just copied, and press Hamisha.
+
+Nothing moves yet. The order sits on the row — **Inasubiri kuhama / shift pending** — until
+the handset's own next beat, which is within fifteen minutes, or seconds if the phone is
+already reporting quickly for some other reason. Once it lands the row here goes
+`Imeachiwa / released`, with a reason naming the shift, and the register the phone answers
+to from then on is the other one.
+
+### It goes with its current state
+
+> "when we shift it goes with current state"
+
+A **locked** phone shifts locked, not blank. The order the handset carries includes the
+row's own `state`, and if that is `locked` or `lost`, the RECEIVING office's row starts out
+the same way — an officer who left with company property does not arrive at the other
+company as an ordinary enrolled handset just because it crossed a company boundary.
+
+This is trusted only in the safe direction: `locked` and `lost` only ever **add**
+restriction, never remove it, so nothing a phone claims about itself can be used to escape
+one. It is also only ever applied to a row the receiving office has not yet formed its own
+opinion about — a phone that office already locked, released or wrote off for its own
+reasons keeps that decision; an incoming claim never argues it away.
+
+### What shift cannot do
+
+- **It cannot reach a locked screen that is showing right now.** A pinned lock screen has no
+  Settings and no way to receive a new order at all until it unlocks or is put back on a
+  cable — same limit every order already has.
+- **It cannot move a released phone.** Achia stops the beat entirely (`BeatJob.cancel`), so
+  there is nothing left listening for a shift order. Shift such a phone *before* releasing
+  it, or re-enrol it first.
+- **It does not know the other office's address on its own.** Somebody has to type it, once,
+  from a source they trust — this is deliberate: there is no standing channel between two
+  separate companies' servers for one to discover the other automatically.
+
+### From lock app 1.11.9
+
+Handsets on an older build simply never receive a `shift` field — nothing breaks, the order
+just sits on the row until the phone updates. `LockLogo` and the lock screen's words also
+travel with the move: everything naming the old company is cleared and refilled from the
+new office's own settings on the very next beat, so nobody rings a desk that cannot help
+them.

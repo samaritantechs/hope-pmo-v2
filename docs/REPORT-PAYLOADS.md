@@ -132,9 +132,12 @@ column added to the report needs no change at the reader's end. The same answer 
 ### deviceList · deviceHistory — the company phone register
 `deviceList` args: `q` (IMEI, holder name, team or model), `state`, `refused` (see below) · answer: `ready, rows[{imei, item,
 holder, team, role, issuedAt, state, reason, by, at, reported, lastSeen, battery, android, appVersion, reportedImei, lat, lng,
-locAcc, locAt, lockState, neverSeen, stale, lockedNeverSpoke}]`, `total`, `q`, `searching`, `refused[{imei, at, tries,
-onRegister}]`, `counts{enrolled, locked, lockPending, released, lost, neverSeen, stale, lockedNeverSpoke, issued, inStore}`.
+locAcc, locAt, lockState, neverSeen, stale, lockedNeverSpoke, shiftPending, shiftTo}]`, `total`, `q`, `searching`,
+`refused[{imei, at, tries, onRegister}]`, `counts{enrolled, locked, lockPending, released, lost, neverSeen, stale,
+lockedNeverSpoke, shiftPending, issued, inStore}`.
 `deviceHistory` args: `imei` · answer: `found, device{…}, events[{event, from, to, reason, actor, at}]`.
+`deviceShift` args: `imeis`, `server` (the other office's own address, `https://…`), `batch` (32 hex, minted by **that** office's
+own `deviceEnrol`) · answer: `ordered, alreadyReleased, unknown, server`. Needs **Kufunga simu** only — see below.
 
 `state` is the office's intent (`enrolled` / `locked` / `released` / `lost`); `reported` is the handset's own word for what it
 is doing. `lockState` compares them: `done`, `pending` (ordered, not yet confirmed) or `unknown`. `ready: false` means the
@@ -147,6 +150,10 @@ handset reported for itself** — which is the number no other screen can show. 
 enrolled, so whatever was pasted at the bench was a different number; `true` means the command carried a stale batch and a
 fresh one from **+ Sajili simu** fixes it. A claim against a batch the office never minted, or one over a day old, is refused
 with nothing recorded at all.
+
+`shiftPending` / `shiftTo` reflect a `deviceShift` order sitting unconfirmed on the row: the handset clears both itself the
+moment it claims a token at the other office (`dev_shifted`, see `docs/DEVICE-LOCKING.md` §9). See that section for the whole
+mechanism — no wipe, no cable, the phone never gives up Device Owner.
 
 Needs **Kufunga simu** or **Kufungua simu**. The writes
 (`deviceEnrol`, `deviceIssue`, `deviceSetState`, `deviceDelete`) are gated on the state being asked for — see
