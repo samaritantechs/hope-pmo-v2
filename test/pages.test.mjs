@@ -371,7 +371,9 @@ test('every setting the locked screen reads can be found on the Settings page', 
   const block = core.match(/const LOCK_SETTINGS = \[([\s\S]*?)\];/);
   assert.ok(block, 'LOCK_SETTINGS should still be a literal array in device-core.js');
   const keys = [...block[1].matchAll(/'([A-Z0-9_]+)'/g)].map(m => m[1]);
-  assert.ok(keys.length >= 5, 'expected the lock screen to read several settings, got ' + keys.length);
+  // 4, since DEVICE_LOCK_REASON was dropped: "DROP THE REASON FILLING AND ITS DATA SINCE
+  // THE MESSAGE IS ENOUGH" -- a self-lock's reason line is blank now, on purpose.
+  assert.ok(keys.length >= 4, 'expected the lock screen to read several settings, got ' + keys.length);
 
   const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
   for (const k of keys) {

@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-l';
+var BUILD = '2026-09-11-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1294,10 +1294,6 @@ var SETTINGS_GROUPS = [
       { key:'DEVICE_HELP_PHONE', label:'Namba ya kupiga / The number to call', type:'text', dflt:'',
         note:'Hujaza {namba}. Ikiwa wazi, ujumbe wa kawaida hauahidi namba yoyote badala ya kuahidi tupu. '
           + '/ Fills {namba}. Left blank, the built-in sentence promises no number rather than a blank one.' },
-      { key:'DEVICE_LOCK_REASON', label:'Sababu ya simu iliyojifunga yenyewe / Reason for a self-lock',
-        type:'text', dflt:'',
-        note:'Hutumika PEKEE simu ikijifunga yenyewe baada ya kukaa kimya. Funga kutoka ofisini huleta sababu yake. '
-          + '/ Used ONLY when a phone locks itself on the offline grace — an ordered lock always carries its own.' },
       { key:'DEVICE_LOCK_LOGO', label:'Alama / The mark', type:'text', dflt:'',
         note:'Wazi = alama ya HOPE (/lock-logo.png). Andika <b>none</b> kuiondoa kabisa. '
           + '/ Blank means HOPE\'s mark. Write <b>none</b> for no mark at all — see docs/DEVICE-LOCKING.md §6a.' },

@@ -318,12 +318,20 @@ is the ordinary case and stays a two-command bench.
 All optional; every one has a working default, and the register never fails because a setting is
 missing or unreadable.
 
+> "DROP THE REASON FILLING AND ITS DATA SINCE THE MESSAGE IS ENOUGH"
+
+`DEVICE_LOCK_REASON` — a fallback reason line shown only on a phone that locked *itself* on the
+offline grace, never on one an officer ordered locked — is gone. A self-lock's `REASON:` line is
+simply blank now: the message above it already says whose phone this is and what to do with it,
+and a second sentence restating that added nothing. **This is not the reason typed into Funga**
+when somebody orders a lock — that one is unrelated, still required, and stays exactly as it was
+(§4, "The reason is not paperwork").
+
 | Key | Default | What it does |
 |---|---|---|
 | `DEVICE_LOCK_BRAND` | `HOPE MICROCREDIT` | the name on the locked screen |
 | `DEVICE_LOCK_MESSAGE` | a Swahili sentence | the message. `{brand}` and `{namba}` are filled in by the server |
 | `DEVICE_HELP_PHONE` | — | the number a stranded person is told to call. Unset means the message promises no number rather than promising a blank one |
-| `DEVICE_LOCK_REASON` | — | the reason shown when a phone locked *itself* on the offline grace |
 | `DEVICE_LOCK_PACKAGE` | `com.samaritantechs.hooploanlock` | the APK the bench command names. The default is the app HOPE actually installs, so leave it alone unless HOPE builds its own — see §5 |
 | `DEVICE_LOCK_LOGO` | `/lock-logo.png` | the wordmark on the locked screen — see §6a. `none` means no mark at all |
 | `DEVICE_BEAT_SECONDS` | `900` | how often a settled handset reports. Floor 60 |
