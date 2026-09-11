@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-g';
+var BUILD = '2026-09-11-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6261,7 +6261,16 @@ function devOpen_(imei, mode){
             + 'asking the wrong office. <b>Do not use -e current</b>; it moves the token and keeps the '
             + 'old server, leaving a phone no register can reach. Release it over the cable with its '
             + 'token from <i>that</i> register (result=1 or result=3 both clear it), then run steps 1 '
-            + 'and 2 again. result=3 keeps ownership, so step 1 can be skipped.</div>'
+            + 'and 2 again. result=3 keeps ownership, so step 1 can be skipped.'
+            /* THE ANGLE BRACKETS ARE THE SAFETY NET, and the error they produce needs saying
+               once. cmd reads < and > as file redirection, so a placeholder left in errors
+               with "The syntax of the command is incorrect" instead of running -- which is
+               exactly why it is written with them. Without that line an operator reads a
+               Windows parser error as a broken command and starts editing the wrong thing. */
+            + '<br><b>"The syntax of the command is incorrect"</b> = bado hujaweka token. Ondoa '
+            + '&lt; &gt; na weka token yenyewe. / That Windows error means the placeholder is '
+            + 'still in it — cmd reads &lt; &gt; as redirection. Replace the brackets <i>and</i> '
+            + 'the words between them with the token itself. Nothing was sent to the phone.</div>'
             + '<div class="note">Token ni siri ya simu hii. / The token is this handset\'s credential — it is '
             + 'not on any list or export, and reading it here is written to the audit log.</div>');
           var copy = function(id){
