@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-b';
+var BUILD = '2026-09-11-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5955,14 +5955,22 @@ function devStateText_(r){
   if (r.state === 'released') return 'Imeachiwa / released';
   return 'Inatumika / in service';
 }
-/** How long since the handset last spoke, in words somebody can act on. */
-function devSeen_(r){
-  if (!r.lastSeen) return 'haijawahi / never';
-  var mins = Math.round((Date.now() - Date.parse(r.lastSeen)) / 60000);
+/** How long ago a stamp was, in words somebody can act on. */
+function devAgo_(iso){
+  if (!iso) return 'haijawahi / never';
+  var mins = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (!isFinite(mins)) return '—';
   if (mins < 2) return 'sasa hivi / just now';
   if (mins < 90) return mins + ' dak / min';
   var hrs = Math.round(mins / 60);
   return hrs < 48 ? hrs + ' saa / hrs' : Math.round(hrs / 24) + ' siku / days';
+}
+/** How long since the handset last spoke. */
+function devSeen_(r){ return devAgo_(r.lastSeen); }
+/** The position column: how old the FIX is, which is not how old the beat is. */
+function devWhere_(r){
+  if (r.lat == null || r.lng == null) return '—';
+  return devAgo_(r.locAt);
 }
 /* ONE CALL FOR EVERY ORDER, so the 409 about a released-and-silent phone is handled in one
    place rather than at each button. The confirmation it raises is a question about the phones
@@ -6037,6 +6045,19 @@ function devOpen_(imei, mode){
       + line('Ilionekana / Last seen', devSeen_(r))
       + line('Betri / Battery', r.battery == null ? null : r.battery + '%')
       + line('Toleo / App', r.appVersion)
+      /* WHERE IT WAS, AND HOW OLD THAT IS -- never the first without the second. The handset
+         reports its LAST KNOWN position rather than waking the GPS every beat, so this fix can
+         be hours older than the beat that carried it, and somebody reading a map pin without
+         its age will drive to where the phone was on Tuesday. */
+      + (r.lat != null && r.lng != null
+          ? '<div class="note">📍 <b>' + esc(r.lat.toFixed(5)) + ', ' + esc(r.lng.toFixed(5)) + '</b>'
+            + (r.locAcc != null ? ' <span class="mutl">±' + money(r.locAcc) + 'm</span>' : '')
+            + '<br><span class="mutl">Ilipimwa / fix taken: ' + esc(devAgo_(r.locAt))
+            + (r.locAt && r.lastSeen && (Date.parse(r.lastSeen) - Date.parse(r.locAt)) > 3600000
+                ? ' — <b>ni ya zamani kuliko mawasiliano ya mwisho</b> / older than the last beat' : '')
+            + '</span><br><a class="tel" target="_blank" rel="noopener" href="https://www.google.com/maps?q='
+            + esc(r.lat + ',' + r.lng) + '">Fungua ramani / Open map</a></div>'
+          : '<div class="note mutl">📍 Hakuna mahali bado / no position reported yet</div>')
       + line('Sababu / Reason', r.reason)
       + line('Ameagiza / Ordered by', r.by)
       /* THE HANDSET'S OWN GUESS AT ITS IMEI, shown only when it differs. A dual-SIM phone has
@@ -6191,6 +6212,12 @@ function devicesView_(mode){
       {key:'lastSeen', label:'Ilionekana / Seen', get:devSeen_,
        cls:function(r){ return r.neverSeen ? 'bad' : (r.stale ? 'warnc' : ''); }},
       {key:'battery', label:'Betri', kind:'num', get:function(r){ return r.battery == null ? '' : r.battery + '%'; }},
+      /* THE AGE OF THE FIX, not the coordinate. A pair of decimals in a table column is noise
+         nobody reads; what somebody scanning this list needs to know is whether there is a
+         recent position to act on. The coordinate and its map link are one tap away, in the
+         drawer, beside the warning that says when the fix is older than the beat. */
+      {key:'locAt', label:'Mahali / Where', get:devWhere_,
+       cls:function(r){ return (r.lat == null) ? 'mutl' : ''; }},
       col('reason','Sababu / Reason'), col('by','Ameagiza / By')];
     ONROW = function(r){ devOpen_(r.imei, mode); };
     S.foot = money(d.total) + ' simu / phones'

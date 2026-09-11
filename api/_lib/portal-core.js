@@ -6808,6 +6808,14 @@ function deviceRow_(r, nowMs) {
     reported, lastSeen: r.last_seen || null,
     appVersion: r.app_version || null, battery: r.battery == null ? null : Number(r.battery),
     android: r.android || null, reportedImei: r.reported_imei || null,
+    /* WHERE IT WAS, AND WHEN THAT FIX WAS TAKEN -- two facts, never one. The handset reports
+       its last known position rather than waking the GPS on every beat, so `locAt` can be
+       hours older than `lastSeen`. A screen that prints the first without the second invites
+       somebody to drive to where the phone was on Tuesday. */
+    lat: r.last_lat == null ? null : Number(r.last_lat),
+    lng: r.last_lng == null ? null : Number(r.last_lng),
+    locAcc: r.last_loc_acc == null ? null : Number(r.last_loc_acc),
+    locAt: r.last_loc_at || null,
     enrolledAt: r.enrolled_at || null, enrolledBy: r.enrolled_by || null,
     /* HAS THE PHONE DONE WHAT IT WAS TOLD? `pending` is the column somebody chases: an order
        given that the handset has not confirmed. A phone that has never spoken is not pending

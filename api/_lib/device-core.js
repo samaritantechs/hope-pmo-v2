@@ -307,14 +307,42 @@ async function beat(db, [payload], nowMs) {
   // A battery reading is only ever 0-100; anything else is a bug on the handset, not a fact.
   const bat = Number(p.battery);
   if (Number.isFinite(bat) && bat >= 0 && bat <= 100) patch.battery = Math.round(bat);
+  /* WHERE THE HANDSET WAS WHEN IT LAST SPOKE, with the age of the fix beside it.
+     -----------------------------------------------------------------------------------------
+       "add location tracking too, GM will want it."
+
+     The phone reports its LAST KNOWN position rather than waking the GPS every minute, so the
+     fix can be much older than the beat carrying it. `last_loc_at` is what keeps those two
+     facts apart; collapse them and the register starts claiming a phone is somewhere it left
+     on Tuesday, which is worse than having no position at all, because somebody drives there.
+
+     Range-checked rather than trusted, and dropped WHOLE when it fails -- half a coordinate is
+     a point in the sea. */
+  const lat = Number(p.lat), lng = Number(p.lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)
+      && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+      && !(lat === 0 && lng === 0)) {        // 0,0 is the Gulf of Guinea, i.e. "no fix"
+    patch.last_lat = lat;
+    patch.last_lng = lng;
+    const acc = Number(p.locAcc);
+    patch.last_loc_acc = Number.isFinite(acc) && acc >= 0 ? Math.round(acc) : null;
+    /* Trust the handset's clock only where it produces a plausible past moment. A fix stamped
+       in the future, or at the epoch, tells us the phone's clock is wrong -- not where it is --
+       so the beat's own time stands in and the age shown is honest about what we know. */
+    const when = Number(p.locAt);
+    patch.last_loc_at = Number.isFinite(when) && when > 946684800000 && when <= nowMs + 86400000
+      ? new Date(when).toISOString() : at;
+  }
 
   let { error } = await db.from('devices').update(patch).eq('imei', imei);
-  /* Pre-migration tolerance: `reported_imei` may not be there yet, and PostgREST refuses the
-     whole update for one unknown column. The beat itself matters more -- a phone that cannot
-     report its state is a phone the office has lost, while one that cannot report what it
-     thinks its IMEI is merely one somebody cannot double-check. */
-  if (error && /reported_imei/.test(String(error.message || ''))) {
-    const { reported_imei, ...rest } = patch;
+  /* Pre-migration tolerance: `reported_imei` and the location columns may not be there yet,
+     and PostgREST refuses the whole update for one unknown column. The beat itself matters
+     more than any of them -- a phone that cannot report its state is a phone the office has
+     lost, while one that cannot report what it thinks its IMEI is, or where it was, is merely
+     one somebody cannot double-check or cannot go and find. */
+  if (error && /reported_imei|last_lat|last_lng|last_loc_acc|last_loc_at/
+        .test(String(error.message || ''))) {
+    const { reported_imei, last_lat, last_lng, last_loc_acc, last_loc_at, ...rest } = patch;
     ({ error } = await db.from('devices').update(rest).eq('imei', imei));
   }
   if (error) throw new Error(error.message);

@@ -11,9 +11,15 @@ one register of handsets, plus a small Android app on each phone that does the a
 
 ## 1. Before anything works
 
-**Run the migration.** Paste `db/RUN-ME-2026-09-11-devices.sql` whole into the Supabase SQL
-editor and run it once. It creates `devices` and `device_events`. Until it runs, both panes open
-and say so, naming the file — nothing breaks and nothing is lost.
+**Run the migrations.** Paste each whole into the Supabase SQL editor and run it once. Both are
+safe to re-run.
+
+1. `db/RUN-ME-2026-09-11-devices.sql` — creates `devices` and `device_events`. Until it runs,
+   both panes open and say so, naming the file.
+2. `db/RUN-ME-2026-09-11b-device-location.sql` — adds the four position columns (§7). Until it
+   runs, handsets still beat and still lock; they simply report no position.
+
+These are `.sql` files for the SQL editor. `DEVICE-LOCKING.md` — this file — is for reading.
 
 **Tick the panes.** They are two ordinary tabs, `devlock` and `devunlock`, granted in **Teams &
 Staff → Roles & access** like every other screen. An admin holds both from the start; nobody
@@ -194,7 +200,37 @@ Said plainly, so nobody plans around a promise that was never made.
   warning at the top of the Locking pane is the only thing that will tell you.
 - **It cannot reach a phone that is factory reset before you lock it.** Device Owner blocks a
   reset from the handset's own settings, but not a hardware recovery-mode wipe on every model.
-- **It does not track location.** Hoop's version reports coordinates; that was deliberately left
-  out here. These are staff phones, and where an employee is standing is a different question
-  from whether the company's handset is locked. Say so if you want it and it can be added.
 - **A released phone is gone.** See §3.
+
+---
+
+## 8. Where a handset last was
+
+> "add location tracking too, GM will want it."
+
+The lock app already reports its last known position on every beat, so this needed no change on
+the phone — only `db/RUN-ME-2026-09-11b-device-location.sql` and the screen to show it.
+
+- The register's **Mahali / Where** column says **how old the fix is**, not the coordinate. What
+  somebody scanning a list of three hundred phones needs is whether there is a recent position
+  worth acting on.
+- The coordinate, its accuracy in metres and a map link are in the phone's own drawer, one tap
+  in.
+
+**The fix's age is not the beat's age, and the screen says so.** The handset reports its LAST
+KNOWN position rather than waking the GPS every beat, so a phone that checked in a minute ago can
+be carrying a fix from this morning. Where the fix is more than an hour older than the beat, the
+drawer says that in bold. Collapse the two facts and the register starts claiming a phone is
+somewhere it left on Tuesday — which is worse than showing nothing, because somebody drives
+there.
+
+What is thrown away rather than stored: half a coordinate, `0,0` (which is what a handset sends
+when it has no fix at all), anything off the globe, and a timestamp from the future — for the
+last, the position is kept and the beat's own time stands in, because a clock that is wrong tells
+you nothing about where the phone is.
+
+**What it is not.** This is where the company's handset was when it last spoke. It is not a live
+trace, it is not a movement history — only the latest fix is kept — and on a staff phone it should
+be read as an answer to "where do we go to collect this handset", not as an account of somebody's
+day. If the GM wants a history of positions rather than the last one, that is a different table
+and worth asking for deliberately.
