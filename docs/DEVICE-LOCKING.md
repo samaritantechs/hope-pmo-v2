@@ -320,12 +320,22 @@ missing or unreadable.
 
 > "DROP THE REASON FILLING AND ITS DATA SINCE THE MESSAGE IS ENOUGH"
 
-`DEVICE_LOCK_REASON` — a fallback reason line shown only on a phone that locked *itself* on the
-offline grace, never on one an officer ordered locked — is gone. A self-lock's `REASON:` line is
-simply blank now: the message above it already says whose phone this is and what to do with it,
-and a second sentence restating that added nothing. **This is not the reason typed into Funga**
-when somebody orders a lock — that one is unrelated, still required, and stays exactly as it was
-(§4, "The reason is not paperwork").
+Two changes came out of that, one settings-level and one in the app the handset runs.
+
+`DEVICE_LOCK_REASON` — a fallback reason shown only on a phone that locked *itself* on the
+offline grace, never on one an officer ordered locked — is gone as a **setting**.
+
+And the **`REASON:` line itself is gone from the locked screen entirely**, ordered lock or
+self-lock alike — the change lives in `LockActivity.java`, the same signed APK HOPE and Hoop
+both run (§5), so it took effect for both companies' phones the moment that build shipped. A
+locked screen now shows three lines, not four: the brand, the message, the IMEI. The message
+already says whose phone this is and what to do with it — that reason line, at best, restated
+it, and at worst named an accused employee to anyone who picked the phone up and read it.
+
+**This is not the reason typed into Funga.** Locking a phone from the portal still requires a
+reason, still writes it to the row's own history, still shows it in the portal's own
+`deviceHistory` — see §4, "The reason is not paperwork". What changed is only what a *stranger
+holding the locked handset* can read off its screen; the internal record is untouched.
 
 | Key | Default | What it does |
 |---|---|---|
