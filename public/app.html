@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-d';
+var BUILD = '2026-09-11-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6281,8 +6281,42 @@ function devEnrolDrawer_(){
   };
 }
 /** THE SHARED VIEW. `mode` is 'lock' or 'unlock' and decides only which orders are offered. */
+/* THE REFUSED-CLAIM STRIP, and why it says what the 403 would not.
+   ---------------------------------------------------------------------------------------
+   The handset is told nothing on purpose -- an endpoint that explains itself to a phone is
+   an endpoint anybody can ask which IMEIs the office is holding. The bench is not a phone,
+   so it is told everything, here.
+
+   TWO CAUSES, TWO DIFFERENT NEXT MOVES, and the whole value of this strip is telling them
+   apart. Not on the register: the number in the phone is not the number that was pasted --
+   the stock sheet was wrong, or it is a dual-SIM's other slot -- so enrol the one printed
+   here and the handset goes through. On the register: the command carried a batch that
+   phone was not in, which is what an old copied command does, so re-open Sajili simu. */
+function devRefused_(list, mode){
+  if (mode !== 'lock' || !list || !list.length) return '';
+  return '<div class="note bad"><b>' + money(list.length) + '</b> simu zimejaribu kujisajili '
+    + 'zikakataliwa (saa 24) / handsets tried to enrol in the last 24h and were refused:'
+    + '<ul style="margin:6px 0 0 18px;padding:0">'
+    + list.map(function(r){
+        return '<li style="margin:3px 0"><b>' + esc(r.imei) + '</b> · ' + esc(devAgo_(r.at))
+          + ' · ' + money(r.tries) + ' mara / tries<br>'
+          + (r.onRegister
+              ? 'Ipo kwenye rejista lakini haikuwa kwenye batch ya amri uliyotumia — amri ya zamani. '
+                + 'Fungua <b>+ Sajili simu</b> tena na nakili amri mpya. '
+                + '/ On the register, but not in the batch that command carried — it is an old '
+                + 'command. Re-open <b>+ Sajili simu</b> and copy the fresh one.'
+              : '<b>Haipo kwenye rejista.</b> Hii ndiyo IMEI halisi iliyoko ndani ya simu; '
+                + 'uliyoandika ni namba nyingine. Sajili hii hapa juu. '
+                + '/ <b>Not on the register.</b> This is the IMEI actually inside that handset — '
+                + 'what was pasted was a different number. Enrol this one.')
+          + '</li>';
+      }).join('')
+    + '</ul></div>';
+}
 function devicesView_(mode){
-  return srv('deviceList', { q: S.args.q || '' }).then(function(d){
+  /* `refused` IS ASKED FOR ONLY BY THE PANE THAT ENROLS. Kufungua simu never provisions a
+     handset, so it never has a refused claim to explain and does not pay the read. */
+  return srv('deviceList', { q: S.args.q || '', refused: mode === 'lock' }).then(function(d){
     var c = d.counts || {};
     S.devMode = mode;
     HEAD = (d.ready === false
@@ -6304,6 +6338,12 @@ function devicesView_(mode){
             + '/ ordered locked but never called home: the app was never provisioned properly on them. '
             + 'They are not locked and cannot be. Take them back to the bench.</div>'
           : '')
+      /* AND THE OTHER HALF OF THE SAME PROBLEM, one step earlier: a phone that asked to
+         enrol and was refused. The bench sees only "THE OFFICE REFUSED THIS PHONE (HTTP
+         403)", which names three possible causes and settles none of them. This names the
+         one that happened, and prints the IMEI THE HANDSET ITSELF REPORTED -- which on the
+         commonest failure of all is simply not the number that was pasted. */
+      + devRefused_(d.refused, mode)
       + bar('<label style="font-size:12px;color:var(--mut)">Tafuta / Search</label>'
           + '<input data-arg="q" value="' + esc(S.args.q || '') + '" placeholder="IMEI, jina, timu">'
           + (mode === 'lock'

@@ -220,6 +220,50 @@ test('a handset claims its own identity out of a batch, and never another phone\
     x => x.status === 403);
 });
 
+/* THE 403 SAYS NOTHING TO THE PHONE AND EVERYTHING TO THE BENCH.
+   -----------------------------------------------------------------------------------
+   This is the bench failure that has no other thread to pull: the IMEI on the stock sheet
+   is not the IMEI inside the handset, so the claim is refused, nothing is written against
+   any row, and the operator is left with three possible causes and no way to choose. The
+   register now keeps the number the phone gave for itself, which settles it in a glance. */
+test('a refused claim is filed for the office, naming the IMEI the handset gave', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '888888888888881' });
+
+  // What the bench actually hit: the phone reports a number nobody pasted.
+  await assert.rejects(() => deviceApi(db, 'dev_claim',
+    [{ batch: e.batch, imeis: ['888888888888889'] }], NOW), x => x.status === 403);
+  await assert.rejects(() => deviceApi(db, 'dev_claim',
+    [{ batch: e.batch, imeis: ['888888888888889'] }], NOW + 60000), x => x.status === 403);
+
+  const seen = await run(db, LOCKER, 'deviceList', { refused: true }, NOW + 120000);
+  assert.equal(seen.refused.length, 1, 'one handset, however many times it was tried');
+  assert.equal(seen.refused[0].imei, '888888888888889', 'the number the PHONE gave, not the one pasted');
+  assert.equal(seen.refused[0].tries, 2);
+  assert.equal(seen.refused[0].onRegister, false,
+    'and the fact that ends the hunt: this IMEI was never enrolled, so a different one was');
+
+  // A phone that IS on the register but carried a stale command reads the other way round,
+  // and the pane tells the operator to take a fresh command rather than to re-type an IMEI.
+  const later = await run(db, LOCKER, 'deviceEnrol', { imeis: '888888888888882' }, NOW);
+  await assert.rejects(() => deviceApi(db, 'dev_claim',
+    [{ batch: later.batch, imeis: ['888888888888881'] }], NOW), x => x.status === 403);
+  const two = await run(db, LOCKER, 'deviceList', { refused: true }, NOW + 120000);
+  assert.equal(two.refused.length, 2);
+  assert.equal(two.refused.find(r => r.imei === '888888888888881').onRegister, true);
+
+  // AND NOTHING IS WRITTEN FOR A BATCH THAT WAS NEVER REAL. Otherwise /api/device, which is
+  // the one door with no access code in front of it, would be a table anybody could fill.
+  await assert.rejects(() => deviceApi(db, 'dev_claim',
+    [{ batch: 'not-a-batch', imeis: ['123456789012345'] }], NOW), x => x.status === 403);
+  const after = await run(db, LOCKER, 'deviceList', { refused: true }, NOW + 120000);
+  assert.equal(after.refused.length, 2, 'a stranger with no batch leaves no row behind');
+
+  // The pane that never enrols never asks, and so never pays for the read.
+  const unlock = await run(db, UNLOCKER, 'deviceList', {}, NOW + 120000);
+  assert.deepEqual(unlock.refused, []);
+});
+
 test('locking a released-and-silent phone is refused, but the rest of the batch still locks', async () => {
   const db = fakeDb(tables());
   await run(db, LOCKER, 'deviceEnrol', { imeis: '777777777777771, 777777777777772' });
