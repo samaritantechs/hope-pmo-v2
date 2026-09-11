@@ -255,3 +255,66 @@ test('only a TIMEOUT buys a smaller slice; a bad file fails at once and says why
     e => /REF#/.test(String(e.message)));
   assert.equal(calls, 1, 'it did not sit there halving a file the database will never accept');
 });
+
+/* =====================================================================================
+   TICKING ROWS -- "no bulk tick/selct checkboxes on the left".
+   =====================================================================================
+   The whole risk in this change is ALIGNMENT. Three separate places grew a cell -- the
+   header, every body row, and the JUMLA row -- and if any one of them is missed the table
+   skews by a column and every figure sits under the wrong heading. That is a bug somebody
+   would act on, so it is pinned here rather than left to be noticed on screen.
+
+   The picking itself is a set of row KEYS, not row positions, which is what lets a tick
+   survive a sort or a search. */
+function liftTable(names, state) {
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const grab = re => {
+    const m = src.match(re);
+    assert.ok(m, 'app.html no longer contains ' + re + ' -- the extractor needs updating');
+    return m[0];
+  };
+  const code = [
+    'var S = ' + JSON.stringify(state) + ';',
+    'function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g, function(c){'
+      + ' return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]; }); }',
+    'function isNum(c){ return c.kind==="num"||c.kind==="money"||c.kind==="pct"; }',
+    'function cellHtml(r,c){ var v = c.get?c.get(r):r[c.key]; return esc(v==null?"":v); }',
+    'function autoTotals(){ return null; }',
+    'function colourCtx_(){ return { floors:{}, avgCol:null }; }',
+    'function cellCls_(){ return ""; }',
+    'function pickPaintCount_(){}',
+    grab(/function pickOn_\(\)\{[\s\S]*?\n\}/),
+    grab(/function pickKeyOf_\(r\)\{[\s\S]*?\n\}/),
+    grab(/function pickHas_\(r\)\{[\s\S]*?\n\}/),
+    grab(/function tableHtml\(rows, cols, onRow\)\{[\s\S]*?\n\}/),
+    'return {' + names.map(n => n + ': ' + n).join(', ') + '};',
+  ].join('\n');
+  return new Function(code)();
+}
+
+const countTag = (html, tag) => (html.match(new RegExp('<' + tag + '[ >]', 'g')) || []).length;
+
+test('a table without ticks is exactly the table it always was', () => {
+  const M = liftTable(['tableHtml'], { pickKey: null, pick: {}, sort: '', asc: false });
+  const html = M.tableHtml([{ imei: '1', v: 2 }], [{ key: 'imei', label: 'IMEI' }, { key: 'v', label: 'V' }], null);
+  assert.equal(countTag(html, 'th'), 3, 'S/N and the two columns, and no tick column');
+  assert.ok(!/data-pick/.test(html), 'nothing about picking reaches a tab that did not ask for it');
+});
+
+test('ticking adds ONE cell to the header and to every row, and keeps them level', () => {
+  const M = liftTable(['tableHtml'], { pickKey: 'imei', pick: { '351388334583296': true }, sort: '', asc: false });
+  const rows = [{ imei: '351388334583295', v: 1 }, { imei: '351388334583296', v: 2 }];
+  const cols = [{ key: 'imei', label: 'IMEI' }, { key: 'v', label: 'V' }];
+  const html = M.tableHtml(rows, cols, function () {});
+
+  assert.equal(countTag(html, 'th'), 4, 'the tick column, S/N and the two columns');
+  const bodyRows = html.split('<tr').filter(x => /data-i=/.test(x));
+  assert.equal(bodyRows.length, 2);
+  for (const tr of bodyRows) {
+    assert.equal(countTag('<tr' + tr.split('</tr>')[0], 'td'), 4, 'every row matches the header, cell for cell');
+  }
+  // The tick is checked from S, so it survives a re-render after a sort or a search.
+  assert.ok(/data-pick="351388334583296"[^>]*checked/.test(html), 'a ticked row comes back ticked');
+  assert.ok(/data-pick="351388334583295"(?![^>]*checked)/.test(html), 'and an unticked one does not');
+  assert.ok(/data-pickall/.test(html), 'with a master tick in the header');
+});
