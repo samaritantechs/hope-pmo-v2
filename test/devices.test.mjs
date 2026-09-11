@@ -519,3 +519,61 @@ test('the lock screen\'s words come from settings, and a missing number promises
   assert.equal(b2.brand, 'HOPE MICROCREDIT');
   assert.doesNotMatch(b2.message, /piga\s*\./i, 'no number, no promise of one');
 });
+
+/* THE MARK ON THE LOCKED SCREEN.
+   -----------------------------------------------------------------------------------
+     "For hope phones this is the logo, so the logos differ"
+
+   HOPE runs Hoop's signed APK on purpose, and the wordmark used to be compiled into it --
+   so a locked HOPE handset drew HOOP's mark above the words "HOPE MICROCREDIT". Two
+   companies on one screen, in front of the officer deciding whether this is their employer
+   or a scam. The mark now travels with the words, and the rules below are what make one
+   APK able to serve both companies. */
+test('a locked handset is told which mark to draw, and a released one is told none', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '212121212121212' });
+  const beat = await deviceApi(db, 'dev_beat', [{ token: e.provision[0].token }], NOW);
+
+  // A PATH, not a URL: the handset resolves it against the server it was provisioned
+  // against, which is the whole mechanism by which one build serves two companies.
+  assert.equal(beat.logo[0], '/', 'an absolute URL here would send Hoop\'s phones to HOPE');
+  assert.match(beat.logoVersion, /^[0-9a-f]{8}$/, 'generated from the bytes, never typed');
+
+  /* The version is what tells a handset to fetch again. A phone that draws this screen with
+     no network redraws from its cached copy, so a version that did not move with the file
+     would leave a fleet showing last month's mark with nothing on any screen to say so. */
+  const again = await deviceApi(db, 'dev_beat', [{ token: e.provision[0].token }], NOW + 1000);
+  assert.equal(again.logoVersion, beat.logoVersion, 'stable while the bytes are');
+
+  // RELEASED MEANS RELEASED. Our logo left cached on a leaver's handset is the opposite of
+  // handing the phone back -- the same rule the words already followed.
+  await run(db, UNLOCKER, 'deviceSetState', { imei: '212121212121212', state: 'released' });
+  const bye = await deviceApi(db, 'dev_beat', [{ token: e.provision[0].token }], NOW + 2000);
+  assert.equal(bye.logo, null);
+  assert.equal(bye.logoVersion, null);
+  assert.equal(bye.brand, null, 'and the words go with it, as they always did');
+});
+
+test('the office can point the mark elsewhere, or turn it off without falling back', async () => {
+  const t = tables();
+  t.settings = [{ key: 'DEVICE_LOCK_LOGO', value: 'https://cdn.example/hope-white.png' }];
+  const db = fakeDb(t);
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '222222222222221' });
+  const beat = await deviceApi(db, 'dev_beat', [{ token: e.provision[0].token }], NOW);
+  assert.equal(beat.logo, 'https://cdn.example/hope-white.png');
+  assert.equal(beat.logoVersion, 'https://cdn.example/hope-white.png',
+    'an address is its own version: change it and every handset refetches');
+
+  /* `none` MUST MEAN NO MARK, not "use whatever is baked into the APK". Falling back is
+     exactly how HOOP's logo lands on a HOPE phone, which is what this whole change exists
+     to prevent -- so the off switch has to be unambiguous on the wire. */
+  for (const off of ['none', 'NONE', 'hakuna', '-', '  none  ']) {
+    const t2 = tables();
+    t2.settings = [{ key: 'DEVICE_LOCK_LOGO', value: off }];
+    const db2 = fakeDb(t2);
+    const e2 = await run(db2, LOCKER, 'deviceEnrol', { imeis: '222222222222222' });
+    const b2 = await deviceApi(db2, 'dev_beat', [{ token: e2.provision[0].token }], NOW);
+    assert.equal(b2.logo, null, off);
+    assert.equal(b2.logoVersion, null, off);
+  }
+});
