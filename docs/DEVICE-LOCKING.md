@@ -256,9 +256,14 @@ office it is right. Here it is not: it moves the token and leaves the server whe
 the phone ends up holding a HOPE credential while beating to Hoop. No register can reach it, no
 desk can unlock it, and `DISALLOW_FACTORY_RESET` means it cannot be wiped either.
 
+**From lock app 1.11.8 onward, achia does this for you.** A successful release now clears the
+handset's token and server, so a phone Hoop has released is already free: run §4's two steps
+and it enrols here with nothing special. Check the app version before assuming it — a handset
+released while still on 1.11.7 or older kept both, and needs the rest of this section.
+
 **The one step that matters is clearing the token**, because an empty token is what makes the
-next enrolment *fresh*, and fresh is what lets `-e server` land. **Only the cable release does
-that** — not an office release, not a re-enrol, not `-e current`.
+next enrolment *fresh*, and fresh is what lets `-e server` land. On an older handset **only the
+cable release does that** — not an office release, not a re-enrol, not `-e current`.
 
 So the handover, whole, with the phone on a cable:
 
