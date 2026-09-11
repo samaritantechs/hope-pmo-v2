@@ -61,7 +61,14 @@ export function teamAllowed(user, team) {
     ONE place keeps /api/me (which draws the UI) and /api/portal (which enforces) agreeing. */
 export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promises', 'fureport',
   'complaints', 'restructure', 'legal', 'expected', 'defexp', 'expdfrep', 'credit', 'abnormal', 'reports',
-  'weekly', 'par', 'present', 'teams', 'commission', 'calls', 'perf'];
+  'weekly', 'par', 'present', 'teams', 'commission', 'calls', 'perf',
+  /* THE COMPANY PHONE REGISTER, AS TWO SEPARATE TICKS ON PURPOSE.
+       "GM has ordered to implement those two nav panes for locking and unlocking"
+     Locking a leaver's handset and giving a handset back are two different authorities, and
+     the whole reason the GM asked for two panes is that they should be grantable to two
+     different people. Both are ordinary tabs, ticked like every other: nobody holds either
+     until an admin says so, and an admin holds both from the start. */
+  'devlock', 'devunlock'];
 /* `audit` is deliberately NOT in USER_TABS: it starts admin-only, and is opened to a role the
    ordinary way -- tick it on that role in Teams & Staff and both the nav item and the function
    follow. One mechanism, the same one every other tab uses. */

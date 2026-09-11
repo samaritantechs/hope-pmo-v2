@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-09-a';
+var BUILD = '2026-09-11-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -756,6 +756,18 @@ var NAV = [
   { id:'par',         label:'Portfolio at Risk', ic:'<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
   { id:'present',     label:'Presentation', ic:'<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>' },
   { id:'teams',       label:'Teams & Staff', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
+  /* THE COMPANY PHONE REGISTER, AS TWO PANES BECAUSE IT IS TWO AUTHORITIES.
+       "field officers, managers, gmos, pmos etc are provided with company devices and some of
+        uor unworth employees quit with our phones so GM has ordered to implement those two
+        nav panes for locking and unlocking in hopepmo too"
+     Both panes draw the SAME register from the same devicesView_ -- one implementation, so
+     the two cannot drift into disagreeing about the fleet. What differs is which orders each
+     offers, and the SERVER gates the order itself on the state being asked for, so hiding a
+     button here is the courtesy rather than the rule. */
+  { id:'devlock',     label:'Kufunga simu / Locking',
+    ic:'<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/><path d="M9 10V8a3 3 0 0 1 6 0v2"/><rect x="8" y="10" width="8" height="5" rx="1"/>' },
+  { id:'devunlock',   label:'Kufungua simu / Unlocking',
+    ic:'<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/><path d="M9 10V8a3 3 0 0 1 6 0"/><rect x="8" y="10" width="8" height="5" rx="1"/>' },
   { id:'upload',      label:'Upload Reports', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
   { id:'settings',    label:'Settings', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>' },
   /* Granted, not assumed -- which is now true of every tab in this list, not only this one.
@@ -2383,6 +2395,7 @@ function wireBar(){
   wireStampWeek();
   wireTeamsDownload();
   wireStaffExcel();
+  wireDevices();
 }
 
 /* SEPARATE FROM wireClean ON PURPOSE. wireClean returns early when the Settings cards are not
@@ -5907,6 +5920,293 @@ VIEWS.creditinfo = function(){
     S.foot = money(d.count) + ' wateja / customers · Count 1–6: ' + money(s.c16);
   });
 };
+
+/* =====================================================================================
+   THE COMPANY PHONE REGISTER -- two panes, one register.
+
+     "GM wants us to enroll and lock all our hope company phones ... field officers,
+      managers, gmos, pmos etc are provided with company devices and some of uor unworth
+      employees quit with our phones so GM has ordered to implement those two nav panes for
+      locking and unlocking in hopepmo too"
+
+   Kufunga simu and Kufungua simu draw the SAME list from the SAME function below -- one
+   implementation, so the two panes can never disagree about the fleet. What differs is which
+   orders each offers. Hiding the other pane's buttons here is the COURTESY; the rule is on
+   the server, which gates every state change on the state being asked for rather than on the
+   screen that asked (see requireDeviceOrder_ in portal-core.js). Anyone reading this should
+   assume the buttons are a convenience and the gate is elsewhere.
+   ===================================================================================== */
+/* The lock app's package name, in one place. The command below is copied at a bench and run
+   against a handset, so it has to name the APK that is actually on the phone -- see
+   docs/DEVICE-LOCKING.md for building it. */
+var DEV_PKG = 'com.samaritantechs.hopelock';
+function devStateChip_(r){
+  if (r.state === 'lost') return 'bad';
+  if (r.state === 'locked') return r.lockState === 'pending' ? 'warn' : 'bad';
+  if (r.state === 'released') return 'mut';
+  return 'ok';
+}
+function devStateText_(r){
+  if (r.state === 'lost') return 'Hasara / written off';
+  if (r.state === 'locked') return r.lockState === 'pending'
+    ? 'Imeagizwa kufungwa / lock ordered' : 'Imefungwa / locked';
+  if (r.state === 'released') return 'Imeachiwa / released';
+  return 'Inatumika / in service';
+}
+/** How long since the handset last spoke, in words somebody can act on. */
+function devSeen_(r){
+  if (!r.lastSeen) return 'haijawahi / never';
+  var mins = Math.round((Date.now() - Date.parse(r.lastSeen)) / 60000);
+  if (mins < 2) return 'sasa hivi / just now';
+  if (mins < 90) return mins + ' dak / min';
+  var hrs = Math.round(mins / 60);
+  return hrs < 48 ? hrs + ' saa / hrs' : Math.round(hrs / 24) + ' siku / days';
+}
+/* ONE CALL FOR EVERY ORDER, so the 409 about a released-and-silent phone is handled in one
+   place rather than at each button. The confirmation it raises is a question about the phones
+   the server NAMED -- the rest are already done, and the message says how many. */
+function devOrder_(state, imeis, reason, force){
+  return srv('deviceSetState', { imeis: imeis, state: state, reason: reason || '', force: !!force })
+    .then(function(r){
+      var said = [];
+      if (r.changed) said.push(r.changed + ' zimebadilishwa / changed');
+      if (r.alreadyThere) said.push(r.alreadyThere + ' zilikuwa hivyo / already');
+      if (r.notEnrolled) said.push(r.notEnrolled + ' hazipo kwenye rejista / not enrolled');
+      toast(said.join(' · ') || 'Hakuna kilichobadilika. / Nothing changed.');
+      closeDrawer(); render({ force:true });
+      return r;
+    })
+    .catch(function(e){
+      if (e && e.code === 'RELEASED_NOT_LISTENING' && e.imeis && e.imeis.length) {
+        var n = e.changed || 0;
+        if (confirm((n ? n + ' zimefungwa. ' : '')
+            + e.imeis.length + ' simu iliachiwa na haijaongea tangu hapo — haitasikia amri hii.\n\n'
+            + (n ? n + ' phone(s) were locked. ' : '')
+            + e.imeis.length + ' was released and has not spoken since, so it will not hear this '
+            + 'order. Leave the order standing for when the app is put back on it by cable?')) {
+          return devOrder_(state, e.imeis, reason, true);
+        }
+        render({ force:true });
+        return null;
+      }
+      toast(String((e && e.message) || e), true);
+      throw e;
+    });
+}
+/** The paste box every bulk order shares: a column of IMEIs, and a reason where one is due. */
+function devBulkDrawer_(state, title, needReason){
+  drawer('<h3>' + esc(title) + '</h3>'
+    + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
+    + '<textarea id="devBulkList" rows="8" placeholder="351388334583295&#10;351388334583296"></textarea></div>'
+    + (needReason
+        ? '<div class="fld"><label>Sababu / Reason <b>*</b></label>'
+          + '<input id="devBulkWhy" placeholder="mfano: ameacha kazi na simu"></div>'
+          /* The reason is not paperwork. Six months from now "why is this locked" has to have
+             an answer, and this is the only moment anybody will reliably give one. */
+          + '<div class="note">Sababu inaonekana kwenye skrini ya simu iliyofungwa na kwenye '
+          + 'historia yake. / The reason shows on the locked phone\'s own screen and stays in its history.</div>'
+        : '')
+    + '<button class="btn w" id="devBulkGo">Tuma / Send</button>');
+  $('#devBulkGo').onclick = function(){
+    var list = String($('#devBulkList').value || '').trim();
+    if (!list) { toast('Weka IMEI. / Paste at least one IMEI.', true); return; }
+    var why = needReason ? String(($('#devBulkWhy')||{}).value || '').trim() : '';
+    if (needReason && !why) { toast('Sababu inahitajika. / A reason is required.', true); return; }
+    $('#devBulkGo').disabled = true;
+    devOrder_(state, list, why).catch(function(){ $('#devBulkGo').disabled = false; });
+  };
+}
+/** ONE PHONE'S STORY, and the orders that can be given against it from this pane. */
+function devOpen_(imei, mode){
+  srv('deviceHistory', { imei: imei }).then(function(d){
+    if (!d.found) { toast('Simu hii haipo kwenye rejista. / Not on the register.', true); return; }
+    var r = d.device;
+    var line = function(k, v){ return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0">'
+      + '<span class="mutl">' + esc(k) + '</span><b>' + esc(v == null || v === '' ? '—' : String(v)) + '</b></div>'; };
+    drawer('<h3>' + esc(r.imei) + '</h3>'
+      + '<div class="note"><span class="chip ' + devStateChip_(r) + '">' + esc(devStateText_(r)) + '</span>'
+      + (r.lockedNeverSpoke
+          ? ' <span class="chip bad">Haijawahi kuongea / never called home</span>' : '')
+      + '</div>'
+      + line('Mfano / Model', r.item)
+      + line('Ana nayo / Held by', r.holder)
+      + line('Timu / Team', r.team)
+      + line('Wadhifa / Role', r.role)
+      + line('Ilionekana / Last seen', devSeen_(r))
+      + line('Betri / Battery', r.battery == null ? null : r.battery + '%')
+      + line('Toleo / App', r.appVersion)
+      + line('Sababu / Reason', r.reason)
+      + line('Ameagiza / Ordered by', r.by)
+      /* THE HANDSET'S OWN GUESS AT ITS IMEI, shown only when it differs. A dual-SIM phone has
+         two and Android is not consistent about which it hands back, so a difference is a
+         thing for a person to look at, never a fact to act on. */
+      + (r.reportedImei && r.reportedImei !== r.imei
+          ? '<div class="note">Simu inasema IMEI yake ni <b>' + esc(r.reportedImei) + '</b>. '
+            + 'Simu za SIM mbili zina IMEI mbili — si lazima iwe tatizo. '
+            + '/ The handset reports a different IMEI. A dual-SIM phone has two; this is not '
+            + 'proof of anything on its own.</div>'
+          : '')
+      + '<div class="fld"><label>Ana nayo nani? / Who is carrying it?</label>'
+      + '<input id="devHolder" value="' + esc(r.holder || '') + '" placeholder="jina la mfanyakazi / staff name"></div>'
+      + '<div class="fld"><label>Timu / Team</label><input id="devTeam" value="' + esc(r.team || '') + '"></div>'
+      + '<div class="fld"><label>Wadhifa / Role</label><input id="devRole" value="' + esc(r.role || '') + '"></div>'
+      + '<button class="btn w ghost" id="devSaveHolder">Hifadhi mwenye simu / Save holder</button>'
+      + (mode === 'lock'
+          ? '<div class="fld" style="margin-top:10px"><label>Sababu / Reason</label>'
+            + '<input id="devWhy" placeholder="mfano: ameacha kazi na simu"></div>'
+            + '<button class="btn w bad" id="devLock">🔒 Funga / Lock</button>'
+            + '<button class="btn w ghost" id="devLost">Andika hasara / Write off</button>'
+          : '<button class="btn w" id="devUnlock" style="margin-top:10px">🔓 Fungua / Unlock</button>'
+            + '<button class="btn w ghost" id="devRelease">Achia kabisa / Release for good</button>'
+            + '<div class="note">Achia humwambia simu ijifungue, iache ulinzi na <b>iache kuongea nasi</b>. '
+            + 'Ni ya simu inayorudishwa kwa mwenyewe. / Release tells the handset to unlock, drop the '
+            + 'restrictions and <b>stop calling home</b>. It is for a phone leaving the company for good.</div>')
+      + '<div class="card" style="margin-top:12px"><div class="card-h">Historia / History</div>'
+      + '<div class="scroll"><table><thead><tr><th>Lini</th><th>Tukio</th><th>Sababu</th><th>Nani</th></tr></thead><tbody>'
+      + (d.events || []).map(function(e){
+          return '<tr><td>' + esc(String(e.at || '').replace('T',' ').slice(0,16)) + '</td>'
+            + '<td>' + esc(e.event) + (e.to ? ' → ' + esc(e.to) : '') + '</td>'
+            + '<td>' + esc(e.reason || '') + '</td><td>' + esc(e.actor || '') + '</td></tr>';
+        }).join('') + '</tbody></table></div></div>');
+
+    $('#devSaveHolder').onclick = function(){
+      srv('deviceIssue', { imei: imei, holder: $('#devHolder').value,
+        team: $('#devTeam').value, role: $('#devRole').value })
+        .then(function(){ toast('Imehifadhiwa. / Saved.'); closeDrawer(); render({ force:true }); })
+        .catch(function(e){ toast(String(e.message || e), true); });
+    };
+    if (mode === 'lock') {
+      $('#devLock').onclick = function(){
+        var why = String($('#devWhy').value || '').trim();
+        if (!why) { toast('Sababu inahitajika. / A reason is required.', true); return; }
+        devOrder_('locked', [imei], why);
+      };
+      $('#devLost').onclick = function(){
+        var why = String($('#devWhy').value || '').trim();
+        if (!why) { toast('Sababu inahitajika. / A reason is required.', true); return; }
+        if (!confirm('Andika simu hii kama hasara? Itabaki imefungwa milele.\n\n'
+          + 'Write this phone off? It stays LOCKED for good — that is the point of it.')) return;
+        devOrder_('lost', [imei], why);
+      };
+    } else {
+      $('#devUnlock').onclick = function(){ devOrder_('enrolled', [imei], ''); };
+      $('#devRelease').onclick = function(){
+        if (!confirm('Achia simu hii kabisa? Itaacha kuongea nasi na haitaweza kufungwa tena bila kebo.\n\n'
+          + 'Release for good? It stops calling home, and cannot be locked again without a cable.')) return;
+        devOrder_('released', [imei], '');
+      };
+    }
+  }).catch(function(e){ toast(String((e && e.message) || e), true); });
+}
+/** ENROL. The bench's own screen: paste the column of IMEIs, get one command back. */
+function devEnrolDrawer_(){
+  drawer('<h3>Sajili simu / Enrol phones</h3>'
+    + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
+    + '<textarea id="devEnrolList" rows="8" placeholder="351388334583295&#10;351388334583296"></textarea></div>'
+    + '<div class="fld"><label>Mfano / Model</label><input id="devEnrolItem" placeholder="mfano: Samsung A05"></div>'
+    + '<button class="btn w" id="devEnrolGo">Sajili / Enrol</button>');
+  $('#devEnrolGo').onclick = function(){
+    var list = String($('#devEnrolList').value || '').trim();
+    if (!list) { toast('Weka IMEI. / Paste at least one IMEI.', true); return; }
+    $('#devEnrolGo').disabled = true;
+    srv('deviceEnrol', { imeis: list, item: $('#devEnrolItem').value })
+      .then(function(r){
+        if (r.ready === false) { toast(r.note, true); $('#devEnrolGo').disabled = false; return; }
+        /* THE COMMAND, WITH THE BATCH ALREADY IN IT. One line for every phone on the hub:
+           each handset reads its own IMEI and collects the token minted for it, so plug-in
+           order cannot decide which phone gets which identity. */
+        var origin = location.origin;
+        /* The package comes from the SERVER, because the command has to name the APK that is
+           actually on these handsets -- and `am broadcast` answers a wrong package with
+           "Broadcast completed: result=0", which reads exactly like success while nothing was
+           enrolled. Set DEVICE_LOCK_PACKAGE in Settings if you run your own build. */
+        var pkg = r.pkg || DEV_PKG;
+        var cmd = 'adb shell am broadcast --include-stopped-packages'
+          + ' -a ' + pkg + '.ENROL'
+          + ' -n ' + pkg + '/.EnrolReceiver'
+          + ' -e server ' + origin
+          + ' -e batch ' + r.batch;
+        drawer('<h3>' + money(r.enrolled) + ' zimesajiliwa / enrolled</h3>'
+          + (r.alreadyOn ? '<div class="note">' + money(r.alreadyOn) + ' zilikuwepo tayari — zimehifadhi token yake ya zamani. '
+              + '/ already on the register, each keeping the token it already had.</div>' : '')
+          + (r.revived ? '<div class="note">' + money(r.revived) + ' zilizokuwa zimeachiwa zimerudi kazini. '
+              + '/ previously released, now back in service.</div>' : '')
+          + '<div class="note">Kwanza: <b>adb shell dpm set-device-owner ' + esc(pkg) + '/.LockAdmin</b> '
+          + 'kwa kila simu. Kisha amri moja hii kwa zote zilizounganishwa. '
+          + '/ Run set-device-owner on each handset first, then this ONE command for every phone on the hub.</div>'
+          + '<div class="fld"><label>Amri ya bench / The bench command</label>'
+          + '<textarea id="devCmd" rows="4" readonly>' + esc(cmd) + '</textarea></div>'
+          + '<button class="btn w ghost" id="devCmdCopy">Nakili / Copy</button>'
+          + '<div class="note">Batch hii inakufa baada ya saa 24. / This batch expires in 24 hours.</div>');
+        $('#devCmdCopy').onclick = function(){
+          var t = $('#devCmd'); t.select();
+          try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
+          catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
+        };
+      })
+      .catch(function(e){ $('#devEnrolGo').disabled = false; toast(String(e.message || e), true); });
+  };
+}
+/** THE SHARED VIEW. `mode` is 'lock' or 'unlock' and decides only which orders are offered. */
+function devicesView_(mode){
+  return srv('deviceList', { q: S.args.q || '' }).then(function(d){
+    var c = d.counts || {};
+    S.devMode = mode;
+    HEAD = (d.ready === false
+        ? '<div class="note bad">' + esc(d.note) + '</div>'
+        : '')
+      + '<div class="kpis">'
+      + kpi('Simu / Phones', money(d.total), money(c.issued) + ' zimetolewa · ' + money(c.inStore) + ' stoo')
+      + kpi('Zimefungwa / Locked', money(c.locked),
+            c.lockPending ? money(c.lockPending) + ' bado hazijathibitisha / not yet confirmed' : 'zote zimethibitisha / all confirmed',
+            c.locked ? 'bad' : '')
+      + kpi('Hasara / Written off', money(c.lost), 'zimeachwa zimefungwa / left locked', c.lost ? 'bad' : '')
+      + kpi('Kimya / Quiet', money(c.stale), money(c.neverSeen) + ' hazijawahi kuongea / never spoke', 'warnc')
+      + '</div>'
+      /* THE ALARM, said where somebody will see it: a handset ordered locked that has never
+         once called home was never provisioned properly, and no other screen can show that. */
+      + (c.lockedNeverSpoke
+          ? '<div class="note bad"><b>' + money(c.lockedNeverSpoke) + '</b> simu zimeagizwa kufungwa lakini '
+            + 'hazijawahi kuongea nasi — hazikuwekwa app vizuri. Zirudishe kwenye bench. '
+            + '/ ordered locked but never called home: the app was never provisioned properly on them. '
+            + 'They are not locked and cannot be. Take them back to the bench.</div>'
+          : '')
+      + bar('<label style="font-size:12px;color:var(--mut)">Tafuta / Search</label>'
+          + '<input data-arg="q" value="' + esc(S.args.q || '') + '" placeholder="IMEI, jina, timu">'
+          + (mode === 'lock'
+              ? '<button class="btn sm" id="devEnrolBtn" style="margin-left:8px">+ Sajili simu / Enrol</button>'
+                + '<button class="btn sm bad" id="devLockMany" style="margin-left:6px">🔒 Funga kwa wingi / Lock many</button>'
+              : '<button class="btn sm" id="devUnlockMany" style="margin-left:8px">🔓 Fungua kwa wingi / Unlock many</button>'
+                + '<button class="btn sm ghost" id="devReleaseMany" style="margin-left:6px">Achia kwa wingi / Release many</button>')
+          + '<span class="chip mut" style="margin-left:8px">'
+          + (mode === 'lock' ? 'Kufunga / Locking' : 'Kufungua / Unlocking') + '</span>');
+    S.rows = d.rows || [];
+    S.cols = [col('imei','IMEI'),
+      {key:'state', label:'Hali / State', kind:'chip', chip:devStateChip_,
+       get:devStateText_},
+      col('holder','Ana nayo / Held by'), col('team','Timu'), col('role','Wadhifa'),
+      col('item','Mfano / Model'),
+      {key:'lastSeen', label:'Ilionekana / Seen', get:devSeen_,
+       cls:function(r){ return r.neverSeen ? 'bad' : (r.stale ? 'warnc' : ''); }},
+      {key:'battery', label:'Betri', kind:'num', get:function(r){ return r.battery == null ? '' : r.battery + '%'; }},
+      col('reason','Sababu / Reason'), col('by','Ameagiza / By')];
+    ONROW = function(r){ devOpen_(r.imei, mode); };
+    S.foot = money(d.total) + ' simu / phones'
+      + (d.searching ? ' · utafutaji / searching "' + d.q + '"' : '');
+  });
+}
+VIEWS.devlock = function(){ return devicesView_('lock'); };
+VIEWS.devunlock = function(){ return devicesView_('unlock'); };
+function wireDevices(){
+  var a = document.getElementById('devEnrolBtn');
+  if (a) a.onclick = devEnrolDrawer_;
+  var b = document.getElementById('devLockMany');
+  if (b) b.onclick = function(){ devBulkDrawer_('locked', 'Funga kwa wingi / Lock many', true); };
+  var c = document.getElementById('devUnlockMany');
+  if (c) c.onclick = function(){ devBulkDrawer_('enrolled', 'Fungua kwa wingi / Unlock many', false); };
+  var e = document.getElementById('devReleaseMany');
+  if (e) e.onclick = function(){ devBulkDrawer_('released', 'Achia kwa wingi / Release many', false); };
+}
 
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
    report read these columns, so a reassignment has to be editable here, not re-uploaded. */

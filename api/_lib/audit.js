@@ -50,6 +50,12 @@ export const AUDITED = new Set([
   'addRestructure', 'decideRestructure', 'addDemandNotice',
   // destructive maintenance
   'purgeSnapshots', 'purgeSuperseded', 'followupClean',
+  /* THE COMPANY PHONE REGISTER. Locking a handset is an act against a named employee, and
+     the register's own device_events trail records the state change. This records the OTHER
+     half -- that a person holding a code did it, from the one door every write passes -- so
+     "who ordered this lock" is answerable from the audit log as well as from the register,
+     and remains answerable if the device row is later deleted. */
+  'deviceEnrol', 'deviceSetState', 'deviceIssue', 'deviceDelete',
 ]);
 
 /** The ONLY argument fields that ever reach the table. Anything not named here is dropped --
