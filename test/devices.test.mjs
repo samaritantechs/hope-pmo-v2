@@ -68,6 +68,25 @@ test('enrolling mints one token per phone, and does it once', async () => {
   assert.ok(db._dump('devices').some(d => d.imei === '351388334583297'));
 });
 
+test('the bench command names the APK that is actually on the phones', async () => {
+  /* A WRONG PACKAGE FAILS SILENTLY, which is why this is pinned. `am broadcast` answers a
+     package that is not installed with "Broadcast completed: result=0" -- the exact line the
+     bench is told to read as success -- while nothing was enrolled at all.
+
+     The default is the signed lock app HOPE actually installs: "set DEVICE_LOCK_PACKAGE to the
+     hooploan one so that i dont download another apk nor nothing more". The app takes its
+     SERVER at first enrolment, so pointing it at HOPE needs no build of our own. */
+  const db = fakeDb(tables());
+  const a = await run(db, LOCKER, 'deviceEnrol', { imeis: '350000000000001' });
+  assert.equal(a.pkg, 'com.samaritantechs.hooploanlock', 'nothing has to be typed for the app in use');
+
+  // And the day HOPE builds its own, the setting moves the bench command with no deploy.
+  const t = tables();
+  t.settings = [{ key: 'DEVICE_LOCK_PACKAGE', value: 'com.samaritantechs.hopelock' }];
+  const own = await run(fakeDb(t), LOCKER, 'deviceEnrol', { imeis: '350000000000002' });
+  assert.equal(own.pkg, 'com.samaritantechs.hopelock');
+});
+
 test('the two panes are two authorities, and the gate is on the order not the screen', async () => {
   const db = fakeDb(tables());
   await run(db, LOCKER, 'deviceEnrol', { imeis: '111111111111111' });

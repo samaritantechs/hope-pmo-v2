@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-a';
+var BUILD = '2026-09-11-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5936,10 +5936,12 @@ VIEWS.creditinfo = function(){
    screen that asked (see requireDeviceOrder_ in portal-core.js). Anyone reading this should
    assume the buttons are a convenience and the gate is elsewhere.
    ===================================================================================== */
-/* The lock app's package name, in one place. The command below is copied at a bench and run
-   against a handset, so it has to name the APK that is actually on the phone -- see
-   docs/DEVICE-LOCKING.md for building it. */
-var DEV_PKG = 'com.samaritantechs.hopelock';
+/* The lock app's package name, as a LAST RESORT only -- the server sends the real one with
+   every enrolment, read from DEVICE_LOCK_PACKAGE. The command below is copied at a bench and
+   run against a handset, so it has to name the APK that is actually installed: a wrong package
+   makes `am broadcast` print "Broadcast completed: result=0", which reads exactly like success
+   while nothing was enrolled. See docs/DEVICE-LOCKING.md. */
+var DEV_PKG = 'com.samaritantechs.hooploanlock';
 function devStateChip_(r){
   if (r.state === 'lost') return 'bad';
   if (r.state === 'locked') return r.lockState === 'pending' ? 'warn' : 'bad';
