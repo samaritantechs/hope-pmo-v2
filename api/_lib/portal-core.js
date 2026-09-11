@@ -6828,6 +6828,13 @@ function deviceRow_(r, nowMs) {
        ordered locked that has never once called home was never provisioned properly, and the
        office has no way of seeing that except here. */
     lockedNeverSpoke: state === 'locked' && !seen,
+    /* AN ORDER SITTING ON THIS ROW, UNCONFIRMED. A shift is answered by the handset on its
+       own next beat and clears itself when it lands -- see `shifted` in device-core.js -- so
+       a row still carrying one has either not beaten since, or the batch it was given never
+       matched anything at the other end. Both are worth a look, which is why this is shown
+       rather than left to sit invisibly on a column nobody queries. */
+    shiftPending: !!r.shift_server,
+    shiftTo: r.shift_server || null,
   };
 }
 
@@ -6905,7 +6912,7 @@ async function deviceList(db, user, args, nowMs = Date.now()) {
   const FRESH_MS = 24 * 60 * 60 * 1000;
   const freshOf = d => (d.enrolledAt && (nowMs - Date.parse(d.enrolledAt)) < FRESH_MS) ? 0 : 1;
   const rank = d => (d.state === 'lost' ? 0 : d.lockState === 'pending' ? 1
-    : d.stale ? 2 : d.state === 'locked' ? 3 : 4);
+    : d.shiftPending ? 2 : d.stale ? 3 : d.state === 'locked' ? 4 : 5);
   rows.sort((x, y) => {
     const fx = freshOf(x), fy = freshOf(y);
     if (fx !== fy) return fx - fy;
@@ -6928,6 +6935,7 @@ async function deviceList(db, user, args, nowMs = Date.now()) {
       neverSeen: count(r => r.neverSeen),
       stale: count(r => r.stale && !r.neverSeen),
       lockedNeverSpoke: count(r => r.lockedNeverSpoke),
+      shiftPending: count(r => r.shiftPending),
       issued: count(r => !!r.holder),
       inStore: count(r => !r.holder && r.state !== 'released'),
     } };
@@ -7213,6 +7221,84 @@ async function deviceTokenOf(db, user, args) {
   return { ok: true, ready: true, imei, token: String(row.enrol_token), batch: row.enrol_batch || null };
 }
 
+/* MOVING A HANDSET TO THE OTHER COMPANY, WITHOUT A FACTORY RESET.
+   =========================================================================================
+     "another button for shift so that hoop can shift a device to hope and viceversa saving
+      re-enlorrment energy"
+
+   One signed APK serves both companies. Until this, moving a handset from one to the other
+   meant Achia -- which calls clearDeviceOwnerApp -- and Device Owner is refused while any
+   account is signed in, so a handset that had been in someone's hand for months needed a
+   FACTORY RESET to change which office it answered to. Shift never lets go of ownership: the
+   phone reads its instruction on its own next beat and moves itself, the same way a lock or
+   an unlock order already travels.
+
+   WHAT THIS FUNCTION ACTUALLY WRITES: not the move itself -- the ORDER for the phone to make
+   it, next time it beats. `deviceApi`'s beat() reads it back off the very same row and hands
+   it to the handset; Shift.java on the phone does the rest, including proving itself to the
+   NEW office with a batch rather than being handed a token directly. See both files' notes.
+
+   WHY THE ADMIN TYPES THE OTHER OFFICE'S SERVER AND A BATCH IT ALREADY MINTED, rather than
+   this function reaching across to the other company's server itself: these are two separate
+   companies' deployments with no standing trust between their backends, and building one
+   would mean each server holding a credential that could act on the other's whole fleet.
+   Instead, the ONLY channel this uses is the one that already exists and is already narrow:
+   the handset itself, proving its own IMEI against a batch, exactly like a bench enrolment. */
+async function deviceShift(db, user, args, nowMs = Date.now()) {
+  requireDeviceOrder_(user, 'locked');            // moving a phone off this register is the
+                                                    // bench's own call, same as enrolling it on
+  const a = args || {};
+  const list = imeiList_(a.imeis != null ? a.imeis : a.imei);
+  if (!list.length) throw badRequest('Weka IMEI. / An IMEI is required.');
+  if (list.length > DEVICE_MAX_BATCH) {
+    throw badRequest('IMEI nyingi mno kwa mara moja (kikomo ' + DEVICE_MAX_BATCH + '). '
+      + '/ Too many at once — ' + DEVICE_MAX_BATCH + ' max.');
+  }
+
+  let server = String(a.server || '').trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^\s]+$/i.test(server)) {
+    throw badRequest('Anwani ya ofisi nyingine lazima ianze na https:// . '
+      + '/ The other office\'s address must start with https:// .');
+  }
+  const batch = String(a.batch || '').trim();
+  if (!/^[0-9a-f]{32}$/i.test(batch)) {
+    throw badRequest('Batch si sahihi — nakili moja kwa moja kutoka \'Sajili simu\' ya ofisi '
+      + 'nyingine. / That batch does not look right — copy it straight from the other '
+      + 'office\'s own \'Sajili simu\' / Enrol drawer.');
+  }
+  /* PASTING THIS OFFICE'S OWN ADDRESS IS CAUGHT ON THE PHONE, NOT HERE -- Shift.apply refuses
+     a shift to the server it already beats against, so a copy-paste mistake produces a
+     no-op rather than a wasted claim. This function has no reliable way to know its own
+     public URL (no such setting exists, and guessing one wrong would refuse a legitimate
+     order), so it is not duplicated as a server-side check. */
+  const got = await deviceRows_(db, 'imei, state');
+  if (!got.ready) return { ...DEVICE_NOT_READY, ordered: 0 };
+  const have = new Map(got.rows.map(r => [String(r.imei), r]));
+  const known = list.filter(i => have.has(i));
+  if (!known.length) {
+    throw badRequest('Simu hizi hazipo kwenye rejista. / None of those IMEIs are on the register.');
+  }
+  /* A RELEASED PHONE HAS ALREADY LEFT, and is not beating here to receive this order in the
+     first place -- BeatJob stops the moment achia takes. Writing a shift order onto its row
+     would sit there for ever, unread by anything, which is worth refusing rather than
+     silently doing nothing. */
+  const released = known.filter(i => String(have.get(i).state) === 'released');
+  const eligible = known.filter(i => String(have.get(i).state) !== 'released');
+
+  const at = new Date(nowMs).toISOString();
+  if (eligible.length) {
+    const { error } = await db.from('devices')
+      .update({ shift_server: server, shift_batch: batch, shift_at: at, updated_at: at })
+      .in('imei', eligible);
+    if (error) throw new Error(error.message);
+    await db.from('device_events').insert(eligible.map(imei => ({
+      imei, event: 'shift-ordered', reason: 'kuhamishwa kwenda ' + server + ' / shift ordered to ' + server,
+      actor: user.name, at })));
+  }
+  return { ok: true, ordered: eligible.length, alreadyReleased: released.length,
+    unknown: list.filter(i => !have.has(i)).length, server };
+}
+
 /** REMOVE A ROW. Admin only, and it does NOT unlock anything: a handset whose row is gone
     stops being answerable by the register and keeps doing whatever it was last told. This is
     for a mistyped IMEI, never for a phone somebody wants freed -- that is Fungua. */
@@ -7252,7 +7338,7 @@ const FN = {
   /* The company phone register -- two panes, one register. deviceToken is exported under a
      different internal name so it cannot be confused with the token HELPER beside it. */
   deviceList, deviceEnrol, deviceIssue, deviceSetState, deviceHistory,
-  deviceToken: deviceTokenOf, deviceDelete,
+  deviceToken: deviceTokenOf, deviceDelete, deviceShift,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
   adjustments, adjustmentRecord, adjustmentAmend, adjustmentDelete,
   auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
@@ -7629,7 +7715,7 @@ const FN_TAB = {
      requireDeviceOrder_. Listing them here as well keeps the one door honest: a code holding
      neither pane cannot reach these at all. */
   deviceList: DEVICE_PANES, deviceHistory: DEVICE_PANES, deviceIssue: DEVICE_PANES,
-  deviceEnrol: ['devlock'], deviceToken: ['devlock'],
+  deviceEnrol: ['devlock'], deviceToken: ['devlock'], deviceShift: ['devlock'],
   deviceSetState: DEVICE_PANES,
 };
 

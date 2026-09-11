@@ -577,3 +577,118 @@ test('the office can point the mark elsewhere, or turn it off without falling ba
     assert.equal(b2.logoVersion, null, off);
   }
 });
+
+/* SHIFTING A HANDSET TO THE OTHER COMPANY, WITHOUT A FACTORY RESET.
+   -----------------------------------------------------------------------------------
+     "another button for shift so that hoop can shift a device to hope and viceversa
+      saving re-enlorrment energy"
+
+   Achia gives up Device Owner, and taking it back is refused while any account is signed
+   in -- so on a phone that has been in use, achia-then-enrol means a factory reset. Shift
+   writes an ORDER onto the row instead: the next beat hands the phone a server + batch,
+   exactly like a lock order, and the phone (not tested here -- see Shift.java) does the
+   rest without ever letting go of ownership. */
+test('a shift order rides the next beat, exactly like a lock order does', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '303030303030301' });
+  const token = e.provision[0].token;
+
+  await assert.rejects(() => run(db, LOCKER, 'deviceShift',
+    { imei: '303030303030301', server: 'http://other.example', batch: 'a'.repeat(32) }),
+    x => x.status === 400, 'http, not https, is refused');
+  await assert.rejects(() => run(db, LOCKER, 'deviceShift',
+    { imei: '303030303030301', server: 'https://other.example', batch: 'not-a-batch' }),
+    x => x.status === 400, 'a batch that is not 32 hex characters is refused');
+
+  const ordered = await run(db, LOCKER, 'deviceShift',
+    { imei: '303030303030301', server: 'https://other.example/', batch: 'b'.repeat(32) });
+  assert.equal(ordered.ordered, 1);
+  assert.equal(ordered.server, 'https://other.example', 'a trailing slash is trimmed');
+
+  const beat = await deviceApi(db, 'dev_beat', [{ token }], NOW);
+  assert.deepEqual(beat.shift, { server: 'https://other.example', batch: 'b'.repeat(32) });
+
+  // Only Kufunga simu may order one -- the same lane enrolling already uses.
+  await assert.rejects(() => run(db, UNLOCKER, 'deviceShift',
+    { imei: '303030303030301', server: 'https://other.example', batch: 'c'.repeat(32) }),
+    x => x.status === 403);
+});
+
+test('the departing phone tells this office it left, and the row reads released', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '303030303030302' });
+  const token = e.provision[0].token;
+  await run(db, LOCKER, 'deviceShift',
+    { imei: '303030303030302', server: 'https://other.example', batch: 'd'.repeat(32) });
+
+  // The handset posts dev_shifted with the OLD token, once the new office has answered.
+  const said = await deviceApi(db, 'dev_shifted', [{ token }], NOW);
+  assert.equal(said.ok, true);
+
+  const row = db._dump('devices').find(d => d.imei === '303030303030302');
+  assert.equal(row.state, 'released');
+  assert.equal(row.shift_server, null, 'the order is cleared once it is confirmed');
+  const ev = db._dump('device_events').find(x => x.event === 'shifted');
+  assert.ok(ev, 'the transition is in the trail');
+
+  // An unknown token proves nothing -- same refusal every dev_* door already gives one.
+  await assert.rejects(() => deviceApi(db, 'dev_shifted', [{ token: 'x'.repeat(32) }], NOW),
+    x => x.status === 403);
+});
+
+test('a released phone is not shiftable, and an unknown IMEI is refused up front', async () => {
+  const db = fakeDb(tables());
+  await run(db, LOCKER, 'deviceEnrol', { imeis: '303030303030303' });
+  await run(db, UNLOCKER, 'deviceSetState', { imei: '303030303030303', state: 'released' });
+
+  const r = await run(db, LOCKER, 'deviceShift',
+    { imei: '303030303030303', server: 'https://other.example', batch: 'e'.repeat(32) });
+  assert.equal(r.ordered, 0);
+  assert.equal(r.alreadyReleased, 1, 'a released phone is not beating here to receive it');
+
+  await assert.rejects(() => run(db, LOCKER, 'deviceShift',
+    { imei: '999999999999999', server: 'https://other.example', batch: 'f'.repeat(32) }),
+    x => x.status === 400, 'nothing on the register to order at all');
+});
+
+/* THE STATE CARRIES ACROSS -- SAFELY.
+   -----------------------------------------------------------------------------------
+     "when we shift it goes with current state"
+
+   Only LOCKED or LOST are trusted from the claim, and only ever onto a row still at its
+   own default: this office's own opinion, once formed, is never overwritten by what a
+   phone says about itself. */
+test('a claim can carry LOCKED or LOST across, but never onto a row already decided', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '404040404040401' });
+  const batch = e.batch;
+
+  const got = await deviceApi(db, 'dev_claim',
+    [{ batch, imeis: ['404040404040401'], state: 'locked', reason: 'ameacha kazi na simu' }], NOW);
+  assert.ok(got.token);
+  const row = db._dump('devices').find(d => d.imei === '404040404040401');
+  assert.equal(row.state, 'locked');
+  assert.match(row.state_reason, /ameacha kazi na simu/);
+  assert.equal(row.state_by, 'shift');
+  const ev = db._dump('device_events').find(x => x.to_state === 'locked');
+  assert.ok(ev, 'the transition is in the trail like any other lock');
+
+  // 'enrolled' carried across is a no-op: that is the row's own default already.
+  const e2 = await run(db, LOCKER, 'deviceEnrol', { imeis: '404040404040402' });
+  await deviceApi(db, 'dev_claim',
+    [{ batch: e2.batch, imeis: ['404040404040402'], state: 'enrolled' }], NOW);
+  assert.equal(db._dump('devices').find(d => d.imei === '404040404040402').state, 'enrolled');
+
+  // A row this office already decided about is never overwritten by an incoming claim.
+  // Once state leaves 'enrolled' -- this office's own action, taken independent of anything
+  // a phone claims about its history -- a later claim on the SAME batch can never move it,
+  // whichever direction it argues for.
+  const e3 = await run(db, LOCKER, 'deviceEnrol', { imeis: '404040404040403' });
+  await run(db, LOCKER, 'deviceSetState',
+    { imei: '404040404040403', state: 'locked', reason: 'ofisi hii iliamua' });
+  await deviceApi(db, 'dev_claim',
+    [{ batch: e3.batch, imeis: ['404040404040403'], state: 'lost', reason: 'x' }], NOW);
+  const row3 = db._dump('devices').find(d => d.imei === '404040404040403');
+  assert.equal(row3.state, 'locked', 'this office\'s own lock stands; a claim never argues it away');
+  assert.equal(row3.state_reason, 'ofisi hii iliamua');
+});

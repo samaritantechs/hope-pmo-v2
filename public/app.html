@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-j';
+var BUILD = '2026-09-11-k';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6090,12 +6090,16 @@ VIEWS.creditinfo = function(){
    while nothing was enrolled. See docs/DEVICE-LOCKING.md. */
 var DEV_PKG = 'com.samaritantechs.hooploanlock';
 function devStateChip_(r){
+  if (r.shiftPending) return 'warn';
   if (r.state === 'lost') return 'bad';
   if (r.state === 'locked') return r.lockState === 'pending' ? 'warn' : 'bad';
   if (r.state === 'released') return 'mut';
   return 'ok';
 }
 function devStateText_(r){
+  // Shown ahead of the ordinary state text -- a shift changes WHICH REGISTER owns this row
+  // next, which matters more than what this register currently thinks the phone is doing.
+  if (r.shiftPending) return 'Inasubiri kuhama / shift pending';
   if (r.state === 'lost') return 'Hasara / written off';
   if (r.state === 'locked') return r.lockState === 'pending'
     ? 'Imeagizwa kufungwa / lock ordered' : 'Imefungwa / locked';
@@ -6183,6 +6187,63 @@ function devBulkDrawer_(state, title, needReason){
     devOrder_(state, list, why).catch(function(){ $('#devBulkGo').disabled = false; });
   };
 }
+/** SHIFTING PHONES TO THE OTHER COMPANY, one or many, ticks welcome exactly like a bulk lock.
+    -----------------------------------------------------------------------------------------
+      "another button for shift so that hoop can shift a device to hope and viceversa saving
+       re-enlorrment energy"
+
+    Achia gives up Device Owner, and re-taking it is refused while any account is signed in --
+    so achia-then-enrol on a used phone means a factory reset. This writes an ORDER instead:
+    the phone reads it on its own next beat and moves itself, never letting go of ownership.
+
+    TWO THINGS THE OTHER OFFICE'S OWN ADMIN HAS TO HAND OVER FIRST, because there is no
+    standing trust between two separate companies' servers -- the only channel this uses is
+    the handset proving itself, exactly like a bench enrolment:
+      1. the other office's own address (where their portal lives)
+      2. a batch THEY minted, from THEIR OWN Sajili simu / Enrol drawer, for these same IMEIs
+    Nothing here reaches across to fetch either automatically. */
+function devShiftDrawer_(oneImei){
+  // Opened from a single row: that phone, and nothing from whatever is ticked elsewhere on
+  // the list -- ticks are for the bulk button, a row's own button means just this phone.
+  var ticked = oneImei ? [oneImei] : pickList_();
+  drawer('<h3>Hamisha kwenda kampuni nyingine / Shift to the other company</h3>'
+    + '<div class="note">Simu HAIACHI kuwa Device Owner — inahama tu. Hakuna kufuta wala kebo. '
+      + '/ The phone does NOT give up ownership — it just moves. No wipe, no cable.</div>'
+    + (ticked.length
+        ? '<div class="note ok"><b>' + money(ticked.length) + '</b> zimechaguliwa kwenye orodha. '
+          + '/ taken from the ticks on the register — edit the list if that is not what you meant.</div>'
+        : '')
+    + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
+    + '<textarea id="devShiftList" rows="6" placeholder="351388334583295&#10;351388334583296">'
+    + esc(ticked.join('\n')) + '</textarea></div>'
+    + '<div class="fld"><label>Anwani ya ofisi nyingine / The other office\'s address <b>*</b></label>'
+    + '<input id="devShiftServer" placeholder="https://…"></div>'
+    + '<div class="fld"><label>Batch kutoka Sajili simu yao / Batch from THEIR Sajili simu <b>*</b></label>'
+    + '<input id="devShiftBatch" placeholder="32 hex characters" style="font-family:monospace"></div>'
+    + '<div class="note">Batch hii ni ya OFISI NYINGINE — waombe wafungue Sajili simu kwa IMEI hizi '
+      + 'hizi na wakupe batch iliyotolewa. Ni siri ya saa 24 tu. / That batch belongs to THE OTHER '
+      + 'office — ask them to open Sajili simu for these same IMEIs and hand you the batch it gives '
+      + 'back. Good for 24 hours only.</div>'
+    + '<button class="btn w" id="devShiftGo">Hamisha / Shift</button>');
+  $('#devShiftGo').onclick = function(){
+    var list = String($('#devShiftList').value || '').trim();
+    if (!list) { toast('Weka IMEI. / Paste at least one IMEI.', true); return; }
+    var server = String($('#devShiftServer').value || '').trim();
+    var batch = String($('#devShiftBatch').value || '').trim();
+    if (!server || !batch) { toast('Anwani na batch vinahitajika. / Address and batch are both required.', true); return; }
+    $('#devShiftGo').disabled = true;
+    srv('deviceShift', { imeis: list, server: server, batch: batch })
+      .then(function(r){
+        var said = [];
+        if (r.ordered) said.push(r.ordered + ' zimeagizwa kuhama / ordered to shift');
+        if (r.alreadyReleased) said.push(r.alreadyReleased + ' tayari zimeachiwa / already released');
+        if (r.unknown) said.push(r.unknown + ' hazipo kwenye rejista / not on this register');
+        toast(said.join(' · ') || 'Hakuna kilichobadilika. / Nothing changed.');
+        closeDrawer(); render({ force:true });
+      })
+      .catch(function(e){ $('#devShiftGo').disabled = false; toast(String((e && e.message) || e), true); });
+  };
+}
 /** ONE PHONE'S STORY, and the orders that can be given against it from this pane. */
 function devOpen_(imei, mode){
   srv('deviceHistory', { imei: imei }).then(function(d){
@@ -6217,6 +6278,13 @@ function devOpen_(imei, mode){
           : '<div class="note mutl">📍 Hakuna mahali bado / no position reported yet</div>')
       + line('Sababu / Reason', r.reason)
       + line('Ameagiza / Ordered by', r.by)
+      /* THE SHIFT ORDER SITTING ON THIS ROW, if there is one, and it is shown here because
+         "why has this phone not moved" is exactly what somebody opens this drawer to ask. */
+      + (r.shiftTo
+          ? '<div class="note warnc">Inasubiri kuhama kwenda <b>' + esc(r.shiftTo) + '</b> — '
+            + 'itaenda kwenye beat yake ijayo. / Waiting to shift to <b>' + esc(r.shiftTo)
+            + '</b> — it moves on its next beat.</div>'
+          : '')
       /* THE HANDSET'S OWN GUESS AT ITS IMEI, shown only when it differs. A dual-SIM phone has
          two and Android is not consistent about which it hands back, so a difference is a
          thing for a person to look at, never a fact to act on. */
@@ -6238,6 +6306,8 @@ function devOpen_(imei, mode){
          bench's own work. The read is audited. */
       + (mode === 'lock'
           ? '<button class="btn w ghost" id="devToken">🔑 Token ya simu hii / This phone\'s command</button>'
+            + '<button class="btn w ghost" id="devShiftOne" style="margin-top:8px">↔️ Hamisha simu hii / '
+            + 'Shift this phone</button>'
           : '')
       + (mode === 'lock'
           ? '<div class="fld" style="margin-top:10px"><label>Sababu / Reason</label>'
@@ -6264,6 +6334,7 @@ function devOpen_(imei, mode){
         .catch(function(e){ toast(String(e.message || e), true); });
     };
     if (mode === 'lock') {
+      $('#devShiftOne').onclick = function(){ devShiftDrawer_(imei); };
       $('#devToken').onclick = function(){
         srv('deviceToken', { imei: imei }).then(function(t){
           if (!t.token) { toast('Simu hii haina token. / This phone has no token — enrol it again.', true); return; }
@@ -6525,6 +6596,10 @@ function devicesView_(mode){
           + (mode === 'lock'
               ? '<button class="btn sm" id="devEnrolBtn" style="margin-left:8px">+ Sajili simu / Enrol</button>'
                 + '<button class="btn sm bad" id="devLockMany" style="margin-left:6px">🔒 Funga kwa wingi / Lock many</button>'
+                /* SHIFT LIVES ON THE LOCKING PANE, next to Enrol, because it is the same job:
+                   deciding which register a handset belongs to. requireDeviceOrder_('locked')
+                   on the server agrees -- Kufungua simu cannot order one, only receive one. */
+                + '<button class="btn sm ghost" id="devShiftMany" style="margin-left:6px">↔️ Hamisha / Shift</button>'
               : '<button class="btn sm" id="devUnlockMany" style="margin-left:8px">🔓 Fungua kwa wingi / Unlock many</button>'
                 + '<button class="btn sm ghost" id="devReleaseMany" style="margin-left:6px">Achia kwa wingi / Release many</button>')
           /* THE LIVE TICK COUNT. Written into this chip by the tick handler rather than by a
@@ -6573,6 +6648,8 @@ function wireDevices(){
   if (c) c.onclick = function(){ devBulkDrawer_('enrolled', 'Fungua kwa wingi / Unlock many', false); };
   var e = document.getElementById('devReleaseMany');
   if (e) e.onclick = function(){ devBulkDrawer_('released', 'Achia kwa wingi / Release many', false); };
+  var f = document.getElementById('devShiftMany');
+  if (f) f.onclick = devShiftDrawer_;
 }
 
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
