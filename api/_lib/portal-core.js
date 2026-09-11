@@ -14,6 +14,10 @@ import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, 
 import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct, recoveryLadder, recoveryBelowOf,
   parseBandTzs, REC_BAND_TZS_KEY } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
+/* WHAT A STATE MEANS AS AN ORDER, from the file the HANDSET reads it out of. The office's
+   panes and the phone's own endpoint must never hold two opinions about whether `lost` means
+   lock -- so there is one function, and this side imports it rather than restating it. */
+import { commandFor } from './device-core.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
@@ -6684,6 +6688,490 @@ function requireAdmin(user) {
   if (!(user.tabs || []).includes('settings')) throw forbidden('Settings (admin) permission required.');
 }
 
+/* =======================================================================================
+   THE COMPANY PHONE REGISTER -- enrol, lock, unlock, hand back, write off.
+   =======================================================================================
+     "GM wants us to enroll and lock all our hope company phones ... field officers,
+      managers, gmos, pmos etc are provided with company devices and some of uor unworth
+      employees quit with our phones so GM has ordered to implement those two nav panes for
+      locking and unlocking in hopepmo too"
+
+   This is the OFFICE's half. The handset's half is api/_lib/device-core.js, and the two
+   meet at exactly two columns: `state`, which only the office writes, and `reported`, which
+   only the phone writes. Keeping them apart is what lets the register say "ordered, not yet
+   confirmed" -- a phone told to lock that has not checked in is neither locked nor a
+   failure, and a report that blurs those two cannot be trusted to chase anything.
+
+   TWO PANES, ONE REGISTER, AND THE GATE IS ON THE ORDER.
+   ---------------------------------------------------------------------------------------
+   Kufunga simu (devlock) and Kufungua simu (devunlock) draw the SAME list from the SAME
+   function -- one implementation, so the two panes can never disagree about the fleet. What
+   differs is which orders each offers. And because a pane that merely hides its unlock
+   button is a suggestion rather than a rule -- curl does not read HTML -- the gate is on the
+   STATE BEING ASKED FOR, not on which screen asked. That is also what makes re-locking work:
+   somebody sending `locked` against a released phone is still asking to lock, and that is
+   theirs to ask if they hold the locking pane.
+
+   WITHOUT THE MIGRATION, THE PANES SAY SO. db/RUN-ME-2026-09-11-devices.sql creates both
+   tables by hand, as every migration here is run. Until it does, every function below
+   answers `ready: false` and names the file rather than throwing -- the rule this repository
+   holds every migration to, and it matters more here because these screens are new.
+   ======================================================================================= */
+const DEVICE_STATES = ['enrolled', 'locked', 'released', 'lost'];
+/* Which pane may ask for which state. Locking and writing off belong to whoever holds
+   Kufunga simu; unlocking and handing back to whoever holds Kufungua simu. Splitting them is
+   the entire point of two panes -- the person who locks a leaver's handset is not
+   necessarily the person who may give it back. */
+const DEVICE_STATE_NAV = { locked: 'devlock', lost: 'devlock', enrolled: 'devunlock', released: 'devunlock' };
+const DEVICE_PANES = ['devlock', 'devunlock'];
+const DEVICE_MIGRATION = 'db/RUN-ME-2026-09-11-devices.sql';
+/** Enrolment and a bulk order both travel as an `in(...)` filter on the query string. Past a
+    few hundred IMEIs the URL is refused somewhere between here and the database, and what
+    comes back is a transport error rather than an answer about phones. One ceiling to
+    remember, above the 500 rows the list can show, so tick-all on a full table still fits. */
+const DEVICE_MAX_BATCH = 500;
+
+/** Does this person hold either phone pane? Both panes SEE the whole fleet: somebody who
+    cannot tell whether the handset in their hand is locked cannot do the one job they have. */
+function requireDeviceNav_(user) {
+  if (!user) return;
+  if (K(user.role) === 'ADMIN' || user.readOnly) return;
+  const have = user.tabs || [];
+  if (DEVICE_PANES.some(t => have.includes(t))) return;
+  throw forbidden('Rejista ya simu haijafunguliwa kwa wadhifa wako. '
+    + '/ The phone register is not open to your role — ask the admin to tick Kufunga simu or '
+    + 'Kufungua simu under Roles & access.');
+}
+/** And the narrower one: may this person ask for THIS state? */
+function requireDeviceOrder_(user, state) {
+  if (!user) return;
+  if (K(user.role) === 'ADMIN') return;
+  const need = DEVICE_STATE_NAV[state];
+  if ((user.tabs || []).includes(need)) return;
+  throw forbidden(need === 'devlock'
+    ? 'Huna ruhusa ya kufunga simu. / You do not hold Kufunga simu (Locking), so you cannot lock or write off a handset.'
+    : 'Huna ruhusa ya kufungua simu. / You do not hold Kufungua simu (Unlocking), so you cannot unlock or release a handset.');
+}
+
+/** IMEIs as people actually paste them: a column out of a spreadsheet, spaces and dashes and
+    all. Deduplicated, because pasting the same column twice is an ordinary accident.
+
+    ONE ENTRY PER LINE, NEVER PER SPACE. An IMEI is often written in groups -- 3513 8833 4583
+    295 -- and splitting on whitespace turns that one handset into four IMEIs of four digits,
+    none of which is on the register. So the separators are the ones a paste actually uses
+    (newline, tab, comma, semicolon) and everything inside an entry is stripped after the
+    split, which is what lets a grouped IMEI and a pasted column both work. */
+function imeiList_(v) {
+  const raw = Array.isArray(v) ? v : String(v == null ? '' : v).split(/[\n\r\t,;]+/);
+  return [...new Set(raw.map(x => String(x == null ? '' : x).replace(/[^0-9A-Za-z]/g, '').trim())
+    .filter(Boolean))];
+}
+
+/* THE ONE PLACE THAT KNOWS THE REGISTER MIGHT NOT BE THERE. Every device function starts
+   here, and a missing table is an ANSWER rather than an exception: the pane draws, says what
+   has not been run, and names the file. Anything else -- a real database error -- is thrown,
+   because "the register is empty" and "the database is broken" must never look the same. */
+async function deviceRows_(db, select = '*') {
+  try {
+    return { ready: true, rows: await fetchAll(() => db.from('devices').select(select)) };
+  } catch (e) {
+    const m = String((e && e.message) || e);
+    if (/devices/i.test(m) && /(does not exist|not find|relation|schema cache|404)/i.test(m)) {
+      return { ready: false, rows: [] };
+    }
+    throw e;
+  }
+}
+const DEVICE_NOT_READY = {
+  ok: true, ready: false, rows: [], total: 0,
+  counts: { enrolled: 0, locked: 0, lockPending: 0, released: 0, lost: 0, neverSeen: 0, stale: 0 },
+  note: 'Rejista ya simu haijaundwa bado — endesha ' + DEVICE_MIGRATION + ' kwenye Supabase SQL editor. '
+    + '/ The phone register has not been created yet — run ' + DEVICE_MIGRATION + ' in the Supabase SQL editor.',
+};
+
+/** A phone is STALE when it has not spoken for long enough that somebody should look. Not a
+    state and not a failure: a handset in a drawer is stale and perfectly fine. */
+const DEVICE_STALE_MS = 6 * 60 * 60 * 1000;
+
+/** One row as the panes read it. The token is NEVER in here -- see deviceToken. */
+function deviceRow_(r, nowMs) {
+  const seen = r.last_seen ? Date.parse(r.last_seen) : 0;
+  const state = String(r.state || 'enrolled');
+  const reported = r.reported ? String(r.reported) : null;
+  const want = commandFor(state);                       // lock | unlock
+  const is = reported === 'locked' ? 'lock' : reported === 'unlocked' ? 'unlock' : null;
+  return {
+    imei: String(r.imei), item: r.item || null,
+    holder: r.holder || null, team: r.holder_team || null, role: r.holder_role || null,
+    issuedAt: r.issued_at || null,
+    state, reason: r.state_reason || null, by: r.state_by || null, at: r.state_at || null,
+    reported, lastSeen: r.last_seen || null,
+    appVersion: r.app_version || null, battery: r.battery == null ? null : Number(r.battery),
+    android: r.android || null, reportedImei: r.reported_imei || null,
+    enrolledAt: r.enrolled_at || null, enrolledBy: r.enrolled_by || null,
+    /* HAS THE PHONE DONE WHAT IT WAS TOLD? `pending` is the column somebody chases: an order
+       given that the handset has not confirmed. A phone that has never spoken is not pending
+       against an unlock -- it is simply not locked, which is true. */
+    lockState: is == null ? (want === 'lock' ? 'pending' : 'unknown')
+      : want === is ? 'done' : 'pending',
+    neverSeen: !seen,
+    stale: !!seen && (nowMs - seen) > DEVICE_STALE_MS,
+    /* THE ALARM, and it is not a category of phone but a category of MISTAKE: a handset
+       ordered locked that has never once called home was never provisioned properly, and the
+       office has no way of seeing that except here. */
+    lockedNeverSpoke: state === 'locked' && !seen,
+  };
+}
+
+/** The register, for both panes. */
+async function deviceList(db, user, args, nowMs = Date.now()) {
+  requireDeviceNav_(user);
+  const a = args || {};
+  const got = await deviceRows_(db);
+  if (!got.ready) return DEVICE_NOT_READY;
+  const want = String(a.state || '').trim();
+  /* FIND ONE HANDSET, FAST. The list holds the newest 500, so a search that only filtered
+     what the browser already has would miss the phone somebody is holding. Digits only, so
+     an IMEI pasted with spaces finds itself; a name or a team matches the holder. */
+  const find = String(a.q == null ? '' : a.q).trim();
+  const findDigits = find.replace(/[^0-9]/g, '');
+  const rows = got.rows.map(r => deviceRow_(r, nowMs)).filter(r => {
+    if (want && r.state !== want) return false;
+    if (!find) return true;
+    if (findDigits && String(r.imei).includes(findDigits)) return true;
+    const hay = [r.holder, r.team, r.role, r.item].map(x => K(x || '')).join(' ');
+    return hay.includes(K(find));
+  });
+  /* PROBLEMS BEFORE ROUTINE, so the register opens on what needs somebody -- except at the
+     bench, where the phones that matter are the ones enrolled five minutes ago. So a BAND on
+     top rather than a new sort: anything enrolled in the last day floats up, newest first,
+     and everything below it keeps the fleet's own order. A day, because that is what a bench
+     session is, and it matches the enrolment batch's own life. */
+  const FRESH_MS = 24 * 60 * 60 * 1000;
+  const freshOf = d => (d.enrolledAt && (nowMs - Date.parse(d.enrolledAt)) < FRESH_MS) ? 0 : 1;
+  const rank = d => (d.state === 'lost' ? 0 : d.lockState === 'pending' ? 1
+    : d.stale ? 2 : d.state === 'locked' ? 3 : 4);
+  rows.sort((x, y) => {
+    const fx = freshOf(x), fy = freshOf(y);
+    if (fx !== fy) return fx - fy;
+    if (fx === 0) {
+      const dx = Date.parse(x.enrolledAt || 0), dy = Date.parse(y.enrolledAt || 0);
+      if (dx !== dy) return dy - dx;
+    }
+    return rank(x) - rank(y) || String(x.imei).localeCompare(String(y.imei));
+  });
+  const all = got.rows.map(r => deviceRow_(r, nowMs));
+  const count = f => all.filter(f).length;
+  return { ok: true, ready: true, rows: rows.slice(0, 500), total: rows.length,
+    q: find, searching: !!find,
+    counts: {
+      enrolled: count(r => r.state === 'enrolled'),
+      locked: count(r => r.state === 'locked'),
+      lockPending: count(r => r.lockState === 'pending'),
+      released: count(r => r.state === 'released'),
+      lost: count(r => r.state === 'lost'),
+      neverSeen: count(r => r.neverSeen),
+      stale: count(r => r.stale && !r.neverSeen),
+      lockedNeverSpoke: count(r => r.lockedNeverSpoke),
+      issued: count(r => !!r.holder),
+      inStore: count(r => !r.holder && r.state !== 'released'),
+    } };
+}
+
+/** Mint a token the way the bench expects it: 32 hex characters, and nowhere else. */
+function deviceToken_() {
+  const u = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : 'xxxxxxxxxxxx4xxxyxxxxxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+  return String(u).replace(/-/g, '');
+}
+
+/* ENROL -- take control of handsets. Fed by IMEI, so the bench can paste a column straight
+   out of a stock sheet. Idempotent: re-enrolling a phone the register already holds is a
+   no-op that reports itself, never a duplicate and never a silent state reset. */
+async function deviceEnrol(db, user, args, nowMs = Date.now()) {
+  /* PROVISIONING IS THE BENCH'S OWN WORK: whoever puts the app on the phone is the person who
+     locks it, so enrolling belongs with Kufunga simu. */
+  requireDeviceOrder_(user, 'locked');
+  const a = args || {};
+  const list = imeiList_(a.imeis != null ? a.imeis : a.imei);
+  if (!list.length) throw badRequest('Weka IMEI. / An IMEI is required.');
+  if (list.length > DEVICE_MAX_BATCH) {
+    throw badRequest('IMEI nyingi mno kwa mara moja (kikomo ' + DEVICE_MAX_BATCH + '). '
+      + '/ Too many at once — ' + DEVICE_MAX_BATCH + ' max. Split the list into batches.');
+  }
+  const got = await deviceRows_(db, 'imei, state, enrol_token');
+  if (!got.ready) return { ...DEVICE_NOT_READY, enrolled: 0, provision: [] };
+  const have = new Map(got.rows.map(r => [String(r.imei), r]));
+  const fresh = list.filter(i => !have.has(i));
+  const at = new Date(nowMs).toISOString();
+  const batch = deviceToken_();
+
+  const minted = new Map(fresh.map(i => [i, deviceToken_()]));
+  if (fresh.length) {
+    const rows = fresh.map(imei => ({
+      imei, enrolled_at: at, enrolled_by: user.name,
+      enrol_batch: batch, enrol_batch_at: at,
+      item: String(a.item || '').trim() || null,
+      enrol_token: minted.get(imei),
+      state: 'enrolled', state_by: user.name, state_at: at, updated_at: at,
+    }));
+    const { error } = await db.from('devices').insert(rows);
+    if (error) throw new Error(error.message);
+    const { error: eErr } = await db.from('device_events').insert(fresh.map(imei => ({
+      imei, event: 'enrolled', from_state: null, to_state: 'enrolled', actor: user.name, at })));
+    if (eErr) throw new Error(eErr.message);
+  }
+  /* A PHONE THE REGISTER ALREADY KNEW HAS TO JOIN THIS BATCH TOO. Its row is not re-inserted
+     -- it keeps its own token, deliberately -- so without this it would still carry some
+     previous session's batch and the hub command would refuse it. At the bench that reads as
+     "this handset is broken" rather than "it was never in the batch you just made". */
+  const rejoin = list.filter(i => have.has(i));
+  if (rejoin.length) {
+    const { error } = await db.from('devices')
+      .update({ enrol_batch: batch, enrol_batch_at: at }).in('imei', rejoin);
+    if (error) throw new Error(error.message);
+  }
+  /* HANDED BACK, THEN ENROLLED AGAIN, AND FUNGA HAS TO JUST WORK. Releasing leaves the row
+     reading `released`; enrolling a handset IS the statement that it is under our control
+     again, so it is recorded as one.
+
+     ONLY FROM `released`, AND THAT LIMIT IS THE WHOLE SAFETY OF IT. A LOCKED phone stays
+     locked: if enrolment reset state generally, then plugging in a leaver's handset and
+     running the same bench command anybody can copy would quietly free it -- a lock bypass
+     with no decision behind it and nothing in the register to show one was made. `lost` stays
+     `lost` for the same reason: writing a handset off is a judgement, and a cable is not an
+     appeal. */
+  const revive = rejoin.filter(i => String(have.get(i).state) === 'released');
+  if (revive.length) {
+    const { error } = await db.from('devices').update({
+      state: 'enrolled', state_reason: null, state_by: user.name, state_at: at,
+      released_at: null, updated_at: at,
+    }).in('imei', revive);
+    if (error) throw new Error(error.message);
+    const { error: eErr } = await db.from('device_events').insert(revive.map(imei => ({
+      imei, event: 'enrolled', from_state: 'released', to_state: 'enrolled',
+      reason: 'imesajiliwa upya / re-enrolled', actor: user.name, at })));
+    if (eErr) throw new Error(eErr.message);
+  }
+  /* WHICH APK IS ACTUALLY ON THESE PHONES. The bench command has to name the package that is
+     installed, and getting it wrong produces `am broadcast`'s worst answer: "Broadcast
+     completed: result=0", which reads exactly like success while nothing was enrolled at all.
+     A setting rather than a constant, because HOPE may run its own build or may provision
+     against the lock app Hoop already ships -- see docs/DEVICE-LOCKING.md. One small read on
+     a bench action taken a few times a day, off the memoised settings. */
+  const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE']);
+  const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hopelock').trim();
+  return { ok: true, ready: true, enrolled: fresh.length, alreadyOn: rejoin.length, pkg,
+    /* Said out loud, because it is a state change nobody explicitly asked for -- they asked to
+       enrol. Silently un-releasing rows would be the right behaviour reported as nothing. */
+    revived: revive.length, batch,
+    /* FOR THE BENCH ONLY, and in the order the IMEIs were typed so a paper list can be worked
+       down without hunting. `fresh` says whether this is a new phone or one the register
+       already knew: the command is identical either way, but an operator who sees "already on
+       the register" and a token knows the handset kept its identity rather than quietly being
+       given a new one. */
+    provision: list.map(imei => ({
+      imei,
+      token: minted.get(imei) || (have.get(imei) || {}).enrol_token || null,
+      fresh: !have.has(imei),
+    })).filter(p => p.token) };
+}
+
+/* WHO IS CARRYING THIS PHONE. Enrolment says the company controls the handset; this says who
+   has it, which is the question the whole register exists to answer when somebody leaves.
+   Deliberately its own function rather than a field on enrolment: a phone is enrolled once at
+   a bench and issued, returned and re-issued many times over its life. */
+async function deviceIssue(db, user, args, nowMs = Date.now()) {
+  requireDeviceNav_(user);
+  const a = args || {};
+  const list = imeiList_(a.imeis != null ? a.imeis : a.imei);
+  if (!list.length) throw badRequest('Weka IMEI. / An IMEI is required.');
+  if (list.length > DEVICE_MAX_BATCH) throw badRequest('Too many at once — ' + DEVICE_MAX_BATCH + ' max.');
+  const holder = String(a.holder || '').trim();
+  const got = await deviceRows_(db, 'imei');
+  if (!got.ready) return { ...DEVICE_NOT_READY, changed: 0 };
+  const known = new Set(got.rows.map(r => String(r.imei)));
+  const changing = list.filter(i => known.has(i));
+  if (!changing.length) {
+    throw badRequest('Simu hizi hazipo kwenye rejista. / None of those IMEIs are on the register — enrol them first.');
+  }
+  const at = new Date(nowMs).toISOString();
+  /* HANDING A PHONE BACK IN is this same call with no holder: the fields are cleared rather
+     than left naming somebody who returned it last March. It does NOT change `state` -- a
+     handset can sit in the store enrolled and unlocked, and who holds it is a different fact
+     from whether it is locked. */
+  const patch = holder
+    ? { holder, holder_team: String(a.team || '').trim() || null,
+        holder_role: String(a.role || '').trim() || null, issued_at: at, updated_at: at }
+    : { holder: null, holder_team: null, holder_role: null, issued_at: null, updated_at: at };
+  const { error } = await db.from('devices').update(patch).in('imei', changing);
+  if (error) throw new Error(error.message);
+  const { error: eErr } = await db.from('device_events').insert(changing.map(imei => ({
+    imei, event: 'issued', from_state: null, to_state: null,
+    reason: holder ? ('kwa / to ' + holder) : 'imerudishwa stoo / returned to the store',
+    actor: user.name, at })));
+  if (eErr) throw new Error(eErr.message);
+  return { ok: true, ready: true, changed: changing.length,
+    notEnrolled: list.length - changing.length, holder: holder || null };
+}
+
+/* SET STATE -- lock, unlock, hand back or write off. ONE door for every state change, so the
+   event trail cannot be bypassed by whichever screen happens to call it.
+
+   A REASON IS REQUIRED to lock or write off. Locking a phone is an act with a person on the
+   other end of it; six months later "why is this locked" has to have an answer, and the only
+   reliable moment to capture one is now. */
+async function deviceSetState(db, user, args, nowMs = Date.now()) {
+  const a = args || {};
+  const to = String(a.state || '').trim();
+  if (!DEVICE_STATES.includes(to)) {
+    throw badRequest('Hali si sahihi. / Unknown device state: ' + to);
+  }
+  // The gate is on the TRANSITION, not on the pane -- see the note at the top of this block.
+  requireDeviceOrder_(user, to);
+  const reason = String(a.reason || '').trim();
+  if ((to === 'locked' || to === 'lost') && !reason) {
+    throw badRequest('Sababu inahitajika. / A reason is required to lock or write off a phone.');
+  }
+  const list = imeiList_(a.imeis != null ? a.imeis : a.imei);
+  if (!list.length) throw badRequest('Weka IMEI. / An IMEI is required.');
+  if (list.length > DEVICE_MAX_BATCH) {
+    throw badRequest('IMEI nyingi mno kwa mara moja (kikomo ' + DEVICE_MAX_BATCH + '). '
+      + '/ Too many at once — ' + DEVICE_MAX_BATCH + ' max. Split the list into batches.');
+  }
+  const got = await deviceRows_(db, 'imei, state, released_at, last_seen');
+  if (!got.ready) return { ...DEVICE_NOT_READY, changed: 0 };
+  const known = new Map(got.rows.filter(r => list.includes(String(r.imei)))
+    .map(r => [String(r.imei), r]));
+  const missing = list.filter(i => !known.has(i));
+
+  /* FUNGA ON A PHONE ALREADY HANDED BACK IS USUALLY AN ORDER NOBODY WILL EVER HEAR.
+     =====================================================================================
+     Releasing tells the handset to unlock, drop the restrictions, step down as Device Owner
+     and STOP CALLING HOME. A phone that did all four is gone: it has no reason to ask us
+     anything again. Ordering a lock against that row writes a decision nobody will collect --
+     the register sits on "ordered, not confirmed" for ever and the office reads it as a phone
+     being slow rather than one that stopped listening weeks ago.
+
+     BUT NOT EVERY RELEASED PHONE IS GONE. Where the step-down was refused by the vendor build,
+     the handset keeps beating precisely so the office can still reach it; those are re-lockable
+     from a desk, and refusing would send somebody driving to a phone they could have locked
+     from here. The register can tell the two apart without asking anybody: has this handset
+     spoken SINCE it was released?
+
+     The override exists because there is one honest reason to order a lock a phone cannot
+     currently hear: you are about to put the app back on it by cable and you want the standing
+     order waiting when it wakes. That is a deliberate act, so it takes a deliberate
+     confirmation rather than being the default. */
+  const stuck = (to !== 'locked' || a.force === true) ? [] : list.filter(i => {
+    const r = known.get(i);
+    if (!r || String(r.state) !== 'released') return false;
+    const spoke = r.last_seen ? Date.parse(r.last_seen) : 0;
+    const freed = r.released_at ? Date.parse(r.released_at) : 0;
+    return !(spoke && freed && spoke > freed);
+  });
+  /* THE REFUSAL IS ABOUT THE PHONES IT NAMES, AND ONLY THOSE. Throwing before touching
+     anything would mean one released-and-silent handset among twenty refuses the whole order
+     and locks NONE of them -- and the toast that follows reads like the job was done. The
+     reachable phones go through; the question that follows is only about the ones that did
+     not, and it carries the count of what already happened so nobody is told less than the
+     truth. */
+  const held = new Set(stuck);
+  const changing = list.filter(i => !held.has(i) && known.has(i) && String(known.get(i).state) !== to);
+  const at = new Date(nowMs).toISOString();
+  if (changing.length) {
+    const patch = { state: to, state_reason: reason || null, state_by: user.name,
+      state_at: at, updated_at: at };
+    if (to === 'released') patch.released_at = at;
+    const { error } = await db.from('devices').update(patch).in('imei', changing);
+    if (error) throw new Error(error.message);
+    const { error: eErr } = await db.from('device_events').insert(changing.map(imei => ({
+      imei,
+      event: to === 'locked' ? 'lock' : to === 'released' ? 'release' : to === 'lost' ? 'lost' : 'unlock',
+      from_state: String(known.get(imei).state), to_state: to, reason: reason || null,
+      actor: user.name, at })));
+    if (eErr) throw new Error(eErr.message);
+  }
+  if (stuck.length) {
+    const e = new Error('Simu iliyoachiwa haisikii tena — iliachwa na ikaacha kuongea. Irudishe app '
+      + 'kwa kebo, kisha funga. / This phone was released and has not spoken since, so it is no '
+      + 'longer listening: a lock order would sit unheard. Re-provision it by cable first, or '
+      + 'confirm to leave the order standing for when it comes back.');
+    e.status = 409;
+    e.code = 'RELEASED_NOT_LISTENING';
+    e.imeis = stuck;
+    e.changed = changing.length;
+    throw e;
+  }
+  return { ok: true, ready: true, changed: changing.length,
+    alreadyThere: list.length - changing.length - missing.length,
+    notEnrolled: missing.length, notEnrolledList: missing.slice(0, 20) };
+}
+
+/** ONE PHONE'S WHOLE STORY -- its row and every state change ever ordered against it. This is
+    what somebody opens when an employee is standing in front of them asking why their handset
+    is locked. */
+async function deviceHistory(db, user, args, nowMs = Date.now()) {
+  requireDeviceNav_(user);
+  const imei = imeiList_((args || {}).imei)[0];
+  if (!imei) throw badRequest('Weka IMEI. / An IMEI is required.');
+  const got = await deviceRows_(db);
+  if (!got.ready) return { ...DEVICE_NOT_READY, device: null, events: [] };
+  const row = got.rows.find(r => String(r.imei) === imei);
+  if (!row) return { ok: true, ready: true, found: false, device: null, events: [] };
+  let events = [];
+  try {
+    events = await fetchAll(() => db.from('device_events').select('*').eq('imei', imei));
+  } catch (e) { events = []; }
+  events.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  return { ok: true, ready: true, found: true, device: deviceRow_(row, nowMs),
+    events: events.slice(0, 200).map(e => ({ event: e.event, from: e.from_state, to: e.to_state,
+      reason: e.reason || null, actor: e.actor || null, at: e.at })) };
+}
+
+/** THE PROVISIONING COMMAND FOR ONE PHONE, token and all. Deliberately its own call rather
+    than a column on the list: the token is the handset's credential, so it is fetched
+    one at a time, by somebody who asked for that phone, and never travels with a table. */
+async function deviceTokenOf(db, user, args) {
+  requireDeviceOrder_(user, 'locked');          // the bench's own work, like enrolling
+  const imei = imeiList_((args || {}).imei)[0];
+  if (!imei) throw badRequest('Weka IMEI. / An IMEI is required.');
+  const got = await deviceRows_(db, 'imei, enrol_token, enrol_batch');
+  if (!got.ready) return { ...DEVICE_NOT_READY, token: null };
+  const row = got.rows.find(r => String(r.imei) === imei);
+  if (!row) throw badRequest('Simu hii haipo kwenye rejista. / That IMEI is not on the register.');
+  if (!row.enrol_token) {
+    throw badRequest('Simu hii haina token — isajili upya. / This phone has no token yet: enrol it again.');
+  }
+  return { ok: true, ready: true, imei, token: String(row.enrol_token), batch: row.enrol_batch || null };
+}
+
+/** REMOVE A ROW. Admin only, and it does NOT unlock anything: a handset whose row is gone
+    stops being answerable by the register and keeps doing whatever it was last told. This is
+    for a mistyped IMEI, never for a phone somebody wants freed -- that is Fungua. */
+async function deviceDelete(db, user, args) {
+  requireAdmin(user);
+  const imei = imeiList_((args || {}).imei)[0];
+  if (!imei) throw badRequest('Weka IMEI. / An IMEI is required.');
+  const got = await deviceRows_(db, 'imei, state');
+  if (!got.ready) return { ...DEVICE_NOT_READY, deleted: false };
+  const row = got.rows.find(r => String(r.imei) === imei);
+  if (!row) throw badRequest('Simu hii haipo kwenye rejista. / That IMEI is not on the register.');
+  if (String(row.state) === 'locked') {
+    throw badRequest('Simu iliyofungwa haiwezi kufutwa — ifungue kwanza. '
+      + '/ A LOCKED phone cannot be deleted: deleting the row would leave a locked handset with '
+      + 'nothing able to free it. Unlock it first, then delete.');
+  }
+  const { error } = await db.from('devices').delete().eq('imei', imei);
+  if (error) throw new Error(error.message);
+  /* The events stay. They are the record of what was done to a real phone, and deleting a
+     mistyped row is not a reason to lose the history of the one it was confused with. */
+  return { ok: true, ready: true, deleted: true, imei };
+}
+
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
   loans, loanPipeline, appsWeekly, appsTab, expected, defaulters, expectedDefaulters,
@@ -6697,6 +7185,10 @@ const FN = {
   teams, saveRole, deleteRole, resetRoleTabs, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
+  /* The company phone register -- two panes, one register. deviceToken is exported under a
+     different internal name so it cannot be confused with the token HELPER beside it. */
+  deviceList, deviceEnrol, deviceIssue, deviceSetState, deviceHistory,
+  deviceToken: deviceTokenOf, deviceDelete,
   storageUsage, purgeSnapshots, purgeSuperseded, changeMyCode, uploadStatus, followupClean,
   adjustments, adjustmentRecord, adjustmentAmend, adjustmentDelete,
   auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
@@ -7067,6 +7559,14 @@ const FN_TAB = {
   perfHistory: ['perf'],
   defaulters: ['defexp', 'followup'],
   teams: ['teams', 'settings', 'adjust'], staffRoster: ['teams'], callAgents: ['teams', 'dashboard'],
+  /* THE PHONE REGISTER. Both panes see the whole fleet, so reading is gated on holding
+     EITHER. The orders are gated separately and more narrowly, inside the functions
+     themselves, on the state being asked for rather than on the pane that asked -- see
+     requireDeviceOrder_. Listing them here as well keeps the one door honest: a code holding
+     neither pane cannot reach these at all. */
+  deviceList: DEVICE_PANES, deviceHistory: DEVICE_PANES, deviceIssue: DEVICE_PANES,
+  deviceEnrol: ['devlock'], deviceToken: ['devlock'],
+  deviceSetState: DEVICE_PANES,
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the

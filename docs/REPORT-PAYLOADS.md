@@ -129,6 +129,20 @@ count 1–6. Needs the **Credit Analysts** tab. Build a workbook by walking `key
 column added to the report needs no change at the reader's end. The same answer feeds the Upload page's
 **Credit info report** download and the portal's **Credit Info · takwimu** pane.
 
+### deviceList · deviceHistory — the company phone register
+`deviceList` args: `q` (IMEI, holder name, team or model), `state` · answer: `ready, rows[{imei, item, holder, team, role,
+issuedAt, state, reason, by, at, reported, lastSeen, battery, android, appVersion, reportedImei, lockState, neverSeen, stale,
+lockedNeverSpoke}]`, `total`, `q`, `searching`, `counts{enrolled, locked, lockPending, released, lost, neverSeen, stale,
+lockedNeverSpoke, issued, inStore}`.
+`deviceHistory` args: `imei` · answer: `found, device{…}, events[{event, from, to, reason, actor, at}]`.
+
+`state` is the office's intent (`enrolled` / `locked` / `released` / `lost`); `reported` is the handset's own word for what it
+is doing. `lockState` compares them: `done`, `pending` (ordered, not yet confirmed) or `unknown`. `ready: false` means the
+register's tables have not been created — the answer carries a `note` naming the migration. The enrolment token is never on
+this payload; it is fetched one phone at a time through `deviceToken`. Needs **Kufunga simu** or **Kufungua simu**. The writes
+(`deviceEnrol`, `deviceIssue`, `deviceSetState`, `deviceDelete`) are gated on the state being asked for — see
+`docs/DEVICE-LOCKING.md`.
+
 ### commission — the three pay schemes
 args: `scope` = `"week"` (default) or `"month"`; `weekOf` for a week, `month` (`yyyy-mm`) for a month · answer:
 `scope, from, to, weekOf, weekEnd, asOfDate, pastWeek, weekFuture, month, monthEnd, weekday, date, me, isAdmin`,
