@@ -248,6 +248,15 @@ adb shell am broadcast --include-stopped-packages \
 - **result=3 PARTIAL** — token cleared, ownership kept (another admin holds the device). Better
   for us: skip straight to the enrol broadcast.
 - **result=2 TOKEN MISMATCH** — wrong token; nothing was changed.
+- **`The syntax of the command is incorrect`** — not the phone at all. That is `cmd` reading
+  `<` and `>` as file redirection, which means the placeholder is still in the command and
+  nothing was sent. Replace the brackets *and* the words between them with the token itself.
+  The brackets are written in deliberately for exactly this reason: a placeholder that errors
+  is a placeholder that cannot be run by accident.
+
+Hoop's register hands the token over at **Devices → the handset's row → Token**. If the phone
+is not on that register either, nothing holds its token and a factory reset with the sign-in
+skipped is the only way back.
 
 Then run §4's two steps. The phone now has no token, so `-e server` lands, and it enrols to HOPE.
 
