@@ -109,25 +109,27 @@ history, and six months from now "why is this locked" has to have an answer.
 
 The lock itself is an Android **Device Owner** app. The portal decides; the app obeys.
 
-**This repository does not yet contain a built HOPE lock APK.** The working implementation lives
-in the sister repository `samaritantechs/hoop-pmo` under `android/lock`, and there are two honest
-routes:
+**This repository contains no lock APK of its own, and does not need one.** The working app
+lives in the sister repository `samaritantechs/hoop-pmo` under `android/lock`, built and signed,
+and HOPE uses that build.
 
-**Route A — provision against HOPE using the existing signed APK.** The lock app takes its
-server address at first enrolment (`-e server <url>`), written once, on a handset that is
-already Device Owner, and never changeable afterwards. So Hoop's built APK can be pointed at
-HOPE's API with no new build at all. Set `DEVICE_LOCK_PACKAGE` in Settings to
-`com.samaritantechs.hooploanlock` so the bench command names the package that is really
-installed. The lock screen still says HOPE, because every word on it comes from this server
-(§6) — only the app's own name in the launcher would read HOOPLOAN.
+**This is the route in force.** The lock app takes its server address at first enrolment
+(`-e server <url>`), written once, on a handset that is already Device Owner, and never
+changeable afterwards — so the same signed APK reports to HOPE with no new build, no new
+signing key and nothing to download beyond the app itself. `DEVICE_LOCK_PACKAGE` already
+defaults to `com.samaritantechs.hooploanlock`, so **there is nothing to set**.
 
-**Route B — build HOPE's own.** Copy `android/lock` from `hoop-pmo`, change the package to
-`com.samaritantechs.hopelock`, point `serverUrl` at HOPE, replace the logo drawable, and build.
-It needs the Android SDK (build-tools and platform 35) and a signing key; `android/build-noagp.sh`
-in that repository builds without Gradle's Android plugin. Leave `DEVICE_LOCK_PACKAGE` unset and
-the bench command names this package by default.
+The lock screen still reads HOPE, because every word on it comes from this server (§6). The only
+trace of the other company is the app's own name in the launcher, on a handset whose launcher is
+about to be pinned behind a lock screen anyway.
 
-Route A gets the fleet locked this week. Route B is the tidier end state.
+Get the APK from `https://hoop-pmo.vercel.app/HOOPLOAN-Lock.apk`.
+
+**If HOPE ever builds its own**, copy `android/lock` from `hoop-pmo`, change the package, point
+`serverUrl` here, replace the logo drawable and build — it needs the Android SDK (build-tools and
+platform 35) and a signing key, and `android/build-noagp.sh` in that repository builds without
+Gradle's Android plugin. Then set `DEVICE_LOCK_PACKAGE` to the new package and the bench command
+follows with no deploy.
 
 ### The bench, per handset
 
@@ -156,7 +158,7 @@ missing or unreadable.
 | `DEVICE_LOCK_MESSAGE` | a Swahili sentence | the message. `{brand}` and `{namba}` are filled in by the server |
 | `DEVICE_HELP_PHONE` | — | the number a stranded person is told to call. Unset means the message promises no number rather than promising a blank one |
 | `DEVICE_LOCK_REASON` | — | the reason shown when a phone locked *itself* on the offline grace |
-| `DEVICE_LOCK_PACKAGE` | `com.samaritantechs.hopelock` | the APK the bench command names — see §5 |
+| `DEVICE_LOCK_PACKAGE` | `com.samaritantechs.hooploanlock` | the APK the bench command names. The default is the app HOPE actually installs, so leave it alone unless HOPE builds its own — see §5 |
 | `DEVICE_BEAT_SECONDS` | `900` | how often a settled handset reports. Floor 60 |
 | `DEVICE_PENDING_BEAT_SECONDS` | `25` | how often it reports while an order is outstanding. Floor 10 |
 | `DEVICE_OFFLINE_GRACE_HOURS` | `336` (14 days) | how long an **issued** phone may go unheard-from before it locks itself. A phone still in the store never does |

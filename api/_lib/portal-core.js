@@ -6959,11 +6959,20 @@ async function deviceEnrol(db, user, args, nowMs = Date.now()) {
   /* WHICH APK IS ACTUALLY ON THESE PHONES. The bench command has to name the package that is
      installed, and getting it wrong produces `am broadcast`'s worst answer: "Broadcast
      completed: result=0", which reads exactly like success while nothing was enrolled at all.
-     A setting rather than a constant, because HOPE may run its own build or may provision
-     against the lock app Hoop already ships -- see docs/DEVICE-LOCKING.md. One small read on
-     a bench action taken a few times a day, off the memoised settings. */
+
+     THE DEFAULT IS THE LOCK APP THAT ALREADY EXISTS, and that is a decision rather than an
+     accident: "set DEVICE_LOCK_PACKAGE to the hooploan one so that i dont download another
+     apk nor nothing more". HOPE provisions handsets against the signed build Hoop already
+     ships -- the lock app takes its SERVER at first enrolment, so pointing it here needs no
+     new build and no new signing key. The lock screen still reads HOPE, because every word on
+     it comes from this server (see lockWords in device-core.js); only the app's own name in
+     the launcher says HOOPLOAN.
+
+     Still a setting, so the day HOPE builds its own the bench command follows without a
+     deploy. One small read on a bench action taken a few times a day, off the memoised
+     settings. */
   const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE']);
-  const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hopelock').trim();
+  const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hooploanlock').trim();
   return { ok: true, ready: true, enrolled: fresh.length, alreadyOn: rejoin.length, pkg,
     /* Said out loud, because it is a state change nobody explicitly asked for -- they asked to
        enrol. Silently un-releasing rows would be the right behaviour reported as nothing. */
