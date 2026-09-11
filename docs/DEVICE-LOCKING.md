@@ -184,6 +184,16 @@ own both count. Remove every account under Settings → Accounts, or factory res
 sign-in. A handset that never takes ownership **cannot be locked**, and once it is in the field
 there is no way back without holding it.
 
+**Run the commands one at a time.** Paste two lines into `cmd` at once and only the first runs:
+the second goes into the type-ahead buffer, its echo interleaves with the first one's output,
+and it never executes — no `Broadcasting:`, no result code, nothing enrolled, and an answer on
+screen that reads like success. Both drawers now hand the commands over one box at a time.
+
+**`IllegalStateException: ... device owner ... is already set` is the SUCCESS case** when the
+package it names is ours. Ownership is already in place; go straight to the broadcast. Android
+has no quieter way of saying "already done", and the stack trace has cost a bench round more
+than once.
+
 ---
 
 ## 6. Settings

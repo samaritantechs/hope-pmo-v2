@@ -318,3 +318,37 @@ test('ticking adds ONE cell to the header and to every row, and keeps them level
   assert.ok(/data-pick="351388334583295"(?![^>]*checked)/.test(html), 'and an unticked one does not');
   assert.ok(/data-pickall/.test(html), 'with a master tick in the header');
 });
+
+/* ONE COMMAND PER COPY BOX, and the bench cost that says why.
+   -------------------------------------------------------------------------------------
+   The single-handset token drawer used to hand over two adb commands in one textarea with
+   "run them in this order" written above it. A terminal does not read notes. Pasted into
+   cmd, the first line runs and the second lands in the type-ahead buffer, where its echo
+   interleaves with the first command's output and it never executes:
+
+     ... -e token 1ea6d5bf...com.samaritantechs.hooploanlock/.LockAdmin was already an admin
+
+   No "Broadcasting:", no "Broadcast completed:", no result code -- nothing enrolled, and
+   nothing on screen saying so. The operator reads the first command's answer as the answer
+   to both. So each command gets its own box and its own button. */
+test('the bench is never handed two adb commands in one copy box', () => {
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(!/\\n'\s*\+\s*'adb /.test(src),
+    'a copied block that starts a second adb command on a new line');
+  assert.ok(!/adb [^'"\n]*\\n\s*adb /.test(src),
+    'two adb commands inside one string literal');
+});
+
+/* AND EVERY ENROL BROADCAST CARRIES --include-stopped-packages.
+   A freshly installed app sits in Android's STOPPED state and receives no broadcast at all
+   without it. `am` then prints "Broadcast completed: result=0" -- no result code, no
+   message, nothing in logcat -- which reads exactly like success while nothing happened. */
+test('every enrol broadcast the portal writes carries --include-stopped-packages', () => {
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const casts = src.match(/adb shell am broadcast[^;]*/g) || [];
+  assert.ok(casts.length >= 2, 'the batch command and the single-handset one');
+  for (const c of casts) {
+    assert.ok(c.includes('--include-stopped-packages'),
+      'a broadcast without it answers result=0, which reads as success: ' + c.slice(0, 60));
+  }
+});
