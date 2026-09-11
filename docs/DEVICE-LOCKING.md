@@ -139,8 +139,11 @@ About phone. A dual-SIM shows two and **either** may be enrolled — the phone o
 claims, so enrolling one of them is enough.
 
 A claim against a batch the office never minted, or one over a day old, is refused with nothing
-written at all — so an empty strip after a refusal means the batch itself was wrong, not the
-IMEI.
+written at all.
+
+**An empty strip after a 403 is itself a diagnosis, and usually THIS one:** the claim never
+reached HOPE at all. See §5a — a handset that already holds a token ignores `-e server`, so it
+asks the wrong office and HOPE never hears from it. Check §5a before re-checking a single IMEI.
 
 ---
 
@@ -195,6 +198,61 @@ has no quieter way of saying "already done", and the stack trace has cost a benc
 than once.
 
 ---
+
+### 5a. A handset that already holds a token — the trap HOPE has and Hoop does not
+
+```
+Broadcast completed: result=2, data="ALREADY ENROLLED, under a different token..."
+```
+
+**HOPE runs Hoop's signed APK on purpose (§5), and that APK's built-in fallback server is
+`hoop-pmo.vercel.app`.** Every handset that has ever been through Hoop's bench — and every one
+that never had a server written at all — is pointed there until something changes it.
+
+**The app writes its server address ONLY when it holds no token.** `EnrolReceiver` computes
+`fresh = existing token is empty` and writes `-e server` inside that branch and nowhere else,
+deliberately: changing the server is a change of *which office owns the phone*, and is the one
+thing that could turn a leaked token into an unlock.
+
+The consequence is the whole reason this section exists. **On a handset that already carries a
+token, `-e server https://…` is read and thrown away, silently, every time.** The claim then
+goes to the server the phone already holds, that office does not know HOPE's batch, and the
+bench sees:
+
+```
+Broadcast completed: result=5, data="THE OFFICE REFUSED THIS PHONE (HTTP 403)..."
+```
+
+which reads as "wrong IMEI" and sends somebody re-checking numbers that were never wrong. **The
+refused-claim strip (§4a) stays empty, because nothing ever reached HOPE** — and that emptiness
+is the tell.
+
+**Do NOT use `-e current`.** The receiver's own result=2 message suggests it, and inside one
+office it is right. Here it is not: it moves the token and leaves the server where it was, so
+the phone ends up holding a HOPE credential while beating to Hoop. No register can reach it, no
+desk can unlock it, and `DISALLOW_FACTORY_RESET` means it cannot be wiped either.
+
+**The route out** is to clear the token, because that is what makes the next enrolment fresh —
+and only a release over the cable does that. Fetch this handset's token from **the register it
+currently belongs to**, then:
+
+```
+adb shell am broadcast --include-stopped-packages \
+    -a com.samaritantechs.hooploanlock.RELEASE \
+    -n com.samaritantechs.hooploanlock/.ReleaseReceiver \
+    -e token <its token on THAT register>
+```
+
+- **result=1 RELEASED** — token cleared and Device Owner given up. Run `set-device-owner` again,
+  then the enrol broadcast.
+- **result=3 PARTIAL** — token cleared, ownership kept (another admin holds the device). Better
+  for us: skip straight to the enrol broadcast.
+- **result=2 TOKEN MISMATCH** — wrong token; nothing was changed.
+
+Then run §4's two steps. The phone now has no token, so `-e server` lands, and it enrols to HOPE.
+
+A phone fresh out of its box has no token either, so none of this applies to new stock — which
+is the ordinary case and stays a two-command bench.
 
 ## 6. Settings
 

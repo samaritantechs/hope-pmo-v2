@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-f';
+var BUILD = '2026-09-11-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6231,6 +6231,37 @@ function devOpen_(imei, mode){
             + '<div class="note">Unatakiwa kuona <b>result=1</b> na neno <b>ENROLLED</b>. Kitu kingine chochote '
             + 'ni kosa — soma ujumbe uliorudi. / You are looking for <b>result=1</b> and the word '
             + '<b>ENROLLED</b>. Anything else is a failure and the message says which.</div>'
+            /* result=2 IS THE ONE THE RECEIVER GIVES THE WRONG ADVICE FOR, on HOPE.
+               ---------------------------------------------------------------------------
+               HOPE provisions against the lock app Hoop already ships, whose built-in
+               fallback server is hoop-pmo. The app writes its server ONLY when it has no
+               token -- `boolean fresh = existing.isEmpty()` in EnrolReceiver -- so on a
+               handset that already carries one, `-e server` is read and thrown away, every
+               time, in silence. The claim then goes to HOOP, HOOP does not know our batch,
+               and the bench reads HTTP 403 as "wrong IMEI" and starts re-checking numbers
+               that were never the problem.
+
+               The receiver answers result=2 by suggesting `-e current`. That moves the token
+               and DELIBERATELY leaves the server where it is -- correct inside one office,
+               wrong here: the phone would end up holding a HOPE credential while beating to
+               HOOP, which is a handset no register can reach and no desk can unlock.
+
+               Clearing the token is what makes the next enrolment fresh, and RELEASE over the
+               cable is the only thing that clears it. */
+            + '<div class="note bad"><b>Ikijibu result=2 "ALREADY ENROLLED"</b> — simu hii bado ni ya '
+            + 'rejista nyingine (hoop-pmo), na <b>-e server haisomwi</b> kwenye simu yenye token. '
+            + '<b>Usitumie -e current</b>: itabadilisha token lakini itaacha server ya zamani. '
+            + 'Kwanza iachie kwa kebo ukitumia token yake ya rejista ile, kisha rudia hatua 1 na 2:'
+            + '<br><code style="font-size:11px;word-break:break-all">adb shell am broadcast '
+            + '--include-stopped-packages -a ' + esc(pkg) + '.RELEASE -n ' + esc(pkg)
+            + '/.ReleaseReceiver -e token &lt;token ya rejista ile&gt;</code>'
+            + '<br>/ <b>result=2 means this handset still belongs to another register</b> (hoop-pmo). '
+            + 'The app writes its server address only when it holds no token, so <b>-e server is '
+            + 'silently ignored</b> on a phone that has one — which is why the claim 403s: it is '
+            + 'asking the wrong office. <b>Do not use -e current</b>; it moves the token and keeps the '
+            + 'old server, leaving a phone no register can reach. Release it over the cable with its '
+            + 'token from <i>that</i> register (result=1 or result=3 both clear it), then run steps 1 '
+            + 'and 2 again. result=3 keeps ownership, so step 1 can be skipped.</div>'
             + '<div class="note">Token ni siri ya simu hii. / The token is this handset\'s credential — it is '
             + 'not on any list or export, and reading it here is written to the audit log.</div>');
           var copy = function(id){
