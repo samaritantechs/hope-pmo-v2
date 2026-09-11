@@ -199,15 +199,32 @@ than once.
 
 ---
 
-### 5a. A handset that already holds a token — the trap HOPE has and Hoop does not
+### 5a. Moving a handset from Hoop's register to HOPE's
+
+> "remember we using one app and sometime hoop can release phones that need to be enrolled
+> into hope"
+
+**This is a routine, and it will keep happening.** One APK serves both companies, so a handset
+Hoop finishes with is a handset HOPE can take on — and the step that makes that work is not the
+obvious one. It is worth doing in the order below every time rather than discovering it again.
 
 ```
 Broadcast completed: result=2, data="ALREADY ENROLLED, under a different token..."
 ```
 
+That is what a Hoop handset says to HOPE's enrol command, and it is the expected answer, not a
+fault.
+
 **HOPE runs Hoop's signed APK on purpose (§5), and that APK's built-in fallback server is
 `hoop-pmo.vercel.app`.** Every handset that has ever been through Hoop's bench — and every one
 that never had a server written at all — is pointed there until something changes it.
+
+**Releasing it in Hoop's portal is NOT enough, and this is the part that catches people.**
+Pressing **Achia** there makes the phone retire on its next beat: `Beat` calls
+`LockAdmin.unharden` and sets `RETIRED`, so it unlocks, gives up Device Owner and stops calling
+home. **It does not clear `Prefs.TOKEN`.** The handset is therefore still carrying Hoop's
+credential and Hoop's server address, and HOPE's enrol command will still be refused — by a
+phone that looks, from Hoop's register, entirely finished with.
 
 **The app writes its server address ONLY when it holds no token.** `EnrolReceiver` computes
 `fresh = existing token is empty` and writes `-e server` inside that branch and nowhere else,
@@ -232,9 +249,22 @@ office it is right. Here it is not: it moves the token and leaves the server whe
 the phone ends up holding a HOPE credential while beating to Hoop. No register can reach it, no
 desk can unlock it, and `DISALLOW_FACTORY_RESET` means it cannot be wiped either.
 
-**The route out** is to clear the token, because that is what makes the next enrolment fresh —
-and only a release over the cable does that. Fetch this handset's token from **the register it
-currently belongs to**, then:
+**The one step that matters is clearing the token**, because an empty token is what makes the
+next enrolment *fresh*, and fresh is what lets `-e server` land. **Only the cable release does
+that** — not an office release, not a re-enrol, not `-e current`.
+
+So the handover, whole, with the phone on a cable:
+
+1. **Get its Hoop token** — Hoop's portal → **Devices** → the handset's row → **Token**. Needed
+   whether or not Hoop has already released it: the receiver checks it before changing anything.
+2. **Release it over the cable** (below). This clears the token.
+3. **`set-device-owner`**, immediately, with nothing signed in.
+4. **HOPE's enrol broadcast** with `-e server` and `-e token` — now `fresh`, so the server
+   finally moves. You want `result=1 ENROLLED`.
+5. **Tidy Hoop's register**: mark the handset released there if it is not already, so it does not
+   sit in Hoop's fleet as a phone that stopped reporting.
+
+The release command:
 
 ```
 adb shell am broadcast --include-stopped-packages \
@@ -243,8 +273,12 @@ adb shell am broadcast --include-stopped-packages \
     -e token <its token on THAT register>
 ```
 
-- **result=1 RELEASED** — token cleared and Device Owner given up. Run `set-device-owner` again,
-  then the enrol broadcast.
+- **result=1 RELEASED** — token cleared and Device Owner given up. `unharden` calls
+  `clearDeviceOwnerApp`, so the handset is an ordinary phone again for as long as it takes you
+  to re-take it. **Run `set-device-owner` again immediately, and let nothing sign in first.**
+  The release also drops `DISALLOW_ADD_USER`, and Device Owner is refused while any account
+  exists — so a phone that picks one up in that window cannot be re-provisioned at all without
+  a factory reset. Do this step with the cable still attached and the phone untouched.
 - **result=3 PARTIAL** — token cleared, ownership kept (another admin holds the device). Better
   for us: skip straight to the enrol broadcast.
 - **result=2 TOKEN MISMATCH** — wrong token; nothing was changed.

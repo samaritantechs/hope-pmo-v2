@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-h';
+var BUILD = '2026-09-11-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6255,7 +6255,10 @@ function devOpen_(imei, mode){
             + '<br><code style="font-size:11px;word-break:break-all">adb shell am broadcast '
             + '--include-stopped-packages -a ' + esc(pkg) + '.RELEASE -n ' + esc(pkg)
             + '/.ReleaseReceiver -e token &lt;token ya rejista ile&gt;</code>'
-            + '<br>/ <b>result=2 means this handset still belongs to another register</b> (hoop-pmo). '
+            + '<br>/ <b>result=2 means this handset still belongs to another register</b> (hoop-pmo) — '
+            + 'routine when a phone comes across from Hoop, not a fault. <b>Releasing it in Hoop\'s '
+            + 'portal is not enough</b>: that unlocks the handset and gives up ownership but leaves its '
+            + 'token in place, so it still answers this way. '
             + 'The app writes its server address only when it holds no token, so <b>-e server is '
             + 'silently ignored</b> on a phone that has one — which is why the claim 403s: it is '
             + 'asking the wrong office. <b>Do not use -e current</b>; it moves the token and keeps the '
