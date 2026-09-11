@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-c';
+var BUILD = '2026-09-11-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -969,6 +969,8 @@ function go(view, args){
      Cleared here, a tab with no table of its own now exports nothing and says so, which is the
      honest answer. A tab with a table sets these before it paints, exactly as it always did. */
   S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
+  // Ticks belong to the tab that drew them -- see the note above tableHtml.
+  S.pickKey = null; S.pick = {};
   document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
   var t = (isLoanId_(view) ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
   // 'noaccess' has no nav entry by design -- it is where somebody lands when their role holds
@@ -1483,9 +1485,41 @@ function sortBarHtml(){
 /* Every table carries a serial number. These lists run to thousands of rows and get read
    aloud in meetings ("number 42..."), so position has to be visible without counting. It is
    the row's position in the CURRENT view, so it stays 1..n after a search or a re-sort. */
+/* =====================================================================================
+   TICKING ROWS, for the screens where the work is done to MANY rows at once.
+
+     "no bulk tick/selct checkboxes on the left"
+
+   A view opts in by setting S.pickKey to the field that identifies a row -- the phone
+   register sets 'imei'. Everything below is inert on every other tab, and go() clears the
+   selection with S.rows and S.cols so no tab ever inherits another's ticks.
+
+   THE TICKS SURVIVE A SORT AND A SEARCH, because they live in S rather than in the DOM: they
+   are a set of row KEYS, not a set of table positions. Tick a phone, search for another, tick
+   that too, and both are still ticked -- which is what somebody working down a paper list
+   actually does. It also means the master tick covers WHAT IS ON SCREEN, which is the only
+   reading of "all" that makes sense under a filter. */
+function pickOn_(){ return !!S.pickKey; }
+function pickKeyOf_(r){ return String(r && r[S.pickKey] == null ? '' : r[S.pickKey]); }
+function pickHas_(r){ return S.pick && S.pick[pickKeyOf_(r)] === true; }
+function pickCount_(){ return S.pick ? Object.keys(S.pick).length : 0; }
+function pickList_(){ return S.pick ? Object.keys(S.pick) : []; }
+function pickClear_(){ S.pick = {}; pickPaintCount_(); }
+/* The count is written into whatever element the view put on its bar, rather than the view
+   being re-rendered on every tick: re-rendering would close the keyboard, lose the scroll
+   position and reset the search box, all to change one number. */
+function pickPaintCount_(){
+  var n = pickCount_();
+  Array.prototype.forEach.call(document.querySelectorAll('[data-pickcount]'), function(el){
+    el.textContent = n ? String(n) : '0';
+    el.className = n ? 'chip ok' : 'chip mut';
+  });
+}
 function tableHtml(rows, cols, onRow){
   if (!rows.length) return '<div class="msg">Hakuna taarifa. / Nothing here yet.</div>';
-  var head = '<th class="sn">S/N</th>' + cols.map(function(c){
+  var pick = pickOn_();
+  var head = (pick ? '<th class="sn"><input type="checkbox" data-pickall="1" title="Chagua zote / select all"></th>' : '')
+    + '<th class="sn">S/N</th>' + cols.map(function(c){
     var arrow = S.sort===c.key ? (S.asc?' ↑':' ↓') : '';
     // An abbreviated header carries its full name as the tooltip (see the dashboard Orodha).
     var tip = c.title ? ' title="'+esc(c.title)+'"' : '';
@@ -1504,6 +1538,8 @@ function tableHtml(rows, cols, onRow){
   var ctx = colourCtx_(cols, tot, rows);
   var body = rows.map(function(r, i){
     return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
+      + (pick ? '<td class="sn"><input type="checkbox" data-pick="'+esc(pickKeyOf_(r))+'"'
+          + (pickHas_(r)?' checked':'')+'></td>' : '')
       + '<td class="sn">'+(i+1)+'</td>'
       + cols.map(function(c){
           var k = cellCls_(r, c, ctx);
@@ -1515,7 +1551,8 @@ function tableHtml(rows, cols, onRow){
      names are a screen and a half away from the JUMLA row they explain. Only on a long list
      -- a short one has its headers in sight -- and they sort exactly like the ones at the top. */
   if (tot && rows.length > 25) body += '<tr class="hdr2">' + head + '</tr>';
-  if (tot) body += '<tr class="totrow"><td class="sn"></td>' + cols.map(function(c, i){
+  if (tot) body += '<tr class="totrow">' + (pick ? '<td class="sn"></td>' : '') + '<td class="sn"></td>'
+    + cols.map(function(c, i){
     return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>';
   return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
@@ -1530,6 +1567,32 @@ function wireTable(rows, onRow){
   if (onRow) Array.prototype.forEach.call(document.querySelectorAll('tbody tr[data-i]'), function(tr){
     tr.onclick = function(){ onRow(rows[+tr.getAttribute('data-i')]); };
   });
+  if (pickOn_()) {
+    S.pick = S.pick || {};
+    /* THE TICK MUST NOT OPEN THE ROW. Both live on the same <tr>, and without this every tick
+       would also open the drawer over the table somebody is trying to work down. */
+    Array.prototype.forEach.call(document.querySelectorAll('input[data-pick]'), function(cb){
+      cb.onclick = function(ev){ ev.stopPropagation(); };
+      cb.onchange = function(ev){
+        ev.stopPropagation();
+        var k = cb.getAttribute('data-pick');
+        if (cb.checked) S.pick[k] = true; else delete S.pick[k];
+        pickPaintCount_();
+      };
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('input[data-pickall]'), function(all){
+      all.onclick = function(ev){ ev.stopPropagation(); };
+      all.onchange = function(){
+        // What is ON SCREEN, which is the only reading of "all" that survives a filter.
+        rows.forEach(function(r){
+          var k = pickKeyOf_(r);
+          if (all.checked) S.pick[k] = true; else delete S.pick[k];
+        });
+        paint(true);
+      };
+    });
+    pickPaintCount_();
+  }
 }
 function exportCsv(){
   if (!S.rows.length){ toast('Hakuna cha kupakua.', true); return; }
@@ -6003,11 +6066,21 @@ function devOrder_(state, imeis, reason, force){
       throw e;
     });
 }
-/** The paste box every bulk order shares: a column of IMEIs, and a reason where one is due. */
+/** The paste box every bulk order shares: a column of IMEIs, and a reason where one is due.
+    TICKED ROWS FILL IT IN. Somebody working down the register ticks the phones and presses the
+    button; somebody working from a paper list pastes a column. Both end in the same box, so
+    there is one order path and one confirmation, and the ticks are visible as text before
+    anything is sent -- which on a bulk lock is the last chance to notice a wrong row. */
 function devBulkDrawer_(state, title, needReason){
+  var ticked = pickList_();
   drawer('<h3>' + esc(title) + '</h3>'
+    + (ticked.length
+        ? '<div class="note ok"><b>' + money(ticked.length) + '</b> zimechaguliwa kwenye orodha. '
+          + '/ taken from the ticks on the register — edit the list if that is not what you meant.</div>'
+        : '')
     + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
-    + '<textarea id="devBulkList" rows="8" placeholder="351388334583295&#10;351388334583296"></textarea></div>'
+    + '<textarea id="devBulkList" rows="8" placeholder="351388334583295&#10;351388334583296">'
+    + esc(ticked.join('\n')) + '</textarea></div>'
     + (needReason
         ? '<div class="fld"><label>Sababu / Reason <b>*</b></label>'
           + '<input id="devBulkWhy" placeholder="mfano: ameacha kazi na simu"></div>'
@@ -6074,6 +6147,14 @@ function devOpen_(imei, mode){
       + '<div class="fld"><label>Timu / Team</label><input id="devTeam" value="' + esc(r.team || '') + '"></div>'
       + '<div class="fld"><label>Wadhifa / Role</label><input id="devRole" value="' + esc(r.role || '') + '"></div>'
       + '<button class="btn w ghost" id="devSaveHolder">Hifadhi mwenye simu / Save holder</button>'
+      /* THE WAY BACK TO A PHONE'S TOKEN. The enrol drawer shows the batch command once and
+         then it is gone; a handset that was wiped, or arrived late to the bench, needs its own
+         credential read back. The server has always been able to do this -- this is the button
+         that reaches it, and it is on the LOCKING pane only, because provisioning is the
+         bench's own work. The read is audited. */
+      + (mode === 'lock'
+          ? '<button class="btn w ghost" id="devToken">🔑 Token ya simu hii / This phone\'s command</button>'
+          : '')
       + (mode === 'lock'
           ? '<div class="fld" style="margin-top:10px"><label>Sababu / Reason</label>'
             + '<input id="devWhy" placeholder="mfano: ameacha kazi na simu"></div>'
@@ -6099,6 +6180,35 @@ function devOpen_(imei, mode){
         .catch(function(e){ toast(String(e.message || e), true); });
     };
     if (mode === 'lock') {
+      $('#devToken').onclick = function(){
+        srv('deviceToken', { imei: imei }).then(function(t){
+          if (!t.token) { toast('Simu hii haina token. / This phone has no token — enrol it again.', true); return; }
+          var pkg = DEV_PKG, origin = location.origin;
+          /* ONE PHONE, ONE TOKEN -- the single-handset form of the bench command. No batch, so
+             it does not expire, and it names this phone and no other. */
+          var cmd = 'adb shell dpm set-device-owner ' + pkg + '/.LockAdmin\n'
+            + 'adb shell am broadcast --include-stopped-packages'
+            + ' -a ' + pkg + '.ENROL'
+            + ' -n ' + pkg + '/.EnrolReceiver'
+            + ' -e server ' + origin
+            + ' -e token ' + t.token;
+          drawer('<h3>' + esc(imei) + '</h3>'
+            + '<div class="note">Amri ya simu hii pekee. Endesha kwa mpangilio huu — <b>umiliki kwanza</b>, '
+            + 'kisha broadcast. Ukibadilisha mpangilio adb inaandika <b>result=0</b> ambayo inasomeka kama mafanikio.'
+            + ' / This one handset\'s command. Run them in this order — <b>ownership first</b>, then the '
+            + 'broadcast. The other way round, adb prints <b>result=0</b>, which reads exactly like success.</div>'
+            + '<div class="fld"><label>Amri / Command</label>'
+            + '<textarea id="devCmd1" rows="5" readonly>' + esc(cmd) + '</textarea></div>'
+            + '<button class="btn w ghost" id="devCmd1Copy">Nakili / Copy</button>'
+            + '<div class="note">Token ni siri ya simu hii. / The token is this handset\'s credential — it is '
+            + 'not on any list or export, and reading it here is written to the audit log.</div>');
+          $('#devCmd1Copy').onclick = function(){
+            var el = $('#devCmd1'); el.select();
+            try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
+            catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
+          };
+        }).catch(function(e){ toast(String((e && e.message) || e), true); });
+      };
       $('#devLock').onclick = function(){
         var why = String($('#devWhy').value || '').trim();
         if (!why) { toast('Sababu inahitajika. / A reason is required.', true); return; }
@@ -6201,8 +6311,18 @@ function devicesView_(mode){
                 + '<button class="btn sm bad" id="devLockMany" style="margin-left:6px">🔒 Funga kwa wingi / Lock many</button>'
               : '<button class="btn sm" id="devUnlockMany" style="margin-left:8px">🔓 Fungua kwa wingi / Unlock many</button>'
                 + '<button class="btn sm ghost" id="devReleaseMany" style="margin-left:6px">Achia kwa wingi / Release many</button>')
+          /* THE LIVE TICK COUNT. Written into this chip by the tick handler rather than by a
+             re-render: re-rendering the tab to change one number would close the keyboard,
+             lose the scroll position and empty the search box. */
+          + '<span class="chip mut" data-pickcount="1" style="margin-left:8px">0</span>'
+          + '<span class="mutl" style="font-size:12px">zimechaguliwa / ticked</span>'
+          + '<button class="btn sm ghost" id="devPickNone" style="margin-left:6px">Ondoa chaguo / Clear</button>'
           + '<span class="chip mut" style="margin-left:8px">'
           + (mode === 'lock' ? 'Kufunga / Locking' : 'Kufungua / Unlocking') + '</span>');
+    /* TICKS ON, keyed by IMEI -- see the note above tableHtml. The bulk buttons read them, and
+       a phone stays ticked through a sort or a search because the selection is a set of IMEIs
+       rather than a set of row positions. */
+    S.pickKey = 'imei';
     S.rows = d.rows || [];
     S.cols = [col('imei','IMEI'),
       {key:'state', label:'Hali / State', kind:'chip', chip:devStateChip_,
@@ -6229,6 +6349,8 @@ VIEWS.devunlock = function(){ return devicesView_('unlock'); };
 function wireDevices(){
   var a = document.getElementById('devEnrolBtn');
   if (a) a.onclick = devEnrolDrawer_;
+  var z = document.getElementById('devPickNone');
+  if (z) z.onclick = function(){ pickClear_(); paint(true); };
   var b = document.getElementById('devLockMany');
   if (b) b.onclick = function(){ devBulkDrawer_('locked', 'Funga kwa wingi / Lock many', true); };
   var c = document.getElementById('devUnlockMany');
