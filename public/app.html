@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-e';
+var BUILD = '2026-09-11-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6186,27 +6186,60 @@ function devOpen_(imei, mode){
           var pkg = DEV_PKG, origin = location.origin;
           /* ONE PHONE, ONE TOKEN -- the single-handset form of the bench command. No batch, so
              it does not expire, and it names this phone and no other. */
-          var cmd = 'adb shell dpm set-device-owner ' + pkg + '/.LockAdmin\n'
-            + 'adb shell am broadcast --include-stopped-packages'
+          var own = 'adb shell dpm set-device-owner ' + pkg + '/.LockAdmin';
+          var run = 'adb shell am broadcast --include-stopped-packages'
             + ' -a ' + pkg + '.ENROL'
             + ' -n ' + pkg + '/.EnrolReceiver'
             + ' -e server ' + origin
             + ' -e token ' + t.token;
+          /* TWO BOXES, NOT ONE, and that is the whole point of this drawer's shape.
+             -----------------------------------------------------------------------------
+             These were one textarea holding two lines, with "run them in this order" written
+             above it -- and a terminal does not read notes. Pasting two lines into cmd runs
+             the first and drops the second into the type-ahead buffer, where its echo
+             interleaves with the first command's output and it never runs at all. What the
+             operator gets back is the first command's answer, looking for all the world like
+             the answer to both:
+
+               ... -e token 1ea6d5bf...com.samaritantechs.hooploanlock/.LockAdmin was already
+               an admin for user 0.
+
+             No "Broadcasting:", no "Broadcast completed:", no result code. Nothing enrolled,
+             and nothing on the screen that says so. So the commands are handed over one at a
+             time, each with its own button, and the ordering note now has something to point
+             at. The batch drawer never had this problem: it copies one command. */
           drawer('<h3>' + esc(imei) + '</h3>'
-            + '<div class="note">Amri ya simu hii pekee. Endesha kwa mpangilio huu — <b>umiliki kwanza</b>, '
-            + 'kisha broadcast. Ukibadilisha mpangilio adb inaandika <b>result=0</b> ambayo inasomeka kama mafanikio.'
-            + ' / This one handset\'s command. Run them in this order — <b>ownership first</b>, then the '
-            + 'broadcast. The other way round, adb prints <b>result=0</b>, which reads exactly like success.</div>'
-            + '<div class="fld"><label>Amri / Command</label>'
-            + '<textarea id="devCmd1" rows="5" readonly>' + esc(cmd) + '</textarea></div>'
-            + '<button class="btn w ghost" id="devCmd1Copy">Nakili / Copy</button>'
+            + '<div class="note">Amri ya simu hii pekee. Endesha <b>moja baada ya nyingine</b> — '
+            + 'subiri prompt irudi kabla ya ya pili. Zikibandikwa pamoja, cmd inaendesha ya kwanza '
+            + 'tu na ya pili inapotea kimya. / This one handset\'s command, in <b>two steps</b>. '
+            + 'Run the first, wait for the prompt to come back, then run the second. Pasted '
+            + 'together, cmd runs only the first and swallows the second silently.</div>'
+            + '<div class="fld"><label>1 · Umiliki / Ownership</label>'
+            + '<textarea id="devCmd1" rows="2" readonly>' + esc(own) + '</textarea></div>'
+            + '<button class="btn w ghost" id="devCmd1Copy">Nakili ya kwanza / Copy step 1</button>'
+            /* THE ANSWER THAT LOOKS LIKE A FAILURE AND IS NOT. Android throws
+               IllegalStateException when the device owner is already set -- including when it
+               is already set to US, which is the success case. An operator reading a stack
+               trace assumes the step failed and goes round again. */
+            + '<div class="note">Ikijibu <b>"device owner (' + esc(pkg) + '/.LockAdmin) is already set"</b> '
+            + 'hatua hii <b>imeshakamilika</b> — ni mafanikio, si kosa. Nenda hatua ya 2. '
+            + '/ If it answers <b>"device owner … is already set"</b> naming this same package, this step '
+            + 'is <b>already done</b> — that stack trace is success, not a failure. Go to step 2.</div>'
+            + '<div class="fld" style="margin-top:10px"><label>2 · Sajili / Enrol</label>'
+            + '<textarea id="devCmd2" rows="4" readonly>' + esc(run) + '</textarea></div>'
+            + '<button class="btn w ghost" id="devCmd2Copy">Nakili ya pili / Copy step 2</button>'
+            + '<div class="note">Unatakiwa kuona <b>result=1</b> na neno <b>ENROLLED</b>. Kitu kingine chochote '
+            + 'ni kosa — soma ujumbe uliorudi. / You are looking for <b>result=1</b> and the word '
+            + '<b>ENROLLED</b>. Anything else is a failure and the message says which.</div>'
             + '<div class="note">Token ni siri ya simu hii. / The token is this handset\'s credential — it is '
             + 'not on any list or export, and reading it here is written to the audit log.</div>');
-          $('#devCmd1Copy').onclick = function(){
-            var el = $('#devCmd1'); el.select();
+          var copy = function(id){
+            var el = $(id); el.select();
             try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
             catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
           };
+          $('#devCmd1Copy').onclick = function(){ copy('#devCmd1'); };
+          $('#devCmd2Copy').onclick = function(){ copy('#devCmd2'); };
         }).catch(function(e){ toast(String((e && e.message) || e), true); });
       };
       $('#devLock').onclick = function(){
@@ -6267,6 +6300,11 @@ function devEnrolDrawer_(){
           + '<div class="note">Kwanza: <b>adb shell dpm set-device-owner ' + esc(pkg) + '/.LockAdmin</b> '
           + 'kwa kila simu. Kisha amri moja hii kwa zote zilizounganishwa. '
           + '/ Run set-device-owner on each handset first, then this ONE command for every phone on the hub.</div>'
+          /* Same trap as the single-phone drawer: that stack trace is the success case. */
+          + '<div class="note">Ikijibu <b>"device owner … is already set"</b> ikitaja <b>' + esc(pkg) + '</b>, '
+          + 'simu hiyo ilishamilikiwa — endelea. / If set-device-owner answers <b>"device owner … is already '
+          + 'set"</b> naming <b>' + esc(pkg) + '</b>, that handset is already owned — that stack trace is '
+          + 'success. Move on.</div>'
           + '<div class="fld"><label>Amri ya bench / The bench command</label>'
           + '<textarea id="devCmd" rows="4" readonly>' + esc(cmd) + '</textarea></div>'
           + '<button class="btn w ghost" id="devCmdCopy">Nakili / Copy</button>'
