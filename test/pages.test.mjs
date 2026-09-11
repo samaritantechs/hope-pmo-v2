@@ -352,3 +352,30 @@ test('every enrol broadcast the portal writes carries --include-stopped-packages
       'a broadcast without it answers result=0, which reads as success: ' + c.slice(0, 60));
   }
 });
+
+/* A SETTING NOBODY CAN FIND IS A SETTING NOBODY HAS.
+   -------------------------------------------------------------------------------------
+     "I cant see where to edit this 'Simu hii ni mali ya hope...' at locking"
+
+   Every word on the locked screen came from `settings` and always had -- and not one of them
+   could be reached. The Settings page lists the rows that EXIST, so a key never written has
+   nothing to click, and the only way in was the key/value drawer, which needs the exact
+   string typed from memory. The server read five keys the portal never offered.
+
+   So: every key the beat reads for that screen must appear in SETTINGS_GROUPS. Hoop learned
+   the same lesson on 27 Aug 2026 and pinned it the same way. */
+test('every setting the locked screen reads can be found on the Settings page', () => {
+  const core = readFileSync(new URL('../api/_lib/device-core.js', import.meta.url).pathname, 'utf8');
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+
+  const block = core.match(/const LOCK_SETTINGS = \[([\s\S]*?)\];/);
+  assert.ok(block, 'LOCK_SETTINGS should still be a literal array in device-core.js');
+  const keys = [...block[1].matchAll(/'([A-Z0-9_]+)'/g)].map(m => m[1]);
+  assert.ok(keys.length >= 5, 'expected the lock screen to read several settings, got ' + keys.length);
+
+  const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
+  for (const k of keys) {
+    assert.ok(groups.includes("key:'" + k + "'"),
+      k + ' is read on every beat but cannot be edited anywhere on the Settings page');
+  }
+});
