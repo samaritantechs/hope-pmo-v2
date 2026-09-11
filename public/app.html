@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-k';
+var BUILD = '2026-09-11-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -680,6 +680,51 @@ function srv(fn, args){
         throw new Error(x.body.error);
       }
       throw new Error((x.body && x.body.error) || ('HTTP '+x.status));
+    });
+}
+
+/* THE ONE CALL THIS PORTAL EVER MAKES TO A SERVER THAT IS NOT ITS OWN.
+   =========================================================================================
+     "I dont need to fill anything during shifting from one to other"
+
+   Shift needs a batch minted on the OTHER company's register, and until this the only way
+   to get one was to open their portal by hand and copy it over. There is no standing trust
+   between HOPE's backend and Hoop's -- deliberately, see deviceShift in portal-core.js -- so
+   this cannot become a server-to-server call without creating exactly the cross-tenant
+   credential that design refuses to hold.
+
+   What it can be is THIS BROWSER, using an admin's OWN access code for the other portal,
+   doing over the wire exactly what that admin would otherwise do by hand: open their Sajili
+   simu, paste the same IMEIs, read back the batch. The code lives in localStorage on THIS
+   DEVICE ONLY -- see devShiftDrawer_ -- and is never sent to hope-pmo-v2's own database,
+   never logged, never in the args. Both portals already answer any origin
+   (Access-Control-Allow-Origin: *; see api/_lib/auth.js), so no server change was needed to
+   let this browser speak to the other company's API at all.
+
+   One attempt, not srv()'s two-retry loop: deviceEnrol is idempotent (a re-enrol of a phone
+   already there is a no-op that returns the same token), so a caller who wants to try again
+   after a network hiccup can simply press Hamisha a second time -- there is no risk of it
+   quietly running twice underneath one click the way a write with side effects would carry. */
+function srvOther_(server, code, fn, args){
+  var ctl = window.AbortController ? new AbortController() : null;
+  var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 20000);
+  return fetch(server.replace(/\/+$/, '') + '/api/portal', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: code, fn: fn, args: args || {} }),
+    signal: ctl ? ctl.signal : undefined
+  }).then(function(r){ clearTimeout(timer); return readJson_(r); },
+    function(e){
+      clearTimeout(timer);
+      if (/abort/i.test(String((e && e.message) || e)) || (e && e.name === 'AbortError')) {
+        throw new Error('Ofisi nyingine haijibu ndani ya sekunde 20 / the other office did not '
+          + 'answer within 20 seconds');
+      }
+      throw new Error('Haifikiki: ' + (server || '') + ' / cannot be reached: ' + (server || ''));
+    })
+    .then(function(x){
+      if (x.status >= 200 && x.status < 300 && x.body.ok !== false) return x.body;
+      throw new Error((x.body && x.body.error)
+        || ('Ofisi nyingine imekataa (HTTP ' + x.status + ') / the other office refused (HTTP ' + x.status + ')'));
     });
 }
 
@@ -1249,13 +1294,23 @@ var SETTINGS_GROUPS = [
       { key:'DEVICE_HELP_PHONE', label:'Namba ya kupiga / The number to call', type:'text', dflt:'',
         note:'Hujaza {namba}. Ikiwa wazi, ujumbe wa kawaida hauahidi namba yoyote badala ya kuahidi tupu. '
           + '/ Fills {namba}. Left blank, the built-in sentence promises no number rather than a blank one.' },
-      { key:'DEVICE_LOCK_REASON', label:'Sababu ya simu iliyojifunga yenyewe / Reason for a self-lock',
-        type:'text', dflt:'',
-        note:'Hutumika PEKEE simu ikijifunga yenyewe baada ya kukaa kimya. Funga kutoka ofisini huleta sababu yake. '
-          + '/ Used ONLY when a phone locks itself on the offline grace — an ordered lock always carries its own.' },
       { key:'DEVICE_LOCK_LOGO', label:'Alama / The mark', type:'text', dflt:'',
         note:'Wazi = alama ya HOPE (/lock-logo.png). Andika <b>none</b> kuiondoa kabisa. '
           + '/ Blank means HOPE\'s mark. Write <b>none</b> for no mark at all — see docs/DEVICE-LOCKING.md §6a.' },
+    ] },
+  /* WHERE SHIFT SENDS A PHONE BY DEFAULT.
+     -------------------------------------------------------------------------------------
+       "I dont need to fill anything during shifting from one to other"
+
+     One APK, two companies -- so "the other office" is not a choice anybody makes each
+     time a phone moves, it is a fact of the deployment. The Hamisha / Shift drawer opens
+     with this address already in the field; nobody types it unless it changes. */
+  { id:'deviceShift', title:'Kuhamisha simu kati ya makampuni / Shifting phones between companies',
+    sub:'anwani ya ofisi nyingine, kwa Hamisha / the other office\'s address, for Shift', fields:[
+      { key:'DEVICE_SHIFT_PARTNER', label:'Anwani ya HOOP / HOOP\'s address', type:'text',
+        dflt:'https://hoop-pmo.vercel.app',
+        note:'Hii ndiyo simu inayohamishwa inakoenda. Badilisha tu kama anwani yao imebadilika. '
+          + '/ This is where a shifted phone goes. Change it only if their address itself changes.' },
     ] },
 ];
 function settingsGroupCard_(g, rows){
@@ -6191,21 +6246,35 @@ function devBulkDrawer_(state, title, needReason){
     -----------------------------------------------------------------------------------------
       "another button for shift so that hoop can shift a device to hope and viceversa saving
        re-enlorrment energy"
+      "I dont need to fill anything during shifting from one to other"
 
     Achia gives up Device Owner, and re-taking it is refused while any account is signed in --
     so achia-then-enrol on a used phone means a factory reset. This writes an ORDER instead:
     the phone reads it on its own next beat and moves itself, never letting go of ownership.
 
-    TWO THINGS THE OTHER OFFICE'S OWN ADMIN HAS TO HAND OVER FIRST, because there is no
-    standing trust between two separate companies' servers -- the only channel this uses is
-    the handset proving itself, exactly like a bench enrolment:
-      1. the other office's own address (where their portal lives)
-      2. a batch THEY minted, from THEIR OWN Sajili simu / Enrol drawer, for these same IMEIs
-    Nothing here reaches across to fetch either automatically. */
+    THIS DRAWER USED TO MAKE THE ADMIN CARRY THE BATCH BY HAND: open the other office's own
+    Sajili simu, copy 32 hex characters, paste them back here. That was deliberate the first
+    time round -- there is no standing trust between two separate companies' SERVERS -- but
+    it missed that the person doing the carrying is the same admin on both sides, and asking
+    them to be their own courier for a string they could just as well fetch themselves was
+    friction with no security behind it.
+
+    So THIS BROWSER now does the carrying, using an access code for the other portal that
+    lives ONLY in this device's localStorage (srvOther_ above says why that is not the same
+    thing as server-to-server trust). Enter it once; every Shift after that is tick, press
+    Hamisha, done -- the address is already filled in from DEVICE_SHIFT_PARTNER, and the
+    batch is minted and collected without anybody reading it off one screen to type into
+    another.
+
+    The manual route never goes away -- a batch handed over some other way still works,
+    under "Chaguo jingine / Another way" -- because the auto-fetch depends on this browser
+    reaching the other portal directly, and an office network that blocks that is a real
+    case, not a hypothetical one. */
 function devShiftDrawer_(oneImei){
   // Opened from a single row: that phone, and nothing from whatever is ticked elsewhere on
   // the list -- ticks are for the bulk button, a row's own button means just this phone.
   var ticked = oneImei ? [oneImei] : pickList_();
+  var savedCode = load('devShiftCode');
   drawer('<h3>Hamisha kwenda kampuni nyingine / Shift to the other company</h3>'
     + '<div class="note">Simu HAIACHI kuwa Device Owner — inahama tu. Hakuna kufuta wala kebo. '
       + '/ The phone does NOT give up ownership — it just moves. No wipe, no cable.</div>'
@@ -6216,32 +6285,101 @@ function devShiftDrawer_(oneImei){
     + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
     + '<textarea id="devShiftList" rows="6" placeholder="351388334583295&#10;351388334583296">'
     + esc(ticked.join('\n')) + '</textarea></div>'
-    + '<div class="fld"><label>Anwani ya ofisi nyingine / The other office\'s address <b>*</b></label>'
-    + '<input id="devShiftServer" placeholder="https://…"></div>'
-    + '<div class="fld"><label>Batch kutoka Sajili simu yao / Batch from THEIR Sajili simu <b>*</b></label>'
+    + '<div class="fld"><label>Anwani ya ofisi nyingine / The other office\'s address</label>'
+    + '<input id="devShiftServer" placeholder="https://…" value="' + esc(S.shiftPartner || '') + '"></div>'
+    /* THE CODE, SHOWN ONE OF TWO WAYS. Saved: a quiet confirmation with a way to change it --
+       nobody wants their own credential echoed back at them in a text box every time. Not
+       saved: the field to set it, said plainly where it lives and where it does not. */
+    + (savedCode
+        ? '<div class="note ok" id="devShiftCodeOk">✓ Umehifadhi msimbo wa ofisi nyingine kwenye simu hii. '
+          + '<a href="#" id="devShiftCodeChange" style="text-decoration:underline">Badilisha</a>. '
+          + '/ This device already holds your code for the other office. '
+          + '<a href="#" id="devShiftCodeChange2" style="text-decoration:underline">Change it</a>.</div>'
+        : '<div class="fld" id="devShiftCodeFld"><label>Msimbo wako kwenye ofisi nyingine (mara moja) / '
+          + 'Your code on the other office (once)</label>'
+          + '<input id="devShiftCode" type="password" placeholder="msimbo / access code" '
+          + 'style="font-family:monospace"></div>'
+          + '<div class="note mutl">Inahifadhiwa kwenye simu HII TU — kamwe haiendi kwenye database yetu. '
+          + 'Baada ya hapo, Hamisha haihitaji chochote kingine. / Saved on THIS DEVICE ONLY — never sent to '
+          + 'our own database. After this, Shift needs nothing else typed.</div>')
+    + '<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--mut);font-size:12.5px">'
+      + 'Chaguo jingine — bandika batch mwenyewe / Another way — paste a batch by hand</summary>'
+    + '<div class="fld" style="margin-top:8px"><label>Batch kutoka Sajili simu yao / Batch from THEIR Sajili simu</label>'
     + '<input id="devShiftBatch" placeholder="32 hex characters" style="font-family:monospace"></div>'
-    + '<div class="note">Batch hii ni ya OFISI NYINGINE — waombe wafungue Sajili simu kwa IMEI hizi '
-      + 'hizi na wakupe batch iliyotolewa. Ni siri ya saa 24 tu. / That batch belongs to THE OTHER '
-      + 'office — ask them to open Sajili simu for these same IMEIs and hand you the batch it gives '
-      + 'back. Good for 24 hours only.</div>'
+    + '<div class="note">Ukijaza hii, Hamisha itatumia batch hii moja kwa moja badala ya kuomba moja '
+      + 'kiotomatiki. Ni siri ya saa 24 tu, kutoka Sajili simu yao kwa IMEI hizi hizi. '
+      + '/ Fill this and Shift uses it directly instead of fetching one automatically. Good for 24 hours '
+      + 'only, from their own Sajili simu for these same IMEIs.</div></details>'
     + '<button class="btn w" id="devShiftGo">Hamisha / Shift</button>');
+
+  var showCodeField = function(){
+    var ok = $('#devShiftCodeOk'); if (ok) ok.outerHTML =
+      '<div class="fld" id="devShiftCodeFld"><label>Msimbo wako kwenye ofisi nyingine (mara moja) / '
+      + 'Your code on the other office (once)</label>'
+      + '<input id="devShiftCode" type="password" placeholder="msimbo / access code" '
+      + 'style="font-family:monospace"></div>';
+  };
+  var cc1 = $('#devShiftCodeChange'), cc2 = $('#devShiftCodeChange2');
+  if (cc1) cc1.onclick = function(ev){ ev.preventDefault(); showCodeField(); };
+  if (cc2) cc2.onclick = function(ev){ ev.preventDefault(); showCodeField(); };
+
   $('#devShiftGo').onclick = function(){
     var list = String($('#devShiftList').value || '').trim();
     if (!list) { toast('Weka IMEI. / Paste at least one IMEI.', true); return; }
     var server = String($('#devShiftServer').value || '').trim();
-    var batch = String($('#devShiftBatch').value || '').trim();
-    if (!server || !batch) { toast('Anwani na batch vinahitajika. / Address and batch are both required.', true); return; }
-    $('#devShiftGo').disabled = true;
-    srv('deviceShift', { imeis: list, server: server, batch: batch })
+    if (!/^https:\/\//i.test(server)) {
+      toast('Anwani lazima ianze na https:// . / The address must start with https:// .', true);
+      return;
+    }
+    var manualBatch = String(($('#devShiftBatch') || {}).value || '').trim();
+    var codeInput = $('#devShiftCode');
+    var code = codeInput ? String(codeInput.value || '').trim() : (load('devShiftCode') || '');
+    if (codeInput && code) store('devShiftCode', code);   // saved the moment it is used, not before
+
+    var go = $('#devShiftGo');
+    var finish = function(server2, batch2){
+      go.disabled = true;
+      return srv('deviceShift', { imeis: list, server: server2, batch: batch2 })
+        .then(function(r){
+          var said = [];
+          if (r.ordered) said.push(r.ordered + ' zimeagizwa kuhama / ordered to shift');
+          if (r.alreadyReleased) said.push(r.alreadyReleased + ' tayari zimeachiwa / already released');
+          if (r.unknown) said.push(r.unknown + ' hazipo kwenye rejista / not on this register');
+          toast(said.join(' · ') || 'Hakuna kilichobadilika. / Nothing changed.');
+          closeDrawer(); render({ force:true });
+        })
+        .catch(function(e){ go.disabled = false; toast(String((e && e.message) || e), true); });
+    };
+
+    /* MANUAL WINS IF FILLED IN -- the "advanced" box is a deliberate override, not a
+       fallback tried after the automatic path fails silently. Somebody who opened it and
+       pasted a batch gets exactly the batch they pasted, every time. */
+    if (manualBatch) { finish(server, manualBatch); return; }
+
+    if (!code) {
+      toast('Weka msimbo wa ofisi nyingine, au bandika batch kwa mkono chini. / Enter your code for '
+        + 'the other office, or paste a batch by hand below.', true);
+      return;
+    }
+    go.disabled = true;
+    /* THE AUTO-FETCH. Exactly the call a human would make by hand from the other portal's
+       own Sajili simu -- same function, same IMEIs -- so the batch that comes back is
+       identical to one copied over by eye, just without the copying. Nothing is written on
+       THIS register until the other one has answered: a wrong code or an unreachable office
+       fails here, loudly, and deviceShift below is never called. */
+    srvOther_(server, code, 'deviceEnrol', { imeis: list })
       .then(function(r){
-        var said = [];
-        if (r.ordered) said.push(r.ordered + ' zimeagizwa kuhama / ordered to shift');
-        if (r.alreadyReleased) said.push(r.alreadyReleased + ' tayari zimeachiwa / already released');
-        if (r.unknown) said.push(r.unknown + ' hazipo kwenye rejista / not on this register');
-        toast(said.join(' · ') || 'Hakuna kilichobadilika. / Nothing changed.');
-        closeDrawer(); render({ force:true });
+        if (!r || !r.batch) {
+          go.disabled = false;
+          toast('Ofisi nyingine haikurudisha batch. / The other office did not hand back a batch.', true);
+          return;
+        }
+        return finish(server, r.batch);
       })
-      .catch(function(e){ $('#devShiftGo').disabled = false; toast(String((e && e.message) || e), true); });
+      .catch(function(e){
+        go.disabled = false;
+        toast(String((e && e.message) || e), true);
+      });
   };
 }
 /** ONE PHONE'S STORY, and the orders that can be given against it from this pane. */
@@ -6550,11 +6688,14 @@ function devRefused_(list, mode){
     + '</ul></div>';
 }
 function devicesView_(mode){
-  /* `refused` IS ASKED FOR ONLY BY THE PANE THAT ENROLS. Kufungua simu never provisions a
-     handset, so it never has a refused claim to explain and does not pay the read. */
-  return srv('deviceList', { q: S.args.q || '', refused: mode === 'lock' }).then(function(d){
+  /* `refused` AND `shiftPartner` ARE ASKED FOR ONLY BY THE PANE THAT ENROLS/SHIFTS.
+     Kufungua simu never provisions or moves a handset, so it never pays either read. */
+  return srv('deviceList', { q: S.args.q || '', refused: mode === 'lock', shiftPartner: mode === 'lock' }).then(function(d){
     var c = d.counts || {};
     S.devMode = mode;
+    // Stashed, not consumed here: the Shift drawer reads it when it opens, so the default
+    // address is on screen the moment somebody presses Hamisha, never a beat later.
+    if (d.shiftPartner) S.shiftPartner = d.shiftPartner;
     HEAD = (d.ready === false
         ? '<div class="note bad">' + esc(d.note) + '</div>'
         : '')

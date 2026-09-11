@@ -6885,6 +6885,23 @@ async function refusals_(db, a, all, nowMs) {
     .map(x => ({ imei: x.imei, at: x.at, tries: x.tries, onRegister: known.has(x.imei) }));
 }
 
+/* WHERE SHIFT SENDS A PHONE, BY DEFAULT.
+   ---------------------------------------------------------------------------------------
+     "I dont need to fill anything during shifting from one to other"
+
+   There are exactly two companies this build ever serves, so "the other office" is not a
+   choice somebody makes each time -- it is a fact of the deployment, the same way
+   DEVICE_LOCK_PACKAGE already is. `DEVICE_SHIFT_PARTNER` lets it be overridden (the address
+   can change), but the drawer never opens on a blank field: it opens on the one address a
+   phone leaving HOPE has ever gone to.
+
+   Asked for only by the pane that can shift a phone -- see `a.shiftPartner` in deviceList,
+   same gate `refused` uses -- so Kufungua simu never pays the read. */
+async function shiftPartner_(db) {
+  const cfg = await settingsMany(db, ['DEVICE_SHIFT_PARTNER']);
+  return String(cfg.get('DEVICE_SHIFT_PARTNER', '') || 'https://hoop-pmo.vercel.app').trim();
+}
+
 /** The register, for both panes. */
 async function deviceList(db, user, args, nowMs = Date.now()) {
   requireDeviceNav_(user);
@@ -6926,6 +6943,7 @@ async function deviceList(db, user, args, nowMs = Date.now()) {
   const count = f => all.filter(f).length;
   return { ok: true, ready: true, rows: rows.slice(0, 500), total: rows.length,
     q: find, searching: !!find, refused: await refusals_(db, a, all, nowMs),
+    shiftPartner: a.shiftPartner ? await shiftPartner_(db) : null,
     counts: {
       enrolled: count(r => r.state === 'enrolled'),
       locked: count(r => r.state === 'locked'),

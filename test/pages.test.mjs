@@ -371,11 +371,26 @@ test('every setting the locked screen reads can be found on the Settings page', 
   const block = core.match(/const LOCK_SETTINGS = \[([\s\S]*?)\];/);
   assert.ok(block, 'LOCK_SETTINGS should still be a literal array in device-core.js');
   const keys = [...block[1].matchAll(/'([A-Z0-9_]+)'/g)].map(m => m[1]);
-  assert.ok(keys.length >= 5, 'expected the lock screen to read several settings, got ' + keys.length);
+  // 4, since DEVICE_LOCK_REASON was dropped: "DROP THE REASON FILLING AND ITS DATA SINCE
+  // THE MESSAGE IS ENOUGH" -- a self-lock's reason line is blank now, on purpose.
+  assert.ok(keys.length >= 4, 'expected the lock screen to read several settings, got ' + keys.length);
 
   const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
   for (const k of keys) {
     assert.ok(groups.includes("key:'" + k + "'"),
       k + ' is read on every beat but cannot be edited anywhere on the Settings page');
   }
+});
+
+/* SAME RULE, ONE MORE SETTING: DEVICE_SHIFT_PARTNER.
+   Not a LOCK_SETTINGS key -- deviceList reads it, not the beat -- so the guard above never
+   sees it. Written by hand rather than folding it into that scanner, because this is the
+   only setting of its kind so far and a second scanner earns its keep once there are two. */
+test('the shift partner address can be edited on the Settings page', () => {
+  const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(core.includes("'DEVICE_SHIFT_PARTNER'"), 'deviceList should still read this setting');
+  const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
+  assert.ok(groups.includes("key:'DEVICE_SHIFT_PARTNER'"),
+    'DEVICE_SHIFT_PARTNER is read by the server but cannot be edited anywhere on the Settings page');
 });

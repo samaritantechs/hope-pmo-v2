@@ -651,6 +651,33 @@ test('a released phone is not shiftable, and an unknown IMEI is refused up front
     x => x.status === 400, 'nothing on the register to order at all');
 });
 
+/* THE DEFAULT ADDRESS SHIFT OPENS ON.
+   -----------------------------------------------------------------------------------
+     "I dont need to fill anything during shifting from one to other"
+
+   Two companies, one build: "the other office" is a fact of the deployment, not a
+   choice made per shift, so the drawer must never open blank. Asked for only by the
+   pane that can shift a phone -- Kufungua simu never pays this read, same gate as
+   `refused`. */
+test('deviceList hands back the shift partner, only when asked, defaulting sensibly', async () => {
+  const db = fakeDb(tables());
+  await run(db, LOCKER, 'deviceEnrol', { imeis: '304040404040401' });
+
+  const asked = await run(db, LOCKER, 'deviceList', { shiftPartner: true });
+  assert.equal(asked.shiftPartner, 'https://hoop-pmo.vercel.app', 'the one other company there is');
+
+  const unasked = await run(db, LOCKER, 'deviceList', {});
+  assert.equal(unasked.shiftPartner, null, 'not paid for when nobody is about to shift anything');
+
+  const t = tables();
+  t.settings = [{ key: 'DEVICE_SHIFT_PARTNER', value: 'https://hoop-pmo-staging.example/' }];
+  const custom = fakeDb(t);
+  await run(custom, LOCKER, 'deviceEnrol', { imeis: '304040404040402' });
+  const overridden = await run(custom, LOCKER, 'deviceList', { shiftPartner: true });
+  assert.equal(overridden.shiftPartner, 'https://hoop-pmo-staging.example/',
+    'a setting overrides the default exactly as typed');
+});
+
 /* THE STATE CARRIES ACROSS -- SAFELY.
    -----------------------------------------------------------------------------------
      "when we shift it goes with current state"

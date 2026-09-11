@@ -318,12 +318,30 @@ is the ordinary case and stays a two-command bench.
 All optional; every one has a working default, and the register never fails because a setting is
 missing or unreadable.
 
+> "DROP THE REASON FILLING AND ITS DATA SINCE THE MESSAGE IS ENOUGH"
+
+Two changes came out of that, one settings-level and one in the app the handset runs.
+
+`DEVICE_LOCK_REASON` — a fallback reason shown only on a phone that locked *itself* on the
+offline grace, never on one an officer ordered locked — is gone as a **setting**.
+
+And the **`REASON:` line itself is gone from the locked screen entirely**, ordered lock or
+self-lock alike — the change lives in `LockActivity.java`, the same signed APK HOPE and Hoop
+both run (§5), so it took effect for both companies' phones the moment that build shipped. A
+locked screen now shows three lines, not four: the brand, the message, the IMEI. The message
+already says whose phone this is and what to do with it — that reason line, at best, restated
+it, and at worst named an accused employee to anyone who picked the phone up and read it.
+
+**This is not the reason typed into Funga.** Locking a phone from the portal still requires a
+reason, still writes it to the row's own history, still shows it in the portal's own
+`deviceHistory` — see §4, "The reason is not paperwork". What changed is only what a *stranger
+holding the locked handset* can read off its screen; the internal record is untouched.
+
 | Key | Default | What it does |
 |---|---|---|
 | `DEVICE_LOCK_BRAND` | `HOPE MICROCREDIT` | the name on the locked screen |
 | `DEVICE_LOCK_MESSAGE` | a Swahili sentence | the message. `{brand}` and `{namba}` are filled in by the server |
 | `DEVICE_HELP_PHONE` | — | the number a stranded person is told to call. Unset means the message promises no number rather than promising a blank one |
-| `DEVICE_LOCK_REASON` | — | the reason shown when a phone locked *itself* on the offline grace |
 | `DEVICE_LOCK_PACKAGE` | `com.samaritantechs.hooploanlock` | the APK the bench command names. The default is the app HOPE actually installs, so leave it alone unless HOPE builds its own — see §5 |
 | `DEVICE_LOCK_LOGO` | `/lock-logo.png` | the wordmark on the locked screen — see §6a. `none` means no mark at all |
 | `DEVICE_BEAT_SECONDS` | `900` | how often a settled handset reports. Floor 60 |
@@ -331,6 +349,7 @@ missing or unreadable.
 | `DEVICE_OFFLINE_GRACE_HOURS` | `336` (14 days) | how long an **issued** phone may go unheard-from before it locks itself. A phone still in the store never does |
 | `DEVICE_BOOT_GRACE_MINUTES` | `5` | ordinary use a locked phone gets after a reboot, so somebody can turn wifi on and let it hear that it was freed. `0` turns it off |
 | `DEVICE_BOOT_GRACE_EVERY_HOURS` | `24` | how often that window is allowed. Rebooting again buys nothing |
+| `DEVICE_SHIFT_PARTNER` | `https://hoop-pmo.vercel.app` | the address Hamisha / Shift opens on — see §9. Change it only if Hoop's own address changes |
 
 ### 6a. The mark on the locked screen
 
@@ -460,20 +479,57 @@ address already written into its storage, and moves itself.
 
 ### Doing it
 
-**On the receiving office's portal first.** Open **+ Sajili simu / Enrol** there, paste the
-same IMEIs, and copy the **batch** it hands back — not the whole bench command, just the
-32-character batch. That is the only thing the sending office needs from the other side;
-there is no login shared between the two companies and none is created for this.
+> "I dont need to fill anything during shifting from one to other"
 
-**Then on the sending office's Kufunga simu.** **↔️ Hamisha / Shift** — on the bar for a
-tick-selected group, or on one phone's own row. Paste the other office's **address**
-(`https://…`) and the **batch** just copied, and press Hamisha.
+**Kufunga simu → ↔️ Hamisha / Shift** — on the bar for a tick-selected group, or on one
+phone's own row. The other office's address is already in the field (from
+`DEVICE_SHIFT_PARTNER`, §6). Tick the phones, press Hamisha. That is the whole thing, the
+first time this device has ever saved a code for the other office and every time after.
 
-Nothing moves yet. The order sits on the row — **Inasubiri kuhama / shift pending** — until
-the handset's own next beat, which is within fifteen minutes, or seconds if the phone is
-already reporting quickly for some other reason. Once it lands the row here goes
-`Imeachiwa / released`, with a reason naming the shift, and the register the phone answers
-to from then on is the other one.
+**The first time only**, the drawer asks for one thing: your own access code **on the other
+office's portal**. It is saved on **this device only** — never sent to this office's own
+database, and this office's servers never talk to each other directly (see *Why this is not
+a server-to-server credential* below). From then on Shift needs nothing typed at all.
+
+What that one-time code buys: the drawer fetches its own batch from the other office,
+automatically, the moment you press Hamisha. It does this by calling the other portal's own
+**+ Sajili simu / Enrol** for these same IMEIs — the exact thing a human would otherwise do
+by hand — using your code there. Nothing is written on *this* register until the other office
+has actually answered; a wrong code or an unreachable office fails loudly, here, before
+anything moves.
+
+**Another way still exists**, under *Chaguo jingine / Another way* in the drawer: paste a
+32-character batch by hand, fetched however you like — the other office's own Sajili simu,
+handed to you by someone else, whatever the moment calls for. Filling it in there always wins
+over the automatic fetch. This is the route for an office network that cannot reach the other
+company's portal directly, or for anybody who would simply rather not save a code on this
+device.
+
+Either way, nothing moves yet once Hamisha is pressed. The order sits on the row —
+**Inasubiri kuhama / shift pending** — until the handset's own next beat, which is within
+fifteen minutes, or seconds if the phone is already reporting quickly for some other reason.
+Once it lands the row here goes `Imeachiwa / released`, with a reason naming the shift, and
+the register the phone answers to from then on is the other one.
+
+### Why this is not a server-to-server credential
+
+The two companies' backends still hold **no standing trust in each other** — that principle
+does not change. What changed is where the manual step happens: it used to be a human,
+copying a batch from one browser tab into another; it is now the same human's browser, making
+the same request it would have made by hand.
+
+The code lives in **this browser's `localStorage`, nowhere else.** It is never written to
+this office's own `settings` table, never logged, never sent anywhere but straight to the
+other portal's own `/api/portal`, over HTTPS, exactly like every ordinary sign-in there. Two
+people sharing one company's admin duties across both portals each save their own code on
+their own device; nobody's credential for the other system ever passes through this office's
+database.
+
+**What it is really worth being honest about:** any script that ever runs on this page could,
+in principle, read that code out of `localStorage` and use it — the same is already true of
+this portal's own access code, held the same way. That is the trade this feature makes, and
+it is why the manual "paste a batch by hand" route is kept rather than removed: for a device
+this is not the right trade for, it is still one click away from not being asked to make it.
 
 ### It goes with its current state
 
@@ -498,9 +554,13 @@ reasons keeps that decision; an incoming claim never argues it away.
 - **It cannot move a released phone.** Achia stops the beat entirely (`BeatJob.cancel`), so
   there is nothing left listening for a shift order. Shift such a phone *before* releasing
   it, or re-enrol it first.
-- **It does not know the other office's address on its own.** Somebody has to type it, once,
-  from a source they trust — this is deliberate: there is no standing channel between two
-  separate companies' servers for one to discover the other automatically.
+- **It does not know the other office's address on its own the first time.** `DEVICE_SHIFT_PARTNER`
+  has to be set, once, from a source somebody trusts — there is no standing channel between
+  two separate companies' servers for one to discover the other automatically. After that it
+  is the same address every time; see §6.
+- **The automatic batch fetch needs this browser to reach the other portal directly.** An
+  office network that blocks that, or a device with no saved code, still shifts phones — with
+  a batch pasted by hand under *Chaguo jingine / Another way*.
 
 ### From lock app 1.11.9
 

@@ -130,11 +130,11 @@ column added to the report needs no change at the reader's end. The same answer 
 **Credit info report** download and the portal's **Credit Info · takwimu** pane.
 
 ### deviceList · deviceHistory — the company phone register
-`deviceList` args: `q` (IMEI, holder name, team or model), `state`, `refused` (see below) · answer: `ready, rows[{imei, item,
-holder, team, role, issuedAt, state, reason, by, at, reported, lastSeen, battery, android, appVersion, reportedImei, lat, lng,
-locAcc, locAt, lockState, neverSeen, stale, lockedNeverSpoke, shiftPending, shiftTo}]`, `total`, `q`, `searching`,
-`refused[{imei, at, tries, onRegister}]`, `counts{enrolled, locked, lockPending, released, lost, neverSeen, stale,
-lockedNeverSpoke, shiftPending, issued, inStore}`.
+`deviceList` args: `q` (IMEI, holder name, team or model), `state`, `refused` (see below), `shiftPartner` (see below) · answer:
+`ready, rows[{imei, item, holder, team, role, issuedAt, state, reason, by, at, reported, lastSeen, battery, android,
+appVersion, reportedImei, lat, lng, locAcc, locAt, lockState, neverSeen, stale, lockedNeverSpoke, shiftPending, shiftTo}]`,
+`total`, `q`, `searching`, `refused[{imei, at, tries, onRegister}]`, `shiftPartner`,
+`counts{enrolled, locked, lockPending, released, lost, neverSeen, stale, lockedNeverSpoke, shiftPending, issued, inStore}`.
 `deviceHistory` args: `imei` · answer: `found, device{…}, events[{event, from, to, reason, actor, at}]`.
 `deviceShift` args: `imeis`, `server` (the other office's own address, `https://…`), `batch` (32 hex, minted by **that** office's
 own `deviceEnrol`) · answer: `ordered, alreadyReleased, unknown, server`. Needs **Kufunga simu** only — see below.
@@ -154,6 +154,11 @@ with nothing recorded at all.
 `shiftPending` / `shiftTo` reflect a `deviceShift` order sitting unconfirmed on the row: the handset clears both itself the
 moment it claims a token at the other office (`dev_shifted`, see `docs/DEVICE-LOCKING.md` §9). See that section for the whole
 mechanism — no wipe, no cable, the phone never gives up Device Owner.
+
+`shiftPartner` is asked for only by the Locking pane (the only one that can order a shift) and is `null` otherwise. It is
+`DEVICE_SHIFT_PARTNER` or the built-in default (`https://hoop-pmo.vercel.app`) — the address the Hamisha / Shift drawer opens
+on, so nobody types it. The drawer's own automatic batch fetch (a saved access code for the other portal, held in this
+browser's `localStorage` only) is a client-side call to that address, not a server-to-server one — see §9.
 
 Needs **Kufunga simu** or **Kufungua simu**. The writes
 (`deviceEnrol`, `deviceIssue`, `deviceSetState`, `deviceDelete`) are gated on the state being asked for — see
