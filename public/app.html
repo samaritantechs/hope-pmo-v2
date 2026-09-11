@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-i';
+var BUILD = '2026-09-11-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1224,6 +1224,39 @@ var SETTINGS_GROUPS = [
       { key:'CALL_CREDIT_MAX_PAID', label:'1-6: kiwango cha juu cha malipo / Count 1-6: upper paid limit',
         type:'number', dflt:'5' },
     ] },
+  /* THE LOCKED PHONE'S OWN SCREEN.
+     -------------------------------------------------------------------------------------
+       "I cant see where to edit this 'Simu hii ni mali ya hope...' at locking"
+
+     Every word on that screen has always come from settings -- and not one of them could be
+     found. Settings lists only rows that EXIST, so a key never written has nothing to click,
+     and the only way in was the key/value drawer, which needs the exact string typed from
+     memory. A setting nobody can find is a setting nobody has. So the five that compose the
+     screen are written out here with their real defaults, exactly like every other group.
+
+     The timing numbers (DEVICE_BEAT_SECONDS, DEVICE_OFFLINE_GRACE_HOURS and the rest) are
+     deliberately NOT here: this card is what a locked handset says, and those are how often
+     it speaks. They remain key/value rows -- docs/DEVICE-LOCKING.md section 6 lists them. */
+  { id:'lockscreen', title:'Skrini ya simu iliyofungwa / The locked phone\'s screen',
+    sub:'maneno yanatoka hapa, si kwenye app / the words come from here, not the app',
+    preview:true, fields:[
+      { key:'DEVICE_LOCK_BRAND', label:'Jina la kampuni juu / Company name across the top',
+        type:'text', dflt:'HOPE MICROCREDIT',
+        note:'Pia hujaza {brand} hapo chini. / Also fills {brand} below.' },
+      { key:'DEVICE_LOCK_MESSAGE', label:'Ujumbe / The message', type:'text', dflt:'',
+        note:'Wazi = ujumbe wa kawaida. Tumia {brand} na {namba}. / Blank uses the built-in sentence. '
+          + 'Write {brand} and {namba} where those belong — the server fills them in.' },
+      { key:'DEVICE_HELP_PHONE', label:'Namba ya kupiga / The number to call', type:'text', dflt:'',
+        note:'Hujaza {namba}. Ikiwa wazi, ujumbe wa kawaida hauahidi namba yoyote badala ya kuahidi tupu. '
+          + '/ Fills {namba}. Left blank, the built-in sentence promises no number rather than a blank one.' },
+      { key:'DEVICE_LOCK_REASON', label:'Sababu ya simu iliyojifunga yenyewe / Reason for a self-lock',
+        type:'text', dflt:'',
+        note:'Hutumika PEKEE simu ikijifunga yenyewe baada ya kukaa kimya. Funga kutoka ofisini huleta sababu yake. '
+          + '/ Used ONLY when a phone locks itself on the offline grace — an ordered lock always carries its own.' },
+      { key:'DEVICE_LOCK_LOGO', label:'Alama / The mark', type:'text', dflt:'',
+        note:'Wazi = alama ya HOPE (/lock-logo.png). Andika <b>none</b> kuiondoa kabisa. '
+          + '/ Blank means HOPE\'s mark. Write <b>none</b> for no mark at all — see docs/DEVICE-LOCKING.md §6a.' },
+    ] },
 ];
 function settingsGroupCard_(g, rows){
   var html = '<div class="card"><div class="card-h">' + esc(g.title)
@@ -1246,6 +1279,7 @@ function settingsGroupCard_(g, rows){
     Dashboard, divided among teams and days by then. Sales Target now shows what it actually
     produces, live, as you type -- so a number that is off by 4x is caught here instead. */
 function wireSettingsPreview_(){
+  wireLockPreview_();
   var w = document.getElementById('cfg_SALES_TARGET_WEEKLY'), out = document.getElementById('cfgPreview_salesTarget');
   if (!w || !out) return;
   var n = Math.max(1, S.teamCount || 1);
@@ -1257,6 +1291,56 @@ function wireSettingsPreview_(){
       + money(daily) + '/day.';
   };
   w.oninput = upd; upd();
+}
+/* WHAT THE PHONE WILL ACTUALLY SAY, as you type it.
+   ---------------------------------------------------------------------------------------
+   This screen is not one somebody can pop open and check: by the time it is on the glass the
+   handset is locked, usually in a pocket in another region. The one mistake it invites is a
+   sentence that promises a number and then does not give one -- "Piga namba ." -- which is
+   why the server keeps TWO built-in sentences and picks by whether a number is set. Typing
+   your own {namba} with the number field blank walks straight back into it, and nothing
+   downstream would ever tell you.
+
+   MIRRORS fill() IN api/_lib/device-core.js, which stays the authority -- the handset is sent
+   what the SERVER composes, never this. It is duplicated only because a preview must render
+   text that has not been saved yet. Keep the two substitutions identical; if fill() gains a
+   placeholder, it belongs here too. */
+function lockFill_(text, brand, phone){
+  return String(text == null ? '' : text)
+    .replace(/\{\s*(brand|kampuni)\s*\}/gi, brand)
+    .replace(/\{\s*(namba|phone|simu)\s*\}/gi, phone)
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+function wireLockPreview_(){
+  var out = document.getElementById('cfgPreview_lockscreen');
+  if (!out) return;
+  var b = document.getElementById('cfg_DEVICE_LOCK_BRAND'),
+      m = document.getElementById('cfg_DEVICE_LOCK_MESSAGE'),
+      p = document.getElementById('cfg_DEVICE_HELP_PHONE');
+  if (!b || !m || !p) return;
+  var upd = function(){
+    var brand = (b.value || '').trim() || 'HOPE MICROCREDIT';
+    var phone = (p.value || '').trim();
+    // The same two defaults device-core.js falls back on, and the same reason for there
+    // being two: no number, no promise of one.
+    var raw = (m.value || '').trim()
+      || (phone ? 'Simu hii ni mali ya {brand}. Irudishe ofisini au piga {namba}.'
+                : 'Simu hii ni mali ya {brand}. Irudishe ofisini.');
+    var said = lockFill_(raw, brand, phone);
+    /* The warning is the whole point of the preview: a placeholder with nothing to fill it
+       leaves a sentence pointing at a number that is not there. */
+    var dangling = !phone && /\{\s*(namba|phone|simu)\s*\}/i.test(raw);
+    out.innerHTML = '<div style="background:#0B2A6B;color:#fff;border-radius:10px;padding:12px;'
+      + 'text-align:center;line-height:1.5"><b style="letter-spacing:.5px">' + esc(brand) + '</b><br>'
+      + esc(said) + '</div>'
+      + (dangling
+          ? '<div class="note bad" style="margin-top:6px">Ujumbe unataja {namba} lakini hakuna namba. '
+            + 'Simu itaonyesha nafasi tupu. / The message names {namba} but no number is set — the '
+            + 'phone will show a gap where it should be.</div>'
+          : '');
+  };
+  b.oninput = upd; m.oninput = upd; p.oninput = upd; upd();
 }
 function cellText(r, c){
   var v = r[c.key];
@@ -6425,6 +6509,17 @@ function devicesView_(mode){
          one that happened, and prints the IMEI THE HANDSET ITSELF REPORTED -- which on the
          commonest failure of all is simply not the number that was pasted. */
       + devRefused_(d.refused, mode)
+      /* WHERE THE WORDS LIVE, said on the screen that orders the lock. They have always come
+         from settings and never from the app -- but Settings lists only keys that already
+         have a row, so until somebody wrote one there was nothing to click and no way to
+         learn the key's name. Whoever presses Funga is exactly who wonders what the phone
+         will say, so the pointer belongs here. */
+      + (mode === 'lock'
+          ? '<div class="note mutl">Maneno na alama kwenye skrini ya simu iliyofungwa yanabadilishwa '
+            + '<b>Mipangilio → Skrini ya simu iliyofungwa</b> (msimamizi). Hayamo ndani ya app. '
+            + '/ The words and the mark on a locked phone\'s screen are edited in '
+            + '<b>Settings → The locked phone\'s screen</b> (admin). None of it is inside the app.</div>'
+          : '')
       + bar('<label style="font-size:12px;color:var(--mut)">Tafuta / Search</label>'
           + '<input data-arg="q" value="' + esc(S.args.q || '') + '" placeholder="IMEI, jina, timu">'
           + (mode === 'lock'

@@ -21,6 +21,13 @@ safe to re-run.
 
 These are `.sql` files for the SQL editor. `DEVICE-LOCKING.md` — this file — is for reading.
 
+**Where the words are edited: Settings → Skrini ya simu iliyofungwa / The locked phone's
+screen.** Admin only, with a live preview of what the handset will actually show. Until
+2026-09-11 these keys were read by the server on every beat and offered nowhere — Settings
+lists only keys that already have a row, so a key never written had nothing to click and no
+way to learn its name. A test now holds every key the lock screen reads to appearing on that
+page.
+
 **Tick the panes.** They are two ordinary tabs, `devlock` and `devunlock`, granted in **Teams &
 Staff → Roles & access** like every other screen. An admin holds both from the start; nobody
 else holds either until somebody ticks it. **Tick them to two different people if you can** —
