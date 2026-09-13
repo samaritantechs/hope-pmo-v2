@@ -2298,9 +2298,10 @@ test('the leader segments group each leader\'s teams, subtotal them, and look up
   // Four measurements over three leader kinds each: the nine asked for, plus sales.
   assert.equal(d.segments.length, 12);
   assert.deepEqual(d.segments.filter(s => s.dflt).map(s => s.id).sort(),
-    ['col_collection', 'col_gmo', 'col_manager', 'ecol_collection', 'ecol_gmo', 'ecol_manager',
+    ['col_collection', 'col_gmo', 'col_manager', 'ecol_expected', 'ecol_gmo', 'ecol_manager',
      'rec_gmo', 'rec_manager', 'rec_recovery'],
-    'the nine open ticked; sales is one tick away');
+    'the nine open ticked; sales is one tick away -- early collection groups by the EARLY COL '
+    + 'leader (expected), not the PMO Col officer collection groups by');
 
   // The day columns are the LATEST of each weekday. Today is Friday 24 July.
   assert.equal(d.segDays.IJ, TODAY, 'IJ is today');
@@ -2325,6 +2326,23 @@ test('the leader segments group each leader\'s teams, subtotal them, and look up
   assert.equal(col.unstaffed, 1);
   // The segment total is worked out again from the parts, never averaged from the rows.
   assert.equal(col.totals.pct, pctOfTest_(500, 2300));
+
+  /* EARLY COLLECTION, by the teams table's own EARLY COL leader -- NOT by the PMO collection
+     officer `col` above groups by, even though CATHERINE holds KONGOWE on her access code too.
+     "kwa PMO Col officer / by PMO Col officer should use / is of Kwa EXPECTED / By EXPECTED not
+      PMO col ... doubled to early collection so expected officers ain't seeing themselves". */
+  const ecol = d.segments.find(s => s.id === 'ecol_expected');
+  assert.ok(ecol, 'early collection is grouped by the expected (EARLY COL) role');
+  assert.ok(!d.segments.some(s => s.id === 'ecol_collection'),
+    'and no longer doubles the PMO Col officer grouping');
+  const earlyE = ecol.groups.find(g => g.leader === 'EARLY E');
+  assert.ok(earlyE, 'KONGOWE\'s EARLY COL leader sees her own team here, not CATHERINE');
+  assert.equal(earlyE.teams, 1);
+  assert.equal(earlyE.rows[0].team, 'KONGOWE');
+  assert.ok(!ecol.groups.find(g => g.leader === 'CATHERINE'),
+    'the PMO Col officer is not the one early collection groups by');
+  // MBAGALA names nobody on the EARLY COL column either.
+  assert.ok(ecol.groups.find(g => g.leader === '(unassigned)'));
 
   // RECOVERY, by the recovery officer, on the day's own rule: Friday divides by jana.
   const rec = d.segments.find(s => s.id === 'rec_recovery');

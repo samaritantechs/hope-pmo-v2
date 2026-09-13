@@ -2878,6 +2878,7 @@ const LEADER_DAY_KEYS = ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2'];   // Mon .. 
 const LEADER_ROLES = [
   { role: 'credit', label: 'Credit analyst' },
   { role: 'collection', label: 'PMO Col officer' },
+  { role: 'expected', label: 'EARLY COL officer' },
   { role: 'recovery', label: 'PMO Rec officer' },
   { role: 'gmo', label: 'GMO' },
   { role: 'manager', label: 'Manager' },
@@ -2888,8 +2889,14 @@ const LEADER_ROLES = [
 const LEADER_METRICS = [
   { metric: 'sales', label: 'Sales / Mauzo', days: ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1'],
     roles: ['credit', 'gmo', 'manager'], dflt: false },
+  /* EARLY COL, not collection -- "kwa PMO Col officer / by PMO Col officer should use / is of
+     Kwa EXPECTED / By EXPECTED not PMO col ... already uses the right collection officers but
+     doubled to early collection so expected officers ain't seeing themselves at early col".
+     `expected` is the teams table's own EARLY COL leader column (renamed on the sheet from
+     EXPECTED -- see TEAM_EXPORT_COLS -- the database key stayed `expected`), a different
+     person from the PMO Col officer `col` below groups by. */
   { metric: 'ecol', label: 'Early collection', days: ['J3', 'J4', 'J5', 'AL', 'IJ'],
-    roles: ['collection', 'gmo', 'manager'], dflt: true },
+    roles: ['expected', 'gmo', 'manager'], dflt: true },
   { metric: 'col', label: 'Collection', days: ['J3', 'J4', 'J5', 'AL', 'IJ'],
     roles: ['collection', 'gmo', 'manager'], dflt: true },
   { metric: 'rec', label: 'Recovery', days: ['J3', 'J4', 'J5', 'AL', 'IJ'], amts: ['J1', 'J2'],
