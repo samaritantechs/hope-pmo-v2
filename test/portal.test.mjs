@@ -2365,6 +2365,44 @@ test('the leader segments group each leader\'s teams, subtotal them, and look up
 });
 const pctOfTest_ = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
 
+/* "leader reports need weekly forwards and backwars" -- the same week bar weekly and
+   dashboardFull already carry (asOfWeek), wired through leaderReports so both halves of the
+   screen -- the per-role team distributions AND the chipped orodha segments -- move together
+   rather than one sliding back while the other stays on today. */
+test('leader reports compute a past week from that week, not from today', async () => {
+  const book = tables();
+  const LASTMON = '2026-07-13', LASTFRI = '2026-07-17';
+  book.access_codes = book.access_codes.concat([
+    { code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] },
+  ]);
+  // Last week's book: a defaulter deck that recovered by a different amount than this week's.
+  book.defaulter_snapshots.push(
+    { ...D('LW1', 'KONGOWE', 5000, 'initial', 45, LASTFRI, 'FRI'), upload_batch: 'ilw', created_at: LASTFRI + 'T04:00:00Z' },
+    { ...D('LW1', 'KONGOWE', 4000, 'current', 45, LASTFRI, 'FRI'), upload_batch: 'clw', created_at: LASTFRI + 'T04:00:00Z' });
+  const db = dbWithRpc(book);
+
+  const now = await portalApi(db, ADMIN, 'leaderReports', {}, NOW);
+  assert.equal(now.weekOf, MON);
+  assert.equal(now.pastWeek, false);
+
+  const last = await portalApi(db, ADMIN, 'leaderReports', { weekOf: LASTMON }, NOW);
+  assert.equal(last.weekOf, LASTMON, 'the week it says it is showing');
+  assert.equal(last.pastWeek, true, 'and it says out loud that this is not today');
+  assert.equal(last.asOfDate, LASTFRI);
+  assert.equal(last.weekday, 'FRI');
+
+  // The team-distribution totals (teamProgress) are that week's own figures.
+  assert.equal(last.totals.initArrears, 5000);
+  assert.equal(last.totals.curArrears, 4000);
+  assert.equal(last.totals.recovered, 1000);
+  assert.notEqual(now.totals.curArrears, 4000, 'and this week is untouched by last week existing');
+
+  // The orodha segments' day-lookback window moved with it too -- IJ (today) is now last
+  // week's Friday, not this week's, so a leader stepping back sees THAT week's day columns.
+  assert.equal(last.segDays.IJ, LASTFRI);
+  assert.notEqual(last.segDays.IJ, now.segDays.IJ);
+});
+
 /* "Start with empty accessible navs for all roles except all for ADMIN so that i go set well
    now : i fear running into errors" -- so the clean slate has to be reversible, and ADMIN has
    to survive it, or the fear is justified. */

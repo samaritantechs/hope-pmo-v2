@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-11-m';
+var BUILD = '2026-09-14-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5008,10 +5008,10 @@ function lrPicksInit_(d){
    PERSON doing" — and most supervisors carry several teams, so their real performance is the
    roll-up across all of them. The same teams appear under a different name in each section. */
 VIEWS.reports = function(){
-  return srv('leaderReports').then(function(d){
+  return srv('leaderReports', { weekOf: S.args.weekOf || '' }).then(function(d){
     S.lrData = d; lrPicksInit_(d);
     var t = d.totals;
-    HEAD = (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
+    HEAD = weekBar(d) + (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
       + '<div class="kpis">'
       + kpi('Teams', money(t.teams), d.weekday+' · '+(d.date||''))
       + kpi('Initial arrears', money(t.initArrears))
