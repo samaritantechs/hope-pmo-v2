@@ -2792,10 +2792,22 @@ async function teamProgress(db, user, _args, nowMs) {
 /* Cached for the reason above. This one takes no arguments at all, so the key is its name and
    the scope -- one computation per team-set per minute, however many leaders open the tab. */
 async function leaderReports(db, user, args, nowMs) {
-  return cachedAnswer(db, 'leaderReports', user, nowMs,
-    () => leaderReportsCompute_(db, user, args, nowMs));
+  /* THE WEEK BAR, THE SAME ONE WEEKLY AND COMMISSION ALREADY USE.
+       "leader reports need weekly forwards and backwars"
+     asOfWeek anchors `nowMs` to the close of whichever Monday-to-Friday was asked for (or
+     leaves it as the real clock when none was), and every read downstream -- teamProgress's
+     weekday lookup, and leaderSegments_'s eight-day J3..J2 window -- already takes nowMs as
+     its only notion of "now", so reassigning it once here is the whole of the feature; nothing
+     below needed its own week argument. Keyed by the resolved week plus the raw request, same
+     as weekly/dashboardFull, so two requests landing on the same Monday from different typed
+     dates keep their own overruled-choice note. */
+  const asOf0 = asOfWeek(nowMs, args && args.weekOf);
+  return cachedAnswer(db, 'leaderReports|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
+    user, nowMs, () => leaderReportsCompute_(db, user, args, nowMs));
 }
-async function leaderReportsCompute_(db, user, _args, nowMs) {
+async function leaderReportsCompute_(db, user, args, nowMs) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  nowMs = asOf.ms;
   const tp = await teamProgress(db, user, {}, nowMs);
   const teamRows = await readTeamsAll(db);
   const teamBy = {};
@@ -2840,6 +2852,10 @@ async function leaderReportsCompute_(db, user, _args, nowMs) {
   const segments = await leaderSegments_(db, user, nowMs, teamBy);
 
   return { weekday: tp.weekday, date: tp.date, paired: tp.paired, note: why,
+    // The week-bar fields, same names weekly/dashboardFull send, so the client's one week bar
+    // works here unchanged.
+    weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 4), asOfDate: todayKey(nowMs),
+    pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future,
     rows: tp.rows, sections, ...segments,
     totals: { teams: tp.rows.length,
       initArrears: tp.rows.reduce((s, r) => s + r.initArrears, 0),
