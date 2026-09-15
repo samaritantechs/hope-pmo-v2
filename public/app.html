@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-14-a';
+var BUILD = '2026-09-15-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6275,14 +6275,17 @@ function devShiftDrawer_(oneImei){
   // the list -- ticks are for the bulk button, a row's own button means just this phone.
   var ticked = oneImei ? [oneImei] : pickList_();
   var savedCode = load('devShiftCode');
-  drawer('<h3>Hamisha kwenda kampuni nyingine / Shift to the other company</h3>'
-    + '<div class="note">Simu HAIACHI kuwa Device Owner — inahama tu. Hakuna kufuta wala kebo. '
-      + '/ The phone does NOT give up ownership — it just moves. No wipe, no cable.</div>'
-    + (ticked.length
-        ? '<div class="note ok"><b>' + money(ticked.length) + '</b> zimechaguliwa kwenye orodha. '
-          + '/ taken from the ticks on the register — edit the list if that is not what you meant.</div>'
-        : '')
-    + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
+  /* NOTHING TO TYPE, WHEN THERE IS NOTHING TO ASK.
+       "It shouldnt request nothing just select imeis and transfer wether hope to hoop or
+        viceversa."
+     Once the phones are ticked, the other office's address is known and this device already
+     holds the code for it, every field the drawer used to show was pre-filled and only there
+     to be scrolled past. So in that case the drawer is the count and the button, and the
+     fields stay in the page -- the Go handler still reads them by id -- folded under "change
+     something" for the one time in fifty the list or the address is not what was meant. A
+     first-time device (no code yet), or an empty tick list, still sees the fields open. */
+  var quiet = ticked.length > 0 && !!savedCode && !!S.shiftPartner;
+  var fields = '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
     + '<textarea id="devShiftList" rows="6" placeholder="351388334583295&#10;351388334583296">'
     + esc(ticked.join('\n')) + '</textarea></div>'
     + '<div class="fld"><label>Anwani ya ofisi nyingine / The other office\'s address</label>'
@@ -6309,8 +6312,25 @@ function devShiftDrawer_(oneImei){
     + '<div class="note">Ukijaza hii, Hamisha itatumia batch hii moja kwa moja badala ya kuomba moja '
       + 'kiotomatiki. Ni siri ya saa 24 tu, kutoka Sajili simu yao kwa IMEI hizi hizi. '
       + '/ Fill this and Shift uses it directly instead of fetching one automatically. Good for 24 hours '
-      + 'only, from their own Sajili simu for these same IMEIs.</div></details>'
-    + '<button class="btn w" id="devShiftGo">Hamisha / Shift</button>');
+      + 'only, from their own Sajili simu for these same IMEIs.</div></details>';
+  drawer('<h3>Hamisha kwenda kampuni nyingine / Shift to the other company</h3>'
+    + '<div class="note">Simu HAIACHI kuwa Device Owner — inahama tu. Hakuna kufuta wala kebo. '
+      + '/ The phone does NOT give up ownership — it just moves. No wipe, no cable.</div>'
+    + (ticked.length
+        ? '<div class="note ok"><b>' + money(ticked.length) + '</b> zimechaguliwa kwenye orodha'
+          + (quiet
+              ? ' — bonyeza Hamisha tu. / ticked on the register — just press Shift.'
+              : '. / taken from the ticks on the register — edit the list if that is not what you meant.')
+          + (quiet ? '<div class="mutl" style="margin-top:4px;font-size:12px">→ '
+              + esc(S.shiftPartner) + '</div>' : '')
+          + '</div>'
+        : '')
+    + (quiet
+        ? '<button class="btn w" id="devShiftGo">Hamisha / Shift</button>'
+          + '<details style="margin-top:12px"><summary style="cursor:pointer;color:var(--mut);font-size:12.5px">'
+          + 'Badilisha kitu — orodha, anwani, msimbo / Change something — list, address, code</summary>'
+          + '<div style="margin-top:8px">' + fields + '</div></details>'
+        : fields + '<button class="btn w" id="devShiftGo">Hamisha / Shift</button>'));
 
   var showCodeField = function(){
     var ok = $('#devShiftCodeOk'); if (ok) ok.outerHTML =
@@ -6790,7 +6810,13 @@ function wireDevices(){
   var e = document.getElementById('devReleaseMany');
   if (e) e.onclick = function(){ devBulkDrawer_('released', 'Achia kwa wingi / Release many', false); };
   var f = document.getElementById('devShiftMany');
-  if (f) f.onclick = devShiftDrawer_;
+  /* NOT `f.onclick = devShiftDrawer_`. An onclick handler is called with the click EVENT,
+     and devShiftDrawer_'s first argument is "the one IMEI a row button opened it for" --
+     so wiring it bare handed the PointerEvent in as that IMEI. The drawer then said
+     "1 zimechaguliwa" and the list read "[object PointerEvent]", and the ticks on the
+     register were never looked at. Reported from the bench as "still requires to input
+     imei on object ... text". */
+  if (f) f.onclick = function(){ devShiftDrawer_(); };
 }
 
 /* Teams & Staff is the supervisory distribution -- the assignment rotation and every leader
