@@ -6937,7 +6937,13 @@ async function deviceList(db, user, args, nowMs = Date.now()) {
      an IMEI pasted with spaces finds itself; a name or a team matches the holder. */
   const find = String(a.q == null ? '' : a.q).trim();
   const findDigits = find.replace(/[^0-9]/g, '');
-  const rows = got.rows.map(r => deviceRow_(r, nowMs)).filter(r => {
+  /* A PHONE THAT HAS SHIFTED AWAY IS THE OTHER OFFICE'S NOW -- "should be seen in only
+     hoop/hope". Its row stays (the token and the trail must survive a shift back, see
+     device-core.js shifted()), but it is off both panes and out of every count. A search
+     by IMEI still finds it, because "where did that phone go" deserves an answer. */
+  const ours = r => !(String(r.state) === 'released' && String(r.state_by || '') === 'shift');
+  const kept = find ? got.rows : got.rows.filter(ours);
+  const rows = kept.map(r => deviceRow_(r, nowMs)).filter(r => {
     if (want && r.state !== want) return false;
     if (!find) return true;
     if (findDigits && String(r.imei).includes(findDigits)) return true;
@@ -6962,7 +6968,7 @@ async function deviceList(db, user, args, nowMs = Date.now()) {
     }
     return rank(x) - rank(y) || String(x.imei).localeCompare(String(y.imei));
   });
-  const all = got.rows.map(r => deviceRow_(r, nowMs));
+  const all = got.rows.filter(ours).map(r => deviceRow_(r, nowMs));
   const count = f => all.filter(f).length;
   return { ok: true, ready: true, rows: rows.slice(0, 500), total: rows.length,
     q: find, searching: !!find, refused: await refusals_(db, a, all, nowMs),
@@ -7285,6 +7291,36 @@ async function deviceTokenOf(db, user, args) {
    would mean each server holding a credential that could act on the other's whole fleet.
    Instead, the ONLY channel this uses is the one that already exists and is already narrow:
    the handset itself, proving its own IMEI against a batch, exactly like a bench enrolment. */
+/* THE OTHER OFFICE, ASKED SERVER-TO-SERVER. One POST to their /api/device with the shared
+   secret; what comes back is exactly what a person would have copied out of their Sajili
+   simu. Every failure names itself: not configured here (the client's cue to fall back to
+   the code-once path), refused there (secrets differ), or unreachable. Never silent. */
+export const SHIFT_NEED_BATCH = 'need-batch';
+async function shiftBatchFromPartner_(server, imeis) {
+  const secret = String(process.env.DEVICE_SHIFT_SECRET || '').trim();
+  if (!secret) {
+    const e = badRequest('need-batch: DEVICE_SHIFT_SECRET haijawekwa kwenye seva hii, kwa hiyo Hamisha '
+      + 'inahitaji msimbo wako wa ofisi nyingine au batch. / need-batch: DEVICE_SHIFT_SECRET is not '
+      + 'set on this deployment, so Shift needs your code for the other office, or a pasted batch.');
+    e.code = SHIFT_NEED_BATCH; throw e;
+  }
+  let res, body;
+  try {
+    res = await fetch(server + '/api/shift-batch', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret, imeis, from: 'HOPE' }) });
+    body = await res.json().catch(() => ({}));
+  } catch (e) {
+    throw badRequest('Ofisi nyingine haipatikani: ' + server + ' / The other office could not be '
+      + 'reached: ' + String((e && e.message) || e));
+  }
+  if (!res.ok || body.ok === false || !body.batch) {
+    throw badRequest('Ofisi nyingine imekataa kutoa batch / The other office refused to hand back a '
+      + 'batch: ' + String(body.error || ('HTTP ' + res.status)));
+  }
+  return String(body.batch).trim();
+}
+
 async function deviceShift(db, user, args, nowMs = Date.now()) {
   requireDeviceOrder_(user, 'locked');            // moving a phone off this register is the
                                                     // bench's own call, same as enrolling it on
@@ -7301,7 +7337,16 @@ async function deviceShift(db, user, args, nowMs = Date.now()) {
     throw badRequest('Anwani ya ofisi nyingine lazima ianze na https:// . '
       + '/ The other office\'s address must start with https:// .');
   }
-  const batch = String(a.batch || '').trim();
+  let batch = String(a.batch || '').trim();
+  /* NO BATCH PASTED, NO CODE TYPED: ASK THE OTHER OFFICE OURSELVES.
+       "hope><hoop needs no verification"
+     The batch is what the other office's own Sajili simu mints for these IMEIs. Fetching it
+     used to need a person: their code for the other portal, typed once into this browser.
+     With DEVICE_SHIFT_SECRET set to the SAME value on both deployments, the two servers
+     trust each other for this one call and nobody types anything -- see api/shift-batch.js
+     for the receiving side. Not set: the client is told so, in a word it
+     looks for, and falls back to the code-once path exactly as before. */
+  if (!batch) batch = await shiftBatchFromPartner_(server, list);
   if (!/^[0-9a-f]{32}$/i.test(batch)) {
     throw badRequest('Batch si sahihi — nakili moja kwa moja kutoka \'Sajili simu\' ya ofisi '
       + 'nyingine. / That batch does not look right — copy it straight from the other '
