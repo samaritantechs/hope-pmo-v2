@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-15-a';
+var BUILD = '2026-09-15-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6284,7 +6284,10 @@ function devShiftDrawer_(oneImei){
      fields stay in the page -- the Go handler still reads them by id -- folded under "change
      something" for the one time in fifty the list or the address is not what was meant. A
      first-time device (no code yet), or an empty tick list, still sees the fields open. */
-  var quiet = ticked.length > 0 && !!savedCode && !!S.shiftPartner;
+  /* Quiet no longer waits for a saved code: with DEVICE_SHIFT_SECRET on both servers the
+     batch is fetched server-to-server and no code is ever needed. The code path below is
+     the fallback the server asks for by name ("need-batch") when that is not configured. */
+  var quiet = ticked.length > 0 && !!S.shiftPartner;
   var fields = '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
     + '<textarea id="devShiftList" rows="6" placeholder="351388334583295&#10;351388334583296">'
     + esc(ticked.join('\n')) + '</textarea></div>'
@@ -6359,7 +6362,7 @@ function devShiftDrawer_(oneImei){
     var go = $('#devShiftGo');
     var finish = function(server2, batch2){
       go.disabled = true;
-      return srv('deviceShift', { imeis: list, server: server2, batch: batch2 })
+      return srv('deviceShift', { imeis: list, server: server2, batch: batch2 || undefined })
         .then(function(r){
           var said = [];
           if (r.ordered) said.push(r.ordered + ' zimeagizwa kuhama / ordered to shift');
@@ -6376,30 +6379,46 @@ function devShiftDrawer_(oneImei){
        pasted a batch gets exactly the batch they pasted, every time. */
     if (manualBatch) { finish(server, manualBatch); return; }
 
-    if (!code) {
-      toast('Weka msimbo wa ofisi nyingine, au bandika batch kwa mkono chini. / Enter your code for '
-        + 'the other office, or paste a batch by hand below.', true);
-      return;
-    }
+    /* FIRST, NO BATCH AT ALL: the server fetches one from the other office itself when
+       DEVICE_SHIFT_SECRET is set on both sides ("hope><hoop needs no verification"). Only
+       if it answers need-batch does this fall to the code-once path below. */
+    var byCode = function(){
+      if (!code) {
+        var det = $('#devShiftCodeFld') && $('#devShiftCodeFld').closest('details');
+        if (det) det.open = true;
+        showCodeField();
+        toast('Weka msimbo wa ofisi nyingine (mara moja), au bandika batch kwa mkono. / Enter your code for '
+          + 'the other office (once), or paste a batch by hand.', true);
+        return;
+      }
+      go.disabled = true;
+      srvOther_(server, code, 'deviceEnrol', { imeis: list })
+        .then(function(r){
+          if (!r || !r.batch) {
+            go.disabled = false;
+            toast('Ofisi nyingine haikurudisha batch. / The other office did not hand back a batch.', true);
+            return;
+          }
+          return finish(server, r.batch);
+        })
+        .catch(function(e){ go.disabled = false; toast(String((e && e.message) || e), true); });
+    };
     go.disabled = true;
-    /* THE AUTO-FETCH. Exactly the call a human would make by hand from the other portal's
-       own Sajili simu -- same function, same IMEIs -- so the batch that comes back is
-       identical to one copied over by eye, just without the copying. Nothing is written on
-       THIS register until the other one has answered: a wrong code or an unreachable office
-       fails here, loudly, and deviceShift below is never called. */
-    srvOther_(server, code, 'deviceEnrol', { imeis: list })
+    srv('deviceShift', { imeis: list, server: server })
       .then(function(r){
-        if (!r || !r.batch) {
-          go.disabled = false;
-          toast('Ofisi nyingine haikurudisha batch. / The other office did not hand back a batch.', true);
-          return;
-        }
-        return finish(server, r.batch);
+        var said = [];
+        if (r.ordered) said.push(r.ordered + ' zimeagizwa kuhama / ordered to shift');
+        if (r.alreadyReleased) said.push(r.alreadyReleased + ' tayari zimeachiwa / already released');
+        if (r.unknown) said.push(r.unknown + ' hazipo kwenye rejista / not on this register');
+        toast(said.join(' · ') || 'Hakuna kilichobadilika. / Nothing changed.');
+        closeDrawer(); render({ force:true });
       })
       .catch(function(e){
         go.disabled = false;
+        if (/need-batch/i.test(String((e && e.message) || e))) { byCode(); return; }
         toast(String((e && e.message) || e), true);
       });
+    return;
   };
 }
 /** ONE PHONE'S STORY, and the orders that can be given against it from this pane. */

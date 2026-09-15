@@ -719,3 +719,102 @@ test('a claim can carry LOCKED or LOST across, but never onto a row already deci
   assert.equal(row3.state, 'locked', 'this office\'s own lock stands; a claim never argues it away');
   assert.equal(row3.state_reason, 'ofisi hii iliamua');
 });
+
+/* NO VERIFICATION, AND SEEN IN ONE PLACE ONLY.
+   -----------------------------------------------------------------------------------
+     "hope><hoop needs no verification" / "and should be seen in only hoop/hope"
+
+   The batch a Shift needs is what the OTHER office's Sajili simu mints. Fetching it used
+   to need a person's code for that portal. With DEVICE_SHIFT_SECRET on both deployments
+   the two servers do it between themselves; without it the client is told "need-batch"
+   and falls back to the code-once path. And once the handset has actually moved, it is
+   the other office's phone -- off this register's panes and counts, findable by IMEI. */
+test('deviceShift with no batch: no secret says need-batch; with the secret it asks the other office itself', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '303030303030310' });
+  const token = e.provision[0].token;
+
+  const saved = process.env.DEVICE_SHIFT_SECRET;
+  delete process.env.DEVICE_SHIFT_SECRET;
+  await assert.rejects(() => run(db, LOCKER, 'deviceShift',
+    { imei: '303030303030310', server: 'https://other.example' }),
+    x => x.status === 400 && x.code === 'need-batch' && /need-batch/.test(x.message),
+    'no secret here: the client is told, by name, to fall back');
+
+  process.env.DEVICE_SHIFT_SECRET = 'shared-secret-xyz';
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, status: 200, json: async () => ({ ok: true, batch: 'f'.repeat(32) }) };
+  };
+  try {
+    const r = await run(db, LOCKER, 'deviceShift', { imei: '303030303030310', server: 'https://other.example/' });
+    assert.equal(r.ordered, 1);
+    assert.equal(calls.length, 1, 'exactly one call to the other office');
+    assert.equal(calls[0].url, 'https://other.example/api/shift-batch');
+    assert.equal(calls[0].body.secret, 'shared-secret-xyz');
+    assert.deepEqual(calls[0].body.imeis, ['303030303030310']);
+    const beat = await deviceApi(db, 'dev_beat', [{ token }], NOW);
+    assert.deepEqual(beat.shift, { server: 'https://other.example', batch: 'f'.repeat(32) },
+      'the fetched batch rides the next beat exactly as a pasted one would');
+
+    // The other office saying no is a loud refusal here, and no order is written.
+    const db2 = fakeDb(tables());
+    await run(db2, LOCKER, 'deviceEnrol', { imeis: '303030303030311' });
+    globalThis.fetch = async () => ({ ok: false, status: 403, json: async () => ({ ok: false, error: 'Shift secret refused.' }) });
+    await assert.rejects(() => run(db2, LOCKER, 'deviceShift', { imei: '303030303030311', server: 'https://other.example' }),
+      x => x.status === 400 && /refused/i.test(x.message));
+    assert.equal(db2._dump('devices').find(d => d.imei === '303030303030311').shift_server || null, null, 'no order written');
+  } finally {
+    globalThis.fetch = realFetch;
+    if (saved === undefined) delete process.env.DEVICE_SHIFT_SECRET; else process.env.DEVICE_SHIFT_SECRET = saved;
+  }
+});
+
+test('the receiving side mints a batch only for the shared secret, compared in constant time', async () => {
+  const { shiftBatch } = await import('../api/shift-batch.js');
+  const saved = process.env.DEVICE_SHIFT_SECRET;
+  try {
+    delete process.env.DEVICE_SHIFT_SECRET;
+    await assert.rejects(() => shiftBatch(fakeDb(tables()), { secret: 'anything', imeis: ['303030303030320'] }),
+      x => x.status === 403 && /DEVICE_SHIFT_SECRET/.test(x.message), 'unset: this office accepts none');
+    process.env.DEVICE_SHIFT_SECRET = 'shared-secret-xyz';
+    await assert.rejects(() => shiftBatch(fakeDb(tables()), { secret: 'wrong', imeis: ['303030303030320'] }),
+      x => x.status === 403, 'wrong secret');
+    await assert.rejects(() => shiftBatch(fakeDb(tables()), { secret: 'shared-secret-xy', imeis: ['303030303030320'] }),
+      x => x.status === 403, 'a different length never reaches the compare');
+    const db = fakeDb(tables());
+    const r = await shiftBatch(db, { secret: 'shared-secret-xyz', imeis: ['303030303030320'], from: 'HOOP' });
+    assert.match(r.batch, /^[0-9a-f]{32}$/);
+    assert.equal(r.enrolled, 1);
+    const row = db._dump('devices').find(d => d.imei === '303030303030320');
+    assert.equal(row.enrol_batch, r.batch, 'the same batch the row now carries, so the phone can claim it');
+    assert.match(String(row.enrolled_by || ''), /SHIFT:HOOP/, 'the trail says which office asked');
+  } finally {
+    if (saved === undefined) delete process.env.DEVICE_SHIFT_SECRET; else process.env.DEVICE_SHIFT_SECRET = saved;
+  }
+});
+
+test('a phone that has shifted away is off both panes and every count, but a search still finds it', async () => {
+  const db = fakeDb(tables());
+  const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '303030303030330, 303030303030331' });
+  const token = e.provision.find(p => p.imei === '303030303030330').token;
+  await run(db, LOCKER, 'deviceShift', { imei: '303030303030330', server: 'https://other.example', batch: 'a'.repeat(32) });
+  await deviceApi(db, 'dev_shifted', [{ token }], NOW);
+
+  const list = await run(db, LOCKER, 'deviceList', {});
+  assert.deepEqual(list.rows.map(r => r.imei), ['303030303030331'], 'the shifted phone is not listed');
+  assert.equal(list.counts.released, 0, 'and not counted as one of our released phones');
+  assert.equal(list.total, 1);
+
+  const rel = await run(db, LOCKER, 'deviceList', { state: 'released' });
+  assert.equal(rel.rows.length, 0, 'not even on the released filter -- it is the other office\'s now');
+
+  const found = await run(db, LOCKER, 'deviceList', { q: '303030303030330' });
+  assert.equal(found.rows.length, 1, '"where did that phone go" still has an answer');
+  assert.equal(found.rows[0].state, 'released');
+
+  // An ordinary achia (released by a person) is still ours to see.
+  await run(db, LOCKER, 'deviceSetState', { imeis: ['303030303030331'], state: 'released' }).catch(() => {});
+});
