@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-15-b';
+var BUILD = '2026-09-17-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5774,6 +5774,22 @@ VIEWS.adjust = function(){
                       srv('teams').catch(function(){ return { rows: [] }; })]).then(function(r){
     var d = r[0], tm = r[1];
     var tg = d.totals || {};
+    /* WHAT THE PICKER MAY OFFER IS THE SERVER'S TO SAY, and until now it was not: both
+       selects drew all four of ADJ_TARGET_LABELS, so the two retired books sat there
+       looking live. Somebody filled in a date, a team, an amount, a ref and a reason,
+       pressed Hifadhi, and only then was told "target must be one of: expected-initial,
+       expected-current" -- with the typing still to do again. `targets` has come back from
+       `adjustments` all along (ADJ_TARGETS in portal-core.js); this is the list it names.
+       The LABELS keep all four, because a row written before the retirement still has to be
+       able to name its own book. */
+    var adjLive = (d.targets && d.targets.length) ? d.targets
+      : ['expected-initial', 'expected-current'];
+    var adjOptions_ = function(sel){
+      return adjLive.map(function(k){
+        return '<option value="' + k + '"' + (k === sel ? ' selected' : '') + '>'
+          + esc(ADJ_TARGET_LABELS[k] || k) + '</option>';
+      }).join('');
+    };
     HEAD = '<div class="kpis">'
       + kpi('Marekebisho / Adjustments', money((d.rows||[]).length))
       + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net', (tg['expected-initial']||0) < 0 ? 'bad' : '')
@@ -5814,8 +5830,7 @@ VIEWS.adjust = function(){
            date typed for a back-dated one simply overtypes it. */
         + '<div class="fld"><label>Tarehe ya ripoti / Report date</label><input type="date" id="adjDate" value="'+esc(today())+'"></div>'
         + '<div class="fld"><label>Aina ya ripoti / Report type</label><select id="adjTarget">'
-          + Object.keys(ADJ_TARGET_LABELS).map(function(k){
-              return '<option value="'+k+'">'+esc(ADJ_TARGET_LABELS[k])+'</option>'; }).join('')
+          + adjOptions_('')
           + '</select>'
           /* WHICH WAY THIS ROW WILL MOVE THE FIGURES, SAID BEFORE IT IS SAVED. The arrears pair
              pull in opposite directions -- recovery is initial minus current -- and the one
@@ -5874,10 +5889,24 @@ VIEWS.adjust = function(){
         + '<div class="frow"><span>Aliyeweka / By</span>' + esc(r.created_by || '') + '</div>'
         + '<div class="fld" style="margin-top:10px"><label>Tarehe ya ripoti / Report date</label>'
           + '<input type="date" id="adjEditDate" value="' + esc(String(r.adj_date || '').slice(0,10)) + '"></div>'
+        /* A ROW ON A RETIRED BOOK STILL NAMES ITS OWN BOOK -- dropping the option would show
+           it as Expected — Initial, which it is not. It is offered here and nowhere else, so
+           the only way it can be selected is by already being it. Saving it back is refused
+           by the server, so the note says the two ways out rather than letting somebody
+           press Hifadhi and find out. */
         + '<div class="fld"><label>Aina ya ripoti / Report type</label><select id="adjEditTarget">'
-          + Object.keys(ADJ_TARGET_LABELS).map(function(k){
-              return '<option value="'+k+'"'+(k===r.target?' selected':'')+'>'+esc(ADJ_TARGET_LABELS[k])+'</option>'; }).join('')
-          + '</select></div>'
+          + (adjLive.indexOf(r.target) < 0
+              ? '<option value="' + esc(r.target) + '" selected>'
+                + esc(ADJ_TARGET_LABELS[r.target] || r.target) + '</option>'
+              : '')
+          + adjOptions_(r.target)
+          + '</select>'
+          + (adjLive.indexOf(r.target) < 0
+              ? '<div class="sub" style="margin-top:4px">Kitabu hiki kimestaafu — chagua Expected ili '
+                + 'kuhifadhi, au futa safu hii. / This book has retired: pick an Expected book to save '
+                + 'this row onto, or delete it.</div>'
+              : '')
+          + '</div>'
         + '<div class="fld"><label>Timu / Team</label><select id="adjEditTeam">'
           + '<option value="">— kitabu chote / whole book —</option>'
           + (tm.rows||[]).map(function(t){

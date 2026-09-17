@@ -394,3 +394,40 @@ test('the shift partner address can be edited on the Settings page', () => {
   assert.ok(groups.includes("key:'DEVICE_SHIFT_PARTNER'"),
     'DEVICE_SHIFT_PARTNER is read by the server but cannot be edited anywhere on the Settings page');
 });
+
+/* THE ILIYONASIA PICKER MAY ONLY OFFER WHAT THE SERVER WILL ACCEPT.
+   -----------------------------------------------------------------------------------
+   Reported from the desk with a payment already typed in: report date, team, 500,000,
+   a ref and a reason, Hifadhi -- and only then "Chagua aina ya ripoti. / target must be
+   one of: expected-initial, expected-current". The two arrears books retired
+   (ADJ_RETIRED_TARGETS) and the server stopped accepting them, but both selects still
+   drew every key of ADJ_TARGET_LABELS, so a retired book sat in the list looking live.
+
+   The note above ADJ_TARGET_LABELS has always said "`targets` comes from the server, so
+   the picker offers exactly what will be accepted". This is what makes that true. The
+   LABELS still carry all four: a row written before the retirement has to be able to
+   name its own book. */
+test('the adjustments picker is built from the server\'s live targets, not from the labels', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.adjust = function'), app.indexOf('VIEWS.abnormal = function'));
+
+  assert.ok(view.includes('d.targets'),
+    'the picker should take its options from the server\'s `targets`');
+  assert.ok(!/<select id="adjTarget">'\s*\+\s*Object\.keys\(ADJ_TARGET_LABELS\)/.test(view),
+    'the NEW adjustment picker must not draw every label -- two of them are retired');
+  assert.ok(!/<select id="adjEditTarget">'\s*\+\s*Object\.keys\(ADJ_TARGET_LABELS\)/.test(view),
+    'the EDIT picker must not draw every label either');
+
+  /* All four labels stay, for rows already written against a retired book. */
+  const labels = app.slice(app.indexOf('var ADJ_TARGET_LABELS'), app.indexOf('var ADJ_COUNT_LABELS'));
+  for (const k of ['expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current']) {
+    assert.ok(labels.includes("'" + k + "'"), k + ' must still be nameable on an existing row');
+  }
+
+  // And the server's own list is the two expected books -- the fallback in the page matches it.
+  const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
+  assert.ok(core.includes("const ADJ_TARGETS = ['expected-initial', 'expected-current']"),
+    'if this list changes, the page\'s offline fallback beside `d.targets` changes with it');
+  assert.ok(view.includes("['expected-initial', 'expected-current']"),
+    'the page should fall back to the same two books when an older server sends no targets');
+});
