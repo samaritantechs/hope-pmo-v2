@@ -23,8 +23,8 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_, adjCountableRefs_, noteAdjustmentsWritten, ADJ_RETIRED_TARGETS,
-  ADJ_RECEIVED_TARGETS } from './adjustments.js';
+import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten,
+  ADJ_RECEIVED_TARGETS, ADJ_ARREARS_TARGETS, ADJ_ARREARS_REOPENED } from './adjustments.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -2526,12 +2526,15 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
      Batch first, register second, for the reason in withAdj_; and the weekday is fixed by the
      caller, so the correction lands on "that initial deck or any current available" for the
      day, whichever weekday's deck that turned out to be. */
-  /* THE ARREARS DECK IS TAKEN AS IT COMES. The register no longer corrects it -- see
-     ADJ_RETIRED_TARGETS: a payment this deck missed shows up as recovery the moment the deck
-     catches up, so adjusting it here counted the same shilling twice. */
-  const defDay_ = (rows, date, type, weekday) =>
+  /* AND THE ARREARS DECK, THE SAME WAY -- the register corrects both books again, asked for
+     in those words ("do as expected just manual add or reduce the amount ... as i input").
+     Batch first, register second, exactly as the expected side: the correction lands on the
+     deck the row names for the day it names. BOTH decks or neither -- recovery is initial
+     minus current, so correcting one alone would report the register itself as recovery. */
+  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
-      && r.snapshot_type === type && r.weekday === weekday));
+      && r.snapshot_type === type && r.weekday === weekday)),
+    adj, 'defaulter-' + type, date);
   const days = [];
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
@@ -2944,12 +2947,15 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
   const dailyTargetTeam = weeklyTarget / 5;
   const myExp = scoped(user, expW), myIni = scoped(user, iniW), myDef = scoped(user, defW);
   /* One day's deck, resolved and corrected -- see the note beside the weekly report's copy. */
-  /* THE ARREARS DECK IS TAKEN AS IT COMES. The register no longer corrects it -- see
-     ADJ_RETIRED_TARGETS: a payment this deck missed shows up as recovery the moment the deck
-     catches up, so adjusting it here counted the same shilling twice. */
-  const defDay_ = (rows, date, type, weekday) =>
+  /* AND THE ARREARS DECK, THE SAME WAY -- the register corrects both books again, asked for
+     in those words ("do as expected just manual add or reduce the amount ... as i input").
+     Batch first, register second, exactly as the expected side: the correction lands on the
+     deck the row names for the day it names. BOTH decks or neither -- recovery is initial
+     minus current, so correcting one alone would report the register itself as recovery. */
+  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
-      && r.snapshot_type === type && r.weekday === weekday));
+      && r.snapshot_type === type && r.weekday === weekday)),
+    adj, 'defaulter-' + type, date);
   const mySales = scoped(user, loanRows).filter(l => SALES_STAGES.includes(l.stage));
 
   // Which real date each day column looks at: the latest of that weekday, today included.
@@ -3409,7 +3415,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     const d = addDaysKey(mon, i);
     if (d > today || d > sun) break;
     const wd = weekdayOfKey(d);
-    const byTeam = recoveryByTeam(myDef, d, wd);
+    const byTeam = recoveryByTeam(myDef, d, wd, adj);
     const landed = type => new Set(myDef
       .filter(r => String(r.snapshot_date) === d && r.snapshot_type === type && K(r.weekday) === wd)
       .map(r => K(r.team)));
@@ -6448,9 +6454,12 @@ function forbidden(m) { const e = new Error(m); e.status = 403; return e; }
    Gated on its own `adjust` tab (granted like `audit`: admins from the start, the PMO-Data
    person by ticking it on their code). Writing numbers reports lean on is not a default
    power. */
-/* WHAT MAY BE WRITTEN NOW. The two arrears books were removed -- see ADJ_RETIRED_TARGETS in
-   adjustments.js for why a correction that arrives on its own must not also be registered. */
-const ADJ_TARGETS = ['expected-initial', 'expected-current'];
+/* ALL FOUR BOOKS ARE WRITABLE. The two arrears ones retired for a while -- the correction
+   arrives on its own as recovery -- and are back by instruction: "do as expected just manual
+   add or reduce the amount to the customer or team as i input!". See ADJ_ARREARS_TARGETS in
+   adjustments.js for what that costs and why it was chosen. The client's picker is built from
+   this list (it comes back as `targets`), so the two stay in step by construction. */
+const ADJ_TARGETS = ['expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current'];
 function requireAdjust(user) {
   const t = (user && user.tabs) || [];
   if (!t.includes('adjust') && !t.includes('settings')) {
@@ -6536,9 +6545,9 @@ async function adjustments(db, user, p = {}) {
   const out = rows.map(r => {
     const a = num(r.amount);
     totals[r.target] = (totals[r.target] || 0) + a;
-    /* The net is what the register is still MOVING, so a retired book is not in it. Its own
-       total stays above, because the row is still there and its history is still true. */
-    if (!ADJ_RETIRED_TARGETS.includes(String(r.target))) net += a;
+    /* EVERY BOOK IS IN THE NET NOW, because every book is moving again -- see
+       ADJ_ARREARS_TARGETS. The per-target totals beside it say which book each shilling is in. */
+    net += a;
     const book = bookOf(String(r.target));
     const ref = String(r.ref || '').trim();
     let countState = 'amount-only', countNote = null;
@@ -6578,15 +6587,26 @@ async function adjustments(db, user, p = {}) {
       countState = 'counted';
       countNote = 'Inahesabika kama mteja mmoja kwenye kamisheni. / Counted as one customer for commission.';
     }
-    /* A ROW WRITTEN AGAINST AN ARREARS BOOK STILL BELONGS IN THE LEDGER, and it says on its
-       face that it no longer applies -- see ADJ_RETIRED_TARGETS. An entry somebody made that
-       quietly stopped counting is how a register loses the authority it exists to have. */
-    const retired = ADJ_RETIRED_TARGETS.includes(String(r.target));
+    /* AN ARREARS ROW THAT WAS ALREADY IN THE LEDGER IS APPLYING AGAIN, and that is worth saying
+       out loud on the row rather than letting a figure move for a reason nobody can see. The
+       row did not change; what changed is that the decks read it once more, and in the months
+       it lay dormant a deck may well have caught up with the same payment by itself.
+
+       IT IS THE DAY THE ROW WAS FILED THAT DECIDES THIS, not the report date it names. The two
+       come apart constantly -- somebody files a correction today for last Thursday's deck --
+       and only `created_at` answers "was this row already sitting there when the books came
+       back". Compared as a day and INCLUSIVE, so a row filed this morning, hours before the
+       change went out, is flagged rather than missed: over-warning on one day costs a glance,
+       under-warning costs a figure nobody can account for. A row with no `created_at` at all
+       predates that column and is old by definition. */
+    const arrears = ADJ_ARREARS_TARGETS.includes(String(r.target));
     return { ...r, countState, countNote,
-      ...(retired ? { retired: true, retiredNote:
-        'Daftari hili halitumiki tena — likishasuluhishwa linaonekana kama urejeshaji kwenye deki. '
-        + '/ This book is no longer adjusted: once it is sorted out the deck shows it as recovery, '
-        + 'so registering it here counted it twice.' } : {}) };
+      ...(arrears && String(r.created_at || '').slice(0, 10) <= ADJ_ARREARS_REOPENED
+        ? { reopened: true, reopenedNote:
+            'Ilikuwa kwenye daftari lililosimamishwa; sasa linatumika tena. Hakiki kama deki '
+            + 'lilishachukua malipo haya. / This row was in the register before the arrears books '
+            + 'started applying again: check the deck has not already carried this payment.' }
+        : {}) };
   });
   return { rows: out, totals, net, ready: true, targets: ADJ_TARGETS.slice(),
     // So the tab can lead with the one thing that needs a person: rows the deck has overtaken.
@@ -8279,9 +8299,10 @@ function adjLedgerCells_(adj, from, to) {
   for (const r of adj.cells('expected-initial')) put(r.date, r.team, 'ic', r.amount);
   /* The arrears pair. Money received lowers a debt, so these SUBTRACT where the two above add
      -- and the ledger stores the two decks separately (ri, rc) precisely so recovery can still
-     be worked out as initial minus current after the fact. The arrears decks are no longer
-     corrected by the register at all -- see ADJ_RETIRED_TARGETS -- so what each
-     one moves recovery, and why. */
+     be worked out as initial minus current after the fact, which is the only way the two can
+     be told apart once they are summed. Both decks are corrected by the register the same way
+     the expected decks are, so a ledger row and the recovery figure it explains come from one
+     set of numbers. */
   for (const r of adj.cells('defaulter-initial')) put(r.date, r.team, 'ri', r.amount);
   for (const r of adj.cells('defaulter-current')) put(r.date, r.team, 'rc', r.amount);
   return out;
@@ -8945,12 +8966,15 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   /* And the arrears side, the same way. Recovery is initial minus current, so BOTH decks are
      corrected or neither is -- correcting one and not the other would report the register as
      recovery. */
-  /* THE ARREARS DECK IS TAKEN AS IT COMES. The register no longer corrects it -- see
-     ADJ_RETIRED_TARGETS: a payment this deck missed shows up as recovery the moment the deck
-     catches up, so adjusting it here counted the same shilling twice. */
-  const defDay_ = (rows, date, type, weekday) =>
+  /* AND THE ARREARS DECK, THE SAME WAY -- the register corrects both books again, asked for
+     in those words ("do as expected just manual add or reduce the amount ... as i input").
+     Batch first, register second, exactly as the expected side: the correction lands on the
+     deck the row names for the day it names. BOTH decks or neither -- recovery is initial
+     minus current, so correcting one alone would report the register itself as recovery. */
+  const defDay_ = (rows, date, type, weekday) => withAdjDef_(
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
-      && r.snapshot_type === type && r.weekday === weekday));
+      && r.snapshot_type === type && r.weekday === weekday)),
+    adj, 'defaulter-' + type, date);
 
   /* ---- loan applications per weekday: unassigned + assigned, by the day the admin CHOSE ----
 
@@ -9025,7 +9049,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        reads it too, so the two screens add up to one figure rather than two that happen to
        agree. See the note on it in snapshot-totals.js. */
     let rec = 0;
-    for (const t of recoveryByTeam(myDefWeek, d, dwd).values()) rec += t.recovered;
+    for (const t of recoveryByTeam(myDefWeek, d, dwd, adj).values()) rec += t.recovered;
     /* THE DENOMINATOR IS JANA'S, on the basis rule -- Monday by Monday, Tuesday to Friday by
        the day before, the weekend by the week.
          "everywhere uses jana except only where there is recovery officers"
@@ -9109,7 +9133,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     let measured = false;
     for (let i = 0; i < 7; i++) {
       // The same function the trend tiles and the commission board read -- see recTrend.
-      const byTeam = recoveryByTeam(defRows, addDaysKey(from, i), WD7[i]);
+      const byTeam = recoveryByTeam(defRows, addDaysKey(from, i), WD7[i], adj);
       if (!byTeam.size) continue;
       measured = true;
       for (const t of byTeam.values()) rec += t.recovered;
@@ -10116,9 +10140,10 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        A board people are ranked on must not depend on which read answered. */
     }).sort((a, b) => b.recovered - a.recovered || String(a.officer).localeCompare(String(b.officer)));
   }
-  /* One day's deck, resolved and taken as it comes -- the register no longer corrects the
-     arrears books, see ADJ_RETIRED_TARGETS. */
-  const defDay_ = (d, type, weekday) => onDate(myDef, d, type, weekday);
+  /* One day's deck, resolved and corrected -- the register moves both arrears books again,
+     the same fold every other screen applies. */
+  const defDay_ = (d, type, weekday) =>
+    withAdjDef_(onDate(myDef, d, type, weekday), adj, 'defaulter-' + type, d);
   const iniToday = defDay_(today, 'initial', wd), curToday = defDay_(today, 'current', wd);
   /* THE PER-OFFICER TODAY BOARD IS THE COMMISSION BOARD'S OWN FIGURE.
        "everywhere uses jana except only where there is recovery officers like in their
@@ -10138,7 +10163,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     const d = addDaysKey(mon, i);
     // Each day through recoveryByTeam -- the dashboard tiles' and the commission board's own
     // function, so the wall, the tiles and the pay slip carry one figure per officer.
-    for (const t of recoveryByTeam(myDef, d, WD7[i]).values()) {
+    for (const t of recoveryByTeam(myDef, d, WD7[i], adj).values()) {
       const who = officerOf(teamBy, t.team, 'recovery');
       dailyRec[who] = (dailyRec[who] || 0) + t.recovered;
     }

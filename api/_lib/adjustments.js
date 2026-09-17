@@ -126,31 +126,46 @@ export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
    decks were uploaded; a correction on a day with no pair leaves that day contributing nothing,
    because "we did not measure recovery" and "recovery was nil" are different facts and the
    register cannot turn one into the other. */
-/* THE ARREARS BOOKS ARE NO LONGER ADJUSTED, AND THE REASON IS THE BEST KIND: the correction
-   arrives on its own.
+/* THE ARREARS BOOKS RETIRED ONCE, AND ARE BACK -- BY INSTRUCTION, BOTH TIMES.
+   =====================================================================================
+   They were retired because the correction arrives on its own:
 
      "we shouldnt miamala iliyonasia kwenye recovery since ikisolviwa itakuwa recovered as
       usual so leave only expected in iliyonasia"
 
-   A payment the arrears deck missed is not lost. When it is sorted out, the customer's arrears
-   fall on the next deck and the recovery walk sees the drop -- as recovery, which is what it
-   is. Registering it against the deck as well counted the SAME shilling twice: once as a
-   correction now, and once as recovery when the deck caught up.
+   A payment the arrears deck missed is not lost -- when it is sorted out the customer's
+   arrears fall on the next deck and the recovery walk sees the drop, as recovery. Registering
+   it here as well counted the SAME shilling twice: once as a correction now, and once as
+   recovery when the deck caught up.
 
-   Worse, it moved recovery in whichever direction the register happened to name, and the two
-   arrears targets pulled OPPOSITE ways -- something somebody had to reason about on a Monday
-   morning to know whether a figure was right.
+   They are open again, asked for in those words:
 
-   The expected books keep the register, because there the correction has nowhere else to
-   arrive: an expected sheet is a photograph of one day, and a payment it missed is missed for
-   ever unless somebody says so.
+     "we need to adjust defaulter initial and current too"
+     "do as expected just manual add or reduce the amount to the customer or team as i input!"
 
-   ROWS ALREADY WRITTEN AGAINST THE ARREARS BOOKS STAY IN THE LEDGER and stop applying. They
-   are named here so the register can SAY that on the row rather than quietly ignoring them --
-   an entry somebody made that silently stopped counting is how a register loses its
-   authority. */
-export const ADJ_RETIRED_TARGETS = ['defaulter-current', 'defaulter-initial'];
-export const ADJ_ALL_TARGETS = ADJ_RECEIVED_TARGETS.slice();
+   So they behave EXACTLY as the expected books do, and that is the whole specification: the
+   amount is applied to the team-day it names, as typed, clamped at zero. No stand-down, no
+   cleverness -- the register says what the figure is.
+
+   WHICH MEANS THE DOUBLE COUNT IS REAL AGAIN, AND IT IS A PERSON'S JOB, NOT THE CODE'S. File
+   500,000 against defaulter-current today and recovery rises today; when tomorrow's deck
+   carries the same payment, recovery rises again for the same shilling unless somebody deletes
+   the row. The Iliyonasia tab lists every row for exactly that reason. This was weighed and
+   chosen: an operator who can see the whole register and correct it beats a rule that silently
+   overrides what they typed.
+
+   AND THE TWO BOOKS PULL OPPOSITE WAYS -- see the note above: defaulter-current raises
+   recovery, defaulter-initial lowers it. That is arithmetic, not a bug, and the drawer says
+   which way before the row is saved. */
+export const ADJ_ARREARS_TARGETS = ['defaulter-initial', 'defaulter-current'];
+/* THE DAY THEY REOPENED. An arrears row filed on or before this day was sitting in a dormant
+   book -- it did not move recovery yesterday and it does today -- so the register flags it for
+   a second look rather than letting old entries change a figure unannounced. A date rather
+   than a column on the row, because nothing was written on those rows at the time to
+   distinguish them: when each was FILED (`created_at`, not the report date it names) is the
+   only record of which side of the change it falls. */
+export const ADJ_ARREARS_REOPENED = '2026-09-17';
+export const ADJ_ALL_TARGETS = [...ADJ_RECEIVED_TARGETS, ...ADJ_ARREARS_TARGETS];
 
 /* ---------------------------------------------------------------- READ IT ONCE, NOT PER SCREEN
    "Mind you we aint interfering app efficiency and speed : postgres issues"

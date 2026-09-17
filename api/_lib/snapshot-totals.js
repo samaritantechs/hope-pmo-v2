@@ -41,6 +41,7 @@ import { runQuery, fetchAll , rpcAll } from './supabase.js';
 import { latestSnapshot, latestSnapshotDate, snapshotsInRange, upperTeams, pickLatestBatch, teamMatchList } from './snapshots.js';
 import { todayKey, addDaysKey } from './time.js';
 import { collectedOf, num } from './recovery.js';
+import { withAdjDef_ } from './adjustments.js';
 
 export const EXPECTED_TOTALS_FN = 'expected_snapshot_totals';
 export const DEFAULTER_TOTALS_FN = 'defaulter_snapshot_totals';
@@ -846,10 +847,18 @@ export const deckKey = (team, weekday) =>
    arrears grew reads negative, exactly as the tile it feeds always has. */
 const K_ = v => String(v == null ? '' : v).trim().toUpperCase();
 
-export function recoveryByTeam(rows, date, weekday) {
+/* `adj` IS OPTIONAL AND ITS ABSENCE MEANS "no register", not "no correction" -- a caller that
+   does not hold one (a test, a screen that has not fetched it) gets the decks exactly as they
+   were uploaded. Passed, the Iliyonasia correction is folded into BOTH decks before either is
+   summed: recovery is initial minus current, so correcting one alone would report the register
+   itself as recovery. This is the same withAdjDef_ every other recovery path applies -- one
+   definition of the rule, in one place. */
+export function recoveryByTeam(rows, date, weekday, adj = null) {
   const d = String(date == null ? '' : date).slice(0, 10), wd = K_(weekday);
-  const deck = type => pickLatestBatch((rows || []).filter(r => String(r.snapshot_date).slice(0, 10) === d
-    && r.snapshot_type === type && K_(r.weekday) === wd));
+  const deck = type => withAdjDef_(
+    pickLatestBatch((rows || []).filter(r => String(r.snapshot_date).slice(0, 10) === d
+      && r.snapshot_type === type && K_(r.weekday) === wd)),
+    adj, 'defaulter-' + type, d);
   const sumBy = list => {
     const m = new Map();
     for (const r of list) {

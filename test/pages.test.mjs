@@ -399,14 +399,16 @@ test('the shift partner address can be edited on the Settings page', () => {
    -----------------------------------------------------------------------------------
    Reported from the desk with a payment already typed in: report date, team, 500,000,
    a ref and a reason, Hifadhi -- and only then "Chagua aina ya ripoti. / target must be
-   one of: expected-initial, expected-current". The two arrears books retired
-   (ADJ_RETIRED_TARGETS) and the server stopped accepting them, but both selects still
-   drew every key of ADJ_TARGET_LABELS, so a retired book sat in the list looking live.
+   one of: expected-initial, expected-current". The two arrears books had retired and the
+   server stopped accepting them, but both selects still drew every key of
+   ADJ_TARGET_LABELS, so a retired book sat in the list looking live.
 
-   The note above ADJ_TARGET_LABELS has always said "`targets` comes from the server, so
-   the picker offers exactly what will be accepted". This is what makes that true. The
-   LABELS still carry all four: a row written before the retirement has to be able to
-   name its own book. */
+   All four books are accepted again, so today the two lists happen to agree -- which is
+   exactly when a guard like this stops being checked and starts rotting. It stays because
+   the DIRECTION of the dependency is the point: the picker reads the server's `targets`,
+   and the list in the page is a fallback for an old server, not a second opinion. Whoever
+   withdraws or adds a book next changes ADJ_TARGETS and this test tells them where the
+   page's copy of it lives. */
 test('the adjustments picker is built from the server\'s live targets, not from the labels', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('VIEWS.adjust = function'), app.indexOf('VIEWS.abnormal = function'));
@@ -414,20 +416,27 @@ test('the adjustments picker is built from the server\'s live targets, not from 
   assert.ok(view.includes('d.targets'),
     'the picker should take its options from the server\'s `targets`');
   assert.ok(!/<select id="adjTarget">'\s*\+\s*Object\.keys\(ADJ_TARGET_LABELS\)/.test(view),
-    'the NEW adjustment picker must not draw every label -- two of them are retired');
+    'the NEW adjustment picker must draw the server\'s targets, not every label');
   assert.ok(!/<select id="adjEditTarget">'\s*\+\s*Object\.keys\(ADJ_TARGET_LABELS\)/.test(view),
     'the EDIT picker must not draw every label either');
 
-  /* All four labels stay, for rows already written against a retired book. */
+  /* Every book the server accepts has to be nameable on a row, whatever the picker offers. */
   const labels = app.slice(app.indexOf('var ADJ_TARGET_LABELS'), app.indexOf('var ADJ_COUNT_LABELS'));
   for (const k of ['expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current']) {
-    assert.ok(labels.includes("'" + k + "'"), k + ' must still be nameable on an existing row');
+    assert.ok(labels.includes("'" + k + "'"), k + ' must be nameable on a row');
   }
 
-  // And the server's own list is the two expected books -- the fallback in the page matches it.
+  /* THE SERVER'S LIST AND THE PAGE'S FALLBACK, SIDE BY SIDE. Read ADJ_TARGETS out of
+     portal-core.js and require the page to fall back to exactly those keys -- so a book
+     added or withdrawn on the server can never leave an old-server fallback naming a
+     different set. */
   const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
-  assert.ok(core.includes("const ADJ_TARGETS = ['expected-initial', 'expected-current']"),
-    'if this list changes, the page\'s offline fallback beside `d.targets` changes with it');
-  assert.ok(view.includes("['expected-initial', 'expected-current']"),
-    'the page should fall back to the same two books when an older server sends no targets');
+  const decl = core.match(/const ADJ_TARGETS = \[([^\]]*)\]/);
+  assert.ok(decl, 'ADJ_TARGETS should still be a literal list in portal-core.js');
+  const served = decl[1].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.deepStrictEqual(served,
+    ['expected-initial', 'expected-current', 'defaulter-initial', 'defaulter-current'],
+    'all four books are accepted -- update the page fallback in the same commit as this list');
+  assert.ok(view.includes('[' + served.map(k => "'" + k + "'").join(', ') + ']'),
+    'the page should fall back to the same books when an older server sends no targets');
 });
