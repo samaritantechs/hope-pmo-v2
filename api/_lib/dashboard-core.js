@@ -12,7 +12,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, de
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
 import { recoveryBasis, num } from './recovery.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. */
-import { adjReceived_, withAdj_, ADJ_BUDGET_MS } from './adjustments.js';
+import { adjReceived_, withAdj_, withAdjDef_, ADJ_BUDGET_MS } from './adjustments.js';
 
 const WEEKDAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
 /* SATURDAY IS A WORKING DAY HERE, AND THE WEEKEND VIEW WAS THROWING IT AWAY.
@@ -132,15 +132,18 @@ async function buildDashboardUncached(db, user, nowMs) {
   const expRows = withAdj_(scoped(expected.rows), adj, 'expected-current', expected.dates || []);
   const sal = scoped(sal0);
   const rcv = scoped(rcv0);
-  /* THE ARREARS BOOKS ARE TAKEN AS THEY COME. The register used to correct them too; it no
-     longer does -- see ADJ_RETIRED_TARGETS. A payment the deck missed arrives by itself as
-     recovery when the deck catches up, and registering it here counted it twice. */
-  const defAdj_ = (rows) => scoped(rows);
+  /* THE ARREARS BOOKS ARE CORRECTED TOO, the same fold every other screen applies -- see
+     ADJ_ARREARS_TARGETS. Each deck carries its own date, so the correction lands on the day
+     that deck is FOR, not on the day the dashboard happens to be drawn. */
+  const defAdj_ = (rows, type, date) =>
+    withAdjDef_(scoped(rows), adj, 'defaulter-' + type, date);
+  const deckDate_ = p => String(p.date || (p.cur && p.cur[0] && p.cur[0].snapshot_date)
+    || (p.ini && p.ini[0] && p.ini[0].snapshot_date) || '').slice(0, 10);
   const defCurRows = decks.pairs.length
-    ? decks.pairs.flatMap(p => defAdj_(p.cur))
+    ? decks.pairs.flatMap(p => defAdj_(p.cur, 'current', deckDate_(p)))
     : scoped(decks.currentRows);
   const deckPairs = decks.pairs.map(p => ({ ...p,
-    ini: defAdj_(p.ini), cur: defAdj_(p.cur) }));
+    ini: defAdj_(p.ini, 'initial', deckDate_(p)), cur: defAdj_(p.cur, 'current', deckDate_(p)) }));
 
   // ---- Recovered: initial arrears minus current arrears, STRICTLY paired decks only.
   // A missing side yields 0 with a note, never +/- the whole book (initial with no current

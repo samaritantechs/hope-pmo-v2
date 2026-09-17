@@ -3071,14 +3071,22 @@ test('the Iliyonasia tab says what the commission side did with every row', asyn
   assert.equal(by.b.countState, 'superseded', 'the deck overtook this one -- say so on the row');
   assert.equal(by.c.countState, 'no-ref');
   assert.equal(by.e.countState, 'amount-only', 'the arrears books pay no per-customer commission');
-  /* AND EVERY ARREARS ROW SAYS IT HAS RETIRED, on the row. These used to carry a note about
-     which way each one moved recovery; they no longer move it at all, and a row that quietly
-     stopped counting is how a register loses its authority. */
+  /* THE ARREARS ROWS MOVE MONEY AND COUNT NOBODY, which is what `amount-only` means: they
+     are corrections to a deck, not people who paid a commission-earning installment. All
+     three carry it -- including the negative one, which is money going back out. */
   for (const id of ['e', 'f', 'g']) {
-    assert.equal(by[id].retired, true, id + ' does not say it has retired');
-    assert.match(by[id].retiredNote, /counted it twice/);
+    assert.equal(by[id].countState, 'amount-only', id + ' should count no customer');
   }
-  assert.ok(!by.a.retired, 'and the expected books are untouched by any of this');
+  /* AND EACH SAYS IT WAS ALREADY IN THE LEDGER WHEN THE BOOKS CAME BACK -- none of these
+     fixtures carries a `created_at`, which is what a row older than that column looks like,
+     and a row that cannot prove it is new is treated as old. It moves a figure today that it
+     did not move yesterday, and the person reading the tab is the one who can check whether a
+     deck has already carried the same payment. */
+  for (const id of ['e', 'f', 'g']) {
+    assert.equal(by[id].reopened, true, id + ' does not flag that it applies again');
+    assert.match(by[id].reopenedNote, /applying again/);
+  }
+  assert.ok(!by.a.reopened, 'and the expected books are untouched by any of this');
   assert.equal(d.superseded, 1, 'and the tab can lead with the count that needs a person');
   for (const r of d.rows) assert.ok(r.countNote, 'every row explains itself in words');
 });
@@ -3128,55 +3136,84 @@ test('every field of a register row is editable, and absent means untouched', as
    taking it off the CURRENT deck raises recovery and taking it off the INITIAL deck lowers it.
    These two tests are the whole of it, and they are the reason the arrears pair sat unapplied
    until somebody said which way it read. */
-test('the register no longer touches the arrears books, and the ledger says so', async () => {
+test('the register moves the arrears books again, both directions, and every screen agrees', async () => {
   /* =====================================================================================
-       "we shouldnt miamala iliyonasia kwenye recovery since ikisolviwa itakuwa recovered as
-        usual so leave only expected in iliyonasia"
+       "we need to adjust defaulter initial and current too"
+       "do as expected just manual add or reduce the amount to the customer or team as i input!"
 
-     This replaces four tests that pinned the OPPOSITE behaviour -- an arrears correction
-     raising or lowering recovery depending on which deck it named. They were right about what
-     the code did and wrong about what it should do, and the reason is the best kind: the
-     correction arrives on its own.
-
-     A payment the arrears deck missed is not lost. When it is sorted out the customer's
-     arrears fall on the next deck and the recovery walk sees the drop -- as recovery, because
-     that is what it is. Registering it against the deck as well counted the same shilling
-     twice: once as a correction now, once as recovery when the deck caught up.
+     The arrears books retired for a while -- the correction arrives on its own as recovery
+     when the deck catches up, so registering it here counted the same shilling twice -- and
+     are open again by instruction. They behave exactly as the expected books do: the amount
+     applies to the team-day it names, as typed. The double count is a person's job now (the
+     Iliyonasia tab lists every row); it is deliberately NOT the code's.
      ===================================================================================== */
-  const t = tables();
-  t.pmo_adjustments = [
-    { id: 'r1', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 200,
-      reason: 'ililipwa, deki la jioni halikuiona' },
-    { id: 'r2', adj_date: TODAY, target: 'defaulter-initial', team: 'KONGOWE', amount: 300 },
-  ];
-  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
+  const base = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
   const dayOf = x => x.days.find(r => r.date === TODAY);
-  assert.equal(dayOf(d).recovered, dayOf(plain).recovered,
-    'an arrears entry moved recovery -- it is counted again when the deck catches up');
+  const was = dayOf(base).recovered;
 
-  /* AND EVERY SCREEN THAT READS RECOVERY AGREES, because they all stopped correcting it
-     together. One day, one recovered figure, whichever asks. */
-  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
-  assert.equal(dayOf(d).recovered, dash.recTrend.find(r => r.date === TODAY).recovered);
-  const shared = await portalApi(dbWithRpc(t), ADMIN, 'dashboard', {}, NOW);
-  assert.equal(shared.totals.recovery.recovered, dayOf(d).recovered);
+  /* CURRENT: the evening deck missed a payment, so its arrears are too high. Take it off and
+     the gap between the two decks WIDENS -- recovery goes UP. */
+  const tc = tables();
+  tc.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 200, reason: 'ililipwa, deki la jioni halikuiona' }];
+  const cur = await portalApi(dbWithRpc(tc), ADMIN, 'weekly', {}, NOW);
+  assert.equal(dayOf(cur).recovered, was + 200, 'current deck corrected -> recovery up');
 
-  /* A NEW ONE CANNOT BE WRITTEN, and the refusal names what may be. */
-  await assert.rejects(
-    () => portalApi(dbWithRpc(t), ADMIN, 'adjustmentRecord',
-      { date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 50 }, NOW),
-    e => e.status === 400 && /expected-initial, expected-current/.test(e.message),
-    'the arrears books are still offered');
+  /* INITIAL: the morning deck was overstated, so the day started from too high a figure.
+     Take it off and the gap NARROWS -- recovery goes DOWN. The opposite direction, from the
+     same one rule, which is why these two are worth a test apiece. */
+  const ti = tables();
+  ti.pmo_adjustments = [{ id: 'r2', adj_date: TODAY, target: 'defaulter-initial',
+    team: 'KONGOWE', amount: 300 }];
+  const ini = await portalApi(dbWithRpc(ti), ADMIN, 'weekly', {}, NOW);
+  assert.equal(dayOf(ini).recovered, was - 300, 'initial deck corrected -> recovery down');
 
-  /* BUT THE ROWS ALREADY WRITTEN STAY IN THE LEDGER. An entry somebody made that silently
-     stopped counting is how a register loses its authority: it is still listed, and it says
-     it no longer applies. */
-  const reg = await portalApi(dbWithRpc(t), ADMIN, 'adjustments', {}, NOW);
-  const old = (reg.rows || []).filter(r => String(r.target).startsWith('defaulter-'));
-  assert.equal(old.length, 2, 'the historical arrears entries vanished from the register');
-  assert.ok(old.every(r => r.retired === true), 'and they do not say that they have retired');
+  /* EVERY SCREEN THAT READS RECOVERY AGREES, because they all apply the same withAdjDef_ --
+     one definition of the rule, in one place. A screen that missed it would show a different
+     recovered figure for the same day, which is the fault this whole register exists to end. */
+  const dash = await portalApi(dbWithRpc(tc), ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(dash.recTrend.find(r => r.date === TODAY).recovered, was + 200,
+    'the dashboard trend must move with the weekly report');
+  const shared = await portalApi(dbWithRpc(tc), ADMIN, 'dashboard', {}, NOW);
+  assert.equal(shared.totals.recovery.recovered, was + 200,
+    'the shared dashboard -- which the phone\'s bar is built from -- must move too');
+  const boards = await portalApi(dbWithRpc(tc), ADMIN, 'officerBoards', {}, NOW);
+  const boardRec = (boards.recToday || []).reduce((n, r) => n + num_(r.recovered), 0);
+  assert.equal(boardRec, was + 200, 'the officer boards must move with them');
+
+  /* A NEW ENTRY AGAINST EITHER BOOK IS ACCEPTED -- this is what was being refused. */
+  const db = dbWithRpc(tables());
+  for (const target of ['defaulter-current', 'defaulter-initial']) {
+    const w = await portalApi(db, ADMIN, 'adjustmentRecord',
+      { date: TODAY, target, team: 'KONGOWE', amount: 50, reason: 'x' }, NOW);
+    assert.equal(w.row.target, target, target + ' must be writable again');
+  }
+
+  /* AND A ROW FILED WHILE THEY WERE RETIRED SAYS SO, because it never applied when it was
+     written and it applies now -- a figure that moves for a reason nobody can see is the one
+     thing this register must never produce.
+
+     THE DAY IT WAS FILED DECIDES THIS, NOT THE DAY IT REPORTS ON, and the pair below is the
+     whole difference: both name yesterday's deck, and only the one entered back in July was
+     ever dormant. Keyed on the report date instead, the fresh row would be branded a
+     historical entry for no better reason than that somebody back-dated it by a day -- and a
+     warning that fires on rows nobody needs to check is a warning people learn to scroll
+     past. */
+  const told = tables();
+  told.pmo_adjustments = [
+    { id: 'old', adj_date: YEST, target: 'defaulter-current', team: 'KONGOWE', amount: 200,
+      created_at: '2026-07-02T09:00:00.000Z' },
+    { id: 'new', adj_date: YEST, target: 'defaulter-current', team: 'KONGOWE', amount: 200,
+      created_at: '2026-12-01T09:00:00.000Z' }];
+  const reg = await portalApi(dbWithRpc(told), ADMIN, 'adjustments', { from: YEST, to: TODAY }, NOW);
+  const row = (reg.rows || []).find(r => r.id === 'old');
+  assert.ok(row, 'the historical arrears entry vanished from the register');
+  assert.equal(row.reopened, true, 'and it does not flag that it has started applying again');
+  const fresh = (reg.rows || []).find(r => r.id === 'new');
+  assert.ok(fresh && !fresh.reopened,
+    'a row filed after the books reopened applied from the moment it was written -- nothing to check');
 });
+const num_ = v => (typeof v === 'number' ? v : Number(v) || 0);
 
 test('an access code can be changed — it is the password, so it must be rotatable', async () => {
   const db = fakeDb(tables());
@@ -9063,20 +9100,24 @@ test('Iliyonasia: the register records signed amounts per book, gated on the adj
     { date: TODAY, target: 'expected-current', team: 'kongowe', amount: 250000, reason: 'muamala ulionasa' }, NOW);
   await portalApi(db, DATA, 'adjustmentRecord',
     { date: TODAY, target: 'expected-current', amount: -50000 }, NOW);
-  /* THE ARREARS BOOKS ARE NO LONGER OFFERED -- see ADJ_RETIRED_TARGETS. The refusal names
-     what may be written, so nobody has to guess what changed. */
+  /* ALL FOUR BOOKS ARE WRITABLE -- see ADJ_ARREARS_TARGETS. A nonsense one still is not, and
+     the refusal names every book that may be, so nobody has to guess. */
+  await portalApi(db, DATA, 'adjustmentRecord',
+    { date: TODAY, target: 'defaulter-current', amount: -100000, ref: '5215609147' }, NOW);
   await assert.rejects(() => portalApi(db, DATA, 'adjustmentRecord',
-    { date: TODAY, target: 'defaulter-current', amount: -100000, ref: '5215609147' }, NOW),
-    e => e.status === 400 && /expected-initial, expected-current/.test(e.message));
+    { date: TODAY, target: 'defaulter-yesterday', amount: -100000 }, NOW),
+    e => e.status === 400 && /defaulter-initial, defaulter-current/.test(e.message));
   await portalApi(db, DATA, 'adjustmentRecord',
     { date: TODAY, target: 'expected-initial', amount: -100000, ref: '5215609147' }, NOW);
 
   const d = await portalApi(db, ADMIN, 'adjustments', {}, NOW);   // admins hold the tab from the start
   assert.equal(d.ready, true);
-  assert.equal(d.rows.length, 3);
+  assert.equal(d.rows.length, 4);
+  assert.equal(d.totals['defaulter-current'], -100000, 'the arrears books net out too');
   assert.equal(d.totals['expected-current'], 200000, 'signed amounts net out per book');
   assert.equal(d.totals['expected-initial'], -100000);
-  assert.equal(d.net, 100000);
+  /* NET SPANS EVERY BOOK now that every book moves a figure: 200,000 - 100,000 - 100,000. */
+  assert.equal(d.net, 0);
   const first = d.rows.find(r => Number(r.amount) === 250000);
   assert.equal(first.created_by, 'PMO DATA', 'never anonymous');
   assert.equal(first.team, 'KONGOWE', 'team is normalised like everywhere else');
@@ -9085,7 +9126,7 @@ test('Iliyonasia: the register records signed amounts per book, gated on the adj
   const gone = d.rows.find(r => Number(r.amount) === -50000);
   await portalApi(db, DATA, 'adjustmentDelete', { id: gone.id }, NOW);
   const after = await portalApi(db, DATA, 'adjustments', {}, NOW);
-  assert.equal(after.rows.length, 2);
+  assert.equal(after.rows.length, 3);
   assert.equal(after.totals['expected-current'], 250000);
 
   /* "some issues are sorted midday": the AMOUNT of a recorded adjustment can be re-typed.
