@@ -95,27 +95,39 @@ export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
       team or by customer ref no then it should apply in that inital deck or any current
       available"
 
-   ONE RULE, AND BOTH DIRECTIONS FALL OUT OF IT: an Iliyonasia is money RECEIVED, and money
-   received REDUCES ARREARS. It comes off whichever deck it was filed against, and recovery is
-   initial minus current, so:
+   ONE RULE, AND BOTH DIRECTIONS FALL OUT OF IT: THE AMOUNT IS ADDED TO THE DECK IT NAMES, with
+   the sign that was typed. Nothing is read into it -- not "this is money received", not "this
+   is a debt" -- because the person filing the row already knows which it is and has said so
+   with a plus or a minus:
 
-     defaulter-current   the evening deck missed a payment, so its arrears are too HIGH.
-                         Take it off -> current falls -> RECOVERY GOES UP.
+     "the system should not decide what i need, but what i input is the decision"
+     "if i input positive add it, if negative subtract it from that customer's stored amount"
+
+   Recovery is initial minus current, so the two books then pull opposite ways on their own:
+
+     defaulter-current   the evening deck. Take 50,000 OFF it and the gap widens ->
+                         RECOVERY GOES UP.
 
        initial 1,000,000   current 850,000 -> recovered 150,000
-       + 50,000 registered against current
+       - 50,000 registered against current
        initial 1,000,000   current 800,000 -> recovered 200,000
 
-     defaulter-initial   the morning deck was wrong, so the day STARTED from an overstated
-                         position. Take it off -> initial falls -> RECOVERY GOES DOWN.
+     defaulter-initial   the morning deck. Take 50,000 OFF it and the day started from a lower
+                         position, so the gap narrows -> RECOVERY GOES DOWN.
 
        initial 1,000,000   current 850,000 -> recovered 150,000
-       + 50,000 registered against initial
+       - 50,000 registered against initial
        initial   950,000   current 850,000 -> recovered 100,000
 
-   THE SIGN IS TAKEN AS TYPED, both books, exactly as it is on the expected side: positive is
-   money received and lowers arrears; negative is money going back out and raises them.
-   Clamped at zero, because a book cannot owe less than nothing.
+   IT READ THE OPPOSITE WAY FOR ONE DAY -- positive meaning "received", so a plus took money
+   off the deck -- and it cost somebody an evening:
+
+     "yesterday i filled -500,000 at current def it didnt work but filling positive worked and
+      increased recovered amount, expectation is i was reducing current amount in the defaulter
+      list yet putting a positive is what worked"
+
+   NOT CLAMPED, either. A floor at zero is the same fault in a quieter form: the code deciding
+   that part of what was typed does not count, and saying nothing about it.
 
    WHERE IT LANDS: the deck the row NAMES, on the day it names -- "that initial deck or any
    current available". A caller has already resolved which deck it is reading (a date, a type
@@ -144,19 +156,25 @@ export const ADJ_RECEIVED_TARGETS = ['expected-current', 'expected-initial'];
      "do as expected just manual add or reduce the amount to the customer or team as i input!"
 
    So they behave EXACTLY as the expected books do, and that is the whole specification: the
-   amount is applied to the team-day it names, as typed, clamped at zero. No stand-down, no
-   cleverness -- the register says what the figure is.
+   amount is ADDED to the figure the book stores, for the team-day it names, with the sign that
+   was typed and no floor under it. No stand-down, no cleverness, nothing inferred --
 
-   WHICH MEANS THE DOUBLE COUNT IS REAL AGAIN, AND IT IS A PERSON'S JOB, NOT THE CODE'S. File
-   500,000 against defaulter-current today and recovery rises today; when tomorrow's deck
-   carries the same payment, recovery rises again for the same shilling unless somebody deletes
-   the row. The Iliyonasia tab lists every row for exactly that reason. This was weighed and
+     "the system should not decide what i need, but what i input is the decision"
+
+   -- and see withAdjDef_ for the day that rule had to be written down, when this fold read a
+   minus as a debt going on and the person who typed it watched recovery move the wrong way.
+
+   WHICH MEANS THE DOUBLE COUNT IS REAL AGAIN, AND IT IS A PERSON'S JOB, NOT THE CODE'S. Take
+   500,000 off defaulter-current today and recovery rises today; when tomorrow's deck carries
+   the same payment, recovery rises again for the same shilling unless somebody deletes the
+   row. The Iliyonasia tab lists every row for exactly that reason. This was weighed and
    chosen: an operator who can see the whole register and correct it beats a rule that silently
    overrides what they typed.
 
-   AND THE TWO BOOKS PULL OPPOSITE WAYS -- see the note above: defaulter-current raises
-   recovery, defaulter-initial lowers it. That is arithmetic, not a bug, and the drawer says
-   which way before the row is saved. */
+   AND THE TWO BOOKS PULL OPPOSITE WAYS, which is arithmetic rather than a rule: recovery is
+   morning arrears minus evening arrears, so an amount added to defaulter-initial raises
+   recovery and the same amount added to defaulter-current lowers it. The drawer says which way
+   before the row is saved, so nobody has to hold it in their head. */
 export const ADJ_ARREARS_TARGETS = ['defaulter-initial', 'defaulter-current'];
 /* THE DAY THEY REOPENED. An arrears row filed on or before this day was sitting in a dormant
    book -- it did not move recovery yesterday and it does today -- so the register flags it for
@@ -477,10 +495,46 @@ export function withAdj_(rows, adj, target, onDate = null, countable = null) {
   return out;
 }
 /* THE SAME FOLD, ON THE ARREARS SIDE. Deliberately its own function rather than a flag on
-   withAdj_: these rows carry `arrears_amt` and nothing else that money touches, and the
-   direction is opposite -- money received makes an arrears figure SMALLER where it makes a
-   collected figure bigger. One function that did both would be one `if` away from applying a
-   payment as a debt, on the number the Monday meeting is read from.
+   withAdj_: these rows carry `arrears_amt` and nothing else that money touches, and one
+   function doing both would be one `if` away from applying a payment to the wrong figure, on
+   the number the Monday meeting is read from.
+
+   THE AMOUNT IS ADDED TO THE FIGURE THE BOOK STORES. Nothing is inferred from it, and that is
+   the entire rule:
+
+     "the system should not decide what i need, but what i input is the decision"
+     "if i input positive add it, if negative subtract it from that customer's stored amount"
+
+   It used to SUBTRACT here, on the reasoning that an Iliyonasia is money received and money
+   received lowers a debt. That reasoning was sound and the behaviour was still wrong, because
+   it made this fold the only one of the four books that did not do what the person typed:
+
+     "yesterday i filled -500,000 at current def it didnt work but filling positive worked and
+      increased recovered amount, expectation is i was reducing current amount in the defaulter
+      list yet putting a positive is what worked"
+
+   Somebody meaning to take 500,000 OFF the evening deck typed minus five hundred thousand, and
+   the system quietly read it as a debt going on. Every book now reads the same way -- the sign
+   you type is the direction the stored figure moves -- and what that does to recovery follows
+   from arithmetic rather than from a rule anyone has to remember: recovery is morning arrears
+   minus evening arrears, so the two books pull opposite ways. The drawer says which way before
+   the row is saved.
+
+   AND IT IS NOT CLAMPED. A floor at zero would be this function deciding again, silently, that
+   part of an amount does not count -- exactly the complaint above, waiting to happen on a
+   reduction bigger than the deck's own figure. `recoveryByTeam` has always let recovery read
+   negative for the same reason (see its note in snapshot-totals.js); a figure that looks wrong
+   because somebody typed something wrong is a figure they can find and fix.
+
+   THE DECK ITSELF IS NEVER TOUCHED. `rows` is copied and the copies carry the corrected
+   figures; the uploaded snapshot keeps the amount the report arrived with --
+
+     "these adjustments should not directly overwrite the deck b/se they could be readjusted or
+      deleted and the deck og amount retains as it was in report"
+
+   -- so deleting or editing a register row puts every screen back to the deck's own number on
+   the next read, with nothing to undo. `adjusted_amt` rides along so a screen can say how much
+   of what it is showing came from the register rather than from the upload.
 
    `onDate` is not optional here and takes no set: recovery is a per-day pairing, and a caller
    always holds one day's deck when it asks. */
@@ -505,12 +559,14 @@ export function withAdjDef_(rows, adj, target, onDate) {
       at.set(K(c.team), out.length);
       out.push({ snapshot_date: c.date, snapshot_type: null, weekday: null, team: c.team,
         upload_batch: null, created_at: null, customers: 0,
-        arrears_amt: Math.max(0, -c.amount), adjusted_amt: c.amount });
+        // No deck to start from, so the amount IS the figure -- sign and all.
+        arrears_amt: c.amount, adjusted_amt: c.amount });
     } else {
       const r = out[i];
       out[i] = { ...r,
-        // Money received lowers a debt. Clamped: a book cannot owe less than nothing.
-        arrears_amt: Math.max(0, num(r.arrears_amt) - c.amount),
+        /* The sign that was typed is the direction this moves. Not clamped, and never written
+           back to the deck -- see the note above the function for both. */
+        arrears_amt: num(r.arrears_amt) + c.amount,
         adjusted_amt: num(r.adjusted_amt) + c.amount };
     }
   }

@@ -2758,8 +2758,11 @@ test('a negative Iliyonasia reduces what was received, and an unattributed one i
     /* NO TEAM. It cannot be attributed to one, and inventing an attribution would make the
        team rows stop adding up to the total -- a discrepancy nobody could account for. */
     { id: 'a2', adj_date: MON, target: 'expected-current', team: null, amount: 99000 },
-    /* THE ARREARS BOOKS ARE RETIRED and apply to nothing -- see ADJ_RETIRED_TARGETS. Rows
-       written before that stay in the ledger; they must not move a figure. */
+    /* THE SAME AMOUNT ON BOTH ARREARS BOOKS CANCELS, and it is worth one line of a test that
+       it cancels for the RIGHT reason. Each is added to the deck it names, recovery is initial
+       minus current, so +50,000 on each moves both ends of the subtraction by the same amount
+       and the difference is untouched. Not because the rows are inert -- see the direction
+       test, where each one alone moves recovery, in opposite directions. */
     { id: 'a3', adj_date: MON, target: 'defaulter-current', team: 'KONGOWE', amount: 50000 },
     { id: 'a4', adj_date: MON, target: 'defaulter-initial', team: 'KONGOWE', amount: 50000 },
   ];
@@ -2768,7 +2771,7 @@ test('a negative Iliyonasia reduces what was received, and an unattributed one i
   const kong = d.teams.find(x => x.team === 'KONGOWE');
   assert.equal(kong.adjusted, -25000, 'positive adds, negative reduces -- the register\'s own rule');
   assert.equal(kong.recovered, plain.teams.find(x => x.team === 'KONGOWE').recovered,
-    'a retired arrears row still moved a recovery figure');
+    'equal amounts on both arrears books must cancel -- they move both ends of the subtraction');
   assert.equal(d.teamTotals.adjusted, -25000, 'the unattributed 99,000 is not in the team total');
 });
 
@@ -2904,6 +2907,42 @@ test('the month ledger takes the register on READ, so a late correction still la
      total and the leader beside it cannot disagree about the same money. */
   const leadOf = (x, name) => x.leaders.find(r => r.name === name && r.roleKey === 'manager');
   assert.ok(leadOf(d, 'BOSS').colPct > leadOf(plain, 'BOSS').colPct);
+});
+
+test('the month ledger moves recovery the same way every other screen does', async () => {
+  /* THE LEDGER HOLDS THE SECOND COPY OF THE ARREARS RULE and it had drifted. Every other screen
+     folds the register into the deck rows through withAdjDef_; the ledger walks its own stored
+     cells instead, so `ri`/`rc` are corrected by their own line of code -- and that line still
+     SUBTRACTED and clamped at zero after the fold was changed to add. Nothing failed: the
+     ledger is a different screen from the dashboard, so the two simply reported different
+     recoveries for one day, which CLAUDE.md names as the worst kind of fault here because
+     there is no way to tell which is the wrong one by looking.
+
+     So: assert the ledger against the SAME expectation the direction test puts on the weekly
+     report, month totals rather than day. Take money off the evening deck and recovery rises;
+     put it on and recovery falls. */
+  const run_ = async adj => {
+    const t = tables();
+    if (adj) t.pmo_adjustments = [adj];
+    const x = await portalApi(dbWithRpc(t), ADMIN, 'monthReport', {}, NOW);
+    assert.ok(x.ledgerReady, 'the fixture fills the ledger in one pass');
+    return x.totals.recovered;
+  };
+  const was = await run_(null);
+  assert.equal(await run_({ id: 'm1', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: -500 }), was + 500,
+    'money off the evening deck must raise the month\'s recovery, as it does the week\'s');
+  assert.equal(await run_({ id: 'm2', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: 500 }), was - 500,
+    'and money onto it must lower it');
+  assert.equal(await run_({ id: 'm3', adj_date: TODAY, target: 'defaulter-initial',
+    team: 'KONGOWE', amount: 500 }), was + 500,
+    'the morning deck pulls the other way -- recovery is initial minus current');
+  /* AND PAST ZERO, unclamped, for the reason in withAdjDef_: a floor here would be the ledger
+     quietly applying less than was typed, which is the fault that started all of this. */
+  assert.equal(await run_({ id: 'm4', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: -10000000 }), was + 10000000,
+    'a reduction past the deck\'s own figure applies in full here too');
 });
 
 test('the register is read once per request, and a missing one is not asked twice', async () => {
@@ -3131,11 +3170,21 @@ test('every field of a register row is editable, and absent means untouched', as
       team or by customer ref no then it should apply in that inital deck or any current
       available"
 
-   One rule, both directions: an Iliyonasia is money RECEIVED, money received REDUCES ARREARS,
-   and it comes off whichever deck it was filed against. Recovery is initial minus current, so
-   taking it off the CURRENT deck raises recovery and taking it off the INITIAL deck lowers it.
-   These two tests are the whole of it, and they are the reason the arrears pair sat unapplied
-   until somebody said which way it read. */
+   ONE RULE, AND IT IS THE SHORTEST ONE THERE IS: the amount is ADDED to the figure the named
+   book stores, with the sign that was typed. Recovery is initial minus current, so the same
+   amount added to the CURRENT deck lowers recovery and added to the INITIAL deck raises it --
+   arithmetic, not a second rule.
+
+   IT READ THE OTHER WAY ROUND FOR ONE DAY, and the report is why these assertions are worth
+   their length:
+
+     "the system should not decide what i need, but what i input is the decision"
+     "yesterday i filled -500,000 at current def it didnt work but filling positive worked and
+      increased recovered amount"
+
+   The fold SUBTRACTED, on the reasoning that an Iliyonasia is money received and money
+   received lowers a debt. Sound reasoning, wrong behaviour: it made this the only one of the
+   four books that did not do what the person typed. */
 test('the register moves the arrears books again, both directions, and every screen agrees', async () => {
   /* =====================================================================================
        "we need to adjust defaulter initial and current too"
@@ -3151,35 +3200,75 @@ test('the register moves the arrears books again, both directions, and every scr
   const dayOf = x => x.days.find(r => r.date === TODAY);
   const was = dayOf(base).recovered;
 
-  /* CURRENT: the evening deck missed a payment, so its arrears are too high. Take it off and
-     the gap between the two decks WIDENS -- recovery goes UP. */
+  /* CURRENT, POSITIVE: 200 is added to the evening deck's arrears. The gap between the two
+     decks NARROWS, so recovery goes DOWN. */
   const tc = tables();
   tc.pmo_adjustments = [{ id: 'r1', adj_date: TODAY, target: 'defaulter-current',
-    team: 'KONGOWE', amount: 200, reason: 'ililipwa, deki la jioni halikuiona' }];
+    team: 'KONGOWE', amount: 200, reason: 'deki la jioni lilikuwa chini' }];
   const cur = await portalApi(dbWithRpc(tc), ADMIN, 'weekly', {}, NOW);
-  assert.equal(dayOf(cur).recovered, was + 200, 'current deck corrected -> recovery up');
+  assert.equal(dayOf(cur).recovered, was - 200, 'positive on the evening deck -> recovery down');
 
-  /* INITIAL: the morning deck was overstated, so the day started from too high a figure.
-     Take it off and the gap NARROWS -- recovery goes DOWN. The opposite direction, from the
-     same one rule, which is why these two are worth a test apiece. */
+  /* AND CURRENT, NEGATIVE -- THE ONE THAT WAS REPORTED. "i was reducing current amount in the
+     defaulter list": minus 500 takes 500 off the evening deck, the gap WIDENS, recovery goes
+     UP. This is the assertion that would have caught it. */
+  const tcn = tables();
+  tcn.pmo_adjustments = [{ id: 'r1n', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: -500, reason: 'ililipwa, deki la jioni halikuiona' }];
+  const curN = await portalApi(dbWithRpc(tcn), ADMIN, 'weekly', {}, NOW);
+  assert.equal(dayOf(curN).recovered, was + 500, 'negative on the evening deck -> recovery up');
+
+  /* INITIAL: the same amount on the morning deck, the other way. Recovery is initial minus
+     current, so adding to the morning figure RAISES it -- the opposite direction out of the
+     same one rule, which is why these are worth a test apiece. */
   const ti = tables();
   ti.pmo_adjustments = [{ id: 'r2', adj_date: TODAY, target: 'defaulter-initial',
     team: 'KONGOWE', amount: 300 }];
   const ini = await portalApi(dbWithRpc(ti), ADMIN, 'weekly', {}, NOW);
-  assert.equal(dayOf(ini).recovered, was - 300, 'initial deck corrected -> recovery down');
+  assert.equal(dayOf(ini).recovered, was + 300, 'positive on the morning deck -> recovery up');
+  const tin = tables();
+  tin.pmo_adjustments = [{ id: 'r2n', adj_date: TODAY, target: 'defaulter-initial',
+    team: 'KONGOWE', amount: -300 }];
+  const iniN = await portalApi(dbWithRpc(tin), ADMIN, 'weekly', {}, NOW);
+  assert.equal(dayOf(iniN).recovered, was - 300, 'negative on the morning deck -> recovery down');
+
+  /* A REDUCTION BIGGER THAN THE DECK'S OWN FIGURE STILL APPLIES IN FULL. A floor at zero would
+     be the code deciding that part of an amount does not count, silently -- the same class of
+     fault as the inverted sign, and harder to spot because the figure moves, just not by what
+     was typed. Ten million off the evening deck is somebody's mistake to see and correct. */
+  const tbig = tables();
+  tbig.pmo_adjustments = [{ id: 'r3', adj_date: TODAY, target: 'defaulter-current',
+    team: 'KONGOWE', amount: -10000000 }];
+  const big = await portalApi(dbWithRpc(tbig), ADMIN, 'weekly', {}, NOW);
+  assert.equal(dayOf(big).recovered, was + 10000000,
+    'a reduction past zero must apply as typed, not stop at the deck\'s own figure');
 
   /* EVERY SCREEN THAT READS RECOVERY AGREES, because they all apply the same withAdjDef_ --
      one definition of the rule, in one place. A screen that missed it would show a different
      recovered figure for the same day, which is the fault this whole register exists to end. */
   const dash = await portalApi(dbWithRpc(tc), ADMIN, 'dashboardFull', {}, NOW);
-  assert.equal(dash.recTrend.find(r => r.date === TODAY).recovered, was + 200,
+  assert.equal(dash.recTrend.find(r => r.date === TODAY).recovered, was - 200,
     'the dashboard trend must move with the weekly report');
   const shared = await portalApi(dbWithRpc(tc), ADMIN, 'dashboard', {}, NOW);
-  assert.equal(shared.totals.recovery.recovered, was + 200,
+  assert.equal(shared.totals.recovery.recovered, was - 200,
     'the shared dashboard -- which the phone\'s bar is built from -- must move too');
   const boards = await portalApi(dbWithRpc(tc), ADMIN, 'officerBoards', {}, NOW);
   const boardRec = (boards.recToday || []).reduce((n, r) => n + num_(r.recovered), 0);
-  assert.equal(boardRec, was + 200, 'the officer boards must move with them');
+  assert.equal(boardRec, was - 200, 'the officer boards must move with them');
+
+  /* AND THE DECK ITSELF IS UNTOUCHED.
+       "these adjustments should not directly overwrite the deck b/se they could be readjusted
+        or deleted and the deck og amount retains as it was in report"
+     The register is a separate table folded in as each screen is built, so the proof is that
+     the same fixture, read with the register emptied, gives the original figure back with no
+     undo step anywhere. If a correction ever did reach the snapshot rows, deleting the row
+     would leave the deck permanently wrong and nothing on any screen would say so. */
+  const deckRows = JSON.stringify(tc.defaulter_snapshots);
+  const cleared = { ...tc, pmo_adjustments: [] };
+  const back = await portalApi(dbWithRpc(cleared), ADMIN, 'weekly', {}, NOW);
+  assert.equal(dayOf(back).recovered, was,
+    'deleting the register row must put the deck\'s own figure back, with nothing to undo');
+  assert.equal(JSON.stringify(tc.defaulter_snapshots), deckRows,
+    'the uploaded deck rows must not have been rewritten by the fold');
 
   /* A NEW ENTRY AGAINST EITHER BOOK IS ACCEPTED -- this is what was being refused. */
   const db = dbWithRpc(tables());

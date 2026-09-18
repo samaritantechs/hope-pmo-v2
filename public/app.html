@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-17-b';
+var BUILD = '2026-09-18-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5790,16 +5790,27 @@ VIEWS.adjust = function(){
           + esc(ADJ_TARGET_LABELS[k] || k) + '</option>';
       }).join('');
     };
+    /* An arrears tile, with what its net does to recovery read off the net's own sign. The
+       amount is added to the arrears the deck carries, so a positive net on the MORNING deck
+       raises recovery and a positive net on the EVENING deck lowers it. */
+    var defKpi_ = function(label, net, book){
+      var up = book === 'initial' ? net > 0 : net < 0;
+      return kpi(label, money(net),
+        !net ? 'jumla / net'
+             : (up ? 'urejeshaji hupanda / recovery goes up'
+                   : 'urejeshaji hushuka / recovery goes down'),
+        !net ? '' : (up ? 'good' : 'bad'));
+    };
     HEAD = '<div class="kpis">'
       + kpi('Marekebisho / Adjustments', money((d.rows||[]).length))
       + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net', (tg['expected-initial']||0) < 0 ? 'bad' : '')
       + kpi('Expected — Current', money(tg['expected-current'] || 0), 'jumla / net', (tg['expected-current']||0) < 0 ? 'bad' : '')
-      /* WHICH WAY EACH ARREARS BOOK MOVES RECOVERY, on the tile: they pull opposite ways
-         (initial minus current), so a net figure without its direction is half a fact. */
-      + kpi('Defaulter — Initial', money(tg['defaulter-initial'] || 0),
-          'urejeshaji hupungua / lowers recovery', (tg['defaulter-initial'] || 0) ? 'bad' : '')
-      + kpi('Defaulter — Current', money(tg['defaulter-current'] || 0),
-          'urejeshaji huongezeka / raises recovery', (tg['defaulter-current'] || 0) ? 'good' : '')
+      /* WHICH WAY EACH ARREARS BOOK'S NET MOVES RECOVERY. They pull opposite ways -- recovery
+         is morning arrears minus evening arrears -- so a net figure without its direction is
+         half a fact. And the SIGN of the net decides it: these captions were fixed text until
+         a net of minus five hundred thousand sat under one reading "raises recovery". */
+      + defKpi_('Defaulter — Initial', tg['defaulter-initial'] || 0, 'initial')
+      + defKpi_('Defaulter — Current', tg['defaulter-current'] || 0, 'current')
       + '</div>'
       + (d.ready === false ? '<div class="note bad">' + esc(d.note || '') + '</div>' : '')
       /* THE ONE THING ON THIS TAB THAT NEEDS A PERSON, AT THE TOP.
@@ -10051,9 +10062,14 @@ function wireForms(){
   var nk = document.getElementById('newCode');
   if (nk) nk.onclick = function(){ codeForm(null); };
   /* Iliyonasia: which way the chosen book will move the figures, said while the choice is
-     still being made. THE ARREARS PAIR PULLS IN OPPOSITE DIRECTIONS -- recovery is initial
-     minus current -- and the one that pulls DOWN is the one somebody will query afterwards.
-     Better read here, while the choice is still being made, than argued about on a Monday. */
+     still being made.
+
+     EVERY BOOK READS THE SAME WAY -- the amount is added to what that book stores, with the
+     sign that was typed -- so this line only has to say what that does downstream. On the
+     arrears pair it is worth saying, because recovery is morning arrears minus evening arrears
+     and the two therefore pull OPPOSITE ways. And it is worth getting right: this hint used to
+     promise the opposite of what the fold actually did, so somebody took 500,000 off the
+     evening deck, was told recovery would go up, and watched it go down. */
   var adjHint = function(){
     var h = document.getElementById('adjTargetHint');
     if (!h) return;
@@ -10065,14 +10081,14 @@ function wireForms(){
                                       : 'Makusanyo ya leo yatapungua / today\u2019s collected goes DOWN')
     : t === 'expected-initial'  ? (up ? 'Early col itaongezeka / early collection goes UP'
                                       : 'Early col itapungua / early collection goes DOWN')
-    : t === 'defaulter-current' ? (up ? 'Deni la deki la jioni litapungua — UREJESHAJI UTAONGEZEKA '
-                                        + '/ evening arrears fall — RECOVERY GOES UP'
-                                      : 'Deni la deki la jioni litaongezeka — urejeshaji utapungua '
-                                        + '/ evening arrears rise — recovery goes DOWN')
-    : t === 'defaulter-initial' ? (up ? 'Deni la deki la asubuhi litapungua — UREJESHAJI UTAPUNGUA '
-                                        + '/ morning arrears fall — RECOVERY GOES DOWN'
-                                      : 'Deni la deki la asubuhi litaongezeka — urejeshaji utaongezeka '
-                                        + '/ morning arrears rise — recovery goes UP')
+    : t === 'defaulter-current' ? (up ? 'Deni la deki la jioni litaongezeka — urejeshaji utapungua '
+                                        + '/ evening arrears go UP — recovery goes DOWN'
+                                      : 'Deni la deki la jioni litapungua — UREJESHAJI UTAONGEZEKA '
+                                        + '/ evening arrears go DOWN — RECOVERY GOES UP')
+    : t === 'defaulter-initial' ? (up ? 'Deni la deki la asubuhi litaongezeka — urejeshaji utaongezeka '
+                                        + '/ morning arrears go UP — recovery goes UP'
+                                      : 'Deni la deki la asubuhi litapungua — urejeshaji utapungua '
+                                        + '/ morning arrears go DOWN — recovery goes DOWN')
     : '';
   };
   var atg = document.getElementById('adjTarget');
