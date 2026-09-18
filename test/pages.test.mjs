@@ -480,3 +480,22 @@ test('the Recovery-by-officer presentation slide never labels today\'s figure "y
   assert.equal((view.match(/'Uncollected \(yesterday\)'/g) || []).length, 0,
     'no weekday on this slide reads a jana denominator -- recToday is today\'s, every weekday');
 });
+
+/* AND AUTOSORT THAT SLIDE BY WEEKLY REC %, NOT THE AMOUNT.
+   -----------------------------------------------------------------------------------
+   recBoard (officerBoards, portal-core.js) orders b.recWeek by recovered TZS, right for a
+   board someone is paid on -- but on a wall the sum favours whoever holds the biggest book,
+   not whoever is doing best at shrinking it. The presentation slide re-sorts its OWN copy of
+   the rows by `pct` (the week's Rec %) before slicing to twelve, so the officers a room
+   actually wants to see -- the best percentages -- are the ones that survive the cut. */
+test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not the amount', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  const recBlock = view.slice(view.indexOf('var recRows ='), view.indexOf('slides.push({ id:\'recovery\''));
+  assert.ok(/\.sort\(function\(a, b2\)\{ return \(b2\.pct == null \? -1 : b2\.pct\) - \(a\.pct == null \? -1 : a\.pct\)/.test(recBlock),
+    'recRows is sorted descending on .pct (the week\'s Rec %) before the slide slices to 12');
+  // recRows.slice(0,12) must run AFTER the sort, not before it -- a sort applied to the
+  // already-cut twelve would still be amount-ranked underneath.
+  assert.ok(/\.sort\([\s\S]*?\);\s*\n\s*slides\.push/.test(view.slice(view.indexOf('var recRows ='))),
+    'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
+});

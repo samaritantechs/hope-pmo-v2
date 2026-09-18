@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-g';
+var BUILD = '2026-09-18-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8456,10 +8456,19 @@ function presSlides(){
        week, which is what makes it the weekly figure rather than a second copy of the daily. */
     var recT = {};
     (b.recToday || []).forEach(function(x){ recT[x.officer] = x; });
+    /* RANKED ON THE WEEK'S REC %, NOT THE AMOUNT. recBoard (officerBoards, portal-core.js)
+       orders b.recWeek by recovered TZS, which is right for a board someone is paid on -- but
+       on a wall the sum favours whoever holds the biggest book, not whoever is doing the best
+       job of shrinking it. Same convention earlyBoard already sorts by: null (unmeasured) sinks
+       to the bottom rather than reading as a beaten zero. This re-sorts the presentation's own
+       copy of the rows -- the commission board and the Dashboard's officer-board widget keep
+       reading b.recWeek exactly as recBoard ordered it, since neither asked to change. */
     var recRows = (b.recWeek || []).map(function(x){
       var t = recT[x.officer] || {};
-      return { ...x, tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; });
-    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — today and this week',
+      return { ...x, tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; })
+      .sort(function(a, b2){ return (b2.pct == null ? -1 : b2.pct) - (a.pct == null ? -1 : a.pct)
+        || String(a.officer).localeCompare(String(b2.officer)); });
+    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — best weekly Rec % first',
       rows: recRows.slice(0,12),
       cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
         col('tUncollected', recUncolLabel, 'money'),
