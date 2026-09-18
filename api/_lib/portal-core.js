@@ -6552,20 +6552,21 @@ async function adjustments(db, user, p = {}) {
     const ref = String(r.ref || '').trim();
     let countState = 'amount-only', countNote = null;
     if (!book || a <= 0) {
-      /* THE ARREARS BOOKS NOW SAY WHICH WAY THEY MOVE RECOVERY, on the row, before anybody has
-         to work it out. Recovery is initial minus current, and money received lowers whichever
-         deck it is filed against -- so the two targets pull in opposite directions and the one
-         that pulls DOWN is the one somebody will query. It is better read here than argued
-         about on a Monday. */
+      /* THE ARREARS BOOKS SAY WHICH WAY THEY MOVE RECOVERY, on the row, before anybody has to
+         work it out. The amount is ADDED to the deck it names, and recovery is initial minus
+         current, so the two targets pull in opposite directions and the one that pulls DOWN is
+         the one somebody will query. Better read here than argued about on a Monday -- and
+         these four strings said the opposite of what the fold did for a day, which is worse
+         than saying nothing at all. */
       const tg = String(r.target);
       countNote = tg === 'defaulter-current'
         ? (a > 0
-            ? 'Deki la jioni linapungua — urejeshaji UNAONGEZEKA. / Comes off the evening deck: recovery goes UP.'
-            : 'Deki la jioni linaongezeka — urejeshaji UNAPUNGUA. / Added to the evening deck: recovery goes DOWN.')
+            ? 'Deki la jioni linaongezeka — urejeshaji UNAPUNGUA. / Added to the evening deck: recovery goes DOWN.'
+            : 'Deki la jioni linapungua — urejeshaji UNAONGEZEKA. / Comes off the evening deck: recovery goes UP.')
         : tg === 'defaulter-initial'
         ? (a > 0
-            ? 'Deki la asubuhi linapungua — urejeshaji UNAPUNGUA. / Comes off the morning deck: recovery goes DOWN.'
-            : 'Deki la asubuhi linaongezeka — urejeshaji UNAONGEZEKA. / Added to the morning deck: recovery goes UP.')
+            ? 'Deki la asubuhi linaongezeka — urejeshaji UNAONGEZEKA. / Added to the morning deck: recovery goes UP.'
+            : 'Deki la asubuhi linapungua — urejeshaji UNAPUNGUA. / Comes off the morning deck: recovery goes DOWN.')
         : a <= 0
         ? 'Kiasi pekee — hasi haihesabu mteja. / Amount only: a negative entry counts no customer.'
         : 'Kiasi pekee — daftari hili halihesabu wateja. / Amount only: this book pays no per-customer commission.';
@@ -8297,12 +8298,11 @@ function adjLedgerCells_(adj, from, to) {
   };
   for (const r of adj.cells('expected-current')) put(r.date, r.team, 'c', r.amount);
   for (const r of adj.cells('expected-initial')) put(r.date, r.team, 'ic', r.amount);
-  /* The arrears pair. Money received lowers a debt, so these SUBTRACT where the two above add
-     -- and the ledger stores the two decks separately (ri, rc) precisely so recovery can still
-     be worked out as initial minus current after the fact, which is the only way the two can
-     be told apart once they are summed. Both decks are corrected by the register the same way
-     the expected decks are, so a ledger row and the recovery figure it explains come from one
-     set of numbers. */
+  /* The arrears pair. The ledger stores the two decks separately (ri, rc) precisely so recovery
+     can still be worked out as initial minus current after the fact, which is the only way the
+     two can be told apart once they are summed. Both are corrected the same way the expected
+     decks are -- the amount ADDED to the deck it names, sign and all -- so a ledger row and the
+     recovery figure it explains come from one set of numbers. */
   for (const r of adj.cells('defaulter-initial')) put(r.date, r.team, 'ri', r.amount);
   for (const r of adj.cells('defaulter-current')) put(r.date, r.team, 'rc', r.amount);
   return out;
@@ -8315,8 +8315,14 @@ function ledgerWalk_(days, from, to, adj, fn) {
     const add = extra && extra.get(d);
     for (const T in cellMap) {
       const s = cellMap[T], a = add && add.get(T);
+      /* THE ARREARS PAIR ADDS, LIKE withAdjDef_ DOES, AND FOR THE SAME REASON -- the sign that
+         was typed is the direction the figure moves, with no floor under it. This line is the
+         second copy of that rule (the ledger walks its own cells rather than the deck rows) and
+         it read the OTHER way, subtracting and clamping at zero, for as long as the fold did.
+         Two implementations of one rule are two answers that can disagree; keep them together
+         or the ledger and the dashboard start reporting different recoveries for one day. */
       fn(T, a ? { ...s, c: num(s.c) + a.c, u: Math.max(0, num(s.u) - a.c), ic: num(s.ic) + a.ic,
-        ri: Math.max(0, num(s.ri) - a.ri), rc: Math.max(0, num(s.rc) - a.rc) } : s);
+        ri: num(s.ri) + a.ri, rc: num(s.rc) + a.rc } : s);
     }
     if (add) for (const [T, a] of add) {
       if (T in cellMap) continue;
