@@ -2860,6 +2860,55 @@ test('the amount, not a note: colTrend and recTrend say how much the register mo
   assert.equal(d.recTrendTotal.adjusted, 40000, 'and the week total carries it too');
 });
 
+test('the Recovery-by-officer board\'s Uncollected agrees with the dashboard\'s, register and all', async () => {
+  /* "the uncollected today on dashboard and at by rec officer slide is different and higher"
+     "higher by a little margin am not sure if its iliyonasia" -- it was: officerBoards read
+     myExp (the SAME Expected-current rows the dashboard and the PMO Collection board read) but
+     skipped the withAdj_ fold the other two apply, so a correction that lowered Uncollected
+     everywhere else left this board showing the deck's own, uncorrected figure -- always
+     higher, by exactly the (clamped) registered amount. KONGOWE has 1,000 outstanding today;
+     the register's 40,000 clears it to zero, same as the dashboard's colTrend tile above. */
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'officerBoards', {}, NOW);
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const b = await portalApi(dbWithRpc(t), ADMIN, 'officerBoards', {}, NOW);
+  const juma = list => (list || []).find(r => r.officer === 'JUMA G');
+
+  assert.equal(juma(plain.recToday).uncollected, 1000, 'the deck\'s own figure, nothing registered');
+  assert.equal(juma(b.recToday).uncollected, 0,
+    'cleared by the register, exactly like the dashboard\'s and PMO Collection\'s own Uncollected');
+  // The week board sums every weekday's own (corrected) uncollected -- today's cleared to zero,
+  // plus yesterday's 400 (E('111', ..., YEST)), which the register never touched.
+  assert.equal(juma(b.recWeek).uncollected, 400,
+    'the week board folds the same correction into each day it sums, not just today\'s');
+});
+
+test('commission pays the recovery officer on the register-corrected Uncollected, not the deck\'s own', async () => {
+  /* THE SAME BUG, CAUGHT IN THE FUNCTION THAT ACTUALLY DECIDES PAY. recUncolByDay/recUncolWeek
+     (the commission board's own "Kilichorejeshwa / kisichokusanywa" denominator) read myExp
+     the same way officerBoards did and skipped the identical withAdj_ fold -- so a correction
+     that raised Collected and lowered Uncollected everywhere else left an officer's BAND worked
+     out against the deck's uncorrected, larger Uncollected, understating their true percentage.
+
+     Base fixture (no register): JUMA G recovered 300 against the week's uncollected --
+     yesterday's 400 plus today's 1,000 = 1,400 -- which is exactly the existing 21.4% the
+     base test already locks in.
+
+     With the register's 40,000 against KONGOWE today (ADJ_WEEK), today's 1,000 clears to zero,
+     so the week's uncollected drops to 400 and the SAME 300 recovered now reads 75% -- clearing
+     the 50% floor the uncorrected figure kept it under. */
+  const base = await run('commission');
+  assert.equal(base.week.find(r => r.officer === 'JUMA G').pct, 21.4, 'sanity: the uncorrected figure');
+
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  const juWeek = d.week.find(r => r.officer === 'JUMA G');
+  assert.equal(juWeek.pct, 75, 'recovered 300 over the register-corrected 400, not the deck\'s 1,400');
+  assert.equal(d.recBoard.find(r => r.officer === 'JUMA G').weekPct, juWeek.pct,
+    'the board beside it must read the same corrected percentage');
+});
+
 test('the weekly report and the dashboard now answer the day with ONE Col %', async () => {
   /* The whole point. Before this these two read the same decks by two different rules and
      disagreed by exactly the register -- which is what sent somebody to check their Excel. */

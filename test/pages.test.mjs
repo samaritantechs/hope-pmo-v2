@@ -460,3 +460,23 @@ test('the REF field on the new-adjustment form is never labelled optional', () =
   assert.ok(/Timu \/ Team \(hiari \/ optional\)/.test(view),
     'Team stays labelled optional -- a blank team applies the row to the whole book');
 });
+
+/* THE RECOVERY-BY-OFFICER SLIDE'S HEADER MUST NAME THE DAY THE FIGURE BESIDE IT ACTUALLY IS.
+   -----------------------------------------------------------------------------------
+     "am seeing the header saying yesterday on screen here so am confused b/se i know we using
+      todays"
+   b.recToday (officerBoards, portal-core.js) divides by TODAY's uncollected on every weekday
+   and the WEEK's at the weekend -- "everywhere uses jana except only where there is recovery
+   officers ... presentation by rec officer". This slide's own label logic was never moved when
+   that rule was fixed, so Tuesday through Friday it kept captioning today's own figure
+   "Uncollected (yesterday)". There is no "yesterday" case left in it at all now. */
+test('the Recovery-by-officer presentation slide never labels today\'s figure "yesterday"', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  assert.ok(/recBasis = d\.weekday === 'SAT' \|\| d\.weekday === 'SUN' \? 'week' : 'today'/.test(view),
+    'Mon-Fri all read "today", weekend reads "week" -- matching recToday\'s own basis exactly');
+  assert.ok(!/recUncolLabel = recBasis === 'week' \? 'Uncollected \(week\)'\s*\n?\s*: recBasis === 'today'/.test(view),
+    'no three-way label branch left -- there is no jana case for this slide to fall into');
+  assert.equal((view.match(/'Uncollected \(yesterday\)'/g) || []).length, 0,
+    'no weekday on this slide reads a jana denominator -- recToday is today\'s, every weekday');
+});

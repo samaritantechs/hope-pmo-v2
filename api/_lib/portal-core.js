@@ -3486,12 +3486,20 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
 
      THE SIXTH RECORD TAKES THE WEEK'S UNCOLLECTED -- Monday to Friday added, which is the same
      window the Orodha's own weekly recovery percentage uses, and it is what the plan's example
-     means by "in default of 1m ... weekly rec = 50%". */
+     means by "in default of 1m ... weekly rec = 50%".
+
+     AND THE REGISTER, THE SAME AS EVERY OTHER READ OF THIS BOOK -- this read myExp directly and
+     skipped the withAdj_ fold the dashboard and PMO Collection board both apply to it, so an
+     Iliyonasia that lowered Uncollected everywhere else left an officer's PAY BAND worked out
+     against the deck's own, uncorrected figure -- caught alongside the identical bug in
+     officerBoards' own uncolOnDate (further down this file): "the uncollected today on
+     dashboard and at by rec officer slide is different and higher". Same rows, same correction,
+     same one place it was missing. */
   const recUncolByDay = new Map();
   const recUncolWeek = {};
   for (const d of colDays) {
     const m = {};
-    for (const r of onDate(myExp, d)) {
+    for (const r of withAdj_(onDate(myExp, d), adj, 'expected-current', d)) {
       const who = officerOf(teamBy, r.team, 'recovery');
       m[who] = (m[who] || 0) + num(r.uncollected_amt);
     }
@@ -10202,22 +10210,27 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
 
   /* ---- RECOVERY: per Recovery officer. ----
 
-     THE DENOMINATOR IS THE UNCOLLECTED THE OFFICER IS ACTUALLY CHASING, and which day's
-     uncollected that is depends on the day of the week. It is the same rule the dashboard's
-     Recovery % has always used (recovery.js, recoveryBasis) -- officers chase what yesterday
-     left behind, so:
+     THE DENOMINATOR IS THE UNCOLLECTED THE OFFICER IS ACTUALLY CHASING -- see recToday's own
+     note below for which day's: today every weekday, the week at the weekend, the "leo not
+     jana" rule for recovery officers specifically.
 
-         Monday      today's uncollected      (no yesterday exists inside a HOPE week)
-         Tue–Fri     yesterday's uncollected
-         Sat/Sun     the whole week's         (the weekend reconciles Monday to Friday)
+     This board used to add up every Expected row of the whole week, every day, every
+     re-upload, and use that as the denominator on BOTH the daily and the weekly board -- so a
+     team whose Tuesday file had been uploaded twice had its recovery percentage quietly
+     halved, and Monday was divided by a week that had barely started. Batch-resolved per day
+     (`onDate`) is what fixed that.
 
-     This board was not following that rule. It added up every Expected row of the whole week,
-     every day, every re-upload, and used that as the denominator on BOTH the daily and the
-     weekly board -- so a team whose Tuesday file had been uploaded twice had its recovery
-     percentage quietly halved, and Monday was divided by a week that had barely started. */
+     AND THE REGISTER, THE SAME AS EVERY OTHER READ OF THIS BOOK -- "everywhere the amount
+     should add as stated during manual input". `myExpDay_` above already corrects the PMO
+     Collection board's own uncollected from `expected-current`; this board read the SAME
+     `myExp` rows and skipped that fold, so an Iliyonasia that lowered Uncollected on the
+     dashboard and PMO Collection left THIS board's Uncollected exactly as the deck said --
+     "the uncollected today on dashboard and at by rec officer slide is different and higher".
+     `withAdj_` here is the identical correction, on the identical rows, applied the one place
+     this board reads them. */
   const uncolOnDate = d => {
     const m = {};
-    for (const r of onDate(myExp, d)) {
+    for (const r of withAdj_(onDate(myExp, d), adj, 'expected-current', d)) {
       bucket(m, officerOf(teamBy, r.team, 'recovery'), { amt: 0 }).amt += num(r.uncollected_amt);
     }
     return m;

@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-f';
+var BUILD = '2026-09-18-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8440,14 +8440,17 @@ function presSlides(){
         col('uncollected','Uncollected'+tpLab,'money'), col('collPct','Collection %'+tpLab,'pct'),
         col('recPctMon','Rec % vs Mon','pct'), col('recPctYest','Rec % vs yest','pct'),
         col('recPctWeek','Rec % vs week','pct')] });
-    /* Recovery is judged against the uncollected the officer is actually chasing, and which
-       day's uncollected that is depends on the day: Monday divides by Monday, Tuesday to
-       Friday by yesterday, and the weekend by the whole week. So the denominator goes on the
-       slide, immediately before the figure it produced -- a recovery percentage with no
-       visible denominator is a number the room has to take on trust. */
-    var recBasis = d.weekday === 'SAT' || d.weekday === 'SUN' ? 'week' : (d.weekday === 'MON' ? 'today' : 'yesterday');
-    var recUncolLabel = recBasis === 'week' ? 'Uncollected (week)'
-      : recBasis === 'today' ? 'Uncollected (today)' : 'Uncollected (yesterday)';
+    /* THE LABEL, NOT JUST THE FIGURE -- "am seeing the header saying yesterday on screen here
+       so am confused b/se i know we using todays". It was: this said "yesterday" Tuesday
+       through Friday while the row beside it (b.recToday) was already today's uncollected --
+       "everywhere uses jana except only where there is recovery officers like in their
+       commissions, their personal reports and presentation by rec officer" (see recToday's own
+       note in officerBoards, portal-core.js). The label here was never moved when that rule
+       was fixed, so the header kept naming the OLD denominator under the NEW figure. Officers
+       chase today's own uncollected every weekday; only the weekend, which has no sheet of its
+       own, reads the week's. */
+    var recBasis = d.weekday === 'SAT' || d.weekday === 'SUN' ? 'week' : 'today';
+    var recUncolLabel = recBasis === 'week' ? 'Uncollected (week)' : 'Uncollected (today)';
     /* Today and the week on one slide, joined on the officer -- the same rule as every other
        role board here. Today's recovery is divided by the basis above; the week's always by the
        week, which is what makes it the weekly figure rather than a second copy of the daily. */
