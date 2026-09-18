@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-e';
+var BUILD = '2026-09-18-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3924,7 +3924,8 @@ VIEWS.apps = function(){
 VIEWS.expected = function(){
   var wd = S.args.weekday || '';
   var type = S.args.type || 'today';
-  return srv('expectedDay', {weekday:wd, type:type}).then(function(d){
+  var weekOf = S.args.weekOf || '';
+  return srv('expectedDay', {weekday:wd, type:type, weekOf:weekOf}).then(function(d){
     S.args.weekday = d.weekday;
     var t = d.totals;
     HEAD = '<div class="kpis">'
@@ -3933,6 +3934,10 @@ VIEWS.expected = function(){
       + kpi('Uncollected', money(t.uncollected), money(t.unpaid)+' unpaid · '+money(t.underpaid)+' underpaid', 'bad')
       + kpi('Collection', pct(t.pct), money(t.paid) + ' paid/overpaid')
       + '</div>'
+      /* THE SAME WEEK BAR THE DASHBOARD, WEEKLY REPORT AND COMMISSION ALREADY STAND ON --
+         "expected repayment nav needs weekly forward and backward too". Picks the Monday this
+         day-pill row belongs to; the day pills below still pick which weekday inside it. */
+      + weekBar(d)
       /* ILIYONASIA, ON THE DECK IT WAS REGISTERED AGAINST.
          "the col% of excels and our system differ ... he just uploaded and confirmed that by
           using the expected tab -- not just there: that was evidence so everywhere the amount

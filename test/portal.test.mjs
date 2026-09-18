@@ -5992,6 +5992,40 @@ test('the Expected tab says plainly when the list on screen is not today\'s', as
   assert.equal(sat.today, '2026-07-25');
 });
 
+test('Expected repayment nav: weekly forward and backward, the same asOfWeek the dashboard already stands on', async () => {
+  const LAST_FRI = '2026-07-17', LAST_MON = '2026-07-13', NEXT_MON = '2026-07-27';
+  const t = tables();
+  t.repayment_snapshots = t.repayment_snapshots.concat([E('444', 'KONGOWE', 900, 'PAID', 0, LAST_FRI)]);
+
+  // No weekOf: unchanged from before this existed -- this week's Monday, today marked on the
+  // pill row, today's own Friday sheet.
+  const plain = await portalApi(fakeDb(tables()), ADMIN, 'expectedDay', {}, NOW);
+  assert.equal(plain.weekOf, MON);
+  assert.equal(plain.pastWeek, false);
+  assert.equal(plain.weekFuture, false);
+  assert.equal(plain.todayWeekday, 'FRI', 'today is marked on the pill row for the current week');
+
+  // Step back one week: lands on THAT week's own Friday sheet, not this week's.
+  const back = await portalApi(fakeDb(t), ADMIN, 'expectedDay', { weekOf: LAST_MON }, NOW);
+  assert.equal(back.weekOf, LAST_MON);
+  assert.equal(back.weekEnd, LAST_FRI);
+  assert.equal(back.pastWeek, true);
+  assert.equal(back.weekday, 'FRI', 'no weekday asked -- falls back to that week\'s own Friday');
+  assert.equal(back.date, LAST_FRI, 'reads THAT week\'s sheet, not this week\'s');
+  assert.equal(back.totals.expected, 900);
+  assert.equal(back.todayWeekday, null, 'no pill reads "today" while a past week is on screen');
+
+  // Step forward past this week, into one nobody has uploaded yet: falls back to the latest
+  // real sheet not after that week -- this week's own Friday -- exactly as a Saturday visit
+  // already falls back to Friday's sheet today.
+  const fwd = await portalApi(fakeDb(t), ADMIN, 'expectedDay', { weekOf: NEXT_MON }, NOW);
+  assert.equal(fwd.weekOf, NEXT_MON);
+  assert.equal(fwd.weekFuture, true);
+  assert.equal(fwd.fellBack, true);
+  assert.equal(fwd.date, TODAY, 'the latest real sheet, since nothing exists for the week itself');
+  assert.equal(fwd.todayWeekday, null, 'a future week is not "this week" either');
+});
+
 test('the Defaulters tab is scoped to the officer\'s teams as well', async () => {
   const officer = await portalApi(fakeDb(tables()), GMO, 'defaulters', {}, NOW);
   assert.ok(officer.rows.length > 0);

@@ -9578,19 +9578,29 @@ const pickLatestBatchRows = pickLatestBatch;
 /** Expected for ONE weekday of this week -- the Mon..Fri pills the officers actually use,
     instead of only ever "the latest". Falls back to the latest snapshot when that weekday
     has not been uploaded yet. */
-async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
+async function expectedDay(db, user, { weekday, type = 'today', weekOf }, nowMs) {
+  /* WEEKLY FORWARD AND BACKWARD -- "expected repayment nav needs weekly forward and backward
+     too", the same asOfWeek the dashboard, weekly report and commission already stand on: pick
+     a week and the MOMENT ITSELF moves, so every date below (which weekday is FRI's fallback,
+     which Monday the pills belong to) is computed exactly as it would have been that week,
+     with no second code path for history. Blank weekOf is the identical no-op it always was --
+     asOf.ms is nowMs and nothing here changes for the screen as it stands today. */
+  const asOf = asOfWeek(nowMs, weekOf);
+  const effMs = asOf.ms;
   // There are no weekend Expected sheets, so a Sat/Sun visit lands on FRIDAY -- the last
   // working day that actually has a list -- instead of an empty day nobody uploads.
   const asked = String(weekday || '').toUpperCase();
-  const wd = WD5.includes(asked) ? asked : (WD5.includes(currentWeekday(nowMs)) ? currentWeekday(nowMs) : 'FRI');
-  const date = dateOfWeekday(nowMs, wd);
+  const wd = WD5.includes(asked) ? asked : (WD5.includes(currentWeekday(effMs)) ? currentWeekday(effMs) : 'FRI');
+  const date = dateOfWeekday(effMs, wd);
   // Same narrowing as the Expected tab -- it is the same table drawn the same way, one weekday
   // at a time.
   const dayOpts = { teams: user.teams, columns: EXPECTED_TAB_COLS };
   let snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { onDate: date, ...dayOpts });
   let fellBack = false;
   if (!snap.rows.length) {
-    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs), ...dayOpts });
+    // Bounded to the week being viewed, not to real today -- a past week falling back must not
+    // reach forward into a live sheet that has not happened yet AS OF that week.
+    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(effMs), ...dayOpts });
     fellBack = true;
   }
   /* ILIYONASIA FOR THIS EXACT DECK -- "he just uploaded and confirmed that by using the
@@ -9634,7 +9644,12 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
     weekday: wd, date: snap.date, requestedDate: date, fellBack, type,
     today: todayK,
     isToday: !!snap.date && String(snap.date) === String(todayK),
-    weekdays: WD5, todayWeekday: currentWeekday(nowMs),
+    weekdays: WD5,
+    // Only marks a pill "leo" while the CURRENT week is on screen -- a Wednesday pill in last
+    // week's row is not today just because today happens to be a Wednesday too.
+    todayWeekday: (asOf.past || asOf.future) ? null : currentWeekday(nowMs),
+    weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 4), asOfDate: todayK,
+    pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future,
     rows, count: rows.length, teams: teamsSeen,
     totals: { expected: exp, collected: colAdj,
       uncollected: Math.max(0, uncollectedOf(rows) - adjAmt),
