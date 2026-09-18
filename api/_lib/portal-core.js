@@ -25,6 +25,11 @@ import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.j
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
 import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten,
   ADJ_RECEIVED_TARGETS, ADJ_ARREARS_TARGETS, ADJ_ARREARS_REOPENED } from './adjustments.js';
+/* IMPREST -- request, GM decision (portal or one-tap email), accountant funding, retirement,
+   report. Its own file for the same reason adjustments.js is: it is a whole feature with its
+   own tables, not a helper this file's other logic reaches into. */
+import { imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
+  imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund } from './imprest.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -7454,6 +7459,9 @@ const FN = {
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
   callOfficers, recoveryByCredit,
+  /* IMPREST -- ask, decide, fund, retire, review. See _lib/imprest.js. */
+  imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
+  imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
 };
 
 /* THE LEADERS TABLE, OUT AND BACK IN.
@@ -7824,6 +7832,18 @@ const FN_TAB = {
   deviceList: DEVICE_PANES, deviceHistory: DEVICE_PANES, deviceIssue: DEVICE_PANES,
   deviceEnrol: ['devlock'], deviceToken: ['devlock'], deviceShift: ['devlock'],
   deviceSetState: DEVICE_PANES,
+  /* IMPREST -- three panes, granted like everything else here: "i'll grant the navs to those
+     responsible". The rate table is read by all three (the requester's form needs it to
+     preview a total; the report reads it to explain a stamped rate), so it is any-of. Photos
+     are the same: a requester needs their own, a decider or reviewer needs any -- narrowed
+     further inside imprestPhotos itself, same shape as the device register above. */
+  imprestRoles: ['impreq', 'impappr', 'imprep'],
+  imprestRoleSave: ['impappr'], imprestRoleDelete: ['impappr'],
+  imprestRequest: ['impreq'], imprestMine: ['impreq'],
+  imprestQueue: ['impappr'], imprestDecide: ['impappr'],
+  imprestRetire: ['impreq'],
+  imprestPhotos: ['impreq', 'impappr', 'imprep'],
+  imprestReport: ['imprep'], imprestFund: ['imprep'],
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the

@@ -299,6 +299,84 @@ create table if not exists pmo_adjustments (
 );
 create index if not exists idx_pmo_adj on pmo_adjustments(adj_date, target);
 
+-- IMPREST -- request, GM decision, accountant funding, retirement. See
+-- db/RUN-ME-031-imprest.sql for the full commentary; this is the same tables, kept here too so
+-- a local test database built from this file alone matches what the migration creates.
+create table if not exists imprest_roles (
+  role                   text primary key,
+  accommodation_per_day  integer not null default 0 check (accommodation_per_day >= 0),
+  updated_at             timestamptz not null default now(),
+  updated_by             text
+);
+create table if not exists imprest_requests (
+  id                uuid primary key default gen_random_uuid(),
+  requested_at      timestamptz not null default now(),
+  staff_code        text,
+  staff_name        text not null,
+  staff_role        text,
+  full_name         text not null,
+  mobile            text,
+  recipient_name    text,
+  email             text,
+  imprest_role      text not null,
+  pay_mode          text,
+  account_no        text,
+  travel_date       date not null,
+  destination       text,
+  fare_trips        integer not null default 0 check (fare_trips >= 0),
+  fare_per_trip     integer not null default 0 check (fare_per_trip >= 0),
+  fare_amount       integer not null default 0,
+  accom_days        integer not null default 0 check (accom_days >= 0),
+  accom_rate        integer not null default 0,
+  accom_amount      integer not null default 0,
+  other1_desc       text,  other1_amount integer not null default 0 check (other1_amount >= 0),
+  other2_desc       text,  other2_amount integer not null default 0 check (other2_amount >= 0),
+  other3_desc       text,  other3_amount integer not null default 0 check (other3_amount >= 0),
+  total_amount      integer not null check (total_amount >= 0),
+  purpose           text not null,
+  status            text not null default 'pending'
+                      check (status in ('pending', 'approved', 'rejected')),
+  approved_amount   integer,
+  comment           text,
+  decided_by        text,
+  decided_at        timestamptz,
+  decided_via_email boolean not null default false,
+  funded_amount     integer,
+  funded_by         text,
+  funded_at         timestamptz,
+  retired_at        timestamptz,
+  retire_total      integer,
+  retire_balance    integer,
+  updated_at        timestamptz not null default now()
+);
+create index if not exists imprest_requests_requested_at_idx on imprest_requests (requested_at desc);
+create index if not exists imprest_requests_status_idx on imprest_requests (status) where status = 'pending';
+create index if not exists imprest_requests_staff_code_idx on imprest_requests (staff_code);
+create index if not exists imprest_requests_travel_date_idx on imprest_requests (travel_date);
+create table if not exists imprest_retirements (
+  id              uuid primary key default gen_random_uuid(),
+  request_id      uuid not null unique references imprest_requests (id) on delete cascade,
+  filed_at        timestamptz not null default now(),
+  filed_by_code   text,
+  filed_by_name   text,
+  fare_actual     integer not null default 0 check (fare_actual >= 0),
+  accom_actual    integer not null default 0 check (accom_actual >= 0),
+  other1_actual   integer not null default 0 check (other1_actual >= 0),
+  other2_actual   integer not null default 0 check (other2_actual >= 0),
+  other3_actual   integer not null default 0 check (other3_actual >= 0),
+  total_actual    integer not null check (total_actual >= 0),
+  notes           text,
+  photo_count     integer not null default 0
+);
+create table if not exists imprest_photos (
+  id          uuid primary key default gen_random_uuid(),
+  request_id  uuid not null references imprest_requests (id) on delete cascade,
+  seq         integer not null check (seq between 1 and 3),
+  data        text not null,
+  bytes       integer not null,
+  unique (request_id, seq)
+);
+
 create table if not exists complaints (
   id uuid primary key default gen_random_uuid(),
   ref text, team text,

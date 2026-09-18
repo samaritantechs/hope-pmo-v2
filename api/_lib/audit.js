@@ -56,6 +56,12 @@ export const AUDITED = new Set([
      "who ordered this lock" is answerable from the audit log as well as from the register,
      and remains answerable if the device row is later deleted. */
   'deviceEnrol', 'deviceSetState', 'deviceIssue', 'deviceDelete', 'deviceShift',
+  /* IMPREST. imprestDecide moves real money and imprestFund records what actually left the
+     account, so both belong beside the salary advance and adjustment writes above; a request
+     and a retirement are the ask and the receipt, not the decision, but are still worth the
+     same line every other write here gets. */
+  'imprestRequest', 'imprestDecide', 'imprestRetire', 'imprestFund',
+  'imprestRoleSave', 'imprestRoleDelete',
 ]);
 
 /** The ONLY argument fields that ever reach the table. Anything not named here is dropped --
