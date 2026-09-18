@@ -4045,6 +4045,116 @@ test('a PMO officer sees their own money and nobody else\'s', async () => {
   assert.equal(d.pmo[0].officer, 'KAMARIA');
 });
 
+/* =====================================================================================
+   THE BOARD IS SEEN BY GRANTED TEAM, NOT BY WHOSE NAME MATCHES THE VIEWER'S.
+   =====================================================================================
+     "the commisions pane is now seeen by role not nav granting because i gave the pmo
+      manager a commision nav pane and sees nothing... someone with the role should see as
+      i do, but pivoted by the granted teams, so expected pmo could see what recovery earned
+      in their shared teams ... the management roles that have all teams will see as me"
+
+   Before this, a viewer saw a row only if isAdmin (upload/settings) or the row's officer
+   NAME matched their own -- so a manager granted the commission tab, never personally named
+   as a recovery, early or PMO officer anywhere, saw an empty board on every one of the three
+   schemes. These tests are the report reproduced, then fixed: team-scoped, never name-scoped,
+   with a management role holding ALL teams (teams: null) landing on exactly what ADMIN sees
+   without any special case for it. */
+test('a PMO manager, not personally named as the officer, sees the officer on their own granted team', async () => {
+  // KAMARIA covers KONGOWE, CATHERINE covers MBAGALA -- see PMO_A / PMO_B above.
+  const rows = [X('KONGOWE', TODAY, 'PAID'), X('MBAGALA', TODAY, 'PAID')];
+  const manager = { code: 'M1', name: 'THE PMO MANAGER', role: 'MANAGER', teams: ['KONGOWE'], tabs: ['commission'] };
+  const d = await run('commission', {}, manager, fakeDb(pmoTables(rows)));
+  assert.equal(d.pmo.length, 1, 'this was reported as empty -- it must not be');
+  assert.equal(d.pmo[0].officer, 'KAMARIA', 'KAMARIA\'s own team is granted; CATHERINE\'s MBAGALA is not');
+});
+
+test('a team-scoped viewer sees the recovery and early officers on their own team, whatever their own name is', async () => {
+  /* Plain tables(): KONGOWE recovery JUMA G, early EARLY E; MBAGALA has neither set. The early
+     board is judged on the INITIAL book only, which the base fixture does not carry -- add
+     one row of it, the same way "the access codes decide who holds which team" does above. */
+  const t = tables();
+  t.repayment_snapshots.push(E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'));
+  const manager = { code: 'M2', name: 'THE PMO MANAGER', role: 'MANAGER', teams: ['KONGOWE'], tabs: ['commission'] };
+  const d = await run('commission', {}, manager, dbWithRpc(t));
+  assert.ok(d.recBoard.find(r => r.officer === 'JUMA G'), 'the manager is not JUMA G and must still see him');
+  assert.ok(d.colBoard.find(r => r.officer === 'EARLY E'), 'nor EARLY E, and must still see her');
+  // Neither board may leak a row this viewer's teams do not cover.
+  assert.equal(d.recBoard.find(r => r.officer === '(unassigned)'), undefined,
+    'MBAGALA\'s unassigned recovery row belongs to a team outside the grant');
+});
+
+test('the same shared team, the other way round: an early-collection viewer sees what recovery earned there', async () => {
+  /* "so expected pmo could see what recovery earned in their shared teams" -- an EARLY E
+     -like viewer, holding only KONGOWE, must see JUMA G's recovery row on that same team. */
+  const early = { code: 'E9', name: 'EARLY E', role: 'PMO EXPECTED', teams: ['KONGOWE'], tabs: ['commission'] };
+  const d = await run('commission', {}, early, dbWithRpc());
+  assert.ok(d.recBoard.find(r => r.officer === 'JUMA G'),
+    'the early officer and the recovery officer share KONGOWE, so each other\'s money is visible there');
+});
+
+test('a team-scoped viewer never sees a team outside their own grant', async () => {
+  const t = tables();
+  // Give MBAGALA a recovery officer too, so there is a real row to fail to leak.
+  t.teams = t.teams.map(x => x.team === 'MBAGALA' ? { ...x, recovery: 'OTHER OFFICER' } : x);
+  const manager = { code: 'M3', name: 'THE PMO MANAGER', role: 'MANAGER', teams: ['KONGOWE'], tabs: ['commission'] };
+  const d = await run('commission', {}, manager, dbWithRpc(t));
+  assert.ok(d.recBoard.find(r => r.officer === 'JUMA G'), 'their own team\'s officer is visible');
+  assert.equal(d.recBoard.find(r => r.officer === 'OTHER OFFICER'), undefined,
+    'MBAGALA was never granted -- its officer must not appear');
+});
+
+test('a management role holding all teams sees exactly what ADMIN sees, with no special case for it', async () => {
+  const rows = [X('KONGOWE', TODAY, 'PAID'), X('MBAGALA', TODAY, 'PAID')];
+  const db = fakeDb(pmoTables(rows));
+  const admin = await run('commission', {}, ADMIN, db);
+  const gm = { code: 'GM', name: 'THE GENERAL MANAGER', role: 'GENERAL MANAGER', teams: null, tabs: ['commission'] };
+  const asGm = await run('commission', {}, gm, db);
+  assert.deepEqual(asGm.pmo.map(r => r.officer).sort(), admin.pmo.map(r => r.officer).sort());
+  assert.deepEqual(asGm.recBoard.map(r => r.officer).sort(), admin.recBoard.map(r => r.officer).sort());
+  assert.deepEqual(asGm.colBoard.map(r => r.officer).sort(), admin.colBoard.map(r => r.officer).sort());
+  assert.equal(asGm.isAdmin, false, 'the tab-based admin flag stays what it always meant -- upload/settings');
+  assert.equal(admin.teamsScoped, false);
+  assert.equal(asGm.teamsScoped, false, 'ALL teams reads as company-wide for anyone, not only ADMIN');
+});
+
+test('ADMIN and a same-scope non-admin never inherit each other\'s isAdmin from the shared cache', async () => {
+  /* cachedAnswer keys its minute-long cache on TEAM SCOPE, deliberately: "two officers on the
+     same one team share a single answer" (answer-cache.js). ADMIN and this manager both hold
+     ALL teams, so within that minute they share one cache entry for the FIGURES, which is
+     correct -- the figures are the same fact for both of them. isAdmin and `me` are not: they
+     answer "who is asking", not "what do the teams show", and baking them into that shared
+     entry would let whichever of the two asked FIRST decide what the other sees. Both orders
+     are checked, because a cache bug is exactly the kind of thing that only shows up in one
+     direction if you only ever try it one way. */
+  const gm = { code: 'GM2', name: 'THE GENERAL MANAGER', role: 'GENERAL MANAGER', teams: null, tabs: ['commission'] };
+  const db1 = dbWithRpc();
+  const first = await run('commission', {}, ADMIN, db1);
+  const second = await run('commission', {}, gm, db1);
+  assert.equal(first.isAdmin, true);
+  assert.equal(second.isAdmin, false, 'the manager must not inherit ADMIN\'s cached flag');
+  assert.equal(second.me, 'THE GENERAL MANAGER');
+
+  const db2 = dbWithRpc();
+  const thirdNonAdminFirst = await run('commission', {}, gm, db2);
+  const fourthAdminSecond = await run('commission', {}, ADMIN, db2);
+  assert.equal(thirdNonAdminFirst.isAdmin, false);
+  assert.equal(fourthAdminSecond.isAdmin, true, 'ADMIN must not inherit the manager\'s cached flag either');
+  assert.equal(fourthAdminSecond.me, 'THE ADMIN');
+});
+
+test('the merged day/week board keeps to the same team grant', async () => {
+  const manager = { code: 'M4', name: 'THE PMO MANAGER', role: 'MANAGER', teams: ['KONGOWE'], tabs: ['commission'] };
+  const d = await run('commission', {}, manager, dbWithRpc());
+  assert.ok(d.week.find(r => r.officer === 'JUMA G'), 'the combined board reads the same grant as the split ones');
+});
+
+test('teamsScoped says whether this is a company-wide view or a granted slice of it', async () => {
+  const restricted = await run('commission', {}, GMO, dbWithRpc());   // GMO holds ['KONGOWE']
+  assert.equal(restricted.teamsScoped, true);
+  assert.equal(ADMIN.teams, null);
+  assert.equal((await run('commission', {}, ADMIN, dbWithRpc())).teamsScoped, false);
+});
+
 test('somebody who sees every team is not a collection officer with a portfolio', async () => {
   /* A blank team list means ALL teams. Putting that person on this board would make their
      percentage the company's percentage and quietly outrank everybody. */

@@ -605,7 +605,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-c';
+var BUILD = '2026-09-18-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5123,12 +5123,12 @@ VIEWS.commission = function(){
          band -- and the headline used to add up only the first two, leaving a whole board out.
          Printing the three parts under the total is what makes a wrong figure findable
          without scrolling to the boards and adding them up by hand. */
-      + kpi(d.isAdmin?'Company total today':'My commission today', money(d.totals.day),
+      + kpi(d.teamsScoped?'Timu zangu leo / My teams today':'Company total today', money(d.totals.day),
             (d.totals.split
               ? 'rec ' + money(d.totals.split.recDay) + ' · early ' + money(d.totals.split.colDay)
                 + ' · PMO ' + money(d.totals.split.pmoDay)
               : d.weekday+' · '+(d.date||'')), d.totals.day?'good':'')
-      + kpi(d.isAdmin?'Company total this week':'My commission this week', money(d.totals.week),
+      + kpi(d.teamsScoped?'Timu zangu wiki hii / My teams this week':'Company total this week', money(d.totals.week),
             (d.totals.split
               ? 'rec ' + money(d.totals.split.recWeek) + ' · early ' + money(d.totals.split.colWeek)
                 + ' · PMO ' + money(d.totals.split.pmoWeek) + ' · Mon–Sun'
@@ -5419,7 +5419,7 @@ VIEWS.cmmonth = function(){
               + ' &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
               + ' <button class="btn sm ghost" data-arg="month" data-val="' + esc(thisM) + '">Rudi mwezi huu / Back to this month</button>'))
       + '<div class="kpis">'
-      + kpi(d.isAdmin ? 'Company total — month to date' : 'My commission — month to date',
+      + kpi(d.teamsScoped ? 'Timu zangu — mwezi hadi sasa / My teams — month to date' : 'Company total — month to date',
           money(d.totals.week),
           'rec ' + money(sp.recWeek||0) + ' · early ' + money(sp.colWeek||0) + ' · PMO ' + money(sp.pmoWeek||0),
           d.totals.week ? 'good' : '')

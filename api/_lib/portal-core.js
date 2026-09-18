@@ -3238,8 +3238,21 @@ async function commission(db, user, args = {}, nowMs) {
   const scope = a.scope === 'month' ? 'month' : 'week';
   // Keyed by the range asked for as well: last week's board and this week's are two answers.
   const pick = scope === 'month' ? String(a.month || '') : String(a.weekOf || '');
-  return cachedAnswer(db, 'commission|' + scope + '|' + pick, user, nowMs,
+  const out = await cachedAnswer(db, 'commission|' + scope + '|' + pick, user, nowMs,
     () => commissionCompute_(db, user, a, nowMs));
+  /* isAdmin AND me ARE THE CALLER'S OWN, NEVER THE CACHE'S. cachedAnswer's key is the
+     TEAMS a person may see (scopeKey) -- "two officers on the same one team share a single
+     answer" is exactly its point, and correctly so for the FIGURES, which are the same fact
+     for anyone holding those teams. isAdmin and the caller's own name are not: two people can
+     hold the identical team scope (both ALL teams, say) while one holds upload/settings and
+     the other does not. Baked into the cached value, whichever of them asked FIRST in a given
+     minute would silently decide what the OTHER sees -- a non-admin briefly shown the rate-
+     editing card, or a real admin not shown their own. Computed fresh here, on every call,
+     costs nothing (pure functions of `user`, no read) and cannot leak between two people who
+     only share a team list. */
+  return { ...out,
+    isAdmin: (user.tabs || []).includes('upload') || (user.tabs || []).includes('settings'),
+    me: user.name, teamsScoped: !!user.teams };
 }
 /** 'yyyy-mm-01' plus n months, on the first of the month -- pure date-key arithmetic. */
 function addMonthsKey_(key, n) {
@@ -3558,9 +3571,54 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   colDay(today, dayAcc);
   for (const d of colDays) colDay(d, weekAcc);
 
-  const isAdmin = (user.tabs || []).includes('upload') || (user.tabs || []).includes('settings');
+  /* =====================================================================================
+     WHO MAY SEE WHOSE MONEY -- BY THE TEAMS GRANTED, NOT BY WHOSE NAME MATCHES THE VIEWER'S.
+     =====================================================================================
+       "the commisions pane is now seeen by role not nav granting because i gave the pmo
+        manager a commision nav pane and sees nothing... someone with the role should see as
+        i do, but pivoted by the granted teams, so expected pmo could see what recovery
+        earned in their shared teams ... the management roles that have all teams will see
+        as me"
+
+     This used to be `isAdmin || officer's name === my name` -- so a manager holding the
+     commission tab but not literally named as a recovery, early or PMO officer anywhere saw
+     an empty board, and an early-collection officer could never see a recovery officer's row
+     even on a team they both work. Team scoping is the rule every other board in this system
+     already follows (CLAUDE.md: "Team scoping happens at the database"); this board was the
+     one place a person's own NAME did the job a TEAM should have. `!user.teams` (ALL teams,
+     the same convention teamAllowed already uses) is what makes a management role with no
+     team restriction see exactly what the owner sees, with no separate admin branch needed
+     for it -- which is what "the management roles that have all teams will see as me" is
+     asking for, arithmetically, once the rule is team-scoped rather than name-scoped.
+
+     recTeamsByOfficer / expTeamsByOfficer are built once, from the same teamRows this
+     function already read: for each role column ('recovery', 'expected'), which teams does
+     each officer NAME cover -- the reverse of officerOf(teamBy, team, roleCol), which is a
+     team-to-name lookup and cannot answer "which teams is this name responsible for". */
+  const officerTeamsOf_ = roleCol => {
+    const m = new Map();
+    for (const t of teamRows) {
+      const name = t[roleCol] ? String(t[roleCol]).trim() : '(unassigned)';
+      if (!m.has(name)) m.set(name, new Set());
+      m.get(name).add(K(t.team));
+    }
+    return m;
+  };
+  const recTeamsByOfficer = officerTeamsOf_('recovery');
+  const expTeamsByOfficer = officerTeamsOf_('expected');
+  /* ALL teams (user.teams === null) always passes -- same convention as teamAllowed. Anyone
+     restricted to a list sees an officer only if that officer covers at least one shared
+     team; an officer covering none of the viewer's teams is exactly what must stay hidden. */
+  const coversAllowedTeam_ = (name, byOfficer) => !user.teams
+    || [...(byOfficer.get(name) || [])].some(t => user.teams.some(x => K(x) === t));
+  const seesRecOfficer = name => coversAllowedTeam_(name, recTeamsByOfficer);
+  const seesExpOfficer = name => coversAllowedTeam_(name, expTeamsByOfficer);
+  /* pack() merges recovery's and collection's officer keys into one row (see dayAcc/weekAcc
+     above), so a name is shown here if either role's teams pass -- an officer holding both
+     jobs on the SAME team must not disappear because only one of the two lookups named them. */
+  const seesEitherOfficer_ = name => seesRecOfficer(name) || seesExpOfficer(name);
   const pack = acc => Object.values(acc)
-    .filter(b => isAdmin || K(b.key) === K(user.name))
+    .filter(b => seesEitherOfficer_(b.key))
     .map(b => ({ officer: b.key, recovered: b.recovered, recComm: Math.round(b.recComm),
       paid: b.paid, over: b.over, colComm: Math.round(b.colComm),
       total: Math.round(b.recComm + b.colComm) }))
@@ -3588,12 +3646,11 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      own percentage, which is the weekend's commission day. The recovered AMOUNT rides along
      per record because "how much did I actually take" is a fair question; it is simply no
      longer what decides the pay. */
-  const seesOfficer = name => isAdmin || K(name) === K(user.name);
   /* The early-collection board still runs on seven real days -- it is a different job with a
      different week, and only recovery's weekend folds into one record. */
   const dayKey7 = ['J3', 'J4', 'J5', 'AL', 'IJ', 'J1', 'J2'];
   const wdOf = d => (new Date(d + 'T12:00:00Z').getUTCDay() + 6) % 7;   // MON=0 .. SUN=6
-  const recBoard = [...recPayOf.keys()].filter(seesOfficer).map(name => {
+  const recBoard = [...recPayOf.keys()].filter(seesRecOfficer).map(name => {
     const pay = recPay(name);
     const row = {
       officer: name,
@@ -3621,7 +3678,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   for (const d of colDays) {
     for (const r of colRows(d)) {
       const name = officerOf(teamBy, r.team, 'expected');
-      if (!seesOfficer(name)) continue;
+      if (!seesExpOfficer(name)) continue;
       const per = colOff.get(name) || colOff.set(name, new Map()).get(name);
       const b = per.get(d) || per.set(d, { expected: 0, collected: 0, paid: 0, over: 0 }).get(d);
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
@@ -3747,13 +3804,16 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   /* The bonus is a WEEKLY rule; the month record shows the days' pay without it. */
   const bonusWon = bonusEnabled && scope === 'week'
     && !!(leader && leaderPrev != null && leader.weekPct > leaderPrev);
+  /* NO SECOND FILTER HERE. pmoRoster (above) already kept only officers whose teams the
+     viewer may see -- pmoBoard returns exactly one row per roster entry -- so re-filtering
+     by officer NAME would only throw away rows this viewer is already entitled to, which is
+     the exact bug reported: a PMO manager granted the commission tab, not personally named
+     as a PMO officer anywhere, saw nothing. See the note above coversAllowedTeam_. */
   const pmo = pmoRows.map(r => ({ ...r,
     prevWeekPct: prevPct[K(r.officer)] == null ? null : prevPct[K(r.officer)],
     isLeader: !!(leader && K(r.officer) === K(leader.officer)),
     bonus: (bonusWon && leader && K(r.officer) === K(leader.officer)) ? bonusTzs : 0,
-    // Only an admin sees everybody's money; an officer sees their own, exactly as the
-    // recovery and collection boards above already work.
-  })).filter(r => isAdmin || K(r.officer) === K(user.name));
+  }));
 
   /* WHY IS THIS BOARD EMPTY? A screen that shows nothing and says nothing sends somebody to
      the telephone. The two ways it can legitimately be empty are "no access code carries that
@@ -3835,7 +3895,13 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         : bonusWon ? null : 'kiongozi hajapita asilimia yake ya wiki iliyopita / the leader has not beaten their own previous week' },
     pmoTotals: { day: pmo.reduce((s, r) => s + r.commission, 0),
       week: pmo.reduce((s, r) => s + r.weekCommission + r.bonus, 0) },
-    paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText, isAdmin, me: user.name,
+    paidTzs: cfg.paidTzs, overTzs: cfg.overTzs, payText: cfg.payText,
+    /* isAdmin, me AND teamsScoped ARE NOT SET HERE -- they are per-caller facts (whose tabs,
+       whose name, whether THEY are team-restricted), and this value is shared by everyone in
+       the same team scope for up to a minute (cachedAnswer). Baking an identity-dependent
+       field into a team-scoped cache entry is exactly how one person's admin status would
+       leak to the next person sharing their teams; see the commission() wrapper, which
+       attaches all three fresh on every call instead. */
     weekday: currentWeekday(scope === 'week' && asOf ? asOf.ms : nowMs), date: today, weekOf: mon,
     /* WHICH RANGE THIS IS, said the way the dashboard says it, so the same week bar works
        here: a finished week, an upcoming one, or this one; the month as yyyy-mm. */
