@@ -440,3 +440,23 @@ test('the adjustments picker is built from the server\'s live targets, not from 
   assert.ok(view.includes('[' + served.map(k => "'" + k + "'").join(', ') + ']'),
     'the page should fall back to the same books when an older server sends no targets');
 });
+
+/* THE REF FIELD MUST NEVER BE LABELLED OPTIONAL.
+   -----------------------------------------------------------------------------------
+     "REF no on iliyonasia is not optional. remove (hiari / optional)"
+   A row with no ref cannot be attributed to a commission customer -- the register's own
+   "no-ref" countState exists to flag exactly that outcome -- so a label reading "hiari /
+   optional" told the person typing the opposite of what the register does the moment they
+   save without one. This does not reach for the Team field beside it, which is genuinely
+   optional (a blank team applies the row to the whole book) and stays labelled that way. */
+test('the REF field on the new-adjustment form is never labelled optional', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.adjust = function'), app.indexOf('VIEWS.abnormal = function'));
+  assert.ok(!/id="adjRef"[^>]*>[\s\S]{0,2}<\/div>[\s\S]{0,400}hiari \/ optional/.test(view) &&
+    !/REF[^<]*\(hiari \/ optional\)/.test(view),
+    'the REF label must not read "hiari / optional" anywhere on the new-adjustment form');
+  assert.ok(/id="adjRef"/.test(view), 'the ref input should still exist');
+  // The Team field's own "optional" label is untouched by this -- it says a real thing.
+  assert.ok(/Timu \/ Team \(hiari \/ optional\)/.test(view),
+    'Team stays labelled optional -- a blank team applies the row to the whole book');
+});

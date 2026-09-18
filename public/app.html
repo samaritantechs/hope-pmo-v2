@@ -601,7 +601,7 @@ var VC = { store:{}, watch:null, key:'' };
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-a';
+var BUILD = '2026-09-18-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5853,7 +5853,15 @@ VIEWS.adjust = function(){
           + (tm.rows||[]).map(function(t){ return '<option>'+esc(t.team)+'</option>'; }).join('')
           + '</select></div>'
         + '<div class="fld"><label>Kiasi / Amount (TZS, + au −)</label><input type="number" id="adjAmt" step="any" placeholder="mf. -250000"></div>'
-        + '<div class="fld"><label>REF (hiari / optional)</label><input id="adjRef"></div>'
+        /* NOT OPTIONAL -- a row with no ref cannot be attributed to a commission customer, and
+           the register says so with a chip on every such row ("no-ref"). The label used to say
+           "hiari / optional", which told the person typing the opposite of what the register
+           itself does the moment they save without one. Left blank on the arrears pair on
+           purpose -- those books pay no per-customer commission, so there is nothing for a ref
+           to attribute -- but the field itself is never presented as something to skip. */
+        + '<div class="fld"><label>REF ya mteja / Customer ref'
+          + '<span class="sub"> — inahitajika ili ihesabike kwenye kamisheni / needed for the commission count</span>'
+          + '</label><input id="adjRef"></div>'
         + '<div class="fld" style="grid-column:1/-1"><label>Sababu / Reason</label><input id="adjReason" placeholder="kwa nini inarekebishwa / why this is being adjusted"></div>'
         + '<div class="clact"><button class="btn sm" id="adjSave">Hifadhi / Save</button></div>'
         + '<div id="adjOut" class="note" style="display:none"></div>'
