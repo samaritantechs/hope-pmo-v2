@@ -511,6 +511,15 @@ var $ = function(s){ return document.querySelector(s); };
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
+/* THE AMOUNT, NOT A NOTE. "put no extra note, include the amount" -- when an Iliyonasia has
+   moved a tile's own figure, this says by how much, signed, right beside it, instead of a
+   sentence explaining that it moved. Empty string when nothing was registered, so an
+   untouched tile reads exactly as it always has. */
+function adjTag_(n){
+  n = Number(n) || 0;
+  if (!n) return '';
+  return ' <span class="mutl">(rekebisho / adj '+(n>0?'+':'')+money(n)+')</span>';
+}
 /* "have J1 and J2 showing amount in 2.4m format single decimal" -- a weekend's recovery in the
    width of a day column, where the full figure would push the table off the screen. */
 function m1_(v){
@@ -605,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-d';
+var BUILD = '2026-09-18-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3258,9 +3267,9 @@ VIEWS.dashboard = function(){
           d.colTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
-            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
+            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
-            ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
+            ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0))+adjTag_(d.colTrend.reduce(function(s,x){return s+(x.adjusted||0);},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
       /* THE DENOMINATOR IS JANA'S -- "everywhere uses jana except only where there is recovery
          officers". Monday divides by Monday, Tuesday to Friday by the day before, the weekend
@@ -3284,12 +3293,12 @@ VIEWS.dashboard = function(){
                UNRECOVERED IS WHAT IS STILL OUT: the basis day's uncollected MINUS what came
                back. Worked out on the server beside the figures it comes from, so the tile
                and the total cannot drift from it. */
-            ['Unrecovered TZS '+money(x.unrecovered), 'badl'],
+            ['Unrecovered TZS '+money(x.unrecovered)+adjTag_(x.dayAdjusted), 'badl'],
             [x.pct != null
               ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
               : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']])); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
-            ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0), 'badl'],
+            ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0)+adjTag_(d.recTrendTotal ? d.recTrendTotal.adjusted : 0), 'badl'],
             ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot'))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){

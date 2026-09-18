@@ -23,7 +23,7 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten,
+import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten, tAdjusted,
   ADJ_RECEIVED_TARGETS, ADJ_ARREARS_TARGETS, ADJ_ARREARS_REOPENED } from './adjustments.js';
 /* IMPREST -- request, GM decision (portal or one-tap email), accountant funding, retirement,
    report. Its own file for the same reason adjustments.js is: it is a whole feature with its
@@ -9118,6 +9118,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        day adds nothing to either side of the sum -- but the tile was not, so this says which
        days actually have a sheet behind them and the screen stops guessing. */
     return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
+      /* THE NUMBER, NOT A NOTE. "put no extra note, include the amount" -- an Iliyonasia moves
+         Uncol by exactly this much (clamped at zero, same as the figure beside it), and the
+         tile says so as a figure rather than a sentence, the same way `adjusted_amt` already
+         rides beside every other corrected total in this system. */
+      adjusted: tAdjusted(rows),
       uploaded: rows.length > 0,
       pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null };
   });
@@ -9150,7 +9155,13 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        uncollected rides along as dayUncollected for the week's total, which cannot be a sum
        of these: jana's figure appears under two tiles and the week's under both weekend
        ones. */
-    const own = tUncollected(colDay_(myExpWeek, d));
+    const colToday_ = colDay_(myExpWeek, d);
+    const own = tUncollected(colToday_);
+    /* THE SAME AMOUNT THAT MOVED COLLECTION'S UNCOLLECTED ALSO MOVES THIS DENOMINATOR, SO IT
+       IS SHOWN HERE TOO -- "if uncollected is 20 we adjusted it to 15, we are now doing
+       recovery of 15 not 20": the denominator really did change, on purpose, and the amount is
+       the honest answer to "why", not a sentence explaining it away. */
+    const ownAdjusted = tAdjusted(colToday_);
     /* SATURDAY AND SUNDAY HAVE NO COLLECTION SHEET, AND SO NO DENOMINATOR.
          "am still seeing unrecovered on sat and sun ... WE HAVE NO COL IN SAT AND SUN!"
        The jana rule's weekend branch -- divide by the week -- is for the Orodha and the phone
@@ -9171,6 +9182,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const unc = basis.den;
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       basis: basis.kind, basisDates: basis.dates, dayUncollected: own,
+      dayAdjusted: ownAdjusted,
       /* WHAT IS STILL OUT AT THE END OF THE DAY -- which is not the same number as what went
          uncollected at the start of it, and the tile was showing the second under the first
          one's name. Tuesday leaves 8m uncollected, the officers get 2m of it back, so 6m is
@@ -9192,7 +9204,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const recTrendTotal = (() => {
     const recovered = recTrend.reduce((s, x) => s + x.recovered, 0);
     const uncollected = recTrend.slice(0, 5).reduce((s, x) => s + x.dayUncollected, 0);
-    return { recovered, uncollected, unrecovered: Math.max(0, uncollected - recovered),
+    const adjusted = recTrend.slice(0, 5).reduce((s, x) => s + (x.dayAdjusted || 0), 0);
+    return { recovered, uncollected, adjusted, unrecovered: Math.max(0, uncollected - recovered),
       pct: uncollected > 0 ? Math.round((recovered / uncollected) * 1000) / 10 : null };
   })();
 

@@ -2839,6 +2839,27 @@ test('the dashboard Col % counts the same Iliyonasia the weekly report does', as
     'a correction is for one team -- nobody else moves');
 });
 
+test('the amount, not a note: colTrend and recTrend say how much the register moved, even when Uncol was clamped', async () => {
+  /* "put no extra note, include the amount ... if uncollected is 20 we adjusted it to 15, we
+     are now doing recovery of 15 not 20" -- the clamp at zero on Uncol means the visible drop
+     can read smaller than what was actually registered (KONGOWE only had 1,000 outstanding, so
+     Uncol can only fall by 1,000), but the full 40,000 was still credited to Collected and
+     therefore to the recovery denominator's correction. `adjusted` is the unclamped figure, so
+     a screen can always say the whole amount rather than only the part Uncol had room for. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  const dayOf = (x, date) => x.colTrend.find(r => r.date === date);
+  assert.equal(dayOf(d, TODAY).adjusted, 40000, 'the full registered amount, unclamped');
+  const totalAdj = d.colTrend.reduce((s, x) => s + (x.adjusted || 0), 0);
+  assert.equal(totalAdj, 40000);
+
+  const recTile = d.recTrend.find(r => r.date === TODAY);
+  assert.equal(recTile.dayAdjusted, 40000,
+    'the same correction that moved Uncol also moved the recovery denominator, by the same amount');
+  assert.equal(d.recTrendTotal.adjusted, 40000, 'and the week total carries it too');
+});
+
 test('the weekly report and the dashboard now answer the day with ONE Col %', async () => {
   /* The whole point. Before this these two read the same decks by two different rules and
      disagreed by exactly the register -- which is what sent somebody to check their Excel. */
