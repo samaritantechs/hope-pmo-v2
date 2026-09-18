@@ -592,16 +592,20 @@ var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay
   // vice versa; both live under one cache key scheme, so both lists matter equally.
   csSearch:1, managerQueue:1, teamQueue:1, seniorQueue:1, creditQueue:1, disburseQueue:1,
   disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1,
-  reversalsList:1, paymentsList:1, complaintsList:1, adjustments:1 };
+  reversalsList:1, paymentsList:1, complaintsList:1, adjustments:1,
+  imprestRoles:1, imprestMine:1, imprestQueue:1, imprestReport:1, imprestPhotos:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
 // the key you would work out from the state afterwards -- keep the real one, or later touches
 // like a team filter get written to a slot nobody reads.
 var VC = { store:{}, watch:null, key:'' };
+/* Set once at boot from ?imp=<id> (the GM email's "open in the portal" link) and cleared the
+   moment it has been acted on -- see imprestOpenDeepLink_, called from drawView_(). */
+var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-b';
+var BUILD = '2026-09-18-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -800,6 +804,17 @@ var NAV = [
   { id:'weekly',      label:'Weekly Report', ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M8 14l2.5 2.5L16 12"/>' },
   { id:'par',         label:'Portfolio at Risk', ic:'<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
   { id:'present',     label:'Presentation', ic:'<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>' },
+  /* IMPREST -- three panes, three authorities, granted like every tab in this list is now:
+       "implement request, approval and report and i'll grant the navs to those responsible"
+     impreq asks (and sees their own history); impappr is the GM's desk -- decide, and the
+     accommodation-rate table; imprep is the review copy, where the accountant also writes the
+     funded amount once the GM has decided. */
+  { id:'impreq',      label:'Omba Imprest / Imprest request',
+    ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
+  { id:'impappr',     label:'Idhini ya Imprest / Imprest approval',
+    ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M9 15l2 2 4-4"/><path d="M8 19h.01M12 19h.01"/>' },
+  { id:'imprep',      label:'Ripoti ya Imprest / Imprest report',
+    ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M7 14h4M7 17h7"/>' },
   { id:'teams',       label:'Teams & Staff', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   /* THE COMPANY PHONE REGISTER, AS TWO PANES BECAUSE IT IS TWO AUTHORITIES.
        "field officers, managers, gmos, pmos etc are provided with company devices and some of
@@ -1184,7 +1199,15 @@ function start(me){
      dashboard is granted like everything else, sending everybody there would open a screen
      half of them have not been given -- and the server would refuse it, which reads as a
      broken app rather than as a permission. */
-  go(firstAllowed_() || 'noaccess');
+  /* THE EMAIL'S "OPEN IN THE PORTAL" LINK -- ?imp=<id>, from the GM's imprest notice (see
+     gmActionLinks_ in api/_lib/imprest.js). Landing on the tab that holds the item is more
+     useful than landing on whatever tab happens to be first, so this overrides that choice
+     only when the id names something the signed-in code can actually see; imprestOpenDeepLink_
+     (below) does the actual opening once that tab's own data has loaded. */
+  var impId = (function(){ try { return new URLSearchParams(location.search).get('imp') || ''; } catch (e) { return ''; } })();
+  var impTab = impId && (allowed('impappr') ? 'impappr' : allowed('imprep') ? 'imprep' : allowed('impreq') ? 'impreq' : null);
+  IMPREST_DEEPLINK_ID = impTab ? impId : null;
+  go(impTab || firstAllowed_() || 'noaccess');
   annCheck();
   bellRefresh();
   $('#bellBtn').onclick = bellOpen;
@@ -1311,6 +1334,24 @@ var SETTINGS_GROUPS = [
         dflt:'https://hoop-pmo.vercel.app',
         note:'Hii ndiyo simu inayohamishwa inakoenda. Badilisha tu kama anwani yao imebadilika. '
           + '/ This is where a shifted phone goes. Change it only if their address itself changes.' },
+    ] },
+  /* THE IMPREST GM AND THE ADDRESS ITS EMAIL LINKS POINT TO -- "i'll set GM email in
+     settings". A blank IMPREST_GM_EMAIL means no notice is sent at all; the request, approval
+     and report panes still work either way, exactly the same "courtesy, never the
+     dependency" rule the weekly report's ADMIN_EMAIL already follows. APP_BASE_URL is this
+     deployment's own web address; without it the notice is still sent, only without its two
+     links (Decide now, Open in the portal) -- see api/_lib/imprest.js. */
+  { id:'imprest', title:'Imprest -- GM na anwani ya email / GM and the email address',
+    sub:'nani anaidhinisha, na kiungo cha email kinaenda wapi / who decides, and where the email links point',
+    fields:[
+      { key:'IMPREST_GM_EMAIL', label:'Barua pepe ya GM / GM\'s email', type:'text', dflt:'',
+        note:'GM lazima awe na msimbo wake wa kuingia na tab ya Idhini ya imprest ikiwa imetikwa; '
+          + 'hii ni email tu ya kutuma taarifa. / The GM still needs their own access code with '
+          + 'Imprest approval ticked -- this only says where the notice email goes. Blank = no email sent.' },
+      { key:'APP_BASE_URL', label:'Anwani ya mfumo huu / This deployment\'s own web address', type:'text', dflt:'',
+        note:'Mfano https://hope-pmo-v2.vercel.app -- bila hii, viungo vya "Amua sasa" na "Fungua '
+          + 'kwenye portal" haviwekwi kwenye email. / e.g. https://hope-pmo-v2.vercel.app -- without '
+          + 'it, the email is still sent but without its Decide-now or Open-in-portal links.' },
     ] },
 ];
 function settingsGroupCard_(g, rows){
@@ -5979,6 +6020,517 @@ VIEWS.adjust = function(){
   });
 };
 
+/* =====================================================================================
+   IMPREST -- ask, decide, fund, retire, review.
+   =====================================================================================
+     "our office and field staff always make imprest requests as implemented in Hoop ...
+      implement request, approval and report and i'll grant the navs to those responsible ...
+      so these people see their history and everything but gm gets email that has the
+      details and two links (single tap approval and disapproval or read) ... so we use the
+      new way but the accountant infos are no longer there for requesting but they will just
+      update funded amount in imprest report tab"
+     "so we'll have dashboards of applications per signed in user, and overall in reports"
+
+   Three panes sharing one costed-trip shape: Omba Imprest (impreq, a personal dashboard over
+   the requester's OWN history plus the form), Idhini ya Imprest (impappr, the GM's queue and
+   the accommodation-rate table), Ripoti ya Imprest (imprep, the whole-company dashboard, and
+   where the accountant writes what was actually funded). The GM can also decide straight from
+   the emailed one-tap link -- see api/imprest-action.js -- without ever opening this page;
+   both paths write through the same imprestDecide on the server. */
+function imprestNotReady_(){
+  return '<div class="note bad">Jedwali la imprest halijatengenezwa bado. Endesha '
+    + '<b>db/RUN-ME-031-imprest.sql</b> kwenye Supabase, kisha rudi hapa. '
+    + '/ The imprest tables have not been created yet — run that migration, then come back.</div>';
+}
+/* ONE VOCABULARY FOR THE STATE, everywhere a status is shown -- the request pane's history,
+   the GM's queue, the report. A retired trip is still "approved" in status; retirement is a
+   second fact shown beside it. */
+function imprestChipCls_(r){
+  if (r.status==='approved') return r.retiredAt ? 'ok' : 'warn';
+  if (r.status==='rejected') return 'bad';
+  return 'mut';
+}
+function imprestChipText_(r){
+  var s = r.status==='approved' ? 'Imeidhinishwa / Approved' + (r.approved!=null && r.approved!==r.total ? ' · ' + money(r.approved) : '')
+    : r.status==='rejected' ? 'Imekataliwa / Rejected'
+    : 'Inasubiri / Pending';
+  if (r.retiredAt) s += ' · retired';
+  else if (r.status==='approved') s += ' · bila retirement';
+  return s;
+}
+/* THE BALANCE HAS A DIRECTION. Positive means the traveller brings change back; negative means
+   the company owes them -- a bare signed number on a cash sheet gets read both ways. */
+function imprestBalanceCls_(r){ return r.retireBalance==null ? 'mut' : r.retireBalance>0 ? 'ok' : r.retireBalance<0 ? 'bad' : 'mut'; }
+function imprestBalanceText_(r){
+  if (r.retireBalance==null) return '—';
+  var b = Number(r.retireBalance)||0;
+  if (b>0) return money(b) + ' arudishe / to refund';
+  if (b<0) return money(-b) + ' alipwe / to reimburse';
+  return money(0);
+}
+function imprestCostingHtml_(r){
+  var line = function(k,calc,v){ return '<tr><td>'+k+'</td><td class="mut" style="font-size:11px">'+calc+'</td>'
+    + '<td class="r">'+money(v)+'</td></tr>'; };
+  var others = [1,2,3].map(function(i){ return { d:r['other'+i+'Desc'], a:r['other'+i+'Amount'] }; })
+    .filter(function(o){ return o.a>0 || o.d; });
+  return '<table style="width:100%"><tbody>'
+    + line('Nauli / Fare', money(r.fareTrips)+' × '+money(r.farePerTrip), r.fareAmount)
+    + line('Malazi / Accommodation', money(r.accomDays)+' siku × '+money(r.accomRate)+' ('+esc(r.imprestRole||'')+')', r.accomAmount)
+    + others.map(function(o){ return line(esc(o.d||'Nyingine / Other'), '', o.a); }).join('')
+    + '<tr><td><b>JUMLA / TOTAL</b></td><td></td><td class="r"><b>'+money(r.total)+'</b></td></tr>'
+    + '</tbody></table>';
+}
+/* THE PHOTOS ARE SHRUNK ON THE PHONE, before they ever reach the server -- a camera shot is
+   3-8MB and three of those per trip would fill the table in a month. Redrawn on a canvas at a
+   long side of 1024px and saved as JPEG at 0.6 (usually 60-120KB); if that is still over the
+   server's 200KB ceiling it is shrunk again, smaller, until it fits. Decoded ONCE regardless of
+   how many sizes are tried -- a phone photo is 3000x4000px, and re-decoding it per attempt is
+   how a WebView on a 1GB handset gets killed mid-shrink and the typed actuals with it. */
+var IMPREST_PHOTO_MAX = 200*1024;
+function imprestDataUrlBytes_(u){
+  var i = String(u||'').indexOf(',');
+  if (i<0) return 0;
+  var b64 = u.slice(i+1), pad = b64.slice(-2)==='=='?2:b64.slice(-1)==='='?1:0;
+  return Math.floor(b64.length*3/4) - pad;
+}
+function imprestLoadImage_(file){
+  return new Promise(function(res, rej){
+    var fr = new FileReader();
+    fr.onerror = function(){ rej(new Error('Picha haikusomeka. / Could not read the photo.')); };
+    fr.onload = function(){
+      var img = new Image();
+      img.onerror = function(){ rej(new Error('Faili si picha. / That file is not an image.')); };
+      img.onload = function(){ res(img); };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  });
+}
+/* Does this browser turn a photo the right way up by itself? An Android System WebView older
+   than Chromium 81 draws the camera's raw pixels sideways and, once re-encoded here, they stay
+   sideways for every reader after -- so only a browser that fails this test pays to read the
+   EXIF orientation tag itself, below. */
+function imprestAutoOrients_(){ try { return !!(window.CSS && CSS.supports && CSS.supports('image-orientation','from-image')); } catch(e){ return false; } }
+function imprestPhotoOrientation_(file){
+  return new Promise(function(res){
+    var jpeg = /jpe?g/i.test((file&&file.type)||'') || /\.jpe?g$/i.test((file&&file.name)||'');
+    if (imprestAutoOrients_() || !file || !jpeg) { res(1); return; }
+    var fr = new FileReader();
+    fr.onerror = function(){ res(1); };
+    fr.onload = function(){
+      try {
+        var v = new DataView(fr.result), n = v.byteLength, o = 2;
+        if (n<4 || v.getUint16(0)!==0xFFD8) { res(1); return; }
+        while (o+4<=n) {
+          var marker = v.getUint16(o); o+=2;
+          if (marker===0xFFE1) {
+            var start = o+2;
+            if (start+6<=n && v.getUint32(start)===0x45786966) {
+              var tiff = start+6, little = v.getUint16(tiff)===0x4949;
+              var ifd = tiff+v.getUint32(tiff+4, little), count = v.getUint16(ifd, little);
+              for (var i=0;i<count;i++){
+                var e = ifd+2+i*12; if (e+12>n) break;
+                if (v.getUint16(e, little)===0x0112){ var t=v.getUint16(e+8, little); res(t>=1&&t<=8?t:1); return; }
+              }
+            }
+            res(1); return;
+          }
+          if ((marker&0xFF00)!==0xFF00 || marker===0xFFDA) { res(1); return; }
+          o += v.getUint16(o);
+        }
+      } catch(e) {}
+      res(1);
+    };
+    fr.readAsArrayBuffer(file.slice(0,65536));
+  });
+}
+function imprestDrawScaled_(img, maxPx, q, orient){
+  var w = img.naturalWidth||img.width, h = img.naturalHeight||img.height;
+  if (!w || !h) throw new Error('Faili si picha. / That file is not an image.');
+  var sc = Math.min(1, maxPx/Math.max(w,h,1));
+  var cw = Math.max(1,Math.round(w*sc)), ch = Math.max(1,Math.round(h*sc));
+  var swap = orient>=5 && orient<=8;
+  var c = document.createElement('canvas'); c.width = swap?ch:cw; c.height = swap?cw:ch;
+  var ctx = c.getContext('2d');
+  if (!ctx) throw new Error('Simu haina kumbukumbu ya kutosha kupunguza picha hii. / The phone ran out of memory shrinking this photo.');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,c.width,c.height);  // a transparent PNG receipt must not turn black as JPEG
+  switch(orient){
+    case 2: ctx.transform(-1,0,0,1,cw,0); break;
+    case 3: ctx.transform(-1,0,0,-1,cw,ch); break;
+    case 4: ctx.transform(1,0,0,-1,0,ch); break;
+    case 5: ctx.transform(0,1,1,0,0,0); break;
+    case 6: ctx.transform(0,1,-1,0,ch,0); break;
+    case 7: ctx.transform(0,-1,-1,0,ch,cw); break;
+    case 8: ctx.transform(0,-1,1,0,0,cw); break;
+  }
+  ctx.drawImage(img,0,0,cw,ch);
+  return c.toDataURL('image/jpeg', q);
+}
+function imprestShrinkForReceipt_(file){
+  var steps = [[1024,0.6],[800,0.5],[640,0.42],[480,0.35]];
+  return Promise.all([imprestLoadImage_(file), imprestPhotoOrientation_(file)]).then(function(r){
+    for (var i=0;i<steps.length;i++){
+      var u = imprestDrawScaled_(r[0], steps[i][0], steps[i][1], r[1]);
+      if (imprestDataUrlBytes_(u) <= IMPREST_PHOTO_MAX) return u;
+    }
+    throw new Error('Picha ni kubwa mno hata baada ya kupunguzwa. / The photo is too large even after shrinking.');
+  });
+}
+var IMPREST_PAY_MODES = ['MPESA','CRDB','CASH','NMB','AIRTEL MONEY','TIGO PESA','HALOPESA'];
+
+/* THE RECEIPTS, fetched only when somebody asks to see them -- never dragged along with a list. */
+function imprestPhotosDrawer_(id){
+  drawer('<h3>Picha za risiti / Receipt photos</h3><div class="sk"></div>');
+  srv('imprestPhotos', { id: id }).then(function(d){
+    var ps = (d.photos||[]).filter(function(p){ return /^data:image\/(jpeg|jpg|png|webp);base64,/.test(String(p.data||'')); });
+    drawer('<h3>Picha za risiti / Receipt photos</h3>'
+      + (ps.length ? ps.map(function(p){
+          return '<div style="margin:8px 0"><img src="'+esc(p.data)+'" alt="risiti '+p.seq+'" '
+            + 'style="max-width:100%;border-radius:8px;border:1px solid var(--line)">'
+            + '<div class="mut" style="font-size:10px">#'+p.seq+' · '+Math.round((p.bytes||0)/1024)+'KB</div></div>';
+        }).join('')
+        : '<div class="mut">Hakuna picha. / No photos.</div>'));
+  }).catch(function(e){ drawer('<div class="msg bad">'+esc(String(e.message||e))+'</div>'); });
+}
+
+/* EVERYTHING ABOUT ONE REQUEST, the way the paper form would read it -- opened by tapping a
+   row on any of the three panes. `opts.canRetire` (the requester's own approved, unretired
+   trip) and `opts.canFund` (an accountant holding imprep, on an approved row) each add one
+   more control at the bottom; neither assumes the other. */
+function imprestDetailsDrawer_(r, opts){
+  opts = opts || {};
+  var kv = function(k,v){ return '<tr><td class="mut" style="font-size:11px;white-space:nowrap">'+k+'</td><td>'+v+'</td></tr>'; };
+  var t = r.retirement;
+  drawer('<h3>Imprest — '+esc(r.fullName||r.staffName||'')+'</h3>'
+    + '<div class="sub"><span class="chip '+imprestChipCls_(r)+'">'+esc(imprestChipText_(r))+'</span></div>'
+    + '<table style="width:100%;margin-top:8px"><tbody>'
+    + kv('Aliyeomba / Requested by', esc(r.staffName||'—')+' <span class="mut">'+esc(r.staffRole||'')+'</span>')
+    + kv('Simu / Mobile', esc(r.mobile||'—'))
+    + kv('Jina la akaunti / Recipient', esc(r.recipientName||r.fullName||'—'))
+    + kv('Barua pepe / Email', esc(r.email||'—'))
+    + kv('Wadhifa / Role', esc(r.imprestRole||'—'))
+    + kv('Malipo / Pay mode', esc(r.payMode||'—')+' · '+esc(r.accountNo||'—'))
+    + kv('Safari / Travel', esc(r.travelDate||'—')+' · '+esc(r.destination||'—'))
+    + kv('Madhumuni / Purpose', '<div style="white-space:pre-wrap">'+esc(r.purpose||'—')+'</div>')
+    + '</tbody></table>'
+    + '<h4 style="margin:12px 0 4px">Gharama / Costing</h4>'+imprestCostingHtml_(r)
+    + (r.status!=='pending'
+      ? '<h4 style="margin:12px 0 4px">Uamuzi wa GM / GM decision</h4><div>'
+        + (r.approved!=null?'<b>'+money(r.approved)+'</b> · ':'')+esc(imprestChipText_(r))
+        + '<div class="mut" style="font-size:11px">'+esc(r.decidedBy||'')
+        + (r.decidedViaEmail?' (barua pepe / by email)':'')+'</div>'
+        + (r.comment?'<div style="white-space:pre-wrap">'+esc(r.comment)+'</div>':'')+'</div>'
+      : '')
+    + (r.status==='approved'
+      ? '<h4 style="margin:12px 0 4px">Kilicholipwa / Funded</h4><div>'
+        + (r.fundedAmount!=null ? '<b>'+money(r.fundedAmount)+'</b> · '+esc(r.fundedBy||'') : '<span class="mut">bado / not yet</span>')+'</div>'
+      : '')
+    + (r.retiredAt
+      ? '<h4 style="margin:12px 0 4px">Retirement</h4>'
+        + (t ? '<table style="width:100%"><tbody>'
+            + '<tr><td>Nauli / Fare</td><td class="r">'+money(t.fare)+'</td></tr>'
+            + '<tr><td>Malazi / Accommodation</td><td class="r">'+money(t.accom)+'</td></tr>'
+            + '<tr><td>'+esc(r.other1Desc||'Nyingine 1')+'</td><td class="r">'+money(t.other1)+'</td></tr>'
+            + '<tr><td>'+esc(r.other2Desc||'Nyingine 2')+'</td><td class="r">'+money(t.other2)+'</td></tr>'
+            + '<tr><td>'+esc(r.other3Desc||'Nyingine 3')+'</td><td class="r">'+money(t.other3)+'</td></tr>'
+            + '<tr><td><b>JUMLA HALISI / ACTUAL</b></td><td class="r"><b>'+money(t.total)+'</b></td></tr>'
+            + '</tbody></table>'
+            + (t.notes?'<div style="white-space:pre-wrap;font-size:12px">'+esc(t.notes)+'</div>':'')
+          : '<div>Halisi / Actual: <b>'+money(r.retireTotal||0)+'</b></div>')
+        + '<div>Salio / Balance: <span class="chip '+imprestBalanceCls_(r)+'">'+esc(imprestBalanceText_(r))+'</span></div>'
+        + '<button class="btn sm ghost" style="margin-top:6px" data-impp="'+esc(r.id)+'">Picha za risiti / Receipt photos</button>'
+      : (opts.canRetire && r.mine && r.status==='approved'
+          ? '<button class="btn w" style="margin-top:10px" id="imRetireBtn" data-imr-id="'+esc(r.id)+'">Jaza retirement / File retirement</button>'
+          : ''))
+    + (opts.canFund && r.status==='approved'
+      ? '<h4 style="margin:12px 0 4px">Weka kilicholipwa / Record what was funded</h4>'
+        + '<div class="fld"><label>Kiasi kilicholipwa (TZS) / Funded amount</label>'
+        + '<input type="number" id="imfAmt" min="0" step="1" value="'+(r.fundedAmount!=null?r.fundedAmount:'')+'"></div>'
+        + '<button class="btn sm" id="imfSave" data-imf-id="'+esc(r.id)+'">Hifadhi / Save</button>'
+      : ''));
+  var pb = $('#drawer [data-impp]'); if (pb) pb.onclick = function(){ imprestPhotosDrawer_(r.id); };
+  var fs = $('#imfSave');
+  if (fs) fs.onclick = function(){
+    var b = fs; b.disabled = true;
+    srv('imprestFund', { id: fs.getAttribute('data-imf-id'), amount: $('#imfAmt').value })
+      .then(function(){ toast('Kimehifadhiwa / Saved'); closeDrawer(); render({ force:true }); })
+      .catch(function(e){ b.disabled = false; toast(String(e.message||e), true); });
+  };
+  var rb = $('#imRetireBtn'); if (rb) rb.onclick = function(){ imprestRetireDrawer_(r); };
+}
+
+/* THE RETIREMENT DRAWER. Actuals start at what was asked for -- most trips cost about what
+   they were costed at, and the traveller edits the lines that differed. Photos are shrunk AS
+   they are chosen, so the size is known before Send rather than discovered by a slow upload. */
+var IMPREST_RETIRE_INFLIGHT = {};
+function imprestRetireDrawer_(r){
+  if (IMPREST_RETIRE_INFLIGHT[r.id]) { toast('Retirement ya safari hii inatumwa bado — subiri ijibiwe. / This retirement is still being sent; wait for the answer.', true); return; }
+  var photos = [null,null,null], seq = [0,0,0], pending = 0, invalid = false;
+  drawer('<h3>Retirement — '+esc(r.destination||r.travelDate||'')+'</h3>'
+    + '<div class="sub">Imeidhinishwa <b>'+money(r.approved||0)+'</b> · safari '+esc(r.travelDate||'')+'</div>'
+    + '<div class="mut" style="font-size:11px;margin:4px 0 8px">Andika gharama HALISI ulizotumia, kisha weka picha za risiti (hadi 3). '
+    + '/ Enter what you ACTUALLY spent, then attach receipt photos (up to 3).</div>'
+    + '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:120px" class="fld"><label>Nauli / Fare (iliombwa '+money(r.fareAmount)+')</label><input id="irFare" type="number" min="0" step="1" value="'+(r.fareAmount||0)+'"></div>'
+    + '<div style="flex:1;min-width:120px" class="fld"><label>Malazi / Accommodation (iliombwa '+money(r.accomAmount)+')</label><input id="irAccom" type="number" min="0" step="1" value="'+(r.accomAmount||0)+'"></div>'
+    + '</div>'
+    + [1,2,3].map(function(i){
+        var dsc = r['other'+i+'Desc'], a = r['other'+i+'Amount']||0;
+        return '<div class="fld"><label>'+esc(dsc||('Nyingine '+i+' / Other '+i))+' (iliombwa '+money(a)+')</label>'
+          + '<input id="irO'+i+'" type="number" min="0" step="1" value="'+a+'"></div>';
+      }).join('')
+    + '<div style="display:flex;justify-content:space-between;margin:8px 0 2px"><b>JUMLA HALISI / ACTUAL</b><b id="irTotal">0</b></div>'
+    + '<div style="display:flex;justify-content:space-between;margin:0 0 8px"><span>Salio / Balance</span><span id="irBal">—</span></div>'
+    + '<div class="fld"><label>Maelezo / Notes</label><textarea id="irNotes" rows="2"></textarea></div>'
+    + [1,2,3].map(function(i){
+        return '<div class="fld"><label>Picha ya risiti '+i+' / Receipt photo '+i+(i===1?' *':'')+'</label>'
+          + '<input id="irP'+i+'" type="file" accept="image/*">'
+          + '<div id="irV'+i+'" class="mut" style="font-size:11px;margin:-4px 0 6px"></div></div>';
+      }).join('')
+    + '<button class="btn w" id="irSend" style="margin-top:10px">Wasilisha retirement / File retirement</button>');
+  var num = function(id){ var el=$(id), v=el?el.value:''; if (v===''||v==null) return 0; var n=Number(v);
+    if (!isFinite(n)||Math.floor(n)!==n||n<0){ invalid=true; if (el) el.style.borderColor='var(--bad)'; return 0; }
+    if (el) el.style.borderColor=''; return n; };
+  var gate = function(){ var b=$('#irSend'); if (b) b.disabled = pending>0||invalid; };
+  var recalc = function(){
+    invalid = false;
+    var t = num('#irFare')+num('#irAccom')+num('#irO1')+num('#irO2')+num('#irO3');
+    $('#irTotal').textContent = invalid?'—':money(t);
+    var bal = (r.approved||0)-t;
+    $('#irBal').innerHTML = invalid?'—':('<span class="chip '+(bal>0?'ok':bal<0?'bad':'mut')+'">'
+      +money(bal>0?bal:-bal)+(bal>0?' arudishe / refund':bal<0?' alipwe / reimburse':'')+'</span>');
+    gate();
+  };
+  ['#irFare','#irAccom','#irO1','#irO2','#irO3'].forEach(function(id){ var el=$(id); if (el) el.oninput=recalc; });
+  recalc();
+  [1,2,3].forEach(function(i){
+    var inp = $('#irP'+i), v = $('#irV'+i);
+    inp.onchange = function(){
+      var f = inp.files && inp.files[0];
+      var my = ++seq[i-1];
+      photos[i-1] = null;
+      if (!f) { v.innerHTML=''; gate(); return; }
+      pending++; gate();
+      v.textContent = 'inapunguzwa… / shrinking…';
+      imprestShrinkForReceipt_(f).then(function(u){
+        if (my!==seq[i-1]) return;
+        photos[i-1] = u;
+        v.innerHTML = '<img src="'+esc(u)+'" style="max-height:80px;border-radius:6px;border:1px solid var(--line);margin-top:4px"> '
+          + Math.round(imprestDataUrlBytes_(u)/1024)+'KB (ilikuwa '+Math.round(f.size/1024)+'KB)';
+      }, function(e){
+        if (my!==seq[i-1]) return;
+        v.textContent = String(e.message||e); inp.value='';
+      }).then(function(){ pending--; gate(); });
+    };
+  });
+  $('#irSend').onclick = function(){
+    var b = this;
+    var got = photos.filter(Boolean);
+    if (!got.length) { toast('Weka angalau picha moja ya risiti. / Attach at least one receipt photo.', true); return; }
+    if (got.length<3 && !confirm('Umeweka picha '+got.length+' kati ya 3. Wasilisha hivyo? / Only '+got.length+' of 3 photos. File anyway?')) return;
+    b.disabled = true; IMPREST_RETIRE_INFLIGHT[r.id] = true;
+    srv('imprestRetire', { id:r.id, fareActual:$('#irFare').value, accomActual:$('#irAccom').value,
+      other1Actual:$('#irO1').value, other2Actual:$('#irO2').value, other3Actual:$('#irO3').value,
+      notes:$('#irNotes').value, photos:got }).then(function(d){
+        delete IMPREST_RETIRE_INFLIGHT[r.id];
+        toast('Retirement imewasilishwa · halisi '+money(d.total)+' · salio '+money(d.balance));
+        closeDrawer(); render({ force:true });
+      }, function(e){ delete IMPREST_RETIRE_INFLIGHT[r.id]; b.disabled=false; toast(String(e.message||e), true); });
+  };
+}
+
+/* ---------- OMBA IMPREST: the requester's own dashboard, the form, then their history ---------- */
+VIEWS.impreq = function(){
+  return srv('imprestMine', {}).then(function(d){
+    if (d.notReady) { HEAD = imprestNotReady_(); S.rows=[]; S.cols=[]; ONROW=null; return; }
+    var rows = d.rows||[], roles = d.roles||[];
+    var appr = rows.filter(function(r){ return r.status==='approved'; });
+    var toRetire = appr.filter(function(r){ return !r.retiredAt; });
+    var spent = appr.reduce(function(s,r){ return s+(r.retiredAt?(r.retireTotal||0):0); }, 0);
+    var toRefund = appr.reduce(function(s,r){ return s+(r.retireBalance!=null&&r.retireBalance>0?r.retireBalance:0); }, 0);
+    /* THE PERSONAL DASHBOARD -- "dashboards of applications per signed in user". Built here,
+       from the same rows the history table below already holds: no second read for it. */
+    HEAD = '<div class="kpis">'
+      + kpi('Maombi yangu / My requests', money(rows.length))
+      + kpi('Yanasubiri / Pending', money(rows.filter(function(r){ return r.status==='pending'; }).length), '', rows.some(function(r){ return r.status==='pending'; })?'warn':'')
+      + kpi('Yameidhinishwa / Approved', money(appr.length), money(appr.reduce(function(s,r){ return s+(r.approved||0); },0))+' TZS', 'good')
+      + kpi('Bila retirement / Not retired', money(toRetire.length), '', toRetire.length?'warn':'')
+      + kpi('Nimetumia / Spent (retired)', money(spent))
+      + kpi('Ya kurejeshwa / To refund', money(toRefund), '', toRefund?'good':'')
+      + '</div>'
+      + (roles.length ? '' : '<div class="note bad" style="margin:8px 0">Mwidhinishaji bado hajaweka viwango vya wadhifa (malazi kwa siku). Muombe aweke kwenye Idhini ya imprest → Viwango. '
+        + '/ The approver has not set any role rates yet — ask them to add one under Imprest approval → Rates.</div>')
+      + '<div class="card"><div class="card-h">Ombi jipya / New imprest request'
+        + '<span class="sub">chanya = gharama halisi / positive costs, seva inahesabu upya kwa kiwango cha wadhifa / the server recomputes at the role\'s own rate</span></div>'
+        + '<div class="cleanbox">'
+        + '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:200px" class="fld"><label>Jina kamili / Full name *</label><input id="imqName" value="'+esc(S.me.name||'')+'"></div>'
+        + '<div style="flex:1;min-width:160px" class="fld"><label>Simu / Mobile</label><input id="imqMobile" placeholder="07…"></div>'
+        + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:200px" class="fld"><label>Jina la akaunti (kama ni tofauti) / Recipient account name</label><input id="imqRecip"></div>'
+        + '<div style="flex:1;min-width:200px" class="fld"><label>Barua pepe yako / Your email *</label><input id="imqEmail" type="email"></div>'
+        + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:160px" class="fld"><label>Wadhifa / Role *</label><select id="imqRole">'
+          + '<option value="">— chagua / choose —</option>'
+          + roles.map(function(r){ return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'">'+esc(r.role)+' · malazi '+money(r.rate)+'/siku</option>'; }).join('')
+          + '</select></div>'
+        + '<div style="flex:1;min-width:140px" class="fld"><label>Njia ya malipo / Payment mode</label><select id="imqPay">'
+          + IMPREST_PAY_MODES.map(function(p){ return '<option>'+esc(p)+'</option>'; }).join('')+'</select></div>'
+        + '<div style="flex:1;min-width:160px" class="fld"><label>Namba ya akaunti / Account No or MOMO</label><input id="imqAcct"></div>'
+        + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
+        + '<div style="flex:1;min-width:140px" class="fld"><label>Tarehe ya safari / Travel date *</label><input id="imqDate" type="date" value="'+esc(today())+'"></div>'
+        + '<div style="flex:2;min-width:200px" class="fld"><label>Mahali / Destination</label><input id="imqDest"></div>'
+        + '</div>'
+        + '<h4 style="margin:10px 0 4px">Gharama / Expense items</h4>'
+        + '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+        + '<div style="flex:1;min-width:110px" class="fld"><label>Nauli: idadi ya safari / Fare trips</label><input id="imqTrips" type="number" min="0" step="1" value="0"></div>'
+        + '<div style="flex:1;min-width:130px" class="fld"><label>Gharama ya safari moja / Cost per trip</label><input id="imqTrip" type="number" min="0" step="1" value="0"></div>'
+        + '<div style="flex:1;min-width:110px" class="fld"><label>= Nauli / Fare</label><input id="imqFare" readonly value="0"></div>'
+        + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+        + '<div style="flex:1;min-width:110px" class="fld"><label>Malazi: siku / Nights</label><input id="imqDays" type="number" min="0" step="1" value="0"></div>'
+        + '<div style="flex:1;min-width:130px" class="fld"><label>Kiwango kwa siku / Rate per day</label><input id="imqRate" readonly value="0"></div>'
+        + '<div style="flex:1;min-width:110px" class="fld"><label>= Malazi / Accommodation</label><input id="imqAccom" readonly value="0"></div>'
+        + '</div>'
+        + [1,2,3].map(function(i){
+            return '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+              + '<div style="flex:2;min-width:180px" class="fld"><label>Nyingine '+i+' / Other '+i+' — maelezo</label><input id="imqO'+i+'d" placeholder="mf. chakula, mafuta…"></div>'
+              + '<div style="flex:1;min-width:110px" class="fld"><label>Kiasi / Amount</label><input id="imqO'+i+'a" type="number" min="0" step="1" value="0"></div>'
+              + '</div>';
+          }).join('')
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px;font-size:15px"><b>JUMLA / TOTAL</b><b id="imqTotal">0</b></div>'
+        + '<div class="fld"><label>Madhumuni ya safari / Objectives — purpose of trip *</label><textarea id="imqPurpose" rows="3"></textarea></div>'
+        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+(roles.length?'':' disabled')+'>Tuma ombi / Submit request</button>'
+        + '<div id="imqOut" class="note" style="display:none;margin-top:8px"></div>'
+        + '</div></div>';
+    S.rows = rows;
+    S.cols = [col('at','Tarehe / Timestamp','dt'), col('travelDate','Safari / Travel','date'), col('destination','Mahali / Destination'),
+      {key:'total', label:'Jumla / Total', kind:'money'},
+      {key:'status', label:'Hali / Status', kind:'chip', chip:imprestChipCls_, get:imprestChipText_},
+      {key:'approved', label:'Imeidhinishwa / Approved', kind:'money'},
+      {key:'retireTotal', label:'Halisi / Actual', kind:'money'},
+      col('comment','Maoni / Comment')];
+    ONROW = function(r){ imprestDetailsDrawer_(r, { canRetire:true }); };
+  });
+};
+
+/* ---------- IDHINI YA IMPREST: the GM's queue, the rate table, and the decision ---------- */
+var IMPQ_STATE = 'pending';
+VIEWS.impappr = function(){
+  return Promise.all([srv('imprestQueue', { state: IMPQ_STATE }), srv('imprestRoles', {})]).then(function(a){
+    var d = a[0], roles = (a[1].roles||[]), allRoles = (a[1].all||[]);
+    if (d.notReady) { HEAD = imprestNotReady_(); S.rows=[]; S.cols=[]; ONROW=null; return; }
+    var rows = d.rows||[], c = d.counts||{};
+    var pick = function(k){ return 'go(\'impappr\')'; };
+    HEAD = '<div class="kpis">'
+      + kpi('Yanasubiri / Pending', money(c.pending||0), '', c.pending?'bad':'')
+      + kpi('Yameidhinishwa / Approved', money(c.approved||0), '', 'good')
+      + kpi('Yamekataliwa / Rejected', money(c.rejected||0))
+      + kpi('Bila retirement / Not retired', money(c.toRetire||0), '', c.toRetire?'warn':'')
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">'
+      + ['', 'pending', 'decided', 'toRetire'].map(function(k){
+          var label = k===''?'Yote / All':k==='pending'?'Yanasubiri / Pending':k==='decided'?'Yaliyoamuliwa / Decided':'Bila retirement / Not retired';
+          return '<button class="btn sm'+(IMPQ_STATE===k?'':' ghost')+'" data-impq="'+k+'">'+label+'</button>';
+        }).join('')
+      + '</div>'
+      + '<div class="card" style="padding:12px;margin:10px 0"><div class="card-h">Viwango vya malazi / Accommodation rates'
+      + '<span class="sub">kiwango kwa siku kwa kila wadhifa / a nightly rate per role — mwombaji anachagua, seva inazidisha / the requester picks it, the server multiplies</span></div>'
+      + (roles.length
+        ? '<div class="scroll"><table><thead><tr><th>Wadhifa / Role</th><th class="r">TZS / siku</th><th class="noxl"></th></tr></thead><tbody>'
+          + roles.map(function(r){ return '<tr><td>'+esc(r.role)+'</td><td class="r">'+money(r.rate)+'</td>'
+            + '<td class="r noxl" style="white-space:nowrap"><button class="btn sm ghost" data-rle="'+esc(r.role)+'" data-rate="'+r.rate+'">Badili</button> '
+            + '<button class="btn sm ghost danger" data-rld="'+esc(r.role)+'">Futa</button></td></tr>'; }).join('')
+          + '</tbody></table></div>' : '<div class="mut">Hakuna wadhifa bado. / No roles yet.</div>')
+      + (function(){
+          var opts = allRoles.slice();
+          roles.forEach(function(r){ if (opts.indexOf(r.role)<0) opts.push(r.role); });
+          opts.sort();
+          return '<div class="row" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+            + '<select id="rlRole" style="flex:2;min-width:160px"><option value="">Chagua wadhifa / choose a role</option>'
+            + opts.map(function(x){ return '<option value="'+esc(x)+'">'+esc(x)+'</option>'; }).join('')+'</select>'
+            + '<input id="rlRate" style="flex:1;min-width:110px" type="number" min="0" step="1" placeholder="TZS kwa siku">'
+            + '<button class="btn sm" id="rlAdd">Hifadhi / Save</button></div>'
+            + '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa haupo? Muongeze kwenye Misimbo/Nafasi kisha rudi hapa. '
+            + '/ Role not listed? Add it under Teams & Staff / Access codes first, then come back.</div>';
+        })()
+      + '</div>';
+    S.rows = rows;
+    S.cols = [col('at','Tarehe / Timestamp','dt'), col('fullName','Jina / Name'), col('imprestRole','Wadhifa / Role'),
+      col('travelDate','Safari / Travel','date'), col('destination','Mahali / Destination'),
+      {key:'total', label:'Jumla / Total', kind:'money'},
+      {key:'status', label:'Hali / Status', kind:'chip', chip:imprestChipCls_, get:imprestChipText_},
+      col('comment','Maoni / Comment')];
+    ONROW = function(r){
+      if (r.status==='pending') { imprestDecideDrawer_(r); return; }
+      imprestDetailsDrawer_(r, {});
+    };
+  }).catch(function(e){ HEAD = '<div class="msg bad">'+esc(String(e.message||e))+'</div>'; S.rows=[]; S.cols=[]; });
+};
+/* ONE DRAWER, BOTH ANSWERS -- capped at what was asked; a comment is required to reject. The
+   same imprestDecide the emailed one-tap link calls. */
+function imprestDecideDrawer_(r){
+  drawer('<h3>Ombi la '+esc(r.fullName||r.staffName||'—')+'</h3>'
+    + '<div class="sub">'+esc(r.staffName||'')+' · '+esc(r.imprestRole||'')+' · safari '+esc(r.travelDate||'—')+' · '+esc(r.destination||'')+'</div>'
+    + (r.mine ? '<div class="mut" style="font-size:11.5px;margin:6px 0 2px">Hili ni ombi lako mwenyewe. / This is your own request.</div>' : '')
+    + '<div style="margin:8px 0"><b>Madhumuni / Purpose:</b><div style="white-space:pre-wrap;font-size:12.5px">'+esc(r.purpose||'—')+'</div></div>'
+    + imprestCostingHtml_(r)
+    + '<div class="mut" style="font-size:11px">Malipo: '+esc(r.payMode||'—')+' · '+esc(r.accountNo||'—')+' · '+esc(r.recipientName||r.fullName||'')+'</div>'
+    + '<div class="fld"><label>Kiasi cha kuidhinisha / Amount to approve (≤ '+money(r.total)+')</label>'
+    + '<input id="imdAmt" type="number" min="1" max="'+(r.total||0)+'" step="1" value="'+(r.total||0)+'"></div>'
+    + '<div class="fld"><label>Maoni / Comment</label><textarea id="imdCmt" rows="3" placeholder="Lazima ukikataa. / Required when rejecting."></textarea></div>'
+    + '<button class="btn w" id="imdOk" style="margin-top:8px">Idhinisha / Approve</button>'
+    + '<button class="btn w ghost danger" id="imdNo" style="margin-top:6px">Kataa / Reject</button>');
+  var send = function(approve){
+    if (approve){ var amt=$('#imdAmt').value; if (amt===''||!(Number(amt)>0)){ toast('Andika kiasi cha kuidhinisha. / Enter the amount to approve.', true); return; } }
+    var b=$('#imdOk'), n=$('#imdNo'); if (b) b.disabled=true; if (n) n.disabled=true;
+    srv('imprestDecide', { id:r.id, approve:approve, approvedAmount: approve?$('#imdAmt').value:null, comment:$('#imdCmt').value })
+      .then(function(){ toast(approve?'Imeidhinishwa / Approved':'Imekataliwa / Rejected'); closeDrawer(); render({ force:true }); })
+      .catch(function(e){ if (b) b.disabled=false; if (n) n.disabled=false; toast(String(e.message||e), true); });
+  };
+  $('#imdOk').onclick = function(){ send(true); };
+  $('#imdNo').onclick = function(){ send(false); };
+}
+
+/* ---------- RIPOTI YA IMPREST: the whole-company dashboard, and where funding is recorded ---------- */
+VIEWS.imprep = function(){
+  var q = { from: S.args.from||'', to: S.args.to||'', status: S.args.status||'' };
+  return srv('imprestReport', q).then(function(d){
+    if (d.notReady) { HEAD = imprestNotReady_(); S.rows=[]; S.cols=[]; ONROW=null; return; }
+    var rows = d.rows||[], t = d.totals||{};
+    /* THE OVERALL DASHBOARD -- "and overall in reports". Server-computed over the WHOLE
+       period, not just what the filter below is narrowing the table to. */
+    HEAD = '<div class="kpis">'
+      + kpi('Maombi / Requests', money(t.count||0), 'kwenye kipindi hiki / in this period')
+      + kpi('Yanasubiri / Pending', money(t.pending||0), '', t.pending?'bad':'')
+      + kpi('Yameidhinishwa / Approved', money(t.approvedAmount||0), money(t.approved||0)+' maombi / requests', 'good')
+      + kpi('Kimelipwa / Funded', money(t.fundedAmount||0), money(t.funded||0)+' maombi / requests')
+      + kpi('Bado / Not funded', money(t.toFund||0), '', t.toFund?'warn':'')
+      + kpi('Bila retirement / Not retired', money(t.toRetire||0), '', t.toRetire?'warn':'')
+      + kpi('Kimetumika / Spent', money(t.spent||0), money(t.retired||0)+' retirement')
+      + kpi('Ya kurejeshwa / To refund', money(t.toRefund||0), '', t.toRefund?'good':'')
+      + kpi('Ya kulipwa / To reimburse', money(t.toReimburse||0), '', t.toReimburse?'bad':'')
+      + '</div>'
+      + bar('<input type="date" data-arg="from" value="'+esc(q.from)+'">'
+          + '<input type="date" data-arg="to" value="'+esc(q.to)+'">'
+          + '<select data-arg="status"><option value="">Hali zote / All statuses</option>'
+          + [['pending','Yanasubiri / Pending'],['approved','Yameidhinishwa / Approved'],['rejected','Yamekataliwa / Rejected'],
+             ['toFund','Bado kulipwa / Not funded'],['toRetire','Bila retirement / Not retired'],['retired','Zenye retirement / Retired']]
+            .map(function(k){ return '<option value="'+k[0]+'"'+(q.status===k[0]?' selected':'')+'>'+k[1]+'</option>'; }).join('')
+          + '</select>');
+    S.rows = rows;
+    S.cols = [col('at','Tarehe / Timestamp','dt'), col('fullName','Jina / Name'), col('imprestRole','Wadhifa / Role'),
+      col('travelDate','Safari / Travel','date'), col('destination','Mahali / Destination'),
+      {key:'total', label:'Jumla / Requested', kind:'money'},
+      {key:'status', label:'Hali / Status', kind:'chip', chip:imprestChipCls_, get:imprestChipText_},
+      {key:'approved', label:'Imeidhinishwa / Approved', kind:'money'},
+      {key:'fundedAmount', label:'Kimelipwa / Funded', kind:'money'},
+      {key:'retireTotal', label:'Halisi / Actual', kind:'money'},
+      {key:'retireBalance', label:'Salio / Balance', kind:'chip', chip:imprestBalanceCls_, get:imprestBalanceText_},
+      col('decidedBy','Aliyeamua / Decided by'), col('comment','Maoni / Comment')];
+    ONROW = function(r){ imprestDetailsDrawer_(r, { canFund:true }); };
+  });
+};
+
 VIEWS.abnormal = function(){
   return srv('abnormal').then(function(d){
     var amt = d.rows.reduce(function(s,r){ return s+(Number(r.paid)||0); }, 0);
@@ -9471,6 +10023,22 @@ function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
 function drawView_(){
   if (S.cols && S.cols.length) paint(); else paintHeadOnly();
   wireForms();
+  imprestOpenDeepLink_();
+}
+/* THE EMAIL'S DEEP LINK, ACTED ON ONCE. Runs after every paint, not only the first, because
+   the imprest panes' own data loads asynchronously and this has to wait for it; it is a no-op
+   on every call after the first since IMPREST_DEEPLINK_ID is cleared the moment the row is
+   found (or the view moves on to something else, which abandons it rather than trying again
+   from a table that will never contain it). */
+function imprestOpenDeepLink_(){
+  if (!IMPREST_DEEPLINK_ID) return;
+  if (['impappr','imprep','impreq'].indexOf(S.view) < 0) { IMPREST_DEEPLINK_ID = null; return; }
+  var row = (S.rows||[]).filter(function(r){ return String(r.id)===IMPREST_DEEPLINK_ID; })[0];
+  // Not found -- most likely the id is stale or wrong; nothing to open, and nothing to retry.
+  if (!row) { IMPREST_DEEPLINK_ID = null; return; }
+  var id = IMPREST_DEEPLINK_ID; IMPREST_DEEPLINK_ID = null;
+  if (S.view==='impappr' && row.status==='pending') imprestDecideDrawer_(row);
+  else imprestDetailsDrawer_(row, { canRetire: S.view==='impreq', canFund: S.view==='imprep' });
 }
 function render(opts){
   clearInterval(S.presentTimer);
@@ -10141,6 +10709,92 @@ function wireForms(){
   });
   var no = document.getElementById('newOfficer');
   if (no) no.onclick = function(){ officerForm(null); };
+
+  /* IMPREST: the request form's live preview, then Send -- the server recomputes every figure
+     from the role's own rate regardless of what this preview shows, so a stale form (a rate
+     changed while it sat open) can never submit a total nobody meant. */
+  (function(){
+    var send = document.getElementById('imqSend');
+    if (!send) return;
+    var invalid = false;
+    var num = function(id){ var el=document.getElementById(id), v=el?el.value:''; if (v===''||v==null) return 0; var n=Number(v);
+      if (!isFinite(n)||Math.floor(n)!==n||n<0){ invalid=true; if (el) el.style.borderColor='var(--bad)'; return 0; }
+      if (el) el.style.borderColor=''; return n; };
+    var rateOf = function(){
+      var sel = document.getElementById('imqRole');
+      var opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+      return opt ? (Number(opt.getAttribute('data-rate'))||0) : 0;
+    };
+    var recalc = function(){
+      invalid = false;
+      var rate = rateOf();
+      var fare = num('imqTrips')*num('imqTrip'), accom = num('imqDays')*rate;
+      var others = num('imqO1a')+num('imqO2a')+num('imqO3a');
+      var rateEl = document.getElementById('imqRate'), fareEl = document.getElementById('imqFare'), accomEl = document.getElementById('imqAccom');
+      if (rateEl) rateEl.value = money(rate); if (fareEl) fareEl.value = money(fare); if (accomEl) accomEl.value = money(accom);
+      document.getElementById('imqTotal').textContent = invalid?'—':money(fare+accom+others);
+      send.disabled = invalid;
+    };
+    ['imqRole','imqTrips','imqTrip','imqDays','imqO1a','imqO2a','imqO3a'].forEach(function(id){
+      var el = document.getElementById(id); if (el){ el.oninput=recalc; el.onchange=recalc; }
+    });
+    recalc();
+    send.onclick = function(){
+      var b = send; b.disabled = true;
+      var say = function(html, bad){ var o=document.getElementById('imqOut'); o.style.display='block'; o.className='note'+(bad?' bad':''); o.innerHTML=html; };
+      var g = function(id){ var el=document.getElementById(id); return el?el.value:''; };
+      srv('imprestRequest', {
+        fullName: g('imqName'), mobile: g('imqMobile'), recipientName: g('imqRecip'), email: g('imqEmail'),
+        imprestRole: g('imqRole'), payMode: g('imqPay'), accountNo: g('imqAcct'),
+        travelDate: g('imqDate'), destination: g('imqDest'),
+        fareTrips: g('imqTrips'), farePerTrip: g('imqTrip'), accomDays: g('imqDays'),
+        other1Desc: g('imqO1d'), other1Amount: g('imqO1a'), other2Desc: g('imqO2d'), other2Amount: g('imqO2a'),
+        other3Desc: g('imqO3d'), other3Amount: g('imqO3a'), purpose: g('imqPurpose'),
+      }).then(function(d){
+        say((d.emailed ? '✅ ' : '⚠️ ') + 'Ombi limetumwa · ' + money(d.total) + ' TZS'
+          + (d.emailed ? ' · GM ameambiwa kwa email / GM was emailed' : ' · email haikutumwa: ' + (d.emailNote||'')), !d.emailed);
+        render({ force:true });
+      }).catch(function(e){ b.disabled=false; say(String(e.message||e), true); });
+    };
+  })();
+
+  /* IDHINI YA IMPREST: the state filter above the queue, and the rate-table editor. */
+  Array.prototype.forEach.call(document.querySelectorAll('[data-impq]'), function(b){
+    b.onclick = function(){ IMPQ_STATE = b.getAttribute('data-impq'); if (S.view==='impappr') render({ force:true }); };
+  });
+  (function(){
+    var add = document.getElementById('rlAdd');
+    if (!add) return;
+    var saveRole = function(role, rate, b){
+      if (b) b.disabled = true;
+      srv('imprestRoleSave', { role:role, rate:rate })
+        .then(function(){ toast('Kiwango kimehifadhiwa / Rate saved'); render({ force:true }); })
+        .catch(function(e){ if (b) b.disabled=false; toast(String(e.message||e), true); });
+    };
+    add.onclick = function(){
+      var role = document.getElementById('rlRole').value, rate = document.getElementById('rlRate').value;
+      if (!role) { toast('Chagua wadhifa kwanza. / Choose a role first.', true); return; }
+      if (rate === '') { toast('Andika kiwango cha malazi (0 inaruhusiwa). / Enter the nightly rate (0 is allowed).', true); return; }
+      saveRole(role, rate, add);
+    };
+    Array.prototype.forEach.call(document.querySelectorAll('[data-rle]'), function(b){
+      b.onclick = function(){
+        document.getElementById('rlRole').value = b.getAttribute('data-rle');
+        document.getElementById('rlRate').value = b.getAttribute('data-rate');
+        document.getElementById('rlRate').focus();
+      };
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-rld]'), function(b){
+      b.onclick = function(){
+        var role = b.getAttribute('data-rld');
+        if (!confirm('Futa wadhifa ' + role + '? Maombi ya zamani hayabadiliki. / Delete role ' + role + '? Old requests keep their stamped rate.')) return;
+        b.disabled = true;
+        srv('imprestRoleDelete', { role: role })
+          .then(function(){ toast('Imefutwa / Deleted'); render({ force:true }); })
+          .catch(function(e){ b.disabled=false; toast(String(e.message||e), true); });
+      };
+    });
+  })();
 }
 
 /* A field officer account. The phone number IS the login name -- it is also what keys their

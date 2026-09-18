@@ -88,6 +88,11 @@ class FakeQuery {
   // PostgREST spells "everything with a value here" as .not(col, 'is', null) -- the idiom for
   // a delete-all, which needs a filter to be accepted at all.
   not(k, op, v) { this.filters.push(r => !(op === 'is' && v === null ? r[k] == null : String(r[k]) === String(v))); return this; }
+  // .is(col, null) -- PostgREST's own spelling of IS NULL / IS NOT NULL, which .eq() cannot
+  // express (SQL equality never matches null, whatever it is compared against). Used by a
+  // guarded update -- "only claim this row if nobody has stamped it yet" -- so it has to be a
+  // real filter, not an .eq() that would silently match nothing and read as "already claimed".
+  is(k, v) { this.filters.push(r => (v === null ? r[k] == null : r[k] === v)); return this; }
   gte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) >= String(v)); return this; }
   lte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) <= String(v)); return this; }
   in(k, arr) { this.filters.push(r => arr.map(String).includes(String(r[k]))); return this; }

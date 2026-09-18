@@ -160,8 +160,17 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
     'the server reads a different stamp (' + (found && found[1]) + ') than the page reports ('
     + pageBuild[1] + ')');
   assert.ok(/freshEnough_/.test(app), 'the page stopped checking whether it is out of date');
-  assert.ok(/go\(firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
-    'the landing tab must be one the person actually holds, never a fixed dashboard');
+  /* THE INVARIANT IS "a tab this person actually holds, never a fixed dashboard" -- not the
+     exact call site, which the imprest GM email's ?imp= deep link (imprestOpenDeepLink_) has
+     legitimately grown a prefix on: go(impTab || firstAllowed_() || 'noaccess'). Both halves
+     of that still have to hold: impTab is only ever set to a tab computed through allowed()
+     (never assumed), and the expression still FALLS THROUGH to firstAllowed_() || 'noaccess'
+     whenever there is no such link, so the original fallback is pinned exactly, just no
+     longer the very first thing after "go(". */
+  assert.ok(/go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
+    'the landing tab must fall through to one the person actually holds, never a fixed dashboard');
+  assert.ok(/impTab = impId && \(allowed\('impappr'\)/.test(app),
+    'the imprest deep-link target must itself be chosen through allowed(), never assumed');
 
   const goTargets = names(app, /data-go="([A-Za-z_]+)"/g);
   const goMissing = goTargets.filter(id => !views.has(id));

@@ -68,7 +68,14 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
      the whole reason the GM asked for two panes is that they should be grantable to two
      different people. Both are ordinary tabs, ticked like every other: nobody holds either
      until an admin says so, and an admin holds both from the start. */
-  'devlock', 'devunlock'];
+  'devlock', 'devunlock',
+  /* IMPREST -- three panes, three authorities, granted like every other tab: nobody by default.
+       "our office and field staff always make imprest requests ... implement request, approval
+        and report and i'll grant the navs to those responsible"
+     impreq asks (and sees their own history); impappr is the GM's desk (decide, and the
+     accommodation-rate table); imprep is the review copy, and now also where the accountant
+     writes the funded amount -- "they will just update funded amount in imprest report tab". */
+  'impreq', 'impappr', 'imprep'];
 /* `audit` is deliberately NOT in USER_TABS: it starts admin-only, and is opened to a role the
    ordinary way -- tick it on that role in Teams & Staff and both the nav item and the function
    follow. One mechanism, the same one every other tab uses. */
