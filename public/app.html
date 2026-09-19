@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-c';
+var BUILD = '2026-09-19-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1329,6 +1329,26 @@ var SETTINGS_GROUPS = [
       { key:'DEVICE_LOCK_LOGO', label:'Alama / The mark', type:'text', dflt:'',
         note:'Wazi = alama ya HOPE (/lock-logo.png). Andika <b>none</b> kuiondoa kabisa. '
           + '/ Blank means HOPE\'s mark. Write <b>none</b> for no mark at all — see docs/DEVICE-LOCKING.md §6a.' },
+    ] },
+  /* THE BENCH COMMANDS THEMSELVES -- what app, and from where.
+     -------------------------------------------------------------------------------------
+       "if there should be installation or anything then it must be included in the token
+        copy"
+     Blank DEVICE_LOCK_APK_PATH means Sajili simu / Kufunga simu keep handing over the same
+     two commands as always -- install stays the operator's own step. Filled in, every bench
+     command gains its own install step, copied the same one-box-at-a-time way as the rest
+     (see the note on devEnrolDrawer_ in app.html for why they are never one paste). */
+  { id:'deviceBench', title:'Amri za benchi / The bench commands', sub:'app gani, na kutoka wapi / which app, and from where',
+    fields:[
+      { key:'DEVICE_LOCK_PACKAGE', label:'Package ya app / The app\'s package', type:'text', dflt:'',
+        note:'Wazi = com.samaritantechs.hooploanlock (app iliyopo tayari). Badilisha tu ukiwa na build yako '
+          + 'mwenyewe. / Blank = com.samaritantechs.hooploanlock (the app that already exists). Change this '
+          + 'only if you build and sign your own.' },
+      { key:'DEVICE_LOCK_APK_PATH', label:'Njia ya APK kwenye kompyuta ya benchi / The APK\'s path on the bench computer', type:'text', dflt:'',
+        note:'Mfano %USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk -- ikiwekwa, amri ya "Sakinisha" '
+          + 'huongezwa kiotomatiki. Wazi = hakuna hatua ya usakinishaji kwenye amri. / e.g. '
+          + '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk -- when set, an "Install" step is added to the '
+          + 'bench commands automatically. Blank = no install step is offered.' },
     ] },
   /* WHERE SHIFT SENDS A PHONE BY DEFAULT.
      -------------------------------------------------------------------------------------
@@ -7177,9 +7197,14 @@ function devOpen_(imei, mode){
       $('#devToken').onclick = function(){
         srv('deviceToken', { imei: imei }).then(function(t){
           if (!t.token) { toast('Simu hii haina token. / This phone has no token — enrol it again.', true); return; }
-          var pkg = DEV_PKG, origin = location.origin;
+          var pkg = t.pkg || DEV_PKG, origin = location.origin;
           /* ONE PHONE, ONE TOKEN -- the single-handset form of the bench command. No batch, so
              it does not expire, and it names this phone and no other. */
+          /* STEP 0, ONLY WHEN CONFIGURED -- "if there should be installation or anything then
+             it must be included in the token copy". Numbered 0 rather than renumbering 1/2 so
+             every existing note below that says "step 2" or "steps 1 and 2" (the result=2
+             handling further down) keeps meaning exactly what it always has. */
+          var install = t.apkPath ? 'adb install -r "' + t.apkPath + '"' : '';
           var own = 'adb shell dpm set-device-owner ' + pkg + '/.LockAdmin';
           var run = 'adb shell am broadcast --include-stopped-packages'
             + ' -a ' + pkg + '.ENROL'
@@ -7208,6 +7233,11 @@ function devOpen_(imei, mode){
             + 'tu na ya pili inapotea kimya. / This one handset\'s command, in <b>two steps</b>. '
             + 'Run the first, wait for the prompt to come back, then run the second. Pasted '
             + 'together, cmd runs only the first and swallows the second silently.</div>'
+            + (install
+                ? '<div class="fld"><label>0 · Sakinisha / Install</label>'
+                  + '<textarea id="devCmd0" rows="2" readonly>' + esc(install) + '</textarea></div>'
+                  + '<button class="btn w ghost" id="devCmd0Copy">Nakili ya 0 / Copy step 0</button>'
+                : '')
             + '<div class="fld"><label>1 · Umiliki / Ownership</label>'
             + '<textarea id="devCmd1" rows="2" readonly>' + esc(own) + '</textarea></div>'
             + '<button class="btn w ghost" id="devCmd1Copy">Nakili ya kwanza / Copy step 1</button>'
@@ -7275,6 +7305,7 @@ function devOpen_(imei, mode){
             try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
             catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
           };
+          if (install) $('#devCmd0Copy').onclick = function(){ copy('#devCmd0'); };
           $('#devCmd1Copy').onclick = function(){ copy('#devCmd1'); };
           $('#devCmd2Copy').onclick = function(){ copy('#devCmd2'); };
         }).catch(function(e){ toast(String((e && e.message) || e), true); });
@@ -7300,7 +7331,30 @@ function devOpen_(imei, mode){
     }
   }).catch(function(e){ toast(String((e && e.message) || e), true); });
 }
-/** ENROL. The bench's own screen: paste the column of IMEIs, get one command back. */
+/* ONE COMMAND, ONE BOX, ONE COPY BUTTON -- always, everywhere a bench command is shown.
+   -----------------------------------------------------------------------------------
+   The single-phone token drawer already learned this the hard way (see its own note, a few
+   screens down): pasting two lines into cmd.exe runs only the first and swallows the second
+   into the type-ahead buffer, in silence -- no error, no second prompt, just a step that
+   never ran and nothing on screen saying so. So every bench step, on every drawer, is its
+   own textarea and its own button, numbered, never concatenated into one paste. */
+function devCmdBox_(n, label, cmd, id){
+  return '<div class="fld" style="margin-top:10px"><label>' + esc(n) + ' &middot; ' + esc(label) + '</label>'
+    + '<textarea id="' + id + '" rows="3" readonly>' + esc(cmd) + '</textarea></div>'
+    + '<button class="btn w ghost dcCopy" data-t="' + id + '">Nakili hatua ' + esc(n) + ' / Copy step ' + esc(n) + '</button>';
+}
+function wireDevCmdCopies_(){
+  Array.prototype.forEach.call(document.querySelectorAll('.dcCopy'), function(b){
+    b.onclick = function(){
+      var t = $('#' + b.getAttribute('data-t'));
+      if (!t) return;
+      t.select();
+      try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
+      catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
+    };
+  });
+}
+/** ENROL. The bench's own screen: paste the column of IMEIs, get the commands back. */
 function devEnrolDrawer_(){
   drawer('<h3>Sajili simu / Enrol phones</h3>'
     + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
@@ -7323,33 +7377,31 @@ function devEnrolDrawer_(){
            "Broadcast completed: result=0", which reads exactly like success while nothing was
            enrolled. Set DEVICE_LOCK_PACKAGE in Settings if you run your own build. */
         var pkg = r.pkg || DEV_PKG;
-        var cmd = 'adb shell am broadcast --include-stopped-packages'
+        var install = 'adb install -r "' + r.apkPath + '"';
+        var own = 'adb shell dpm set-device-owner ' + pkg + '/.LockAdmin';
+        var run = 'adb shell am broadcast --include-stopped-packages'
           + ' -a ' + pkg + '.ENROL'
           + ' -n ' + pkg + '/.EnrolReceiver'
           + ' -e server ' + origin
           + ' -e batch ' + r.batch;
+        var step = 1;
         drawer('<h3>' + money(r.enrolled) + ' zimesajiliwa / enrolled</h3>'
           + (r.alreadyOn ? '<div class="note">' + money(r.alreadyOn) + ' zilikuwepo tayari — zimehifadhi token yake ya zamani. '
               + '/ already on the register, each keeping the token it already had.</div>' : '')
           + (r.revived ? '<div class="note">' + money(r.revived) + ' zilizokuwa zimeachiwa zimerudi kazini. '
               + '/ previously released, now back in service.</div>' : '')
-          + '<div class="note">Kwanza: <b>adb shell dpm set-device-owner ' + esc(pkg) + '/.LockAdmin</b> '
-          + 'kwa kila simu. Kisha amri moja hii kwa zote zilizounganishwa. '
-          + '/ Run set-device-owner on each handset first, then this ONE command for every phone on the hub.</div>'
+          + '<div class="note">Kwa kila simu, kwa mpangilio huu, moja baada ya nyingine. / For each phone, '
+          + 'in this order, one step at a time.</div>'
+          + (r.apkPath ? devCmdBox_(String(step++), 'Sakinisha / Install', install, 'devCmdI') : '')
+          + devCmdBox_(String(step++), 'Umiliki / Ownership', own, 'devCmdO')
           /* Same trap as the single-phone drawer: that stack trace is the success case. */
           + '<div class="note">Ikijibu <b>"device owner … is already set"</b> ikitaja <b>' + esc(pkg) + '</b>, '
           + 'simu hiyo ilishamilikiwa — endelea. / If set-device-owner answers <b>"device owner … is already '
           + 'set"</b> naming <b>' + esc(pkg) + '</b>, that handset is already owned — that stack trace is '
           + 'success. Move on.</div>'
-          + '<div class="fld"><label>Amri ya bench / The bench command</label>'
-          + '<textarea id="devCmd" rows="4" readonly>' + esc(cmd) + '</textarea></div>'
-          + '<button class="btn w ghost" id="devCmdCopy">Nakili / Copy</button>'
+          + devCmdBox_(String(step++), 'Sajili / Enrol', run, 'devCmdR')
           + '<div class="note">Batch hii inakufa baada ya saa 24. / This batch expires in 24 hours.</div>');
-        $('#devCmdCopy').onclick = function(){
-          var t = $('#devCmd'); t.select();
-          try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
-          catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
-        };
+        wireDevCmdCopies_();
       })
       .catch(function(e){ $('#devEnrolGo').disabled = false; toast(String(e.message || e), true); });
   };
