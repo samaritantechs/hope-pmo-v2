@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-h';
+var BUILD = '2026-09-19-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1459,8 +1459,16 @@ function cellText(r, c){
     /* Stored UTC, read in East Africa: the raw ISO string showed every comment three hours
        early ("The time of comments in app is not reading EAT, +3hrs please"). Timestamps
        arrive from PostgREST with an offset, so parse and shift; anything unparseable is
-       shown as written rather than blanked. */
-    var t = Date.parse(v);
+       shown as written rather than blanked.
+
+       A NUMBER IS ALREADY A MOMENT, NOT A STRING TO PARSE -- "time stamp is reading as
+       1789799553103". Imprest's own rows (impRow, api/_lib/imprest.js) hand every timestamp
+       across the wire as epoch-ms, already Date.parse()'d server-side so the client can do
+       plain numeric comparisons (retiredAt, the retirement claim lock) without re-parsing a
+       string on every read. Date.parse(<a number>) stringifies it first and fails to parse a
+       13-digit epoch as a date, so this fell through to printing the raw milliseconds. A
+       number here IS the timestamp; only a string still needs parsing. */
+    var t = typeof v === 'number' ? v : Date.parse(v);
     if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
     return String(v).replace('T',' ').slice(0,16);
   }

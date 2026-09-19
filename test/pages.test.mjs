@@ -499,3 +499,30 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
   assert.ok(/\.sort\([\s\S]*?\);\s*\n\s*slides\.push/.test(view.slice(view.indexOf('var recRows ='))),
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
+
+/* A "dt" COLUMN WHOSE VALUE IS ALREADY A NUMBER MUST NOT BE RE-PARSED AS A STRING.
+   -----------------------------------------------------------------------------------
+     "time stamp is reading as 1789799553103"
+   impRow (api/_lib/imprest.js) hands every Imprest timestamp across the wire as epoch-ms --
+   already Date.parse()'d server-side, a NUMBER -- so the client can compare them (retiredAt,
+   the retirement claim lock) without re-parsing a string on every read. cellText's 'dt' branch
+   called Date.parse(v) unconditionally; handed a number, Date.parse stringifies it first and
+   fails to read a 13-digit epoch as a date string, so isFinite(t) was false and the raw
+   milliseconds printed as-is. Proven by actually running cellText, not just matching source. */
+test('a "dt" column already holding a number is read as the timestamp it is, not re-parsed', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const start = app.indexOf('function cellText(r, c){');
+  const end = app.indexOf('\nfunction telHref_');
+  const src = app.slice(start, end);
+  const cellText = new Function('r', 'c', src + '\nreturn cellText(r, c);');
+
+  // A real Imprest requested_at, already converted server-side the way impRow does it.
+  const ms = Date.parse('2026-09-19T05:52:33.103Z');
+  const out = cellText({ at: ms }, { key: 'at', kind: 'dt' });
+  assert.doesNotMatch(out, /^\d{10,}$/, 'never the raw epoch milliseconds on screen');
+  assert.equal(out, '2026-09-19 08:52', 'shifted +3h into EAT, exactly like a parsed ISO string would be');
+
+  // The existing string path (comments, complaints, ...) must still work unchanged.
+  const strOut = cellText({ at: '2026-09-19T05:52:33Z' }, { key: 'at', kind: 'dt' });
+  assert.equal(strOut, out, 'a string and the equivalent already-parsed number read identically');
+});
