@@ -7180,10 +7180,19 @@ async function deviceEnrol(db, user, args, nowMs = Date.now()) {
 
      Still a setting, so the day HOPE builds its own the bench command follows without a
      deploy. One small read on a bench action taken a few times a day, off the memoised
-     settings. */
-  const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE']);
+     settings.
+
+     AND THE INSTALL STEP, THE SAME WAY -- "if there should be installation or anything then
+     it must be included in the token copy". A bench command that assumes the APK is already
+     on the phone is exactly wrong for a fresh handset, and the failure it produces --
+     `result=0`, indistinguishable from success -- is the one this whole file exists to keep
+     an operator from reading as "done". DEVICE_LOCK_APK_PATH names where the current build
+     sits on the BENCH COMPUTER (not the phone, not this server); blank means the operator
+     still runs their own `adb install` first, exactly as before. */
+  const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE', 'DEVICE_LOCK_APK_PATH']);
   const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hooploanlock').trim();
-  return { ok: true, ready: true, enrolled: fresh.length, alreadyOn: rejoin.length, pkg,
+  const apkPath = String(cfg.get('DEVICE_LOCK_APK_PATH', '') || '').trim();
+  return { ok: true, ready: true, enrolled: fresh.length, alreadyOn: rejoin.length, pkg, apkPath,
     /* Said out loud, because it is a state change nobody explicitly asked for -- they asked to
        enrol. Silently un-releasing rows would be the right behaviour reported as nothing. */
     revived: revive.length, batch,
@@ -7369,7 +7378,13 @@ async function deviceTokenOf(db, user, args) {
   if (!row.enrol_token) {
     throw badRequest('Simu hii haina token — isajili upya. / This phone has no token yet: enrol it again.');
   }
-  return { ok: true, ready: true, imei, token: String(row.enrol_token), batch: row.enrol_batch || null };
+  // Same package/path knobs the batch command reads -- this single-phone form had been
+  // reading the client's own hardcoded default and ignoring DEVICE_LOCK_PACKAGE entirely.
+  const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE', 'DEVICE_LOCK_APK_PATH']);
+  const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hooploanlock').trim();
+  const apkPath = String(cfg.get('DEVICE_LOCK_APK_PATH', '') || '').trim();
+  return { ok: true, ready: true, imei, token: String(row.enrol_token), batch: row.enrol_batch || null,
+    pkg, apkPath };
 }
 
 /* MOVING A HANDSET TO THE OTHER COMPANY, WITHOUT A FACTORY RESET.

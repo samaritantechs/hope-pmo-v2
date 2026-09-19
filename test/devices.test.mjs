@@ -79,12 +79,19 @@ test('the bench command names the APK that is actually on the phones', async () 
   const db = fakeDb(tables());
   const a = await run(db, LOCKER, 'deviceEnrol', { imeis: '350000000000001' });
   assert.equal(a.pkg, 'com.samaritantechs.hooploanlock', 'nothing has to be typed for the app in use');
+  assert.equal(a.apkPath, '', 'no install step offered until an operator sets one');
 
   // And the day HOPE builds its own, the setting moves the bench command with no deploy.
   const t = tables();
   t.settings = [{ key: 'DEVICE_LOCK_PACKAGE', value: 'com.samaritantechs.hopelock' }];
   const own = await run(fakeDb(t), LOCKER, 'deviceEnrol', { imeis: '350000000000002' });
   assert.equal(own.pkg, 'com.samaritantechs.hopelock');
+
+  /* "if there should be installation or anything then it must be included in the token copy" */
+  const t2 = tables();
+  t2.settings = [{ key: 'DEVICE_LOCK_APK_PATH', value: '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk' }];
+  const withApk = await run(fakeDb(t2), LOCKER, 'deviceEnrol', { imeis: '350000000000003' });
+  assert.equal(withApk.apkPath, '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk');
 });
 
 test('the two panes are two authorities, and the gate is on the order not the screen', async () => {
@@ -398,6 +405,10 @@ test('the list chases what needs somebody, and names a lock nobody ever confirme
   for (const r of list.rows) assert.equal(r.token, undefined);
   const t = await run(db, LOCKER, 'deviceToken', { imei: '151515151515151' });
   assert.equal(t.token, e.provision[0].token);
+  // The single-phone re-issue reads the same package/path knobs the batch command does --
+  // it used to fall back to the client's own hardcoded default and ignore an override.
+  assert.equal(t.pkg, 'com.samaritantechs.hooploanlock');
+  assert.equal(t.apkPath, '');
   // And the desk that only unlocks has no business with the bench's credentials.
   await assert.rejects(() => run(db, UNLOCKER, 'deviceToken', { imei: '151515151515151' }),
     x => x.status === 403);
