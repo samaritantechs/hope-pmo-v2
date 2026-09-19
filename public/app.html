@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-b';
+var BUILD = '2026-09-19-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6868,12 +6868,18 @@ function devOrder_(state, imeis, reason, force){
       throw e;
     });
 }
-/** The paste box every bulk order shares: a column of IMEIs, and a reason where one is due.
+/** The paste box every bulk order shares: a column of IMEIs, and a reason box on locking.
     TICKED ROWS FILL IT IN. Somebody working down the register ticks the phones and presses the
     button; somebody working from a paper list pastes a column. Both end in the same box, so
     there is one order path and one confirmation, and the ticks are visible as text before
-    anything is sent -- which on a bulk lock is the last chance to notice a wrong row. */
-function devBulkDrawer_(state, title, needReason){
+    anything is sent -- which on a bulk lock is the last chance to notice a wrong row.
+
+    THE REASON IS OFFERED, NOT DEMANDED -- "Hope is still requiring reason to lock" / make it
+    optional. It used to block Tuma with nothing typed; a locked phone with a blank reason is
+    still worth locking, and a required field a legitimate lock cannot get past is worse than
+    an empty one on the history. It still shows only where it ever has (locking, not unlock or
+    release), and still lands on the phone's own screen and in its history when given. */
+function devBulkDrawer_(state, title, showReason){
   var ticked = pickList_();
   drawer('<h3>' + esc(title) + '</h3>'
     + (ticked.length
@@ -6883,20 +6889,17 @@ function devBulkDrawer_(state, title, needReason){
     + '<div class="fld"><label>IMEI (moja kwa mstari / one per line)</label>'
     + '<textarea id="devBulkList" rows="8" placeholder="351388334583295&#10;351388334583296">'
     + esc(ticked.join('\n')) + '</textarea></div>'
-    + (needReason
-        ? '<div class="fld"><label>Sababu / Reason <b>*</b></label>'
+    + (showReason
+        ? '<div class="fld"><label>Sababu / Reason <span class="mut">(hiari / optional)</span></label>'
           + '<input id="devBulkWhy" placeholder="mfano: ameacha kazi na simu"></div>'
-          /* The reason is not paperwork. Six months from now "why is this locked" has to have
-             an answer, and this is the only moment anybody will reliably give one. */
-          + '<div class="note">Sababu inaonekana kwenye skrini ya simu iliyofungwa na kwenye '
-          + 'historia yake. / The reason shows on the locked phone\'s own screen and stays in its history.</div>'
+          + '<div class="note">Ikijazwa, sababu inaonekana kwenye skrini ya simu iliyofungwa na kwenye '
+          + 'historia yake. / If given, the reason shows on the locked phone\'s own screen and stays in its history.</div>'
         : '')
     + '<button class="btn w" id="devBulkGo">Tuma / Send</button>');
   $('#devBulkGo').onclick = function(){
     var list = String($('#devBulkList').value || '').trim();
     if (!list) { toast('Weka IMEI. / Paste at least one IMEI.', true); return; }
-    var why = needReason ? String(($('#devBulkWhy')||{}).value || '').trim() : '';
-    if (needReason && !why) { toast('Sababu inahitajika. / A reason is required.', true); return; }
+    var why = showReason ? String(($('#devBulkWhy')||{}).value || '').trim() : '';
     $('#devBulkGo').disabled = true;
     devOrder_(state, list, why).catch(function(){ $('#devBulkGo').disabled = false; });
   };
@@ -7146,7 +7149,7 @@ function devOpen_(imei, mode){
             + 'Shift this phone</button>'
           : '')
       + (mode === 'lock'
-          ? '<div class="fld" style="margin-top:10px"><label>Sababu / Reason</label>'
+          ? '<div class="fld" style="margin-top:10px"><label>Sababu / Reason <span class="mut">(hiari / optional)</span></label>'
             + '<input id="devWhy" placeholder="mfano: ameacha kazi na simu"></div>'
             + '<button class="btn w bad" id="devLock">🔒 Funga / Lock</button>'
             + '<button class="btn w ghost" id="devLost">Andika hasara / Write off</button>'
@@ -7278,7 +7281,6 @@ function devOpen_(imei, mode){
       };
       $('#devLock').onclick = function(){
         var why = String($('#devWhy').value || '').trim();
-        if (!why) { toast('Sababu inahitajika. / A reason is required.', true); return; }
         devOrder_('locked', [imei], why);
       };
       $('#devLost').onclick = function(){

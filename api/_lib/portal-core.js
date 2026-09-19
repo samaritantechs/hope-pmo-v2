@@ -7251,9 +7251,13 @@ async function deviceSetState(db, user, args, nowMs = Date.now()) {
   }
   // The gate is on the TRANSITION, not on the pane -- see the note at the top of this block.
   requireDeviceOrder_(user, to);
+  /* "Hope is still requiring reason to lock" -- make it optional. Write-off (`lost`) keeps the
+     requirement: that one leaves the phone locked for good, which is exactly the kind of
+     decision that should not go undocumented. A lock is reversible from this same pane, so a
+     blank reason is a phone still worth locking, not a request to reject. */
   const reason = String(a.reason || '').trim();
-  if ((to === 'locked' || to === 'lost') && !reason) {
-    throw badRequest('Sababu inahitajika. / A reason is required to lock or write off a phone.');
+  if (to === 'lost' && !reason) {
+    throw badRequest('Sababu inahitajika. / A reason is required to write off a phone.');
   }
   const list = imeiList_(a.imeis != null ? a.imeis : a.imei);
   if (!list.length) throw badRequest('Weka IMEI. / An IMEI is required.');

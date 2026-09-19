@@ -111,24 +111,37 @@ test('the two panes are two authorities, and the gate is on the order not the sc
   assert.equal(db._dump('devices')[0].state, 'enrolled');
 });
 
-test('a lock always carries a reason, and the trail keeps who ordered it', async () => {
+/* "Hope is still requiring reason to lock" -- made optional: a lock is reversible from this
+   same pane, so a blank reason is still a phone worth locking, not a request to reject. A
+   given reason still travels with the row and the trail. Write-off ('lost') is different --
+   that leaves the phone locked for good -- so it keeps the requirement. */
+test('a lock\'s reason is optional, and the trail keeps who ordered it either way', async () => {
   const db = fakeDb(tables());
   await run(db, LOCKER, 'deviceEnrol', { imeis: '222222222222222' });
-  await assert.rejects(
-    () => run(db, LOCKER, 'deviceSetState', { imei: '222222222222222', state: 'locked' }),
-    e => e.status === 400 && /Sababu|reason/i.test(e.message));
+  const locked = await run(db, LOCKER, 'deviceSetState', { imei: '222222222222222', state: 'locked' });
+  assert.equal(locked.changed, 1, 'a lock with no reason is not rejected');
+  const bare = db._dump('devices')[0];
+  assert.equal(bare.state, 'locked');
+  assert.ok(!bare.state_reason, 'no reason typed, none invented');
+  assert.equal(bare.state_by, 'STORE KEEPER', 'the trail still names who ordered it');
 
+  await run(db, UNLOCKER, 'deviceSetState', { imei: '222222222222222', state: 'enrolled' });
   await run(db, LOCKER, 'deviceSetState',
     { imei: '222222222222222', state: 'locked', reason: 'ameacha kazi na simu' });
   const row = db._dump('devices')[0];
   assert.equal(row.state, 'locked');
-  assert.equal(row.state_reason, 'ameacha kazi na simu');
+  assert.equal(row.state_reason, 'ameacha kazi na simu', 'a reason given is still kept, when there is one');
   assert.equal(row.state_by, 'STORE KEEPER');
   const ev = db._dump('device_events').filter(e => e.event === 'lock');
-  assert.equal(ev.length, 1);
-  assert.equal(ev[0].from_state, 'enrolled');
-  assert.equal(ev[0].to_state, 'locked');
-  assert.equal(ev[0].actor, 'STORE KEEPER');
+  assert.equal(ev.length, 2);
+  assert.equal(ev[1].from_state, 'enrolled');
+  assert.equal(ev[1].to_state, 'locked');
+  assert.equal(ev[1].actor, 'STORE KEEPER');
+
+  // Write-off is a different decision -- permanent -- and still demands its reason.
+  await assert.rejects(
+    () => run(db, LOCKER, 'deviceSetState', { imei: '222222222222222', state: 'lost' }),
+    e => e.status === 400 && /Sababu|reason/i.test(e.message));
 });
 
 test('the phone is told what to do, and can never tell itself', async () => {
