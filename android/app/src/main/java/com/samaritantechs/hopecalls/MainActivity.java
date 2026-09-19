@@ -14,6 +14,7 @@ import android.os.Environment;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
+import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -51,6 +52,10 @@ public class MainActivity extends Activity {
     // (if any) resolves -- see onGeolocationPermissionsShowPrompt / onRequestPermissionsResult.
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingGeoOrigin;
+    // Same shape as the geo pair above, for the KYC capture screens' camera. Resolved either
+    // immediately (permission already held) or from onRequestPermissionsResult once the OS
+    // dialog answers.
+    private PermissionRequest pendingCameraRequest;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -167,6 +172,31 @@ public class MainActivity extends Activity {
                 pendingGeoCallback = null;
                 pendingGeoOrigin = null;
             }
+
+            /* "App never asks camera permission as gps and calls" -- true, for the same reason
+               geolocation once was: a bare WebView denies a getUserMedia() PermissionRequest
+               with no OS prompt at all unless this is implemented. Video only, ever -- the KYC
+               capture screens (openCameraOverlay_) ask for video with audio:false, and nothing
+               in this app should be able to turn a microphone on from a page. */
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                boolean wantsCamera = false;
+                for (String r : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(r)) wantsCamera = true;
+                }
+                if (!wantsCamera) { request.deny(); return; }
+                if (hasCameraPermission()) {
+                    request.grant(new String[]{ PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+                    return;
+                }
+                pendingCameraRequest = request;
+                requestPermissions(new String[]{ Manifest.permission.CAMERA }, REQ_PERMS);
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest request) {
+                if (request == pendingCameraRequest) pendingCameraRequest = null;
+            }
         });
 
         // Reports the page offers for download go to the phone's Downloads folder via the
@@ -259,12 +289,16 @@ public class MainActivity extends Activity {
                 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    /** Asks for whichever of {call log, location} is not already granted, in one dialog queue.
-        "use friendly note that an officer will adhere to allowing" -- the bare OS dialog names
-        a permission, not a reason, and a reason is what makes someone tap Allow instead of the
-        reflex Deny. When location is the one missing, a short rationale explains why BEFORE
-        Android's own dialog appears; call log alone (nothing new to explain) skips straight to
-        it, as it always has. */
+    private boolean hasCameraPermission() {
+        return checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Asks for whichever of {call log, location, camera} is not already granted, in one dialog
+        queue. "use friendly note that an officer will adhere to allowing" -- the bare OS dialog
+        names a permission, not a reason, and a reason is what makes someone tap Allow instead of
+        the reflex Deny. When location or camera is one of the ones missing, a short rationale
+        explains why BEFORE Android's own dialog appears; call log alone (nothing new to explain)
+        skips straight to it, as it always has. */
     private void requestMissingPermissions() {
         List<String> need = new ArrayList<>();
         if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
@@ -275,9 +309,11 @@ public class MainActivity extends Activity {
             need.add(Manifest.permission.ACCESS_FINE_LOCATION);
             need.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         }
+        boolean needsCamera = !hasCameraPermission();
+        if (needsCamera) need.add(Manifest.permission.CAMERA);
         if (need.isEmpty()) return;
         String[] perms = need.toArray(new String[0]);
-        if (needsLocation) showLocationRationale_(() -> requestPermissions(perms, REQ_PERMS), null);
+        if (needsLocation || needsCamera) showLocationRationale_(() -> requestPermissions(perms, REQ_PERMS), null);
         else requestPermissions(perms, REQ_PERMS);
     }
 
@@ -355,6 +391,13 @@ public class MainActivity extends Activity {
             pendingGeoCallback.invoke(pendingGeoOrigin, hasLocationPermission(), false);
             pendingGeoCallback = null;
             pendingGeoOrigin = null;
+        }
+        // Same idea for a KYC capture button -- answer the page's PermissionRequest now instead
+        // of leaving openCameraOverlay_'s getUserMedia() promise hanging.
+        if (pendingCameraRequest != null) {
+            if (hasCameraPermission()) pendingCameraRequest.grant(new String[]{ PermissionRequest.RESOURCE_VIDEO_CAPTURE });
+            else pendingCameraRequest.deny();
+            pendingCameraRequest = null;
         }
     }
 }
