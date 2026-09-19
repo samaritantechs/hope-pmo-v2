@@ -1,6 +1,6 @@
 {
-  "versionCode": 15,
-  "versionName": "1.9.2",
-  "notes": "Sasa unaweza kuona saa na mtandao juu ya skrini tena. / The clock and signal at the top of the screen are visible again.",
+  "versionCode": 16,
+  "versionName": "1.9.3",
+  "notes": "Usasishaji uliopita ulipoacha faili ya zamani nyuma, sasa haujarudiwa tena bure. / Fixed a case where an old update file could be left behind and re-offered for no reason.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
