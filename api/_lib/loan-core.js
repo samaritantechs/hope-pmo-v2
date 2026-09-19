@@ -396,7 +396,7 @@ async function teamAssessDetail(db, user, { loan_id }) {
    leaked path is not a leaked photo. */
 const KYC_BUCKET = 'kyc-photos';
 const KYC_MAX_BYTES = 2 * 1024 * 1024;
-async function kycUpload(db, user, { loan_id, kind, data_url }) {
+async function kycUpload(db, user, { loan_id, kind, data_url, camera_label }) {
   requireTab(user, 'team');
   await mustLoan(db, loan_id);
   const m = /^data:([^;]+);base64,(.+)$/.exec(String(data_url || ''));
@@ -411,7 +411,20 @@ async function kycUpload(db, user, { loan_id, kind, data_url }) {
   const path = 'loans/' + loan_id + '/' + safeKind + '-' + Date.now() + '.' + ext;
   const { error } = await db.storage.from(KYC_BUCKET).upload(path, bytes, { contentType, upsert: false });
   if (error) throw new Error(error.message);
+  await logKycCapture(db, loan_id, safeKind, path, camera_label, user);
   return { path };
+}
+
+/* Fire-and-forget, same rule as logEvent above: the audit trail must never be able to fail
+   the upload it is recording, and db/RUN-ME-007 not having been run yet is not an error. */
+async function logKycCapture(db, loanId, kind, path, cameraLabel, user) {
+  try {
+    await db.from('kyc_captures').insert({
+      loan_id: loanId, kind, path,
+      camera_label: cameraLabel ? String(cameraLabel).slice(0, 200) : null,
+      actor: user && user.name, actor_role: user && user.role,
+    });
+  } catch { /* never blocks the real upload */ }
 }
 
 async function assessmentFor(db, loanId) {

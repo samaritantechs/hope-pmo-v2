@@ -440,6 +440,39 @@ test('kycUpload refuses anything that is not a data URL, and anything requiring 
   await assert.rejects(() => loanApi(db, CS, 'kycUpload', { loan_id: loan.id, kind: 'signature', data_url: TINY_PNG }), /"team"/i);
 });
 
+/* THE AUDIT TRAIL -- WHICH CAMERA ANSWERED.
+   "We now have a setback officers are using Ai photos so this comes as ronaldo" -- a spoofed
+   camera answers getUserMedia() the same way a real one does, so this is audit-only: every
+   capture logs the browser's own label for whichever camera it was, against who was signed in,
+   so a suspicious one can be traced to an officer rather than silently trusted. Fire-and-forget
+   like loan_events -- db/RUN-ME-007 not having been run yet must never fail the upload itself. */
+test('kycUpload logs the camera label (and who was signed in) against the capture', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'C CUSTOMER', mobile: '0700000032', team: 'MABIBO', amount: 200000 });
+  const { path } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'photo', data_url: TINY_PNG, camera_label: 'Virtual Camera' });
+  const rows = db._dump('kyc_captures');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].loan_id, loan.id);
+  assert.equal(rows[0].kind, 'photo');
+  assert.equal(rows[0].path, path);
+  assert.equal(rows[0].camera_label, 'Virtual Camera');
+  assert.equal(rows[0].actor, TEAM.name);
+  assert.equal(rows[0].actor_role, TEAM.role);
+});
+
+test('kycUpload copes with no camera label at all, and with the audit table not existing yet', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });
+  const { path } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'thumbprint', data_url: TINY_PNG });
+  assert.ok(path, 'the upload itself still succeeds with no label offered');
+  assert.equal(db._dump('kyc_captures')[0].camera_label, null);
+
+  const originalFrom = db.from.bind(db);
+  db.from = (name) => { if (name === 'kyc_captures') throw new Error('relation "kyc_captures" does not exist'); return originalFrom(name); };
+  const { path: path2 } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'photo', data_url: TINY_PNG, camera_label: 'back camera' });
+  assert.ok(path2, 'db/RUN-ME-007 not run yet must never fail the upload it would have logged');
+});
+
 test('teamAssessDetail opens pre-filled: customer, every guarantor rank, and the draft assessment', async () => {
   const db = fakeDb({});
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'C CUSTOMER', mobile: '0700000032', team: 'MABIBO', amount: 200000 });

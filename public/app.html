@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-e';
+var BUILD = '2026-09-19-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9001,8 +9001,8 @@ function lnActKeep_(fn, args, okMsg){
    DEVICE before a byte is sent (openCameraOverlay_ draws straight from the live video frame
    at a capped dimension), which is what actually matters on a field connection; kycUpload's
    own 2MB cap is only the backstop. */
-function kycUpload_(loanId, kind, dataUrl){
-  return srv('kycUpload', { loan_id: loanId, kind: kind, data_url: dataUrl });
+function kycUpload_(loanId, kind, dataUrl, cameraLabel){
+  return srv('kycUpload', { loan_id: loanId, kind: kind, data_url: dataUrl, camera_label: cameraLabel });
 }
 
 /* THE SAME CAPTURE FOR BOTH SIGNATURE AND THUMBPRINT.
@@ -9135,8 +9135,15 @@ function openCameraOverlay_(onCapture){
     var c = document.createElement('canvas'); c.width = Math.round(vw * scale); c.height = Math.round(vh * scale);
     c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
     var dataUrl = c.toDataURL('image/jpeg', 0.7);
+    /* WHICH CAMERA ANSWERED. A genuine handset and a virtual-camera app (used to feed in a
+       photo instead of a live capture) both satisfy getUserMedia() the same way -- there is
+       no way to tell them apart from here. What the track's own label carries through is an
+       audit trail: kycUpload_ below records it against the capture, unseen by the officer,
+       so a suspicious one can be traced back to who took it. */
+    var track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    var cameraLabel = track && track.label || '';
     stop();
-    onCapture(dataUrl);
+    onCapture(dataUrl, cameraLabel);
   };
 }
 function wirePhotoCapture_(btnId, statusId, loanId, kind, existingPath, onPath){
@@ -9145,9 +9152,9 @@ function wirePhotoCapture_(btnId, statusId, loanId, kind, existingPath, onPath){
   function setStatus(has){ if (status) status.textContent = has ? '✓ Imepigwa / Captured' : ''; }
   setStatus(!!existingPath);
   btn.onclick = function(){
-    openCameraOverlay_(function(dataUrl){
+    openCameraOverlay_(function(dataUrl, cameraLabel){
       btn.disabled = true; if (status) status.textContent = 'Inapakia... / Uploading...';
-      kycUpload_(loanId, kind, dataUrl)
+      kycUpload_(loanId, kind, dataUrl, cameraLabel)
         .then(function(r){ onPath(r.path); setStatus(true); btn.disabled = false; })
         .catch(function(e){ btn.disabled = false; setStatus(!!existingPath); toast(String((e && e.message) || e), true); });
     });
