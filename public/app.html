@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-d';
+var BUILD = '2026-09-19-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1333,11 +1333,12 @@ var SETTINGS_GROUPS = [
   /* THE BENCH COMMANDS THEMSELVES -- what app, and from where.
      -------------------------------------------------------------------------------------
        "if there should be installation or anything then it must be included in the token
-        copy"
-     Blank DEVICE_LOCK_APK_PATH means Sajili simu / Kufunga simu keep handing over the same
-     two commands as always -- install stays the operator's own step. Filled in, every bench
-     command gains its own install step, copied the same one-box-at-a-time way as the rest
-     (see the note on devEnrolDrawer_ in app.html for why they are never one paste). */
+        copy" / "should be inclusive in code if important"
+     INCLUDED BY DEFAULT, not opt-in: blank DEVICE_LOCK_APK_PATH uses the real path already in
+     use on this bench (apkPathFor_, portal-core.js), so the install step rides on every bench
+     command unless an operator deliberately writes <b>none</b> to leave it out. A bench
+     command that assumes the APK is already on the phone is exactly the trap that read
+     result=0 as success while nothing was ever installed. */
   { id:'deviceBench', title:'Amri za benchi / The bench commands', sub:'app gani, na kutoka wapi / which app, and from where',
     fields:[
       { key:'DEVICE_LOCK_PACKAGE', label:'Package ya app / The app\'s package', type:'text', dflt:'',
@@ -1345,10 +1346,10 @@ var SETTINGS_GROUPS = [
           + 'mwenyewe. / Blank = com.samaritantechs.hooploanlock (the app that already exists). Change this '
           + 'only if you build and sign your own.' },
       { key:'DEVICE_LOCK_APK_PATH', label:'Njia ya APK kwenye kompyuta ya benchi / The APK\'s path on the bench computer', type:'text', dflt:'',
-        note:'Mfano %USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk -- ikiwekwa, amri ya "Sakinisha" '
-          + 'huongezwa kiotomatiki. Wazi = hakuna hatua ya usakinishaji kwenye amri. / e.g. '
-          + '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk -- when set, an "Install" step is added to the '
-          + 'bench commands automatically. Blank = no install step is offered.' },
+        note:'Wazi = %USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk (njia inayotumika tayari) -- hatua ya '
+          + '"Sakinisha" inakuwa sehemu ya kila amri ya benchi kiotomatiki. Andika <b>none</b> kuiacha nje. '
+          + '/ Blank = %USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk (the path already in use) -- the "Install" '
+          + 'step rides on every bench command automatically. Write <b>none</b> to leave it out.' },
     ] },
   /* WHERE SHIFT SENDS A PHONE BY DEFAULT.
      -------------------------------------------------------------------------------------
@@ -7211,6 +7212,13 @@ function devOpen_(imei, mode){
             + ' -n ' + pkg + '/.EnrolReceiver'
             + ' -e server ' + origin
             + ' -e token ' + t.token;
+          /* ONE LINE, CHAINED, NOT THREE LINES PASTED -- "make sure single cmd works
+             everything". See the identical note in devEnrolDrawer_ for why `&&` sits before
+             ownership (no point granting it to an app that never installed) and plain `&`
+             sits before enrol (set-device-owner answering "already set" is success and can
+             exit non-zero for it, so `&&` there would stop the chain on the one run that
+             needed nothing more done). */
+          var all = (install ? install + ' && ' : '') + '(' + own + ' & ' + run + ')';
           /* TWO BOXES, NOT ONE, and that is the whole point of this drawer's shape.
              -----------------------------------------------------------------------------
              These were one textarea holding two lines, with "run them in this order" written
@@ -7233,6 +7241,9 @@ function devOpen_(imei, mode){
             + 'tu na ya pili inapotea kimya. / This one handset\'s command, in <b>two steps</b>. '
             + 'Run the first, wait for the prompt to come back, then run the second. Pasted '
             + 'together, cmd runs only the first and swallows the second silently.</div>'
+            + devCmdBox_('A', 'Amri moja / All-in-one', all, 'devCmdAll')
+            + '<div class="note">Au fuata hatua kwa hatua hapa chini ukitaka kuona kila jibu lenyewe. '
+            + '/ Or follow the numbered steps below if you want to see each answer on its own.</div>'
             + (install
                 ? '<div class="fld"><label>0 · Sakinisha / Install</label>'
                   + '<textarea id="devCmd0" rows="2" readonly>' + esc(install) + '</textarea></div>'
@@ -7305,6 +7316,7 @@ function devOpen_(imei, mode){
             try { document.execCommand('copy'); toast('Imenakiliwa. / Copied.'); }
             catch (e) { toast('Chagua na nakili kwa mkono. / Select and copy it by hand.', true); }
           };
+          wireDevCmdCopies_();
           if (install) $('#devCmd0Copy').onclick = function(){ copy('#devCmd0'); };
           $('#devCmd1Copy').onclick = function(){ copy('#devCmd1'); };
           $('#devCmd2Copy').onclick = function(){ copy('#devCmd2'); };
@@ -7384,14 +7396,25 @@ function devEnrolDrawer_(){
           + ' -n ' + pkg + '/.EnrolReceiver'
           + ' -e server ' + origin
           + ' -e batch ' + r.batch;
+        /* ONE LINE, CHAINED, NOT THREE LINES PASTED -- "make sure single cmd works everything".
+           cmd.exe only swallows a SECOND LINE (a second Enter); operators chained on one line
+           with && / & is exactly what the operator's own working curl-chain already proved.
+           `&&` between install and ownership: no point granting ownership onto an app that
+           never installed. Plain `&` between ownership and enrol, deliberately, NOT `&&`:
+           set-device-owner answering "already set" is the SUCCESS case and can exit non-zero
+           for it, so `&&` there would stop the chain on exactly the run that needed nothing
+           more done. */
+        var all = (r.apkPath ? install + ' && ' : '') + '(' + own + ' & ' + run + ')';
         var step = 1;
         drawer('<h3>' + money(r.enrolled) + ' zimesajiliwa / enrolled</h3>'
           + (r.alreadyOn ? '<div class="note">' + money(r.alreadyOn) + ' zilikuwepo tayari — zimehifadhi token yake ya zamani. '
               + '/ already on the register, each keeping the token it already had.</div>' : '')
           + (r.revived ? '<div class="note">' + money(r.revived) + ' zilizokuwa zimeachiwa zimerudi kazini. '
               + '/ previously released, now back in service.</div>' : '')
-          + '<div class="note">Kwa kila simu, kwa mpangilio huu, moja baada ya nyingine. / For each phone, '
-          + 'in this order, one step at a time.</div>'
+          + '<div class="note">Kwa kila simu. Amri moja hapa chini inafanya kila kitu — au fuata hatua kwa '
+          + 'hatua chini yake ukitaka kuona kila jibu lenyewe. / For each phone. The one command below does '
+          + 'everything — or follow the numbered steps beneath it if you want to see each answer on its own.</div>'
+          + devCmdBox_('A', 'Amri moja / All-in-one', all, 'devCmdAll')
           + (r.apkPath ? devCmdBox_(String(step++), 'Sakinisha / Install', install, 'devCmdI') : '')
           + devCmdBox_(String(step++), 'Umiliki / Ownership', own, 'devCmdO')
           /* Same trap as the single-phone drawer: that stack trace is the success case. */

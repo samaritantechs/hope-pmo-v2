@@ -558,3 +558,24 @@ test('EMAIL_FROM has a real Settings field now, explaining the Resend onboarding
   assert.ok(/key:'EMAIL_FROM'/.test(view), 'EMAIL_FROM is a labelled field in the Imprest settings group');
   assert.ok(/Resend/.test(view), 'the note explains the Resend onboarding-sender restriction, not just the syntax');
 });
+
+/* THE ALL-IN-ONE BENCH COMMAND, CHAINED CORRECTLY ON ONE LINE.
+   -----------------------------------------------------------------------------------
+     "make sure singe cmd works everything"
+   `&&` between install and ownership -- no point granting Device Owner to an app that never
+   installed. Plain `&`, deliberately NOT `&&`, between ownership and enrol: set-device-owner
+   answering "already set" is the SUCCESS case (see the note a few lines above each of these
+   in app.html) and can exit non-zero for it, so `&&` there would stop the chain on exactly
+   the run that needed nothing more done. Checked in both drawers -- the batch one and the
+   single-phone token one build this the same way. */
+test('the all-in-one bench command chains install/&&/ownership/&/enrol, in both drawers', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const batch = app.slice(app.indexOf('function devEnrolDrawer_'), app.indexOf('/** THE SHARED VIEW.'));
+  const single = app.slice(app.indexOf("$('#devToken').onclick"), app.indexOf("$('#devLock').onclick"));
+  for (const [name, view] of [['batch', batch], ['single-phone', single]]) {
+    assert.ok(/var all = \([\w.]+ \? install \+ ' && ' : ''\) \+ '\(' \+ own \+ ' & ' \+ run \+ '\)'/.test(view),
+      name + ' drawer: && before ownership, plain & before enrol');
+    assert.ok(/devCmdBox_\('A', 'Amri moja \/ All-in-one', all,/.test(view),
+      name + ' drawer: the all-in-one box is actually offered');
+  }
+});
