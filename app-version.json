@@ -1,6 +1,6 @@
 {
-  "versionCode": 13,
-  "versionName": "1.9.0",
-  "notes": "Kamera sasa itauliza ruhusa kwenye skrini za KYC (picha, sahihi, dole gumba) -- kama haikuwahi kuuliza kabla, sasisha ili kupiga picha kufanye kazi. / The camera now asks permission on the KYC screens (photo, signature, thumbprint) -- if it never asked before, update so capture works.",
+  "versionCode": 14,
+  "versionName": "1.9.1",
+  "notes": "Ukurasa ukichukua muda kufunguka, sasa utaona 'Inapakia...' badala ya skrini nyeupe tupu -- usifunge programu, subiri. / When the page takes a while to open you now see 'Loading...' instead of a blank white screen -- don't close the app, just wait.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

@@ -8,9 +8,13 @@ import android.app.DownloadManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.GeolocationPermissions;
@@ -23,6 +27,10 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
@@ -46,6 +54,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE_PICK = 72;
 
     private WebView web;
+    private View loadingOverlay;
     private SharedPreferences prefs;
     private ValueCallback<Uri[]> pendingFileCallback;
     // The page's getCurrentPosition() call is answered async, once the OS permission dialog
@@ -64,11 +73,23 @@ public class MainActivity extends Activity {
         prefs = getSharedPreferences("hopecalls", MODE_PRIVATE);
 
         web = new WebView(this);
+        FrameLayout root = new FrameLayout(this);
         // Leave the phone's own status bar (clock, battery, signal) visible and untouched:
         // without this the page draws underneath it, so the time and battery sit on top of
-        // the app's header. fitsSystemWindows insets the WebView below the system bars.
-        web.setFitsSystemWindows(true);
-        setContentView(web);
+        // the app's header. fitsSystemWindows insets everything below the system bars.
+        root.setFitsSystemWindows(true);
+        root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        /* "sometimes the app opens blank white until re-open attempts" -- a bare WebView paints
+           solid white and says NOTHING while the page loads, and this page is one big file with
+           a lot to fetch and parse before its own first paint. On a slow field connection that
+           can take a real while; with no feedback at all it looks exactly like a frozen app, so
+           an officer force-quits and tries again -- which restarts the same slow load rather
+           than fixing anything. A visible spinner is the fix: shown by default here, hidden the
+           moment the page actually paints (onPageCommitVisible below) or fails outright
+           (onReceivedError). */
+        loadingOverlay = buildLoadingOverlay();
+        root.addView(loadingOverlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);          // localStorage holds the access code, device id, list cache
@@ -119,7 +140,28 @@ public class MainActivity extends Activity {
 
             @Override
             public void onReceivedError(WebView v, WebResourceRequest req, WebResourceError err) {
-                if (req.isForMainFrame()) showUrlScreen(String.valueOf(err.getDescription()));
+                if (req.isForMainFrame()) {
+                    hideLoading();      // the error screen has its own Retry button -- nothing to spin over
+                    showUrlScreen(String.valueOf(err.getDescription()));
+                }
+            }
+
+            /* Shown for every real navigation -- the first load, "Simu / Calls" swapping to a
+               separate page and back, Retry, and a changed server URL all end up here -- and
+               skipped for the built-in offline screen itself (loadDataWithBaseURL's url is never
+               http(s)), so it never flashes on top of that screen's own Retry button. */
+            @Override
+            public void onPageStarted(WebView v, String url, Bitmap favicon) {
+                if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) showLoading();
+            }
+
+            /* The earliest moment the page has actually painted something -- long before
+               onPageFinished, which waits on every remaining resource. That is the right moment
+               to hand the screen back: waiting any longer just reintroduces the blank wait this
+               exists to remove. */
+            @Override
+            public void onPageCommitVisible(WebView v, String url) {
+                hideLoading();
             }
         });
 
@@ -282,6 +324,36 @@ public class MainActivity extends Activity {
                 + "style='width:100%;padding:14px;border:0;border-radius:10px;font-weight:700;margin-top:10px'>Hifadhi &amp; fungua / Save &amp; open</button>"
                 + "</body>";
         web.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
+    }
+
+    /** Built in code, not a layout resource, matching how the rest of this activity is put
+        together. Same colour as the window background and the portal's own --bg, so the swap
+        to real content the instant it paints is not itself a jarring colour change. */
+    private View buildLoadingOverlay() {
+        FrameLayout overlay = new FrameLayout(this);
+        overlay.setBackgroundColor(0xFFF6F8FC);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER);
+        col.addView(new ProgressBar(this));
+        TextView label = new TextView(this);
+        label.setText("Inapakia... / Loading...");
+        label.setTextColor(0xFF64748B);
+        label.setGravity(Gravity.CENTER);
+        label.setPadding(0, 24, 0, 0);
+        col.addView(label);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        overlay.addView(col, lp);
+        return overlay;
+    }
+
+    private void showLoading() {
+        if (loadingOverlay != null) loadingOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private void hideLoading() {
+        if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
     }
 
     private boolean hasLocationPermission() {
