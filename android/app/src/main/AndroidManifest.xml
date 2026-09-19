@@ -8,6 +8,11 @@
          geolocation prompt if only FINE is declared. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- The KYC photo/signature/thumbprint capture screens (openCameraOverlay_ in app.html) call
+         getUserMedia() for a live camera feed, never a gallery picker. Without this declared, a
+         WebView's PermissionRequest for it is refused with no OS prompt at all -- see
+         onPermissionRequest below. -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Lets the app offer its own update; Android still shows the normal install prompt. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
