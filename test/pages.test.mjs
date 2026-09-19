@@ -603,3 +603,23 @@ test('the camera device label is captured and carried through to the upload call
   const upload = app.slice(app.indexOf('function kycUpload_'), app.indexOf('/* THE SAME CAPTURE FOR BOTH SIGNATURE AND THUMBPRINT'));
   assert.ok(/camera_label:\s*cameraLabel/.test(upload), 'kycUpload_ sends the label to the server');
 });
+
+/* THE ANDROID BACK BUTTON MUST CLOSE THE OVERLAY, NOT THE WHOLE APP.
+   -----------------------------------------------------------------------------------
+     "clicking back from camera goes to hopecalls instead of recovering current customer card"
+   The camera overlay is a <div>, not a real page -- MainActivity.onBackPressed only ever asks
+   the WebView "is there a previous PAGE" (web.canGoBack()), which knows nothing about a div
+   sitting on top of one. Without a history entry of its own, the hardware back button skips
+   the overlay entirely and unwinds the WebView's real navigation history instead, dropping
+   the customer card underneath. Pushing one entry when the overlay opens, and popping it again
+   however the overlay closes, is what gives the back button something of its own to consume
+   first. */
+test('the camera overlay pushes a history entry so the Android back button closes it, not the app', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const overlay = app.slice(app.indexOf('function openCameraOverlay_'), app.indexOf('function wirePhotoCapture_'));
+  assert.ok(/history\.pushState\(/.test(overlay), 'a history entry is pushed when the overlay opens');
+  assert.ok(/addEventListener\('popstate',\s*onPop\)/.test(overlay), 'a popstate handler is wired to close the overlay');
+  assert.ok(/function onPop\(\)\{[^}]*stop\(\)/.test(overlay), 'popstate actually calls stop(), not just flags something');
+  assert.ok(/if \(!poppedBack\)[^]*history\.back\(\)/.test(overlay),
+    'closing any other way (Cancel/Capture/error) consumes the pushed entry itself, exactly once');
+});
