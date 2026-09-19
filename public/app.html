@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-f';
+var BUILD = '2026-09-19-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9112,11 +9112,26 @@ function openCameraOverlay_(onCapture){
   overlay.appendChild(video); overlay.appendChild(bar);
   document.body.appendChild(overlay);
 
-  var stream = null, stopped = false;
+  var stream = null, stopped = false, poppedBack = false;
+  /* THE ANDROID BACK BUTTON. This overlay is a DOM element, not a real page -- the app's
+     onBackPressed only ever asks the WebView "is there a previous PAGE" (web.canGoBack()), which
+     knows nothing about a div sitting on top of one, so without this the hardware back button
+     skipped straight past the overlay and navigated the whole app away, dropping whoever was on
+     screen underneath it entirely ("clicking back from camera goes to hopecalls instead of
+     recovering current customer card"). Pushing one history entry when the overlay opens gives
+     the back button something of its own to consume first: it pops this same-document entry (no
+     real navigation, just the popstate event below) before it can ever reach a real page. */
+  history.pushState({ hopeCam: 1 }, '', location.href);
+  function onPop(){ poppedBack = true; stop(); }
+  window.addEventListener('popstate', onPop);
   function stop(){
     if (stopped) return; stopped = true;
+    window.removeEventListener('popstate', onPop);
     if (stream) stream.getTracks().forEach(function(t){ t.stop(); });
     if (overlay.parentNode) document.body.removeChild(overlay);
+    // Closed by Cancel/Capture/an error, not by the back button -- consume the pushed entry now
+    // rather than leaving it for a LATER back press to pop for no reason.
+    if (!poppedBack) { poppedBack = true; history.back(); }
   }
   cancelBtn.onclick = stop;
   shotBtn.disabled = true;

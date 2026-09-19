@@ -1,6 +1,6 @@
 {
-  "versionCode": 14,
-  "versionName": "1.9.1",
-  "notes": "Ukurasa ukichukua muda kufunguka, sasa utaona 'Inapakia...' badala ya skrini nyeupe tupu -- usifunge programu, subiri. / When the page takes a while to open you now see 'Loading...' instead of a blank white screen -- don't close the app, just wait.",
+  "versionCode": 15,
+  "versionName": "1.9.2",
+  "notes": "Sasa unaweza kuona saa na mtandao juu ya skrini tena. / The clock and signal at the top of the screen are visible again.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
