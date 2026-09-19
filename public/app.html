@@ -511,6 +511,15 @@ var $ = function(s){ return document.querySelector(s); };
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(c){
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'); }
+/* THE AMOUNT, NOT A NOTE. "put no extra note, include the amount" -- when an Iliyonasia has
+   moved a tile's own figure, this says by how much, signed, right beside it, instead of a
+   sentence explaining that it moved. Empty string when nothing was registered, so an
+   untouched tile reads exactly as it always has. */
+function adjTag_(n){
+  n = Number(n) || 0;
+  if (!n) return '';
+  return ' <span class="mutl">(rekebisho / adj '+(n>0?'+':'')+money(n)+')</span>';
+}
 /* "have J1 and J2 showing amount in 2.4m format single decimal" -- a weekend's recovery in the
    width of a day column, where the full figure would push the table off the screen. */
 function m1_(v){
@@ -605,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-18-d';
+var BUILD = '2026-09-19-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1352,6 +1361,21 @@ var SETTINGS_GROUPS = [
         note:'Mfano https://hope-pmo-v2.vercel.app -- bila hii, viungo vya "Amua sasa" na "Fungua '
           + 'kwenye portal" haviwekwi kwenye email. / e.g. https://hope-pmo-v2.vercel.app -- without '
           + 'it, the email is still sent but without its Decide-now or Open-in-portal links.' },
+      /* "he's gonna request again now, i hope when gm approves he gets one" -- and the reason
+         he did not is almost always this field, blank. A blank EMAIL_FROM falls back to
+         Resend's own onboarding sender, which Resend will only deliver to the address of the
+         Resend ACCOUNT ITSELF -- enough to see the GM's own notice arrive (if the GM signed up
+         for the Resend account) and nothing else. A requester's personal Gmail is a different
+         address, so Resend silently refuses it -- the request still saves, the GM's own notice
+         still lands, and only the requester's decision email goes missing, which is exactly
+         the shape of the bug reported here. Same key the weekly report's ADMIN_EMAIL email
+         already uses (api/_lib/portal-core.js), shared rather than a second copy. */
+      { key:'EMAIL_FROM', label:'Mtumaji wa email / Email sender address', type:'text', dflt:'',
+        note:'Mfano HOPE PMO &lt;imprest@hopemicrocredit.co.tz&gt; -- lazima iwe kwenye domain '
+          + 'iliyothibitishwa Resend. Ikiachwa wazi, taarifa za GM zinaweza kufika lakini email za '
+          + 'maamuzi kwa waombaji HAZITAFIKA. / e.g. HOPE PMO &lt;imprest@hopemicrocredit.co.tz&gt; '
+          + '-- must be on a domain verified in Resend. Left blank, the GM\'s own notice may still '
+          + 'arrive but decision emails to REQUESTERS will silently fail to deliver.' },
     ] },
 ];
 function settingsGroupCard_(g, rows){
@@ -1450,8 +1474,16 @@ function cellText(r, c){
     /* Stored UTC, read in East Africa: the raw ISO string showed every comment three hours
        early ("The time of comments in app is not reading EAT, +3hrs please"). Timestamps
        arrive from PostgREST with an offset, so parse and shift; anything unparseable is
-       shown as written rather than blanked. */
-    var t = Date.parse(v);
+       shown as written rather than blanked.
+
+       A NUMBER IS ALREADY A MOMENT, NOT A STRING TO PARSE -- "time stamp is reading as
+       1789799553103". Imprest's own rows (impRow, api/_lib/imprest.js) hand every timestamp
+       across the wire as epoch-ms, already Date.parse()'d server-side so the client can do
+       plain numeric comparisons (retiredAt, the retirement claim lock) without re-parsing a
+       string on every read. Date.parse(<a number>) stringifies it first and fails to parse a
+       13-digit epoch as a date, so this fell through to printing the raw milliseconds. A
+       number here IS the timestamp; only a string still needs parsing. */
+    var t = typeof v === 'number' ? v : Date.parse(v);
     if (isFinite(t)) return new Date(t + 3*3600*1000).toISOString().replace('T',' ').slice(0,16);
     return String(v).replace('T',' ').slice(0,16);
   }
@@ -3258,9 +3290,9 @@ VIEWS.dashboard = function(){
           d.colTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
-            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
+            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
           tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
-            ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0)), 'badl'],
+            ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0))+adjTag_(d.colTrend.reduce(function(s,x){return s+(x.adjusted||0);},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'))
       /* THE DENOMINATOR IS JANA'S -- "everywhere uses jana except only where there is recovery
          officers". Monday divides by Monday, Tuesday to Friday by the day before, the weekend
@@ -3284,12 +3316,12 @@ VIEWS.dashboard = function(){
                UNRECOVERED IS WHAT IS STILL OUT: the basis day's uncollected MINUS what came
                back. Worked out on the server beside the figures it comes from, so the tile
                and the total cannot drift from it. */
-            ['Unrecovered TZS '+money(x.unrecovered), 'badl'],
+            ['Unrecovered TZS '+money(x.unrecovered)+adjTag_(x.dayAdjusted), 'badl'],
             [x.pct != null
               ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
               : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']])); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
-            ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0), 'badl'],
+            ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0)+adjTag_(d.recTrendTotal ? d.recTrendTotal.adjusted : 0), 'badl'],
             ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot'))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){
@@ -3915,7 +3947,8 @@ VIEWS.apps = function(){
 VIEWS.expected = function(){
   var wd = S.args.weekday || '';
   var type = S.args.type || 'today';
-  return srv('expectedDay', {weekday:wd, type:type}).then(function(d){
+  var weekOf = S.args.weekOf || '';
+  return srv('expectedDay', {weekday:wd, type:type, weekOf:weekOf}).then(function(d){
     S.args.weekday = d.weekday;
     var t = d.totals;
     HEAD = '<div class="kpis">'
@@ -3924,6 +3957,10 @@ VIEWS.expected = function(){
       + kpi('Uncollected', money(t.uncollected), money(t.unpaid)+' unpaid · '+money(t.underpaid)+' underpaid', 'bad')
       + kpi('Collection', pct(t.pct), money(t.paid) + ' paid/overpaid')
       + '</div>'
+      /* THE SAME WEEK BAR THE DASHBOARD, WEEKLY REPORT AND COMMISSION ALREADY STAND ON --
+         "expected repayment nav needs weekly forward and backward too". Picks the Monday this
+         day-pill row belongs to; the day pills below still pick which weekday inside it. */
+      + weekBar(d)
       /* ILIYONASIA, ON THE DECK IT WAS REGISTERED AGAINST.
          "the col% of excels and our system differ ... he just uploaded and confirmed that by
           using the expected tab -- not just there: that was evidence so everywhere the amount
@@ -6484,7 +6521,19 @@ function imprestDecideDrawer_(r){
     if (approve){ var amt=$('#imdAmt').value; if (amt===''||!(Number(amt)>0)){ toast('Andika kiasi cha kuidhinisha. / Enter the amount to approve.', true); return; } }
     var b=$('#imdOk'), n=$('#imdNo'); if (b) b.disabled=true; if (n) n.disabled=true;
     srv('imprestDecide', { id:r.id, approve:approve, approvedAmount: approve?$('#imdAmt').value:null, comment:$('#imdCmt').value })
-      .then(function(){ toast(approve?'Imeidhinishwa / Approved':'Imekataliwa / Rejected'); closeDrawer(); render({ force:true }); })
+      .then(function(d){
+        /* SAY WHETHER THE REQUESTER WAS ACTUALLY TOLD -- "he's gonna request again now, i hope
+           when gm approves he gets one". This used to celebrate the DECISION and stay quiet
+           about the email, so a send that failed (most often EMAIL_FROM unset -- see Settings)
+           looked exactly like one that worked, and nobody knew to check until the requester
+           asked why nothing arrived. Same rule the request form's own confirmation already
+           follows a few screens over. */
+        var base = approve ? 'Imeidhinishwa / Approved' : 'Imekataliwa / Rejected';
+        toast(base + (d && d.emailed && d.emailed.requester
+          ? ' · mwombaji ameambiwa kwa email / requester was emailed'
+          : ' · ⚠️ mwombaji HAKUAMBIWA kwa email: ' + ((d && d.emailNote) || '')), !(d && d.emailed && d.emailed.requester));
+        closeDrawer(); render({ force:true });
+      })
       .catch(function(e){ if (b) b.disabled=false; if (n) n.disabled=false; toast(String(e.message||e), true); });
   };
   $('#imdOk').onclick = function(){ send(true); };
@@ -8426,23 +8475,35 @@ function presSlides(){
         col('uncollected','Uncollected'+tpLab,'money'), col('collPct','Collection %'+tpLab,'pct'),
         col('recPctMon','Rec % vs Mon','pct'), col('recPctYest','Rec % vs yest','pct'),
         col('recPctWeek','Rec % vs week','pct')] });
-    /* Recovery is judged against the uncollected the officer is actually chasing, and which
-       day's uncollected that is depends on the day: Monday divides by Monday, Tuesday to
-       Friday by yesterday, and the weekend by the whole week. So the denominator goes on the
-       slide, immediately before the figure it produced -- a recovery percentage with no
-       visible denominator is a number the room has to take on trust. */
-    var recBasis = d.weekday === 'SAT' || d.weekday === 'SUN' ? 'week' : (d.weekday === 'MON' ? 'today' : 'yesterday');
-    var recUncolLabel = recBasis === 'week' ? 'Uncollected (week)'
-      : recBasis === 'today' ? 'Uncollected (today)' : 'Uncollected (yesterday)';
+    /* THE LABEL, NOT JUST THE FIGURE -- "am seeing the header saying yesterday on screen here
+       so am confused b/se i know we using todays". It was: this said "yesterday" Tuesday
+       through Friday while the row beside it (b.recToday) was already today's uncollected --
+       "everywhere uses jana except only where there is recovery officers like in their
+       commissions, their personal reports and presentation by rec officer" (see recToday's own
+       note in officerBoards, portal-core.js). The label here was never moved when that rule
+       was fixed, so the header kept naming the OLD denominator under the NEW figure. Officers
+       chase today's own uncollected every weekday; only the weekend, which has no sheet of its
+       own, reads the week's. */
+    var recBasis = d.weekday === 'SAT' || d.weekday === 'SUN' ? 'week' : 'today';
+    var recUncolLabel = recBasis === 'week' ? 'Uncollected (week)' : 'Uncollected (today)';
     /* Today and the week on one slide, joined on the officer -- the same rule as every other
        role board here. Today's recovery is divided by the basis above; the week's always by the
        week, which is what makes it the weekly figure rather than a second copy of the daily. */
     var recT = {};
     (b.recToday || []).forEach(function(x){ recT[x.officer] = x; });
+    /* RANKED ON THE WEEK'S REC %, NOT THE AMOUNT. recBoard (officerBoards, portal-core.js)
+       orders b.recWeek by recovered TZS, which is right for a board someone is paid on -- but
+       on a wall the sum favours whoever holds the biggest book, not whoever is doing the best
+       job of shrinking it. Same convention earlyBoard already sorts by: null (unmeasured) sinks
+       to the bottom rather than reading as a beaten zero. This re-sorts the presentation's own
+       copy of the rows -- the commission board and the Dashboard's officer-board widget keep
+       reading b.recWeek exactly as recBoard ordered it, since neither asked to change. */
     var recRows = (b.recWeek || []).map(function(x){
       var t = recT[x.officer] || {};
-      return { ...x, tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; });
-    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — today and this week',
+      return { ...x, tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; })
+      .sort(function(a, b2){ return (b2.pct == null ? -1 : b2.pct) - (a.pct == null ? -1 : a.pct)
+        || String(a.officer).localeCompare(String(b2.officer)); });
+    slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — best weekly Rec % first',
       rows: recRows.slice(0,12),
       cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
         col('tUncollected', recUncolLabel, 'money'),

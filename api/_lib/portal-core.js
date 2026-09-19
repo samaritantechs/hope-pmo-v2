@@ -23,7 +23,7 @@ import { recordPerformance, performanceHistory, recordsFor } from './performance
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
-import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten,
+import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten, tAdjusted,
   ADJ_RECEIVED_TARGETS, ADJ_ARREARS_TARGETS, ADJ_ARREARS_REOPENED } from './adjustments.js';
 /* IMPREST -- request, GM decision (portal or one-tap email), accountant funding, retirement,
    report. Its own file for the same reason adjustments.js is: it is a whole feature with its
@@ -3486,12 +3486,20 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
 
      THE SIXTH RECORD TAKES THE WEEK'S UNCOLLECTED -- Monday to Friday added, which is the same
      window the Orodha's own weekly recovery percentage uses, and it is what the plan's example
-     means by "in default of 1m ... weekly rec = 50%". */
+     means by "in default of 1m ... weekly rec = 50%".
+
+     AND THE REGISTER, THE SAME AS EVERY OTHER READ OF THIS BOOK -- this read myExp directly and
+     skipped the withAdj_ fold the dashboard and PMO Collection board both apply to it, so an
+     Iliyonasia that lowered Uncollected everywhere else left an officer's PAY BAND worked out
+     against the deck's own, uncorrected figure -- caught alongside the identical bug in
+     officerBoards' own uncolOnDate (further down this file): "the uncollected today on
+     dashboard and at by rec officer slide is different and higher". Same rows, same correction,
+     same one place it was missing. */
   const recUncolByDay = new Map();
   const recUncolWeek = {};
   for (const d of colDays) {
     const m = {};
-    for (const r of onDate(myExp, d)) {
+    for (const r of withAdj_(onDate(myExp, d), adj, 'expected-current', d)) {
       const who = officerOf(teamBy, r.team, 'recovery');
       m[who] = (m[who] || 0) + num(r.uncollected_amt);
     }
@@ -9118,6 +9126,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        day adds nothing to either side of the sum -- but the tile was not, so this says which
        days actually have a sheet behind them and the screen stops guessing. */
     return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
+      /* THE NUMBER, NOT A NOTE. "put no extra note, include the amount" -- an Iliyonasia moves
+         Uncol by exactly this much (clamped at zero, same as the figure beside it), and the
+         tile says so as a figure rather than a sentence, the same way `adjusted_amt` already
+         rides beside every other corrected total in this system. */
+      adjusted: tAdjusted(rows),
       uploaded: rows.length > 0,
       pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null };
   });
@@ -9150,7 +9163,13 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        uncollected rides along as dayUncollected for the week's total, which cannot be a sum
        of these: jana's figure appears under two tiles and the week's under both weekend
        ones. */
-    const own = tUncollected(colDay_(myExpWeek, d));
+    const colToday_ = colDay_(myExpWeek, d);
+    const own = tUncollected(colToday_);
+    /* THE SAME AMOUNT THAT MOVED COLLECTION'S UNCOLLECTED ALSO MOVES THIS DENOMINATOR, SO IT
+       IS SHOWN HERE TOO -- "if uncollected is 20 we adjusted it to 15, we are now doing
+       recovery of 15 not 20": the denominator really did change, on purpose, and the amount is
+       the honest answer to "why", not a sentence explaining it away. */
+    const ownAdjusted = tAdjusted(colToday_);
     /* SATURDAY AND SUNDAY HAVE NO COLLECTION SHEET, AND SO NO DENOMINATOR.
          "am still seeing unrecovered on sat and sun ... WE HAVE NO COL IN SAT AND SUN!"
        The jana rule's weekend branch -- divide by the week -- is for the Orodha and the phone
@@ -9171,6 +9190,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const unc = basis.den;
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       basis: basis.kind, basisDates: basis.dates, dayUncollected: own,
+      dayAdjusted: ownAdjusted,
       /* WHAT IS STILL OUT AT THE END OF THE DAY -- which is not the same number as what went
          uncollected at the start of it, and the tile was showing the second under the first
          one's name. Tuesday leaves 8m uncollected, the officers get 2m of it back, so 6m is
@@ -9192,7 +9212,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const recTrendTotal = (() => {
     const recovered = recTrend.reduce((s, x) => s + x.recovered, 0);
     const uncollected = recTrend.slice(0, 5).reduce((s, x) => s + x.dayUncollected, 0);
-    return { recovered, uncollected, unrecovered: Math.max(0, uncollected - recovered),
+    const adjusted = recTrend.slice(0, 5).reduce((s, x) => s + (x.dayAdjusted || 0), 0);
+    return { recovered, uncollected, adjusted, unrecovered: Math.max(0, uncollected - recovered),
       pct: uncollected > 0 ? Math.round((recovered / uncollected) * 1000) / 10 : null };
   })();
 
@@ -9565,19 +9586,29 @@ const pickLatestBatchRows = pickLatestBatch;
 /** Expected for ONE weekday of this week -- the Mon..Fri pills the officers actually use,
     instead of only ever "the latest". Falls back to the latest snapshot when that weekday
     has not been uploaded yet. */
-async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
+async function expectedDay(db, user, { weekday, type = 'today', weekOf }, nowMs) {
+  /* WEEKLY FORWARD AND BACKWARD -- "expected repayment nav needs weekly forward and backward
+     too", the same asOfWeek the dashboard, weekly report and commission already stand on: pick
+     a week and the MOMENT ITSELF moves, so every date below (which weekday is FRI's fallback,
+     which Monday the pills belong to) is computed exactly as it would have been that week,
+     with no second code path for history. Blank weekOf is the identical no-op it always was --
+     asOf.ms is nowMs and nothing here changes for the screen as it stands today. */
+  const asOf = asOfWeek(nowMs, weekOf);
+  const effMs = asOf.ms;
   // There are no weekend Expected sheets, so a Sat/Sun visit lands on FRIDAY -- the last
   // working day that actually has a list -- instead of an empty day nobody uploads.
   const asked = String(weekday || '').toUpperCase();
-  const wd = WD5.includes(asked) ? asked : (WD5.includes(currentWeekday(nowMs)) ? currentWeekday(nowMs) : 'FRI');
-  const date = dateOfWeekday(nowMs, wd);
+  const wd = WD5.includes(asked) ? asked : (WD5.includes(currentWeekday(effMs)) ? currentWeekday(effMs) : 'FRI');
+  const date = dateOfWeekday(effMs, wd);
   // Same narrowing as the Expected tab -- it is the same table drawn the same way, one weekday
   // at a time.
   const dayOpts = { teams: user.teams, columns: EXPECTED_TAB_COLS };
   let snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { onDate: date, ...dayOpts });
   let fellBack = false;
   if (!snap.rows.length) {
-    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(nowMs), ...dayOpts });
+    // Bounded to the week being viewed, not to real today -- a past week falling back must not
+    // reach forward into a live sheet that has not happened yet AS OF that week.
+    snap = await latestSnapshot(db, 'repayment_snapshots', { snapshot_type: type }, { notAfter: todayKey(effMs), ...dayOpts });
     fellBack = true;
   }
   /* ILIYONASIA FOR THIS EXACT DECK -- "he just uploaded and confirmed that by using the
@@ -9621,7 +9652,12 @@ async function expectedDay(db, user, { weekday, type = 'today' }, nowMs) {
     weekday: wd, date: snap.date, requestedDate: date, fellBack, type,
     today: todayK,
     isToday: !!snap.date && String(snap.date) === String(todayK),
-    weekdays: WD5, todayWeekday: currentWeekday(nowMs),
+    weekdays: WD5,
+    // Only marks a pill "leo" while the CURRENT week is on screen -- a Wednesday pill in last
+    // week's row is not today just because today happens to be a Wednesday too.
+    todayWeekday: (asOf.past || asOf.future) ? null : currentWeekday(nowMs),
+    weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 4), asOfDate: todayK,
+    pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future,
     rows, count: rows.length, teams: teamsSeen,
     totals: { expected: exp, collected: colAdj,
       uncollected: Math.max(0, uncollectedOf(rows) - adjAmt),
@@ -10174,22 +10210,27 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
 
   /* ---- RECOVERY: per Recovery officer. ----
 
-     THE DENOMINATOR IS THE UNCOLLECTED THE OFFICER IS ACTUALLY CHASING, and which day's
-     uncollected that is depends on the day of the week. It is the same rule the dashboard's
-     Recovery % has always used (recovery.js, recoveryBasis) -- officers chase what yesterday
-     left behind, so:
+     THE DENOMINATOR IS THE UNCOLLECTED THE OFFICER IS ACTUALLY CHASING -- see recToday's own
+     note below for which day's: today every weekday, the week at the weekend, the "leo not
+     jana" rule for recovery officers specifically.
 
-         Monday      today's uncollected      (no yesterday exists inside a HOPE week)
-         Tue–Fri     yesterday's uncollected
-         Sat/Sun     the whole week's         (the weekend reconciles Monday to Friday)
+     This board used to add up every Expected row of the whole week, every day, every
+     re-upload, and use that as the denominator on BOTH the daily and the weekly board -- so a
+     team whose Tuesday file had been uploaded twice had its recovery percentage quietly
+     halved, and Monday was divided by a week that had barely started. Batch-resolved per day
+     (`onDate`) is what fixed that.
 
-     This board was not following that rule. It added up every Expected row of the whole week,
-     every day, every re-upload, and used that as the denominator on BOTH the daily and the
-     weekly board -- so a team whose Tuesday file had been uploaded twice had its recovery
-     percentage quietly halved, and Monday was divided by a week that had barely started. */
+     AND THE REGISTER, THE SAME AS EVERY OTHER READ OF THIS BOOK -- "everywhere the amount
+     should add as stated during manual input". `myExpDay_` above already corrects the PMO
+     Collection board's own uncollected from `expected-current`; this board read the SAME
+     `myExp` rows and skipped that fold, so an Iliyonasia that lowered Uncollected on the
+     dashboard and PMO Collection left THIS board's Uncollected exactly as the deck said --
+     "the uncollected today on dashboard and at by rec officer slide is different and higher".
+     `withAdj_` here is the identical correction, on the identical rows, applied the one place
+     this board reads them. */
   const uncolOnDate = d => {
     const m = {};
-    for (const r of onDate(myExp, d)) {
+    for (const r of withAdj_(onDate(myExp, d), adj, 'expected-current', d)) {
       bucket(m, officerOf(teamBy, r.team, 'recovery'), { amt: 0 }).amt += num(r.uncollected_amt);
     }
     return m;

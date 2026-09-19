@@ -460,3 +460,101 @@ test('the REF field on the new-adjustment form is never labelled optional', () =
   assert.ok(/Timu \/ Team \(hiari \/ optional\)/.test(view),
     'Team stays labelled optional -- a blank team applies the row to the whole book');
 });
+
+/* THE RECOVERY-BY-OFFICER SLIDE'S HEADER MUST NAME THE DAY THE FIGURE BESIDE IT ACTUALLY IS.
+   -----------------------------------------------------------------------------------
+     "am seeing the header saying yesterday on screen here so am confused b/se i know we using
+      todays"
+   b.recToday (officerBoards, portal-core.js) divides by TODAY's uncollected on every weekday
+   and the WEEK's at the weekend -- "everywhere uses jana except only where there is recovery
+   officers ... presentation by rec officer". This slide's own label logic was never moved when
+   that rule was fixed, so Tuesday through Friday it kept captioning today's own figure
+   "Uncollected (yesterday)". There is no "yesterday" case left in it at all now. */
+test('the Recovery-by-officer presentation slide never labels today\'s figure "yesterday"', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  assert.ok(/recBasis = d\.weekday === 'SAT' \|\| d\.weekday === 'SUN' \? 'week' : 'today'/.test(view),
+    'Mon-Fri all read "today", weekend reads "week" -- matching recToday\'s own basis exactly');
+  assert.ok(!/recUncolLabel = recBasis === 'week' \? 'Uncollected \(week\)'\s*\n?\s*: recBasis === 'today'/.test(view),
+    'no three-way label branch left -- there is no jana case for this slide to fall into');
+  assert.equal((view.match(/'Uncollected \(yesterday\)'/g) || []).length, 0,
+    'no weekday on this slide reads a jana denominator -- recToday is today\'s, every weekday');
+});
+
+/* AND AUTOSORT THAT SLIDE BY WEEKLY REC %, NOT THE AMOUNT.
+   -----------------------------------------------------------------------------------
+   recBoard (officerBoards, portal-core.js) orders b.recWeek by recovered TZS, right for a
+   board someone is paid on -- but on a wall the sum favours whoever holds the biggest book,
+   not whoever is doing best at shrinking it. The presentation slide re-sorts its OWN copy of
+   the rows by `pct` (the week's Rec %) before slicing to twelve, so the officers a room
+   actually wants to see -- the best percentages -- are the ones that survive the cut. */
+test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not the amount', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  const recBlock = view.slice(view.indexOf('var recRows ='), view.indexOf('slides.push({ id:\'recovery\''));
+  assert.ok(/\.sort\(function\(a, b2\)\{ return \(b2\.pct == null \? -1 : b2\.pct\) - \(a\.pct == null \? -1 : a\.pct\)/.test(recBlock),
+    'recRows is sorted descending on .pct (the week\'s Rec %) before the slide slices to 12');
+  // recRows.slice(0,12) must run AFTER the sort, not before it -- a sort applied to the
+  // already-cut twelve would still be amount-ranked underneath.
+  assert.ok(/\.sort\([\s\S]*?\);\s*\n\s*slides\.push/.test(view.slice(view.indexOf('var recRows ='))),
+    'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
+});
+
+/* A "dt" COLUMN WHOSE VALUE IS ALREADY A NUMBER MUST NOT BE RE-PARSED AS A STRING.
+   -----------------------------------------------------------------------------------
+     "time stamp is reading as 1789799553103"
+   impRow (api/_lib/imprest.js) hands every Imprest timestamp across the wire as epoch-ms --
+   already Date.parse()'d server-side, a NUMBER -- so the client can compare them (retiredAt,
+   the retirement claim lock) without re-parsing a string on every read. cellText's 'dt' branch
+   called Date.parse(v) unconditionally; handed a number, Date.parse stringifies it first and
+   fails to read a 13-digit epoch as a date string, so isFinite(t) was false and the raw
+   milliseconds printed as-is. Proven by actually running cellText, not just matching source. */
+test('a "dt" column already holding a number is read as the timestamp it is, not re-parsed', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const start = app.indexOf('function cellText(r, c){');
+  const end = app.indexOf('\nfunction telHref_');
+  const src = app.slice(start, end);
+  const cellText = new Function('r', 'c', src + '\nreturn cellText(r, c);');
+
+  // A real Imprest requested_at, already converted server-side the way impRow does it.
+  const ms = Date.parse('2026-09-19T05:52:33.103Z');
+  const out = cellText({ at: ms }, { key: 'at', kind: 'dt' });
+  assert.doesNotMatch(out, /^\d{10,}$/, 'never the raw epoch milliseconds on screen');
+  assert.equal(out, '2026-09-19 08:52', 'shifted +3h into EAT, exactly like a parsed ISO string would be');
+
+  // The existing string path (comments, complaints, ...) must still work unchanged.
+  const strOut = cellText({ at: '2026-09-19T05:52:33Z' }, { key: 'at', kind: 'dt' });
+  assert.equal(strOut, out, 'a string and the equivalent already-parsed number read identically');
+});
+
+/* THE GM'S DECIDE DRAWER MUST SAY WHETHER THE REQUESTER WAS ACTUALLY EMAILED.
+   -----------------------------------------------------------------------------------
+     "he's gonna request again now, i hope when gm approves he gets one"
+   imprestDecide (api/_lib/imprest.js) already resolves { emailed: { requester }, emailNote }
+   -- the same shape the request form's own confirmation already reads (imqSend, further down
+   this file) to say "GM ameambiwa kwa email" or the reason it failed. The decide drawer threw
+   that answer away and celebrated the DECISION only, so a send that silently failed (most
+   often EMAIL_FROM unset in Settings -- see settingsGroupCard_) looked identical to one that
+   worked, and the only way anybody found out was the requester asking why nothing arrived. */
+test('the GM decide drawer reports whether the requester was actually emailed, not just the decision', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function imprestDecideDrawer_'), app.indexOf('/* ---------- RIPOTI YA IMPREST'));
+  assert.ok(/srv\('imprestDecide',/.test(view), 'sanity: this is the right function');
+  assert.ok(/\.then\(function\(d\)\{/.test(view),
+    'the decide response must be captured (d), not discarded, to read d.emailed off it');
+  assert.ok(/d\.emailed\s*&&\s*d\.emailed\.requester/.test(view),
+    'the toast must actually branch on whether the requester was emailed');
+  assert.ok(/d\.emailNote/.test(view), 'and show the reason when it was not');
+});
+
+/* AND THE FIELD MOST LIKELY TO BE THE ACTUAL CAUSE IS NOW SOMEWHERE TO SET IT.
+   EMAIL_FROM (api/_lib/mail.js) had no Settings field at all -- only the generic "+ Badili
+   thamani" raw key editor could touch it -- so the one setting that silently breaks delivery
+   to anyone but the Resend account's own address was invisible on the screen that lists every
+   other Imprest knob. */
+test('EMAIL_FROM has a real Settings field now, explaining the Resend onboarding-sender trap', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf("id:'imprest',"), app.indexOf('function settingsGroupCard_'));
+  assert.ok(/key:'EMAIL_FROM'/.test(view), 'EMAIL_FROM is a labelled field in the Imprest settings group');
+  assert.ok(/Resend/.test(view), 'the note explains the Resend onboarding-sender restriction, not just the syntax');
+});

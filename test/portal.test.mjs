@@ -2839,6 +2839,76 @@ test('the dashboard Col % counts the same Iliyonasia the weekly report does', as
     'a correction is for one team -- nobody else moves');
 });
 
+test('the amount, not a note: colTrend and recTrend say how much the register moved, even when Uncol was clamped', async () => {
+  /* "put no extra note, include the amount ... if uncollected is 20 we adjusted it to 15, we
+     are now doing recovery of 15 not 20" -- the clamp at zero on Uncol means the visible drop
+     can read smaller than what was actually registered (KONGOWE only had 1,000 outstanding, so
+     Uncol can only fall by 1,000), but the full 40,000 was still credited to Collected and
+     therefore to the recovery denominator's correction. `adjusted` is the unclamped figure, so
+     a screen can always say the whole amount rather than only the part Uncol had room for. */
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  const dayOf = (x, date) => x.colTrend.find(r => r.date === date);
+  assert.equal(dayOf(d, TODAY).adjusted, 40000, 'the full registered amount, unclamped');
+  const totalAdj = d.colTrend.reduce((s, x) => s + (x.adjusted || 0), 0);
+  assert.equal(totalAdj, 40000);
+
+  const recTile = d.recTrend.find(r => r.date === TODAY);
+  assert.equal(recTile.dayAdjusted, 40000,
+    'the same correction that moved Uncol also moved the recovery denominator, by the same amount');
+  assert.equal(d.recTrendTotal.adjusted, 40000, 'and the week total carries it too');
+});
+
+test('the Recovery-by-officer board\'s Uncollected agrees with the dashboard\'s, register and all', async () => {
+  /* "the uncollected today on dashboard and at by rec officer slide is different and higher"
+     "higher by a little margin am not sure if its iliyonasia" -- it was: officerBoards read
+     myExp (the SAME Expected-current rows the dashboard and the PMO Collection board read) but
+     skipped the withAdj_ fold the other two apply, so a correction that lowered Uncollected
+     everywhere else left this board showing the deck's own, uncorrected figure -- always
+     higher, by exactly the (clamped) registered amount. KONGOWE has 1,000 outstanding today;
+     the register's 40,000 clears it to zero, same as the dashboard's colTrend tile above. */
+  const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'officerBoards', {}, NOW);
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const b = await portalApi(dbWithRpc(t), ADMIN, 'officerBoards', {}, NOW);
+  const juma = list => (list || []).find(r => r.officer === 'JUMA G');
+
+  assert.equal(juma(plain.recToday).uncollected, 1000, 'the deck\'s own figure, nothing registered');
+  assert.equal(juma(b.recToday).uncollected, 0,
+    'cleared by the register, exactly like the dashboard\'s and PMO Collection\'s own Uncollected');
+  // The week board sums every weekday's own (corrected) uncollected -- today's cleared to zero,
+  // plus yesterday's 400 (E('111', ..., YEST)), which the register never touched.
+  assert.equal(juma(b.recWeek).uncollected, 400,
+    'the week board folds the same correction into each day it sums, not just today\'s');
+});
+
+test('commission pays the recovery officer on the register-corrected Uncollected, not the deck\'s own', async () => {
+  /* THE SAME BUG, CAUGHT IN THE FUNCTION THAT ACTUALLY DECIDES PAY. recUncolByDay/recUncolWeek
+     (the commission board's own "Kilichorejeshwa / kisichokusanywa" denominator) read myExp
+     the same way officerBoards did and skipped the identical withAdj_ fold -- so a correction
+     that raised Collected and lowered Uncollected everywhere else left an officer's BAND worked
+     out against the deck's uncorrected, larger Uncollected, understating their true percentage.
+
+     Base fixture (no register): JUMA G recovered 300 against the week's uncollected --
+     yesterday's 400 plus today's 1,000 = 1,400 -- which is exactly the existing 21.4% the
+     base test already locks in.
+
+     With the register's 40,000 against KONGOWE today (ADJ_WEEK), today's 1,000 clears to zero,
+     so the week's uncollected drops to 400 and the SAME 300 recovered now reads 75% -- clearing
+     the 50% floor the uncorrected figure kept it under. */
+  const base = await run('commission');
+  assert.equal(base.week.find(r => r.officer === 'JUMA G').pct, 21.4, 'sanity: the uncorrected figure');
+
+  const t = tables();
+  t.pmo_adjustments = ADJ_WEEK.slice();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  const juWeek = d.week.find(r => r.officer === 'JUMA G');
+  assert.equal(juWeek.pct, 75, 'recovered 300 over the register-corrected 400, not the deck\'s 1,400');
+  assert.equal(d.recBoard.find(r => r.officer === 'JUMA G').weekPct, juWeek.pct,
+    'the board beside it must read the same corrected percentage');
+});
+
 test('the weekly report and the dashboard now answer the day with ONE Col %', async () => {
   /* The whole point. Before this these two read the same decks by two different rules and
      disagreed by exactly the register -- which is what sent somebody to check their Excel. */
@@ -5969,6 +6039,40 @@ test('the Expected tab says plainly when the list on screen is not today\'s', as
   assert.equal(sat.fellBack, false, 'nothing fell back -- which is why the old notice was silent');
   assert.equal(sat.isToday, false, 'but it is NOT today\'s list, and the red line says so');
   assert.equal(sat.today, '2026-07-25');
+});
+
+test('Expected repayment nav: weekly forward and backward, the same asOfWeek the dashboard already stands on', async () => {
+  const LAST_FRI = '2026-07-17', LAST_MON = '2026-07-13', NEXT_MON = '2026-07-27';
+  const t = tables();
+  t.repayment_snapshots = t.repayment_snapshots.concat([E('444', 'KONGOWE', 900, 'PAID', 0, LAST_FRI)]);
+
+  // No weekOf: unchanged from before this existed -- this week's Monday, today marked on the
+  // pill row, today's own Friday sheet.
+  const plain = await portalApi(fakeDb(tables()), ADMIN, 'expectedDay', {}, NOW);
+  assert.equal(plain.weekOf, MON);
+  assert.equal(plain.pastWeek, false);
+  assert.equal(plain.weekFuture, false);
+  assert.equal(plain.todayWeekday, 'FRI', 'today is marked on the pill row for the current week');
+
+  // Step back one week: lands on THAT week's own Friday sheet, not this week's.
+  const back = await portalApi(fakeDb(t), ADMIN, 'expectedDay', { weekOf: LAST_MON }, NOW);
+  assert.equal(back.weekOf, LAST_MON);
+  assert.equal(back.weekEnd, LAST_FRI);
+  assert.equal(back.pastWeek, true);
+  assert.equal(back.weekday, 'FRI', 'no weekday asked -- falls back to that week\'s own Friday');
+  assert.equal(back.date, LAST_FRI, 'reads THAT week\'s sheet, not this week\'s');
+  assert.equal(back.totals.expected, 900);
+  assert.equal(back.todayWeekday, null, 'no pill reads "today" while a past week is on screen');
+
+  // Step forward past this week, into one nobody has uploaded yet: falls back to the latest
+  // real sheet not after that week -- this week's own Friday -- exactly as a Saturday visit
+  // already falls back to Friday's sheet today.
+  const fwd = await portalApi(fakeDb(t), ADMIN, 'expectedDay', { weekOf: NEXT_MON }, NOW);
+  assert.equal(fwd.weekOf, NEXT_MON);
+  assert.equal(fwd.weekFuture, true);
+  assert.equal(fwd.fellBack, true);
+  assert.equal(fwd.date, TODAY, 'the latest real sheet, since nothing exists for the week itself');
+  assert.equal(fwd.todayWeekday, null, 'a future week is not "this week" either');
 });
 
 test('the Defaulters tab is scoped to the officer\'s teams as well', async () => {
