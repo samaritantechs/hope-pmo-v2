@@ -3,7 +3,17 @@
     <style name="Theme.HopeCalls" parent="android:Theme.Material.Light.NoActionBar">
         <!-- The status bar stays a real status bar: the app is NOT drawn edge-to-edge, so the
              clock, battery and signal keep their own strip above the page. Dark blue to match
-             the portal's own header, with the light icons that colour needs. -->
+             the portal's own header, with the light icons that colour needs.
+
+             "Top bar is now full white app user can't see time or network info": targeting
+             SDK 35 (Android 15) ENFORCES edge-to-edge for every app by default, which silently
+             ignores statusBarColor/windowDrawsSystemBarBackgrounds below: the status bar goes
+             transparent, the page's own near-white background shows through it, and the white
+             status-bar icons this theme asks for (windowLightStatusBar=false) vanish against
+             it. windowOptOutEdgeToEdgeEnforcement is the platform's own opt-out for an app that
+             is not (yet) built for edge-to-edge, restoring the classic behaviour every item
+             below was already written for; API 35+ only, harmlessly ignored on older phones. -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
         <item name="android:statusBarColor">#0B2A6B</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowTranslucentStatus">false</item>
