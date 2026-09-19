@@ -526,3 +526,35 @@ test('a "dt" column already holding a number is read as the timestamp it is, not
   const strOut = cellText({ at: '2026-09-19T05:52:33Z' }, { key: 'at', kind: 'dt' });
   assert.equal(strOut, out, 'a string and the equivalent already-parsed number read identically');
 });
+
+/* THE GM'S DECIDE DRAWER MUST SAY WHETHER THE REQUESTER WAS ACTUALLY EMAILED.
+   -----------------------------------------------------------------------------------
+     "he's gonna request again now, i hope when gm approves he gets one"
+   imprestDecide (api/_lib/imprest.js) already resolves { emailed: { requester }, emailNote }
+   -- the same shape the request form's own confirmation already reads (imqSend, further down
+   this file) to say "GM ameambiwa kwa email" or the reason it failed. The decide drawer threw
+   that answer away and celebrated the DECISION only, so a send that silently failed (most
+   often EMAIL_FROM unset in Settings -- see settingsGroupCard_) looked identical to one that
+   worked, and the only way anybody found out was the requester asking why nothing arrived. */
+test('the GM decide drawer reports whether the requester was actually emailed, not just the decision', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function imprestDecideDrawer_'), app.indexOf('/* ---------- RIPOTI YA IMPREST'));
+  assert.ok(/srv\('imprestDecide',/.test(view), 'sanity: this is the right function');
+  assert.ok(/\.then\(function\(d\)\{/.test(view),
+    'the decide response must be captured (d), not discarded, to read d.emailed off it');
+  assert.ok(/d\.emailed\s*&&\s*d\.emailed\.requester/.test(view),
+    'the toast must actually branch on whether the requester was emailed');
+  assert.ok(/d\.emailNote/.test(view), 'and show the reason when it was not');
+});
+
+/* AND THE FIELD MOST LIKELY TO BE THE ACTUAL CAUSE IS NOW SOMEWHERE TO SET IT.
+   EMAIL_FROM (api/_lib/mail.js) had no Settings field at all -- only the generic "+ Badili
+   thamani" raw key editor could touch it -- so the one setting that silently breaks delivery
+   to anyone but the Resend account's own address was invisible on the screen that lists every
+   other Imprest knob. */
+test('EMAIL_FROM has a real Settings field now, explaining the Resend onboarding-sender trap', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf("id:'imprest',"), app.indexOf('function settingsGroupCard_'));
+  assert.ok(/key:'EMAIL_FROM'/.test(view), 'EMAIL_FROM is a labelled field in the Imprest settings group');
+  assert.ok(/Resend/.test(view), 'the note explains the Resend onboarding-sender restriction, not just the syntax');
+});

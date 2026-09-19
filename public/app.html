@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-a';
+var BUILD = '2026-09-19-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1361,6 +1361,21 @@ var SETTINGS_GROUPS = [
         note:'Mfano https://hope-pmo-v2.vercel.app -- bila hii, viungo vya "Amua sasa" na "Fungua '
           + 'kwenye portal" haviwekwi kwenye email. / e.g. https://hope-pmo-v2.vercel.app -- without '
           + 'it, the email is still sent but without its Decide-now or Open-in-portal links.' },
+      /* "he's gonna request again now, i hope when gm approves he gets one" -- and the reason
+         he did not is almost always this field, blank. A blank EMAIL_FROM falls back to
+         Resend's own onboarding sender, which Resend will only deliver to the address of the
+         Resend ACCOUNT ITSELF -- enough to see the GM's own notice arrive (if the GM signed up
+         for the Resend account) and nothing else. A requester's personal Gmail is a different
+         address, so Resend silently refuses it -- the request still saves, the GM's own notice
+         still lands, and only the requester's decision email goes missing, which is exactly
+         the shape of the bug reported here. Same key the weekly report's ADMIN_EMAIL email
+         already uses (api/_lib/portal-core.js), shared rather than a second copy. */
+      { key:'EMAIL_FROM', label:'Mtumaji wa email / Email sender address', type:'text', dflt:'',
+        note:'Mfano HOPE PMO &lt;imprest@hopemicrocredit.co.tz&gt; -- lazima iwe kwenye domain '
+          + 'iliyothibitishwa Resend. Ikiachwa wazi, taarifa za GM zinaweza kufika lakini email za '
+          + 'maamuzi kwa waombaji HAZITAFIKA. / e.g. HOPE PMO &lt;imprest@hopemicrocredit.co.tz&gt; '
+          + '-- must be on a domain verified in Resend. Left blank, the GM\'s own notice may still '
+          + 'arrive but decision emails to REQUESTERS will silently fail to deliver.' },
     ] },
 ];
 function settingsGroupCard_(g, rows){
@@ -6506,7 +6521,19 @@ function imprestDecideDrawer_(r){
     if (approve){ var amt=$('#imdAmt').value; if (amt===''||!(Number(amt)>0)){ toast('Andika kiasi cha kuidhinisha. / Enter the amount to approve.', true); return; } }
     var b=$('#imdOk'), n=$('#imdNo'); if (b) b.disabled=true; if (n) n.disabled=true;
     srv('imprestDecide', { id:r.id, approve:approve, approvedAmount: approve?$('#imdAmt').value:null, comment:$('#imdCmt').value })
-      .then(function(){ toast(approve?'Imeidhinishwa / Approved':'Imekataliwa / Rejected'); closeDrawer(); render({ force:true }); })
+      .then(function(d){
+        /* SAY WHETHER THE REQUESTER WAS ACTUALLY TOLD -- "he's gonna request again now, i hope
+           when gm approves he gets one". This used to celebrate the DECISION and stay quiet
+           about the email, so a send that failed (most often EMAIL_FROM unset -- see Settings)
+           looked exactly like one that worked, and nobody knew to check until the requester
+           asked why nothing arrived. Same rule the request form's own confirmation already
+           follows a few screens over. */
+        var base = approve ? 'Imeidhinishwa / Approved' : 'Imekataliwa / Rejected';
+        toast(base + (d && d.emailed && d.emailed.requester
+          ? ' · mwombaji ameambiwa kwa email / requester was emailed'
+          : ' · ⚠️ mwombaji HAKUAMBIWA kwa email: ' + ((d && d.emailNote) || '')), !(d && d.emailed && d.emailed.requester));
+        closeDrawer(); render({ force:true });
+      })
       .catch(function(e){ if (b) b.disabled=false; if (n) n.disabled=false; toast(String(e.message||e), true); });
   };
   $('#imdOk').onclick = function(){ send(true); };
