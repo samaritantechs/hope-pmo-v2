@@ -79,7 +79,10 @@ test('the bench command names the APK that is actually on the phones', async () 
   const db = fakeDb(tables());
   const a = await run(db, LOCKER, 'deviceEnrol', { imeis: '350000000000001' });
   assert.equal(a.pkg, 'com.samaritantechs.hooploanlock', 'nothing has to be typed for the app in use');
-  assert.equal(a.apkPath, '', 'no install step offered until an operator sets one');
+  /* "should be inclusive in code if important" -- the install step is now on BY DEFAULT,
+     the same way the package name already was; an operator writes `none` to ask it left out. */
+  assert.equal(a.apkPath, '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk',
+    'the install step rides on the bench command with nothing typed, same as the package');
 
   // And the day HOPE builds its own, the setting moves the bench command with no deploy.
   const t = tables();
@@ -89,9 +92,15 @@ test('the bench command names the APK that is actually on the phones', async () 
 
   /* "if there should be installation or anything then it must be included in the token copy" */
   const t2 = tables();
-  t2.settings = [{ key: 'DEVICE_LOCK_APK_PATH', value: '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk' }];
+  t2.settings = [{ key: 'DEVICE_LOCK_APK_PATH', value: 'C:\\Bench\\HOOPLOAN-Lock.apk' }];
   const withApk = await run(fakeDb(t2), LOCKER, 'deviceEnrol', { imeis: '350000000000003' });
-  assert.equal(withApk.apkPath, '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk');
+  assert.equal(withApk.apkPath, 'C:\\Bench\\HOOPLOAN-Lock.apk', 'an explicit path overrides the default');
+
+  // And an operator who genuinely wants no install step gets to say so, same as the logo's `none`.
+  const t3 = tables();
+  t3.settings = [{ key: 'DEVICE_LOCK_APK_PATH', value: 'none' }];
+  const noApk = await run(fakeDb(t3), LOCKER, 'deviceEnrol', { imeis: '350000000000004' });
+  assert.equal(noApk.apkPath, '', '"none" turns the install step off, on purpose');
 });
 
 test('the two panes are two authorities, and the gate is on the order not the screen', async () => {
@@ -408,7 +417,7 @@ test('the list chases what needs somebody, and names a lock nobody ever confirme
   // The single-phone re-issue reads the same package/path knobs the batch command does --
   // it used to fall back to the client's own hardcoded default and ignore an override.
   assert.equal(t.pkg, 'com.samaritantechs.hooploanlock');
-  assert.equal(t.apkPath, '');
+  assert.equal(t.apkPath, '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk', 'included by default here too');
   // And the desk that only unlocks has no business with the bench's credentials.
   await assert.rejects(() => run(db, UNLOCKER, 'deviceToken', { imei: '151515151515151' }),
     x => x.status === 403);

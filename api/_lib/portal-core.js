@@ -6854,6 +6854,19 @@ const DEVICE_MIGRATION = 'db/RUN-ME-2026-09-11-devices.sql';
     remember, above the 500 rows the list can show, so tick-all on a full table still fits. */
 const DEVICE_MAX_BATCH = 500;
 
+/* THE INSTALL STEP'S DEFAULT PATH -- "should be inclusive in code if important". A bench
+   command missing its install step is exactly the trap that sent an operator round the
+   accounts/device-owner/Invalid-component cycle believing a phone was ready when the app was
+   never on it. DEVICE_LOCK_APK_PATH now works the same way DEVICE_LOCK_LOGO already does:
+   blank means the real default (this path, the one actually used on this bench), not "no
+   install step" -- an operator has to type `none` to ask for that. */
+const DEVICE_LOCK_APK_PATH_DEFAULT = '%USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk';
+function apkPathFor_(setting) {
+  const want = String(setting == null ? '' : setting).trim();
+  if (/^(none|hakuna|-)$/i.test(want)) return '';
+  return want || DEVICE_LOCK_APK_PATH_DEFAULT;
+}
+
 /** Does this person hold either phone pane? Both panes SEE the whole fleet: somebody who
     cannot tell whether the handset in their hand is locked cannot do the one job they have. */
 function requireDeviceNav_(user) {
@@ -7187,11 +7200,13 @@ async function deviceEnrol(db, user, args, nowMs = Date.now()) {
      on the phone is exactly wrong for a fresh handset, and the failure it produces --
      `result=0`, indistinguishable from success -- is the one this whole file exists to keep
      an operator from reading as "done". DEVICE_LOCK_APK_PATH names where the current build
-     sits on the BENCH COMPUTER (not the phone, not this server); blank means the operator
-     still runs their own `adb install` first, exactly as before. */
+     sits on the BENCH COMPUTER (not the phone, not this server) -- INCLUDED BY DEFAULT, not
+     opt-in, per "should be inclusive in code if important": blank uses the real default
+     path (apkPathFor_), typing `none` is how an operator who genuinely wants it left out
+     asks for that. */
   const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE', 'DEVICE_LOCK_APK_PATH']);
   const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hooploanlock').trim();
-  const apkPath = String(cfg.get('DEVICE_LOCK_APK_PATH', '') || '').trim();
+  const apkPath = apkPathFor_(cfg.get('DEVICE_LOCK_APK_PATH', ''));
   return { ok: true, ready: true, enrolled: fresh.length, alreadyOn: rejoin.length, pkg, apkPath,
     /* Said out loud, because it is a state change nobody explicitly asked for -- they asked to
        enrol. Silently un-releasing rows would be the right behaviour reported as nothing. */
@@ -7382,7 +7397,7 @@ async function deviceTokenOf(db, user, args) {
   // reading the client's own hardcoded default and ignoring DEVICE_LOCK_PACKAGE entirely.
   const cfg = await settingsMany(db, ['DEVICE_LOCK_PACKAGE', 'DEVICE_LOCK_APK_PATH']);
   const pkg = String(cfg.get('DEVICE_LOCK_PACKAGE', '') || 'com.samaritantechs.hooploanlock').trim();
-  const apkPath = String(cfg.get('DEVICE_LOCK_APK_PATH', '') || '').trim();
+  const apkPath = apkPathFor_(cfg.get('DEVICE_LOCK_APK_PATH', ''));
   return { ok: true, ready: true, imei, token: String(row.enrol_token), batch: row.enrol_batch || null,
     pkg, apkPath };
 }
