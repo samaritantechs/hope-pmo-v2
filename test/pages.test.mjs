@@ -579,3 +579,27 @@ test('the all-in-one bench command chains install/&&/ownership/&/enrol, in both 
       name + ' drawer: the all-in-one box is actually offered');
   }
 });
+
+/* WHICH CAMERA ANSWERED, CARRIED ALL THE WAY THROUGH.
+   -----------------------------------------------------------------------------------
+     "We now have a setback officers are using Ai photos so this comes as ronaldo"
+   A genuine handset and a virtual-camera app (fed a still image instead of a live feed) both
+   satisfy getUserMedia() the same way -- nothing in the page can tell them apart. The one
+   thing the browser does hand back is the track's own label, so every capture logs it: the
+   overlay reads it off the live stream, and it rides the same path every capture already
+   takes (openCameraOverlay_ -> wirePhotoCapture_ -> kycUpload_ -> the server) rather than a
+   second one bolted on beside it. */
+test('the camera device label is captured and carried through to the upload call', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const overlay = app.slice(app.indexOf('function openCameraOverlay_'), app.indexOf('function wirePhotoCapture_'));
+  assert.ok(/stream(?:\s*&&\s*stream\.getVideoTracks)?.*getVideoTracks\(\)\[0\]/.test(overlay),
+    'the overlay reads the label off its own live stream, not a fresh getUserMedia call');
+  assert.ok(/onCapture\(dataUrl,\s*cameraLabel\)/.test(overlay), 'the label travels out with the capture');
+
+  const wire = app.slice(app.indexOf('function wirePhotoCapture_'), app.indexOf('function wireGpsCapture_'));
+  assert.ok(/function\(dataUrl,\s*cameraLabel\)/.test(wire), 'wirePhotoCapture_ receives the label openCameraOverlay_ hands back');
+  assert.ok(/kycUpload_\(loanId,\s*kind,\s*dataUrl,\s*cameraLabel\)/.test(wire), 'and passes it on to the upload call');
+
+  const upload = app.slice(app.indexOf('function kycUpload_'), app.indexOf('/* THE SAME CAPTURE FOR BOTH SIGNATURE AND THUMBPRINT'));
+  assert.ok(/camera_label:\s*cameraLabel/.test(upload), 'kycUpload_ sends the label to the server');
+});
