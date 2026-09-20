@@ -53,3 +53,29 @@ test('every comment in the manifest is actually closed (an unclosed one swallows
   const closes = (src.match(/-->/g) || []).length;
   assert.equal(opens, closes, opens + ' comment openers vs ' + closes + ' closers');
 });
+
+/* THE STANDING NOTIFICATION SAYS "AUTO UPDATING DATA", AND NOTHING ABOUT LOCATION.
+     "Bro we can't have notification on handset that we are reporting device location.
+      If it's a compulsory policy then at least say 'Hope pmo is auto updating data'."
+   Android makes the notification itself compulsory for a background location service; the
+   wording is ours. This pins the wording, and pins the channel at MINIMUM importance on a
+   channel id that is not the original one -- a channel's importance freezes when it is first
+   created, so lowering it under the old id would have changed nothing on phones already
+   running the service. */
+test('the officer-location service notification says auto updating data, quietly, on a fresh channel', () => {
+  const src = readFileSync(join(ANDROID_MAIN, 'java/com/samaritantechs/hopecalls/OfficerLocationService.java'), 'utf8');
+  /* Only what the PERSON sees: the channel's name and description, the notification's title
+     and line. Internal names (the thread, the preference key) are not on the screen. */
+  const shown = [...src.matchAll(/(?:setContentTitle|setContentText|setDescription)\("([^"]*)"\)|new NotificationChannel\(CHANNEL_ID, "([^"]*)"/g)]
+    .map(m => m[1] || m[2]);
+  assert.ok(shown.length >= 4, 'channel name, description, title and line are all literal strings (' + shown.length + ')');
+  assert.ok(shown.filter(s => /inasasisha data|auto updating data/i.test(s)).length >= 2,
+    'both the channel description and the notification line carry the agreed wording');
+  for (const s of shown) {
+    assert.ok(!/location|mahali|ripoti/i.test(s), 'no user-visible string mentions location: ' + s);
+  }
+  assert.ok(/IMPORTANCE_MIN/.test(src) && !/IMPORTANCE_LOW|IMPORTANCE_DEFAULT|IMPORTANCE_HIGH/.test(src), 'the channel is minimum importance');
+  assert.ok(/setSilent\(true\)/.test(src) && /PRIORITY_MIN/.test(src), 'the notification itself is silent and lowest priority');
+  assert.ok(/CHANNEL_ID = "hope_pmo_sync"/.test(src), 'a new channel id, so the quieter importance takes effect on update');
+  assert.ok(/deleteNotificationChannel\("officer_location"\)/.test(src), 'and the old channel is retired');
+});

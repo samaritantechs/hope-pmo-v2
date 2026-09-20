@@ -56,7 +56,18 @@ import java.nio.charset.StandardCharsets;
  * detect or react to itself.
  */
 public class OfficerLocationService extends Service implements LocationListener {
-    private static final String CHANNEL_ID = "officer_location";
+    /* THE NOTIFICATION IS COMPULSORY; ITS WORDING IS NOT.
+       Android will not run a location service in the background without a persistent
+       notification -- there is no permission, flag or build setting that removes it. What
+       can be chosen is what it says and how loud it is:
+         "Bro we can't have notification on handset that we are reporting device location.
+          If it's a compulsory policy then at least say 'Hope pmo is auto updating data'."
+       So it says exactly that, on a channel of MINIMUM importance (collapsed to a line in
+       the shade, no status-bar icon on most handsets, never a sound or a buzz). A NEW channel
+       id on purpose: Android freezes a channel's importance the moment it is first created,
+       so lowering the old "officer_location" channel from LOW to MIN would have changed nothing
+       on the phones already running it. */
+    private static final String CHANNEL_ID = "hope_pmo_sync";
     private static final int NOTIF_ID = 4471;
     // "were they are" only needs to be roughly current, not live-tracked to the second -- once
     // every five minutes (or sooner, once they have actually moved 50m) is a fix a supervisor
@@ -165,10 +176,18 @@ public class OfficerLocationService extends Service implements LocationListener 
     private Notification buildNotification_() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationManager nm = getSystemService(NotificationManager.class);
-            NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "Mahali / Location",
-                    NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("Inaripoti mahali pa kifaa cha kampuni / Reports this company device's location.");
-            if (nm != null) nm.createNotificationChannel(ch);
+            NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "HOPE PMO",
+                    NotificationManager.IMPORTANCE_MIN);
+            ch.setDescription("HOPE PMO inasasisha data / HOPE PMO is auto updating data.");
+            ch.setSound(null, null);
+            ch.enableVibration(false);
+            ch.setShowBadge(false);
+            if (nm != null) {
+                nm.createNotificationChannel(ch);
+                // The old, louder channel is retired so it cannot linger in the phone's
+                // notification settings beside the new one.
+                nm.deleteNotificationChannel("officer_location");
+            }
         }
         Intent tap = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, 0, tap,
@@ -176,7 +195,10 @@ public class OfficerLocationService extends Service implements LocationListener 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("HOPE PMO")
-                .setContentText("Inaripoti mahali pa kifaa / Reporting device location")
+                .setContentText("Inasasisha data / auto updating data")
+                .setPriority(NotificationCompat.PRIORITY_MIN)
+                .setSilent(true)
+                .setShowWhen(false)
                 .setOngoing(true)
                 .setContentIntent(pi)
                 .build();
