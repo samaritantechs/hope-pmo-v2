@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-h';
+var BUILD = '2026-09-20-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -941,11 +941,14 @@ var NAV_LOAN = [
   { id:'ln_pipeline', label:'Pipeline', tab:null, ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
   { id:'ln_cs',        label:'Customer Service', tab:'customer_service', ic:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>' },
   { id:'ln_manager',   label:'Manager · Assign', tab:'manager', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>' },
-  { id:'ln_team',      label:'Team · Assessment', tab:'team', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
   // "a new Assessment Plan nav, team-pivoted ... who a team means to visit before there is
-  // even a customer" (RUN-ME-011) -- same 'team' tab as the assessment screen itself, next
-  // to it, since it is the same officers planning ahead of the same visits.
+  // even a customer" (RUN-ME-011) -- comes BEFORE the assessment/recommendation screen in
+  // the nav, same 'team' tab, because planning who to visit is the step that comes first.
   { id:'ln_assess_plan', label:'Mpango wa Tathmini / Assessment Plan', tab:'team', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15h2M14 15h2"/>' },
+  // Renamed from "Team · Assessment" -- "Assessment" now means the PLAN above (before there
+  // is even a customer); this screen's own five sections end in a recommendation, which is
+  // what it has always actually produced (lnTeamAssessForm_'s own "Submit recommendation").
+  { id:'ln_team',      label:'Team · Recommendation', tab:'team', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
   /* TWO SIDE NAVS, NOT ONE SCREEN WITH A DROPDOWN -- "so here we'll have two side navs b/se
      that's the way I distribute operations people login and I give them navigation tabs
      access at access codes". Manager Review reuses the 'manager' tab on purpose (see the
