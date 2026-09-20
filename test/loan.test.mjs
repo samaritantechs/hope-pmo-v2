@@ -812,7 +812,7 @@ test('the next loan for a reversed customer opens on the next track, not a reuse
 test('financeImportPayments is the receiver for the ISP feed finance already runs by hand', async () => {
   const db = fakeDb({});
   const r = await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: '919000001', amount: 34000, paid_by: '0715000001' }, { ref: '', amount: 0 }],
+    rows: [{ ref: '919000001', amount: 34000, trans_no: 'T-1', paid_by: '0715000001' }, { ref: '', amount: 0 }],
   });
   assert.equal(r.imported, 1, 'a row missing a reference or an amount is dropped, not guessed');
   const rows = (await db.from('payment_imports').select('*')).data;
@@ -822,10 +822,23 @@ test('financeImportPayments is the receiver for the ISP feed finance already run
 
 /* Both of these existed as writes with no way to read them back -- a register nobody can open
    and a shift-by-id nobody could look an id up for. */
+/* "Importing payment at finance always require transaction ID too" */
+test('financeImportPayments refuses the whole import when any row has no transaction ID', async () => {
+  const db = fakeDb({});
+  await assert.rejects(
+    () => loanApi(db, FINANCE, 'financeImportPayments', { rows: [
+      { ref: '919000001', amount: 34000, trans_no: 'T-1' },
+      { ref: '919000002', amount: 51000 },
+    ] }),
+    /transaction ID[\s\S]*row 2 \(REF 919000002\)/, 'the offending row is named');
+  assert.equal((await db.from('payment_imports').select('*')).data.length, 0,
+    'nothing imported -- not even the good row; a partial import is a silent gap in the book');
+});
+
 test('paymentsList makes a misapplied payment findable, so shifting one is reachable', async () => {
   const db = fakeDb({});
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    batch: 'PAY-A', rows: [{ ref: '919000001', amount: 34000 }, { ref: '919000002', amount: 51000 }],
+    batch: 'PAY-A', rows: [{ ref: '919000001', amount: 34000, trans_no: 'T-1' }, { ref: '919000002', amount: 51000, trans_no: 'T-2' }],
   });
   const d = await loanApi(db, FINANCE, 'paymentsList', {});
   assert.equal(d.rows.length, 2);
@@ -873,14 +886,14 @@ test('a payment that covers the loan in full closes it and stamps the Real End D
   const db = fakeDb({});
   const loan = await toFunded(db, 300000);   // loan_amt = 408000
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: loan.loan_id, amount: 200000, paid_at: '2026-01-05' }],
+    rows: [{ ref: loan.loan_id, amount: 200000, paid_at: '2026-01-05', trans_no: 'T-200' }],
   });
   let after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
   assert.equal(after.stage, 'funded', 'short of the total -- stays open');
   assert.equal(after.real_end_date, undefined);
 
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: loan.loan_id, amount: 208000, paid_at: '2026-01-19' }],
+    rows: [{ ref: loan.loan_id, amount: 208000, paid_at: '2026-01-19', trans_no: 'T-208' }],
   });
   after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
   assert.equal(after.stage, 'closed', 'fully covered now -- the closing event fires');
@@ -897,7 +910,7 @@ test('a loan not yet funded never auto-closes, even if a matching ref is fully p
   await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
   const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
   assert.equal(loan.stage, 'approved', 'sanity: not disbursed or funded yet');
-  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: loan.loan_id, amount: 999999999 }] });
+  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: loan.loan_id, amount: 999999999, trans_no: 'T-STRAY' }] });
   const after = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
   assert.equal(after.stage, 'approved', 'never disbursed or funded -- a stray payment cannot close it');
 });
@@ -906,9 +919,9 @@ test('shifting a payment onto a ref can be the transaction that finally closes i
   const db = fakeDb({});
   const loan = await toFunded(db, 300000);   // loan_amt = 408000
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: 'WRONG-REF', amount: 408000, paid_at: '2026-02-10' }],
+    rows: [{ ref: 'WRONG-REF', amount: 408000, paid_at: '2026-02-10', trans_no: 'T-408' }],
   });
-  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: 'WRONG-REF', amount: 1 }] });
+  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: 'WRONG-REF', amount: 1, trans_no: 'T-ONE' }] });
   const rows = (await db.from('payment_imports').select('*')).data.filter(p => p.ref === 'WRONG-REF' && p.amount === 408000);
   await loanApi(db, FINANCE, 'financeShiftPayment', { payment_id: rows[0].id, to_ref: loan.loan_id, reason: 'misapplied slip' });
   const after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
@@ -1212,6 +1225,48 @@ test('Assessment Plan: 30+ days past its own planned date autodeletes on the nex
   const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
   assert.equal(r.rows.length, 0);
   assert.equal(db._dump('assessment_plans').length, 0, 'gone from the table, not just hidden from this read');
+});
+
+/* "Users with multiple teams should also be able to create assessment plan ... they get their
+   granted teams at access codes as we always pivot" */
+test('Assessment Plan: a code holding several teams sees only those, pivots within them, and must pick one to save', async () => {
+  const TWO = { code: 'T2', name: 'A TWO-TEAM LEADER', role: 'TEAM LEADER', tabs: ['team'], teams: ['MABIBO', 'KAWE'] };
+  const soon = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const db = fakeDb({ assessment_plans: [
+    { id: 'p-mab', team: 'MABIBO', full_name: 'IN MABIBO', phone: '0715000040', planned_date: soon },
+    { id: 'p-kawe', team: 'KAWE', full_name: 'IN KAWE', phone: '0715000041', planned_date: soon },
+    { id: 'p-other', team: 'TANDIKA', full_name: 'SOMEBODY ELSE\'S', phone: '0715000042', planned_date: soon },
+  ] });
+
+  const all = await loanApi(db, TWO, 'assessmentPlanList', {});
+  assert.deepEqual(all.teams, ['MABIBO', 'KAWE'], 'the pivot offers exactly the granted teams, in the code\'s own order');
+  assert.deepEqual(all.rows.map(r => r.team).sort(), ['KAWE', 'MABIBO'], 'TANDIKA is not this code\'s to see');
+
+  const kawe = await loanApi(db, TWO, 'assessmentPlanList', { team: 'kawe' });
+  assert.deepEqual(kawe.rows.map(r => r.id), ['p-kawe'], 'the pivot filters, matched case-insensitively');
+  const outside = await loanApi(db, TWO, 'assessmentPlanList', { team: 'TANDIKA' });
+  assert.deepEqual(outside.rows.map(r => r.team).sort(), ['KAWE', 'MABIBO'], 'a pivot outside the grant is not honoured, not answered');
+
+  await assert.rejects(() => loanApi(db, TWO, 'assessmentPlanSave', { full_name: 'X', planned_date: soon }), /Choose one of your own teams/);
+  await assert.rejects(() => loanApi(db, TWO, 'assessmentPlanSave', { full_name: 'X', planned_date: soon, team: 'TANDIKA' }), /Choose one of your own teams/);
+  await loanApi(db, TWO, 'assessmentPlanSave', { full_name: 'NEW IN KAWE', planned_date: soon, team: 'kawe' });
+  const saved = db._dump('assessment_plans').find(r => r.full_name === 'NEW IN KAWE');
+  assert.equal(saved.team, 'KAWE', 'stored under the granted spelling, not whatever case was typed');
+
+  await assert.rejects(() => loanApi(db, TWO, 'assessmentPlanSave', { id: 'p-other', full_name: 'HIJACK', planned_date: soon }),
+    e => e.status === 403, 'editing another team\'s plan is refused, not just hidden');
+  await loanApi(db, TWO, 'assessmentPlanSave', { id: 'p-mab', full_name: 'MOVED', planned_date: soon, team: 'KAWE' });
+  assert.equal(db._dump('assessment_plans').find(r => r.id === 'p-mab').team, 'KAWE', 'a future-dated plan can be moved between held teams');
+});
+
+test('Assessment Plan: a code granted every team is offered the whole register to pivot on', async () => {
+  const db = fakeDb({ teams: [{ team: 'MABIBO', branch: 'B' }, { team: 'KAWE', branch: 'B' }, { team: 'MABIBO', branch: 'B' }] });
+  const r = await loanApi(db, ADMIN, 'assessmentPlanList', {});
+  assert.deepEqual(r.teams, ['KAWE', 'MABIBO'], 'every team, once each, sorted');
+  const soon = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  await assert.rejects(() => loanApi(db, ADMIN, 'assessmentPlanSave', { full_name: 'X', planned_date: soon }), /Choose one of your own teams/);
+  await loanApi(db, ADMIN, 'assessmentPlanSave', { full_name: 'X', planned_date: soon, team: 'KAWE' });
+  assert.equal(db._dump('assessment_plans')[0].team, 'KAWE');
 });
 
 test('Assessment Plan: a matching approved loan autodeletes the plan that predicted it', async () => {

@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-j';
+var BUILD = '2026-09-20-n';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -944,7 +944,7 @@ var NAV_LOAN = [
   // "a new Assessment Plan nav, team-pivoted ... who a team means to visit before there is
   // even a customer" (RUN-ME-011) -- comes BEFORE the assessment/recommendation screen in
   // the nav, same 'team' tab, because planning who to visit is the step that comes first.
-  { id:'ln_assess_plan', label:'Mpango wa Tathmini / Assessment Plan', tab:'team', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15h2M14 15h2"/>' },
+  { id:'ln_assess_plan', label:'Assessment Plan', tab:'team', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15h2M14 15h2"/>' },
   // Renamed from "Team · Assessment" -- "Assessment" now means the PLAN above (before there
   // is even a customer); this screen's own five sections end in a recommendation, which is
   // what it has always actually produced (lnTeamAssessForm_'s own "Submit recommendation").
@@ -8545,17 +8545,21 @@ VIEWS.officerloc = function(){
       + (!rows.length
         ? '<div class="note">Hakuna aliyeripoti mahali bado. Inahitaji ruhusa ya location ikiwa imeruhusiwa kwenye simu, na programu ifunguliwe. / '
           + 'Nobody has reported a position yet. It needs location permission granted on the phone, and the app to have been opened.</div>'
-        : '<table><thead><tr><th>Jina / Name</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
-          + '<th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th><th></th></tr></thead><tbody>'
+        /* "am not seeing location link at locations" -- it was there, as the LAST of six
+           columns, in a table with no scroll box: on a phone that column sat past the right
+           edge, clipped. The link is now the officer's own name in the FIRST column, so it
+           is on screen whatever the width, and the table scrolls like every other one here. */
+        : '<div class="scroll"><table><thead><tr><th>Jina / Name (bonyeza = ramani / tap = map)</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
+          + '<th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th></tr></thead><tbody>'
           + rows.map(function(r){
               var teams = (r.teams || []).join(', ') || 'zote / all';
               var mapUrl = 'https://www.google.com/maps?q=' + encodeURIComponent(r.last_lat) + ',' + encodeURIComponent(r.last_lng);
-              return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.role) + '</td><td>' + esc(teams) + '</td>'
+              return '<tr><td><a href="' + esc(mapUrl) + '" target="_blank" rel="noopener" class="btn sm ghost">📍 ' + esc(r.name) + '</a></td>'
+                + '<td>' + esc(r.role) + '</td><td>' + esc(teams) + '</td>'
                 + '<td>' + (r.last_loc_acc != null ? '±' + esc(r.last_loc_acc) + 'm' : '—') + '</td>'
-                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td>'
-                + '<td><a href="' + esc(mapUrl) + '" target="_blank" rel="noopener" class="btn sm ghost">Ramani / Map</a></td></tr>';
+                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td></tr>';
             }).join('')
-          + '</tbody></table>')
+          + '</tbody></table></div>')
       + '</div>';
     S.rows = []; S.cols = null;
     ONROW = null;
@@ -10311,14 +10315,23 @@ function lnFundOneForm_(row){
 }
 function lnImportPaymentsForm_(){
   drawer('<h3>Import payments / Ingiza malipo</h3>'
-    + '<div class="sub">The receiver for the ISP channel finance already runs by hand -- one line per payment: REF, AMOUNT, PAID_BY (tab or comma separated).</div>'
-    + '<textarea id="lnPayRows" rows="8" style="width:100%" placeholder="919000001, 34000, 0715000001"></textarea>'
+    // "Importing payment at finance always require transaction ID too" -- TRANS_NO is the
+    // third column, ahead of the optional PAID_BY, and a line without one stops the import
+    // here with its line number; the server refuses the same way (financeImportPayments).
+    + '<div class="sub">The receiver for the ISP channel finance already runs by hand -- one line per payment: REF, AMOUNT, TRANS_NO, PAID_BY (tab or comma separated). Namba ya muamala ni lazima / Transaction ID is required.</div>'
+    + '<textarea id="lnPayRows" rows="8" style="width:100%" placeholder="919000001, 34000, CI250920.1234.A12345, 0715000001"></textarea>'
     + '<button class="btn w" id="lnPayImportBtn" style="margin-top:8px">Import</button>');
   $('#lnPayImportBtn').onclick = function(){
-    var rows = $('#lnPayRows').value.split('\n').map(function(line){
+    var missing = [];
+    var rows = $('#lnPayRows').value.split('\n').map(function(line, i){
       var p = line.split(/[,\t]/).map(function(x){ return x.trim(); });
-      return { ref: p[0], amount: Number(p[1]) || 0, paid_by: p[2] || '' };
+      if (p[0] && !p[2]) missing.push(i + 1);
+      return { ref: p[0], amount: Number(p[1]) || 0, trans_no: p[2] || '', paid_by: p[3] || '' };
     }).filter(function(r){ return r.ref; });
+    if (missing.length) {
+      toast('Namba ya muamala inakosekana mstari / Transaction ID missing on line ' + missing.join(', ') + '. Hakuna kilichoingizwa / Nothing imported.', true);
+      return;
+    }
     lnAct('financeImportPayments', { rows: rows }, money(rows.length) + ' row(s) imported.', function(){ go('ln_finance'); });
   };
 }
@@ -10442,10 +10455,16 @@ function wireLnGm_(){
 }
 
 /* ---------- Assessment Plan -- who a team means to visit, before there is even a customer ---------- */
-var LN_PLAN_STALE_REASONS_ = [];
+var LN_PLAN_STALE_REASONS_ = [], LN_PLAN_TEAMS_ = [];
 VIEWS.ln_assess_plan = function(){
-  return srv('assessmentPlanList', {}).then(function(d){
+  return srv('assessmentPlanList', { team: S.args.team || '' }).then(function(d){
     LN_PLAN_STALE_REASONS_ = d.staleReasons || [];
+    /* "Users with multiple teams should also be able to create assessment plan ... they get
+       their granted teams at access codes as we always pivot" -- d.teams is exactly the
+       team list the signed-in code holds (every team, for a code granted all of them). One
+       team: nothing to choose, the server fills it in. More than one: a pivot in the bar,
+       and a picker on the add form and the edit drawer. */
+    LN_PLAN_TEAMS_ = d.teams || [];
     S.rows = d.rows; S.cols = [
       col('full_name', 'Jina / Name'), col('phone', 'Simu / Phone'), col('team', 'Timu / Team'),
       col('planned_date', 'Tarehe iliyopangwa / Planned date', 'date'),
@@ -10455,9 +10474,19 @@ VIEWS.ln_assess_plan = function(){
     // "only future dates editable" -- a new plan can only ever be for a date not yet here,
     // so the add form's own date input refuses to open on anything earlier, same rule the
     // server enforces again in assessmentPlanSave.
-    HEAD = bar('<input id="lnPlanName" placeholder="Jina / Name">'
+    var teamOpts = function(selected){
+      return LN_PLAN_TEAMS_.map(function(t){ return '<option' + (t === selected ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('');
+    };
+    HEAD = bar(
+      (LN_PLAN_TEAMS_.length > 1
+        ? '<select data-arg="team"><option value="">Timu zote / All my teams</option>' + teamOpts(S.args.team || '') + '</select>'
+        : '')
+      + '<input id="lnPlanName" placeholder="Jina / Name">'
       + '<input id="lnPlanPhone" placeholder="Simu / Phone">'
-      + '<input id="lnPlanDate" type="date" min="' + esc(todayKey_()) + '">'
+      + '<input id="lnPlanDate" type="date" min="' + esc(todayKey_()) + '" value="' + esc(todayKey_()) + '">'
+      + (LN_PLAN_TEAMS_.length > 1
+        ? '<select id="lnPlanTeam"><option value="">— timu / team —</option>' + teamOpts(S.args.team || '') + '</select>'
+        : '')
       + '<button class="btn sm" id="lnPlanAdd">+ Ongeza / Add</button>');
     ONROW = function(r){ lnAssessPlanForm_(r); };
     S.foot = money(d.rows.length) + ' mipango / plans';
@@ -10468,8 +10497,10 @@ function wireLnAssessPlan_(){
   var b = document.getElementById('lnPlanAdd');
   if (!b) return;
   b.onclick = function(){
+    var teamSel = document.getElementById('lnPlanTeam');
     lnAct('assessmentPlanSave', {
       full_name: $('#lnPlanName').value.trim(), phone: $('#lnPlanPhone').value.trim(), planned_date: $('#lnPlanDate').value,
+      team: teamSel ? teamSel.value : '',
     }, 'Imeongezwa.', function(){ go('ln_assess_plan'); });
   };
 }
@@ -10481,6 +10512,11 @@ function lnAssessPlanForm_(row){
   var locked = row.planned_date < todayKey_();
   drawer('<h3>' + esc(row.full_name) + '</h3><div class="sub">' + esc(row.team || '')
       + (locked ? ' &middot; <span class="chip warn">Tarehe imepita / Date has passed (ED ' + row.elapsedDays + ')</span>' : '') + '</div>'
+    + (!locked && LN_PLAN_TEAMS_.length > 1
+        ? '<div class="fld"><label>Timu / Team</label><select id="lnPlanEditTeam">'
+          + LN_PLAN_TEAMS_.map(function(t){ return '<option' + (t === row.team ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('')
+          + '</select></div>'
+        : '')
     + '<div class="fld"><label>Jina / Name</label><input id="lnPlanEditName" value="' + esc(row.full_name || '') + '"' + (locked ? ' disabled' : '') + '></div>'
     + '<div class="fld"><label>Simu / Phone</label><input id="lnPlanEditPhone" value="' + esc(row.phone || '') + '"' + (locked ? ' disabled' : '') + '></div>'
     + '<div class="fld"><label>Tarehe / Date</label><input id="lnPlanEditDate" type="date" value="' + esc(row.planned_date || '') + '"' + (locked ? ' disabled' : ' min="' + esc(todayKey_()) + '"') + '></div>'
@@ -10498,6 +10534,8 @@ function lnAssessPlanForm_(row){
       fields.full_name = $('#lnPlanEditName').value.trim();
       fields.phone = $('#lnPlanEditPhone').value.trim();
       fields.planned_date = $('#lnPlanEditDate').value;
+      var editTeam = document.getElementById('lnPlanEditTeam');
+      fields.team = editTeam ? editTeam.value : row.team;
     }
     lnAct('assessmentPlanSave', fields, 'Imehifadhiwa.', function(){ go('ln_assess_plan'); });
   };

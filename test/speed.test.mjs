@@ -851,9 +851,11 @@ const LOAN_BUDGETS = [
      in JavaScript; the row budget here is what makes that impossible to reintroduce quietly --
      400 customers exist and a search may bring back at most a capped handful. */
   ['csSearch', 'csSearch', { q: 'CUSTOMER 7' }, 2, 30],
-  // Empty here (an empty book has nothing to prune), so this is the floor -- see the
-  // assessmentPlanList-specific test below for the pruning path's own trip cost.
-  ['assessmentPlanList', 'assessmentPlanList', {}, 1, 50],
+  // Two trips, not one: LOAN_ADMIN holds every team (teams: null), so the list also reads
+  // the teams register once to offer the team pivot ("as we always pivot") -- a code granted
+  // specific teams pays only the one trip, its list coming off its own access code. An empty
+  // book has nothing to prune, so this is the floor.
+  ['assessmentPlanList', 'assessmentPlanList', {}, 2, 50],
 ];
 
 for (const [label, fn, args, tripBudget, rowBudget] of LOAN_BUDGETS) {
