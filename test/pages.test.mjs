@@ -858,3 +858,62 @@ test('the finance payment import asks for TRANS_NO and stops on a line without o
   assert.ok(/if \(p\[0\] && !p\[2\]\) missing\.push/.test(form), 'a line with a ref but no transaction ID is collected');
   assert.ok(/if \(missing\.length\)[\s\S]*return;/.test(form), 'and the import is stopped, not sent with the gap');
 });
+
+/* A BUTTON THAT DOES NOTHING IS WORSE THAN NO BUTTON.
+
+   "+ New team" on Teams & Staff was drawn for every admin and wired to nothing -- the drawer
+   knew how to make a team, no click ever opened it that way, and nobody could tell from the
+   screen. Nothing here read the front end for that shape, so it sat there through many
+   releases. This is the check: every <button id="x"> the page can draw has to be looked up by
+   that id somewhere in the same file. A handler that is never attached is the exact failure
+   mode "the button does nothing" describes, and it is the cheapest thing in the world to test.
+   (Buttons without an id are wired by class or data-attribute and are not this test's job.) */
+test('every button app.html draws with an id is looked up by that id somewhere in the file', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const drawn = new Set([...app.matchAll(/<button[^>]*\bid="([A-Za-z0-9_-]+)"/g)].map(m => m[1]));
+  assert.ok(drawn.size > 100, 'the page draws its buttons with ids (' + drawn.size + ' found)');
+  const unwired = [...drawn].filter(id => {
+    const looked = new RegExp("getElementById\\(\\s*'" + id + "'\\s*\\)|\\$\\(\\s*'#" + id + "'\\s*\\)|querySelector\\(\\s*'#" + id + "\\b");
+    return !looked.test(app);
+  });
+  assert.deepEqual(unwired, [], 'buttons drawn with an id nothing ever wires: ' + unwired.join(', '));
+});
+
+/* And the mirror: wiring left behind after its card was removed. The follow-up clean, rebuild
+   register and duplicate-sweep cards were taken out of Settings on purpose (see api/upload.js)
+   and their click handlers stayed for months, looking up ids no screen draws. Harmless to the
+   user, but every dead lookup is one more place a reader has to check before trusting that a
+   feature exists. Dynamic ids (built with + at render time) are excused by prefix. */
+test('every id app.html looks up with getElementById is one some screen can draw', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const rendered = new Set([...app.matchAll(/\bid=(?:"|'|\\")?([A-Za-z0-9_-]+)/g)].map(m => m[1]));
+  const dynPrefix = [...app.matchAll(/id="([A-Za-z0-9_-]+)'\s*\+/g)].map(m => m[1]);
+  const looked = new Set([...app.matchAll(/getElementById\(\s*'([A-Za-z0-9_-]+)'\s*\)/g)].map(m => m[1]));
+  /* An id handed to a helper (kpi(..., 'presCount') draws id="presCount" and id="presCountS")
+     or assigned in code (f.id = 'printFrame') is drawable too: it appears as a quoted string
+     somewhere OTHER than the lookup itself. */
+  const quotedElsewhere = id => {
+    const all = app.split("'" + id + "'").length - 1;
+    const asLookup = (app.match(new RegExp("getElementById\\(\\s*'" + id + "'\\s*\\)", 'g')) || []).length;
+    return all > asLookup;
+  };
+  const orphan = [...looked].filter(id => !rendered.has(id)
+    && !dynPrefix.some(p => id.startsWith(p))
+    && !quotedElsewhere(id) && !(id.endsWith('S') && quotedElsewhere(id.slice(0, -1))));
+  assert.deepEqual(orphan, [], 'ids looked up that no screen draws: ' + orphan.join(', '));
+});
+
+/* Reversals is three parties, and the screen only offers each of them their own half.
+   Credit files the request (the server gates reversalRequest on `credit`); finance and the GM
+   sign. Drawn for finance and gm only, a credit analyst could not reach the screen at all, and
+   a finance user who chose "request one" was refused by the server after typing the reason. */
+test('the Reversals nav admits credit, and the screen offers each tab only its own half', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/id:'ln_reversals',[^\n]*tab:\['finance','gm','credit'\]/.test(app), 'credit is on the nav gate');
+  const view = app.slice(app.indexOf('VIEWS.ln_reversals'), app.indexOf('/* ---------- GM: carriers'));
+  assert.ok(/var canAsk = lnHolds_\('credit'\)/.test(view), 'the request scope hinges on holding credit');
+  assert.ok(/\(canAsk \? '<option value="eligible"/.test(view), 'and the "request one" option is only drawn for them');
+  assert.ok(/var financePending = finTurn && lnHolds_\('finance'\)/.test(view), 'finance buttons need the finance tab');
+  assert.ok(/var gmTurn = gmChain && lnHolds_\('gm'\)/.test(view), 'GM buttons need the gm tab');
+  assert.ok(/Waiting for finance to sign|Waiting for the GM to sign/.test(view), 'everyone else is told whose signature it waits for');
+});

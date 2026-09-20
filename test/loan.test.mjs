@@ -774,6 +774,20 @@ test('reversalsList shows what is waiting for a signature and what is still reve
   assert.equal(list.rows.length, 1, 'but still on the record');
 });
 
+/* The Reversals screen is drawn for finance, the GM AND credit (credit files the request), and
+   the register itself is theirs alone: a team or customer-service code is refused at the server,
+   which is what makes hiding the nav item a courtesy rather than the rule. */
+test('reversalsList is readable by credit, finance and the GM, and refused to everyone else', async () => {
+  const db = fakeDb({});
+  await toDisbursed(db, 300000);
+  for (const u of [CREDIT, FINANCE, GM]) {
+    const list = await loanApi(db, u, 'reversalsList', {});
+    assert.equal(list.eligible.length, 1, u.role + ' can read the register');
+  }
+  await assert.rejects(() => loanApi(db, TEAM, 'reversalsList', {}), /required tabs/i);
+  await assert.rejects(() => loanApi(db, CS, 'reversalsList', {}), /required tabs/i);
+});
+
 test('a funded loan is NOT reversible -- the money has already moved', async () => {
   const db = fakeDb({});
   const loanId = await toDisbursed(db, 300000);

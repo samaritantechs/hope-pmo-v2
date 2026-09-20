@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-n';
+var BUILD = '2026-09-20-o';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -960,7 +960,12 @@ var NAV_LOAN = [
   { id:'ln_credit',    label:'Credit · Approval', tab:'credit', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
   { id:'ln_disburse',  label:'Disburse', tab:'manager', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
   { id:'ln_finance',   label:'Finance', tab:'finance', ic:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
-  { id:'ln_reversals', label:'Reversals', tab:['finance','gm'], ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
+  /* THREE TABS, NOT TWO. The request half of a reversal is Credit's (reversalRequest is gated
+     on `credit` at the server), the two signatures are Finance's and the GM's. Drawn for
+     finance and gm only, a credit analyst had no way in at all, and a finance user who picked
+     "request one" was refused on the tap. Each half of the screen shows only its holder's
+     buttons -- see lnHolds_. */
+  { id:'ln_reversals', label:'Reversals', tab:['finance','gm','credit'], ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
   { id:'ln_gm',        label:'GM · Carriers', tab:'gm', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>' },
 ];
 
@@ -2722,8 +2727,6 @@ function wireBar(){
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   wireClean();
-  wireRebuildFu();
-  wireFollowupClean();
   wireStampWeek();
   wireTeamsDownload();
   wireStaffExcel();
@@ -2813,65 +2816,14 @@ function wireStampWeek(){
       });
   };
 }
-/* Check counts and NAMES the first few, because "412 customers" is not something anybody should
-   act on without recognising at least one of them. */
-function wireFollowupClean(){
-  var chk = document.getElementById('fcCheck'), run = document.getElementById('fcRun');
-  if (!chk && !run) return;
-  var out = document.getElementById('fcOut');
-  var say = function(html, bad){ out.style.display='block'; out.className='note'+(bad?' bad':''); out.innerHTML = html; };
-  var call = function(confirm){
-    var days = parseInt(document.getElementById('fcDays').value, 10) || 14;
-    say('Inahesabu\u2026 / counting\u2026');
-    srv('followupClean', { days: days, confirm: confirm })
-      .then(function(r){
-        if (!r.stale) return say('Hakuna aliyepitwa na wakati \u2014 kila mtu kwenye orodha amethibitishwa ndani ya siku ' + days
-          + '. / Nobody is stale; everyone on the list was confirmed within ' + days + ' days.');
-        var names = (r.sample||[]).map(function(x){
-          return esc(x.name || x.ref) + ' <span style="color:var(--mut)">(' + esc(x.team) + ', D.S ' + esc(x.ds||'\u2014')
-            + ', ' + esc(x.lastSeen) + ')</span>'; }).join('<br>');
-        if (r.applied) {
-          /* THE BRAKE HAS TO SAY SO. Above a third of the list, nothing is retired -- and
-             reporting that as "0 taken off" reads like a sweep that found nothing to do, when
-             it is actually the system refusing to empty the officers' book and telling you
-             some weekday's decks have stopped arriving. */
-          if (r.capped) { say(esc(r.note), true); return; }
-          say('<b>' + money(r.retired) + '</b> wameondolewa kwenye orodha hai. Maoni yao yote yapo pale pale. / '
-            + money(r.retired) + ' taken off the working list. Every comment is untouched.'
-            + (r.note ? '<br><span style="color:var(--mut);font-size:11.5px">' + esc(r.note) + '</span>' : ''));
-          render();
-          return;
-        }
-        say('<b>' + money(r.stale) + '</b> kati ya ' + money(r.checked) + ' hawajathibitishwa tangu <b>' + esc(r.cutoff) + '</b>.'
-          + '<br><span style="color:var(--mut);font-size:11.5px">Bonyeza <b>Safisha</b> kuwaondoa kwenye orodha hai. Hakuna kinachofutwa.</span>'
-          + (names ? '<div style="margin-top:8px;font-size:12px;line-height:1.6">' + names
-              + (r.stale > (r.sample||[]).length ? '<br><span style="color:var(--mut)">\u2026na wengine ' + money(r.stale - r.sample.length) + '</span>' : '')
-              + '</div>' : ''));
-      })
-      .catch(function(e){ say(esc(String(e.message || e)), true); });
-  };
-  if (chk) chk.onclick = function(){ call(false); };
-  if (run) run.onclick = function(){ call(true); };
-}
+/* THREE SETTINGS CARDS USED TO BE WIRED HERE: "Rejista ya ufuatiliaji" (followupClean),
+   "Rebuild register" (rebuildFollowup) and the duplicate-upload sweep (purgeSuperseded). They
+   were removed from Settings on purpose -- the register repairs itself on every upload and the
+   sweep runs as upload housekeeping (see the note in api/upload.js beside purgeSuperseded) --
+   but their click wiring stayed behind, looking up ids no screen draws. Gone now; the server
+   functions remain for the API. */
 /* Cleaning old reports deletes a DAY OF HISTORY, so the flow is deliberately two-step: Check
    counts the rows without touching anything, Clean asks once more and names the number. */
-function wireRebuildFu(){
-  var b = document.getElementById('fuRebuild');
-  if (!b) return;
-  b.onclick = function(){
-    var out = document.getElementById('fuRebuildOut');
-    b.disabled = true; b.textContent = '\u23f3 Inaendelea / working...';
-    srv('rebuildFollowup', {}).then(function(r){
-      out.style.display = 'block';
-      out.textContent = r.note + '  (deki ' + money(r.deck) + ' \u00b7 rejista ' + money(r.register)
-        + ' \u00b7 ' + (r.date || '') + ' \u00b7 ' + (r.weekdays || []).join(', ') + ')';
-      b.disabled = false; b.textContent = '\u21bb Rekebisha rejista / Rebuild register';
-    }).catch(function(e){
-      out.style.display = 'block'; out.textContent = String(e.message || e);
-      b.disabled = false; b.textContent = '\u21bb Rekebisha rejista / Rebuild register';
-    });
-  };
-}
 function wireClean(){
   var run = document.getElementById('clRun'), chk = document.getElementById('clCheck');
   if (!run && !chk) return;
@@ -2939,84 +2891,6 @@ function wireClean(){
       + (through ? ' na zote za kabla yake' : '') + '?\n\nHistoria ya siku hiyo itapotea. / That day’s history will be gone.'
       + warn)) return;
     call(false);
-  };
-
-  /* THE DUPLICATE SWEEP. Check first is the default posture: "delete most of the database" is
-     not a button anybody should press blind, and the count it reports is the whole reassurance
-     that nothing on screen will move. */
-  var dupChk = document.getElementById('dupCheck'), dupRun = document.getElementById('dupRun'),
-      dupOut = document.getElementById('dupOut');
-  function dupSay(html, bad){
-    if (!dupOut) return;
-    dupOut.style.display = 'block';
-    dupOut.className = 'note' + (bad ? ' bad' : '');
-    dupOut.innerHTML = html;
-  }
-  /* WALKS BACKWARDS A MONTH AT A TIME.
-     The server bounds each call to a window -- asking it to aggregate every snapshot the
-     company has ever written does not come back inside sixty seconds, which is what made this
-     button appear to do nothing at all. So the screen does the walking: one window, then the
-     one before it, until the server says there is nothing older. Progress is shown as it goes,
-     because a button that is working silently is indistinguishable from one that is broken. */
-  function dupCall(dry){
-    var keepEl = document.getElementById('dupKeep');
-    var keepN = keepEl ? Number(keepEl.value) || 2 : 2;
-    var tot = { batches: 0, rows: 0, deleted: 0, remaining: 0 }, byLabel = {}, windows = 0;
-    var stop = false;
-
-    function fmt(){
-      var detail = Object.keys(byLabel).map(function(k){
-        return esc(k) + ': ' + money(byLabel[k].rows) + ' rows in ' + byLabel[k].batches + ' old upload(s)';
-      }).join('<br>');
-      return detail || 'Hakuna nakala. / No duplicate uploads found.';
-    }
-
-    function step(to){
-      if (stop) return;
-      dupSay('Inahesabu\u2026 / counting\u2026 <span style="color:var(--mut)">(hadi ' + esc(to) + ')</span>'
-        + (tot.batches ? '<br>' + fmt() : ''));
-      srv('purgeSuperseded', dry
-        ? { keep: keepN, to: to }
-        : { confirm: true, keep: keepN, to: to, limit: 120 })
-        .then(function(r){
-          windows++;
-          tot.batches += r.totalBatches || 0;
-          tot.rows += r.totalRows || 0;
-          tot.deleted += r.deletedBatches || 0;
-          tot.remaining += r.remainingBatches || 0;
-          (r.report || []).forEach(function(x){
-            if (!x.losingBatches) return;
-            if (!byLabel[x.label]) byLabel[x.label] = { rows: 0, batches: 0 };
-            byLabel[x.label].rows += x.rows;
-            byLabel[x.label].batches += x.losingBatches;
-          });
-          /* Keep walking while there is older data. Capped so a database with years in it
-             cannot spin the browser forever -- it reports how far it got and can be run again. */
-          if (!r.done && windows < 60) { step(r.before); return; }
-
-          if (dry){
-            dupSay('<b>' + money(tot.rows) + '</b> rows in <b>' + tot.batches
-              + '</b> upload(s) beyond the last <b>' + keepN + '</b> would be removed.'
-              + ' <span style="color:var(--mut)">(' + windows + ' window(s) back to ' + esc(r.oldest || '\u2014') + ')</span>'
-              + '<br>' + fmt()
-              + '<br><i>Takwimu hazitabadilika \u2014 hizi ndizo safu ambazo kila usomaji ulikuwa unaziruka. '
-              + '/ No figure will change: these are exactly the rows every read already skipped.</i>');
-          } else {
-            dupSay('<b>' + tot.deleted + '</b> old upload(s) removed.'
-              + (tot.remaining ? ' <b>' + tot.remaining + '</b> left \u2014 bofya tena. / more remain, run it again.' : '')
-              + '<br>' + fmt());
-            S.storage = null;
-          }
-        })
-        .catch(function(e){ stop = true; dupSay(esc(String(e.message || e)), true); });
-    }
-    step(today());
-  }
-  if (dupChk) dupChk.onclick = function(){ dupCall(true); };
-  if (dupRun) dupRun.onclick = function(){
-    if (!confirm('Ondoa nakala za upakiaji zilizopitwa?\n\nUpakiaji wa mwisho wa kila siku unabaki.'
-      + '\n\nRemove superseded upload copies? The last upload of each day stays, and no figure changes.')) return;
-    dupCall(false);
   };
 
   var fuListSave = document.getElementById('fuListSave'), fuListOut = document.getElementById('fuListOut');
@@ -10355,8 +10229,15 @@ function lnAdjustmentForm_(){
    Two lists in one view, because they are two halves of the same job: what is WAITING on a
    signature, and what could still be reversed at all. `scope` switches between them; the row
    click does the right thing for whichever is showing. */
+/* Does this code hold a HOPE Loan tab? ADMIN holds them all -- the same rule requireTab applies
+   at the server, so a button drawn by this is one the server will honour. */
+function lnHolds_(tab){
+  return S.me.role === 'ADMIN' || (S.me.tabs||[]).indexOf(tab) >= 0;
+}
 VIEWS.ln_reversals = function(){
-  var scope = S.args.scope || 'pending';
+  var canAsk = lnHolds_('credit');
+  var scope = S.args.scope || (canAsk && !lnHolds_('finance') && !lnHolds_('gm') ? 'eligible' : 'pending');
+  if (scope === 'eligible' && !canAsk) scope = 'pending';
   return srv('reversalsList', {}).then(function(d){
     S.lnRev = d;
     HEAD = '<div class="kpis">'
@@ -10365,7 +10246,9 @@ VIEWS.ln_reversals = function(){
       + '</div>'
       + bar('<select id="lnRevScope">'
         + '<option value="pending"' + (scope==='pending'?' selected':'') + '>Awaiting a decision</option>'
-        + '<option value="eligible"' + (scope==='eligible'?' selected':'') + '>Reversible loans (request one)</option>'
+        /* Only offered to whoever can actually file one; a finance-only code picking it was
+           refused by the server at the tap, after choosing the loan and typing the reason. */
+        + (canAsk ? '<option value="eligible"' + (scope==='eligible'?' selected':'') + '>Reversible loans (request one)</option>' : '')
         + '<option value="all"' + (scope==='all'?' selected':'') + '>All reversals</option></select>');
     if (scope === 'eligible') {
       S.rows = d.eligible;
@@ -10408,8 +10291,16 @@ function lnRevRequestForm_(row){
    finance decides while finance is Pending; the GM only once finance has approved -- the same
    order the server enforces, so the screen can never offer a step that will be refused. */
 function lnRevDecideForm_(row){
-  var financePending = row.finance_status === 'Pending';
-  var gmTurn = row.finance_status === 'Approved' && row.gm_status === 'Pending';
+  /* The chain says whose turn it is; the tab says whether that is YOU. A credit analyst who
+     opens a pending row sees whose signature it is waiting for, not buttons that would be
+     refused. */
+  var finTurn = row.finance_status === 'Pending';
+  var gmChain = row.finance_status === 'Approved' && row.gm_status === 'Pending';
+  var financePending = finTurn && lnHolds_('finance');
+  var gmTurn = gmChain && lnHolds_('gm');
+  var waitingOn = finTurn ? 'Inasubiri saini ya Fedha / Waiting for finance to sign.'
+    : gmChain ? 'Inasubiri saini ya GM / Waiting for the GM to sign.'
+    : 'Hakuna hatua iliyobaki / Nothing left to decide here.';
   drawer('<h3>' + esc(row.full_name) + '</h3>'
     + '<div class="sub">' + esc(row.ref) + ' &middot; ' + money(row.amount) + '</div>'
     + '<div class="frow"><span>Reason</span>' + esc(row.reason || '') + '</div>'
@@ -10424,7 +10315,7 @@ function lnRevDecideForm_(row){
         ? '<div class="fld" style="margin-top:10px"><label>GM note</label><input id="lnRevNote"></div>'
           + '<button class="btn w" id="lnRevGmOk">GM: authorise (closes the contract)</button>'
           + '<button class="btn w ghost" id="lnRevGmNo" style="margin-top:8px">GM: reject</button>'
-        : '<div class="hint" style="margin-top:10px">Hakuna hatua iliyobaki / Nothing left to decide here.</div>'));
+        : '<div class="hint" style="margin-top:10px">' + waitingOn + '</div>'));
   function note(){ var n = document.getElementById('lnRevNote'); return n ? n.value.trim() : ''; }
   if (financePending) {
     $('#lnRevFinOk').onclick = function(){ lnAct('reversalFinanceDecide', { id: row.id, approve: true, note: note() }, 'Approved -- now with the GM.', function(){ go('ln_reversals'); }); };
@@ -11072,6 +10963,11 @@ function wireForms(){
   });
   var nrole = document.getElementById('newRole');
   if (nrole) nrole.onclick = function(){ roleForm(null); };
+  /* "+ New team" on Teams & Staff was drawn for every admin and wired to nothing: the drawer
+     already knew how to make a new team (a blank row is isNew) but no click ever opened it
+     that way, so a team could only be created by uploading the leaders sheet. */
+  var nteam = document.getElementById('newTeam');
+  if (nteam) nteam.onclick = function(){ teamForm(null); };
   /* The clean slate, and the way back from it. Both confirm in words, because both change what
      every person in the company can open. */
   var rreset = document.getElementById('resetRoles');

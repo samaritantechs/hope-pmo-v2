@@ -1174,6 +1174,9 @@ async function financeShiftPayment(db, user, { payment_id, to_ref, reason }) {
     are the same loans the bank report lists, which is the point: every row on that report is
     money that has not moved yet, so every row on it is reversible until it does. */
 async function reversalsList(db, user) {
+  /* The three parties to a reversal, and nobody else: the register names every customer whose
+     contract is being unwound, which a team or customer-service code has no business reading. */
+  requireAnyTab(user, ['finance', 'gm', 'credit']);
   const rows = await allPaged(db, 'reversals', b => b.select('*').order('requested_at', { ascending: false }));
   const loans = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'disbursed'));
   const openIds = new Set(rows.filter(r => r.status === 'Pending').map(r => String(r.loan_id)));
