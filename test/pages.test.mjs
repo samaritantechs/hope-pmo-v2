@@ -660,3 +660,24 @@ test('personal details offers the two-photo consent form capture for a receiving
   assert.ok(/other_number_form_url:/.test(wire) && /other_number_form_holder_url:/.test(wire),
     'both paths are sent to the server on save');
 });
+
+/* "our system photos should have timestamp too" / "our timestamp could capture location and
+   user who took it too" -- burned into the picture itself, not left as metadata that does not
+   survive the picture leaving this system. GPS is requested the moment the overlay opens (the
+   whole time the officer spends framing the shot to resolve in), and must never hold up the
+   shutter if it doesn't land in time. */
+test('every KYC photo is stamped with the date/time, the officer, and a GPS fix when one lands in time', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const stamp = app.slice(app.indexOf('function stampPhoto_'), app.indexOf('function openCameraOverlay_'));
+  assert.ok(/S\.me\s*&&\s*S\.me\.name/.test(stamp), 'the signed-in officer is read into the stamp');
+  assert.ok(/geoCoords\s*\?/.test(stamp), 'a GPS fix is included when one is available');
+  assert.ok(/fillRect|fillText/.test(stamp), 'the stamp is actually drawn onto the canvas');
+
+  const overlay = app.slice(app.indexOf('function openCameraOverlay_'), app.indexOf('function wirePhotoCapture_'));
+  assert.ok(/navigator\.geolocation\.getCurrentPosition\(/.test(overlay), 'a GPS reading is requested when the overlay opens');
+  assert.ok(/stampPhoto_\(ctx,\s*c\.width,\s*c\.height,\s*geoCoords\)/.test(overlay),
+    'the capture handler actually stamps the frame before it is encoded');
+  const shot = overlay.slice(overlay.indexOf('shotBtn.onclick'));
+  assert.ok(shot.indexOf('stampPhoto_(') < shot.indexOf('toDataURL('),
+    'stamping happens before the image is turned into the data URL that gets uploaded');
+});
