@@ -119,7 +119,7 @@ class Updater {
                     // build knows the attempt was made and can say so.
                     activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE)
                             .edit().putInt(PREF_TRIED, versionCode).apply();
-                    download(activity, url);
+                    download(activity, url, versionCode);
                 })
                 .setNegativeButton("Baadaye / Later", (d, w) ->
                         activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE)
@@ -128,10 +128,25 @@ class Updater {
                 .show();
     }
 
-    private static void download(final MainActivity activity, String url) {
+    private static void download(final MainActivity activity, String url, int versionCode) {
         try {
-            final File out = new File(activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "HOPE-LOAN-update.apk");
-            if (out.exists() && !out.delete()) { /* stale copy stays -- the fresh download overwrites it below */ }
+            /* "Keeps on prompting update .. without change" -- every download used to land on
+               the same fixed filename, deleted first "so the fresh download overwrites it
+               below". That overwrite is DownloadManager's job, not guaranteed: if the delete
+               ever fails (a locked handle, an odd vendor storage quirk) the comment's own
+               assumption breaks silently -- the OLD bytes are still there, DownloadManager can
+               report STATUS_SUCCESSFUL regardless of whether it actually replaced them, and the
+               installer is handed an APK that is not actually the new build. Android sees no
+               real change, versionCode never advances, and the very next launch asks again --
+               exactly this report. Stamping the target version into the filename makes that
+               ambiguity impossible: this download can only ever write ITS OWN file, never an
+               old one's leftover bytes. The old fixed name and any earlier version's file are
+               cleared out here too, so a phone that has been through several updates does not
+               quietly collect one stale APK per release. */
+            File dir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            File[] stale = dir == null ? null : dir.listFiles((d, name) -> name.startsWith("HOPE-LOAN-update"));
+            if (stale != null) for (File f : stale) f.delete();
+            final File out = new File(dir, "HOPE-LOAN-update-" + versionCode + ".apk");
             DownloadManager.Request r = new DownloadManager.Request(Uri.parse(url));
             r.setTitle("HOPE LOAN");
             r.setDescription("Inapakua toleo jipya…");
@@ -213,7 +228,7 @@ class Updater {
             i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
             activity.startActivity(i);
         } catch (Exception e) {
-            Toast.makeText(activity, "Fungua faili HOPE-LOAN-update.apk kwenye Downloads ili kusakinisha.", Toast.LENGTH_LONG).show();
+            Toast.makeText(activity, "Fungua faili " + apk.getName() + " kwenye Downloads ili kusakinisha.", Toast.LENGTH_LONG).show();
         }
     }
 }

@@ -623,3 +623,212 @@ test('the camera overlay pushes a history entry so the Android back button close
   assert.ok(/if \(!poppedBack\)[^]*history\.back\(\)/.test(overlay),
     'closing any other way (Cancel/Capture/error) consumes the pushed entry itself, exactly once');
 });
+
+/* FINGERPRINT CAPTURE IS GONE; THE OFFICER'S OWN NAME AND SIGNATURE REPLACE IT AT
+   RECOMMENDATION. "Remove the fingerprint capture, only remain with signature and at field
+   officer name filling and signature at recommendation." */
+test('thumbprint/fingerprint capture no longer exists anywhere in the KYC flow', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(!/lnThumbPad|lnGThumbPad|lnThumbClear|lnGThumbClear/.test(app), 'no thumbprint pad IDs remain');
+  assert.ok(!/mode === 'stamp'/.test(app), 'the stamp (thumbprint) drawing mode is gone, not just unused');
+  assert.ok(!/Alama ya kidole gumba/.test(app), 'the Swahili thumbprint label is gone');
+});
+
+test('the recommendation section captures the officer\'s own name and signature', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('card-h">5. Team recommendation'), app.indexOf("$('#lnSaveRec').onclick"));
+  assert.ok(/id="lnOfficerName"/.test(view), 'an officer name field is offered');
+  assert.ok(/captureRowPad_\('Sahihi ya afisa/.test(view), 'an officer signature pad is offered');
+  const wire = app.slice(app.indexOf("$('#lnSaveRec').onclick"), app.indexOf("$('#lnSaveGuar').onclick"));
+  assert.ok(/officerSigPad/.test(wire), 'the officer signature pad is actually saved');
+  assert.ok(/officer_name:\s*\$\('#lnOfficerName'\)\.value\.trim\(\)/.test(wire), 'the officer name field is sent to the server');
+  assert.ok(/officer_signature_url:/.test(wire), 'the officer signature path is sent to the server');
+});
+
+/* THE CONSENT FORM, WHEN THE MONEY GOES TO SOMEONE ELSE'S NUMBER.
+   "The assessments always have a nida form filled for customers who receive money with nos
+   that ain't under their registration so there our camera has to take 2 photos, of the doc
+   and the 2nd the customer holding it." */
+test('personal details offers the two-photo consent form capture for a receiving number that is not the customer\'s own', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const card = app.slice(app.indexOf('card-h">1. Personal details'), app.indexOf('lnSavePersonal'));
+  assert.ok(/captureRowPhoto_\('Fomu ya idhini/.test(card), 'the consent-form-document capture is offered');
+  assert.ok(/captureRowPhoto_\('Mteja akishikilia fomu/.test(card), 'the customer-holding-the-form capture is offered');
+  const wire = app.slice(app.indexOf('var PATHS = {'), app.indexOf("$('#lnSaveRec').onclick"));
+  assert.ok(/'other-number-form'/.test(wire), 'the document photo is uploaded as its own kind');
+  assert.ok(/'other-number-form-holder'/.test(wire), 'the holder photo is uploaded as its own kind');
+  assert.ok(/other_number_form_url:/.test(wire) && /other_number_form_holder_url:/.test(wire),
+    'both paths are sent to the server on save');
+});
+
+/* "our system photos should have timestamp too" / "our timestamp could capture location and
+   user who took it too" -- burned into the picture itself, not left as metadata that does not
+   survive the picture leaving this system. GPS is requested the moment the overlay opens (the
+   whole time the officer spends framing the shot to resolve in), and must never hold up the
+   shutter if it doesn't land in time. */
+test('every KYC photo is stamped with the date/time, the officer, and a GPS fix when one lands in time', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const stamp = app.slice(app.indexOf('function stampPhoto_'), app.indexOf('function openCameraOverlay_'));
+  assert.ok(/S\.me\s*&&\s*S\.me\.name/.test(stamp), 'the signed-in officer is read into the stamp');
+  assert.ok(/geoCoords\s*\?/.test(stamp), 'a GPS fix is included when one is available');
+  assert.ok(/fillRect|fillText/.test(stamp), 'the stamp is actually drawn onto the canvas');
+
+  const overlay = app.slice(app.indexOf('function openCameraOverlay_'), app.indexOf('function wirePhotoCapture_'));
+  assert.ok(/navigator\.geolocation\.getCurrentPosition\(/.test(overlay), 'a GPS reading is requested when the overlay opens');
+  assert.ok(/stampPhoto_\(ctx,\s*c\.width,\s*c\.height,\s*geoCoords\)/.test(overlay),
+    'the capture handler actually stamps the frame before it is encoded');
+  const shot = overlay.slice(overlay.indexOf('shotBtn.onclick'));
+  assert.ok(shot.indexOf('stampPhoto_(') < shot.indexOf('toDataURL('),
+    'stamping happens before the image is turned into the data URL that gets uploaded');
+});
+
+/* THE NEIGHBOUR'S NUMBER -- WHO TO ASK IF WE CAN'T REACH THE CUSTOMER.
+   "add neighbor no at customer service, they ask them who is near when we can't reach you,
+   and not the guarantor, so we have alt no and neighbor no" */
+test('customer service registration asks for a neighbour\'s phone, distinct from the guarantor', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const form = app.slice(app.indexOf('function lnCsRegisterForm_'), app.indexOf('/* ---------- Manager: assignment'));
+  assert.ok(/id="lnNeighborNo"/.test(form), 'a neighbour-phone field is offered at customer service');
+  assert.ok(/neighbor_no:\s*\$\('#lnNeighborNo'\)\.value\.trim\(\)/.test(form), 'it is sent to csRegister on submit');
+});
+
+/* "the 5 extra guarantors, 3 are (*) compulsory to fill" */
+test('the first 3 of the 5 extra guarantor contacts are required before the guarantor section saves', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const card = app.slice(app.indexOf('Wadhamini wa ziada'), app.indexOf("$('#lnSaveGuar').onclick"));
+  assert.ok(/req\s*=\s*i\s*<\s*3/.test(card), 'the first 3 of the 5 are marked as the required ones');
+  const guarStart = app.indexOf("$('#lnSaveGuar').onclick");
+  const wire = app.slice(guarStart, app.indexOf('Promise.all([', guarStart));
+  assert.ok(/reqI\s*<\s*3/.test(wire), 'the save handler checks exactly the first 3');
+  assert.ok(/return;/.test(wire), 'the save is actually blocked when one of the 3 is missing, not just warned about');
+});
+
+/* "For the officers with no hopelock app but allowed location, gm asked, can we track were
+   they are by the devices without lockapp ... put their live location link on their rows in
+   settings nav system view not call view" */
+test('Settings offers a button to the officer-locations screen, with a real maps link per row', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/id:'officerloc'/.test(app), 'a nav entry exists for the screen (hidden, reached from a button)');
+  const settingsView = app.slice(app.indexOf('VIEWS.settings = function'), app.indexOf('VIEWS.officerloc = function'));
+  assert.ok(/id="sgOfficerLoc"/.test(settingsView), 'Settings offers a button into it');
+  const wire = app.slice(app.indexOf("var sgOfficerLoc = document.getElementById"), app.indexOf("var so = document.getElementById('soToggle')"));
+  assert.ok(/go\('officerloc'\)/.test(wire), 'the button actually navigates to the new screen');
+
+  const view = app.slice(app.indexOf('VIEWS.officerloc = function'), app.indexOf('VIEWS.present = function'));
+  assert.ok(/srv\('officerLocationsList'\)/.test(view), 'the screen reads the new server function');
+  assert.ok(/https:\/\/www\.google\.com\/maps\?q=/.test(view), 'each row gets a real Google Maps link');
+  assert.ok(/target="_blank"/.test(view), 'opened as a real link (now safe -- see onCreateWindow in MainActivity.java)');
+});
+
+/* RUN-ME-011: business grows from 1 photo to 3 named ones, residence from 1 to 4 each. */
+test('business verification offers all three named photos and saves all three', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const card = app.slice(app.indexOf('card-h">2. Business verification'), app.indexOf("$('#lnSaveGuar').onclick"));
+  assert.ok(/lnBizPhotoBtn/.test(card) && /lnBizPhoto2Btn/.test(card) && /lnBizPhoto3Btn/.test(card),
+    'three distinct capture buttons are offered');
+  const wire = app.slice(app.indexOf("$('#lnSaveBusiness').onclick"), app.indexOf("$('#lnSubmitRec').onclick"));
+  assert.ok(/business_verify_photo_url:\s*PATHS\.bizPhoto,/.test(wire), 'the first photo is sent');
+  assert.ok(/business_verify_photo2_url:\s*PATHS\.bizPhoto2/.test(wire), 'the second photo is sent');
+  assert.ok(/business_verify_photo3_url:\s*PATHS\.bizPhoto3/.test(wire), 'the third photo is sent');
+});
+
+test('customer and guarantor residence verification each offer and save four photos', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const custCard = app.slice(app.indexOf('card-h">3. Customer residence verification'), app.indexOf('card-h">4. Guarantor'));
+  for (const id of ['lnCustResPhotoBtn', 'lnCustResPhoto2Btn', 'lnCustResPhoto3Btn', 'lnCustResPhoto4Btn']) {
+    assert.ok(custCard.includes(id), 'customer residence offers ' + id);
+  }
+  const guarCard = app.slice(app.indexOf('card-h">4. Guarantor'), app.indexOf('Wadhamini wa ziada'));
+  for (const id of ['lnGResPhotoBtn', 'lnGResPhoto2Btn', 'lnGResPhoto3Btn', 'lnGResPhoto4Btn']) {
+    assert.ok(guarCard.includes(id), 'guarantor residence offers ' + id);
+  }
+  const resWire = app.slice(app.indexOf("$('#lnSaveResidence').onclick"), app.indexOf("$('#lnSaveBusiness').onclick"));
+  for (const key of ['residence_verify_photo_url', 'residence_verify_photo2_url', 'residence_verify_photo3_url', 'residence_verify_photo4_url']) {
+    assert.ok(resWire.includes(key + ':'), 'residence save sends ' + key);
+  }
+  const guarWire = app.slice(app.indexOf("$('#lnSaveGuar').onclick"), app.indexOf("$('#lnSaveResidence').onclick"));
+  for (const key of ['residence_verify_photo_url', 'residence_verify_photo2_url', 'residence_verify_photo3_url', 'residence_verify_photo4_url']) {
+    assert.ok(guarWire.includes(key + ':'), 'guarantor save sends ' + key);
+  }
+});
+
+/* "10-photo contract capture + WhatsApp share with autogenerated caption" (RUN-ME-011) */
+test('the recommendation stage offers a 10-page contract capture and a WhatsApp share button', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const panel = app.slice(app.indexOf('card-h">5. Team recommendation'), app.indexOf('/* ---------- ID type'));
+  assert.ok(/id="lnContractAddBtn"/.test(panel), 'a page-add button is offered');
+  assert.ok(/id="lnContractWaBtn"/.test(panel), 'a WhatsApp share button is offered');
+  assert.ok(/id="lnContractCount"/.test(panel), 'a running count out of 10 is shown');
+
+  assert.ok(/kycUpload_\(loan\.id,\s*'contract'/.test(app.slice(app.indexOf("$('#lnContractAddBtn').onclick"), app.indexOf("$('#lnContractWaBtn').onclick"))),
+    'each captured page uploads with kind contract');
+  const waStart = app.indexOf("$('#lnContractWaBtn').onclick");
+  const waWire = app.slice(waStart, app.indexOf("$('#lnSavePersonal').onclick", waStart));
+  assert.ok(/wa\.me\/\?text=/.test(waWire), 'the share button opens a wa.me link');
+  assert.ok(/window\.open\(/.test(waWire), 'it actually opens the link (window.open, now safe -- see onCreateWindow)');
+});
+
+/* "horizontal (not vertical) assessment stage switcher with business as 2nd stage" and
+   "sticky customer card header while scrolling" */
+test('the assessment drawer has a sticky horizontal stage switcher, business as the 2nd stage', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const drawerCall = app.slice(app.indexOf('function lnTeamAssessForm_'), app.indexOf('// ---- ID type'));
+  assert.ok(/class="ln-sticky"/.test(drawerCall), 'the header + switcher are in the sticky box');
+  assert.ok(/class="ln-stagebar"/.test(drawerCall), 'a horizontal stage bar is rendered');
+  const order = ['personal', 'business', 'residence', 'guarantor', 'recommendation']
+    .map(s => drawerCall.indexOf("data-stage=\"" + s + "\""));
+  for (let i = 1; i < order.length; i++) assert.ok(order[i - 1] < order[i], 'stages render personal, business, residence, guarantor, recommendation in order');
+  assert.equal(order.indexOf(order[1]), 1, 'business is the 2nd stage');
+
+  const css = app.slice(app.indexOf('/* THE ASSESSMENT DRAWER'), app.indexOf('.ln-dots{'));
+  assert.ok(/position:sticky/.test(css), 'the header is actually pinned with position:sticky, not just styled to look like it');
+
+  const wire = app.slice(app.indexOf("querySelectorAll('.ln-stage-btn')"), app.indexOf('// ---- NIDA/phone'));
+  assert.ok(/classList\.toggle\('on'/.test(wire), 'clicking a stage tab actually shows its panel');
+});
+
+/* "NIDA/phone number progress-dot input" -- digits shown as a count, never masked. */
+test('NIDA and phone fields in the assessment drawer show a digit-progress-dot row', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const dotsFn = app.slice(app.indexOf('function wireDigitDots_'), app.indexOf('function lnReasonPrompt_'));
+  assert.ok(/\.match\(\/\\d\/g\)/.test(dotsFn), 'only digits are counted, not every character typed');
+  assert.ok(!/type\s*=\s*.password/.test(dotsFn), 'the input itself is never masked -- it only reports a count');
+
+  const wire = app.slice(app.indexOf('function lnTeamAssessForm_'), app.indexOf('function lnSeniorView_'));
+  assert.ok(/wireDigitDots_\('lnIdNo'/.test(wire), 'the NIDA field is wired');
+  assert.ok(/wireDigitDots_\('lnGPhone'/.test(wire), 'the guarantor phone field is wired');
+  assert.ok(/wireDigitDots_\('lnMobileAlt'/.test(wire), 'the alternate phone field is wired');
+});
+
+/* "call verification tick at approval tied to min-seconds threshold from the approver's own
+   call-sync login" */
+test('the credit approval drawer shows a call-verification tick read from the server, not a checkbox', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const fn = app.slice(app.indexOf('function lnCreditForm_'), app.indexOf('function lnDisburseForm_'));
+  assert.ok(/id="lnCallVerify"/.test(fn), 'a place to show the result is offered');
+  assert.ok(/srv\('creditCallCheck'/.test(fn), 'it reads the server-side check');
+  assert.ok(/r\.verified/.test(fn), 'the result actually drives what is shown');
+  assert.ok(!/type="checkbox"[^>]*lnCallVerify|id="lnCallVerify"[^>]*type="checkbox"/.test(fn),
+    'it is not a box anyone could just tick');
+});
+
+/* "a new Assessment Plan nav, team-pivoted, only future dates editable, autodelete after 30
+   days, autodelete once a matching approved loan appears, dropdown stale-reason comments, an
+   ED/elapsed-days column" */
+test('the Assessment Plan screen is a real nav entry that reads and writes the new server functions', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/id:'ln_assess_plan'/.test(app), 'a NAV_LOAN entry exists');
+
+  const view = app.slice(app.indexOf('VIEWS.ln_assess_plan = function'), app.indexOf('function todayKey_'));
+  assert.ok(/srv\('assessmentPlanList'/.test(view), 'the list reads the new server function');
+  assert.ok(/elapsedDays/.test(view), 'the ED column is shown');
+  assert.ok(/min="'\s*\+\s*esc\(todayKey_\(\)\)/.test(view), 'the add form\'s own date input refuses a past date');
+
+  const addWire = app.slice(app.indexOf('function wireLnAssessPlan_'), app.indexOf('function lnAssessPlanForm_'));
+  assert.ok(/assessmentPlanSave/.test(addWire), 'adding a plan calls assessmentPlanSave');
+
+  const form = app.slice(app.indexOf('function lnAssessPlanForm_'), app.indexOf('function busy_'));
+  assert.ok(/locked\s*=\s*row\.planned_date\s*<\s*todayKey_\(\)/.test(form), 'past-dated rows are locked client-side too');
+  assert.ok(/lnPlanEditReason/.test(form), 'the stale-reason dropdown is offered');
+  assert.ok(/assessmentPlanDelete/.test(form), 'a plan can be deleted from the drawer');
+});
