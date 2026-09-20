@@ -458,12 +458,24 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
     const locked = Number(loan.track_no) > 1;
     const customerPatch = {};
     for (const [k, v] of Object.entries(fields || {})) {
+      if (k === 'other_number_form_url' || k === 'other_number_form_holder_url') continue;   // lands on loans, below
       if (locked && FIELD_LOCK_.has(k)) continue;
       customerPatch[k] = v;
     }
     if (Object.keys(customerPatch).length && loan.customer_id) {
       customerPatch.updated_by = user.name; customerPatch.updated_at = new Date().toISOString();
       const { error } = await db.from('customers').update(customerPatch).eq('id', loan.customer_id);
+      if (error) throw new Error(error.message);
+    }
+    // "receives money with nos that ain't under their registration" -- the consent form
+    // photos (RUN-ME-009). A fact about THIS loan's disbursement, not a permanent fact
+    // about the customer, so it lands on loans rather than on the customer record above.
+    const loanPatch = {};
+    if ('other_number_form_url' in (fields || {})) loanPatch.other_number_form_url = textOrNull(fields.other_number_form_url);
+    if ('other_number_form_holder_url' in (fields || {})) loanPatch.other_number_form_holder_url = textOrNull(fields.other_number_form_holder_url);
+    if (Object.keys(loanPatch).length) {
+      loanPatch.updated_at = new Date().toISOString();
+      const { error } = await db.from('loans').update(loanPatch).eq('id', loan.id);
       if (error) throw new Error(error.message);
     }
   }

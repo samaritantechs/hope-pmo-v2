@@ -538,6 +538,25 @@ test('recommendation section: the officer\'s own name and signature are saved, d
   assert.equal(d.assessment.officer_signature_url, sigPath);
 });
 
+/* THE CONSENT FORM, WHEN THE MONEY GOES TO SOMEONE ELSE'S NUMBER. See
+   db/hopeloan/RUN-ME-009-other-number-form.sql -- two photos of HOPE's own paper form,
+   landing on the LOAN (a fact about this disbursement), not the customer record. */
+test('personal section: the other-number consent form photos land on the loan, not the customer', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'OTHER NUMBER CUSTOMER', mobile: '0700000041', team: 'MABIBO', amount: 300000 });
+  const { path: formPath } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'other-number-form', data_url: TINY_PNG });
+  const { path: holderPath } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'other-number-form-holder', data_url: TINY_PNG });
+  await loanApi(db, TEAM, 'teamAssessmentSave', {
+    loan_id: loan.id, section: 'personal',
+    fields: { other_number_form_url: formPath, other_number_form_holder_url: holderPath },
+  });
+  const after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
+  assert.equal(after.other_number_form_url, formPath);
+  assert.equal(after.other_number_form_holder_url, holderPath);
+  const custAfter = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(custAfter.other_number_form_url, undefined, 'never written to the customer record');
+});
+
 test('personal details: gender/ID type/signature/thumbprint/photo all pass through, the same generic write DOB already used', async () => {
   const db = fakeDb({});
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });

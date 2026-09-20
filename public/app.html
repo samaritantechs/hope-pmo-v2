@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-a';
+var BUILD = '2026-09-20-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9486,6 +9486,14 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="sub" style="margin:10px 0 4px">Mawasiliano zaidi / More contact</div>'
       + '<div class="fld"><label>Simu ya pili / Alternate phone</label><input id="lnMobileAlt" value="' + esc(c.mobile_alt || '') + '"></div>'
       + '<div class="fld"><label>Barua pepe / Email</label><input id="lnEmail" type="email" value="' + esc(c.email || '') + '"></div>'
+      // "The assessments always have a nida form filled for customers who receive money with
+      // nos that ain't under their registration so there our camera has to take 2 photos, of
+      // the doc and the 2nd the customer holding it" -- HOPE's own consent/authorisation form
+      // (FOMU YA MAKUBALIANO ... MALIPO YA MKOPO KUPITIA NAMBA YA SIMU YA MTU MWINGINE), needed
+      // only when the receiving number is not the customer's own; left blank otherwise.
+      + '<div class="sub" style="margin:10px 0 4px">Kama namba ya kupokea sio ya mteja / If the receiving number is not the customer\'s own</div>'
+      + captureRowPhoto_('Fomu ya idhini (hati) / Consent form (the document)', 'lnOtherNumFormBtn', 'lnOtherNumFormStatus')
+      + captureRowPhoto_('Mteja akishikilia fomu / Customer holding the form', 'lnOtherNumHolderBtn', 'lnOtherNumHolderStatus')
       + captureRowPad_('Sahihi / Signature', 'lnSigPad', 'lnSigClear')
       + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoStatus')
       + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
@@ -9623,7 +9631,10 @@ function lnTeamAssessForm_(loanRow){
 
     var PATHS = { photo: c.photo_url, gPhoto: g.photo_url, gResPhoto: g.residence_verify_photo_url,
       custResPhoto: c.residence_verify_photo_url, bizPhoto: c.business_verify_photo_url,
-      custLetter: c.local_govt_letter_url, gLetter: g.local_govt_letter_url };
+      custLetter: c.local_govt_letter_url, gLetter: g.local_govt_letter_url,
+      otherNumForm: loan.other_number_form_url, otherNumHolder: loan.other_number_form_holder_url };
+    wirePhotoCapture_('lnOtherNumFormBtn', 'lnOtherNumFormStatus', loan.id, 'other-number-form', PATHS.otherNumForm, function(p){ PATHS.otherNumForm = p; });
+    wirePhotoCapture_('lnOtherNumHolderBtn', 'lnOtherNumHolderStatus', loan.id, 'other-number-form-holder', PATHS.otherNumHolder, function(p){ PATHS.otherNumHolder = p; });
     wirePhotoCapture_('lnPhotoBtn', 'lnPhotoStatus', loan.id, 'photo', PATHS.photo, function(p){ PATHS.photo = p; });
     wirePhotoCapture_('lnGPhotoBtn', 'lnGPhotoStatus', loan.id, 'g-photo', PATHS.gPhoto, function(p){ PATHS.gPhoto = p; });
     wirePhotoCapture_('lnGResPhotoBtn', 'lnGResPhotoStatus', loan.id, 'g-residence', PATHS.gResPhoto, function(p){ PATHS.gResPhoto = p; });
@@ -9660,7 +9671,9 @@ function lnTeamAssessForm_(loanRow){
           employment: $('#lnEmployment').value, employer_name: $('#lnEmployerName').value.trim(),
           mobile_alt: $('#lnMobileAlt').value.trim(), email: $('#lnEmail').value.trim(),
           signature_url: PATHS.signature != null ? PATHS.signature : c.signature_url,
-          photo_url: PATHS.photo };
+          photo_url: PATHS.photo,
+          other_number_form_url: PATHS.otherNumForm != null ? PATHS.otherNumForm : loan.other_number_form_url,
+          other_number_form_holder_url: PATHS.otherNumHolder != null ? PATHS.otherNumHolder : loan.other_number_form_holder_url };
         if (idCol) fields[idCol] = $('#lnIdNo').value.trim();
         if (type === 'Other') fields.other_id_type = $('#lnIdOther').value.trim();
         lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: fields }, 'Saved.');

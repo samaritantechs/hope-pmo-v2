@@ -644,3 +644,19 @@ test('the recommendation section captures the officer\'s own name and signature'
   assert.ok(/officer_name:\s*\$\('#lnOfficerName'\)\.value\.trim\(\)/.test(wire), 'the officer name field is sent to the server');
   assert.ok(/officer_signature_url:/.test(wire), 'the officer signature path is sent to the server');
 });
+
+/* THE CONSENT FORM, WHEN THE MONEY GOES TO SOMEONE ELSE'S NUMBER.
+   "The assessments always have a nida form filled for customers who receive money with nos
+   that ain't under their registration so there our camera has to take 2 photos, of the doc
+   and the 2nd the customer holding it." */
+test('personal details offers the two-photo consent form capture for a receiving number that is not the customer\'s own', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const card = app.slice(app.indexOf('card-h">1. Personal details'), app.indexOf('lnSavePersonal'));
+  assert.ok(/captureRowPhoto_\('Fomu ya idhini/.test(card), 'the consent-form-document capture is offered');
+  assert.ok(/captureRowPhoto_\('Mteja akishikilia fomu/.test(card), 'the customer-holding-the-form capture is offered');
+  const wire = app.slice(app.indexOf('var PATHS = {'), app.indexOf("$('#lnSaveRec').onclick"));
+  assert.ok(/'other-number-form'/.test(wire), 'the document photo is uploaded as its own kind');
+  assert.ok(/'other-number-form-holder'/.test(wire), 'the holder photo is uploaded as its own kind');
+  assert.ok(/other_number_form_url:/.test(wire) && /other_number_form_holder_url:/.test(wire),
+    'both paths are sent to the server on save');
+});
