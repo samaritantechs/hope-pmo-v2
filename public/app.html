@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-i';
+var BUILD = '2026-09-20-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8276,62 +8276,9 @@ VIEWS.settings = function(){
         + sgKpis_(sg)
         + '</div>'
         + '<div class="note" id="sgPlanNote">' + sgPlanNote_(sg) + '</div>'
-      /* THE MASTER SWITCH, first on the page because it is the one that decides whether anybody
-         else can see any of the rest. Closed, the whole company has HOPE Calls and nothing
-         else: no portal, no HOPE Live, and no button offering either. The admin is never shut
-         out by it -- otherwise there would be no way back. */
-      + '<div class="card"><div class="card-h">Mfumo kwa watumiaji wote / The system, for everybody'
-        + '<span class="sub">HOPE Calls haiathiriki kamwe / HOPE Calls is never affected</span></div>'
-        + '<div class="cleanbox">'
-        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-        + '<span class="chip ' + (so.open ? 'ok' : 'bad') + '" id="soState">'
-          + (so.open ? 'IMEFUNGULIWA / OPEN' : 'IMEFUNGWA / CLOSED') + '</span>'
-        + '<button class="btn sm' + (so.open ? ' danger' : '') + '" id="soToggle">'
-          + (so.open ? 'Funga mfumo / Close the system' : 'Fungua mfumo / Open the system') + '</button>'
-        + '</div>'
-        + '<div class="note" style="margin-top:10px">'
-        + (so.open
-            ? 'Kila mwenye msimbo anaweza kufungua mfumo na HOPE Live.'
-              + ' / Everyone with a code can open the portal and HOPE Live.'
-            : 'Watumiaji wanaona HOPE Calls pekee. Kitufe cha kubadili na HOPE Live vimefichwa,'
-              + ' na seva inakataa hata mtu akijaribu anwani moja kwa moja.'
-              + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
-              + ' server refuses those addresses even if somebody types them in directly.')
-        + '</div></div></div>'
-      /* "can we track were they are by the devices without lockapp ... officers have become
-         many and managing them has been like kids ... some even dare escape with our phones
-         and fraud demands of customer installments" -- a live-location link per officer, for
-         whoever has the ordinary HOPE Calls app open with location allowed, lock app or not.
-         See officerBeat/officerLocationsList. A button here rather than a row of numbers on
-         this already-busy screen; the list itself is its own page. */
-      + '<div class="card"><div class="card-h">Mahali walipo maafisa / Officer locations'
-        + '<span class="sub">Hakuna lockapp inayohitajika / No lock app required</span></div>'
-        + '<button class="btn sm" id="sgOfficerLoc">Fungua orodha / Open the list</button></div>'
-      /* THE PRESENTATION SWITCH. HOPE LOAN is being perfected inside this portal before the
-         company has formally received it, so the owner must be able to present HOPE PMO with
-         no trace of it in the sidebar -- and put it back with one press afterwards. Hidden
-         means hidden for every sign-in, this admin's included; nothing is deleted and no data
-         moves either way. The server side of the same rule lives in canSwitchWorkspace(). */
-      + '<div class="card"><div class="card-h">HOPE LOAN kwenye menyu / HOPE LOAN in the sidebar'
-        + '<span class="sub">kuficha hakufuti chochote / hiding deletes nothing</span></div>'
-        + '<div class="cleanbox">'
-        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
-        + '<span class="chip ' + (hlOn ? 'ok' : 'bad') + '" id="hlState">'
-          + (hlOn ? 'INAONEKANA / SHOWN' : 'IMEFICHWA / HIDDEN') + '</span>'
-        + '<button class="btn sm" id="hlToggle">'
-          + (hlOn ? 'Ficha HOPE LOAN / Hide HOPE LOAN' : 'Onyesha HOPE LOAN / Show HOPE LOAN') + '</button>'
-        + '</div>'
-        + '<div class="note" style="margin-top:10px">'
-        + (hlOn
-            ? 'Ukificha: navs zote za HOPE LOAN zinatoweka kwenye menyu kwa kila mtumiaji, admin pia.'
-              + ' Takwimu na skrini zake zinabaki salama — bonyeza tena kuzirudisha.'
-              + ' / Hidden, every HOPE LOAN nav disappears from the sidebar for every sign-in, admin'
-              + ' included. Its data and screens stay exactly as they are — press again to bring them back.'
-            : 'HOPE LOAN imefichwa: hakuna nav yake inayoonekana kwa yeyote sasa.'
-              + ' Hakuna kilichofutwa — bonyeza kuonyesha tena.'
-              + ' / HOPE LOAN is hidden: none of its navs are visible to anybody right now.'
-              + ' Nothing was deleted — press to show it again.')
-        + '</div></div></div>'
+      /* The master open/close switch, the officer-locations button and the HOPE LOAN
+         presentation switch used to open this page; by the owner's choice they now sit lower
+         down, between Field officer accounts and the Announcement -- see there. */
       /* Uploads append rather than overwrite -- that is what makes trends and "recovery since
          Monday" possible -- so the tables only grow. Nothing breaks when they do (Postgres has
          no cell ceiling), but the plan's disk is finite, so this is where old dates get let go. */
@@ -8493,6 +8440,62 @@ VIEWS.settings = function(){
             + '<td class="r"><button class="btn sm ghost" data-user="'+esc(u.user_id)+'">Simamia / Manage</button></td></tr>';
         }).join('') : '<tr><td colspan="9" style="text-align:center;color:var(--mut);padding:20px">Hakuna akaunti bado. / No accounts yet.</td></tr>')
       + '</tbody></table></div></div>')
+      /* THE MASTER SWITCH -- the one that decides whether anybody else can see any of the rest.
+         Closed, the whole company has HOPE Calls and nothing else: no portal, no HOPE Live, and
+         no button offering either. The admin is never shut out by it -- otherwise there would
+         be no way back. Placed here, below the officers' accounts, by the owner's choice. */
+      + '<div class="card"><div class="card-h">Mfumo kwa watumiaji wote / The system, for everybody'
+        + '<span class="sub">HOPE Calls haiathiriki kamwe / HOPE Calls is never affected</span></div>'
+        + '<div class="cleanbox">'
+        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        + '<span class="chip ' + (so.open ? 'ok' : 'bad') + '" id="soState">'
+          + (so.open ? 'IMEFUNGULIWA / OPEN' : 'IMEFUNGWA / CLOSED') + '</span>'
+        + '<button class="btn sm' + (so.open ? ' danger' : '') + '" id="soToggle">'
+          + (so.open ? 'Funga mfumo / Close the system' : 'Fungua mfumo / Open the system') + '</button>'
+        + '</div>'
+        + '<div class="note" style="margin-top:10px">'
+        + (so.open
+            ? 'Kila mwenye msimbo anaweza kufungua mfumo na HOPE Live.'
+              + ' / Everyone with a code can open the portal and HOPE Live.'
+            : 'Watumiaji wanaona HOPE Calls pekee. Kitufe cha kubadili na HOPE Live vimefichwa,'
+              + ' na seva inakataa hata mtu akijaribu anwani moja kwa moja.'
+              + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
+              + ' server refuses those addresses even if somebody types them in directly.')
+        + '</div></div></div>'
+      /* "can we track were they are by the devices without lockapp ... officers have become
+         many and managing them has been like kids ... some even dare escape with our phones
+         and fraud demands of customer installments" -- a live-location link per officer, for
+         whoever has the ordinary HOPE Calls app open with location allowed, lock app or not.
+         See officerBeat/officerLocationsList. A button here rather than a row of numbers on
+         this already-busy screen; the list itself is its own page. */
+      + '<div class="card"><div class="card-h">Mahali walipo maafisa / Officer locations'
+        + '<span class="sub">Hakuna lockapp inayohitajika / No lock app required</span></div>'
+        + '<button class="btn sm" id="sgOfficerLoc">Fungua orodha / Open the list</button></div>'
+      /* THE PRESENTATION SWITCH. HOPE LOAN is being perfected inside this portal before the
+         company has formally received it, so the owner must be able to present HOPE PMO with
+         no trace of it in the sidebar -- and put it back with one press afterwards. Hidden
+         means hidden for every sign-in, this admin's included; nothing is deleted and no data
+         moves either way. The server side of the same rule lives in canSwitchWorkspace(). */
+      + '<div class="card"><div class="card-h">HOPE LOAN kwenye menyu / HOPE LOAN in the sidebar'
+        + '<span class="sub">kuficha hakufuti chochote / hiding deletes nothing</span></div>'
+        + '<div class="cleanbox">'
+        + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        + '<span class="chip ' + (hlOn ? 'ok' : 'bad') + '" id="hlState">'
+          + (hlOn ? 'INAONEKANA / SHOWN' : 'IMEFICHWA / HIDDEN') + '</span>'
+        + '<button class="btn sm" id="hlToggle">'
+          + (hlOn ? 'Ficha HOPE LOAN / Hide HOPE LOAN' : 'Onyesha HOPE LOAN / Show HOPE LOAN') + '</button>'
+        + '</div>'
+        + '<div class="note" style="margin-top:10px">'
+        + (hlOn
+            ? 'Ukificha: navs zote za HOPE LOAN zinatoweka kwenye menyu kwa kila mtumiaji, admin pia.'
+              + ' Takwimu na skrini zake zinabaki salama — bonyeza tena kuzirudisha.'
+              + ' / Hidden, every HOPE LOAN nav disappears from the sidebar for every sign-in, admin'
+              + ' included. Its data and screens stay exactly as they are — press again to bring them back.'
+            : 'HOPE LOAN imefichwa: hakuna nav yake inayoonekana kwa yeyote sasa.'
+              + ' Hakuna kilichofutwa — bonyeza kuonyesha tena.'
+              + ' / HOPE LOAN is hidden: none of its navs are visible to anybody right now.'
+              + ' Nothing was deleted — press to show it again.')
+        + '</div></div></div>'
       + '<div class="card"><div class="card-h">Tangazo / Announcement'
         + '<span class="sub">huonekana kwenye kila skrini, hata ya kuingia / shows on every screen, including sign-in</span></div>'
         + '<div class="fld"><label>Maandishi / Text (max 500)</label>'
