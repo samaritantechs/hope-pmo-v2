@@ -241,6 +241,10 @@ async function csRegister(db, user, p) {
       // teamAssessmentSave's 'business' branch) -- one field, filled early when CS already has
       // the answer, still editable at assessment if it needs correcting.
       business_type: textOrNull(p.business_type),
+      // "they ask them who is near when we can't reach you, and not the guarantor" -- someone
+      // physically near the customer, distinct from mobile_alt (the customer's own second
+      // number, asked later at team assessment) and from the guarantor. See RUN-ME-010.
+      neighbor_no: normPhone(p.neighbor_no),
       created_by: user.name, updated_by: user.name,
     }).select('id, docket').maybeSingle();
     if (error) throw new Error(error.message);

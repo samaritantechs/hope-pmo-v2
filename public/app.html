@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-c';
+var BUILD = '2026-09-20-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9351,6 +9351,10 @@ function lnCsRegisterForm_(existing){
       // OUT to the same number just typed above, so the two belong next to each other, not
       // Mobile up top and Disbursement mode buried after Region/Branch/Landmark.
       + '<div class="fld"><label>Mobile</label><input id="lnMobile" value="' + esc(existing ? existing.mobile : '') + '"' + (existing ? ' readonly' : '') + '></div>'
+      // "add neighbor no at customer service, they ask them who is near when we can't reach
+      // you, and not the guarantor" -- someone physically near the customer, not the
+      // customer's own alternate number and not the guarantor.
+      + '<div class="fld"><label>Simu ya jirani / Neighbor\'s phone</label><input id="lnNeighborNo" value="' + esc(existing ? existing.neighbor_no : '') + '"></div>'
       + '<div class="fld"><label>Disbursement mode</label><select id="lnDisbMode">'
         + '<option value="">— chagua / choose —</option>'
         + DISB_MODES.map(function(m){ return '<option>' + m + '</option>'; }).join('')
@@ -9404,6 +9408,7 @@ function lnCsRegisterForm_(existing){
         customer_id: existing ? existing.id : undefined,
         docket: existing ? existing.docket : undefined,
         full_name: $('#lnFullName').value.trim(), mobile: $('#lnMobile').value.trim(),
+        neighbor_no: $('#lnNeighborNo').value.trim(),
         branch: $('#lnBranch').value.trim(), region: $('#lnRegion').value.trim(),
         landmark: $('#lnLandmark').value.trim(), business_type: $('#lnBizType').value.trim(),
         disbursement_mode: $('#lnDisbMode').value.trim(), amount: Number($('#lnAmount').value) || 0,
@@ -9616,12 +9621,15 @@ function lnTeamAssessForm_(loanRow){
       // "we have 5 extra guarantors who we just say are the close people to the customer
       // these are filled names nos and relationship [help in followup by having people to
       // ask whats going on when both customer and guarantor are unreachable]"
-      + '<div class="sub" style="margin:10px 0 4px">Wadhamini wa ziada (5) / Extra close contacts (5) -- name, phone, relationship only</div>'
+      // "the 5 extra guarantors, 3 are (*) compulsory to fill" -- the first 3, marked the same
+      // way a required field is marked anywhere else in this form.
+      + '<div class="sub" style="margin:10px 0 4px">Wadhamini wa ziada (5) / Extra close contacts (5) -- name, phone, relationship only. Wa kwanza 3 ni lazima (*) / The first 3 are required (*).</div>'
       + [0, 1, 2, 3, 4].map(function(i){
           var alt = alts[i] || {};
+          var req = i < 3;
           return '<div class="fld" style="display:flex;gap:6px">'
-            + '<input id="lnAlt' + i + 'Name" placeholder="Jina / Name" value="' + esc(alt.full_name || '') + '" style="flex:2">'
-            + '<input id="lnAlt' + i + 'Phone" placeholder="Simu / Phone" value="' + esc(alt.phone || '') + '" style="flex:1">'
+            + '<input id="lnAlt' + i + 'Name" placeholder="' + (req ? 'Jina* / Name*' : 'Jina / Name') + '" value="' + esc(alt.full_name || '') + '" style="flex:2">'
+            + '<input id="lnAlt' + i + 'Phone" placeholder="' + (req ? 'Simu* / Phone*' : 'Simu / Phone') + '" value="' + esc(alt.phone || '') + '" style="flex:1">'
             + '<input id="lnAlt' + i + 'Rel" placeholder="Uhusiano / Relation" value="' + esc(alt.relationship || '') + '" style="flex:1"></div>';
         }).join('')
       + '<button class="btn sm" id="lnSaveGuar" style="margin-top:6px">Save this section</button></div>'
@@ -9725,6 +9733,15 @@ function lnTeamAssessForm_(loanRow){
         }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveGuar').onclick = function(){
+      // "the 5 extra guarantors, 3 are (*) compulsory to fill" -- checked here, once, rather
+      // than leaving an assessment that looks complete but is missing the three follow-up
+      // contacts it was actually asked for.
+      for (var reqI = 0; reqI < 3; reqI++) {
+        if (!$('#lnAlt' + reqI + 'Name').value.trim() || !$('#lnAlt' + reqI + 'Phone').value.trim()) {
+          toast('Jaza jina na simu ya wadhamini wa ziada 1-3 / Fill in name and phone for extra contacts 1-3.', true);
+          return;
+        }
+      }
       Promise.all([
         saveCanvasPad_(gSigPad, loan.id, 'g-signature', function(p){ PATHS.gSignature = p; }),
       ]).then(function(){

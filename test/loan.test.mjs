@@ -557,6 +557,20 @@ test('personal section: the other-number consent form photos land on the loan, n
   assert.equal(custAfter.other_number_form_url, undefined, 'never written to the customer record');
 });
 
+/* THE NEIGHBOUR'S NUMBER -- WHO TO ASK IF WE CAN'T REACH THE CUSTOMER. See
+   db/hopeloan/RUN-ME-010-neighbor-no.sql. "add neighbor no at customer service, they ask
+   them who is near when we can't reach you, and not the guarantor, so we have alt no and
+   neighbor no" -- a different person than the customer's own mobile_alt (asked later, at
+   team assessment) and than the guarantor. */
+test('csRegister captures the neighbour\'s number, normalised the same way every other phone is', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', {
+    full_name: 'HAS A NEIGHBOUR', mobile: '0700000042', team: 'MABIBO', amount: 200000, neighbor_no: '0712345678',
+  });
+  const cust = (await db.from('customers').select('*')).data.find(c => c.id === loan.customer_id);
+  assert.equal(cust.neighbor_no, '712345678');
+});
+
 test('personal details: gender/ID type/signature/thumbprint/photo all pass through, the same generic write DOB already used', async () => {
   const db = fakeDb({});
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });

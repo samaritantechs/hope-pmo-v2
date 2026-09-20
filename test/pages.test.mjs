@@ -681,3 +681,24 @@ test('every KYC photo is stamped with the date/time, the officer, and a GPS fix 
   assert.ok(shot.indexOf('stampPhoto_(') < shot.indexOf('toDataURL('),
     'stamping happens before the image is turned into the data URL that gets uploaded');
 });
+
+/* THE NEIGHBOUR'S NUMBER -- WHO TO ASK IF WE CAN'T REACH THE CUSTOMER.
+   "add neighbor no at customer service, they ask them who is near when we can't reach you,
+   and not the guarantor, so we have alt no and neighbor no" */
+test('customer service registration asks for a neighbour\'s phone, distinct from the guarantor', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const form = app.slice(app.indexOf('function lnCsRegisterForm_'), app.indexOf('/* ---------- Manager: assignment'));
+  assert.ok(/id="lnNeighborNo"/.test(form), 'a neighbour-phone field is offered at customer service');
+  assert.ok(/neighbor_no:\s*\$\('#lnNeighborNo'\)\.value\.trim\(\)/.test(form), 'it is sent to csRegister on submit');
+});
+
+/* "the 5 extra guarantors, 3 are (*) compulsory to fill" */
+test('the first 3 of the 5 extra guarantor contacts are required before the guarantor section saves', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const card = app.slice(app.indexOf('Wadhamini wa ziada'), app.indexOf("$('#lnSaveGuar').onclick"));
+  assert.ok(/req\s*=\s*i\s*<\s*3/.test(card), 'the first 3 of the 5 are marked as the required ones');
+  const guarStart = app.indexOf("$('#lnSaveGuar').onclick");
+  const wire = app.slice(guarStart, app.indexOf('Promise.all([', guarStart));
+  assert.ok(/reqI\s*<\s*3/.test(wire), 'the save handler checks exactly the first 3');
+  assert.ok(/return;/.test(wire), 'the save is actually blocked when one of the 3 is missing, not just warned about');
+});
