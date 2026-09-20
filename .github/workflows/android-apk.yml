@@ -6,6 +6,11 @@
 # (Actions tab -> Build HOPE Calls APK -> Run workflow) with a different site URL if the
 # deployment ever moves. Officers can also fix the URL from inside the app itself, so a
 # wrong default never bricks an installed copy.
+#
+# A hand-run on a branch other than main builds and uploads the APK as an artifact ONLY --
+# it never publishes to the download link. That is the way to get a real compile of a
+# branch's Java and manifest before merging (nothing outside CI builds this APK), without
+# any risk of handing every handset an unmerged build.
 
 name: Build HOPE Calls APK
 
@@ -50,7 +55,11 @@ jobs:
           name: hope-calls-apk
           path: android/HOPE-Calls.apk
 
+      # ONLY FROM main. A manual "Run workflow" on any other branch still builds and uploads
+      # the artifact above (that is how a branch gets a real compile check without merging),
+      # but must never overwrite the APK every handset downloads from this fixed tag.
       - name: Publish to the fixed download link
+        if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: hope-calls-apk
