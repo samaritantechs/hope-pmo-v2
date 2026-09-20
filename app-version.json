@@ -1,6 +1,6 @@
 {
-  "versionCode": 17,
-  "versionName": "1.9.4",
-  "notes": "Viungo vinavyofunguliwa ndani ya app sasa vinafika kwenye kivinjari; maafisa wasio na lockapp sasa wanaweza kufuatiliwa mahali walipo. / Links opened from inside the app now reach the browser; officers without the lock app can now be tracked by location.",
+  "versionCode": 18,
+  "versionName": "1.9.5",
+  "notes": "Arifa ya kudumu sasa inasema tu 'HOPE PMO inasasisha data' na haitoi sauti wala mtetemo. / The standing notification now only says 'HOPE PMO is auto updating data', silently.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }
