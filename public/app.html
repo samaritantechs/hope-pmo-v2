@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-d';
+var BUILD = '2026-09-20-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -864,7 +864,14 @@ var NAV = [
      month report is reached from the dashboard's -- "put a blue blinking dot for this infront
      of the Stamp report button at weekly reports tab". */
   { id:'teamtrend', label:'Timu bora na dhaifu / Good & bad teams', hidden: true,
-    ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' }
+    ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
+  /* "For the officers with no hopelock app but allowed location, gm asked, can we track were
+     they are by the devices without lockapp ... put their live location link on their rows in
+     settings nav system view not call view" -- a standalone screen, reached from a button on
+     Settings rather than a nav item of its own (it is one more thing an admin opens, not
+     something anybody browses to daily). */
+  { id:'officerloc', label:'Mahali walipo maafisa / Officer locations', hidden: true,
+    ic:'<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>' }
 ];
 /* =====================================================================================
    THE TICKS DECIDE. THERE IS NO LIST OF TABS EVERYBODY GETS ANY MORE.
@@ -8261,6 +8268,15 @@ VIEWS.settings = function(){
               + ' / Users see HOPE Calls only. The switch button and HOPE Live are hidden, and the'
               + ' server refuses those addresses even if somebody types them in directly.')
         + '</div></div></div>'
+      /* "can we track were they are by the devices without lockapp ... officers have become
+         many and managing them has been like kids ... some even dare escape with our phones
+         and fraud demands of customer installments" -- a live-location link per officer, for
+         whoever has the ordinary HOPE Calls app open with location allowed, lock app or not.
+         See officerBeat/officerLocationsList. A button here rather than a row of numbers on
+         this already-busy screen; the list itself is its own page. */
+      + '<div class="card"><div class="card-h">Mahali walipo maafisa / Officer locations'
+        + '<span class="sub">Hakuna lockapp inayohitajika / No lock app required</span></div>'
+        + '<button class="btn sm" id="sgOfficerLoc">Fungua orodha / Open the list</button></div>'
       /* THE PRESENTATION SWITCH. HOPE LOAN is being perfected inside this portal before the
          company has formally received it, so the owner must be able to present HOPE PMO with
          no trace of it in the sidebar -- and put it back with one press afterwards. Hidden
@@ -8476,6 +8492,38 @@ VIEWS.settings = function(){
               + '<td>'+esc(r.value == null ? '' : String(r.value))+'</td></tr>'; }).join('')
         + '</tbody></table></div></div>');
     S.acRows = ac.rows; S.cuRows = cu.rows; S.setRows = st.rows;
+    S.rows = []; S.cols = null;
+    ONROW = null;
+  });
+};
+
+/* "put their live location link on their rows in settings nav system view not call view" --
+   officers signed into the ordinary HOPE Calls app (no lock app needed, see officerBeat).
+   Reached from a button on Settings; a real page of its own rather than a table squeezed onto
+   an already-busy screen. */
+VIEWS.officerloc = function(){
+  return srv('officerLocationsList').then(function(d){
+    var rows = (d.rows || []).slice().sort(function(a, b){
+      return String(b.last_loc_at || '').localeCompare(String(a.last_loc_at || ''));
+    });
+    HEAD = '<div class="kpis">' + kpi('Wenye mahali / Reporting', money(rows.length)) + '</div>'
+      + '<div class="card"><div class="card-h">Mahali walipo maafisa / Officer locations'
+      + '<span class="sub">Ramani inafunguliwa kwenye kivinjari / Maps opens in the browser</span></div>'
+      + (!rows.length
+        ? '<div class="note">Hakuna aliyeripoti mahali bado. Inahitaji ruhusa ya location ikiwa imeruhusiwa kwenye simu, na programu ifunguliwe. / '
+          + 'Nobody has reported a position yet. It needs location permission granted on the phone, and the app to have been opened.</div>'
+        : '<table><thead><tr><th>Jina / Name</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
+          + '<th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th><th></th></tr></thead><tbody>'
+          + rows.map(function(r){
+              var teams = (r.teams || []).join(', ') || 'zote / all';
+              var mapUrl = 'https://www.google.com/maps?q=' + encodeURIComponent(r.last_lat) + ',' + encodeURIComponent(r.last_lng);
+              return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.role) + '</td><td>' + esc(teams) + '</td>'
+                + '<td>' + (r.last_loc_acc != null ? '±' + esc(r.last_loc_acc) + 'm' : '—') + '</td>'
+                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td>'
+                + '<td><a href="' + esc(mapUrl) + '" target="_blank" rel="noopener" class="btn sm ghost">Ramani / Map</a></td></tr>';
+            }).join('')
+          + '</tbody></table>')
+      + '</div>';
     S.rows = []; S.cols = null;
     ONROW = null;
   });
@@ -10788,6 +10836,8 @@ function wireForms(){
   /* Closing the system turns two hundred people away from a screen they were using a minute
      ago, so it asks first. Opening it does not -- letting people back in is not the move
      anybody regrets. */
+  var sgOfficerLoc = document.getElementById('sgOfficerLoc');
+  if (sgOfficerLoc) sgOfficerLoc.onclick = function(){ go('officerloc'); };
   var so = document.getElementById('soToggle');
   if (so) so.onclick = function(){
     var open = document.getElementById('soState').textContent.indexOf('OPEN') >= 0;

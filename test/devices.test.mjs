@@ -851,3 +851,70 @@ test('a phone that has shifted away is off both panes and every count, but a sea
   // An ordinary achia (released by a person) is still ours to see.
   await run(db, LOCKER, 'deviceSetState', { imeis: ['303030303030331'], state: 'released' }).catch(() => {});
 });
+
+/* =========================================================================================
+   AN OFFICER'S OWN LOCATION -- THE SAME BEAT, FOR ANYONE SIGNED IN, LOCK APP OR NOT.
+   =========================================================================================
+   "For the officers with no hopelock app but allowed location, gm asked, can we track were
+   they are by the devices without lockapp" -- see db/RUN-ME-2026-09-20-officer-location.sql
+   and officerBeat/officerLocationsList in api/_lib/portal-core.js, which mirror deviceBeat's
+   own validation exactly. */
+test('an officer reports their own position through the ordinary app, no lock app needed', async () => {
+  const db = fakeDb({ ...tables(), access_codes: [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] }] });
+  const fixAt = NOW - 2 * 3600 * 1000;             // taken two hours before it spoke
+  await run(db, ADMIN, 'officerBeat', { lat: -6.7924, lng: 39.2083, locAcc: 22, locAt: fixAt });
+
+  const row = db._dump('access_codes').find(r => r.code === 'A');
+  assert.equal(row.last_lat, -6.7924);
+  assert.equal(row.last_lng, 39.2083);
+  assert.equal(row.last_loc_acc, 22);
+  assert.equal(Date.parse(row.last_loc_at), fixAt, 'the FIX\'s own time, not the beat\'s');
+
+  const list = await run(db, ADMIN, 'officerLocationsList', {});
+  assert.equal(list.rows.length, 1);
+  assert.equal(list.rows[0].code, 'A');
+  assert.equal(list.rows[0].last_lat, -6.7924);
+});
+
+test('half a coordinate, 0,0, or an out-of-range fix never reaches an officer\'s own row', async () => {
+  const seed = () => ({ ...tables(), access_codes: [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] }] });
+  const at = db => db._dump('access_codes').find(r => r.code === 'A').last_lat;
+
+  let db = fakeDb(seed());
+  await run(db, ADMIN, 'officerBeat', { lat: -6.79 });          // half a fix
+  assert.equal(at(db), undefined);
+
+  db = fakeDb(seed());
+  await run(db, ADMIN, 'officerBeat', { lat: 0, lng: 0 });      // "no fix"
+  assert.equal(at(db), undefined);
+
+  db = fakeDb(seed());
+  await run(db, ADMIN, 'officerBeat', { lat: 91, lng: 200 });   // off the globe
+  assert.equal(at(db), undefined);
+});
+
+test('an officer beat still lands on a register that has not taken the location columns yet', async () => {
+  const inner = fakeDb({ ...tables(), access_codes: [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] }] });
+  let stripped = false;
+  const db = { ...inner, from(name) {
+    const q = inner.from(name);
+    if (name !== 'access_codes') return q;
+    const realUpdate = q.update.bind(q);
+    q.update = function (patch) {
+      if ('last_lat' in patch) {
+        stripped = true;
+        return { eq: () => ({ error: { message: 'column access_codes.last_lat does not exist' } }) };
+      }
+      return realUpdate(patch);
+    };
+    return q;
+  } };
+  const r = await run(db, ADMIN, 'officerBeat', { lat: -6.79, lng: 39.2 });
+  assert.equal(stripped, true, 'the first write was refused for the missing column');
+  assert.equal(r.ok, true, 'the sign-in-adjacent report itself must never fail over a column not yet added');
+});
+
+test('officerLocationsList is gated the same as the rest of Settings', async () => {
+  const db = fakeDb(tables());
+  await assert.rejects(() => run(db, NEITHER, 'officerLocationsList', {}), /settings/i);
+});

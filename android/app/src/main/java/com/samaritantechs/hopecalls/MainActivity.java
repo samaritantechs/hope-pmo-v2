@@ -12,6 +12,7 @@ import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Message;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -96,6 +97,15 @@ public class MainActivity extends Activity {
         s.setCacheMode(WebSettings.LOAD_DEFAULT);
         s.setAllowFileAccess(false);           // the page never needs file:// -- keep it shut
         s.setGeolocationEnabled(true);         // required or the page's GPS capture buttons fail silently, permission or not
+        /* "opening links from app always fail to get out into browsers" -- true, and this is
+           why: a bare WebView has nowhere to put a window.open()/target=_blank navigation, so
+           it is silently DROPPED -- no error, nothing on screen, nothing in the logs. Every one
+           of this page's own window.open() calls (printHtml's browser handoff, the WhatsApp
+           demand-message button, and anything with a link meant to leave the app) was hitting
+           this exact gap. Both settings are required together or onCreateWindow below is never
+           even called. */
+        s.setJavaScriptCanOpenWindowsAutomatically(true);
+        s.setSupportMultipleWindows(true);
         web.addJavascriptInterface(new HopeCallsBridge(this, prefs), "HopeCalls");
 
         web.setWebViewClient(new WebViewClient() {
@@ -239,6 +249,40 @@ public class MainActivity extends Activity {
             public void onPermissionRequestCanceled(PermissionRequest request) {
                 if (request == pendingCameraRequest) pendingCameraRequest = null;
             }
+
+            /* THE ACTUAL FIX for window.open()/target=_blank doing nothing. Android has no
+               "new tab" to hand a popup to, so by default the request just vanishes -- no
+               error, nothing on screen. A throwaway, invisible WebView receives the popup's own
+               navigation instead of a visible one; the moment that navigation happens (almost
+               always immediately, since every window.open() in this app is a plain external
+               URL) it is caught and handed to the phone's real browser via ACTION_VIEW, exactly
+               like any other outside link, and the throwaway WebView is torn down having never
+               been shown. Two paths catch it -- shouldOverrideUrlLoading is the documented one,
+               onPageStarted is a safety net for the rare case a popup's first navigation does
+               not route through it -- guarded so only the first one to see the URL acts on it. */
+            @Override
+            public boolean onCreateWindow(WebView v, boolean isDialog, boolean isUserGesture, Message resultMsg) {
+                final WebView popup = new WebView(MainActivity.this);
+                final boolean[] handled = { false };
+                popup.setWebViewClient(new WebViewClient() {
+                    @Override
+                    public boolean shouldOverrideUrlLoading(WebView pv, WebResourceRequest req) {
+                        if (!handled[0]) { handled[0] = true; launchExternally_(req.getUrl()); }
+                        popup.destroy();
+                        return true;
+                    }
+                    @Override
+                    public void onPageStarted(WebView pv, String url, Bitmap favicon) {
+                        if (!handled[0] && url != null && !"about:blank".equals(url)) {
+                            handled[0] = true; launchExternally_(Uri.parse(url)); popup.destroy();
+                        }
+                    }
+                });
+                WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+                transport.setWebView(popup);
+                resultMsg.sendToTarget();
+                return true;
+            }
         });
 
         // Reports the page offers for download go to the phone's Downloads folder via the
@@ -354,6 +398,14 @@ public class MainActivity extends Activity {
 
     private void hideLoading() {
         if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
+    }
+
+    /** Used by onCreateWindow's popup catcher -- every window.open() target in this app (print,
+        WhatsApp, a maps link) is meant for the phone's real browser or another app, never for a
+        second window inside this one. */
+    private void launchExternally_(Uri u) {
+        try { startActivity(new Intent(Intent.ACTION_VIEW, u)); }
+        catch (Exception ignored) { /* nothing installed can open it -- there is no second attempt to make */ }
     }
 
     private boolean hasLocationPermission() {

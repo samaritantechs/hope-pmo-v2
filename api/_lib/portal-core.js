@@ -7542,6 +7542,56 @@ async function deviceDelete(db, user, args) {
   return { ok: true, ready: true, deleted: true, imei };
 }
 
+/* =========================================================================================
+   AN OFFICER'S OWN LOCATION -- THE SAME IDEA AS THE PHONE REGISTER'S BEAT, FOR ANYONE WHO
+   SIGNS IN, LOCK APP OR NOT.
+   =========================================================================================
+   "For the officers with no hopelock app but allowed location, gm asked, can we track were
+   they are by the devices without lockapp" -- devices.last_lat/last_lng/last_loc_acc/
+   last_loc_at (RUN-ME-2026-09-11b) already do this for lock-app handsets, reported on every
+   beat. This is the identical shape on access_codes instead: whoever is signed in reports
+   their own last-known fix, range-checked and dropped whole rather than trusted, exactly the
+   same validation deviceBeat already uses -- see that function's own note on why 0,0 is "no
+   fix" and why the AGE of the fix travels separately from when it arrived. */
+async function officerBeat(db, user, p) {
+  const code = String((user && user.code) || '').trim();
+  if (!code) return { ok: false };
+  const patch = {};
+  const lat = Number((p || {}).lat), lng = Number((p || {}).lng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)
+      && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180
+      && !(lat === 0 && lng === 0)) {          // 0,0 is the Gulf of Guinea, i.e. "no fix"
+    patch.last_lat = lat;
+    patch.last_lng = lng;
+    const acc = Number((p || {}).locAcc);
+    patch.last_loc_acc = Number.isFinite(acc) && acc >= 0 ? Math.round(acc) : null;
+    const when = Number((p || {}).locAt);
+    const nowMs = Date.now();
+    patch.last_loc_at = Number.isFinite(when) && when > 946684800000 && when <= nowMs + 86400000
+      ? new Date(when).toISOString() : new Date(nowMs).toISOString();
+  }
+  if (!Object.keys(patch).length) return { ok: true };  // nothing usable reported -- not an error
+  let { error } = await db.from('access_codes').update(patch).eq('code', code);
+  // Pre-migration tolerance -- see deviceBeat's identical fallback. The sign-in itself must
+  // never fail for a column RUN-ME-2026-09-20-officer-location.sql has not added yet.
+  if (error && /last_lat|last_lng|last_loc_acc|last_loc_at/.test(String(error.message || ''))) return { ok: true };
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
+/** The list this reports into -- gated the same as the rest of Settings (requireAdmin), since
+    this is thirty officers' whereabouts, not a screen every code should be able to open. Only
+    rows that have actually reported a fix are worth showing; a code that has never opened the
+    app since this shipped has nothing to say yet. */
+async function officerLocationsList(db, user) {
+  requireAdmin(user);
+  const rows = await fetchAll(() => db.from('access_codes')
+    .select('code, name, role, teams, last_lat, last_lng, last_loc_acc, last_loc_at')
+    .not('last_lat', 'is', null));
+  rows.sort((a, b) => String(b.last_loc_at || '').localeCompare(String(a.last_loc_at || '')));
+  return { rows };
+}
+
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
   loans, loanPipeline, appsWeekly, appsTab, expected, defaulters, expectedDefaulters,
@@ -7570,6 +7620,7 @@ const FN = {
   /* IMPREST -- ask, decide, fund, retire, review. See _lib/imprest.js. */
   imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
+  officerBeat, officerLocationsList,
 };
 
 /* THE LEADERS TABLE, OUT AND BACK IN.

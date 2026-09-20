@@ -32,7 +32,15 @@ create table if not exists access_codes (
   role text not null,
   teams text[],              -- null/empty = ALL teams
   tabs text[],
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- An officer's own last-known position, reported by the ordinary HOPE Calls app -- no lock
+  -- app required. Same four columns, same reasoning, as devices' own last_lat/last_lng/
+  -- last_loc_acc/last_loc_at (db/RUN-ME-2026-09-11b-device-location.sql); see
+  -- db/RUN-ME-2026-09-20-officer-location.sql for the ALTER an already-live database runs.
+  last_lat double precision,
+  last_lng double precision,
+  last_loc_acc integer,           -- metres, as the handset reported
+  last_loc_at timestamptz         -- when the FIX was taken, not when it was sent
 );
 
 create table if not exists roles (

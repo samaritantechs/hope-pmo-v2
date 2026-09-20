@@ -702,3 +702,20 @@ test('the first 3 of the 5 extra guarantor contacts are required before the guar
   assert.ok(/reqI\s*<\s*3/.test(wire), 'the save handler checks exactly the first 3');
   assert.ok(/return;/.test(wire), 'the save is actually blocked when one of the 3 is missing, not just warned about');
 });
+
+/* "For the officers with no hopelock app but allowed location, gm asked, can we track were
+   they are by the devices without lockapp ... put their live location link on their rows in
+   settings nav system view not call view" */
+test('Settings offers a button to the officer-locations screen, with a real maps link per row', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/id:'officerloc'/.test(app), 'a nav entry exists for the screen (hidden, reached from a button)');
+  const settingsView = app.slice(app.indexOf('VIEWS.settings = function'), app.indexOf('VIEWS.officerloc = function'));
+  assert.ok(/id="sgOfficerLoc"/.test(settingsView), 'Settings offers a button into it');
+  const wire = app.slice(app.indexOf("var sgOfficerLoc = document.getElementById"), app.indexOf("var so = document.getElementById('soToggle')"));
+  assert.ok(/go\('officerloc'\)/.test(wire), 'the button actually navigates to the new screen');
+
+  const view = app.slice(app.indexOf('VIEWS.officerloc = function'), app.indexOf('VIEWS.present = function'));
+  assert.ok(/srv\('officerLocationsList'\)/.test(view), 'the screen reads the new server function');
+  assert.ok(/https:\/\/www\.google\.com\/maps\?q=/.test(view), 'each row gets a real Google Maps link');
+  assert.ok(/target="_blank"/.test(view), 'opened as a real link (now safe -- see onCreateWindow in MainActivity.java)');
+});
