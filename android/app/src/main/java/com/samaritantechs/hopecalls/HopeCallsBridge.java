@@ -32,6 +32,7 @@ import java.util.UUID;
  *   hasCallLogPermission()           '1' / '0'
  *   getManufacturer()                for the OEM battery-settings guidance
  *   isIgnoringBatteryOptimizations() / requestIgnoreBatteryOptimizations()
+ *   setOfficerCode(code)             starts/stops OfficerLocationService for whoever is signed in
  * Everything returns strings/primitives -- the WebView bridge marshals nothing fancier.
  */
 public class HopeCallsBridge {
@@ -178,6 +179,12 @@ public class HopeCallsBridge {
 
     @JavascriptInterface
     public void setStartUrl(String url) { activity.setStartUrlFromBridge(url); }
+
+    /** Called from app.html at sign-in, sign-out and own-code change (see pushOfficerCode_) --
+        an empty/null code stops OfficerLocationService; a real one starts it. See that class's
+        own header comment for what it does while it runs. */
+    @JavascriptInterface
+    public void setOfficerCode(String code) { activity.startOrStopLocationService_(code); }
 
     private boolean has(String perm) {
         return activity.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;

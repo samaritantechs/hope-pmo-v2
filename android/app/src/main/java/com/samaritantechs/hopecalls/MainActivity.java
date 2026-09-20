@@ -34,6 +34,8 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.content.ContextCompat;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -53,6 +55,7 @@ public class MainActivity extends Activity {
         behind a first that is still on screen. */
     private static final int REQ_PERMS = 71;
     private static final int REQ_FILE_PICK = 72;
+    private static final int REQ_BG_LOCATION = 73;
 
     private WebView web;
     private View loadingOverlay;
@@ -339,7 +342,12 @@ public class MainActivity extends Activity {
      * ".../call" is additionally rewritten to the site root rather than simply discarded, so a
      * genuinely different domain typed in the field survives the upgrade.
      */
-    private String startUrl() {
+    private String startUrl() { return resolveStartUrl(prefs); }
+
+    /** Same resolution, callable without an Activity -- OfficerLocationService runs detached
+        from this one and needs the identical answer to "which server", never a second copy of
+        this rule that could drift from it. */
+    static String resolveStartUrl(SharedPreferences prefs) {
         String saved = prefs.getString("startUrl", null);
         if (saved == null) return BuildConfig.START_URL;
         if (prefs.getInt("startUrlVersion", 0) >= BuildConfig.VERSION_CODE) return saved;
@@ -435,6 +443,12 @@ public class MainActivity extends Activity {
         }
         boolean needsCamera = !hasCameraPermission();
         if (needsCamera) need.add(Manifest.permission.CAMERA);
+        // No rationale needed -- a bare system dialog asking to show notifications at all, not
+        // a new capability an officer needs explaining.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
         if (need.isEmpty()) return;
         String[] perms = need.toArray(new String[0]);
         if (needsLocation || needsCamera) showLocationRationale_(() -> requestPermissions(perms, REQ_PERMS), null);
@@ -466,6 +480,27 @@ public class MainActivity extends Activity {
 
     void retryFromBridge() {
         runOnUiThread(() -> web.loadUrl(startUrl()));
+    }
+
+    /** Driven by HopeCallsBridge.setOfficerCode, itself called from app.html at every sign-in,
+        sign-out and code change -- an officer's OWN session is what starts and stops this,
+        the same as the device-lock register only ever beats for an enrolled handset. Background
+        location is asked for here, once, the moment tracking is actually about to start, per
+        Android's own guidance -- not bundled into the app-open ask in requestMissingPermissions,
+        where the system silently refuses it if it is not already held with foreground location
+        granted first. Starting without it is still correct: tracking simply works only while the
+        app is open until it is granted, never a crash and never blocked on it. */
+    void startOrStopLocationService_(String code) {
+        String c = code == null ? "" : code.trim();
+        prefs.edit().putString("officerCode", c).apply();
+        Intent svc = new Intent(this, OfficerLocationService.class);
+        if (c.isEmpty()) { stopService(svc); return; }
+        if (!hasLocationPermission()) return;   // nothing to track with -- the next sign-in after Allow starts it
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                && checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{ Manifest.permission.ACCESS_BACKGROUND_LOCATION }, REQ_BG_LOCATION);
+        }
+        ContextCompat.startForegroundService(this, svc);
     }
 
     void setStartUrlFromBridge(String url) {

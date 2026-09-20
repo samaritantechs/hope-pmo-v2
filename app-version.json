@@ -1,6 +1,6 @@
 {
-  "versionCode": 16,
-  "versionName": "1.9.3",
-  "notes": "Usasishaji uliopita ulipoacha faili ya zamani nyuma, sasa haujarudiwa tena bure. / Fixed a case where an old update file could be left behind and re-offered for no reason.",
+  "versionCode": 17,
+  "versionName": "1.9.4",
+  "notes": "Viungo vinavyofunguliwa ndani ya app sasa vinafika kwenye kivinjari; maafisa wasio na lockapp sasa wanaweza kufuatiliwa mahali walipo. / Links opened from inside the app now reach the browser; officers without the lock app can now be tracked by location.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

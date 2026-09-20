@@ -559,6 +559,11 @@ function fmtDur(sec){ sec = Math.max(0, Math.round(Number(sec)||0)); var h=Math.
   function p2(n){ return (n<10?'0':'')+n; } return h>0 ? (h+':'+p2(m)+':'+p2(s)) : (m+':'+p2(s)); }
 function store(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,v);}catch(e){} }
 function load(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
+/* The Android app tracks an officer's location natively (OfficerLocationService) so it keeps
+   working while the app is off screen, which needs the signed-in code OUTSIDE this WebView's
+   own localStorage -- pushed here at every point the code changes, mirroring hopeCode exactly.
+   A no-op everywhere else (plain browser, iOS, an old APK without the bridge method yet). */
+function pushOfficerCode_(code){ try{ if (window.HopeCalls && HopeCalls.setOfficerCode) HopeCalls.setOfficerCode(code||''); }catch(e){} }
 function toast(m, bad){ var t=$('#toast'); t.textContent=m; t.className='toast'+(bad?' bad':'');
   t.style.display='block'; clearTimeout(toast._t); toast._t=setTimeout(function(){t.style.display='none';},3200); }
 function today(){ var d=new Date(Date.now()+3*3600*1000); return d.toISOString().slice(0,10); }   // EAT
@@ -614,7 +619,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-e';
+var BUILD = '2026-09-20-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -751,7 +756,7 @@ function signIn(){
     .then(function(x){
       $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in';
       if (x.status<200||x.status>=300||x.body.ok===false){ $('#inErr').textContent = x.body.error||'Msimbo si sahihi.'; return; }
-      S.code = code; store('hopeCode', code); start(x.body);
+      S.code = code; store('hopeCode', code); pushOfficerCode_(code); start(x.body);
     })
     /* A SERVER THAT ANSWERED BADLY IS NOT A MISSING NETWORK, and telling somebody to check
        their connection when the connection is fine sends them looking in the wrong place --
@@ -773,7 +778,7 @@ $('#code').onkeydown = function(e){ if (e.key==='Enter') signIn(); };
    sign-in box -- the portal's own -- on the address of the screen they had just left. Two
    different sign-in cards for one system is how somebody ends up believing their code stopped
    working. There is one front door and this is it. */
-$('#outBtn').onclick = function(){ store('hopeCode', null); window.location.replace('/'); };
+$('#outBtn').onclick = function(){ store('hopeCode', null); pushOfficerCode_(''); window.location.replace('/'); };
 
 /* ----------------------------------------------------------- navigation */
 /* ORDER MATTERS: this is the v1 sidebar order, copied from app.html's own NAV array, because
@@ -3049,6 +3054,7 @@ function wireClean(){
       .then(function(r){
         store('hopeCode', r.code);
         S.code = r.code;
+        pushOfficerCode_(r.code);
         pwOut.className = 'note';
         pwOut.innerHTML = 'Msimbo umebadilishwa. / Code changed. '
           + '<b>Uandike mahali salama.</b> / <b>Write it down somewhere safe.</b>';
@@ -11251,8 +11257,8 @@ function settingForm(key, value){
   fetch('/api/me?code='+encodeURIComponent(saved))
     .then(readJson_)
     .then(function(x){
-      if (x.status>=200 && x.status<300 && x.body.ok!==false) start(x.body);
-      else { store('hopeCode', null); $('#code').value=''; }
+      if (x.status>=200 && x.status<300 && x.body.ok!==false) { pushOfficerCode_(saved); start(x.body); }
+      else { store('hopeCode', null); pushOfficerCode_(''); $('#code').value=''; }
     })
     .catch(function(){});
 })();
