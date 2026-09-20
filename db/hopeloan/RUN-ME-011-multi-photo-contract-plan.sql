@@ -38,9 +38,22 @@ alter table loans add column if not exists contract_photo_urls text[];
 
 /* assessments.contract_url and .contract_signed already exist (RUN-ME-001) and were never
    wired to anything -- contract_url now becomes the path of the ONE PDF assembled from the
-   captures above at approval (see contractApprovalCleanup in loan-core.js), and
+   captures above at approval (see finalizeContractOnApproval_ in loan-core.js), and
    contract_signed is set true the moment the first contract photo is captured. No new
-   columns needed for either. */
+   columns needed for either.
+
+   HOPE Loan has no Settings SCREEN of its own yet (unlike HOPE PMO's) -- its settings table
+   has only ever been written by hand, here, in a migration (see WORKSPACE/WORKSPACE_LABEL/
+   SANDBOX_REF_PREFIX above, from RUN-ME-001). Two more join that list, both left UNSET here
+   on purpose rather than seeded with a guessed value:
+     CONTRACT_EMAIL            recipient(s) for the courtesy contract email on approval; blank
+                                means no email is sent at all (finalizeContractOnApproval_'s
+                                PDF is still built and stored either way). Set it with:
+                                  insert into settings (key, value) values ('CONTRACT_EMAIL', 'legal@hope.example')
+                                  on conflict (key) do update set value = excluded.value;
+     CALL_VERIFY_MIN_SECONDS   seconds a CONNECTED call must run to count as "verified" at
+                                credit approval (see callVerificationFor_). Defaults to 30 in
+                                code if this is never set -- only insert it to change that. */
 
 
 /* =====================================================================================
