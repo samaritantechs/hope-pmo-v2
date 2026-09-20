@@ -50,11 +50,14 @@ async function setting(db, key) {
 
 /**
  * Send one email. `toKey` names the Settings row holding the recipient(s); `to` may be given
- * directly instead (the requester's own address off a form). Resolves with
+ * directly instead (the requester's own address off a form). `attachments`, when given, is
+ * Resend's own shape: [{ filename, content }] with `content` base64 -- HOPE Loan's contract
+ * email (loan-core.js) is the first caller to use it, passing the one assembled PDF. Resolves
+ * with
  *   { sent: true, to, id }            on success
  *   { sent: false, reason: '...' }    on every kind of failure, including "not configured"
  */
-export async function sendMail(db, { toKey, to, subject, html }) {
+export async function sendMail(db, { toKey, to, subject, html, attachments }) {
   try {
     const key = String(process.env.RESEND_API_KEY || '').trim();
     if (!key) return { sent: false, reason: 'RESEND_API_KEY haijawekwa / not set on the deployment' };
@@ -82,7 +85,8 @@ export async function sendMail(db, { toKey, to, subject, html }) {
         // A subject is one line. A name typed with a line break in it must not become a header.
         body: JSON.stringify({ from, to: list,
           subject: String(subject || 'HOPE PMO').replace(/[\r\n]+/g, ' ').slice(0, 200),
-          html: String(html || '') }),
+          html: String(html || ''),
+          ...(Array.isArray(attachments) && attachments.length ? { attachments } : {}) }),
         signal: ctl ? ctl.signal : undefined,
       });
       // The body read is under the same clock: a provider that sends headers and then stalls

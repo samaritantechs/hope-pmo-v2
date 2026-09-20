@@ -1,6 +1,8 @@
-import { fetchAll, runQuery } from './supabase.js';
+import { fetchAll, runQuery, supabase } from './supabase.js';
 import { normPhone, textOrNull, normTeam } from './parse.js';
 import { todayKey } from './time.js';
+import { sendMail, noticeHtml } from './mail.js';
+import { PDFDocument } from 'pdf-lib';
 
 /* =====================================================================================
    HOPE LOAN -- ORIGINATION, END TO END.
@@ -377,6 +379,7 @@ async function teamQueue(db, user) {
 async function teamAssessDetail(db, user, { loan_id }) {
   requireTab(user, 'team');
   const loan = await mustLoan(db, loan_id);
+  await pruneStaleContractPhotos_(db, loan);
   const [custRows, guarantors, assessment] = await Promise.all([
     loan.customer_id ? allPaged(db, 'customers', b => b.select('*').eq('id', loan.customer_id)) : [],
     allPaged(db, 'guarantors', b => b.select('*').eq('loan_id', loan.id).order('rank')),
@@ -400,9 +403,12 @@ async function teamAssessDetail(db, user, { loan_id }) {
    leaked path is not a leaked photo. */
 const KYC_BUCKET = 'kyc-photos';
 const KYC_MAX_BYTES = 2 * 1024 * 1024;
+/* "10-photo contract capture" -- a genuinely repeated, undifferentiated set (RUN-ME-011),
+   capped server-side rather than left to the client alone to enforce. */
+const CONTRACT_MAX_PHOTOS = 10;
 async function kycUpload(db, user, { loan_id, kind, data_url, camera_label }) {
   requireTab(user, 'team');
-  await mustLoan(db, loan_id);
+  const loan = await mustLoan(db, loan_id);
   const m = /^data:([^;]+);base64,(.+)$/.exec(String(data_url || ''));
   if (!m) throw badRequest('That did not look like an image.');
   const [, contentType, b64] = m;
@@ -410,13 +416,159 @@ async function kycUpload(db, user, { loan_id, kind, data_url, camera_label }) {
   try { bytes = Buffer.from(b64, 'base64'); } catch { throw badRequest('That image could not be read.'); }
   if (!bytes.length) throw badRequest('That image was empty.');
   if (bytes.length > KYC_MAX_BYTES) throw badRequest('That image is still too large (over 2MB) even after compression.');
-  const ext = contentType.indexOf('png') >= 0 ? 'png' : 'jpg';
   const safeKind = String(kind || 'file').replace(/[^a-z0-9_-]/gi, '') || 'file';
+  if (safeKind === 'contract' && (Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls.length : 0) >= CONTRACT_MAX_PHOTOS) {
+    throw badRequest('Already at ' + CONTRACT_MAX_PHOTOS + ' contract photos for this loan.');
+  }
+  const ext = contentType.indexOf('png') >= 0 ? 'png' : 'jpg';
   const path = 'loans/' + loan_id + '/' + safeKind + '-' + Date.now() + '.' + ext;
   const { error } = await db.storage.from(KYC_BUCKET).upload(path, bytes, { contentType, upsert: false });
   if (error) throw new Error(error.message);
   await logKycCapture(db, loan_id, safeKind, path, camera_label, user);
+  if (safeKind === 'contract') await addContractPhoto_(db, loan, path);
   return { path };
+}
+
+/** Appends one captured contract-page path to the loan's array and marks the assessment
+    "contract_signed" the moment the first page lands. A read-modify-write, not an atomic
+    array append -- one officer works one loan at a time here, never concurrent writers on the
+    same row, so the small race window this leaves is not worth a Postgres function to close. */
+async function addContractPhoto_(db, loan, path) {
+  const next = [...(Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls : []), path];
+  const { error } = await db.from('loans').update({ contract_photo_urls: next }).eq('id', loan.id);
+  if (error) throw new Error(error.message);
+  loan.contract_photo_urls = next;
+  const a = await assessmentFor(db, loan.id);
+  if (a) {
+    if (!a.contract_signed) await db.from('assessments').update({ contract_signed: true }).eq('id', a.id);
+  } else {
+    // No assessment row yet is unusual (personal details is normally saved first) but not
+    // impossible -- create one rather than losing that the contract has been signed.
+    await db.from('assessments').insert({
+      loan_id: loan.id, customer_id: loan.customer_id, team: loan.team, contract_signed: true,
+    });
+  }
+}
+
+/* "delete recommendation photos on approval / 3-day max lifetime otherwise" -- the raw
+   per-page captures are meant to be consolidated into one PDF at approval (finalizeContract_,
+   below) and cleared from storage then. A loan that never gets there -- rejected, abandoned,
+   or just slow -- must not keep piling up raw photos indefinitely; checked lazily the next
+   time anyone opens this one loan, same as every other time-based cleanup in this codebase has
+   no cron to run on (see CLAUDE.md) and instead rides the feature's own natural read. */
+const CONTRACT_PHOTO_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+async function pruneStaleContractPhotos_(db, loan) {
+  const paths = Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls : [];
+  if (!paths.length) return;
+  const oldest = oldestCaptureMs_(paths);
+  if (oldest == null || Date.now() - oldest < CONTRACT_PHOTO_MAX_AGE_MS) return;
+  try { await db.storage.from(KYC_BUCKET).remove(paths); } catch { /* best-effort -- the DB clear below still runs */ }
+  const { error } = await db.from('loans').update({ contract_photo_urls: [] }).eq('id', loan.id);
+  if (!error) loan.contract_photo_urls = [];
+}
+/* Every kycUpload path ends "...-<epoch ms>.<ext>" -- reused here rather than adding a
+   first-captured-at column just to answer "how old is the oldest one". */
+function oldestCaptureMs_(paths) {
+  let oldest = null;
+  for (const p of paths) {
+    const m = /-(\d{10,})\.\w+$/.exec(String(p || ''));
+    const ms = m ? Number(m[1]) : NaN;
+    if (Number.isFinite(ms) && (oldest == null || ms < oldest)) oldest = ms;
+  }
+  return oldest;
+}
+
+/** Assembles the loan's captured contract-page photos into ONE PDF -- literally the photographed
+    pages of the actual signed paper contract, one image per page, never invented text: this
+    codebase has no legal-contract-text generator (see RUN-ME-011) and is not the place to guess
+    at one. Stored as assessments.contract_url, emailed as a courtesy if CONTRACT_EMAIL is set
+    (never able to block the approval it follows -- same rule as every email in api/_lib/mail.js),
+    then the raw per-page photos are deleted: they are now preserved inside the PDF, and keeping
+    both would only be the same record twice. Never throws -- called after the approval itself
+    has already committed. */
+async function finalizeContractOnApproval_(db, loan, assessment, user) {
+  const paths = Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls : [];
+  if (!paths.length) return { built: false };
+  try {
+    const doc = await PDFDocument.create();
+    for (const path of paths) {
+      const { data, error } = await db.storage.from(KYC_BUCKET).download(path);
+      if (error || !data) continue;                    // one missing page skips, it does not fail the whole contract
+      const bytes = Buffer.from(await data.arrayBuffer());
+      const isPng = /\.png$/i.test(path);
+      const img = isPng ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+      const page = doc.addPage([img.width, img.height]);
+      page.drawImage(img, { x: 0, y: 0, width: img.width, height: img.height });
+    }
+    if (!doc.getPageCount()) return { built: false };
+    const pdfBytes = Buffer.from(await doc.save());
+    const pdfPath = 'loans/' + loan.id + '/contract-' + Date.now() + '.pdf';
+    const { error: upErr } = await db.storage.from(KYC_BUCKET).upload(pdfPath, pdfBytes, { contentType: 'application/pdf', upsert: false });
+    if (upErr) throw new Error(upErr.message);
+
+    if (assessment) await db.from('assessments').update({ contract_url: pdfPath }).eq('id', assessment.id);
+
+    const mailResult = await sendMail(db, {
+      toKey: 'CONTRACT_EMAIL',
+      subject: 'Mkataba ulioidhinishwa / Approved contract -- ' + (loan.loan_id || loan.id),
+      html: noticeHtml('Mkataba ulioidhinishwa / Approved contract', [
+        ['Ref', loan.loan_id || '—'], ['Docket', loan.docket_no || '—'],
+        ['Jina / Name', loan.full_name || '—'], ['Timu / Team', loan.team || '—'],
+        ['Kiasi kilichoidhinishwa / Granted', Number(loan.principal_amt) || 0],
+        ['Aliyeidhinisha / Approved by', (user && user.name) || '—'],
+      ], 'Mkataba uliosainiwa umeambatanishwa kama PDF. / The signed contract is attached as a PDF.'),
+      attachments: [{ filename: 'contract-' + (loan.loan_id || loan.id) + '.pdf', content: pdfBytes.toString('base64') }],
+    });
+
+    try { await db.storage.from(KYC_BUCKET).remove(paths); } catch { /* the PDF above is the durable copy either way */ }
+    await db.from('loans').update({ contract_photo_urls: [] }).eq('id', loan.id);
+
+    return { built: true, pdfPath, mail: mailResult };
+  } catch (e) {
+    // Never lets a PDF/email hiccup undo or fail an approval that already happened.
+    return { built: false, error: String((e && e.message) || e) };
+  }
+}
+
+/** "call verification tick at approval tied to min-seconds threshold from the approver's own
+    call-sync login" -- not a checkbox anyone could tick, a fact read off the SAME call_logs the
+    officer's own call-sync app already wrote (see call-core.js/call.html) -- a DIFFERENT
+    database from `db` in this file (see this file's own header comment on the sandbox/live
+    split), reached deliberately for this one read. Advisory only: it never blocks approval, it
+    tells the analyst what their own synced call history already shows. */
+let callLogsDb_ = supabase;
+/** Test-only seam, same idea as mail.js's _setFetch -- a test must not let this reach a real
+    network. */
+export function _setCallLogsDb(db) { callLogsDb_ = db || supabase; }
+
+const CALL_VERIFY_DEFAULT_SECONDS = 30;
+async function hlSettingNum_(db, key, dflt) {
+  try {
+    const { data } = await db.from('settings').select('value').eq('key', key).maybeSingle();
+    const n = parseInt(String((data && data.value) || '').replace(/[^0-9]/g, ''), 10);
+    return (!n || isNaN(n)) ? dflt : n;
+  } catch { return dflt; }
+}
+async function callVerificationFor_(db, user, phone) {
+  const p = normPhone(phone);
+  const minSeconds = await hlSettingNum_(db, 'CALL_VERIFY_MIN_SECONDS', CALL_VERIFY_DEFAULT_SECONDS);
+  if (!p) return { verified: false, seconds: 0, minSeconds };
+  try {
+    const { data, error } = await callLogsDb_.from('call_logs')
+      .select('duration, call_date')
+      .eq('phone', p).eq('officer', (user && user.name) || '').eq('outcome', 'CONNECTED')
+      .order('duration', { ascending: false }).limit(1);
+    if (error || !data || !data.length) return { verified: false, seconds: 0, minSeconds };
+    const seconds = Number(data[0].duration) || 0;
+    return { verified: seconds >= minSeconds, seconds, minSeconds, callDate: data[0].call_date };
+  } catch {
+    return { verified: false, seconds: 0, minSeconds };   // call_logs unreachable is not a reason to block the screen
+  }
+}
+async function creditCallCheck(db, user, { loan_id }) {
+  requireTab(user, 'credit');
+  const loan = await mustLoan(db, loan_id);
+  return callVerificationFor_(db, user, loan.contact);
 }
 
 /* Fire-and-forget, same rule as logEvent above: the audit trail must never be able to fail
@@ -526,7 +678,11 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
       // block_number/type_of_residence/residency_capacity/years_of_residence and the local
       // government letter are all CreditInfo Individual columns that already existed on
       // customers (RUN-ME-001/006) with nothing on this screen ever asking for them.
+      // "4 residence photos each for customer and guarantor" (RUN-ME-011) -- the one photo
+      // above is now the first of four; the extra three are optional, same as it was optional
+      // before this.
       for (const k of ['street', 'ward', 'district', 'residence_lat', 'residence_lng', 'residence_verify_photo_url',
+        'residence_verify_photo2_url', 'residence_verify_photo3_url', 'residence_verify_photo4_url',
         'block_number', 'type_of_residence', 'residency_capacity', 'years_of_residence', 'local_govt_letter_url']) {
         if ((fields || {})[k] !== undefined) resPatch[k] = (fields || {})[k];
       }
@@ -545,8 +701,12 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
       // and their residences" -- business_lat/lng and the site photo (officer + customer AT
       // the business front) join business_name and business_type here.
       const BIZ_NUMERIC_ = new Set(['daily_sales', 'daily_profit', 'weekly_expenses']);
+      // "3 business verification photos (customer alone / customer+officer / customer+officer
+      // +guarantor)" (RUN-ME-011) -- business_verify_photo_url is the first ("customer alone"),
+      // already existed; the other two are new and optional, same as the first always was.
       for (const k of ['business_type', 'business_name', 'daily_sales', 'daily_profit', 'weekly_expenses',
-        'business_lat', 'business_lng', 'business_verify_photo_url']) {
+        'business_lat', 'business_lng', 'business_verify_photo_url',
+        'business_verify_photo2_url', 'business_verify_photo3_url']) {
         const v = (fields || {})[k];
         if (v === undefined) continue;
         // These come off the form as trimmed strings, same as every text field -- cast rather
@@ -602,6 +762,10 @@ async function saveGuarantors(db, loan, user, list) {
     residence_lat: g.residence_lat != null ? Number(g.residence_lat) : null,
     residence_lng: g.residence_lng != null ? Number(g.residence_lng) : null,
     residence_verify_photo_url: textOrNull(g.residence_verify_photo_url),
+    // "4 residence photos each for customer and guarantor" (RUN-ME-011).
+    residence_verify_photo2_url: textOrNull(g.residence_verify_photo2_url),
+    residence_verify_photo3_url: textOrNull(g.residence_verify_photo3_url),
+    residence_verify_photo4_url: textOrNull(g.residence_verify_photo4_url),
     local_govt_letter_url: textOrNull(g.local_govt_letter_url),
     photo_url: textOrNull(g.photo_url), signature_url: textOrNull(g.signature_url), thumbprint_url: textOrNull(g.thumbprint_url),
     created_by: user.name,
@@ -733,7 +897,26 @@ async function creditApprove(db, user, p) {
     approved_by: user.name, approved_date: todayKey(Date.now()), bank_name: textOrNull(p.bank_name),
     account_no: textOrNull(p.account_no),
   }, 'Granted ' + granted);
-  return { ok: true, interest, total, installment, application_fee: appFee };
+  loan.principal_amt = granted;   // finalizeContractOnApproval_'s email reads this off the in-memory loan, not a refetch
+
+  // "call verification tick at approval" -- recorded now, once, against what the analyst's
+  // own call-sync history actually showed AT approval, not left to drift from a client-side
+  // read that may be minutes stale by the time this fires.
+  const a = await assessmentFor(db, loan.id);
+  const callCheck = await callVerificationFor_(db, user, loan.contact);
+  if (a) {
+    await db.from('assessments').update({
+      call_verified: callCheck.verified, call_verified_seconds: callCheck.seconds,
+      call_verified_at: new Date().toISOString(),
+    }).eq('id', a.id);
+  }
+
+  // "delete recommendation photos on approval" -- consolidated into one PDF and emailed as a
+  // courtesy first (see finalizeContractOnApproval_); never allowed to fail the approval that
+  // already committed above.
+  const contract = await finalizeContractOnApproval_(db, loan, a, user);
+
+  return { ok: true, interest, total, installment, application_fee: appFee, callCheck, contract };
 }
 
 async function creditReject(db, user, { loan_id, reason }) {
@@ -1146,6 +1329,104 @@ async function logEvent(db, loanId, from, to, user, amount, note) {
 }
 
 /* =====================================================================================
+   ASSESSMENT PLAN -- who a team means to visit, and when, before there is even a customer.
+   =====================================================================================
+   "a new Assessment Plan nav, team-pivoted, only future dates editable, autodelete after 30
+   days, autodelete once a matching approved loan appears, dropdown stale-reason comments, an
+   ED/elapsed-days column" -- see RUN-ME-011 for the table. Both autodeletes are lazy, checked
+   the moment anyone opens the list, same reasoning as pruneStaleContractPhotos_ above: no cron
+   in this codebase (CLAUDE.md), and a screen's own natural read is what pays for it. */
+const PLAN_MAX_AGE_DAYS = 30;
+const PLAN_STALE_REASONS = [
+  'Hapatikani / Unreachable', 'Amekataa / Declined', 'Amehama eneo / Moved away',
+  'Biashara imefungwa / Business closed', 'Hana muda bado / No time yet', 'Nyingine / Other',
+];
+
+function elapsedDays_(plannedDate, nowKey) {
+  if (!plannedDate) return null;
+  const a = new Date(plannedDate + 'T00:00:00Z'), b = new Date(nowKey + 'T00:00:00Z');
+  return Math.round((b - a) / 86400000);
+}
+
+/** Both autodeletes, checked once per list-open against the rows just read (no second query
+    just to decide what to prune):
+      - 30 days past its own planned_date, whatever the reason
+      - a phone number that now matches a REAL, approved-or-further loan -- the plan did its job
+    Marks the rows it removed with `_pruned` rather than re-querying; assessmentPlanList filters
+    those out of what it returns. */
+async function pruneAssessmentPlans_(db, rows) {
+  if (!rows.length) return;
+  const nowKey = todayKey(Date.now());
+  const stale = new Set(rows.filter(r => elapsedDays_(r.planned_date, nowKey) > PLAN_MAX_AGE_DAYS));
+  const phones = [...new Set(rows.map(r => normPhone(r.phone)).filter(Boolean))];
+  let matched = new Set();
+  if (phones.length) {
+    try {
+      const loans = await allPaged(db, 'loans', b => b.select('contact').in('stage', ['approved', 'disbursed', 'funded', 'closed']).in('contact', phones));
+      matched = new Set(loans.map(l => l.contact));
+    } catch { /* a failed lookup just means nothing autodeletes for that reason this time */ }
+  }
+  const toDelete = rows.filter(r => stale.has(r) || matched.has(normPhone(r.phone)));
+  if (!toDelete.length) return;
+  try { await db.from('assessment_plans').delete().in('id', toDelete.map(r => r.id)); } catch { /* next open tries again */ }
+  for (const r of toDelete) r._pruned = true;
+}
+
+async function assessmentPlanList(db, user) {
+  requireTab(user, 'team');
+  const team = user.teams && user.teams.length === 1 ? user.teams[0] : null;
+  const rows = await allPaged(db, 'assessment_plans', b => team ? b.select('*').eq('team', team) : b.select('*'));
+  await pruneAssessmentPlans_(db, rows);
+  const nowKey = todayKey(Date.now());
+  return {
+    rows: rows.filter(r => !r._pruned)
+      .sort((a, b) => String(a.planned_date || '').localeCompare(String(b.planned_date || '')))
+      .map(r => ({ ...r, elapsedDays: elapsedDays_(r.planned_date, nowKey) })),
+    staleReasons: PLAN_STALE_REASONS,
+  };
+}
+
+async function assessmentPlanSave(db, user, p) {
+  requireTab(user, 'team');
+  const team = textOrNull(p.team) || (user.teams && user.teams.length === 1 ? user.teams[0] : null);
+  if (!team) throw badRequest('A team is required.');
+  const fullName = textOrNull(p.full_name);
+  if (!fullName) throw badRequest('A name is required.');
+  const plannedDate = textOrNull(p.planned_date);
+  if (!plannedDate) throw badRequest('A planned date is required.');
+  const nowKey = todayKey(Date.now());
+  if (p.id) {
+    const rows = await allPaged(db, 'assessment_plans', b => b.select('*').eq('id', p.id));
+    const existing = rows[0];
+    if (!existing) throw badRequest('That plan could not be found.');
+    // "only future dates editable" -- once a row's OWN planned date has passed, the dropdown
+    // reason is still open to it (that is what the dropdown is for) but nothing else is.
+    const patch = existing.planned_date < nowKey
+      ? { stale_reason: textOrNull(p.stale_reason) }
+      : { team, full_name: fullName, phone: normPhone(p.phone), planned_date: plannedDate, stale_reason: textOrNull(p.stale_reason) };
+    const { error } = await db.from('assessment_plans')
+      .update({ ...patch, updated_by: user.name, updated_at: new Date().toISOString() }).eq('id', p.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  }
+  // A brand new plan is only ever for a date not yet here -- "only future dates editable"
+  // starts at creation, not just at edit.
+  if (plannedDate < nowKey) throw badRequest('The planned date must be today or later.');
+  const { error } = await db.from('assessment_plans').insert({
+    team, full_name: fullName, phone: normPhone(p.phone), planned_date: plannedDate, created_by: user.name,
+  });
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
+async function assessmentPlanDelete(db, user, { id }) {
+  requireTab(user, 'team');
+  const { error } = await db.from('assessment_plans').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
+/* =====================================================================================
    THE ONE DOOR.
    ===================================================================================== */
 
@@ -1154,7 +1435,7 @@ const FN = {
   managerQueue, managerAssign, managerReject,
   teamQueue, teamAssessDetail, teamAssessmentSave, teamSubmit, kycUpload,
   seniorQueue, seniorRecommend,
-  creditQueue, creditApprove, creditReject,
+  creditQueue, creditApprove, creditReject, creditCallCheck,
   disburseWindowStatus, disburseQueue, managerDisburse, managerDisburseReject, managerReturnToCredit,
   financeOpenWindow, financeCloseWindow, financeBankReport, financeMarkFunded,
   financeImportPayments, financeShiftPayment, paymentsList,
@@ -1163,6 +1444,7 @@ const FN = {
   carriersList, carrierSave,
   adjustmentSave, adjustmentsList,
   pipelineSummary,
+  assessmentPlanList, assessmentPlanSave, assessmentPlanDelete,
 };
 
 export async function loanApi(db, user, fn, args) {

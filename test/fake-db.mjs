@@ -325,6 +325,20 @@ class FakeStorageBucket {
     b[path] = { bytes, contentType: opts && opts.contentType };
     return { data: { path }, error: null };
   }
+  /** Real Supabase Storage hands back a Blob; only .arrayBuffer() is ever called on it in this
+      codebase (finalizeContractOnApproval_), so that is all the fake needs to offer. */
+  async download(path) {
+    const b = this.store.buckets[this.name] || {};
+    const file = b[path];
+    if (!file) return { data: null, error: { message: 'Object not found' } };
+    const bytes = file.bytes;
+    return { data: { arrayBuffer: async () => (bytes.buffer ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : bytes) }, error: null };
+  }
+  async remove(paths) {
+    const b = (this.store.buckets[this.name] = this.store.buckets[this.name] || {});
+    for (const p of (paths || [])) delete b[p];
+    return { data: (paths || []).map(p => ({ name: p })), error: null };
+  }
 }
 
 export function fakeDb(tables, opts = {}) {

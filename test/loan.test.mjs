@@ -9,7 +9,17 @@ import { fakeDb } from './fake-db.mjs';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { loanApi, mintDocket, refFor, docketFromRef, GMO_THRESHOLD, MANAGER_THRESHOLD,
-        INTEREST_FLAT_RATE, INSTALLMENTS } = await import('../api/_lib/loan-core.js');
+        INTEREST_FLAT_RATE, INSTALLMENTS, _setCallLogsDb } = await import('../api/_lib/loan-core.js');
+
+/* creditApprove now reads production call_logs (callVerificationFor_, a DIFFERENT database
+   from the sandbox `db` every test here builds) to answer "did the analyst actually call this
+   customer" -- see RUN-ME-011. Left to its real default it would hit the network at
+   SUPABASE_URL above (test.invalid) on every one of this file's creditApprove calls, which is
+   slow and pointless to test against; an empty fake here answers instantly and correctly
+   (nothing on file -- not verified), same as call_logs genuinely holding no matching row would. */
+_setCallLogsDb(fakeDb({}));
+
+const { _setFetch: _setMailFetch } = await import('../api/_lib/mail.js');
 
 const CS = { code: 'CS', name: 'ASHA CS', role: 'CUSTOMER SERVICE', tabs: ['customer_service'] };
 // MGR already holds 'manager' for Assign and Disburse -- reused for Manager Review too, by the
@@ -973,4 +983,244 @@ test('pipelineSummary counts every stage and reports the window state', async ()
   assert.equal(s.total, 2);
   assert.equal(s.stages.find(x => x.stage === 'unassigned').count, 2);
   assert.equal(s.windowOpen, false);
+});
+
+/* =====================================================================================
+   RUN-ME-011 -- multi-photo business/residence, the 10-photo contract, its retention,
+   contract email automation, call verification at approval, and the Assessment Plan screen.
+   ===================================================================================== */
+
+test('business section saves all three named photos, not just the first', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'A', mobile: '0700000020', team: 'MABIBO', amount: 300000 });
+  await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
+    business_verify_photo_url: 'p1', business_verify_photo2_url: 'p2', business_verify_photo3_url: 'p3',
+  } });
+  const loanRow = (await db.from('loans').select('*').eq('id', loan.id)).data[0];
+  const cust = db._dump('customers').find(c => c.docket === loanRow.docket_ref);
+  assert.equal(cust.business_verify_photo_url, 'p1');
+  assert.equal(cust.business_verify_photo2_url, 'p2');
+  assert.equal(cust.business_verify_photo3_url, 'p3');
+});
+
+test('residence section saves all four customer photos, and guarantor save saves all four of theirs', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'A', mobile: '0700000021', team: 'MABIBO', amount: 300000 });
+  await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
+    residence_verify_photo_url: 'r1', residence_verify_photo2_url: 'r2',
+    residence_verify_photo3_url: 'r3', residence_verify_photo4_url: 'r4',
+  } });
+  const loanRow = (await db.from('loans').select('*').eq('id', loan.id)).data[0];
+  const cust = db._dump('customers').find(c => c.docket === loanRow.docket_ref);
+  assert.deepEqual([cust.residence_verify_photo_url, cust.residence_verify_photo2_url, cust.residence_verify_photo3_url, cust.residence_verify_photo4_url],
+    ['r1', 'r2', 'r3', 'r4']);
+
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: [{
+    full_name: 'A GUARANTOR', phone: '0715000009',
+    residence_verify_photo_url: 'g1', residence_verify_photo2_url: 'g2',
+    residence_verify_photo3_url: 'g3', residence_verify_photo4_url: 'g4',
+  }] } });
+  const g = db._dump('guarantors').find(x => x.loan_id === loan.id && x.rank === 0);
+  assert.deepEqual([g.residence_verify_photo_url, g.residence_verify_photo2_url, g.residence_verify_photo3_url, g.residence_verify_photo4_url],
+    ['g1', 'g2', 'g3', 'g4']);
+});
+
+test('contract photos accumulate on the loan and are capped at ten; the first one signs the assessment', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  let a = (await db.from('assessments').select('*').eq('loan_id', loanId)).data[0];
+  assert.equal(!!a.contract_signed, false);
+
+  // A real capture is always at least a millisecond after the last (a live camera shot, an
+  // upload round trip); ten in a tight loop here can land on the very same millisecond, which
+  // would collide on kycUpload's own Date.now()-based filename -- nothing this test means to
+  // prove, so it is given the same headroom a real capture always has for free.
+  for (let i = 0; i < 10; i++) {
+    await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+    await new Promise(r => setTimeout(r, 2));
+  }
+  const loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+  assert.equal(loan.contract_photo_urls.length, 10);
+  a = (await db.from('assessments').select('*').eq('loan_id', loanId)).data[0];
+  assert.equal(a.contract_signed, true, 'signed the moment the first page landed');
+
+  await assert.rejects(
+    () => loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG }),
+    /Already at 10/);
+});
+
+test('an unapproved loan\'s contract photos are purged once they are more than three days old', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+  let loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+  assert.equal(loan.contract_photo_urls.length, 1);
+
+  // Backdate the one capture's own embedded timestamp past the 3-day line, the same way a
+  // genuinely old file's path would read.
+  const stale = 'loans/' + loanId + '/contract-' + (Date.now() - 4 * 24 * 60 * 60 * 1000) + '.jpg';
+  await db.from('loans').update({ contract_photo_urls: [stale] }).eq('id', loanId);
+  await db.storage.from('kyc-photos').upload(stale, Buffer.from('x'), { upsert: true });
+
+  await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loanId });   // the natural read that triggers the lazy prune
+  loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+  assert.deepEqual(loan.contract_photo_urls, []);
+  assert.deepEqual(db._storageDump('kyc-photos')[stale], undefined, 'the raw file is gone too, not just the reference');
+});
+
+test('a fresh (under three days) contract photo survives opening the assessment', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+  await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loanId });
+  const loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+  assert.equal(loan.contract_photo_urls.length, 1, 'one day old is nowhere near the three-day line');
+});
+
+test('approval assembles the contract photos into one PDF, emails it, and clears the raw photos', async () => {
+  process.env.RESEND_API_KEY = 'test-resend-key';
+  let mailBody = null;
+  _setMailFetch(async (url, opts) => {
+    mailBody = JSON.parse(opts.body);
+    return { ok: true, json: async () => ({ id: 'mail-1' }) };
+  });
+  const db = fakeDb({ settings: [{ key: 'CONTRACT_EMAIL', value: 'legal@hope.example' }, { key: 'EMAIL_FROM', value: 'HOPE <n@hope.example>' }] });
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+  await new Promise(r => setTimeout(r, 2));
+  await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+
+  const r = await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
+  assert.equal(r.contract.built, true);
+  assert.ok(r.contract.pdfPath);
+  assert.equal(r.contract.mail.sent, true);
+  assert.ok(mailBody, 'sendMail actually reached the (mocked) network');
+  assert.equal(mailBody.attachments.length, 1);
+  assert.match(mailBody.attachments[0].filename, /\.pdf$/);
+
+  const a = (await db.from('assessments').select('*').eq('loan_id', loanId)).data[0];
+  assert.equal(a.contract_url, r.contract.pdfPath);
+  const loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+  assert.deepEqual(loan.contract_photo_urls, [], 'consolidated into the PDF -- the loose pages are gone');
+  assert.ok(db._storageDump('kyc-photos')[r.contract.pdfPath], 'the assembled PDF itself is on file');
+
+  delete process.env.RESEND_API_KEY;
+  _setMailFetch(null);
+});
+
+test('approval with no captured contract photos never builds a PDF or emails anything', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  const r = await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
+  assert.equal(r.contract.built, false);
+});
+
+test('creditCallCheck and the same check recorded at approval read the analyst\'s OWN synced call log, not a checkbox', async () => {
+  const callDb = fakeDb({ call_logs: [
+    { phone: '763357860', officer: CREDIT.name, outcome: 'CONNECTED', duration: 45, call_date: '2026-09-18' },
+    { phone: '763357860', officer: 'SOMEONE ELSE', outcome: 'CONNECTED', duration: 900, call_date: '2026-09-18' },
+  ] });
+  _setCallLogsDb(callDb);
+  try {
+    const db = fakeDb({});
+    const { loanId } = await registerAssignAssess(db, 300000);
+    const check = await loanApi(db, CREDIT, 'creditCallCheck', { loan_id: loanId });
+    assert.equal(check.verified, true, '45s from the ANALYST\'s own log clears the 30s default threshold');
+    assert.equal(check.seconds, 45, 'not the 900s that belongs to a different officer\'s row');
+
+    await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+    const r = await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
+    assert.equal(r.callCheck.verified, true);
+    const a = (await db.from('assessments').select('*').eq('loan_id', loanId)).data[0];
+    assert.equal(a.call_verified, true);
+    assert.equal(a.call_verified_seconds, 45);
+    assert.ok(a.call_verified_at);
+  } finally {
+    _setCallLogsDb(fakeDb({}));   // back to the file's own empty default for every test after this one
+  }
+});
+
+test('a call under the minute threshold does not verify, and an unreachable call_logs never blocks approval', async () => {
+  const shortCallDb = fakeDb({ call_logs: [
+    { phone: '763357860', officer: CREDIT.name, outcome: 'CONNECTED', duration: 5, call_date: '2026-09-18' },
+  ] });
+  _setCallLogsDb(shortCallDb);
+  try {
+    const db = fakeDb({});
+    const { loanId } = await registerAssignAssess(db, 300000);
+    const check = await loanApi(db, CREDIT, 'creditCallCheck', { loan_id: loanId });
+    assert.equal(check.verified, false, '5s is under the 30s default');
+    assert.equal(check.seconds, 5);
+  } finally {
+    _setCallLogsDb(fakeDb({}));
+  }
+
+  // A call_logs read that throws must not take approval down with it -- see finalizeContractOnApproval_'s
+  // own never-block rule, applied here to the OTHER new network read creditApprove now makes.
+  const brokenDb = { from() { throw new Error('network is down'); } };
+  _setCallLogsDb(brokenDb);
+  try {
+    const db = fakeDb({});
+    const { loanId } = await registerAssignAssess(db, 300000);
+    await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+    const r = await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
+    assert.equal(r.callCheck.verified, false);
+    const loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+    assert.equal(loan.stage, 'approved', 'the approval itself went through despite call_logs being unreachable');
+  } finally {
+    _setCallLogsDb(fakeDb({}));
+  }
+});
+
+test('Assessment Plan: a new plan must be dated today or later, and lists sorted by date with elapsedDays', async () => {
+  const db = fakeDb({});
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  await assert.rejects(
+    () => loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'PROSPECT A', phone: '0715000030', planned_date: yesterday }),
+    /today or later/);
+  await loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'PROSPECT A', phone: '0715000030', planned_date: today });
+  const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.rows[0].elapsedDays, 0);
+  assert.ok(r.staleReasons.length > 0);
+});
+
+test('Assessment Plan: once its own planned date has passed, only the stale-reason dropdown can still change', async () => {
+  const db = fakeDb({ assessment_plans: [{
+    id: 'plan-1', team: 'MABIBO', full_name: 'PROSPECT B', phone: '0715000031',
+    planned_date: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10),
+  }] });
+  await loanApi(db, TEAM, 'assessmentPlanSave', {
+    id: 'plan-1', full_name: 'RENAMED -- SHOULD NOT STICK', planned_date: new Date().toISOString().slice(0, 10),
+    stale_reason: 'Amekataa / Declined',
+  });
+  const row = db._dump('assessment_plans')[0];
+  assert.equal(row.full_name, 'PROSPECT B', 'the name/date past their own planned date do not move');
+  assert.equal(row.stale_reason, 'Amekataa / Declined', 'but the stale reason does');
+});
+
+test('Assessment Plan: 30+ days past its own planned date autodeletes on the next list read', async () => {
+  const db = fakeDb({ assessment_plans: [{
+    id: 'plan-old', team: 'MABIBO', full_name: 'OLD PROSPECT', phone: '0715000032',
+    planned_date: new Date(Date.now() - 31 * 86400000).toISOString().slice(0, 10),
+  }] });
+  const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
+  assert.equal(r.rows.length, 0);
+  assert.equal(db._dump('assessment_plans').length, 0, 'gone from the table, not just hidden from this read');
+});
+
+test('Assessment Plan: a matching approved loan autodeletes the plan that predicted it', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);   // registers mobile 0763357860 -- see the top of this file
+  await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
+  await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
+  await loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'ASHA, PLANNED EARLIER', phone: '0763357860', planned_date: new Date().toISOString().slice(0, 10) });
+
+  const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
+  assert.equal(r.rows.length, 0, 'the plan did its job -- there is now a real approved loan for this phone number');
 });
