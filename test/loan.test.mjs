@@ -1214,6 +1214,48 @@ test('Assessment Plan: 30+ days past its own planned date autodeletes on the nex
   assert.equal(db._dump('assessment_plans').length, 0, 'gone from the table, not just hidden from this read');
 });
 
+/* "Users with multiple teams should also be able to create assessment plan ... they get their
+   granted teams at access codes as we always pivot" */
+test('Assessment Plan: a code holding several teams sees only those, pivots within them, and must pick one to save', async () => {
+  const TWO = { code: 'T2', name: 'A TWO-TEAM LEADER', role: 'TEAM LEADER', tabs: ['team'], teams: ['MABIBO', 'KAWE'] };
+  const soon = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  const db = fakeDb({ assessment_plans: [
+    { id: 'p-mab', team: 'MABIBO', full_name: 'IN MABIBO', phone: '0715000040', planned_date: soon },
+    { id: 'p-kawe', team: 'KAWE', full_name: 'IN KAWE', phone: '0715000041', planned_date: soon },
+    { id: 'p-other', team: 'TANDIKA', full_name: 'SOMEBODY ELSE\'S', phone: '0715000042', planned_date: soon },
+  ] });
+
+  const all = await loanApi(db, TWO, 'assessmentPlanList', {});
+  assert.deepEqual(all.teams, ['MABIBO', 'KAWE'], 'the pivot offers exactly the granted teams, in the code\'s own order');
+  assert.deepEqual(all.rows.map(r => r.team).sort(), ['KAWE', 'MABIBO'], 'TANDIKA is not this code\'s to see');
+
+  const kawe = await loanApi(db, TWO, 'assessmentPlanList', { team: 'kawe' });
+  assert.deepEqual(kawe.rows.map(r => r.id), ['p-kawe'], 'the pivot filters, matched case-insensitively');
+  const outside = await loanApi(db, TWO, 'assessmentPlanList', { team: 'TANDIKA' });
+  assert.deepEqual(outside.rows.map(r => r.team).sort(), ['KAWE', 'MABIBO'], 'a pivot outside the grant is not honoured, not answered');
+
+  await assert.rejects(() => loanApi(db, TWO, 'assessmentPlanSave', { full_name: 'X', planned_date: soon }), /Choose one of your own teams/);
+  await assert.rejects(() => loanApi(db, TWO, 'assessmentPlanSave', { full_name: 'X', planned_date: soon, team: 'TANDIKA' }), /Choose one of your own teams/);
+  await loanApi(db, TWO, 'assessmentPlanSave', { full_name: 'NEW IN KAWE', planned_date: soon, team: 'kawe' });
+  const saved = db._dump('assessment_plans').find(r => r.full_name === 'NEW IN KAWE');
+  assert.equal(saved.team, 'KAWE', 'stored under the granted spelling, not whatever case was typed');
+
+  await assert.rejects(() => loanApi(db, TWO, 'assessmentPlanSave', { id: 'p-other', full_name: 'HIJACK', planned_date: soon }),
+    e => e.status === 403, 'editing another team\'s plan is refused, not just hidden');
+  await loanApi(db, TWO, 'assessmentPlanSave', { id: 'p-mab', full_name: 'MOVED', planned_date: soon, team: 'KAWE' });
+  assert.equal(db._dump('assessment_plans').find(r => r.id === 'p-mab').team, 'KAWE', 'a future-dated plan can be moved between held teams');
+});
+
+test('Assessment Plan: a code granted every team is offered the whole register to pivot on', async () => {
+  const db = fakeDb({ teams: [{ team: 'MABIBO', branch: 'B' }, { team: 'KAWE', branch: 'B' }, { team: 'MABIBO', branch: 'B' }] });
+  const r = await loanApi(db, ADMIN, 'assessmentPlanList', {});
+  assert.deepEqual(r.teams, ['KAWE', 'MABIBO'], 'every team, once each, sorted');
+  const soon = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  await assert.rejects(() => loanApi(db, ADMIN, 'assessmentPlanSave', { full_name: 'X', planned_date: soon }), /Choose one of your own teams/);
+  await loanApi(db, ADMIN, 'assessmentPlanSave', { full_name: 'X', planned_date: soon, team: 'KAWE' });
+  assert.equal(db._dump('assessment_plans')[0].team, 'KAWE');
+});
+
 test('Assessment Plan: a matching approved loan autodeletes the plan that predicted it', async () => {
   const db = fakeDb({});
   const { loanId } = await registerAssignAssess(db, 300000);   // registers mobile 0763357860 -- see the top of this file

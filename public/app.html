@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-j';
+var BUILD = '2026-09-20-k';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -10442,10 +10442,16 @@ function wireLnGm_(){
 }
 
 /* ---------- Assessment Plan -- who a team means to visit, before there is even a customer ---------- */
-var LN_PLAN_STALE_REASONS_ = [];
+var LN_PLAN_STALE_REASONS_ = [], LN_PLAN_TEAMS_ = [];
 VIEWS.ln_assess_plan = function(){
-  return srv('assessmentPlanList', {}).then(function(d){
+  return srv('assessmentPlanList', { team: S.args.team || '' }).then(function(d){
     LN_PLAN_STALE_REASONS_ = d.staleReasons || [];
+    /* "Users with multiple teams should also be able to create assessment plan ... they get
+       their granted teams at access codes as we always pivot" -- d.teams is exactly the
+       team list the signed-in code holds (every team, for a code granted all of them). One
+       team: nothing to choose, the server fills it in. More than one: a pivot in the bar,
+       and a picker on the add form and the edit drawer. */
+    LN_PLAN_TEAMS_ = d.teams || [];
     S.rows = d.rows; S.cols = [
       col('full_name', 'Jina / Name'), col('phone', 'Simu / Phone'), col('team', 'Timu / Team'),
       col('planned_date', 'Tarehe iliyopangwa / Planned date', 'date'),
@@ -10455,9 +10461,19 @@ VIEWS.ln_assess_plan = function(){
     // "only future dates editable" -- a new plan can only ever be for a date not yet here,
     // so the add form's own date input refuses to open on anything earlier, same rule the
     // server enforces again in assessmentPlanSave.
-    HEAD = bar('<input id="lnPlanName" placeholder="Jina / Name">'
+    var teamOpts = function(selected){
+      return LN_PLAN_TEAMS_.map(function(t){ return '<option' + (t === selected ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('');
+    };
+    HEAD = bar(
+      (LN_PLAN_TEAMS_.length > 1
+        ? '<select data-arg="team"><option value="">Timu zote / All my teams</option>' + teamOpts(S.args.team || '') + '</select>'
+        : '')
+      + '<input id="lnPlanName" placeholder="Jina / Name">'
       + '<input id="lnPlanPhone" placeholder="Simu / Phone">'
       + '<input id="lnPlanDate" type="date" min="' + esc(todayKey_()) + '">'
+      + (LN_PLAN_TEAMS_.length > 1
+        ? '<select id="lnPlanTeam"><option value="">— timu / team —</option>' + teamOpts(S.args.team || '') + '</select>'
+        : '')
       + '<button class="btn sm" id="lnPlanAdd">+ Ongeza / Add</button>');
     ONROW = function(r){ lnAssessPlanForm_(r); };
     S.foot = money(d.rows.length) + ' mipango / plans';
@@ -10468,8 +10484,10 @@ function wireLnAssessPlan_(){
   var b = document.getElementById('lnPlanAdd');
   if (!b) return;
   b.onclick = function(){
+    var teamSel = document.getElementById('lnPlanTeam');
     lnAct('assessmentPlanSave', {
       full_name: $('#lnPlanName').value.trim(), phone: $('#lnPlanPhone').value.trim(), planned_date: $('#lnPlanDate').value,
+      team: teamSel ? teamSel.value : '',
     }, 'Imeongezwa.', function(){ go('ln_assess_plan'); });
   };
 }
@@ -10481,6 +10499,11 @@ function lnAssessPlanForm_(row){
   var locked = row.planned_date < todayKey_();
   drawer('<h3>' + esc(row.full_name) + '</h3><div class="sub">' + esc(row.team || '')
       + (locked ? ' &middot; <span class="chip warn">Tarehe imepita / Date has passed (ED ' + row.elapsedDays + ')</span>' : '') + '</div>'
+    + (!locked && LN_PLAN_TEAMS_.length > 1
+        ? '<div class="fld"><label>Timu / Team</label><select id="lnPlanEditTeam">'
+          + LN_PLAN_TEAMS_.map(function(t){ return '<option' + (t === row.team ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('')
+          + '</select></div>'
+        : '')
     + '<div class="fld"><label>Jina / Name</label><input id="lnPlanEditName" value="' + esc(row.full_name || '') + '"' + (locked ? ' disabled' : '') + '></div>'
     + '<div class="fld"><label>Simu / Phone</label><input id="lnPlanEditPhone" value="' + esc(row.phone || '') + '"' + (locked ? ' disabled' : '') + '></div>'
     + '<div class="fld"><label>Tarehe / Date</label><input id="lnPlanEditDate" type="date" value="' + esc(row.planned_date || '') + '"' + (locked ? ' disabled' : ' min="' + esc(todayKey_()) + '"') + '></div>'
@@ -10498,6 +10521,8 @@ function lnAssessPlanForm_(row){
       fields.full_name = $('#lnPlanEditName').value.trim();
       fields.phone = $('#lnPlanEditPhone').value.trim();
       fields.planned_date = $('#lnPlanEditDate').value;
+      var editTeam = document.getElementById('lnPlanEditTeam');
+      fields.team = editTeam ? editTeam.value : row.team;
     }
     lnAct('assessmentPlanSave', fields, 'Imehifadhiwa.', function(){ go('ln_assess_plan'); });
   };

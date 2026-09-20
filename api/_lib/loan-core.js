@@ -1372,10 +1372,31 @@ async function pruneAssessmentPlans_(db, rows) {
   for (const r of toDelete) r._pruned = true;
 }
 
-async function assessmentPlanList(db, user) {
+/** The teams a plan may be filed under, for this code: exactly the ones granted on its access
+    code -- "they get their granted teams at access codes as we always pivot" -- or every team on
+    the register for a code granted all of them (teams null/empty, the same convention /api/me
+    reports). Spellings are the register's own, matched case-insensitively but never rewritten:
+    .in()/.eq() are exact-case (CLAUDE.md), so the filter has to carry the stored spelling. */
+async function planTeamsFor_(db, user) {
+  const mine = [...new Set((Array.isArray(user.teams) ? user.teams : []).map(t => String(t == null ? '' : t).trim()).filter(Boolean))];
+  if (mine.length) return { mine, all: false };
+  const rows = await allPaged(db, 'teams', b => b.select('team'));
+  return { mine: [...new Set(rows.map(r => textOrNull(r.team)).filter(Boolean))].sort(), all: true };
+}
+function matchTeam_(list, want) {
+  const w = String(want == null ? '' : want).trim().toUpperCase();
+  if (!w) return null;
+  return list.find(t => String(t).trim().toUpperCase() === w) || null;
+}
+
+async function assessmentPlanList(db, user, p) {
   requireTab(user, 'team');
-  const team = user.teams && user.teams.length === 1 ? user.teams[0] : null;
-  const rows = await allPaged(db, 'assessment_plans', b => team ? b.select('*').eq('team', team) : b.select('*'));
+  const scope = await planTeamsFor_(db, user);
+  // The bar's pivot. A team the code does not hold is simply not honoured -- the list stays
+  // scoped to what it holds rather than answering with somebody else's plans.
+  const picked = matchTeam_(scope.mine, (p || {}).team);
+  const only = picked ? [picked] : (scope.all ? null : scope.mine);
+  const rows = await allPaged(db, 'assessment_plans', b => only ? b.select('*').in('team', only) : b.select('*'));
   await pruneAssessmentPlans_(db, rows);
   const nowKey = todayKey(Date.now());
   return {
@@ -1383,13 +1404,25 @@ async function assessmentPlanList(db, user) {
       .sort((a, b) => String(a.planned_date || '').localeCompare(String(b.planned_date || '')))
       .map(r => ({ ...r, elapsedDays: elapsedDays_(r.planned_date, nowKey) })),
     staleReasons: PLAN_STALE_REASONS,
+    teams: scope.mine,
   };
+}
+
+/** Which team a save lands in: the one named, if the code holds it; the code's only team when
+    it holds just one and named none; and for a code granted every team, whatever it named
+    (the register is the choice list, but a brand-new team is not refused). A code holding
+    several teams that names none, or names one it does not hold, is told to choose. */
+function resolvePlanTeam_(scope, want) {
+  const held = matchTeam_(scope.mine, want);
+  if (held) return held;
+  if (scope.all) return textOrNull(want);
+  if (scope.mine.length === 1 && !textOrNull(want)) return scope.mine[0];
+  return null;
 }
 
 async function assessmentPlanSave(db, user, p) {
   requireTab(user, 'team');
-  const team = textOrNull(p.team) || (user.teams && user.teams.length === 1 ? user.teams[0] : null);
-  if (!team) throw badRequest('A team is required.');
+  const scope = await planTeamsFor_(db, user);
   const fullName = textOrNull(p.full_name);
   if (!fullName) throw badRequest('A name is required.');
   const plannedDate = textOrNull(p.planned_date);
@@ -1399,16 +1432,26 @@ async function assessmentPlanSave(db, user, p) {
     const rows = await allPaged(db, 'assessment_plans', b => b.select('*').eq('id', p.id));
     const existing = rows[0];
     if (!existing) throw badRequest('That plan could not be found.');
+    // The list never shows a plan outside the code's teams; a save reaching one anyway is
+    // refused for the same reason, not quietly accepted.
+    if (!scope.all && !matchTeam_(scope.mine, existing.team)) throw forbidden('That plan belongs to a team this code does not hold.');
     // "only future dates editable" -- once a row's OWN planned date has passed, the dropdown
     // reason is still open to it (that is what the dropdown is for) but nothing else is.
-    const patch = existing.planned_date < nowKey
-      ? { stale_reason: textOrNull(p.stale_reason) }
-      : { team, full_name: fullName, phone: normPhone(p.phone), planned_date: plannedDate, stale_reason: textOrNull(p.stale_reason) };
+    let patch;
+    if (existing.planned_date < nowKey) {
+      patch = { stale_reason: textOrNull(p.stale_reason) };
+    } else {
+      const team = p.team != null && textOrNull(p.team) ? resolvePlanTeam_(scope, p.team) : existing.team;
+      if (!team) throw badRequest('Chagua timu unayoishikilia / Choose one of your own teams.');
+      patch = { team, full_name: fullName, phone: normPhone(p.phone), planned_date: plannedDate, stale_reason: textOrNull(p.stale_reason) };
+    }
     const { error } = await db.from('assessment_plans')
       .update({ ...patch, updated_by: user.name, updated_at: new Date().toISOString() }).eq('id', p.id);
     if (error) throw new Error(error.message);
     return { ok: true };
   }
+  const team = resolvePlanTeam_(scope, p.team);
+  if (!team) throw badRequest('Chagua timu unayoishikilia / Choose one of your own teams.');
   // A brand new plan is only ever for a date not yet here -- "only future dates editable"
   // starts at creation, not just at edit.
   if (plannedDate < nowKey) throw badRequest('The planned date must be today or later.');
