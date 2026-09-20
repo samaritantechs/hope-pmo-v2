@@ -488,6 +488,10 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
       }).eq('id', loan.id);
       if (error) throw new Error(error.message);
     }
+    // The field officer's own attestation -- who was actually there, not just who the loan
+    // was assigned to (that is the existing `officer` column). See RUN-ME-008.
+    if ('officer_name' in (fields || {})) patch.officer_name = textOrNull(fields.officer_name);
+    if ('officer_signature_url' in (fields || {})) patch.officer_signature_url = textOrNull(fields.officer_signature_url);
   }
   if (section === 'guarantor') {
     await saveGuarantors(db, loan, user, (fields || {}).guarantors || []);

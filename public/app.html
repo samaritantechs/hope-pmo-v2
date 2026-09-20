@@ -614,7 +614,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-19-g';
+var BUILD = '2026-09-20-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9005,23 +9005,17 @@ function kycUpload_(loanId, kind, dataUrl, cameraLabel){
   return srv('kycUpload', { loan_id: loanId, kind: kind, data_url: dataUrl, camera_label: cameraLabel });
 }
 
-/* THE SAME CAPTURE FOR BOTH SIGNATURE AND THUMBPRINT.
-   "i mean they press the thumb on phone screen and we record the fingerprint or draw
-    signature too llike how we work with phone notes apps" -- one canvas, drawn on with a
-   finger; there is no hardware fingerprint reader involved, on purpose, confirmed rather than
-   assumed before this was built. Pointer events cover touch and mouse the same way, so this
-   works identically on a phone in the field and a laptop in the office. */
-/** mode 'line' is a signature -- a pen stroke, thin, follows the path exactly. mode 'stamp' is
-    a thumbprint -- "fingerprint capturing is still miserable it works as typing": a thin exact
-    line IS what typing/drawing precisely feels like, and a thumb pressed on glass is neither
-    thin nor precise. Stamp mode lays down overlapping soft-edged circles the width of a real
-    thumb along wherever the finger moves, so the result reads as a pressed smear, not a traced
-    outline -- the same physical gesture a real inked thumbprint takes. */
-function wireCanvasPad_(canvasId, mode){
+/* THE SIGNATURE CAPTURE.
+   "i mean ... draw signature too llike how we work with phone notes apps" -- one canvas,
+   drawn on with a finger. Pointer events cover touch and mouse the same way, so this works
+   identically on a phone in the field and a laptop in the office.
+   Fingerprint/thumbprint capture (mode 'stamp', once alongside this) was removed at the
+   owner's request -- signature only, plus the field officer's own name and signature at
+   recommendation. */
+function wireCanvasPad_(canvasId){
   var canvas = document.getElementById(canvasId);
   if (!canvas) return null;
   var ctx = canvas.getContext('2d');
-  var stamp = mode === 'stamp';
   ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a2b4a';
   ctx.fillStyle = 'rgba(26,43,74,.55)';
   var drawing = false, dirty = false, last = null;
@@ -9029,44 +9023,14 @@ function wireCanvasPad_(canvasId, mode){
     var r = canvas.getBoundingClientRect();
     return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
   }
-  /* "fingerprint are now taking a big dot, not the reality lines" -- a filled circle is ink,
-     not a print. A real thumbprint reads as RIDGES: a handful of wavy, roughly-concentric
-     lines, not a solid disc. Each dab now draws that ridge texture instead of filling one. */
-  function dab(p){
-    var R = Math.max(canvas.width, canvas.height) * 0.09;   // thumb-pad sized, not pen-tip sized
-    var rings = 5;
-    ctx.save();
-    ctx.strokeStyle = 'rgba(26,43,74,.6)';
-    ctx.lineWidth = 1.1;
-    for (var i = 0; i < rings; i++) {
-      var r = R * (0.3 + i * (0.7 / rings));
-      ctx.beginPath();
-      for (var a = 0; a <= Math.PI * 2 + 0.3; a += 0.3) {
-        var wob = Math.sin(a * 3 + i * 1.7) * R * 0.05;       // waviness -- ridges, not a perfect ring
-        var x = p.x + Math.cos(a) * (r + wob), y = p.y + Math.sin(a) * (r + wob);
-        if (a === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-    ctx.restore();
-  }
   function start(e){
     e.preventDefault(); drawing = true; last = pos(e);
     try { canvas.setPointerCapture(e.pointerId); } catch (err) {}   // keeps the stroke on THIS canvas even off a fast, small screen
-    if (stamp) { dab(last); dirty = true; }
   }
   function move(e){
     if (!drawing) return; e.preventDefault();
     var p = pos(e);
-    if (stamp) {
-      // Dab along the path, not just at the endpoints, or a fast smear leaves gaps.
-      var dx = p.x - last.x, dy = p.y - last.y, dist = Math.sqrt(dx * dx + dy * dy);
-      var step = Math.max(canvas.width, canvas.height) * 0.03;
-      for (var d = 0; d < dist; d += step) dab({ x: last.x + dx * (d / dist), y: last.y + dy * (d / dist) });
-      dab(p);
-    } else {
-      ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
-    }
+    ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
     last = p; dirty = true;
   }
   function end(){ drawing = false; }
@@ -9314,7 +9278,7 @@ var ID_TYPES = { 'NIDA': 'national_id', 'Driving Licence': 'driving_licence', 'V
 // with choice comment to return" -- nothing at team level is compulsory (see teamAssessmentSave
 // -- every section still saves whatever's filled, gaps and all); the gate is here instead, at
 // the one place that already had the power to send a loan back: credit's own reject.
-var CREDIT_RETURN_REASONS = ['Missing signature', 'Missing thumbprint', 'Missing customer photo',
+var CREDIT_RETURN_REASONS = ['Missing signature', 'Missing customer photo',
   'Missing guarantor details', 'Location (GPS) not captured', 'Verification photo missing',
   'Incomplete business details', 'Other'];
 // "are all information captured enough for the future creditinfo crb report?" -- these
@@ -9523,7 +9487,6 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="fld"><label>Simu ya pili / Alternate phone</label><input id="lnMobileAlt" value="' + esc(c.mobile_alt || '') + '"></div>'
       + '<div class="fld"><label>Barua pepe / Email</label><input id="lnEmail" type="email" value="' + esc(c.email || '') + '"></div>'
       + captureRowPad_('Sahihi / Signature', 'lnSigPad', 'lnSigClear')
-      + captureRowPad_('Alama ya kidole gumba / Thumbprint press', 'lnThumbPad', 'lnThumbClear')
       + captureRowPhoto_('Picha ya pasipoti / Passport-size photo', 'lnPhotoBtn', 'lnPhotoStatus')
       + '<button class="btn sm" id="lnSavePersonal">Save this section</button></div>'
 
@@ -9608,7 +9571,6 @@ function lnTeamAssessForm_(loanRow){
       + captureRowPhoto_('Barua ya Serikali ya Mtaa ya mdhamini / Guarantor local govt letter', 'lnGLetterBtn', 'lnGLetterStatus')
       + captureRowPhoto_('Picha ya mdhamini / Guarantor photo', 'lnGPhotoBtn', 'lnGPhotoStatus')
       + captureRowPad_('Sahihi ya mdhamini / Guarantor signature', 'lnGSigPad', 'lnGSigClear')
-      + captureRowPad_('Alama ya kidole gumba ya mdhamini / Guarantor thumbprint', 'lnGThumbPad', 'lnGThumbClear')
       // "we have 5 extra guarantors who we just say are the close people to the customer
       // these are filled names nos and relationship [help in followup by having people to
       // ask whats going on when both customer and guarantor are unreachable]"
@@ -9632,6 +9594,11 @@ function lnTeamAssessForm_(loanRow){
       + '<div class="fld"><label>Thamani ya dhamana (TZS) / Collateral value</label><input id="lnCollValue" type="number" value="' + (loan.collateral_value != null ? loan.collateral_value : '') + '"></div>'
       + '<div class="fld"><label>Zone visited</label><input id="lnZone" value="' + esc(a.zone_visited || '') + '"></div>'
       + '<div class="fld"><label>Remarks</label><input id="lnRemarks" value="' + esc(a.remarks || '') + '"></div>'
+      // "at field officer name filling and signature at recommendation" -- the officer's own
+      // attestation that THEY made this visit and this recommendation, taken here rather than
+      // assumed from whoever the loan happens to be assigned to (see RUN-ME-008).
+      + '<div class="fld"><label>Jina la afisa / Officer name</label><input id="lnOfficerName" value="' + esc(a.officer_name || (S.me && S.me.name) || '') + '"></div>'
+      + captureRowPad_('Sahihi ya afisa / Officer signature', 'lnOfficerSigPad', 'lnOfficerSigClear')
       + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
 
       + '<div class="fld" style="margin-top:14px">'
@@ -9647,12 +9614,12 @@ function lnTeamAssessForm_(loanRow){
     $('#lnIdType').onchange = toggleIdOther; toggleIdOther();
 
     // ---- captures: canvas pads, camera buttons, GPS -- wired once, uploaded as they happen ----
-    var sigPad = wireCanvasPad_('lnSigPad', 'line'), thumbPad = wireCanvasPad_('lnThumbPad', 'stamp');
-    var gSigPad = wireCanvasPad_('lnGSigPad', 'line'), gThumbPad = wireCanvasPad_('lnGThumbPad', 'stamp');
+    var sigPad = wireCanvasPad_('lnSigPad');
+    var gSigPad = wireCanvasPad_('lnGSigPad');
+    var officerSigPad = wireCanvasPad_('lnOfficerSigPad');
     $('#lnSigClear').onclick = function(){ sigPad.clear(); };
-    $('#lnThumbClear').onclick = function(){ thumbPad.clear(); };
     $('#lnGSigClear').onclick = function(){ gSigPad.clear(); };
-    $('#lnGThumbClear').onclick = function(){ gThumbPad.clear(); };
+    $('#lnOfficerSigClear').onclick = function(){ officerSigPad.clear(); };
 
     var PATHS = { photo: c.photo_url, gPhoto: g.photo_url, gResPhoto: g.residence_verify_photo_url,
       custResPhoto: c.residence_verify_photo_url, bizPhoto: c.business_verify_photo_url,
@@ -9679,7 +9646,6 @@ function lnTeamAssessForm_(loanRow){
     $('#lnSavePersonal').onclick = function(){
       Promise.all([
         saveCanvasPad_(sigPad, loan.id, 'signature', function(p){ PATHS.signature = p; }),
-        saveCanvasPad_(thumbPad, loan.id, 'thumbprint', function(p){ PATHS.thumbprint = p; }),
       ]).then(function(){
         var type = $('#lnIdType').value, idCol = ID_TYPES[type];
         // District moved to section 4 with street/ward ("residence and business ver should be
@@ -9694,7 +9660,6 @@ function lnTeamAssessForm_(loanRow){
           employment: $('#lnEmployment').value, employer_name: $('#lnEmployerName').value.trim(),
           mobile_alt: $('#lnMobileAlt').value.trim(), email: $('#lnEmail').value.trim(),
           signature_url: PATHS.signature != null ? PATHS.signature : c.signature_url,
-          thumbprint_url: PATHS.thumbprint != null ? PATHS.thumbprint : c.thumbprint_url,
           photo_url: PATHS.photo };
         if (idCol) fields[idCol] = $('#lnIdNo').value.trim();
         if (type === 'Other') fields.other_id_type = $('#lnIdOther').value.trim();
@@ -9702,15 +9667,19 @@ function lnTeamAssessForm_(loanRow){
       }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveRec').onclick = function(){
-      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
-        fields: { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
-          collateral_type: $('#lnCollType').value.trim(), collateral_value: $('#lnCollValue').value.trim(),
-          zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim() } }, 'Saved.');
+      saveCanvasPad_(officerSigPad, loan.id, 'officer-signature', function(p){ PATHS.officerSignature = p; })
+        .then(function(){
+          lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
+            fields: { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
+              collateral_type: $('#lnCollType').value.trim(), collateral_value: $('#lnCollValue').value.trim(),
+              zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim(),
+              officer_name: $('#lnOfficerName').value.trim(),
+              officer_signature_url: PATHS.officerSignature != null ? PATHS.officerSignature : a.officer_signature_url } }, 'Saved.');
+        }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveGuar').onclick = function(){
       Promise.all([
         saveCanvasPad_(gSigPad, loan.id, 'g-signature', function(p){ PATHS.gSignature = p; }),
-        saveCanvasPad_(gThumbPad, loan.id, 'g-thumbprint', function(p){ PATHS.gThumbprint = p; }),
       ]).then(function(){
         // "guarantor id should be choices too.. not just nida" -- same ID_TYPES choice as
         // personal details; the guarantor is not reported to the bureau per-type the way the
@@ -9725,7 +9694,6 @@ function lnTeamAssessForm_(loanRow){
           residence_lat: COORDS.gRes.lat, residence_lng: COORDS.gRes.lng,
           residence_verify_photo_url: PATHS.gResPhoto, local_govt_letter_url: PATHS.gLetter, photo_url: PATHS.gPhoto,
           signature_url: PATHS.gSignature != null ? PATHS.gSignature : g.signature_url,
-          thumbprint_url: PATHS.gThumbprint != null ? PATHS.gThumbprint : g.thumbprint_url,
         };
         var list = [primary];
         for (var i = 0; i < 5; i++) list.push({

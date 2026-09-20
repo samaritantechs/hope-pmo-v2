@@ -523,6 +523,21 @@ test('recommendation section: collateral type/value land on the loan itself, not
   assert.equal(Number(after.collateral_value), 900000);
 });
 
+/* THE FIELD OFFICER'S OWN NAME AND SIGNATURE, AT RECOMMENDATION -- what fingerprint capture
+   was replaced with. See db/hopeloan/RUN-ME-008-officer-attestation.sql. */
+test('recommendation section: the officer\'s own name and signature are saved, distinct from who the loan is assigned to', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'ATTESTED CUSTOMER', mobile: '0700000040', team: 'MABIBO', amount: 300000 });
+  const { path: sigPath } = await loanApi(db, TEAM, 'kycUpload', { loan_id: loan.id, kind: 'officer-signature', data_url: TINY_PNG });
+  await loanApi(db, TEAM, 'teamAssessmentSave', {
+    loan_id: loan.id, section: 'recommendation',
+    fields: { amount: 300000, officer_name: 'A LOAN OFFICER', officer_signature_url: sigPath },
+  });
+  const d = await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loan.id });
+  assert.equal(d.assessment.officer_name, 'A LOAN OFFICER');
+  assert.equal(d.assessment.officer_signature_url, sigPath);
+});
+
 test('personal details: gender/ID type/signature/thumbprint/photo all pass through, the same generic write DOB already used', async () => {
   const db = fakeDb({});
   const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'D CUSTOMER', mobile: '0700000033', team: 'MABIBO', amount: 200000 });

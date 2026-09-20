@@ -623,3 +623,24 @@ test('the camera overlay pushes a history entry so the Android back button close
   assert.ok(/if \(!poppedBack\)[^]*history\.back\(\)/.test(overlay),
     'closing any other way (Cancel/Capture/error) consumes the pushed entry itself, exactly once');
 });
+
+/* FINGERPRINT CAPTURE IS GONE; THE OFFICER'S OWN NAME AND SIGNATURE REPLACE IT AT
+   RECOMMENDATION. "Remove the fingerprint capture, only remain with signature and at field
+   officer name filling and signature at recommendation." */
+test('thumbprint/fingerprint capture no longer exists anywhere in the KYC flow', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(!/lnThumbPad|lnGThumbPad|lnThumbClear|lnGThumbClear/.test(app), 'no thumbprint pad IDs remain');
+  assert.ok(!/mode === 'stamp'/.test(app), 'the stamp (thumbprint) drawing mode is gone, not just unused');
+  assert.ok(!/Alama ya kidole gumba/.test(app), 'the Swahili thumbprint label is gone');
+});
+
+test('the recommendation section captures the officer\'s own name and signature', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('card-h">5. Team recommendation'), app.indexOf("$('#lnSaveRec').onclick"));
+  assert.ok(/id="lnOfficerName"/.test(view), 'an officer name field is offered');
+  assert.ok(/captureRowPad_\('Sahihi ya afisa/.test(view), 'an officer signature pad is offered');
+  const wire = app.slice(app.indexOf("$('#lnSaveRec').onclick"), app.indexOf("$('#lnSaveGuar').onclick"));
+  assert.ok(/officerSigPad/.test(wire), 'the officer signature pad is actually saved');
+  assert.ok(/officer_name:\s*\$\('#lnOfficerName'\)\.value\.trim\(\)/.test(wire), 'the officer name field is sent to the server');
+  assert.ok(/officer_signature_url:/.test(wire), 'the officer signature path is sent to the server');
+});
