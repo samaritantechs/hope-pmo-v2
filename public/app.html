@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-k';
+var BUILD = '2026-09-20-l';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -10311,14 +10311,23 @@ function lnFundOneForm_(row){
 }
 function lnImportPaymentsForm_(){
   drawer('<h3>Import payments / Ingiza malipo</h3>'
-    + '<div class="sub">The receiver for the ISP channel finance already runs by hand -- one line per payment: REF, AMOUNT, PAID_BY (tab or comma separated).</div>'
-    + '<textarea id="lnPayRows" rows="8" style="width:100%" placeholder="919000001, 34000, 0715000001"></textarea>'
+    // "Importing payment at finance always require transaction ID too" -- TRANS_NO is the
+    // third column, ahead of the optional PAID_BY, and a line without one stops the import
+    // here with its line number; the server refuses the same way (financeImportPayments).
+    + '<div class="sub">The receiver for the ISP channel finance already runs by hand -- one line per payment: REF, AMOUNT, TRANS_NO, PAID_BY (tab or comma separated). Namba ya muamala ni lazima / Transaction ID is required.</div>'
+    + '<textarea id="lnPayRows" rows="8" style="width:100%" placeholder="919000001, 34000, CI250920.1234.A12345, 0715000001"></textarea>'
     + '<button class="btn w" id="lnPayImportBtn" style="margin-top:8px">Import</button>');
   $('#lnPayImportBtn').onclick = function(){
-    var rows = $('#lnPayRows').value.split('\n').map(function(line){
+    var missing = [];
+    var rows = $('#lnPayRows').value.split('\n').map(function(line, i){
       var p = line.split(/[,\t]/).map(function(x){ return x.trim(); });
-      return { ref: p[0], amount: Number(p[1]) || 0, paid_by: p[2] || '' };
+      if (p[0] && !p[2]) missing.push(i + 1);
+      return { ref: p[0], amount: Number(p[1]) || 0, trans_no: p[2] || '', paid_by: p[3] || '' };
     }).filter(function(r){ return r.ref; });
+    if (missing.length) {
+      toast('Namba ya muamala inakosekana mstari / Transaction ID missing on line ' + missing.join(', ') + '. Hakuna kilichoingizwa / Nothing imported.', true);
+      return;
+    }
     lnAct('financeImportPayments', { rows: rows }, money(rows.length) + ' row(s) imported.', function(){ go('ln_finance'); });
   };
 }

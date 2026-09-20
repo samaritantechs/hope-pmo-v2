@@ -848,3 +848,13 @@ test('the Assessment Plan screen pivots by granted team and lets a multi-team co
   assert.ok(/id="lnPlanEditTeam"/.test(form), 'the edit drawer offers the team picker on a future-dated plan');
   assert.ok(/fields\.team\s*=\s*editTeam\s*\?\s*editTeam\.value\s*:\s*row\.team/.test(form), 'and sends it, falling back to the row\'s own team');
 });
+
+/* "Importing payment at finance always require transaction ID too" */
+test('the finance payment import asks for TRANS_NO and stops on a line without one before sending', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const form = app.slice(app.indexOf('function lnImportPaymentsForm_'), app.indexOf("lnAct('financeImportPayments'"));
+  assert.ok(/REF, AMOUNT, TRANS_NO, PAID_BY/.test(form), 'the paste format names the transaction column');
+  assert.ok(/trans_no:\s*p\[2\]/.test(form), 'the third column is sent as trans_no');
+  assert.ok(/if \(p\[0\] && !p\[2\]\) missing\.push/.test(form), 'a line with a ref but no transaction ID is collected');
+  assert.ok(/if \(missing\.length\)[\s\S]*return;/.test(form), 'and the import is stopped, not sent with the gap');
+});

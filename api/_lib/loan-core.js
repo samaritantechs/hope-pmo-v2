@@ -1101,6 +1101,15 @@ async function financeImportPayments(db, user, { rows, batch }) {
     trans_no: textOrNull(r.trans_no), paid_by: textOrNull(r.paid_by), source: 'manual', imported_by: user.name,
   })).filter(r => r.ref && r.amount);
   if (!clean.length) throw badRequest('No usable rows -- each needs at least a reference and an amount.');
+  /* "Importing payment at finance always require transaction ID too." A payment with no
+     transaction number cannot be traced back to the money -- and the WHOLE import is refused
+     rather than the bad row quietly dropped, because "12 rows imported" with 11 in the book is
+     exactly the kind of silent gap that becomes an unexplained figure later. */
+  const noTrans = clean.map((r, i) => (r.trans_no ? null : (i + 1) + ' (REF ' + r.ref + ')')).filter(Boolean);
+  if (noTrans.length) {
+    throw badRequest('Kila mlipo lazima uwe na namba ya muamala / Every payment needs a transaction ID. '
+      + 'Bila: / Missing on row ' + noTrans.join(', ') + '. Hakuna kilichoingizwa / Nothing was imported.');
+  }
   const { error } = await db.from('payment_imports').insert(clean);
   if (error) throw new Error(error.message);
   for (const ref of new Set(clean.map(r => r.ref))) await closeIfFullyPaid_(db, user, ref);

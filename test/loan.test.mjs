@@ -812,7 +812,7 @@ test('the next loan for a reversed customer opens on the next track, not a reuse
 test('financeImportPayments is the receiver for the ISP feed finance already runs by hand', async () => {
   const db = fakeDb({});
   const r = await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: '919000001', amount: 34000, paid_by: '0715000001' }, { ref: '', amount: 0 }],
+    rows: [{ ref: '919000001', amount: 34000, trans_no: 'T-1', paid_by: '0715000001' }, { ref: '', amount: 0 }],
   });
   assert.equal(r.imported, 1, 'a row missing a reference or an amount is dropped, not guessed');
   const rows = (await db.from('payment_imports').select('*')).data;
@@ -822,10 +822,23 @@ test('financeImportPayments is the receiver for the ISP feed finance already run
 
 /* Both of these existed as writes with no way to read them back -- a register nobody can open
    and a shift-by-id nobody could look an id up for. */
+/* "Importing payment at finance always require transaction ID too" */
+test('financeImportPayments refuses the whole import when any row has no transaction ID', async () => {
+  const db = fakeDb({});
+  await assert.rejects(
+    () => loanApi(db, FINANCE, 'financeImportPayments', { rows: [
+      { ref: '919000001', amount: 34000, trans_no: 'T-1' },
+      { ref: '919000002', amount: 51000 },
+    ] }),
+    /transaction ID[\s\S]*row 2 \(REF 919000002\)/, 'the offending row is named');
+  assert.equal((await db.from('payment_imports').select('*')).data.length, 0,
+    'nothing imported -- not even the good row; a partial import is a silent gap in the book');
+});
+
 test('paymentsList makes a misapplied payment findable, so shifting one is reachable', async () => {
   const db = fakeDb({});
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    batch: 'PAY-A', rows: [{ ref: '919000001', amount: 34000 }, { ref: '919000002', amount: 51000 }],
+    batch: 'PAY-A', rows: [{ ref: '919000001', amount: 34000, trans_no: 'T-1' }, { ref: '919000002', amount: 51000, trans_no: 'T-2' }],
   });
   const d = await loanApi(db, FINANCE, 'paymentsList', {});
   assert.equal(d.rows.length, 2);
@@ -873,14 +886,14 @@ test('a payment that covers the loan in full closes it and stamps the Real End D
   const db = fakeDb({});
   const loan = await toFunded(db, 300000);   // loan_amt = 408000
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: loan.loan_id, amount: 200000, paid_at: '2026-01-05' }],
+    rows: [{ ref: loan.loan_id, amount: 200000, paid_at: '2026-01-05', trans_no: 'T-200' }],
   });
   let after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
   assert.equal(after.stage, 'funded', 'short of the total -- stays open');
   assert.equal(after.real_end_date, undefined);
 
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: loan.loan_id, amount: 208000, paid_at: '2026-01-19' }],
+    rows: [{ ref: loan.loan_id, amount: 208000, paid_at: '2026-01-19', trans_no: 'T-208' }],
   });
   after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
   assert.equal(after.stage, 'closed', 'fully covered now -- the closing event fires');
@@ -897,7 +910,7 @@ test('a loan not yet funded never auto-closes, even if a matching ref is fully p
   await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
   const loan = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
   assert.equal(loan.stage, 'approved', 'sanity: not disbursed or funded yet');
-  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: loan.loan_id, amount: 999999999 }] });
+  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: loan.loan_id, amount: 999999999, trans_no: 'T-STRAY' }] });
   const after = (await db.from('loans').select('*')).data.find(l => l.id === loanId);
   assert.equal(after.stage, 'approved', 'never disbursed or funded -- a stray payment cannot close it');
 });
@@ -906,9 +919,9 @@ test('shifting a payment onto a ref can be the transaction that finally closes i
   const db = fakeDb({});
   const loan = await toFunded(db, 300000);   // loan_amt = 408000
   await loanApi(db, FINANCE, 'financeImportPayments', {
-    rows: [{ ref: 'WRONG-REF', amount: 408000, paid_at: '2026-02-10' }],
+    rows: [{ ref: 'WRONG-REF', amount: 408000, paid_at: '2026-02-10', trans_no: 'T-408' }],
   });
-  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: 'WRONG-REF', amount: 1 }] });
+  await loanApi(db, FINANCE, 'financeImportPayments', { rows: [{ ref: 'WRONG-REF', amount: 1, trans_no: 'T-ONE' }] });
   const rows = (await db.from('payment_imports').select('*')).data.filter(p => p.ref === 'WRONG-REF' && p.amount === 408000);
   await loanApi(db, FINANCE, 'financeShiftPayment', { payment_id: rows[0].id, to_ref: loan.loan_id, reason: 'misapplied slip' });
   const after = (await db.from('loans').select('*')).data.find(l => l.id === loan.id);
