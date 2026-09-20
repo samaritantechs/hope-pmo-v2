@@ -8,18 +8,20 @@
          geolocation prompt if only FINE is declared. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <!-- Officers with no lock-app installed are followed the same way a locked handset is --
-         OfficerLocationService -- but only while it can run as a FOREGROUND service, which on
+    <!-- Officers with no lock-app installed are followed the same way a locked handset is
+         (OfficerLocationService), but only while it can run as a FOREGROUND service, which on
          Android 10+ is the only way a plain LocationManager keeps delivering fixes once the app
          is off screen. Foreground-only permission (above) still works whenever the app is open;
          this is what lets it keep working the rest of the time, requested only once it is about
-         to actually be used -- see MainActivity.startOrStopLocationService_. -->
+         to actually be used: see MainActivity.startOrStopLocationService_. (No double hyphen
+         anywhere in this comment on purpose: XML forbids it, and the manifest merger fails the
+         whole build on one.) -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <!-- Android 13+ refuses to show ANY notification, including a foreground service's own,
-         without this -- bundled into the app's one combined permission ask alongside call log,
-         location and camera; see requestMissingPermissions. -->
+         without this; bundled into the app's one combined permission ask alongside call log,
+         location and camera, see requestMissingPermissions. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The KYC photo/signature/thumbprint capture screens (openCameraOverlay_ in app.html) call
          getUserMedia() for a live camera feed, never a gallery picker. Without this declared, a
