@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-l';
+var BUILD = '2026-09-20-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8545,17 +8545,21 @@ VIEWS.officerloc = function(){
       + (!rows.length
         ? '<div class="note">Hakuna aliyeripoti mahali bado. Inahitaji ruhusa ya location ikiwa imeruhusiwa kwenye simu, na programu ifunguliwe. / '
           + 'Nobody has reported a position yet. It needs location permission granted on the phone, and the app to have been opened.</div>'
-        : '<table><thead><tr><th>Jina / Name</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
-          + '<th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th><th></th></tr></thead><tbody>'
+        /* "am not seeing location link at locations" -- it was there, as the LAST of six
+           columns, in a table with no scroll box: on a phone that column sat past the right
+           edge, clipped. The link is now the officer's own name in the FIRST column, so it
+           is on screen whatever the width, and the table scrolls like every other one here. */
+        : '<div class="scroll"><table><thead><tr><th>Jina / Name (bonyeza = ramani / tap = map)</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
+          + '<th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th></tr></thead><tbody>'
           + rows.map(function(r){
               var teams = (r.teams || []).join(', ') || 'zote / all';
               var mapUrl = 'https://www.google.com/maps?q=' + encodeURIComponent(r.last_lat) + ',' + encodeURIComponent(r.last_lng);
-              return '<tr><td>' + esc(r.name) + '</td><td>' + esc(r.role) + '</td><td>' + esc(teams) + '</td>'
+              return '<tr><td><a href="' + esc(mapUrl) + '" target="_blank" rel="noopener" class="btn sm ghost">📍 ' + esc(r.name) + '</a></td>'
+                + '<td>' + esc(r.role) + '</td><td>' + esc(teams) + '</td>'
                 + '<td>' + (r.last_loc_acc != null ? '±' + esc(r.last_loc_acc) + 'm' : '—') + '</td>'
-                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td>'
-                + '<td><a href="' + esc(mapUrl) + '" target="_blank" rel="noopener" class="btn sm ghost">Ramani / Map</a></td></tr>';
+                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td></tr>';
             }).join('')
-          + '</tbody></table>')
+          + '</tbody></table></div>')
       + '</div>';
     S.rows = []; S.cols = null;
     ONROW = null;
