@@ -982,3 +982,25 @@ test('a fresh capture reads "not saved yet" and turns to "Saved ✓" only when i
   assert.ok(/return p\.then\(function\(r\)\{ markSectionSaved_\(section\); return r; \}\)/.test(form), 'the section router flips them to Saved only after the server said yes');
   assert.ok(/function markSectionSaved_\(section\)\{\s*document\.querySelectorAll\('\.ln-stage-panel\[data-stage="' \+ section \+ '"\] \[data-capture-pending\]'\)/.test(app), 'and only the captures inside that section\'s panel');
 });
+
+/* "Clicking back at customer card in loan recommendation goes to hope calls instead of returning
+   to tab as close does., treat that and any card that behaves so too in the system interface"
+   The WebView's Back only knows pages; every layer drawn on top of one has to give it an entry
+   to pop. One helper, used by the drawer, the presentation and the phone menu (the camera
+   overlay had its own already). */
+test('the drawer, the presentation and the phone menu each give the Back button an entry to pop, and close on it', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const helper = app.slice(app.indexOf('var BACK_LAYERS_ = []'), app.indexOf('function drawer(html)'));
+  assert.ok(/history\.pushState\(\{ hopeLayer: name \}/.test(helper), 'opening a layer pushes one tagged entry');
+  assert.ok(/if \(BACK_LAYERS_\.indexOf\(name\) >= 0\) return;/.test(helper), 'once, however often the layer redraws while open');
+  assert.ok(/if \(!BACK_POPPING_\) \{ try \{ history\.back\(\); \}/.test(helper), 'closing by button consumes the entry it pushed');
+  assert.ok(/addEventListener\('popstate'/.test(helper) && /BACK_CLOSERS_\[top\]\(\)/.test(helper), 'Back closes the top layer');
+  assert.ok(/e\.state\.hopeLayer === top \|\| e\.state\.hopeCam/.test(helper), 'a pop that lands on our own entry (the camera above us closing) is left alone');
+  const drawer = app.slice(app.indexOf('function drawer(html)'), app.indexOf("$('#drawerBg').onclick"));
+  assert.ok(/backLayerOpen_\('drawer'\)/.test(drawer) && /backLayerClose_\('drawer'\)/.test(drawer), 'the drawer is a layer');
+  const pres = app.slice(app.indexOf('function presStart('), app.indexOf('function presDraw('));
+  assert.ok(/backLayerOpen_\('pres'\)/.test(pres) && /backLayerClose_\('pres'\)/.test(pres), 'the presentation is a layer');
+  assert.ok(/function navOpen_\(\)\{[^}]*backLayerOpen_\('nav'\)/.test(app) && /function navClose_\(\)\{[^}]*backLayerClose_\('nav'\)/.test(app), 'the phone menu is a layer');
+  const direct = (app.match(/classList\.(remove|toggle|add)\('navopen'\)/g) || []).length;
+  assert.equal(direct, 2, 'the navopen class is touched only inside navOpen_/navClose_ -- nowhere else, or an entry is left behind');
+});
