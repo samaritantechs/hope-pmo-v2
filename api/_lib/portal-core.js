@@ -7613,7 +7613,7 @@ const FN = {
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
   par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
-  dashboardFull, dashboardProbe, monthReport, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
+  dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
@@ -7965,6 +7965,8 @@ const FN_TAB = {
   dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
   recoveryByCredit: ['dashboard'],
+  // The customers behind a recovery tile -- the tile's own screens, nothing more.
+  recoveryCustomers: ['dashboard', 'present'],
   /* The month report answers TWO dots now -- the dashboard's, and the weekly tab's, which
      opens the GM's team trend off this same answer. Whoever holds either screen may open it. */
   monthReport: ['dashboard', 'weekly'],
@@ -8946,6 +8948,74 @@ async function dashboardFull(db, user, args, nowMs) {
     pick.user, nowMs, () => dashboardFullCompute_(db, pick.user, args, nowMs));
   return { ...out, teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
 }
+/* THE CUSTOMERS BEHIND A RECOVERY TILE.
+
+     "weekly Recovery cards at dashboard / widgets should be clickable to open list of those
+      respective customers showing their initial arrears, current arrears and recovered,
+      with grand totals."
+
+   A tile is one day's initial deck minus the same day's current deck, paired on date AND
+   weekday, latest upload per team (recoveryByTeam). This is the same subtraction with the
+   customer kept: one row per ref, their arrears on the day's initial deck, their arrears on
+   the day's current deck (nothing on the current deck = fully recovered), and the difference.
+   Adding the rows gives the tile, because it is the tile's own arithmetic -- including the
+   register: an Iliyonasia cell on the team-day is a line of its own here (it is an amount,
+   not a person) so the grand total still equals what the tile shows. A day with no pair is
+   "not measured" here exactly as it is on the tile. The TOTAL tile is the seven days added:
+   a customer on two decks that week appears once with both days added, and says how many.
+
+   The only per-customer read on the dashboard, and on purpose: it runs when a tile is
+   pressed, never on the dashboard's own load, and it carries the tile's team pick. */
+const REC_CUST_COLS = 'ref, full_name, contact, team, arrears, snapshot_date, snapshot_type, weekday';
+async function recoveryCustomers(db, user0, args, nowMs) {
+  const pick = await narrowToPickedTeams_(db, user0, args, nowMs);
+  const user = pick.user;
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  const mon = asOf.weekOf, sun = addDaysKey(mon, 6);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String((args && args.date) || '')) ? String(args.date).slice(0, 10) : null;
+  const from = date || mon, to = date || sun;
+  const [rows, adj] = await Promise.all([
+    snapshotsInRange(db, 'defaulter_snapshots', {}, from, to, user.teams, REC_CUST_COLS),
+    adjReceived_(db, user, { from, to }),
+  ]);
+  const days = date ? [date] : [0, 1, 2, 3, 4, 5, 6].map(i => addDaysKey(mon, i));
+  const byKey = new Map();
+  const lines = [];
+  const measured = [];
+  const entry = r => {
+    const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
+    return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
+      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set() }).get(k);
+  };
+  for (const d of days) {
+    const wd = weekdayOfKey(d);
+    const deck = type => pickLatestBatch(rows.filter(r => String(r.snapshot_date).slice(0, 10) === d
+      && r.snapshot_type === type && K(r.weekday) === wd));
+    const ini = deck('initial'), cur = deck('current');
+    if (!ini.length || !cur.length) continue;                 // not measured -- the tile's rule
+    measured.push(d);
+    for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(d); }
+    for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(d); }
+    for (const target of ['defaulter-initial', 'defaulter-current']) {
+      for (const c of (adj ? adj.cells(target).filter(c => c.date === d) : [])) {
+        if (!teamAllowed(user, c.team)) continue;
+        lines.push({ ref: '', full_name: 'Iliyonasia / Adjustment', contact: '', team: c.team,
+          initial: target === 'defaulter-initial' ? c.amount : 0,
+          current: target === 'defaulter-current' ? c.amount : 0,
+          recovered: target === 'defaulter-initial' ? c.amount : -c.amount, days: 1, adjustment: true });
+      }
+    }
+  }
+  const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size, dates: undefined }))
+    .concat(lines)
+    .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
+  const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
+    recovered: t.recovered + r.recovered, customers: t.customers + (r.adjustment ? 0 : 1) }),
+    { initial: 0, current: 0, recovered: 0, customers: 0 });
+  return { rows: out, totals, date, weekOf: mon, weekEnd: sun, days: measured,
+    teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
+}
+
 /* THE DASHBOARD'S OWN DIAGNOSIS.
 
      "dashboard [Imeshindikana / Could not load. Seva haijibu ndani ya sekunde 45]"

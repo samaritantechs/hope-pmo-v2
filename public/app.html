@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-e';
+var BUILD = '2026-09-21-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2560,6 +2560,10 @@ function wireBar(){
     };
   });
   wireWeekBar();
+  // A recovery tile opens the customers behind it.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-reccust]'), function(el){
+    el.onclick = function(e){ e.stopPropagation(); recoveryCustomersDrawer_(el.getAttribute('data-reccust')); };
+  });
   // The team pick: a team pill toggles itself, "All" clears the lot; remembered per code.
   Array.prototype.forEach.call(document.querySelectorAll('[data-teampick]'), function(el){
     el.onclick = function(){
@@ -3067,8 +3071,8 @@ function trendGrid(title, sub, id, cells, totalCell){
     + '<span class="sub"><button class="btn sm ghost" data-jpg="'+id+'">JPG</button></span></div>'
     + '<div class="tgrid">' + cells.join('') + (totalCell||'') + '</div></div>';
 }
-function tcell(head, lines, cls){
-  return '<div class="tcell'+(cls?' '+cls:'')+'"><div class="th">'+esc(head)+'</div>'
+function tcell(head, lines, cls, attrs){
+  return '<div class="tcell'+(cls?' '+cls:'')+'"'+(attrs ? ' ' + attrs : '')+'><div class="th">'+esc(head)+'</div>'
     + lines.map(function(l){ return '<div class="tl '+(l[1]||'')+'">'+l[0]+'</div>'; }).join('') + '</div>';
 }
 
@@ -3188,6 +3192,48 @@ function wireWeekBar(){
    holds a single team, since there is nothing to choose. The pick is remembered per code on
    this device and rides into the month report with the week. The server does the narrowing
    at the database (narrowToPickedTeams_); these pills only say what was asked for. */
+/* A recovery tile that can be pressed: carries its date ('week' for the TOTAL) and looks it. */
+function recTileAttrs_(date){
+  return 'data-reccust="' + esc(date || '') + '" role="button" tabindex="0" style="cursor:pointer" title="Bofya kuona wateja / Tap for the customers"';
+}
+/* THE CUSTOMERS BEHIND THE TILE -- name, ref, team, initial, current, recovered, and the grand
+   total, which is the tile's own figure (the server does the tile's own subtraction with the
+   customer kept). An Iliyonasia on the team-day is a line of its own so the total still
+   matches. Exports (Excel/JPG/CSV) are wired here because the drawer is drawn after the
+   screen's own wiring has run. */
+function recoveryCustomersDrawer_(date){
+  var week = date === 'week';
+  drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="sub">Inapakia... / Loading...</div>');
+  srv('recoveryCustomers', { weekOf: S.args.weekOf || '', teams: teamPickLoad_(), date: week ? '' : date }).then(function(d){
+    var cols = [col('full_name', 'Mteja / Customer'), col('ref', 'Ref'), col('team', 'Timu / Team'),
+      { key:'initial', label:'Madeni awali / Initial arrears', kind:'money' },
+      { key:'current', label:'Madeni sasa / Current arrears', kind:'money' },
+      { key:'recovered', label:'Imerejeshwa / Recovered', kind:'money' }];
+    if (week) cols.push({ key:'days', label:'Siku / Days', kind:'num' });
+    var when = week ? (d.weekOf + ' → ' + d.weekEnd) : (wdLabel(weekdayOf_(d.date)) + ' ' + d.date);
+    var sub = money(d.totals.customers) + ' wateja / customers · siku zilizopimwa / days measured: ' + d.days.length
+      + ((d.teamsApplied || []).length ? ' · timu / teams: ' + d.teamsApplied.join(', ') : '');
+    drawer('<h3>Wateja waliorejesha / Recovery customers · ' + esc(when) + '</h3>'
+      + (d.rows.length
+          ? board('recCust', 'Awali − sasa = imerejeshwa / Initial − current = recovered', sub, d.rows, cols,
+              sumRow(d.rows, ['initial', 'current', 'recovered']))
+          : '<div class="note">Hakuna deki iliyooanishwa siku hii (awali NA sasa). / No paired deck (initial AND current) on this day.</div>'));
+    var root = document.getElementById('drawer');
+    Array.prototype.forEach.call(root.querySelectorAll('[data-jpg]'), function(el){
+      el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-xls]'), function(el){
+      el.onclick = function(e){ e.stopPropagation(); exportBoard(el.getAttribute('data-xls'), 'xls'); };
+    });
+    Array.prototype.forEach.call(root.querySelectorAll('[data-csv]'), function(el){
+      el.onclick = function(e){ e.stopPropagation(); exportBoard(el.getAttribute('data-csv'), 'csv'); };
+    });
+  }).catch(function(e){ drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="note bad">' + esc(String((e && e.message) || e)) + '</div>'); });
+}
+function weekdayOf_(key){
+  var t = Date.parse(String(key || '').slice(0, 10) + 'T12:00:00Z');
+  return isFinite(t) ? ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][new Date(t).getUTCDay()] : '';
+}
 function teamPickKey_(){ return 'hopeDashTeams_' + ((S.me && S.me.code) || ''); }
 function teamPickLoad_(){
   if (Array.isArray(S.args.teams)) return S.args.teams;
@@ -3271,8 +3317,12 @@ VIEWS.dashboard = function(){
          by the week; each tile says which. The TOTAL comes from the server (recTrendTotal):
          the week's recovered over Monday to Friday's OWN uncollected, once each, which is not
          what adding seven tiles' denominators would give. */
-      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % ÷ that day’s uncollected · weekend: no col', 'gRec',
-          d.recTrend.map(function(x){ return x.uploaded === false
+      /* "weekly Recovery cards at dashboard / widgets should be clickable to open list of those
+         respective customers showing their initial arrears, current arrears and recovered, with
+         grand totals." Every measured tile carries its date; the TOTAL tile carries the week.
+         Pressing one opens recoveryCustomersDrawer_ (wired in wireBar). */
+      + trendGrid('Weekly recovery trend (Mon–Sun)', 'recovery = start-of-day − end-of-day defaulter arrears · % ÷ that day’s uncollected · weekend: no col · bofya kadi kuona wateja / tap a card for its customers', 'gRec',
+          d.recTrend.map(function(x){ var press = recTileAttrs_(x.date); return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : (x.basis === 'none'
               /* SATURDAY AND SUNDAY: no collection sheet, so no "Unrecovered" and no percentage
@@ -3281,7 +3331,7 @@ VIEWS.dashboard = function(){
               ? tcell(wdLabel(x.weekday), [
                   ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
                   ['no col', 'mutl'],
-                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']])
+                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']], '', press)
               : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
@@ -3291,10 +3341,10 @@ VIEWS.dashboard = function(){
             ['Unrecovered TZS '+money(x.unrecovered)+adjTag_(x.dayAdjusted), 'badl'],
             [x.pct != null
               ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
-              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']])); }),
+              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']], '', press)); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
             ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0)+adjTag_(d.recTrendTotal ? d.recTrendTotal.adjusted : 0), 'badl'],
-            ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot'))
+            ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot', recTileAttrs_('week')))
       + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
       + d.funnel.map(function(f){
           var max = Math.max.apply(null, d.funnel.map(function(x){ return x.count; }).concat([1]));

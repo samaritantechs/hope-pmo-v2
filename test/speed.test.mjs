@@ -170,6 +170,10 @@ const BUDGETS = [
   ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  32,  5500],
   ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  31,   900],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
+  /* THE CUSTOMERS BEHIND A RECOVERY TILE -- the one per-customer read on the dashboard, and
+     only when a tile is pressed: one day's initial and current decks for the scope, raw, plus
+     the register. 500 customers x 2 decks in this fixture. Same read in both worlds. */
+  ['Recovery customers (day)', 'recoveryCustomers', { date: '2026-07-24' }, ADMIN, 6, 1100, 6, 1100],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
   ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000,  10, 10000],
