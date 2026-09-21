@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-c';
+var BUILD = '2026-09-21-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1083,7 +1083,7 @@ function go(view, args){
   S.rows = []; S.cols = []; HEAD = ''; ONROW = null;
   // Ticks belong to the tab that drew them -- see the note above tableHtml.
   S.pickKey = null; S.pick = {};
-  document.body.classList.remove('navopen');        // picking a tab closes the phone drawer
+  navClose_();                                       // picking a tab closes the phone drawer
   var t = (isLoanId_(view) ? NAV_LOAN : NAV).filter(function(n){ return n.id===view; })[0];
   // 'noaccess' has no nav entry by design -- it is where somebody lands when their role holds
   // nothing -- so it would otherwise show its own id as the page title.
@@ -1120,8 +1120,8 @@ function go(view, args){
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
 $('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
 $('#tipBtn').onclick = function(){ tipShow(); };
-$('#menuBtn').onclick = function(){ document.body.classList.toggle('navopen'); };
-$('#scrim').onclick = function(){ document.body.classList.remove('navopen'); };
+$('#menuBtn').onclick = function(){ if (document.body.classList.contains('navopen')) navClose_(); else navOpen_(); };
+$('#scrim').onclick = function(){ navClose_(); };
 
 /* THE NOTICEBOARD, on the reader's side.
 
@@ -8795,12 +8795,14 @@ function presStart(from){
   S.presRefresh = setInterval(presRefetch, PRES_REFRESH_MS);
   // Real full screen: on the office TV the browser chrome should not be part of the picture.
   if (el.requestFullscreen) { try { el.requestFullscreen(); } catch(e){} }
+  backLayerOpen_('pres');
 }
 function presStop(){
   clearInterval(S.presTimer);
   clearInterval(S.presRefresh); S.presRefresh = null;
   document.getElementById('pres').style.display = 'none';
   if (document.fullscreenElement && document.exitFullscreen) { try { document.exitFullscreen(); } catch(e){} }
+  backLayerClose_('pres');
 }
 function presDraw(){
   var s = S.slides[S.presI], body;
@@ -10714,15 +10716,68 @@ function drawOrderPanel(){
   };
 }
 
+/* THE ANDROID BACK BUTTON, FOR EVERY LAYER THAT SITS ON TOP OF A SCREEN.
+
+     "Clicking back at customer card in loan recommendation goes to hope calls instead of
+      returning to tab as close does., treat that and any card that behaves so too"
+
+   The app's onBackPressed only ever asks the WebView "is there a previous PAGE"
+   (web.canGoBack()). A drawer, the fullscreen presentation and the phone's side menu are
+   DOM elements on top of one page, so with nothing in the history the hardware Back skipped
+   straight past them and left the portal for the launcher. The camera overlay solved this
+   for itself (openCameraOverlay_: push one same-document history entry on open, pop it on
+   close, close on popstate); this is the same rule, written once, for every other layer.
+
+   How it holds together:
+     open   -> one pushState entry tagged with the layer's name (once, even if the layer
+               re-draws itself while open, as the recommendation form does over the plan drawer)
+     Back   -> the WebView pops that entry (no navigation), popstate fires, the top layer closes
+     Close  -> the layer closes itself and consumes its own entry with history.back(), so a
+               LATER Back press does not pop it for nothing
+   A pop that lands ON the top layer's own entry was something above it (the camera) closing,
+   not ours -- left alone. Desktop browsers get the same: Back closes the drawer instead of
+   leaving the page. */
+var BACK_LAYERS_ = [];          // open layers, in the order they were opened
+var BACK_POPPING_ = false;      // true while a layer is being closed BY a Back press
+function backLayerOpen_(name){
+  if (BACK_LAYERS_.indexOf(name) >= 0) return;
+  BACK_LAYERS_.push(name);
+  try { history.pushState({ hopeLayer: name }, '', location.href); } catch (e) {}
+}
+function backLayerClose_(name){
+  var i = BACK_LAYERS_.indexOf(name);
+  if (i < 0) return;
+  BACK_LAYERS_.splice(i, 1);
+  if (!BACK_POPPING_) { try { history.back(); } catch (e) {} }
+}
+var BACK_CLOSERS_ = {
+  drawer: function(){ closeDrawer(); },
+  pres: function(){ presStop(); },
+  nav: function(){ navClose_(); },
+};
+window.addEventListener('popstate', function(e){
+  if (!BACK_LAYERS_.length) return;
+  var top = BACK_LAYERS_[BACK_LAYERS_.length - 1];
+  if (e.state && (e.state.hopeLayer === top || e.state.hopeCam)) return;   // something ABOVE us closed
+  BACK_POPPING_ = true;
+  try { BACK_CLOSERS_[top](); } finally { BACK_POPPING_ = false; }
+});
+/* The phone's side menu, through the same door -- go() and the scrim used to clear the class
+   directly, which would have left the menu's history entry behind for the next Back to eat. */
+function navOpen_(){ document.body.classList.add('navopen'); backLayerOpen_('nav'); }
+function navClose_(){ document.body.classList.remove('navopen'); backLayerClose_('nav'); }
+
 function drawer(html){
   $('#drawer').innerHTML = html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
   $('#drawerBg').style.display = 'flex';
   fitPanelToKeyboard_('drawerBg');
+  backLayerOpen_('drawer');
 }
 function closeDrawer(){
   $('#drawerBg').style.display='none';
   $('#drawerBg').style.height = ''; $('#drawerBg').style.top = '';
   $('#drawer').style.maxHeight = '';
+  backLayerClose_('drawer');
 }
 $('#drawerBg').onclick = function(e){ if (e.target===$('#drawerBg')) closeDrawer(); };
 /* THE DRAWER DID NOT RISE ABOVE THE KEYBOARD.
