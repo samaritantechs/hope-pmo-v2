@@ -939,3 +939,29 @@ test('no HOPE Loan tab word is also a HOPE PMO tab, and the role editor keeps th
   assert.ok(/all\.filter\(function\(t\)\{ return !isLoanTab_\(t\); \}\)/.test(form), 'PMO words in the first');
   assert.ok(/all\.filter\(isLoanTab_\)/.test(form), 'HOPE Loan words in the second');
 });
+
+/* "allow the pre-fillable info of loan recommendation at assessment plan and saving only -
+   submitting will only happen at recommendation ... if assigned no = assessment plan number,
+   merge both for the single customer into recommendation" -- the ONE recommendation form
+   serves both owners; a plan drafts on itself, photos land under the plan, and Assign says
+   what became of a matching plan. */
+test('the recommendation form drafts on an Assessment Plan, and the plan drawer opens it', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const form = app.slice(app.indexOf('function lnTeamAssessForm_(loanRow, planRow)'), app.indexOf('/* ---------- GMO / OPM senior review'));
+  assert.ok(form.length > 1000, 'the form takes a plan row as its second owner');
+  assert.ok(/lnActKeep_\('assessmentPlanDraftSave', \{ id: planRow\.id, section: section, fields: fields \}/.test(form), 'plan mode saves the draft on the plan');
+  assert.ok(/lnActKeep_\('teamAssessmentSave', \{ loan_id: loan\.id, section: section, fields: fields \}/.test(form), 'loan mode saves the recommendation as before');
+  assert.equal((form.match(/saveSection_\('(personal|business|residence|guarantor|recommendation)'/g) || []).length, 5, 'all five sections go through the one router');
+  assert.ok(!/lnActKeep_\('teamAssessmentSave', \{ loan_id: loan\.id, section: '/.test(form), 'no section save bypasses it');
+  assert.ok(/if \(planMode\) return;\s*\n\s*\$\('#lnSubmitRec'\)/.test(form), 'submit and reject are never wired on a plan');
+  assert.ok(/planMode\s*\?\s*'<div class="note"[^]*?Submit live at Team/.test(form), 'and the contract/copy/submit block is replaced by a note on a plan');
+  const up = app.slice(app.indexOf('function kycUpload_('), app.indexOf('function wireCanvasPad_('));
+  assert.ok(/\^plan:\(\.\+\)\$/.test(up) && /plan_id: pm\[1\]/.test(up), 'a plan: id in the loan slot uploads under the plan');
+  const planForm = app.slice(app.indexOf('function lnAssessPlanForm_('), app.indexOf('function busy_('));
+  assert.ok(/id="lnPlanFillBtn"/.test(planForm) && /lnTeamAssessForm_\(null, row\)/.test(planForm), 'the plan drawer opens the form in plan mode');
+  assert.ok(/row\.assignedRef/.test(planForm) && /Team &middot; Recommendation/.test(planForm), 'an already-assigned customer is pointed at the recommendation instead');
+  const view = app.slice(app.indexOf('VIEWS.ln_assess_plan'), app.indexOf('function todayKey_'));
+  assert.ok(/draftSections/.test(view) && /assignedRef/.test(view), 'the list shows draft progress and assignment');
+  const assign = app.slice(app.indexOf("lnAct('managerAssign'"), app.indexOf("lnAct('managerAssign'") + 900);
+  assert.ok(/r\.planMerged/.test(assign) && /bad: true/.test(assign), 'Assign reports the merge, and a failed merge in red');
+});

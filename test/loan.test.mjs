@@ -1293,3 +1293,142 @@ test('Assessment Plan: a matching approved loan autodeletes the plan that predic
   const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
   assert.equal(r.rows.length, 0, 'the plan did its job -- there is now a real approved loan for this phone number');
 });
+
+/* =====================================================================================
+   THE ASSESSMENT PLAN CARRIES THE RECOMMENDATION'S DRAFT, AND MERGES INTO THE LOAN AT ASSIGN.
+   =====================================================================================
+   "We allow our customers to double loans when they reach 10+ installments. Now it happens a
+    team has a customer at 9, they visit this customer later the customer pays the 10th so as
+    to get assigned (customer service never register under 10) so assessment plan should ...
+    allow the pre-fillable info of loan recommendation at assessment plan and saving only -
+    submitting will only happen at recommendation ... so if assigned no = assessment plan
+    number, merge both for the single customer into recommendation" */
+const PLAN_DRAFT = {
+  personal: { dob: '1988-05-05', gender: 'Female', id_type: 'NIDA', national_id: '19880505-00000-00001-01', first_name: 'ASHA', photo_url: 'plans/p1/photo-1.jpg' },
+  business: { verified: true, business_name: 'ASHA MAMA LISHE', daily_profit: '20000', business_verify_photo_url: 'plans/p1/business-1.jpg' },
+  residence: { verified: true, guarantor_verified: false, street: 'MABIBO KATI', ward: 'MABIBO', district: 'UBUNGO' },
+  guarantor: { guarantors: [
+    { full_name: 'A GUARANTOR', phone: '0715000001', relationship: 'Sister' },
+    { full_name: 'ALT ONE', phone: '0715000002', relationship: 'Friend' },
+    { full_name: 'ALT TWO', phone: '0715000003', relationship: 'Friend' },
+    { full_name: 'ALT THREE', phone: '0715000004', relationship: 'Neighbour' } ] },
+  recommendation: { amount: 450000, credit_score: '7.5', zone: 'Mabibo', remarks: 'Visited at 9 installments', officer_name: 'A LOAN OFFICER' },
+};
+const soonKey_ = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+test('Assessment Plan: the recommendation is drafted on the plan section by section, saving only', async () => {
+  const db = fakeDb({ assessment_plans: [{ id: 'p1', team: 'MABIBO', full_name: 'ASHA', phone: '0763357860', planned_date: soonKey_() }] });
+  await assert.rejects(() => loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'p1', section: 'contract', fields: {} }), /Unknown assessment section/);
+  await assert.rejects(() => loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'nope', section: 'personal', fields: {} }), /could not be found/);
+  for (const [section, fields] of Object.entries(PLAN_DRAFT)) {
+    await loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'p1', section, fields });
+  }
+  const row = db._dump('assessment_plans')[0];
+  assert.deepEqual(row.draft, PLAN_DRAFT, 'every section, in the field names the form sends');
+  assert.equal(row.updated_by, TEAM.name);
+  // A section is replaced whole, never merged key by key: a cleared photo stays cleared.
+  await loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'p1', section: 'business', fields: { verified: false, business_name: 'RENAMED' } });
+  assert.deepEqual(db._dump('assessment_plans')[0].draft.business, { verified: false, business_name: 'RENAMED' });
+  // Nothing touched a customer or a loan -- there is none.
+  assert.equal(db._dump('customers').length, 0); assert.equal(db._dump('loans').length, 0);
+  const list = await loanApi(db, TEAM, 'assessmentPlanList', {});
+  assert.deepEqual(list.rows[0].draftSections, ['personal', 'recommendation', 'guarantor', 'residence', 'business']);
+  // Another team's plan is refused, the same rule the plan's own save applies.
+  const OTHER = { ...TEAM, code: 'T9', teams: ['KAWE'] };
+  await assert.rejects(() => loanApi(db, OTHER, 'assessmentPlanDraftSave', { id: 'p1', section: 'personal', fields: {} }), e => e.status === 403);
+});
+
+test('Assessment Plan: photos are captured under the plan, and the contract is refused until there is a loan', async () => {
+  const db = fakeDb({ assessment_plans: [{ id: 'p1', team: 'MABIBO', full_name: 'ASHA', phone: '0763357860', planned_date: soonKey_() }] });
+  const png = 'data:image/png;base64,' + Buffer.from('not-really-a-png').toString('base64');
+  const r = await loanApi(db, TEAM, 'kycUpload', { plan_id: 'p1', kind: 'business', data_url: png });
+  assert.match(r.path, /^plans\/p1\/business-\d+\.png$/);
+  await assert.rejects(() => loanApi(db, TEAM, 'kycUpload', { plan_id: 'p1', kind: 'contract', data_url: png }), /once the loan exists/);
+  const OTHER = { ...TEAM, code: 'T9', teams: ['KAWE'] };
+  await assert.rejects(() => loanApi(db, OTHER, 'kycUpload', { plan_id: 'p1', kind: 'photo', data_url: png }), e => e.status === 403);
+});
+
+async function seedPlan_(db, user, { id, team, draft }) {
+  await loanApi(db, user, 'assessmentPlanSave', { full_name: 'ASHA', phone: '0763357860', planned_date: soonKey_(), team });
+  const row = db._dump('assessment_plans').find(r => r.team === team && !r._seeded);
+  row._seeded = true; row.id = id;
+  for (const [section, fields] of Object.entries(draft || {})) await loanApi(db, user, 'assessmentPlanDraftSave', { id, section, fields });
+  return row;
+}
+test('Assessment Plan: assigning a loan whose phone matches a plan merges the draft into the recommendation', async () => {
+  const db = fakeDb({});
+  await seedPlan_(db, TEAM, { id: 'p1', team: 'MABIBO', draft: PLAN_DRAFT });
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'ASHA OMARI IDDI', mobile: '0763357860', team: 'MABIBO', amount: 400000 });
+  const r = await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+  assert.ok(r.planMerged, 'the answer says a plan was found');
+  assert.equal(r.planMerged.error, null);
+  assert.deepEqual(r.planMerged.sections, ['personal', 'recommendation', 'guarantor', 'residence', 'business']);
+  assert.equal(r.planMerged.planned_by, TEAM.name);
+
+  const after = (await db.from('loans').select('*').eq('id', loan.id)).data[0];
+  assert.equal(after.stage, 'unassessed', 'the assessment has started -- exactly as if the officer had saved a section');
+  assert.equal(after.team, 'MABIBO');
+  const a = db._dump('assessments').find(x => x.loan_id === loan.id);
+  assert.ok(a, 'an assessment row exists');
+  for (const s of ['personal', 'business', 'residence', 'guarantor', 'recommendation']) assert.equal(a['done_' + s], true, s + ' is done');
+  assert.equal(Number(a.recommend_amount), 450000);
+  assert.equal(a.zone_visited, 'Mabibo');
+  assert.equal(a.credit_score, 7.5);
+  assert.equal(a.business_verified, true); assert.equal(a.residence_verified, true); assert.equal(a.guarantor_residence_verified, false);
+  assert.equal(a.submitted_by, TEAM.name, 'filed under the officer who captured it, not the manager who pressed Assign');
+  const c = db._dump('customers').find(x => x.id === loan.customer_id);
+  assert.equal(c.dob, '1988-05-05'); assert.equal(c.first_name, 'ASHA');
+  assert.equal(c.business_name, 'ASHA MAMA LISHE'); assert.equal(Number(c.weekly_profit), 120000, 'derived exactly as the form save derives it');
+  assert.equal(c.street, 'MABIBO KATI'); assert.equal(c.photo_url, 'plans/p1/photo-1.jpg', 'the plan-owned photo path rides across');
+  const gs = db._dump('guarantors').filter(x => x.loan_id === loan.id);
+  assert.equal(gs.length, 4); assert.equal(gs[0].full_name, 'A GUARANTOR'); assert.equal(gs[0].rank, 0);
+  assert.equal(db._dump('assessment_plans').length, 0, 'the plan did its job and is gone');
+  const ev = db._dump('loan_events').find(e => /Assessment plan merged/.test(String(e.note || '')));
+  assert.ok(ev, 'the loan\'s own history says the draft came from a plan');
+  // The drawer opens on the merged data, and the officer can carry on editing it.
+  const d = await loanApi(db, TEAM, 'teamAssessDetail', { loan_id: loan.id });
+  assert.equal(d.customer.business_name, 'ASHA MAMA LISHE');
+  assert.equal(d.guarantors.length, 4);
+  await loanApi(db, TEAM, 'teamAssessmentSave', { loan_id: loan.id, section: 'recommendation', fields: { amount: 500000, zone: 'Mabibo', remarks: 'raised' } });
+  assert.equal(Number(db._dump('assessments').find(x => x.loan_id === loan.id).recommend_amount), 500000);
+});
+
+test('Assessment Plan: the assigned team\'s own plan is the one merged when several teams planned the same number', async () => {
+  const db = fakeDb({});
+  const KAWE_U = { ...TEAM, code: 'TK', name: 'KAWE OFFICER', teams: ['KAWE'] };
+  const mab = await seedPlan_(db, TEAM, { id: 'p-mab', team: 'MABIBO', draft: { recommendation: { amount: 2 } } });
+  const kawe = await seedPlan_(db, KAWE_U, { id: 'p-kawe', team: 'KAWE', draft: { recommendation: { amount: 1 } } });
+  mab.updated_at = '2026-09-19T10:00:00Z'; kawe.updated_at = '2026-09-20T10:00:00Z';   // KAWE's is the newer
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'ASHA OMARI IDDI', mobile: '0763357860', team: 'MABIBO', amount: 400000 });
+  const r = await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+  assert.equal(r.planMerged.plan_id, 'p-mab', 'MABIBO\'s plan, although KAWE\'s is newer');
+  assert.equal(Number(db._dump('assessments').find(x => x.loan_id === loan.id).recommend_amount), 2);
+  assert.deepEqual(db._dump('assessment_plans').map(p => p.id), ['p-kawe'], 'the other team\'s plan is left alone');
+});
+
+test('Assessment Plan: a matching plan with nothing drafted is closed at assign, and the loan stays at assigned', async () => {
+  const db = fakeDb({});
+  await seedPlan_(db, TEAM, { id: 'p1', team: 'MABIBO' });
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'ASHA OMARI IDDI', mobile: '0763357860', team: 'MABIBO', amount: 400000 });
+  const r = await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+  assert.deepEqual(r.planMerged.sections, []);
+  assert.equal(r.planMerged.error, null);
+  assert.equal((await db.from('loans').select('*').eq('id', loan.id)).data[0].stage, 'assigned');
+  assert.equal(db._dump('assessments').length, 0, 'nothing invented');
+  assert.equal(db._dump('assessment_plans').length, 0);
+  // And no plan at all: the answer says so with null, and the assignment is unchanged.
+  const { loan: loan2 } = await loanApi(db, CS, 'csRegister', { full_name: 'NOBODY PLANNED', mobile: '0763357861', team: 'MABIBO', amount: 400000 });
+  const r2 = await loanApi(db, MGR, 'managerAssign', { loan_id: loan2.id, team: 'MABIBO' });
+  assert.equal(r2.planMerged, null);
+});
+
+test('Assessment Plan: a plan for a customer already assigned says so on the row, pointing at the recommendation', async () => {
+  const db = fakeDb({});
+  const { loan } = await loanApi(db, CS, 'csRegister', { full_name: 'ASHA OMARI IDDI', mobile: '0763357860', team: 'MABIBO', amount: 400000 });
+  await loanApi(db, MGR, 'managerAssign', { loan_id: loan.id, team: 'MABIBO' });
+  await loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'ASHA, PLANNED LATE', phone: '0763357860', planned_date: soonKey_() });
+  const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
+  assert.equal(r.rows.length, 1, 'not pruned -- the loan is not approved, it is with the team');
+  assert.equal(r.rows[0].assignedRef, loan.loan_id);
+  assert.equal(r.rows[0].assignedTeam, 'MABIBO');
+});
