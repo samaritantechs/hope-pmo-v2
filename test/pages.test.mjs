@@ -1033,8 +1033,12 @@ test('every measured recovery tile is pressable and opens the customers behind i
   const drawerFn = app.slice(app.indexOf('function recoveryCustomersDrawer_('), app.indexOf('function weekdayOf_('));
   assert.ok(/srv\('recoveryCustomers', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\), date: week \? '' : date \}\)/.test(drawerFn), 'asks with the week and the team pick');
   for (const k of ['initial', 'current', 'recovered']) assert.ok(new RegExp("key:'" + k + "'").test(drawerFn), k + ' column');
-  assert.ok(/sumRow\(d\.rows, \['initial', 'current', 'recovered'\]\)/.test(drawerFn), 'a grand total row');
+  assert.ok(/sumRow\(rows, \['initial', 'current', 'recovered'\]\)/.test(drawerFn), 'a grand total row, over the rows on screen');
   assert.ok(/root\.querySelectorAll\('\[data-xls\]'\)/.test(drawerFn), 'exports are wired inside the drawer');
+  // "grind more": search, a status filter, and the decks the system paired.
+  assert.ok(/id="recCustQ"/.test(drawerFn) && /id="recCustStatus"/.test(drawerFn), 'a search box and a status filter');
+  assert.ok(/key:'status'/.test(drawerFn), 'a status column');
+  assert.ok(/fold_\('recDecks'/.test(drawerFn) && /Imepakiwa \/ Uploaded at/.test(drawerFn) && /Zilizopitwa \/ Superseded/.test(drawerFn), 'the decks paired, with upload time and superseded count');
   assert.ok(/querySelectorAll\('\[data-reccust\]'\)[\s\S]{0,200}recoveryCustomersDrawer_\(el\.getAttribute\('data-reccust'\)\)/.test(app), 'pressing a tile opens the drawer');
 });
 

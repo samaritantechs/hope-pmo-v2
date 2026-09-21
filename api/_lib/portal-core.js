@@ -8982,20 +8982,50 @@ async function recoveryCustomers(db, user0, args, nowMs) {
   const byKey = new Map();
   const lines = [];
   const measured = [];
+  /* WHICH UPLOADS WERE PAIRED, said per team and per day -- so a figure that disagrees with
+     somebody's own file comparison can be traced to the upload the system actually read.
+       "someone said they recovered more than what i displayed so i dag into that team ...
+        having 1,600,473.00 recovered but the system shown only 986,167 ... thats why i
+        requested teams and list to grind more not just my initial and current data but
+        what is in the system too"
+     For each team-day-type: the batch that won (uploaded at, rows, total) and how many other
+     uploads of that same team-day-type it superseded. A deck the system paired that is not
+     the file on somebody's desk is then visible as a time and a row count, not a mystery. */
+  const decks = [];
   const entry = r => {
     const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
     return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
-      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set() }).get(k);
+      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0 }).get(k);
+  };
+  const deckInfo_ = (d, type, all, chosen) => {
+    const byTeam = new Map();
+    for (const r of all) {
+      const t = K(r.team);
+      const e = byTeam.get(t) || byTeam.set(t, { team: r.team || '', batches: new Set(), rows: 0, total: 0, uploadedAt: null }).get(t);
+      e.batches.add(String(r.upload_batch || ''));
+    }
+    for (const r of chosen) {
+      const e = byTeam.get(K(r.team));
+      e.rows++; e.total += num(r.arrears);
+      if (!e.uploadedAt || String(r.created_at || '') > e.uploadedAt) e.uploadedAt = r.created_at || null;
+    }
+    for (const e of byTeam.values()) {
+      decks.push({ date: d, type, team: e.team, uploadedAt: e.uploadedAt, rows: e.rows, total: e.total,
+        superseded: Math.max(0, e.batches.size - 1) });
+    }
   };
   for (const d of days) {
     const wd = weekdayOfKey(d);
-    const deck = type => pickLatestBatch(rows.filter(r => String(r.snapshot_date).slice(0, 10) === d
-      && r.snapshot_type === type && K(r.weekday) === wd));
-    const ini = deck('initial'), cur = deck('current');
+    const onDay = type => rows.filter(r => String(r.snapshot_date).slice(0, 10) === d
+      && r.snapshot_type === type && K(r.weekday) === wd);
+    const iniAll = onDay('initial'), curAll = onDay('current');
+    const ini = pickLatestBatch(iniAll), cur = pickLatestBatch(curAll);
     if (!ini.length || !cur.length) continue;                 // not measured -- the tile's rule
     measured.push(d);
-    for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(d); }
-    for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(d); }
+    deckInfo_(d, 'initial', iniAll, ini);
+    deckInfo_(d, 'current', curAll, cur);
+    for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(d); e.onInitial++; }
+    for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(d); e.onCurrent++; }
     for (const target of ['defaulter-initial', 'defaulter-current']) {
       for (const c of (adj ? adj.cells(target).filter(c => c.date === d) : [])) {
         if (!teamAllowed(user, c.team)) continue;
@@ -9006,13 +9036,21 @@ async function recoveryCustomers(db, user0, args, nowMs) {
       }
     }
   }
-  const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size, dates: undefined }))
-    .concat(lines)
+  /* WHAT HAPPENED TO EACH CUSTOMER, in a word the list can be filtered on: cleared (on the
+     initial deck, gone from the current), reduced, unchanged, increased, or new (on the
+     current deck only). "Unchanged" is the row to look at when a file says otherwise: it is
+     the system saying its current deck still carries that arrears. */
+  const statusOf = e => !e.onCurrent ? 'cleared' : !e.onInitial ? 'new'
+    : e.current < e.initial ? 'reduced' : e.current > e.initial ? 'increased' : 'unchanged';
+  const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size,
+      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined }))
+    .concat(lines.map(l => ({ ...l, status: 'adjustment' })))
     .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
   const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
     recovered: t.recovered + r.recovered, customers: t.customers + (r.adjustment ? 0 : 1) }),
     { initial: 0, current: 0, recovered: 0, customers: 0 });
-  return { rows: out, totals, date, weekOf: mon, weekEnd: sun, days: measured,
+  decks.sort((a, b) => a.date.localeCompare(b.date) || String(a.team).localeCompare(String(b.team)) || a.type.localeCompare(b.type));
+  return { rows: out, totals, date, weekOf: mon, weekEnd: sun, days: measured, decks,
     teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
 }
 

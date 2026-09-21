@@ -346,6 +346,32 @@ test('the customers behind a recovery tile add up to the tile, for a day and for
   assert.deepEqual(picked.rows.map(r => r.ref), ['999']); assert.deepEqual(picked.teamsApplied, ['MBAGALA']);
 });
 
+/* "someone said they recovered more than what i displayed ... thats why i requested teams and
+   list to grind more not just my initial and current data but what is in the system too" /
+   "i can repair initial or current of any day of last week now by uploading and choosing date"
+   The list says which uploads it paired per team, and what happened to each customer. */
+test('the recovery list names the uploads it paired, the latest for the picked date wins, and each customer carries a status', async () => {
+  const t = tables();
+  // A repair of KONGOWE's current deck for TODAY, uploaded later: customer 111 is gone (cleared),
+  // 555 is unchanged at 700. It supersedes the fixture's earlier current upload for that team.
+  t.defaulter_snapshots.push({ ...D('555', 'KONGOWE', 700, 'current'), upload_batch: 'repair', created_at: TODAY + 'T18:00:00Z' });
+  const db = dbWithRpc(t);
+  const r = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY }, NOW);
+  const k = Object.fromEntries(r.rows.map(x => [x.ref, x]));
+  assert.equal(k['111'].status, 'cleared'); assert.equal(k['111'].recovered, 500, 'gone from the repaired current deck = fully recovered');
+  assert.equal(k['555'].status, 'unchanged'); assert.equal(k['555'].recovered, 0, 'the repaired deck says 700 both sides');
+  assert.equal(k['999'].status, 'reduced'); assert.equal(k['999'].recovered, 100);
+  const kc = r.decks.find(d => d.team === 'KONGOWE' && d.type === 'current');
+  assert.ok(kc, 'the paired current deck for KONGOWE is named');
+  assert.equal(kc.rows, 1); assert.equal(kc.total, 700);
+  assert.equal(kc.uploadedAt, TODAY + 'T18:00:00Z', 'the later upload for the picked date is the one paired');
+  assert.equal(kc.superseded, 1, 'and it says an earlier upload of that team-day was superseded');
+  const ki = r.decks.find(d => d.team === 'KONGOWE' && d.type === 'initial');
+  assert.equal(ki.rows, 2); assert.equal(ki.total, 1200); assert.equal(ki.superseded, 0);
+  assert.equal(r.decks.length, 4, 'two teams x initial and current');
+  assert.equal(r.totals.recovered, 600);
+});
+
 test('a team with no branch set yet reads null, not a crash', async () => {
   const d = await run('followup');   // tables()'s default fixture never sets .branch
   assert.ok(d.rows.length, 'the fixture has rows to check');
