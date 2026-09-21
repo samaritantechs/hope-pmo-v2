@@ -291,6 +291,32 @@ test('followup and dashboardFull carry branch, straight off the teams table', as
   assert.equal(kongoweTeam.branch, 'KIBAHA-KONGOWE');
 });
 
+/* "I need a team selector after the blue blinker on dashboard that filters the current dashboard
+   data into chosen/selected team(s) among those owned by the current user." The pick narrows the
+   code's own scope at the database and can never widen it. */
+test('the dashboard narrows to picked teams, never widens, and says what it offered and applied', async () => {
+  const db = dbWithRpc(tables());
+  const all = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  assert.deepEqual(all.teamOptions, ['KONGOWE', 'MBAGALA'], 'a code holding every team is offered the register');
+  assert.deepEqual(all.teamsApplied, []);
+  const one = await portalApi(db, ADMIN, 'dashboardFull', { teams: ['kongowe'] }, NOW);
+  assert.deepEqual(one.teamsApplied, ['KONGOWE'], 'matched case-insensitively, answered in the register\'s spelling');
+  assert.deepEqual(one.teamPerf.map(r => r.team), ['KONGOWE'], 'the figures are that team\'s alone');
+  assert.ok(all.teamPerf.length > one.teamPerf.length);
+  assert.notDeepEqual(all.cards, one.cards, 'two picks in one minute are two answers, not one cached one');
+  const csv = await portalApi(db, ADMIN, 'dashboardFull', { teams: 'KONGOWE,NOBODY' }, NOW);
+  assert.deepEqual(csv.teamsApplied, ['KONGOWE'], 'a comma list works and an unknown name is dropped');
+  // A one-team officer: offered their one team, and a pick outside it is not honoured.
+  const mine = await portalApi(db, GMO, 'dashboardFull', {}, NOW);
+  assert.deepEqual(mine.teamOptions, ['KONGOWE']);
+  const outside = await portalApi(db, GMO, 'dashboardFull', { teams: ['MBAGALA'] }, NOW);
+  assert.deepEqual(outside.teamsApplied, [], 'not theirs, so not applied');
+  assert.deepEqual(outside.teamPerf.map(r => r.team), ['KONGOWE'], 'and the scope stayed their own, not everything');
+  // The month report takes the same pick.
+  const m = await portalApi(db, ADMIN, 'monthReport', { teams: ['MBAGALA'] }, NOW);
+  assert.deepEqual(m.teamsApplied, ['MBAGALA']);
+});
+
 test('a team with no branch set yet reads null, not a crash', async () => {
   const d = await run('followup');   // tables()'s default fixture never sets .branch
   assert.ok(d.rows.length, 'the fixture has rows to check');
