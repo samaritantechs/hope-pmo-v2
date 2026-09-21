@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-f';
+var BUILD = '2026-09-21-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -667,21 +667,35 @@ function srv(fn, args){
      seconds on purpose -- the heaviest screens here legitimately take several. */
   var ctl = window.AbortController ? new AbortController() : null;
   var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 45000);
-  return fetch('/api/portal', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    // `workspace` travels on EVERY call, not just the loan ones -- the server is the one place
-    // that decides whether it is honoured (see api/_lib/workspace.js), so a stray value here
-    // can, at worst, be ignored, never grant anything on its own.
-    body: JSON.stringify({ code:S.code, fn:fn, args:args||{}, workspace:S.workspace }),
-    signal: ctl ? ctl.signal : undefined
-  }).then(function(r){ clearTimeout(timer); return readJson_(r); },
-     function(e){
-       clearTimeout(timer);
-       if (/abort/i.test(String((e && e.message) || e)) || (e && e.name === 'AbortError')) {
-         throw new Error('Seva haijibu ndani ya sekunde 45 / the server did not answer within 45 seconds');
-       }
-       throw e;
-     })
+  var post = function(){
+    return fetch('/api/portal', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      // `workspace` travels on EVERY call, not just the loan ones -- the server is the one place
+      // that decides whether it is honoured (see api/_lib/workspace.js), so a stray value here
+      // can, at worst, be ignored, never grant anything on its own.
+      body: JSON.stringify({ code:S.code, fn:fn, args:args||{}, workspace:S.workspace }),
+      signal: ctl ? ctl.signal : undefined
+    });
+  };
+  /* ONE RETRY WHEN THE LINE DROPS A READ. "Failed to fetch" is not the server saying no -- it
+     is the connection going before an answer came back, which on a field phone during a long
+     dashboard read is ordinary. A READ can be asked again safely; a write cannot, and is not.
+     The 45-second deadline covers both attempts together. */
+  var attempt = function(n){
+    return post().then(function(r){ clearTimeout(timer); return readJson_(r); },
+      function(e){
+        if (/abort/i.test(String((e && e.message) || e)) || (e && e.name === 'AbortError')) {
+          clearTimeout(timer);
+          throw new Error('Seva haijibu ndani ya sekunde 45 / the server did not answer within 45 seconds');
+        }
+        if (n < 1 && READ_FNS[fn] && (!e || !e.status)) {
+          return new Promise(function(res){ setTimeout(res, 1500); }).then(function(){ return attempt(n + 1); });
+        }
+        clearTimeout(timer);
+        throw e;
+      });
+  };
+  return attempt(0)
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) return x.body;
       /* The admin closed the system while this page was open. Every tab from here on would
@@ -2560,6 +2574,9 @@ function wireBar(){
     };
   });
   wireWeekBar();
+  // The dashboard's officer boards, on request.
+  var dbl = document.getElementById('dashBoardsLoad');
+  if (dbl) dbl.onclick = function(){ if (typeof DASH_LOAD_BOARDS_ === 'function') DASH_LOAD_BOARDS_(); };
   // A recovery tile opens the customers behind it.
   Array.prototype.forEach.call(document.querySelectorAll('[data-reccust]'), function(el){
     el.onclick = function(e){ e.stopPropagation(); recoveryCustomersDrawer_(el.getAttribute('data-reccust')); };
@@ -3234,6 +3251,7 @@ function weekdayOf_(key){
   var t = Date.parse(String(key || '').slice(0, 10) + 'T12:00:00Z');
   return isFinite(t) ? ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][new Date(t).getUTCDay()] : '';
 }
+var DASH_LOAD_BOARDS_ = null;   // set by VIEWS.dashboard; pressed via #dashBoardsLoad (wireBar)
 function teamPickKey_(){ return 'hopeDashTeams_' + ((S.me && S.me.code) || ''); }
 function teamPickLoad_(){
   if (Array.isArray(S.args.teams)) return S.args.teams;
@@ -3362,91 +3380,106 @@ VIEWS.dashboard = function(){
        one that failed says so IN ITS OWN PLACE, with the reason. "Officer boards could not
        load" told nobody whether the server was slow, the session had expired, or the screen was
        broken -- and the reason is the only part anybody can act on. */
+    /* THE BOARDS LOAD ON A TAP, NOT WITH THE DASHBOARD.
+         "dashboard speed is falling (Imeshindikana / Could not load. Failed to fetch) we could
+          load that data after click"
+       The three calls below (officerBoards alone is thirty-odd reads) used to fire the moment
+       the headline numbers landed, so on a slow morning they competed with the dashboard's
+       own reads on the same database and the whole screen fell over together. Now the core
+       paints on its own and the boards wait behind one button; pressing it runs exactly the
+       wave that used to run by itself. */
+    DASH_LOAD_BOARDS_ = function(){
+      var host0 = document.getElementById('boards');
+      if (host0) host0.innerHTML = '<div class="sk"></div>';
     var boardsWhy = '';
-    Promise.all([srv('officerBoards').catch(function(e){ boardsWhy = String((e && e.message) || e); return null; }),
-                 srv('callAgents', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; }),
-                 srv('recoveryByCredit', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; })])
-      .then(function(r){
-      /* An empty shape rather than null, so every board below draws its (empty) self instead of
-         throwing on the first property access and taking the rest down with it a second time. */
-      var b = r[0] || { earlyToday:[], earlyWeek:[], recToday:[], recWeek:[],
-                        creditToday:[], creditWeek:[], teamPerf:[] };
-      S.csAgents = r[1];
-      var creditRec = r[2];
-      var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
-      var extra =
-          (boardsWhy
-            ? '<div class="note bad">Bodi za maafisa hazikupakia / the officer boards did not load'
-              + ' &mdash; ' + esc(boardsWhy)
-              + '<br><span style="font-size:11.5px">Bodi zilizo hapa chini ni zile zilizofanikiwa.'
-              + ' / What is below is whatever else did load. Press the tab again to retry.</span></div>'
-            : '')
-        + (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
-        /* The paid / overpaid counts are what the COMMISSION is worked out from -- so many
-           shillings per PAID client, so many per OVERPAID -- and they belong on the commission
-           panel beside the money they produce, not on the dashboard where they read as a
-           performance figure they are not. What an early-collection officer is judged on is
-           the percentage, over the teams they cover. */
-        /* "TODAY" IS THE LIST FOR TOMORROW -- the initial sheet dated after today, which is
-           what the early officers are working now. The title names the date it is for. */
-        + boardPair('bEarlyT','Early collection by officer — kesho / the next list' + (b.earlyDate ? ' (' + esc(b.earlyDate) + ')' : ''),
-                    'teams · uncollected · collection % · kitabu cha INITIAL cha ' + (b.earlyAhead ? 'kesho / for the day ahead' : 'siku ya mwisho / the latest one held'), b.earlyToday,
-                    'bEarlyW','Early collection — this week','Mon–Fri · kitabu cha INITIAL pekee / the INITIAL sheets only, as the commission board pays', b.earlyWeek,
-                    [col('officer','Officer'), col('teams','Teams','num'),
-                     col('uncollected','Uncollected','money'),
-                     {key:'pct', label:'Collection %', kind:'pct', target:'ecol'}],
-                    ['teams','uncollected'])
-        // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
-        // a customer does not fall into default between breakfast and lunch.
-        /* TODAY's uncollected stands BEFORE today's recovered -- what was left out, then what
-           the officer brought back -- and it is the very figure the % divides by (the week's
-           on Saturday and Sunday): the commission board's own record for the officer, so the
-           wall and the pay slip cannot show two figures for one person. No jana column: a
-           figure the percentage does not divide by has no business sitting beside it. */
-        + board('bRecT','Recovery — today','initial · current · leo uncollected · recovered · Rec % ÷ today’s uncollected (the week’s on Sat/Sun), as on the commission board', b.recToday,
-                    [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
-                     col('uncollected','Uncol leo','money'),
-                     {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recToday, ['initial','current','uncollected','recovered']))
-        + board('bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
-                    [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
-                     {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
-                     {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                     {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
-        + creditRecoveryBoard(creditRec && creditRec.metrics)
-        + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
-                    'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
-                    [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
-                     col('salesPct','Sales %','pct'), col('recPct','Rec %','pct'), col('perf','Perf','pct')], ['apps','amount'])
-        // "Call agents" here means the CUSTOMER SERVICE agents named on loan applications --
-        // each application carries a CREATED BY agent id. How many phone calls a field
-        // officer made is a different question and lives on the Call Reports tab.
-        /* THE WEEK'S, by upload date -- not the whole pipeline. One Monday file of 132
-           applications was reading as two and a half thousand here, because the card counted
-           every application still sitting unassigned or assigned, however old. */
-        + board('bCS','Call agents — applications brought in' + (S.csAgents && S.csAgents.weekOf ? ' · wiki ya / week of ' + esc(S.csAgents.weekOf) : ''),
-                'CREATED BY on the application reports · TRACK# reads 1 · roster agents only (the strict rule) · tarehe ya kupakia / by the UPLOAD date, Mon–Sun',
-                (S.csAgents && S.csAgents.rows) || [],
-                [{key:'id', label:'Agent'},
-                 // The TOTAL row has no agent, so it has nobody to be "not named".
-                 {key:'names', label:'Who', cls:function(r){ return (r.names || !r.id)?'':'bad'; },
-                  get:function(r){ return !r.id ? '' : (r.names || 'not named — add in Teams & Staff'); }},
-                 col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
-                 col('total','Total apps','num'), col('amount','Requested','money')],
-                (S.csAgents && S.csAgents.totals)
-                  ? Object.assign({ id:'', names:'' }, S.csAgents.totals) : null)
-        + csExcludedNote(S.csAgents && S.csAgents.excluded)
-        + board('bFu','Follow-up status — all defaulters', money(b.fuTotal)+' customers', b.fuStatus,
-                [col('status','Status'), col('customers','Customers','num'),
-                 {key:'pct', label:'% of book', kind:'pct', lowGood:true}, col('arrears','Arrears','money')],
-                sumRow(b.fuStatus, ['customers','arrears']));
-      var host = document.getElementById('boards');
-      if (host) { host.innerHTML = extra; wireBar(); }
-    }).catch(function(){
-      var host = document.getElementById('boards');
-      if (host) host.innerHTML = '<div class="msg bad">Officer boards could not load.</div>';
-    });
-    HEAD += '<div id="boards"><div class="sk"></div></div>';
+      Promise.all([srv('officerBoards').catch(function(e){ boardsWhy = String((e && e.message) || e); return null; }),
+                   srv('callAgents', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; }),
+                   srv('recoveryByCredit', { weekOf: S.args.weekOf || '' }).catch(function(){ return null; })])
+        .then(function(r){
+        /* An empty shape rather than null, so every board below draws its (empty) self instead of
+           throwing on the first property access and taking the rest down with it a second time. */
+        var b = r[0] || { earlyToday:[], earlyWeek:[], recToday:[], recWeek:[],
+                          creditToday:[], creditWeek:[], teamPerf:[] };
+        S.csAgents = r[1];
+        var creditRec = r[2];
+        var money2 = function(k){ return {key:k, label:k, kind:'money'}; };
+        var extra =
+            (boardsWhy
+              ? '<div class="note bad">Bodi za maafisa hazikupakia / the officer boards did not load'
+                + ' &mdash; ' + esc(boardsWhy)
+                + '<br><span style="font-size:11.5px">Bodi zilizo hapa chini ni zile zilizofanikiwa.'
+                + ' / What is below is whatever else did load. Press the tab again to retry.</span></div>'
+              : '')
+          + (b.deckWarning ? '<div class="note bad">'+esc(b.deckWarning)+'</div>' : '')
+          /* The paid / overpaid counts are what the COMMISSION is worked out from -- so many
+             shillings per PAID client, so many per OVERPAID -- and they belong on the commission
+             panel beside the money they produce, not on the dashboard where they read as a
+             performance figure they are not. What an early-collection officer is judged on is
+             the percentage, over the teams they cover. */
+          /* "TODAY" IS THE LIST FOR TOMORROW -- the initial sheet dated after today, which is
+             what the early officers are working now. The title names the date it is for. */
+          + boardPair('bEarlyT','Early collection by officer — kesho / the next list' + (b.earlyDate ? ' (' + esc(b.earlyDate) + ')' : ''),
+                      'teams · uncollected · collection % · kitabu cha INITIAL cha ' + (b.earlyAhead ? 'kesho / for the day ahead' : 'siku ya mwisho / the latest one held'), b.earlyToday,
+                      'bEarlyW','Early collection — this week','Mon–Fri · kitabu cha INITIAL pekee / the INITIAL sheets only, as the commission board pays', b.earlyWeek,
+                      [col('officer','Officer'), col('teams','Teams','num'),
+                       col('uncollected','Uncollected','money'),
+                       {key:'pct', label:'Collection %', kind:'pct', target:'ecol'}],
+                      ['teams','uncollected'])
+          // Debt crisis is a WEEKLY reading, so the two boards no longer share a column set:
+          // a customer does not fall into default between breakfast and lunch.
+          /* TODAY's uncollected stands BEFORE today's recovered -- what was left out, then what
+             the officer brought back -- and it is the very figure the % divides by (the week's
+             on Saturday and Sunday): the commission board's own record for the officer, so the
+             wall and the pay slip cannot show two figures for one person. No jana column: a
+             figure the percentage does not divide by has no business sitting beside it. */
+          + board('bRecT','Recovery — today','initial · current · leo uncollected · recovered · Rec % ÷ today’s uncollected (the week’s on Sat/Sun), as on the commission board', b.recToday,
+                      [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+                       col('uncollected','Uncol leo','money'),
+                       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+                       {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recToday, ['initial','current','uncollected','recovered']))
+          + board('bRecW','Recovery by officer — this week','Mon initial vs today current · debt crisis = Mon−today · recovered = daily summed', b.recWeek,
+                      [col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+                       {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
+                       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+                       {key:'pct', label:'Rec %', kind:'pct', target:'rec'}], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
+          + creditRecoveryBoard(creditRec && creditRec.metrics)
+          + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
+                      'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
+                      [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
+                       col('salesPct','Sales %','pct'), col('recPct','Rec %','pct'), col('perf','Perf','pct')], ['apps','amount'])
+          // "Call agents" here means the CUSTOMER SERVICE agents named on loan applications --
+          // each application carries a CREATED BY agent id. How many phone calls a field
+          // officer made is a different question and lives on the Call Reports tab.
+          /* THE WEEK'S, by upload date -- not the whole pipeline. One Monday file of 132
+             applications was reading as two and a half thousand here, because the card counted
+             every application still sitting unassigned or assigned, however old. */
+          + board('bCS','Call agents — applications brought in' + (S.csAgents && S.csAgents.weekOf ? ' · wiki ya / week of ' + esc(S.csAgents.weekOf) : ''),
+                  'CREATED BY on the application reports · TRACK# reads 1 · roster agents only (the strict rule) · tarehe ya kupakia / by the UPLOAD date, Mon–Sun',
+                  (S.csAgents && S.csAgents.rows) || [],
+                  [{key:'id', label:'Agent'},
+                   // The TOTAL row has no agent, so it has nobody to be "not named".
+                   {key:'names', label:'Who', cls:function(r){ return (r.names || !r.id)?'':'bad'; },
+                    get:function(r){ return !r.id ? '' : (r.names || 'not named — add in Teams & Staff'); }},
+                   col('unassigned','Unassigned','num'), col('assigned','Assigned','num'),
+                   col('total','Total apps','num'), col('amount','Requested','money')],
+                  (S.csAgents && S.csAgents.totals)
+                    ? Object.assign({ id:'', names:'' }, S.csAgents.totals) : null)
+          + csExcludedNote(S.csAgents && S.csAgents.excluded)
+          + board('bFu','Follow-up status — all defaulters', money(b.fuTotal)+' customers', b.fuStatus,
+                  [col('status','Status'), col('customers','Customers','num'),
+                   {key:'pct', label:'% of book', kind:'pct', lowGood:true}, col('arrears','Arrears','money')],
+                  sumRow(b.fuStatus, ['customers','arrears']));
+        var host = document.getElementById('boards');
+        if (host) { host.innerHTML = extra; wireBar(); }
+      }).catch(function(){
+        var host = document.getElementById('boards');
+        if (host) host.innerHTML = '<div class="msg bad">Officer boards could not load.</div>';
+      });
+    };
+    HEAD += '<div id="boards"><div class="card" style="padding:12px 14px">'
+      + '<button class="btn sm" id="dashBoardsLoad">📊 Pakia bodi za maafisa / Load officer boards</button>'
+      + '<span class="sub" style="margin-left:10px">Bodi za maafisa, wakala wa simu na urejeshaji wa credit hupakiwa ukibofya, ili dashibodi ifunguke haraka.'
+      + ' / Officer boards, call agents and credit recovery load on request, so the dashboard opens fast.</span></div></div>';
     S.rows = d.teamPerf || [];
     /* THE ORODHA: the team, its four officers, then TODAY beside the MONTH for each of the
        four things a team is judged on, the two averages, and the two counts.
