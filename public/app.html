@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-a';
+var BUILD = '2026-09-21-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8968,8 +8968,12 @@ function lnDisableTrigger_(){
 }
 function lnAct(fn, args, okMsg, after){
   var btn = lnDisableTrigger_();
-  srv(fn, args).then(function(){
-    toast(okMsg || 'Imefanyika / Done');
+  srv(fn, args).then(function(r){
+    /* okMsg may be a function of the answer -- Assign says whether an Assessment Plan was
+       merged into the loan, and a merge that could not finish is said in red, not swallowed
+       behind a plain "Assigned." (CLAUDE.md: silence reads as success). */
+    var m = typeof okMsg === 'function' ? okMsg(r) : okMsg;
+    if (m && typeof m === 'object') toast(m.text, !!m.bad); else toast(m || 'Imefanyika / Done');
     closeDrawer();               // the button leaves with the drawer -- nothing to re-enable
     (after || render)();
   }).catch(function(e){
@@ -9003,6 +9007,11 @@ function lnActKeep_(fn, args, okMsg){
    at a capped dimension), which is what actually matters on a field connection; kycUpload's
    own 2MB cap is only the backstop. */
 function kycUpload_(loanId, kind, dataUrl, cameraLabel){
+  /* "plan:<id>" in the loan slot means the capture belongs to an Assessment Plan's draft, not
+     to a loan (there is none yet) -- every capture helper passes the id straight through, so
+     this one branch is the whole of plan mode as far as uploads are concerned. */
+  var pm = /^plan:(.+)$/.exec(String(loanId || ''));
+  if (pm) return srv('kycUpload', { plan_id: pm[1], kind: kind, data_url: dataUrl, camera_label: cameraLabel });
   return srv('kycUpload', { loan_id: loanId, kind: kind, data_url: dataUrl, camera_label: cameraLabel });
 }
 
@@ -9478,7 +9487,14 @@ function lnManagerAssignForm_(loan){
       + '<button class="btn w" id="lnAssignBtn">Assign</button>'
       + '<button class="btn w ghost" id="lnRejectBtn" style="margin-top:8px">Reject</button>');
     $('#lnAssignBtn').onclick = function(){
-      lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, 'Assigned.', function(){ go('ln_manager'); });
+      lnAct('managerAssign', { loan_id: loan.id, team: $('#lnAssignTeam').value.trim() }, function(r){
+        var m = r && r.planMerged;
+        if (!m) return 'Assigned.';
+        if (m.error) return { bad: true, text: 'Assigned, LAKINI mpango wa tathmini haukuunganishwa / BUT the assessment plan was NOT merged: ' + m.error };
+        return m.sections && m.sections.length
+          ? 'Assigned. Mpango wa tathmini umeunganishwa (' + m.sections.join(', ') + ') / Assessment plan merged into the recommendation.'
+          : 'Assigned. Mpango wa tathmini umefungwa -- haukuwa na rasimu / Assessment plan closed (nothing was drafted on it).';
+      }, function(){ go('ln_manager'); });
     };
     $('#lnRejectBtn').onclick = function(){
       lnReasonPrompt_(function(reason){ lnAct('managerReject', { loan_id: loan.id, reason: reason }, 'Rejected.', function(){ go('ln_manager'); }); });
@@ -9501,13 +9517,52 @@ VIEWS.ln_team = function(){
    otherwise. Captures upload the moment they happen (kycUpload), independent of the section's
    own Save button -- a photo taken and then the drawer closed before pressing Save is still on
    file, not lost with the rest of the section's typed fields. */
-function lnTeamAssessForm_(loanRow){
-  srv('teamAssessDetail', { loan_id: loanRow.id }).then(function(d){
+/* AN ASSESSMENT PLAN, READ AS IF IT WERE A LOAN'S DETAIL, so the one recommendation form
+   below draws it. The draft is saved section by section in exactly the field names the form
+   sends (assessmentPlanDraftSave), so turning it back into {loan, customer, guarantors,
+   assessment} is a matter of putting each section's fields where the form looks for them. */
+function lnPlanAsDetail_(plan){
+  var dr = plan.draft && typeof plan.draft === 'object' ? plan.draft : {};
+  var p = dr.personal || {}, b = dr.business || {}, r = dr.residence || {}, rec = dr.recommendation || {};
+  var c = {};
+  Object.keys(p).forEach(function(k){ if (k !== 'other_number_form_url' && k !== 'other_number_form_holder_url') c[k] = p[k]; });
+  Object.keys(r).forEach(function(k){ if (k !== 'verified' && k !== 'guarantor_verified') c[k] = r[k]; });
+  Object.keys(b).forEach(function(k){ if (k !== 'verified') c[k] = b[k]; });
+  return {
+    loan: { id: 'plan:' + plan.id, full_name: plan.full_name, contact: plan.phone, team: plan.team,
+      loan_id: 'MPANGO / PLAN', docket_no: '', track_no: 1, requested_amt: null,
+      collateral_type: rec.collateral_type || '',
+      collateral_value: (rec.collateral_value != null && rec.collateral_value !== '') ? rec.collateral_value : null,
+      other_number_form_url: p.other_number_form_url || null, other_number_form_holder_url: p.other_number_form_holder_url || null,
+      contract_photo_urls: [] },
+    customer: c,
+    guarantors: (dr.guarantor && dr.guarantor.guarantors) || [],
+    assessment: { recommend_amount: rec.amount || null, credit_score: rec.credit_score, zone_visited: rec.zone, remarks: rec.remarks,
+      officer_name: rec.officer_name, officer_signature_url: rec.officer_signature_url,
+      business_verified: !!b.verified, residence_verified: !!r.verified, guarantor_residence_verified: !!r.guarantor_verified },
+  };
+}
+/* One form, two owners. With a loan row it is Team · Recommendation, saving through
+   teamAssessmentSave and submitting through teamSubmit. With a PLAN row it is the same five
+   sections drafted on the Assessment Plan -- "allow the pre-fillable info of loan
+   recommendation at assessment plan and saving only - submitting will only happen at
+   recommendation" -- saving through assessmentPlanDraftSave, photos under the plan, and no
+   submit, reject, contract or KYC-copy at all: those need a loan, and the loan arrives the
+   day the customer is assigned, when the draft is merged into it (mergePlanIntoLoan_). */
+function lnTeamAssessForm_(loanRow, planRow){
+  var planMode = !!planRow;
+  var detail = planMode ? Promise.resolve(lnPlanAsDetail_(planRow)) : srv('teamAssessDetail', { loan_id: loanRow.id });
+  detail.then(function(d){
     var loan = d.loan, c = d.customer || {}, a = d.assessment || {};
     var g = (d.guarantors || [])[0] || {};
     var alts = (d.guarantors || []).slice(1, 6);
     while (alts.length < 5) alts.push({});
-    var locked = Number(loan.track_no) > 1;
+    var locked = !planMode && Number(loan.track_no) > 1;
+    var saveSection_ = function(section, fields){
+      return planMode
+        ? lnActKeep_('assessmentPlanDraftSave', { id: planRow.id, section: section, fields: fields }, 'Imehifadhiwa kwenye mpango / Saved on the plan.')
+        : lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: section, fields: fields }, 'Saved.');
+    };
     var idType = c.id_type || 'NIDA';
     var idNo = ID_TYPES[idType] ? (c[ID_TYPES[idType]] || '') : '';
 
@@ -9518,8 +9573,11 @@ function lnTeamAssessForm_(loanRow){
     // through every stage, not just the first.
     var STAGE_TABS_ = [['personal', '1. Personal'], ['business', '2. Business'],
       ['residence', '3. Residence'], ['guarantor', '4. Guarantor'], ['recommendation', '5. Recommendation']];
-    drawer('<div class="ln-sticky"><h3>' + esc(loan.full_name) + ' &middot; Ref ' + esc(loan.loan_id) + '</h3>'
-      + '<div class="sub">Each section SAVES ON ITS OWN -- nothing is lost if you leave and come back.</div>'
+    drawer('<div class="ln-sticky"><h3>' + esc(loan.full_name) + ' &middot; '
+        + (planMode ? 'Mpango / Plan &middot; ' + esc(planRow.planned_date || '') : 'Ref ' + esc(loan.loan_id)) + '</h3>'
+      + '<div class="sub">' + (planMode
+          ? 'RASIMU TU. Kila sehemu huhifadhiwa kwenye mpango; kuwasilisha hufanyika kwenye Team &middot; Recommendation baada ya kupangiwa. / DRAFT ONLY. Each section saves on the plan; submitting happens at Team &middot; Recommendation once the customer is assigned.'
+          : 'Each section SAVES ON ITS OWN -- nothing is lost if you leave and come back.') + '</div>'
       + '<div class="ln-stagebar">' + STAGE_TABS_.map(function(t, i){
           return '<button type="button" class="btn sm ln-stage-btn' + (i ? ' ghost' : '') + '" data-stage="' + t[0] + '">' + t[1] + '</button>';
         }).join('') + '</div></div>'
@@ -9715,23 +9773,25 @@ function lnTeamAssessForm_(loanRow){
       + captureRowPad_('Sahihi ya afisa / Officer signature', 'lnOfficerSigPad', 'lnOfficerSigClear')
       + '<button class="btn sm" id="lnSaveRec">Save this section</button></div>'
 
-      // "10-photo contract capture + WhatsApp share with autogenerated caption" (RUN-ME-011)
-      // -- photographs of the SIGNED PAPER contract, one "add" button rather than ten fixed
-      // ones (an officer works through the pages one at a time, however many the contract
-      // actually runs to, up to the cap).
-      + '<div class="card"><div class="card-h">Mkataba uliosainiwa / Signed contract'
-      + '<span class="sub" id="lnContractCount">' + (loan.contract_photo_urls || []).length + '/10</span></div>'
-      + '<button type="button" class="btn sm ghost" id="lnContractAddBtn">📷 Ongeza ukurasa / Add a page</button>'
-      + '<button type="button" class="btn sm ghost" id="lnContractWaBtn" style="margin-left:6px" disabled>💬 Shiriki WhatsApp / Share on WhatsApp</button>'
-      + '</div>'
+      + (planMode
+        ? '<div class="note" style="margin-top:14px">Mkataba, nakala ya KYC na kuwasilisha vinapatikana kwenye Team &middot; Recommendation baada ya mteja kupangiwa; rasimu hii itahamia huko yenyewe. / The contract, the KYC copy and Submit live at Team &middot; Recommendation once the customer is assigned; this draft moves there on its own.</div>'
+        // "10-photo contract capture + WhatsApp share with autogenerated caption" (RUN-ME-011)
+        // -- photographs of the SIGNED PAPER contract, one "add" button rather than ten fixed
+        // ones (an officer works through the pages one at a time, however many the contract
+        // actually runs to, up to the cap).
+        : '<div class="card"><div class="card-h">Mkataba uliosainiwa / Signed contract'
+          + '<span class="sub" id="lnContractCount">' + (loan.contract_photo_urls || []).length + '/10</span></div>'
+          + '<button type="button" class="btn sm ghost" id="lnContractAddBtn">📷 Ongeza ukurasa / Add a page</button>'
+          + '<button type="button" class="btn sm ghost" id="lnContractWaBtn" style="margin-left:6px" disabled>💬 Shiriki WhatsApp / Share on WhatsApp</button>'
+          + '</div>'
 
-      + '<div class="fld" style="margin-top:14px">'
-      // "Having all the recommendation filled should produce a copy icon on the customer
-      // pannel for copying all the loan recommendation KYC organized text to report in
-      // whatsapp" -- enabled once there is a recommended amount to report, live as it's typed.
-      + '<button class="btn w ghost" id="lnCopyKyc" disabled>📋 Nakili KYC / Copy KYC for WhatsApp</button>'
-      + '<button class="btn w" id="lnSubmitRec" style="margin-top:8px">Submit recommendation</button>'
-      + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>'
+          + '<div class="fld" style="margin-top:14px">'
+          // "Having all the recommendation filled should produce a copy icon on the customer
+          // pannel for copying all the loan recommendation KYC organized text to report in
+          // whatsapp" -- enabled once there is a recommended amount to report, live as it's typed.
+          + '<button class="btn w ghost" id="lnCopyKyc" disabled>📋 Nakili KYC / Copy KYC for WhatsApp</button>'
+          + '<button class="btn w" id="lnSubmitRec" style="margin-top:8px">Submit recommendation</button>'
+          + '<button class="btn w ghost" id="lnRejectRec" style="margin-top:8px">Reject</button></div>')
       + '</div>');
 
     // ---- ID type: which number field is actually being asked for ----
@@ -9792,6 +9852,7 @@ function lnTeamAssessForm_(loanRow){
     // uploads (and counts) the moment it is taken, same as every other capture in this form;
     // there is nothing to "save" for this one, kycUpload itself appends it (see loan-core.js).
     var contractCount = (loan.contract_photo_urls || []).length;
+    if (!planMode) {
     function refreshContractCount_(){
       $('#lnContractCount').textContent = contractCount + '/10';
       $('#lnContractAddBtn').disabled = contractCount >= 10;
@@ -9818,6 +9879,7 @@ function lnTeamAssessForm_(loanRow){
         + 'Kurasa za mkataba zilizopigwa picha / Contract pages captured: ' + contractCount + '/10';
       window.open('https://wa.me/?text=' + encodeURIComponent(caption), '_blank');
     };
+    }
 
     var COORDS = { custRes: { lat: c.residence_lat, lng: c.residence_lng },
       biz: { lat: c.business_lat, lng: c.business_lng },
@@ -9850,18 +9912,18 @@ function lnTeamAssessForm_(loanRow){
           other_number_form_holder_url: PATHS.otherNumHolder != null ? PATHS.otherNumHolder : loan.other_number_form_holder_url };
         if (idCol) fields[idCol] = $('#lnIdNo').value.trim();
         if (type === 'Other') fields.other_id_type = $('#lnIdOther').value.trim();
-        lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'personal', fields: fields }, 'Saved.');
+        saveSection_('personal', fields);
       }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveRec').onclick = function(){
       saveCanvasPad_(officerSigPad, loan.id, 'officer-signature', function(p){ PATHS.officerSignature = p; })
         .then(function(){
-          lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'recommendation',
-            fields: { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
+          saveSection_('recommendation',
+            { amount: Number($('#lnRecAmt').value) || 0, credit_score: $('#lnCreditScore').value.trim(),
               collateral_type: $('#lnCollType').value.trim(), collateral_value: $('#lnCollValue').value.trim(),
               zone: $('#lnZone').value.trim(), remarks: $('#lnRemarks').value.trim(),
               officer_name: $('#lnOfficerName').value.trim(),
-              officer_signature_url: PATHS.officerSignature != null ? PATHS.officerSignature : a.officer_signature_url } }, 'Saved.');
+              officer_signature_url: PATHS.officerSignature != null ? PATHS.officerSignature : a.officer_signature_url });
         }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     $('#lnSaveGuar').onclick = function(){
@@ -9896,14 +9958,14 @@ function lnTeamAssessForm_(loanRow){
         for (var i = 0; i < 5; i++) list.push({
           full_name: $('#lnAlt' + i + 'Name').value.trim(), phone: $('#lnAlt' + i + 'Phone').value.trim(), relationship: $('#lnAlt' + i + 'Rel').value.trim(),
         });
-        lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'guarantor', fields: { guarantors: list } }, 'Saved.');
+        saveSection_('guarantor', { guarantors: list });
       }).catch(function(e){ toast(String((e && e.message) || e), true); });
     };
     // Two independent saves now -- "officers could reach those in different timeframes", so
     // a residence visit today must be bankable today without waiting on a business visit
     // that might not happen until next week (and vice versa).
     $('#lnSaveResidence').onclick = function(){
-      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'residence', fields: {
+      saveSection_('residence', {
         verified: $('#lnResOk').checked, guarantor_verified: $('#lnGResOk').checked,
         street: $('#lnCustStreet').value.trim(), ward: $('#lnCustWard').value.trim(), district: $('#lnDistrict').value.trim(),
         block_number: $('#lnCustBlock').value.trim(), type_of_residence: $('#lnCustResType').value, residency_capacity: $('#lnCustResCap').value,
@@ -9911,16 +9973,18 @@ function lnTeamAssessForm_(loanRow){
         residence_lat: COORDS.custRes.lat, residence_lng: COORDS.custRes.lng, residence_verify_photo_url: PATHS.custResPhoto,
         residence_verify_photo2_url: PATHS.custResPhoto2, residence_verify_photo3_url: PATHS.custResPhoto3, residence_verify_photo4_url: PATHS.custResPhoto4,
         local_govt_letter_url: PATHS.custLetter,
-      } }, 'Saved.');
+      });
     };
     $('#lnSaveBusiness').onclick = function(){
-      lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: 'business', fields: {
+      saveSection_('business', {
         verified: $('#lnBizOk').checked, business_name: $('#lnBizName').value.trim(),
         daily_sales: $('#lnDailySales').value.trim(), daily_profit: $('#lnDailyProfit').value.trim(), weekly_expenses: $('#lnWeeklyExpenses').value.trim(),
         business_lat: COORDS.biz.lat, business_lng: COORDS.biz.lng, business_verify_photo_url: PATHS.bizPhoto,
         business_verify_photo2_url: PATHS.bizPhoto2, business_verify_photo3_url: PATHS.bizPhoto3,
-      } }, 'Saved.');
+      });
     };
+    // A plan has nothing to submit, reject or copy -- see the note in its place above.
+    if (planMode) return;
     $('#lnSubmitRec').onclick = function(){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'ACCEPTED' }, 'Recommended.', function(){ go('ln_team'); }); };
     $('#lnRejectRec').onclick = function(){
       lnReasonPrompt_(function(reason){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'REJECTED', reason: reason }, 'Rejected.', function(){ go('ln_team'); }); });
@@ -10402,6 +10466,10 @@ VIEWS.ln_assess_plan = function(){
       col('full_name', 'Jina / Name'), col('phone', 'Simu / Phone'), col('team', 'Timu / Team'),
       col('planned_date', 'Tarehe iliyopangwa / Planned date', 'date'),
       { key:'elapsedDays', label:'ED', kind:'num' },
+      // How much of the recommendation is drafted on the plan, and whether the customer has
+      // since been assigned (then the recommendation itself is where to type).
+      { key:'draftN', label:'Rasimu / Draft', get:function(r){ return (r.draftSections || []).length + '/5'; } },
+      { key:'assignedRef', label:'Amepangiwa / Assigned', get:function(r){ return r.assignedRef ? r.assignedRef + (r.assignedTeam ? ' · ' + r.assignedTeam : '') : ''; } },
       col('stale_reason', 'Sababu / Reason'),
     ];
     // "only future dates editable" -- a new plan can only ever be for a date not yet here,
@@ -10458,7 +10526,18 @@ function lnAssessPlanForm_(row){
         + LN_PLAN_STALE_REASONS_.map(function(x){ return '<option' + (row.stale_reason === x ? ' selected' : '') + '>' + esc(x) + '</option>'; }).join('')
         + '</select></div>' : '')
     + '<button class="btn w" id="lnPlanSaveBtn">Hifadhi / Save</button>'
+    /* "allow the pre-fillable info of loan recommendation at assessment plan and saving only"
+       -- the whole recommendation form, drafted on the plan; it merges into the loan the day
+       the customer is assigned. Already assigned? Then there is a loan, and the draft has
+       nowhere to go -- say so and point at Team · Recommendation. */
+    + (row.assignedRef
+        ? '<div class="note" style="margin-top:10px">Tayari amepangiwa: Ref ' + esc(row.assignedRef) + (row.assignedTeam ? ' (' + esc(row.assignedTeam) + ')' : '')
+          + ' &mdash; jaza kwenye Team &middot; Recommendation. / Already assigned &mdash; fill in at Team &middot; Recommendation.</div>'
+        : '<button class="btn w ghost" id="lnPlanFillBtn" style="margin-top:8px">📝 Jaza taarifa za mapendekezo / Fill recommendation info ('
+          + (row.draftSections || []).length + '/5)</button>')
     + '<button class="btn w ghost" id="lnPlanDelBtn" style="margin-top:8px">Futa / Delete</button>');
+  var fill = document.getElementById('lnPlanFillBtn');
+  if (fill) fill.onclick = function(){ lnTeamAssessForm_(null, row); };
   $('#lnPlanSaveBtn').onclick = function(){
     var fields = { id: row.id };
     if (locked) {

@@ -344,7 +344,13 @@ async function managerAssign(db, user, { loan_id, team }) {
   await transition(db, loan, 'unassigned', 'assigned', user, {
     team: t, assigned_by: user.name, assigned_at: new Date().toISOString(),
   }, 'Assigned to ' + t);
-  return { ok: true };
+  /* "if assigned no = assessment plan number, merge both for the single customer into
+     recommendation" -- the team may have visited this customer before customer service could
+     register them (a double loan needs 10 installments paid; the visit happens at 9). What
+     they captured is waiting on the plan; it lands on this loan now. Never fails the
+     assignment: what happened, or did not, comes back in the answer. */
+  const planMerged = await mergePlanIntoLoan_(db, user, { ...loan, stage: 'assigned', team: t });
+  return { ok: true, planMerged };
 }
 
 async function managerReject(db, user, { loan_id, reason }) {
@@ -406,8 +412,14 @@ const KYC_MAX_BYTES = 2 * 1024 * 1024;
 /* "10-photo contract capture" -- a genuinely repeated, undifferentiated set (RUN-ME-011),
    capped server-side rather than left to the client alone to enforce. */
 const CONTRACT_MAX_PHOTOS = 10;
-async function kycUpload(db, user, { loan_id, kind, data_url, camera_label }) {
+async function kycUpload(db, user, { loan_id, kind, data_url, camera_label, plan_id }) {
   requireTab(user, 'team');
+  /* A PLAN MAY OWN A CAPTURE TOO. The field visit that fills an Assessment Plan's draft (see
+     assessmentPlanDraftSave) takes the same photos the recommendation does, before there is a
+     loan to file them under. They land under plans/<plan id>/ and their paths ride the draft
+     into the loan at merge -- the objects never move. The signed contract is the one kind a
+     plan cannot take: it is a fact about a loan that exists. */
+  if (!loan_id && plan_id) return kycUploadForPlan_(db, user, { plan_id, kind, data_url });
   const loan = await mustLoan(db, loan_id);
   const m = /^data:([^;]+);base64,(.+)$/.exec(String(data_url || ''));
   if (!m) throw badRequest('That did not look like an image.');
@@ -426,6 +438,29 @@ async function kycUpload(db, user, { loan_id, kind, data_url, camera_label }) {
   if (error) throw new Error(error.message);
   await logKycCapture(db, loan_id, safeKind, path, camera_label, user);
   if (safeKind === 'contract') await addContractPhoto_(db, loan, path);
+  return { path };
+}
+
+/** The image checks kycUpload makes, on their own, so the plan-owned upload cannot drift from
+    the loan-owned one on what it accepts. */
+function decodeCapture_(data_url) {
+  const m = /^data:([^;]+);base64,(.+)$/.exec(String(data_url || ''));
+  if (!m) throw badRequest('That did not look like an image.');
+  const [, contentType, b64] = m;
+  let bytes;
+  try { bytes = Buffer.from(b64, 'base64'); } catch { throw badRequest('That image could not be read.'); }
+  if (!bytes.length) throw badRequest('That image was empty.');
+  if (bytes.length > KYC_MAX_BYTES) throw badRequest('That image is still too large (over 2MB) even after compression.');
+  return { contentType, bytes, ext: contentType.indexOf('png') >= 0 ? 'png' : 'jpg' };
+}
+async function kycUploadForPlan_(db, user, { plan_id, kind, data_url }) {
+  const plan = await mustPlan_(db, user, plan_id);
+  const safeKind = String(kind || 'file').replace(/[^a-z0-9_-]/gi, '') || 'file';
+  if (safeKind === 'contract') throw badRequest('The signed contract is captured at Team · Recommendation, once the loan exists.');
+  const { contentType, bytes, ext } = decodeCapture_(data_url);
+  const path = 'plans/' + plan.id + '/' + safeKind + '-' + Date.now() + '.' + ext;
+  const { error } = await db.storage.from(KYC_BUCKET).upload(path, bytes, { contentType, upsert: false });
+  if (error) throw new Error(error.message);
   return { path };
 }
 
@@ -597,7 +632,7 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   requireTab(user, 'team');
   if (!SECTIONS.has(section)) throw badRequest('Unknown assessment section: ' + section);
   const loan = await mustLoan(db, loan_id);
-  let a = await assessmentFor(db, loan_id);
+  const a = await assessmentFor(db, loan_id);
   /* "as long as recommendation is not submitted - can edit previous stages but always load /
      preview presaved info" -- and NOT once it has been. teamSubmit sets submitted_at and moves
      the loan out of the team's queue, but a screen already open (or a stale one someone kept
@@ -606,6 +641,19 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
   if (a && a.submitted_at) {
     throw badRequest('This recommendation has already been submitted -- it can no longer be edited here.');
   }
+  const patch = await applySection_(db, user, loan, section, fields);
+  const saved = await upsertAssessment_(db, user, loan, a, patch);
+  if (loan.stage === 'assigned') await transition(db, loan, 'assigned', 'unassessed', user, {}, 'Assessment started');
+  return { assessment: saved };
+}
+
+/** Where one section's fields LAND -- the customer record, the loan, the guarantor rows --
+    and the patch that goes on the assessment row itself. One definition, read by two callers:
+    the recommendation form's own save (teamAssessmentSave) and the merge of an Assessment
+    Plan's draft into a freshly assigned loan (mergePlanIntoLoan_). The draft is saved in
+    exactly this shape, section by section, so that at merge the same code files it the same
+    way it would have been filed had the officer typed it into the recommendation. */
+async function applySection_(db, user, loan, section, fields) {
   const patch = { ['done_' + section]: true, updated_at: new Date().toISOString(), submitted_by: user.name };
 
   if (section === 'personal') {
@@ -720,21 +768,21 @@ async function teamAssessmentSave(db, user, { loan_id, section, fields }) {
       if (error) throw new Error(error.message);
     }
   }
+  return patch;
+}
 
+async function upsertAssessment_(db, user, loan, a, patch) {
   if (a) {
     const { data, error } = await db.from('assessments').update(patch).eq('id', a.id).select('*').maybeSingle();
     if (error) throw new Error(error.message);
-    a = data;
-  } else {
-    const { data, error } = await db.from('assessments').insert({
-      loan_id: loan.id, customer_id: loan.customer_id, team: loan.team, officer: user.name,
-      visited_at: new Date().toISOString(), ...patch,
-    }).select('*').maybeSingle();
-    if (error) throw new Error(error.message);
-    a = data;
+    return data;
   }
-  if (loan.stage === 'assigned') await transition(db, loan, 'assigned', 'unassessed', user, {}, 'Assessment started');
-  return { assessment: a };
+  const { data, error } = await db.from('assessments').insert({
+    loan_id: loan.id, customer_id: loan.customer_id, team: loan.team, officer: user.name,
+    visited_at: new Date().toISOString(), ...patch,
+  }).select('*').maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
 }
 
 /** Fields the bureau matches identity on -- write-once past the first loan, per instruction:
@@ -1366,17 +1414,31 @@ function elapsedDays_(plannedDate, nowKey) {
       - a phone number that now matches a REAL, approved-or-further loan -- the plan did its job
     Marks the rows it removed with `_pruned` rather than re-querying; assessmentPlanList filters
     those out of what it returns. */
+const PLAN_DONE_STAGES = ['approved', 'disbursed', 'funded', 'closed'];
+/* A loan already with the team, whose recommendation is the place to type now -- a plan for
+   this phone opened after assignment has nowhere to merge, so the list says so on the row. */
+const PLAN_ASSIGNED_STAGES = ['assigned', 'unassessed', 'assessed'];
 async function pruneAssessmentPlans_(db, rows) {
   if (!rows.length) return;
   const nowKey = todayKey(Date.now());
   const stale = new Set(rows.filter(r => elapsedDays_(r.planned_date, nowKey) > PLAN_MAX_AGE_DAYS));
   const phones = [...new Set(rows.map(r => normPhone(r.phone)).filter(Boolean))];
   let matched = new Set();
+  const assigned = new Map();
   if (phones.length) {
     try {
-      const loans = await allPaged(db, 'loans', b => b.select('contact').in('stage', ['approved', 'disbursed', 'funded', 'closed']).in('contact', phones));
-      matched = new Set(loans.map(l => l.contact));
+      // ONE read for both questions (speed budget: 2 trips) -- done-or-further prunes the
+      // plan; with-the-team marks it "already assigned, use Team · Recommendation".
+      const loans = await allPaged(db, 'loans', b => b.select('contact, stage, loan_id, team')
+        .in('stage', PLAN_DONE_STAGES.concat(PLAN_ASSIGNED_STAGES)).in('contact', phones));
+      matched = new Set(loans.filter(l => PLAN_DONE_STAGES.includes(l.stage)).map(l => l.contact));
+      for (const l of loans) if (PLAN_ASSIGNED_STAGES.includes(l.stage)) assigned.set(l.contact, { ref: l.loan_id, team: l.team });
     } catch { /* a failed lookup just means nothing autodeletes for that reason this time */ }
+  }
+  for (const r of rows) {
+    const hit = assigned.get(normPhone(r.phone));
+    r.assignedRef = hit ? hit.ref : null;
+    r.assignedTeam = hit ? hit.team : null;
   }
   const toDelete = rows.filter(r => stale.has(r) || matched.has(normPhone(r.phone)));
   if (!toDelete.length) return;
@@ -1414,7 +1476,9 @@ async function assessmentPlanList(db, user, p) {
   return {
     rows: rows.filter(r => !r._pruned)
       .sort((a, b) => String(a.planned_date || '').localeCompare(String(b.planned_date || '')))
-      .map(r => ({ ...r, elapsedDays: elapsedDays_(r.planned_date, nowKey) })),
+      .map(r => ({ ...r, elapsedDays: elapsedDays_(r.planned_date, nowKey),
+        // How much of the recommendation is already drafted on this plan -- the column.
+        draftSections: draftSections_(draftOf_(r)) })),
     staleReasons: PLAN_STALE_REASONS,
     teams: scope.mine,
   };
@@ -1481,6 +1545,103 @@ async function assessmentPlanDelete(db, user, { id }) {
   return { ok: true };
 }
 
+/** The plan this code may work on: it exists, and it belongs to a team the code holds. */
+async function mustPlan_(db, user, id) {
+  if (!id) throw badRequest('A plan is required.');
+  const rows = await allPaged(db, 'assessment_plans', b => b.select('*').eq('id', id));
+  const plan = rows[0];
+  if (!plan) throw badRequest('That plan could not be found.');
+  const scope = await planTeamsFor_(db, user);
+  if (!scope.all && !matchTeam_(scope.mine, plan.team)) throw forbidden('That plan belongs to a team this code does not hold.');
+  return plan;
+}
+function draftOf_(plan) {
+  return plan && plan.draft && typeof plan.draft === 'object' && !Array.isArray(plan.draft) ? plan.draft : {};
+}
+function draftSections_(draft) {
+  return [...SECTIONS].filter(s => draft[s] && typeof draft[s] === 'object' && Object.keys(draft[s]).length);
+}
+
+/* THE PRE-FILLABLE RECOMMENDATION -- SAVED ON THE PLAN, SUBMITTED ONLY ONCE THERE IS A LOAN.
+
+     "allow the pre-fillable info of loan recommendation at assessment plan and saving only -
+      submitting will only happen at recommendation"
+
+   The same five sections the recommendation form saves, in the same field names, kept as
+   JSON on the plan (RUN-ME-012). Nothing is written to any customer or loan here -- there is
+   no customer yet; that is the whole point. Allowed whatever the plan's date: the visit is
+   what the date was FOR, and the officer types it up on the day or the day after. */
+async function assessmentPlanDraftSave(db, user, { id, section, fields }) {
+  requireTab(user, 'team');
+  if (!SECTIONS.has(section)) throw badRequest('Unknown assessment section: ' + section);
+  const plan = await mustPlan_(db, user, id);
+  const draft = { ...draftOf_(plan) };
+  // A section is replaced whole, the way the form sends it -- every field it shows, each
+  // save. Merging key-by-key would keep a photo the officer deliberately cleared.
+  draft[section] = fields && typeof fields === 'object' ? fields : {};
+  const { error } = await db.from('assessment_plans')
+    .update({ draft, updated_by: user.name, updated_at: new Date().toISOString() }).eq('id', id);
+  if (error) {
+    if (/draft/i.test(String(error.message))) {
+      throw new Error('Rasimu haiwezi kuhifadhiwa bado: endesha db/hopeloan/RUN-ME-012 kwenye SQL editor. '
+        + '/ The draft cannot be saved yet: run db/hopeloan/RUN-ME-012 in the SQL editor.');
+    }
+    throw new Error(error.message);
+  }
+  return { ok: true, draft, sections: draftSections_(draft) };
+}
+
+/** Which plan a freshly assigned loan matches: the loan's phone against the plans' -- the
+    team's own plan first, then anyone's, newest saved first. */
+function pickPlanForLoan_(plans, loan) {
+  const team = String(loan.team == null ? '' : loan.team).trim().toUpperCase();
+  const byNewest = (a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''));
+  const own = plans.filter(p => String(p.team == null ? '' : p.team).trim().toUpperCase() === team).sort(byNewest);
+  return own[0] || plans.slice().sort(byNewest)[0] || null;
+}
+
+/* "so if assigned no = assessment plan number, merge both for the single customer into
+   recommendation". Runs inside managerAssign, after the assignment itself has been written.
+   Every section the draft holds is filed through applySection_ -- the SAME code the
+   recommendation form's own save goes through -- under the plan's author, so the loan reads
+   exactly as if that officer had typed it into Team · Recommendation. Then the plan is
+   removed: it did its job. A plan with an empty draft still matches (the customer is now in
+   the team's queue, which is what the plan was reminding them of) and is removed too.
+   Never throws: the assignment has already happened, and a merge that could not be finished
+   is reported in the answer rather than allowed to undo it. */
+async function mergePlanIntoLoan_(db, user, loan) {
+  const phone = normPhone(loan.contact);
+  if (!phone) return null;
+  let plans;
+  try { plans = await allPaged(db, 'assessment_plans', b => b.select('*').eq('phone', phone)); } catch { return null; }
+  if (!plans.length) return null;
+  const plan = pickPlanForLoan_(plans, loan);
+  const draft = draftOf_(plan);
+  const sections = draftSections_(draft);
+  const out = { plan_id: plan.id, team: plan.team, planned_date: plan.planned_date,
+    planned_by: plan.updated_by || plan.created_by || null, sections, error: null };
+  try {
+    if (sections.length) {
+      // Filed under the officer who captured it, not the manager pressing Assign.
+      const author = { ...user, name: out.planned_by || user.name };
+      let patch = {};
+      for (const s of sections) patch = { ...patch, ...(await applySection_(db, author, loan, s, draft[s])) };
+      const a = await assessmentFor(db, loan.id);
+      await upsertAssessment_(db, author, loan, a, patch);
+      await transition(db, loan, 'assigned', 'unassessed', user, {},
+        'Assessment plan merged: ' + sections.join(', ') + ' (planned ' + (plan.planned_date || '?') + ' by ' + (out.planned_by || '?') + ')');
+    } else {
+      await logEvent(db, loan.id, 'assigned', 'assigned', user, null,
+        'Assessment plan matched (planned ' + (plan.planned_date || '?') + ', nothing drafted)');
+    }
+    const { error } = await db.from('assessment_plans').delete().eq('id', plan.id);
+    if (error) throw new Error(error.message);
+  } catch (e) {
+    out.error = String((e && e.message) || e);
+  }
+  return out;
+}
+
 /* =====================================================================================
    THE ONE DOOR.
    ===================================================================================== */
@@ -1499,7 +1660,7 @@ const FN = {
   carriersList, carrierSave,
   adjustmentSave, adjustmentsList,
   pipelineSummary,
-  assessmentPlanList, assessmentPlanSave, assessmentPlanDelete,
+  assessmentPlanList, assessmentPlanSave, assessmentPlanDelete, assessmentPlanDraftSave,
 };
 
 export async function loanApi(db, user, fn, args) {
