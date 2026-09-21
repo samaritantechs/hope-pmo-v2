@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-h';
+var BUILD = '2026-09-21-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3218,10 +3218,11 @@ function recTileAttrs_(date){
    customer kept). An Iliyonasia on the team-day is a line of its own so the total still
    matches. Exports (Excel/JPG/CSV) are wired here because the drawer is drawn after the
    screen's own wiring has run. */
-function recoveryCustomersDrawer_(date){
+function recoveryCustomersDrawer_(date, mode){
   var week = date === 'week';
+  mode = mode === 'day' ? 'day' : 'present';
   drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="sub">Inapakia... / Loading...</div>');
-  srv('recoveryCustomers', { weekOf: S.args.weekOf || '', teams: teamPickLoad_(), date: week ? '' : date }).then(function(d){
+  srv('recoveryCustomers', { weekOf: S.args.weekOf || '', teams: teamPickLoad_(), date: week ? '' : date, mode: mode }).then(function(d){
     var STATUS_ = { cleared: ['Amemaliza / Cleared', 'good'], reduced: ['Imepungua / Reduced', 'good'],
       unchanged: ['Haijabadilika / Unchanged', 'mut'], increased: ['Imeongezeka / Increased', 'bad'],
       'new': ['Mpya / New on current', 'bad'], adjustment: ['Iliyonasia / Adjustment', 'warn'] };
@@ -3231,7 +3232,18 @@ function recoveryCustomersDrawer_(date){
       { key:'recovered', label:'Imerejeshwa / Recovered', kind:'money' },
       { key:'status', label:'Hali / Status', kind:'chip', chip:function(r){ var x = STATUS_[r.status] || [r.status || '', 'mut']; return { text: x[0], cls: x[1] }; } }];
     if (week) cols.push({ key:'days', label:'Siku / Days', kind:'num' });
-    var when = week ? (d.weekOf + ' → ' + d.weekEnd) : (wdLabel(weekdayOf_(d.date)) + ' ' + d.date);
+    var when = mode === 'present'
+      ? 'kama export / as the export' + (d.asOf ? ' · hadi / as of ' + d.asOf : '')
+      : (week ? (d.weekOf + ' → ' + d.weekEnd) : (wdLabel(weekdayOf_(d.date)) + ' ' + d.date));
+    /* TWO READINGS, ONE SWITCH. "Kama export" is the upload page's export subtracted -- each
+       team's latest INITIAL deck against the latest CURRENT deck, whatever their dates: where
+       every defaulter stands now. "Siku ya kadi" is the card's own pairing -- the two decks
+       filed under the card's date: what came back that day. Both are said by name so a figure
+       is never compared with the wrong reading. */
+    var modeBar = '<div class="pills" style="margin:6px 0 8px;display:flex;gap:4px;flex-wrap:wrap">'
+      + '<button type="button" class="pill' + (mode === 'present' ? ' on' : '') + '" data-recmode="present">Kama export / As the export (present decks)</button>'
+      + '<button type="button" class="pill' + (mode === 'day' ? ' on' : '') + '" data-recmode="day">' + (week ? 'Wiki ya kadi / The card\'s week' : 'Siku ya kadi / The card\'s day') + '</button>'
+      + '</div>';
     var all = d.rows || [];
     var counts = {}; all.forEach(function(r){ counts[r.status] = (counts[r.status] || 0) + 1; });
     /* THE DECKS THE SYSTEM PAIRED. A figure that disagrees with somebody's own two files is
@@ -3251,10 +3263,10 @@ function recoveryCustomersDrawer_(date){
               + '<td>' + esc(k.uploadedAt) + '</td><td class="r">' + money(k.rows) + '</td><td class="r">' + money(k.total) + '</td>'
               + '<td class="r' + (k.superseded ? ' warnc' : '') + '">' + (k.superseded || '') + '</td></tr>'; }).join('')
           + '</tbody></table></div>'
-          + '<div class="note">Mfumo huoanisha deki ya AWALI na ya SASA ya tarehe ile ile (siku ya wiki inatokana na tarehe iliyochaguliwa ukipakia), upakiaji wa mwisho kwa kila timu. '
-          + 'Faili yako ikisema tofauti, linganisha muda na idadi ya safu hapa na faili uliyopakia. '
-          + '/ The system pairs the INITIAL and CURRENT decks of the SAME date (the weekday comes from the date chosen at upload), latest upload per team. '
-          + 'If your file says otherwise, compare the upload time and row count here with the file you uploaded.</div></div>')
+          + '<div class="note">' + (mode === 'present'
+              ? 'Deki zilezile ambazo kitufe cha export kwenye ukurasa wa kupakia hutoa: deki ya AWALI ya mwisho ya kila timu na deki ya SASA ya mwisho, bila kujali tarehe zake. / The very decks the upload page\'s export hands out: each team\'s latest INITIAL deck and the latest CURRENT deck, whatever their dates.'
+              : 'Kadi huoanisha deki ya AWALI na ya SASA za tarehe ile ile (siku ya wiki inatokana na tarehe iliyochaguliwa ukipakia), upakiaji wa mwisho kwa kila timu — kilichorudi siku hiyo. / The card pairs the INITIAL and CURRENT decks filed under the SAME date (the weekday comes from the date chosen at upload), latest upload per team: what came back that day.')
+          + '</div></div>')
       : '';
     var sub = function(rows){
       return money(d.totals.customers) + ' wateja / customers · siku zilizopimwa / days measured: ' + d.days.length
@@ -3262,12 +3274,15 @@ function recoveryCustomersDrawer_(date){
         + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
     };
     var statusOpts = Object.keys(STATUS_).map(function(k){ return counts[k] ? '<option value="' + k + '">' + STATUS_[k][0] + ' (' + counts[k] + ')</option>' : ''; }).join('');
-    drawer('<h3>Wateja waliorejesha / Recovery customers · ' + esc(when) + '</h3>'
+    drawer('<h3>Wateja waliorejesha / Recovery customers · ' + esc(when) + '</h3>' + modeBar
       + (all.length
           ? '<div class="bar"><input id="recCustQ" placeholder="Tafuta jina / ref / timu — search">'
             + '<select id="recCustStatus"><option value="">Hali zote / All statuses</option>' + statusOpts + '</select></div>'
             + '<div id="recCustBoard"></div>' + decksHtml
           : '<div class="note">Hakuna deki iliyooanishwa siku hii (awali NA sasa). / No paired deck (initial AND current) on this day.</div>'));
+    Array.prototype.forEach.call(document.querySelectorAll('[data-recmode]'), function(el){
+      el.onclick = function(){ var m = el.getAttribute('data-recmode'); if (m !== mode) recoveryCustomersDrawer_(date, m); };
+    });
     if (!all.length) return;
     var host = document.getElementById('recCustBoard');
     function paint_(){

@@ -173,7 +173,11 @@ const BUDGETS = [
   /* THE CUSTOMERS BEHIND A RECOVERY TILE -- the one per-customer read on the dashboard, and
      only when a tile is pressed: one day's initial and current decks for the scope, raw, plus
      the register. 500 customers x 2 decks in this fixture. Same read in both worlds. */
-  ['Recovery customers (day)', 'recoveryCustomers', { date: '2026-07-24' }, ADMIN, 6, 1100, 6, 1100],
+  ['Recovery customers (day)', 'recoveryCustomers', { date: '2026-07-24', mode: 'day' }, ADMIN, 6, 1100, 6, 1100],
+  /* The export's reading: the two present decks through defaulterBook, exactly as the upload
+     page's export reads them -- 500 x 2 deck rows plus the per-team deck-date index the
+     initial deck is resolved from. Same cost as pressing the two export buttons. */
+  ['Recovery customers (present)', 'recoveryCustomers', {}, ADMIN, 8, 1400, 8, 1400],
   ['Defaulters Followup',     'followup',      {}, ADMIN,   10,  10000,  10, 10000],
   ['Expected Repayment',      'expectedDay',   { type: 'today' }, ADMIN, 10, 10000, 10, 10000],
   ['Loan Applications',       'loanPipeline',  {}, ADMIN,   10,  10000,  10, 10000],

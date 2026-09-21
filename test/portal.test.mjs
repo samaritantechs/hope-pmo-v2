@@ -322,7 +322,8 @@ test('the dashboard narrows to picked teams, never widens, and says what it offe
    totals." The list is the tile's own subtraction with the customer kept, so it adds up to it. */
 test('the customers behind a recovery tile add up to the tile, for a day and for the week', async () => {
   const db = dbWithRpc(tables());                       // Friday: 111 500->300, 555 700->600, 999 900->800
-  const day = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY }, NOW);
+  const day = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, mode: 'day' }, NOW);
+  assert.equal(day.mode, 'day');
   assert.deepEqual(day.rows.map(r => [r.ref, r.initial, r.current, r.recovered]),
     [['111', 500, 300, 200], ['555', 700, 600, 100], ['999', 900, 800, 100]], 'per customer, biggest recovery first');
   assert.deepEqual(day.totals, { initial: 2100, current: 1700, recovered: 400, customers: 3 });
@@ -331,18 +332,18 @@ test('the customers behind a recovery tile add up to the tile, for a day and for
   const fri = dash.recTrend.find(x => x.date === TODAY);
   assert.equal(day.totals.recovered, fri.recovered, 'the grand total IS the tile');
   // The TOTAL tile: the week, with only Friday measured.
-  const wk = await portalApi(db, ADMIN, 'recoveryCustomers', { weekOf: MON }, NOW);
+  const wk = await portalApi(db, ADMIN, 'recoveryCustomers', { weekOf: MON, mode: 'day' }, NOW);
   assert.equal(wk.date, null); assert.equal(wk.weekOf, MON);
   assert.deepEqual(wk.days, [TODAY]);
   assert.equal(wk.totals.recovered, dash.recTrendTotal.recovered, 'the week list adds up to the TOTAL tile');
   assert.ok(wk.rows.every(r => r.days === 1));
   // An unmeasured day is empty, not zeros pretending to be customers.
-  const thu = await portalApi(db, ADMIN, 'recoveryCustomers', { date: YEST }, NOW);
+  const thu = await portalApi(db, ADMIN, 'recoveryCustomers', { date: YEST, mode: 'day' }, NOW);
   assert.deepEqual(thu.rows, []); assert.deepEqual(thu.days, []);
   // Scoped like everything else: a one-team officer sees their team; the dashboard's pick narrows.
-  const mine = await portalApi(db, GMO, 'recoveryCustomers', { date: TODAY }, NOW);
+  const mine = await portalApi(db, GMO, 'recoveryCustomers', { date: TODAY, mode: 'day' }, NOW);
   assert.deepEqual(mine.rows.map(r => r.ref), ['111', '555']);
-  const picked = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, teams: ['MBAGALA'] }, NOW);
+  const picked = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, teams: ['MBAGALA'], mode: 'day' }, NOW);
   assert.deepEqual(picked.rows.map(r => r.ref), ['999']); assert.deepEqual(picked.teamsApplied, ['MBAGALA']);
 });
 
@@ -356,7 +357,7 @@ test('the recovery list names the uploads it paired, the latest for the picked d
   // 555 is unchanged at 700. It supersedes the fixture's earlier current upload for that team.
   t.defaulter_snapshots.push({ ...D('555', 'KONGOWE', 700, 'current'), upload_batch: 'repair', created_at: TODAY + 'T18:00:00Z' });
   const db = dbWithRpc(t);
-  const r = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY }, NOW);
+  const r = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, mode: 'day' }, NOW);
   const k = Object.fromEntries(r.rows.map(x => [x.ref, x]));
   assert.equal(k['111'].status, 'cleared'); assert.equal(k['111'].recovered, 500, 'gone from the repaired current deck = fully recovered');
   assert.equal(k['555'].status, 'unchanged'); assert.equal(k['555'].recovered, 0, 'the repaired deck says 700 both sides');
@@ -370,6 +371,37 @@ test('the recovery list names the uploads it paired, the latest for the picked d
   assert.equal(ki.rows, 2); assert.equal(ki.total, 1200); assert.equal(ki.superseded, 0);
   assert.equal(r.decks.length, 4, 'two teams x initial and current');
   assert.equal(r.totals.recovered, 600);
+});
+
+/* "Remember the actual data i got was from the upload export button but the system one still
+   had the error" -- the export hands out the PRESENT decks (each team's latest initial, the
+   latest current), whatever their dates; the card pairs one date's two decks. The list's
+   default reads exactly as the export does, through the same function. */
+test('the recovery list, as the export: present initial vs present current, whatever their dates', async () => {
+  const t = tables();
+  // A Thursday initial deck for KONGOWE naming 777 at 400, with no Thursday current deck: the
+  // card for Thursday is unmeasured, and the card for Friday never sees 777. The export does:
+  // 777 is on a present initial deck and absent from the present current deck -> cleared.
+  t.defaulter_snapshots.push(D('777', 'KONGOWE', 400, 'initial', 45, YEST, 'THU'));
+  const db = dbWithRpc(t);
+  const exp = await portalApi(db, ADMIN, 'defaulters', { type: 'initial' }, NOW);
+  assert.ok(exp.rows.some(r => r.ref === '777'), 'the export carries 777 on the present initial deck');
+  const present = await portalApi(db, ADMIN, 'recoveryCustomers', {}, NOW);
+  assert.equal(present.mode, 'present', 'the default reading is the export\'s');
+  const k = Object.fromEntries(present.rows.map(x => [x.ref, x]));
+  assert.equal(k['777'].status, 'cleared'); assert.equal(k['777'].recovered, 400);
+  assert.equal(present.totals.recovered, 800, 'Friday\'s 400 plus Thursday\'s 777 -- what the two exported files subtract to');
+  // The very same decks the export hands out, row for row.
+  const expCur = await portalApi(db, ADMIN, 'defaulters', { type: 'current' }, NOW);
+  assert.equal(present.totals.initial, exp.rows.reduce((s, r) => s + Number(r.arrears || 0), 0));
+  assert.equal(present.totals.current, expCur.rows.reduce((s, r) => s + Number(r.arrears || 0), 0));
+  const kd = present.decks.find(d => d.team === 'KONGOWE' && d.type === 'initial');
+  assert.equal(kd.date, [YEST, TODAY].join(', '), 'the decks fold names the dates each team\'s deck came from');
+  assert.equal(kd.rows, 3);
+  // The card's own day reading is still there behind the switch, and says less on purpose.
+  const day = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, mode: 'day' }, NOW);
+  assert.equal(day.totals.recovered, 400);
+  assert.ok(!day.rows.some(r => r.ref === '777'), 'Thursday\'s customer is not Friday\'s recovery');
 });
 
 test('a team with no branch set yet reads null, not a crash', async () => {

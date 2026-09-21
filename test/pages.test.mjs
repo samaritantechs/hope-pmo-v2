@@ -1031,7 +1031,10 @@ test('every measured recovery tile is pressable and opens the customers behind i
   assert.ok(/var press = recTileAttrs_\(x\.date\)/.test(grid), 'each tile carries its own date');
   assert.ok(/data-reccust="' \+ esc\(date \|\| ''\)/.test(app), 'the attribute names the date');
   const drawerFn = app.slice(app.indexOf('function recoveryCustomersDrawer_('), app.indexOf('function weekdayOf_('));
-  assert.ok(/srv\('recoveryCustomers', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\), date: week \? '' : date \}\)/.test(drawerFn), 'asks with the week and the team pick');
+  assert.ok(/srv\('recoveryCustomers', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\), date: week \? '' : date, mode: mode \}\)/.test(drawerFn), 'asks with the week, the team pick and the reading');
+  assert.ok(/mode = mode === 'day' \? 'day' : 'present'/.test(drawerFn), 'the export\'s reading is the default');
+  assert.ok(/data-recmode="present"/.test(drawerFn) && /data-recmode="day"/.test(drawerFn), 'both readings are offered by name');
+  assert.ok(/recoveryCustomersDrawer_\(date, m\)/.test(drawerFn), 'and the switch re-reads');
   for (const k of ['initial', 'current', 'recovered']) assert.ok(new RegExp("key:'" + k + "'").test(drawerFn), k + ' column');
   assert.ok(/sumRow\(rows, \['initial', 'current', 'recovered'\]\)/.test(drawerFn), 'a grand total row, over the rows on screen');
   assert.ok(/root\.querySelectorAll\('\[data-xls\]'\)/.test(drawerFn), 'exports are wired inside the drawer');
