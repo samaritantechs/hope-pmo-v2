@@ -10,6 +10,10 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { loanApi, mintDocket, refFor, docketFromRef, GMO_THRESHOLD, MANAGER_THRESHOLD,
         INTEREST_FLAT_RATE, INSTALLMENTS, _setCallLogsDb } = await import('../api/_lib/loan-core.js');
+/* "Today" as the SERVER reads it -- East Africa Time -- not the UTC day. Between 21:00 and
+   midnight UTC the two differ, and a plan dated the UTC day was refused as yesterday's. */
+const { todayKey, addDaysKey } = await import('../api/_lib/time.js');
+const todayEAT_ = () => todayKey(Date.now());
 
 /* creditApprove now reads production call_logs (callVerificationFor_, a DIFFERENT database
    from the sandbox `db` every test here builds) to answer "did the analyst actually call this
@@ -1205,8 +1209,8 @@ test('a call under the minute threshold does not verify, and an unreachable call
 
 test('Assessment Plan: a new plan must be dated today or later, and lists sorted by date with elapsedDays', async () => {
   const db = fakeDb({});
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const today = todayEAT_();
+  const yesterday = addDaysKey(today, -1);
   await assert.rejects(
     () => loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'PROSPECT A', phone: '0715000030', planned_date: yesterday }),
     /today or later/);
@@ -1223,7 +1227,7 @@ test('Assessment Plan: once its own planned date has passed, only the stale-reas
     planned_date: new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10),
   }] });
   await loanApi(db, TEAM, 'assessmentPlanSave', {
-    id: 'plan-1', full_name: 'RENAMED -- SHOULD NOT STICK', planned_date: new Date().toISOString().slice(0, 10),
+    id: 'plan-1', full_name: 'RENAMED -- SHOULD NOT STICK', planned_date: todayEAT_(),
     stale_reason: 'Amekataa / Declined',
   });
   const row = db._dump('assessment_plans')[0];
@@ -1288,7 +1292,7 @@ test('Assessment Plan: a matching approved loan autodeletes the plan that predic
   const { loanId } = await registerAssignAssess(db, 300000);   // registers mobile 0763357860 -- see the top of this file
   await loanApi(db, TEAM, 'teamSubmit', { loan_id: loanId, decision: 'ACCEPTED' });
   await loanApi(db, CREDIT, 'creditApprove', { loan_id: loanId, granted_amount: 300000 });
-  await loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'ASHA, PLANNED EARLIER', phone: '0763357860', planned_date: new Date().toISOString().slice(0, 10) });
+  await loanApi(db, TEAM, 'assessmentPlanSave', { full_name: 'ASHA, PLANNED EARLIER', phone: '0763357860', planned_date: todayEAT_() });
 
   const r = await loanApi(db, TEAM, 'assessmentPlanList', {});
   assert.equal(r.rows.length, 0, 'the plan did its job -- there is now a real approved loan for this phone number');

@@ -1007,14 +1007,22 @@ test('the drawer, the presentation and the phone menu each give the Back button 
 
 /* "I need a team selector after the blue blinker on dashboard that filters the current dashboard
    data into chosen/selected team(s) among those owned by the current user." */
+/* "I requested it as a drop down where multiple teams can be ticked and press okay to load the
+   new dashboard not just every team selection initiating load." */
 test('the dashboard draws a team pick after the dot, sends it, remembers it, and carries it to the month report', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const dash = app.slice(app.indexOf('function teamPick_('), app.indexOf("kpi('Current arrears'"));
   assert.ok(/srv\('dashboardFull', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\) \}\)/.test(dash), 'the pick is sent');
   assert.ok(/data-carry="weekOf,teams"><\/button>' \+ teamPick_\(d\)/.test(dash), 'drawn right after the dot, and carried by it');
   assert.ok(/if \(opts\.length <= 1\) return '';/.test(dash), 'nothing to choose for a one-team code');
-  assert.ok(/data-teampick=""/.test(dash) && /data-teampick="' \+ esc\(t\)/.test(dash), 'an All pill and one per team');
-  assert.ok(/store\(teamPickKey_\(\), cur\.length \? JSON\.stringify\(cur\) : null\)/.test(app), 'remembered per code on the device');
+  assert.ok(/id="teamPickBtn"/.test(dash) && /id="teamPickMenu" hidden/.test(dash), 'one button, a menu closed under it');
+  assert.ok(/type="checkbox" data-teamopt=""/.test(dash) && /type="checkbox" data-teamopt="' \+ esc\(t\)/.test(dash), 'an All tick box and one per team');
+  assert.ok(/id="teamPickOk"/.test(dash) && /id="teamPickCancel"/.test(dash), 'OK and Cancel');
+  const wire = app.slice(app.indexOf("var tpBtn = document.getElementById('teamPickBtn')"), app.indexOf('var fcGo = document.getElementById'));
+  assert.ok(/getElementById\('teamPickOk'\)\.onclick[\s\S]*store\(teamPickKey_\(\), cur\.length \? JSON\.stringify\(cur\) : null\);\s*render\(\{ force: true \}\)/.test(wire), 'applied, remembered per code and loaded on OK');
+  assert.equal((wire.match(/render\(/g) || []).length, 1, 'OK is the ONLY thing that loads -- a tick never does');
+  assert.ok(/b\.onchange = function\(\)\{ tpAll\.checked = /.test(wire), 'a tick only moves the All box');
+  assert.ok(/getElementById\('teamPickCancel'\)\.onclick[\s\S]{0,60}tpOpen\(false\)/.test(wire) && /e\.key === 'Escape'/.test(wire), 'Cancel and Escape close without loading');
   const mStart = app.indexOf('VIEWS.monthreport = function');
   const month = app.slice(mStart, app.indexOf('VIEWS.', mStart + 10));
   assert.ok(/teams: teamPickLoad_\(\)/.test(month) && /teamPick_\(d\)/.test(month), 'the month report takes and shows the same pick');
