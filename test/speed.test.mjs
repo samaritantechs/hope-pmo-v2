@@ -167,13 +167,20 @@ const BUDGETS = [
      book to sift: a hand-typed register of tens of rows, config-sized like `settings` and
      `teams`, which are memoised in exactly the same way and for exactly the same reason. The
      row budgets below are untouched because it adds no measurable rows. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  32,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  31,   900],
+  /* +2 TRIPS EACH (2026-09-21): recovery_standing, the one rule for every recovered figure.
+     One call inside the shared core (buildDashboard: today's standing, the figure the phone's
+     strip shows), one for this screen's own dates -- the seven tiles, the week's end and last
+     week's end -- both cached per scope for a minute. They replace arithmetic over rows this
+     screen already read; the rows they cost are one per team per date asked. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  34,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  33,   900],
   ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
   /* THE CUSTOMERS BEHIND A RECOVERY TILE -- the one per-customer read on the dashboard, and
      only when a tile is pressed: one day's initial and current decks for the scope, raw, plus
      the register. 500 customers x 2 decks in this fixture. Same read in both worlds. */
-  ['Recovery customers (day)', 'recoveryCustomers', { date: '2026-07-24', mode: 'day' }, ADMIN, 6, 1100, 6, 1100],
+  /* The same reading as 'present' below, as of the card's day (2026-09-21): the two present
+     decks through defaulterBook as they stood on that date. Same cost as the export. */
+  ['Recovery customers (day)', 'recoveryCustomers', { date: '2026-07-24', mode: 'day' }, ADMIN, 8, 1400, 8, 1400],
   /* The export's reading: the two present decks through defaulterBook, exactly as the upload
      page's export reads them -- 500 x 2 deck rows plus the per-team deck-date index the
      initial deck is resolved from. Same cost as pressing the two export buttons. */
@@ -199,7 +206,8 @@ const BUDGETS = [
      two decks as customer rows -- it compares each PERSON's Monday arrears against their
      arrears at the end of the week, which no team total can answer -- so the row budget here
      stays above zero on purpose. Everything else on the report is a sum. */
-  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  14,  3500],
+  // +1 trip (2026-09-21): recovery_standing for the five days and the week's end, one call.
+  ['Weekly report',           'weekly',        {}, ADMIN,   45,  90000,  15,  3500],
   ['The bell',                'notifications', {}, ADMIN,    6,    200,   6,   200],
   ['The bell (one team)',     'notifications', {}, OFFICER,  6,    200,   6,   200],
   /* =====================================================================================
@@ -361,7 +369,11 @@ const PHONE = [
      per instance per quarter-minute, not one per officer. Could the database do it instead?
      Only by comparing team names without regard to case inside the totals functions, which
      is a migration to every one of them; this is one indexed read of eighty rows. */
-  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 31, 40000],
+  /* +1 trip (2026-09-21): recovery_standing inside buildDashboard, behind its per-scope
+     per-minute cache -- forty handsets on a scope ask once. Rule 1, counted and written down:
+     it replaces the pairing arithmetic, and a missing function costs one round trip and
+     falls back to that arithmetic with a note. */
+  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 32, 40000],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way

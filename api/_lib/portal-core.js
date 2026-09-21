@@ -8,6 +8,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
   recoveryByTeam } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
+import { recoveryStanding, standingWithAdj, standingSum, RECOVERY_RULE_NOTE } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord,
   PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf } from './pmo.js';
@@ -2540,6 +2541,12 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
     pickLatestBatchRows(rows.filter(r => String(r.snapshot_date) === date
       && r.snapshot_type === type && r.weekday === weekday)),
     adj, 'defaulter-' + type, date);
+  // The one recovery rule for the five days and the week's end; day pairing is the fallback.
+  const today0 = todayKey(nowMs);
+  // The week's end is its SUNDAY once it is over -- the weekend's recovery counts toward the
+  // week, and the dashboard's weekly tile reads the same day (see recTrendTotal).
+  const wkEnd = addDaysKey(mon, 6) < today0 ? addDaysKey(mon, 6) : today0;
+  const stand = await recoveryStandingFor_(db, user, [0, 1, 2, 3, 4].map(i => addDaysKey(mon, i)).concat([wkEnd, today0]).filter(d => d <= today0), nowMs, adj);
   const days = [];
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
@@ -2565,7 +2572,7 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
       date, weekday: ['MON', 'TUE', 'WED', 'THU', 'FRI'][i],
       customers: tCustomers(dayRows), expected: exp, collected: col, uncollected: tUncollected(dayRows),
       pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null,
-      recovered: (ini.length && cur.length) ? tArrears(ini) - tArrears(cur) : 0,
+      recovered: stand ? standingSum(stand.get(date)).recovered : ((ini.length && cur.length) ? tArrears(ini) - tArrears(cur) : 0),
       received: scoped(user, rcvAll.filter(r => String(r.paid_at) === date)).reduce((s, r) => s + num(r.amount_paid), 0),
     });
   }
@@ -2609,6 +2616,7 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
       b.uncollected += num(r.uncollected_amt);
     }
+    if (stand) continue;                      // recovery per team comes from the standing, below
     // Same population on both sides -- see the note above.
     const ini = defDay_(scoped(user, defAll), d.date, 'initial', d.weekday);
     const cur = defDay_(scoped(user, defAll), d.date, 'current', d.weekday);
@@ -2622,6 +2630,12 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
     const isToday = d.date === todayKey(nowMs);
     for (const r of ini) { const b = gt(r.team); b.recovered += num(r.arrears_amt); if (isToday) b.recToday += num(r.arrears_amt); }
     for (const r of cur) { const b = gt(r.team); b.recovered -= num(r.arrears_amt); if (isToday) b.recToday -= num(r.arrears_amt); }
+  }
+  if (stand) {
+    /* The week per team is the standing at the week's end; "leo" is the standing today, when
+       today is inside the week -- the one rule, the same figure the dashboard's card shows. */
+    for (const e of (stand.get(wkEnd) || new Map()).values()) gt(e.team).recovered = e.recovered;
+    if (today0 >= mon && today0 <= fri) for (const e of (stand.get(today0) || new Map()).values()) gt(e.team).recToday = e.recovered;
   }
   const myMonIni = scoped(user, monIni.rows), myEndCur = scoped(user, endCur.rows);
   for (const r of myMonIni) gt(r.team).mondayDebt += num(r.arrears);
@@ -2685,7 +2699,7 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
      copying each leader's NAME AND POSITION as text. See api/_lib/performance.js. */
   recordPerformance(db, teamsOut, teamRows, mon, nowMs, perTarget);
 
-  return { weekOf: mon, weekEnd: fri, days,
+  return { weekOf: mon, weekEnd: fri, days, ...recoveryRuleOf_(stand),
     // What was ASKED for, so the week bar can say when a choice was overruled and why.
     weekRequested: asOf.requested, weekFuture: asOf.future, pastWeek: asOf.past,
     teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
@@ -2962,6 +2976,8 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
       && r.snapshot_type === type && r.weekday === weekday)),
     adj, 'defaulter-' + type, date);
   const mySales = scoped(user, loanRows).filter(l => SALES_STAGES.includes(l.stage));
+  // The one recovery rule for each of the seven day columns; day pairing is the fallback.
+  const stand = await recoveryStandingFor_(db, user, [0, 1, 2, 3, 4, 5, 6].map(i => addDaysKey(today, -i)), nowMs, adj);
 
   // Which real date each day column looks at: the latest of that weekday, today included.
   const dayDate = {};
@@ -2992,11 +3008,17 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
     }
     /* The day's own weekday on both sides -- an initial Monday deck against a current
        Thursday one is two different populations, and their gap is not recovery. */
-    const ini = defDay_(myDef, d, 'initial', dwd);
-    const cur = defDay_(myDef, d, 'current', dwd);
-    if (ini.length && cur.length) {
-      for (const r of ini) { const c = cell(slot(r.team), 'rec', d); c.ini += num(r.arrears_amt); c.paired = 1; }
-      for (const r of cur) { const c = cell(slot(r.team), 'rec', d); c.cur += num(r.arrears_amt); c.paired = 1; }
+    if (stand) {
+      for (const e of (stand.get(d) || new Map()).values()) {
+        const c = cell(slot(e.team), 'rec', d); c.ini += e.initial; c.cur += e.current; c.paired = 1;
+      }
+    } else {
+      const ini = defDay_(myDef, d, 'initial', dwd);
+      const cur = defDay_(myDef, d, 'current', dwd);
+      if (ini.length && cur.length) {
+        for (const r of ini) { const c = cell(slot(r.team), 'rec', d); c.ini += num(r.arrears_amt); c.paired = 1; }
+        for (const r of cur) { const c = cell(slot(r.team), 'rec', d); c.cur += num(r.arrears_amt); c.paired = 1; }
+      }
     }
   }
   for (const l of mySales) {
@@ -3176,7 +3198,7 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
         unstaffed: (by['(unassigned)'] ? by['(unassigned)'].rows.length : 0) });
     }
   }
-  return { segments, segDays: dayDate, segRoles: LEADER_ROLES.slice(),
+  return { segments, segDays: dayDate, segRoles: LEADER_ROLES.slice(), ...recoveryRuleOf_(stand),
     segMetrics: LEADER_METRICS.map(x => ({ metric: x.metric, label: x.label, dflt: !!x.dflt })) };
 }
 
@@ -3429,6 +3451,17 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      say WHICH, or the person uploads the same file a fourth time. One line per day of the
      range: was the day measured, how many teams had both decks, how many were holding one. */
   const recDiag = { from: mon, to: sun, days: [], measured: 0 };
+  /* THE ONE RULE for every day of the range and every week's end. Pay follows the figure the
+     dashboard shows -- "what we did in dashboard is the correct way" -- and that figure is now
+     the latest initial minus the latest current as of the day. */
+  /* `today` is pinned to a finished week's Friday for the "leo" cells; the standing is read
+     to the REAL end of the range -- its Sunday once the week is over -- see recEnd below. */
+  const standEnd = scope === 'week' ? (sun < today0 ? sun : today0) : today;
+  const weekEndOf_ = w => (w.to < standEnd ? w.to : standEnd);
+  const standDates = [];
+  for (let i = 0; ; i++) { const d = addDaysKey(mon, i); if (d > standEnd) break; standDates.push(d); }
+  for (const w of weeks) standDates.push(weekEndOf_(w));
+  const stand = await recoveryStandingFor_(db, user, standDates, nowMs, adj);
   /* THE WALK RUNS TO THE END OF A FINISHED WEEK, NOT TO ITS FRIDAY.
 
        "weekly dashboard .... has 70m recovered ... yet commisions have 53m"
@@ -3446,13 +3479,14 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     const d = addDaysKey(mon, i);
     if (d > recEnd || d > sun) break;
     const wd = weekdayOfKey(d);
-    const byTeam = recoveryByTeam(myDef, d, wd, adj);
+    const byTeam = stand ? (stand.get(d) || new Map()) : recoveryByTeam(myDef, d, wd, adj);
     const landed = type => new Set(myDef
       .filter(r => String(r.snapshot_date) === d && r.snapshot_type === type && K(r.weekday) === wd)
       .map(r => K(r.team)));
     const ini = landed('initial'), cur = landed('current');
     recDiag.days.push({ date: d, weekday: wd, measured: byTeam.size > 0,
-      paired: [...byTeam.values()].filter(t => t.paired).length,
+      // under the one rule every team in the standing is "paired": its initial decks against the current deck
+      paired: stand ? byTeam.size : [...byTeam.values()].filter(t => t.paired).length,
       initialOnly: [...ini].filter(k => !cur.has(k)).length,
       currentOnly: [...cur].filter(k => !ini.has(k)).length });
     if (!byTeam.size) continue;
@@ -3537,7 +3571,11 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       const perWeek = weeks.map(w => {
         const weekdays = w.days5.map(d => ({ date: d, recovered: cell(d).recovered, base: uncolOn(d) }));
         let recovered = 0, base = 0;
-        for (const [d, src] of recByDay) if (d >= w.from && d <= w.to && src[name]) recovered += src[name].recovered;
+        if (stand) {
+          // The week's figure is the standing at its end, not its days added -- see recTrendTotal.
+          const m = stand.get(weekEndOf_(w));
+          if (m) for (const t of m.values()) if (officerOf(teamBy, t.team, 'recovery') === name) recovered += t.recovered;
+        } else for (const [d, src] of recByDay) if (d >= w.from && d <= w.to && src[name]) recovered += src[name].recovered;
         for (const d of w.days5) base += uncolOn(d);
         return { key: w.key, from: w.from, to: w.to, recovered, base,
           pay: recoveryWeek(weekdays, { recovered, base }, cfg.recBands, cfg.recBelow) };
@@ -3895,7 +3933,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   };
 
   return { scope, from: mon, to: scope === 'month' ? today : sun,
-    recBoard, colBoard, recDiag,
+    recBoard, colBoard, recDiag, ...recoveryRuleOf_(stand),
     /* The recovery ladder itself, so the screen draws the bands from the one definition rather
        than repeating them in HTML -- a pay table written twice is a pay table that disagrees
        with itself the first time one of them is edited. */
@@ -8627,6 +8665,18 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
        same walk, so a month's Col % is one figure in both places or it is a bug. */
     adjReceived_(db, user, { from: monthStart, to: today }),
   ]);
+  /* RECOVERY UNDER THE ONE RULE: the standing (latest initial deck minus latest current
+     deck) as of the end of each week that has happened, and as of today for the month. The
+     week ends are worked out here, before the row loop below, so the standing is one read. */
+  const weekEnds_ = [];
+  for (let f = monthStart; f <= monthEnd; ) {
+    const sun = addDaysKey(weekMondayKey(Date.parse(f + 'T12:00:00Z')), 6);
+    const to = sun < monthEnd ? sun : monthEnd;
+    if (f <= today) weekEnds_.push(to <= today ? to : today);
+    f = addDaysKey(to, 1);
+  }
+  const stand = await recoveryStandingFor_(db, user, [today, ...weekEnds_],
+    realNowMs == null ? asOf.ms : realNowMs, adj);
   const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
   const appRows = scoped(user, appsRaw).filter(l => {
     const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
@@ -8701,6 +8751,8 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
       return d >= from && d <= done;
     });
     const s = (days && started) ? ledgerSum_(days, user, from, done, adj) : null;
+    // The week's recovered under the one rule: the standing at its end.
+    if (s && stand) s.recR = standingSum(stand.get(done)).recovered;
     const salesAmt = started ? wk.reduce((t, l) => t + amtOf(l), 0) : null;
     // A week's sales are judged against a quarter of the month's target.
     const salesPct = started ? pct(salesAmt, monthTarget / 4) : null;
@@ -8734,6 +8786,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   }
 
   const total = days ? ledgerSum_(days, user, monthStart, today, adj) : null;
+  if (total && stand) total.recR = standingSum(stand.get(today)).recovered;
   const salesTotal = sales.reduce((t, l) => t + amtOf(l), 0);
   const totSalesPct = pct(salesTotal, monthTarget);
   const totColPct = total ? pct(total.colC, total.colE) : null;
@@ -8811,8 +8864,9 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
      week's stretch instead of a day's:
        sales       the team's approved principal over its own weekly target
        collection  collected over expected, the days of that week
-       recovery    initial minus current over the uncollected, over the days that PAIRED --
-                   a week with no paired deck is null, never 0%, exactly as everywhere else.
+       recovery    the STANDING at the week's end (latest initial deck minus latest current
+                   deck, see recoveryStanding) over the week's uncollected -- a week with no
+                   current deck yet is null, never 0%, exactly as everywhere else.
      A short first or last week (a month opening midweek) is judged against the same weekly
      sales target as a full one, which is the convention the month rows above already use. */
   const trendWeeks = rows.map(r => ({ key: 'W' + r.week, week: r.week, from: r.from, to: r.to, started: r.started }));
@@ -8845,7 +8899,8 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
         if (!teamAllowed(user, T)) continue;
         const m = wk[T], s = reach(T);
         s.collection[w.key] = pct(m.c, m.e);
-        s.recovery[w.key] = m.pairedDays > 0 ? pct(m.rec, m.u) : null;
+        const stT = stand ? ((stand.get(done) || new Map()).get(T) || null) : null;
+        s.recovery[w.key] = stand ? (stT ? pct(stT.recovered, m.u) : null) : (m.pairedDays > 0 ? pct(m.rec, m.u) : null);
       }
     }
     /* The average is of the weeks that HAVE a percentage, and `on` says how many -- the same
@@ -8886,6 +8941,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
     weekOf: mon, weekEnd: addDaysKey(mon, 6),
     asOfDate: today, pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future,
     ledgerReady: !!days,
+    ...recoveryRuleOf_(stand),
     rows,
     totals: {
       sales: salesTotal, loans: sales.length, monthTarget, salesPct: totSalesPct,
@@ -8905,6 +8961,31 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
    while somebody slides the week bar back and forth. Keyed by the RESOLVED week plus the raw
    request (two requests resolving to the same week can carry different overruled-choice
    notes), scoped per team-set, held for the same one minute every other answer lives. */
+/* RECOVERY, EVERYWHERE, FROM THE ONE RULE -- see recoveryStanding in snapshot-totals.js.
+     "recovery is initial and current only from latest uploads - everywhere"
+   Per date, per team, for this code's scope, cached per scope for a minute (forty handsets
+   and a dozen screens on one scope ask the database once). The register is laid over it
+   here, once, so every reader gets the same corrected figure. null means RUN-ME-032 has not
+   been run: the screen keeps its day pairing and says so (RECOVERY_RULE_NOTE). */
+async function recoveryStandingFor_(db, user, dates, nowMs, adj = null) {
+  const want = [...new Set((dates || []).filter(Boolean))].sort();
+  if (!want.length) return new Map();
+  const st = await cachedAnswer(db, 'recStanding|' + want.join(','), user, nowMs,
+    () => recoveryStanding(db, { dates: want, teams: user.teams }));
+  if (!st) return null;
+  if (!adj) return st;
+  const out = new Map();
+  for (const [d, m] of st) out.set(d, standingWithAdj(m, adj));
+  return out;
+}
+/** Pseudo deck rows from a standing, for the readers that still fold rows by team. */
+function standingRows_(perTeam, side) {
+  return [...(perTeam ? perTeam.values() : [])].map(e => ({ team: e.team,
+    arrears_amt: side === 'initial' ? e.initial : e.current,
+    customers: side === 'initial' ? e.initialCustomers : e.currentCustomers }));
+}
+const recoveryRuleOf_ = st => (st ? { recoveryRule: 'latest', recoveryNote: null } : { recoveryRule: 'pairing', recoveryNote: RECOVERY_RULE_NOTE });
+
 /* A TEAM PICK ON TOP OF THE SCOPE -- NARROWER, NEVER WIDER.
 
      "I need a team selector after the blue blinker on dashboard that filters the current
@@ -8995,100 +9076,37 @@ async function recoveryCustomers(db, user0, args, nowMs) {
   const mon = asOf.weekOf, sun = addDaysKey(mon, 6);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String((args && args.date) || '')) ? String(args.date).slice(0, 10) : null;
   const mode = (args && args.mode) === 'day' ? 'day' : 'present';
-  if (mode === 'present') return recoveryCustomersPresent_(db, user, pick, { asOf, mon, sun, nowMs });
-  const from = date || mon, to = date || sun;
-  const [rows, adj] = await Promise.all([
-    snapshotsInRange(db, 'defaulter_snapshots', {}, from, to, user.teams, REC_CUST_COLS),
-    adjReceived_(db, user, { from, to }),
-  ]);
-  const days = date ? [date] : [0, 1, 2, 3, 4, 5, 6].map(i => addDaysKey(mon, i));
-  const byKey = new Map();
-  const lines = [];
-  const measured = [];
-  /* WHICH UPLOADS WERE PAIRED, said per team and per day -- so a figure that disagrees with
-     somebody's own file comparison can be traced to the upload the system actually read.
-       "someone said they recovered more than what i displayed so i dag into that team ...
-        having 1,600,473.00 recovered but the system shown only 986,167 ... thats why i
-        requested teams and list to grind more not just my initial and current data but
-        what is in the system too"
-     For each team-day-type: the batch that won (uploaded at, rows, total) and how many other
-     uploads of that same team-day-type it superseded. A deck the system paired that is not
-     the file on somebody's desk is then visible as a time and a row count, not a mystery. */
-  const decks = [];
-  const entry = r => {
-    const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
-    return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
-      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0 }).get(k);
-  };
-  const deckInfo_ = (d, type, all, chosen) => {
-    const byTeam = new Map();
-    for (const r of all) {
-      const t = K(r.team);
-      const e = byTeam.get(t) || byTeam.set(t, { team: r.team || '', batches: new Set(), rows: 0, total: 0, uploadedAt: null }).get(t);
-      e.batches.add(String(r.upload_batch || ''));
-    }
-    for (const r of chosen) {
-      const e = byTeam.get(K(r.team));
-      e.rows++; e.total += num(r.arrears);
-      if (!e.uploadedAt || String(r.created_at || '') > e.uploadedAt) e.uploadedAt = r.created_at || null;
-    }
-    for (const e of byTeam.values()) {
-      decks.push({ date: d, type, team: e.team, uploadedAt: e.uploadedAt, rows: e.rows, total: e.total,
-        superseded: Math.max(0, e.batches.size - 1) });
-    }
-  };
-  for (const d of days) {
-    const wd = weekdayOfKey(d);
-    const onDay = type => rows.filter(r => String(r.snapshot_date).slice(0, 10) === d
-      && r.snapshot_type === type && K(r.weekday) === wd);
-    const iniAll = onDay('initial'), curAll = onDay('current');
-    const ini = pickLatestBatch(iniAll), cur = pickLatestBatch(curAll);
-    if (!ini.length || !cur.length) continue;                 // not measured -- the tile's rule
-    measured.push(d);
-    deckInfo_(d, 'initial', iniAll, ini);
-    deckInfo_(d, 'current', curAll, cur);
-    for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(d); e.onInitial++; }
-    for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(d); e.onCurrent++; }
-    for (const target of ['defaulter-initial', 'defaulter-current']) {
-      for (const c of (adj ? adj.cells(target).filter(c => c.date === d) : [])) {
-        if (!teamAllowed(user, c.team)) continue;
-        lines.push({ ref: '', full_name: 'Iliyonasia / Adjustment', contact: '', team: c.team,
-          initial: target === 'defaulter-initial' ? c.amount : 0,
-          current: target === 'defaulter-current' ? c.amount : 0,
-          recovered: target === 'defaulter-initial' ? c.amount : -c.amount, days: 1, adjustment: true });
-      }
-    }
-  }
-  /* WHAT HAPPENED TO EACH CUSTOMER, in a word the list can be filtered on: cleared (on the
-     initial deck, gone from the current), reduced, unchanged, increased, or new (on the
-     current deck only). "Unchanged" is the row to look at when a file says otherwise: it is
-     the system saying its current deck still carries that arrears. */
-  const statusOf = e => !e.onCurrent ? 'cleared' : !e.onInitial ? 'new'
-    : e.current < e.initial ? 'reduced' : e.current > e.initial ? 'increased' : 'unchanged';
-  const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size,
-      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined }))
-    .concat(lines.map(l => ({ ...l, status: 'adjustment' })))
-    .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
-  const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
-    recovered: t.recovered + r.recovered, customers: t.customers + (r.adjustment ? 0 : 1) }),
-    { initial: 0, current: 0, recovered: 0, customers: 0 });
-  decks.sort((a, b) => a.date.localeCompare(b.date) || String(a.team).localeCompare(String(b.team)) || a.type.localeCompare(b.type));
-  return { mode: 'day', rows: out, totals, date, weekOf: mon, weekEnd: sun, days: measured, decks,
-    teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
+  /* ONE READING, TWO DATES. The list is always the export's reading -- present initial
+     against present current, per customer (recoveryCustomersPresent_). "Present" as of the
+     week's end for the week tile, or as of the CARD'S DAY for a day tile: the decks as they
+     stood on that day, which is what the card's figure was read from under the one rule
+     (recoveryStanding). The same-day pairing this list used to do in 'day' mode is gone with
+     the rule it served -- see snapshot-totals.js. */
+  const today = todayKey(nowMs);
+  const asOfDate = mode === 'day' ? (date || (sun < today ? sun : today)) : (asOf.past ? sun : today);
+  return recoveryCustomersPresent_(db, user, pick, { asOfDate, mode, date, mon, sun });
 }
 
 /** The export's reading: present initial vs present current, per customer. No register here,
     because the export carries none -- what this returns is exactly the two files the upload
     page hands out, subtracted. A past week reads the decks as they stood on that Sunday. */
-async function recoveryCustomersPresent_(db, user, pick, { asOf, mon, sun, nowMs }) {
-  const asOfDate = asOf.past ? sun : todayKey(nowMs);
+async function recoveryCustomersPresent_(db, user, pick, { asOfDate, mode, date, mon, sun }) {
   const { ini, cur } = await presentDecks_(db, user, asOfDate);
+  const empty = () => ({ mode: mode || 'present', asOf: asOfDate, rows: [], totals: { initial: 0, current: 0, recovered: 0, customers: 0 },
+    date: date || null, weekOf: mon, weekEnd: sun, days: [], decks: [], measured: false,
+    teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied });
+  // No current deck as of this date: not measured -- the card's own rule (recovery_standing),
+  // never "everybody on the initial decks recovered everything".
+  if (!cur.length) return empty();
   const byKey = new Map();
   const entry = r => {
     const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
     return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
-      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0 }).get(k);
+      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0, iniKey: '' }).get(k);
   };
+  /* ONE INITIAL ROW PER CUSTOMER -- their newest, the same DISTINCT ON the database's standing
+     takes -- so a customer who sits on two weekday decks is not owed twice. */
+  const iniKey_ = r => String(r.snapshot_date).slice(0, 10) + ' ' + String(r.created_at || '');
   const decksBy = new Map();
   const note = (type, r) => {
     const k = K(r.team) + '|' + type;
@@ -9096,12 +9114,17 @@ async function recoveryCustomersPresent_(db, user, pick, { asOf, mon, sun, nowMs
     e.dates.add(String(r.snapshot_date).slice(0, 10)); e.rows++; e.total += num(r.arrears);
     if (!e.uploadedAt || String(r.created_at || '') > e.uploadedAt) e.uploadedAt = r.created_at || null;
   };
-  for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onInitial++; note('initial', r); }
+  for (const r of ini) {
+    const e = entry(r); note('initial', r);
+    const k = iniKey_(r);
+    if (e.onInitial && k <= e.iniKey) continue;
+    e.initial = num(r.arrears); e.iniKey = k; e.onInitial = 1; e.dates.add(String(r.snapshot_date).slice(0, 10));
+  }
   for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onCurrent++; note('current', r); }
   const statusOf = e => !e.onCurrent ? 'cleared' : !e.onInitial ? 'new'
     : e.current < e.initial ? 'reduced' : e.current > e.initial ? 'increased' : 'unchanged';
   const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size,
-      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined }))
+      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined, iniKey: undefined }))
     .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
   const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
     recovered: t.recovered + r.recovered, customers: t.customers + 1 }), { initial: 0, current: 0, recovered: 0, customers: 0 });
@@ -9110,8 +9133,8 @@ async function recoveryCustomersPresent_(db, user, pick, { asOf, mon, sun, nowMs
     return { date: ds.join(', '), team: e.team, type: e.type, uploadedAt: e.uploadedAt, rows: e.rows, total: e.total, superseded: null };
   }).sort((a, b) => String(a.team).localeCompare(String(b.team)) || a.type.localeCompare(b.type));
   const days = [...new Set(decks.flatMap(d => d.date.split(', ')))].sort();
-  return { mode: 'present', asOf: asOfDate, rows: out, totals, date: null, weekOf: mon, weekEnd: sun, days, decks,
-    teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
+  return { mode: mode || 'present', asOf: asOfDate, rows: out, totals, date: date || null, weekOf: mon, weekEnd: sun, days, decks,
+    measured: true, teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
 }
 
 /* THE DASHBOARD'S OWN DIAGNOSIS.
@@ -9221,6 +9244,9 @@ function ledgerWithin_(p, ms) {
 }
 async function dashboardFullCompute_(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
+  // The REAL today, kept before the pin: a finished week's standing is read at its Sunday,
+  // and `today` below is pinned to that week's Friday for every "leo" cell.
+  const realToday = todayKey(nowMs);
   nowMs = asOf.ms;
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
   const wdToday = currentWeekday(nowMs);
@@ -9347,6 +9373,13 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     monthLedgerDays_(db, { monthStart: monthStart0, today, mon, budgetMs: monthBudget, maxJobs: DASH_MONTH_SLICES }),
     monthBudget + 500);
   const monthByTeam = ledgerDays ? ledgerByTeam_(ledgerDays, monthStart0, today, adj) : null;
+  /* THE ONE RECOVERY RULE, for every date this screen draws: the seven tiles, today's cards
+     and Orodha, the week's total, and last week's end for the arrows. One call, cached per
+     scope. Null = RUN-ME-032 not run; everything below then keeps its day pairing. */
+  const weekEnd = sun < realToday ? sun : realToday;
+  const stand = await recoveryStandingFor_(db, user,
+    WD7.map((_, i) => addDaysKey(mon, i)).concat([today, weekEnd, prevSun]).filter(d => d <= realToday), nowMs, adj);
+  const standToday = stand ? (stand.get(today) || null) : null;
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
@@ -9461,7 +9494,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        reads it too, so the two screens add up to one figure rather than two that happen to
        agree. See the note on it in snapshot-totals.js. */
     let rec = 0;
-    for (const t of recoveryByTeam(myDefWeek, d, dwd, adj).values()) rec += t.recovered;
+    // The one rule: the latest decks as of this day. The pairing below is the fallback only.
+    const stD = stand ? (stand.get(d) || null) : null;
+    if (stand) { if (stD) for (const t of stD.values()) rec += t.recovered; }
+    else for (const t of recoveryByTeam(myDefWeek, d, dwd, adj).values()) rec += t.recovered;
     /* THE DENOMINATOR IS JANA'S, on the basis rule -- Monday by Monday, Tuesday to Friday by
        the day before, the weekend by the week.
          "everywhere uses jana except only where there is recovery officers"
@@ -9509,7 +9545,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
          that happens the Rec % beside it goes above 100, which is where the room should be
          looking anyway. */
       unrecovered: Math.max(0, unc - rec),
-      uploaded: !!(ini.length || cur.length),
+      uploaded: stand ? !!stD : !!(ini.length || cur.length),
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
   });
@@ -9517,7 +9553,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      uncollected is Monday to Friday's OWN sheets, once each -- the weekend branch of the same
      rule -- which is not what adding the seven tiles' denominators would give. */
   const recTrendTotal = (() => {
-    const recovered = recTrend.reduce((s, x) => s + x.recovered, 0);
+    /* Under the one rule the week's figure is the standing at the week's end -- the latest
+       initial minus the latest current as of then -- not seven days added: a customer's
+       recovery stands once, however many days it is looked at. */
+    const recovered = stand ? standingSum(stand.get(weekEnd)).recovered : recTrend.reduce((s, x) => s + x.recovered, 0);
     const uncollected = recTrend.slice(0, 5).reduce((s, x) => s + x.dayUncollected, 0);
     const adjusted = recTrend.slice(0, 5).reduce((s, x) => s + (x.dayAdjusted || 0), 0);
     return { recovered, uncollected, adjusted, unrecovered: Math.max(0, uncollected - recovered),
@@ -9551,7 +9590,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       e += tExpected(rows); c += tCollected(rows); u += tUncollected(rows);
     }
     let measured = false;
-    for (let i = 0; i < 7; i++) {
+    if (stand) {
+      // The standing at the week's end (or today, inside a live week) -- the one rule.
+      const end = to < realToday ? to : realToday;
+      const m = stand.get(end);
+      if (m && m.size) { measured = true; rec = standingSum(m).recovered; }
+    } else for (let i = 0; i < 7; i++) {
       // The same function the trend tiles and the commission board read -- see recTrend.
       const byTeam = recoveryByTeam(defRows, addDaysKey(from, i), WD7[i], adj);
       if (!byTeam.size) continue;
@@ -9603,9 +9647,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   /* Today's own weekday, so the headline counts and the team board describe ONE deck rather
      than whichever two happened to be uploaded last. This is the same rule the RECOVERED card
      has always used -- the card was right and these were not. */
-  const iniToday = defDay_(myDefWeek, today, 'initial', wdToday);
-  const curToday = defDay_(myDefWeek, today, 'current', wdToday);
-  const pairedToday = !!(iniToday.length && curToday.length);
+  // Today's decks under the one rule (the latest as of today), or the day's pair as fallback.
+  const iniToday = stand ? standingRows_(standToday, 'initial') : defDay_(myDefWeek, today, 'initial', wdToday);
+  const curToday = stand ? standingRows_(standToday, 'current') : defDay_(myDefWeek, today, 'current', wdToday);
+  const pairedToday = stand ? !!(standToday && standToday.size) : !!(iniToday.length && curToday.length);
 
   const T = {};
   const slot = t => {
@@ -9735,7 +9780,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const mEColPct = m ? pctOf_(m.ic, m.ie) : null;
     const mColPct = m ? pctOf_(m.c, m.e) : null;
     // A month with no deck paired on any day has not measured recovery -- null, never 0%.
-    const mRecPct = (m && m.pairedDays > 0) ? pctOf_(m.rec, m.u) : null;
+    // Under the one rule the month's recovered IS the standing today, over the month's uncollected.
+    const stT = standToday ? standToday.get(K(s.team)) : null;
+    const mRecPct = stand ? (stT && m ? pctOf_(stT.recovered, m.u) : null) : ((m && m.pairedDays > 0) ? pctOf_(m.rec, m.u) : null);
     return {
       ...s, recovered, salesPct,
       collPctToday: pctOf_(s.colToday, s.expToday),
@@ -9819,7 +9866,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       recovered: teams.reduce((s, t) => s + t.recovered, 0),
       defaulters: tCustomers(curToday),
       defaultersInitial: tCustomers(iniToday),
-      cleared: Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
+      cleared: stand ? standingSum(standToday).cleared : Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
       salesLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
       /* NO MONTH FIGURES HERE. They lived in three tiles on this row for exactly one week of
@@ -9830,7 +9877,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),
     },
-    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel,
+    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel, ...recoveryRuleOf_(stand),
     teamPerf: teams,
     paired: pairedToday,
     /* Whether the M. columns on the Orodha are real this load, or still filling. The screen
@@ -10584,7 +10631,12 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      the same fold every other screen applies. */
   const defDay_ = (d, type, weekday) =>
     withAdjDef_(onDate(myDef, d, type, weekday), adj, 'defaulter-' + type, d);
-  const iniToday = defDay_(today, 'initial', wd), curToday = defDay_(today, 'current', wd);
+  /* The one recovery rule: today's boards on the standing today, the week's on the standing at
+     the week's end. The day pairing below is the fallback until RUN-ME-032 is run. */
+  const obEnd = sun < today ? sun : today;
+  const stand = await recoveryStandingFor_(db, user, WD7.map((_, i) => addDaysKey(mon, i)).concat([today, obEnd]).filter(d => d <= today), nowMs, adj);
+  const iniToday = stand ? standingRows_(stand.get(today), 'initial') : defDay_(today, 'initial', wd);
+  const curToday = stand ? standingRows_(stand.get(today), 'current') : defDay_(today, 'current', wd);
   /* THE PER-OFFICER TODAY BOARD IS THE COMMISSION BOARD'S OWN FIGURE.
        "everywhere uses jana except only where there is recovery officers like in their
         commissions, their personal reports and presentation by rec officer"
@@ -10599,7 +10651,13 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     isoWeekday(nowMs) >= 6 ? uncolWeekBy : uncolTodayBy);
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
-  for (let i = 0; i < 7; i++) {
+  if (stand) {
+    // The week per officer is the standing at the week's end -- not the days added.
+    for (const t of (stand.get(obEnd) || new Map()).values()) {
+      const who = officerOf(teamBy, t.team, 'recovery');
+      dailyRec[who] = (dailyRec[who] || 0) + t.recovered;
+    }
+  } else for (let i = 0; i < 7; i++) {
     const d = addDaysKey(mon, i);
     // Each day through recoveryByTeam -- the dashboard tiles' and the commission board's own
     // function, so the wall, the tiles and the pay slip carry one figure per officer.
@@ -10608,7 +10666,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       dailyRec[who] = (dailyRec[who] || 0) + t.recovered;
     }
   }
-  const iniMon = defDay_(mon, 'initial', 'MON');
+  const iniMon = stand ? standingRows_(stand.get(obEnd), 'initial') : defDay_(mon, 'initial', 'MON');
   /* The weekly board always divides by the WEEK's uncollected, whatever day it is read on --
      that is what makes it the weekly board rather than a second copy of the daily one. */
   const recWeek = recBoard(iniMon, curToday, dailyRec, uncolWeekBy);

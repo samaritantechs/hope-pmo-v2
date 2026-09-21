@@ -4,7 +4,8 @@ import { todayKey, currentWeekday, isoWeekday, addDaysKey, weekMondayKey } from 
 import { resolveLatestPerKey, upperTeams , teamMatchList } from './snapshots.js';
 import { cachedAnswer } from './answer-cache.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, defaulterTotalsLatest,
-  tCustomers, tExpected, tCollected, tUncollected, tArrears } from './snapshot-totals.js';
+  tCustomers, tExpected, tCollected, tUncollected, tArrears,
+  recoveryStanding, standingWithAdj, standingSum, RECOVERY_RULE_NOTE } from './snapshot-totals.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
@@ -168,6 +169,35 @@ async function buildDashboardUncached(db, user, nowMs) {
       latest = { day: p.day || null, date: p.date, recovered: dayRec };
     }
   }
+  /* RECOVERY UNDER THE ONE RULE -- see recoveryStanding in snapshot-totals.js.
+       "recovery is initial and current only from latest uploads - everywhere"
+     The pairing above is now the FALLBACK, kept for a deployment where RUN-ME-032 has not
+     been run. With the function installed, recovered is the standing as of today: every
+     customer's newest row on the latest initial deck of each team-and-weekday, minus their
+     row on the latest current deck the company holds -- the upload page's export, subtracted.
+     Rule 1, counted: this is ONE read on the phone's summary path, inside buildDashboard's
+     per-scope-per-minute cache, so forty handsets on a scope ask the database once. It is
+     asked AFTER the wave above because it replaces its answer, not beside it; a missing
+     function answers null in one round trip and the pairing stands, with a note. */
+  const stand0 = await recoveryStanding(db, { dates: [today], teams: user.teams });
+  const standToday = stand0 && stand0.get(today) ? standingWithAdj(stand0.get(today), adj) : null;
+  let recoveryRule = 'pairing';
+  if (stand0) {
+    recoveryRule = 'latest';
+    const sum = standingSum(standToday);
+    recovered = sum.recovered;
+    for (const k of Object.keys(recoveredByTeam)) delete recoveredByTeam[k];
+    let curDeck = null;
+    for (const e of (standToday ? standToday.values() : [])) {
+      if (!teamAllowed(user, e.team)) continue;
+      bump(recoveredByTeam, e.team, e.recovered);
+      if (e.currentDeck && (!curDeck || e.currentDeck > curDeck)) curDeck = e.currentDeck;
+    }
+    // The newest side of the standing is the current deck; that is the day "latest" names.
+    latest = curDeck ? { day: null, date: curDeck, recovered: sum.recovered } : null;
+  } else if (!decks.note) {
+    decks.note = RECOVERY_RULE_NOTE;
+  }
 
   // ---- Recovery denominator, per the basis rule ----
   let recDen, recDenDates, yesterdaySource;
@@ -214,6 +244,7 @@ async function buildDashboardUncached(db, user, nowMs) {
       pct: recDen > 0 ? Math.round((recovered / recDen) * 1000) / 10 : null,
       basis: basis.kind,
       basisLabel: basis.label,
+      rule: recoveryRule,
       /* The newest paired day on its own, so a screen showing a week total can also show what
          the last day contributed. Null when no deck pairs at all -- never 0, which would read
          as "nothing came in" rather than "nobody uploaded". */
