@@ -94,10 +94,17 @@ export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust'];
    because writing could error" -- a free-text tabs field is exactly that risk (one typo and a
    grant silently does nothing), and it existed for access codes even though the Roles screen
    had already solved it for roles with a checkbox list. Both now tick from the SAME list.
-   'credit' deliberately appears only once even though it gates a screen on each side (PMO's
-   own Credit Analysts board and HOPE Loan's Credit · Approval) -- one word, one permission,
-   the same person doing the same kind of work wherever it shows up. */
-export const LOAN_TABS = ['customer_service', 'manager', 'team', 'gmo', 'credit', 'finance', 'gm'];
+   NO WORD IS SHARED WITH HOPE PMO. 'credit' used to be one permission for both the PMO
+   Credit Analysts board and HOPE Loan's Credit · Approval, on the reasoning that it is the
+   same kind of work. It is not the same DOOR: ticking Credit Analysts for a PMO role quietly
+   opened HOPE Loan's section (Pipeline, Credit · Approval, Reversals) for that role --
+     "Hope loan tabs are misbehaving, appearing to roles i havent ticked for"
+   -- and a permission that grants a second system as a side effect is not a permission the
+   admin ticked. HOPE Loan's credit desk is `loan_credit`; `credit` is HOPE PMO's alone. The
+   other six have no HOPE PMO namesake (Teams & Staff is `teams`, not `team`), and the roles
+   editor now draws all seven under their own HOPE Loan heading so they cannot be mistaken
+   for the PMO screen a role's name suggests. */
+export const LOAN_TABS = ['customer_service', 'manager', 'team', 'gmo', 'loan_credit', 'finance', 'gm'];
 /* Everything tickable, PMO and Loan together, deduplicated -- what a Roles or Access Code
    checkbox list draws from so neither has to be told about a tab twice. */
 export const ALL_TABS = [...new Set([...ADMIN_TABS, ...LOAN_TABS])];

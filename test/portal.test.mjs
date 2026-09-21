@@ -25,7 +25,7 @@ const { callApi } = await import('../api/_lib/call-core.js');
 
 /* The ordinary screens' tab ids, from the one place that names them, so a fixture's grant
    cannot drift away from what the system actually offers. */
-const { USER_TABS } = await import('../api/_lib/auth.js');
+const { USER_TABS, ADMIN_TABS, LOAN_TABS } = await import('../api/_lib/auth.js');
 const { todayKey: todayKeyOf } = await import('../api/_lib/time.js');
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20';
@@ -2287,11 +2287,24 @@ test('a role can be ticked into a HOPE Loan tab too, not just HOPE PMO -- both l
   const t = await portalApi(db, ADMIN, 'teams', {}, NOW);
   const ac = await portalApi(db, ADMIN, 'accessCodes', {}, NOW);
   for (const list of [t.allTabs, ac.allTabs]) {
-    for (const lt of ['customer_service', 'manager', 'team', 'gmo', 'credit', 'finance', 'gm']) {
+    for (const lt of ['customer_service', 'manager', 'team', 'gmo', 'loan_credit', 'finance', 'gm']) {
       assert.ok(list.includes(lt), lt + ' is tickable');
     }
     assert.ok(list.includes('upload'), 'HOPE PMO tabs are still there too');
   }
+});
+
+/* "Hope loan tabs are misbehaving, appearing to roles i havent ticked for" -- `credit` was one
+   word for both systems, so ticking Credit Analysts for a PMO role opened HOPE Loan. No tick
+   word may open both systems, and the server says so in the same list the editor draws. */
+test('no HOPE Loan tab word is also a HOPE PMO tab, so a PMO tick can never open HOPE Loan', async () => {
+  const shared = LOAN_TABS.filter(t => ADMIN_TABS.includes(t));
+  assert.deepEqual(shared, [], 'shared between the two systems: ' + shared.join(', '));
+  assert.ok(LOAN_TABS.includes('loan_credit') && !LOAN_TABS.includes('credit'));
+  // A PMO credit analyst holds `credit`; that alone reaches nothing in HOPE Loan.
+  const { canSwitchWorkspace } = await import('../api/_lib/workspace.js');
+  const pmoCredit = { code: 'PC', name: 'PMO CREDIT', role: 'CREDIT ANALYST', teams: null, tabs: ['credit', 'dashboard'] };
+  assert.equal(await canSwitchWorkspace(pmoCredit), false, 'no HOPE Loan section for a PMO credit role');
 });
 
 test('leader reports roll teams up under each supervisor, not just per team', async () => {

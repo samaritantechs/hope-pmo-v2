@@ -909,11 +909,33 @@ test('every id app.html looks up with getElementById is one some screen can draw
    a finance user who chose "request one" was refused by the server after typing the reason. */
 test('the Reversals nav admits credit, and the screen offers each tab only its own half', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  assert.ok(/id:'ln_reversals',[^\n]*tab:\['finance','gm','credit'\]/.test(app), 'credit is on the nav gate');
+  assert.ok(/id:'ln_reversals',[^\n]*tab:\['finance','gm','loan_credit'\]/.test(app), 'loan_credit is on the nav gate');
   const view = app.slice(app.indexOf('VIEWS.ln_reversals'), app.indexOf('/* ---------- GM: carriers'));
-  assert.ok(/var canAsk = lnHolds_\('credit'\)/.test(view), 'the request scope hinges on holding credit');
+  assert.ok(/var canAsk = lnHolds_\('loan_credit'\)/.test(view), 'the request scope hinges on holding loan_credit');
   assert.ok(/\(canAsk \? '<option value="eligible"/.test(view), 'and the "request one" option is only drawn for them');
   assert.ok(/var financePending = finTurn && lnHolds_\('finance'\)/.test(view), 'finance buttons need the finance tab');
   assert.ok(/var gmTurn = gmChain && lnHolds_\('gm'\)/.test(view), 'GM buttons need the gm tab');
   assert.ok(/Waiting for finance to sign|Waiting for the GM to sign/.test(view), 'everyone else is told whose signature it waits for');
+});
+
+/* "Hope loan tabs are misbehaving, appearing to roles i havent ticked for."
+   Two leaks, both closed here. (1) `credit` was one word for HOPE PMO's Credit Analysts and
+   HOPE Loan's Credit · Approval, so a PMO credit role was handed the HOPE Loan section. No
+   HOPE Loan tab word may equal a HOPE PMO nav id or tab. (2) The role editor listed the
+   HOPE Loan words in one flat run with the PMO ones, so `gmo` or `manager` got ticked for a
+   role by that name. The editor now draws HOPE Loan's under their own heading. */
+test('no HOPE Loan tab word is also a HOPE PMO tab, and the role editor keeps the two apart', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const navBlock = app.slice(app.indexOf('var NAV = ['), app.indexOf('var NAV_LOAN = ['));
+  const loanBlock = app.slice(app.indexOf('var NAV_LOAN = ['), app.indexOf('];', app.indexOf('var NAV_LOAN = [')));
+  const pmoWords = new Set([...navBlock.matchAll(/\bid:'([a-z_]+)'/g)].map(m => m[1])
+    .concat([...navBlock.matchAll(/\btab:'([a-z_]+)'/g)].map(m => m[1])));
+  const loanWords = new Set([...loanBlock.matchAll(/'([a-z_]+)'/g)].map(m => m[1]).filter(w => !w.startsWith('ln_')));
+  const shared = [...loanWords].filter(w => pmoWords.has(w));
+  assert.deepEqual(shared, [], 'a word that opens both systems: ' + shared.join(', '));
+  assert.ok(loanWords.has('loan_credit') && !loanWords.has('credit'), 'HOPE Loan credit is loan_credit');
+  const form = app.slice(app.indexOf('function roleForm('), app.indexOf('function teamForm('));
+  assert.ok(/Tabs — HOPE PMO/.test(form) && /Tabs — HOPE Loan/.test(form), 'two headed lists');
+  assert.ok(/all\.filter\(function\(t\)\{ return !isLoanTab_\(t\); \}\)/.test(form), 'PMO words in the first');
+  assert.ok(/all\.filter\(isLoanTab_\)/.test(form), 'HOPE Loan words in the second');
 });
