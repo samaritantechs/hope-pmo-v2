@@ -8967,12 +8967,35 @@ async function dashboardFull(db, user, args, nowMs) {
    The only per-customer read on the dashboard, and on purpose: it runs when a tile is
    pressed, never on the dashboard's own load, and it carries the tile's team pick. */
 const REC_CUST_COLS = 'ref, full_name, contact, team, arrears, snapshot_date, snapshot_type, weekday';
+/* TWO READINGS OF ONE BOOK, AND WHICH ONE THE LIST GIVES.
+
+     "Remember the actual data i got was from the upload export button but the system one
+      still had the error"
+
+   The upload page's export (defaulters -> defaulterBook) hands over the PRESENT decks: each
+   team's latest INITIAL deck and the latest CURRENT deck the company holds, whatever dates
+   they were filed under. Initial minus current across those is "where every defaulter stands
+   now against their baseline". The card's own pairing is narrower: the initial and current
+   decks filed under ONE date, which is "what came back that day". Both are right; they answer
+   different questions, and a list opened to check the export must read the export's decks or
+   it will never agree with it. So the list's default is the export's reading, through the
+   same function the export calls, and the card's own day pairing is a switch on the drawer
+   for anyone reconciling the card itself. */
+async function presentDecks_(db, user, notAfter) {
+  const [ini, cur] = await Promise.all([
+    defaulterBook(db, user, { type: 'initial', notAfter, columns: REC_CUST_COLS }),
+    defaulterBook(db, user, { type: 'current', notAfter, columns: REC_CUST_COLS }),
+  ]);
+  return { ini: scoped(user, ini.rows), cur: scoped(user, cur.rows) };
+}
 async function recoveryCustomers(db, user0, args, nowMs) {
   const pick = await narrowToPickedTeams_(db, user0, args, nowMs);
   const user = pick.user;
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   const mon = asOf.weekOf, sun = addDaysKey(mon, 6);
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String((args && args.date) || '')) ? String(args.date).slice(0, 10) : null;
+  const mode = (args && args.mode) === 'day' ? 'day' : 'present';
+  if (mode === 'present') return recoveryCustomersPresent_(db, user, pick, { asOf, mon, sun, nowMs });
   const from = date || mon, to = date || sun;
   const [rows, adj] = await Promise.all([
     snapshotsInRange(db, 'defaulter_snapshots', {}, from, to, user.teams, REC_CUST_COLS),
@@ -9050,7 +9073,44 @@ async function recoveryCustomers(db, user0, args, nowMs) {
     recovered: t.recovered + r.recovered, customers: t.customers + (r.adjustment ? 0 : 1) }),
     { initial: 0, current: 0, recovered: 0, customers: 0 });
   decks.sort((a, b) => a.date.localeCompare(b.date) || String(a.team).localeCompare(String(b.team)) || a.type.localeCompare(b.type));
-  return { rows: out, totals, date, weekOf: mon, weekEnd: sun, days: measured, decks,
+  return { mode: 'day', rows: out, totals, date, weekOf: mon, weekEnd: sun, days: measured, decks,
+    teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
+}
+
+/** The export's reading: present initial vs present current, per customer. No register here,
+    because the export carries none -- what this returns is exactly the two files the upload
+    page hands out, subtracted. A past week reads the decks as they stood on that Sunday. */
+async function recoveryCustomersPresent_(db, user, pick, { asOf, mon, sun, nowMs }) {
+  const asOfDate = asOf.past ? sun : todayKey(nowMs);
+  const { ini, cur } = await presentDecks_(db, user, asOfDate);
+  const byKey = new Map();
+  const entry = r => {
+    const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
+    return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
+      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0 }).get(k);
+  };
+  const decksBy = new Map();
+  const note = (type, r) => {
+    const k = K(r.team) + '|' + type;
+    const e = decksBy.get(k) || decksBy.set(k, { team: r.team || '', type, dates: new Set(), uploadedAt: null, rows: 0, total: 0 }).get(k);
+    e.dates.add(String(r.snapshot_date).slice(0, 10)); e.rows++; e.total += num(r.arrears);
+    if (!e.uploadedAt || String(r.created_at || '') > e.uploadedAt) e.uploadedAt = r.created_at || null;
+  };
+  for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onInitial++; note('initial', r); }
+  for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onCurrent++; note('current', r); }
+  const statusOf = e => !e.onCurrent ? 'cleared' : !e.onInitial ? 'new'
+    : e.current < e.initial ? 'reduced' : e.current > e.initial ? 'increased' : 'unchanged';
+  const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size,
+      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined }))
+    .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
+  const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
+    recovered: t.recovered + r.recovered, customers: t.customers + 1 }), { initial: 0, current: 0, recovered: 0, customers: 0 });
+  const decks = [...decksBy.values()].map(e => {
+    const ds = [...e.dates].sort();
+    return { date: ds.join(', '), team: e.team, type: e.type, uploadedAt: e.uploadedAt, rows: e.rows, total: e.total, superseded: null };
+  }).sort((a, b) => String(a.team).localeCompare(String(b.team)) || a.type.localeCompare(b.type));
+  const days = [...new Set(decks.flatMap(d => d.date.split(', ')))].sort();
+  return { mode: 'present', asOf: asOfDate, rows: out, totals, date: null, weekOf: mon, weekEnd: sun, days, decks,
     teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
 }
 
