@@ -1037,3 +1037,20 @@ test('every measured recovery tile is pressable and opens the customers behind i
   assert.ok(/root\.querySelectorAll\('\[data-xls\]'\)/.test(drawerFn), 'exports are wired inside the drawer');
   assert.ok(/querySelectorAll\('\[data-reccust\]'\)[\s\S]{0,200}recoveryCustomersDrawer_\(el\.getAttribute\('data-reccust'\)\)/.test(app), 'pressing a tile opens the drawer');
 });
+
+/* "dashboard speed is falling (Imeshindikana / Could not load. Failed to fetch) we could load
+   that data after click" -- the officer boards (thirty-odd reads) no longer fire with the
+   dashboard; they wait behind a button. And a read whose connection dropped is asked once more. */
+test('the dashboard paints its core alone; the officer boards load on a tap; a dropped read is retried once', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const start = app.indexOf('VIEWS.dashboard = function');
+  const view = app.slice(start, app.indexOf('/* =====', start));
+  assert.ok(/DASH_LOAD_BOARDS_ = function\(\)\{[\s\S]*srv\('officerBoards'\)/.test(view), 'the boards wave lives inside the loader');
+  const beforeLoader = view.slice(0, view.indexOf('DASH_LOAD_BOARDS_ = function'));
+  assert.ok(!/srv\('officerBoards'\)|srv\('callAgents'|srv\('recoveryByCredit'/.test(beforeLoader), 'and nowhere else in the view');
+  assert.ok(/id="dashBoardsLoad"/.test(view), 'a button offers them');
+  assert.ok(/getElementById\('dashBoardsLoad'\)[\s\S]{0,120}DASH_LOAD_BOARDS_\(\)/.test(app), 'pressing it runs the wave');
+  const srv = app.slice(app.indexOf('function srv(fn, args)'), app.indexOf('function srv(fn, args)') + 3000);
+  assert.ok(/n < 1 && READ_FNS\[fn\] && \(!e \|\| !e\.status\)/.test(srv), 'a read with no HTTP answer at all is retried once; a write never');
+  assert.ok(/setTimeout\(res, 1500\)/.test(srv), 'after a short pause');
+});
