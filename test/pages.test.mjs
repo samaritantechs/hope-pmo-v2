@@ -1041,7 +1041,9 @@ test('every measured recovery tile is pressable and opens the customers behind i
   // "grind more": search, a status filter, and the decks the system paired.
   assert.ok(/id="recCustQ"/.test(drawerFn) && /id="recCustStatus"/.test(drawerFn), 'a search box and a status filter');
   assert.ok(/key:'status'/.test(drawerFn), 'a status column');
-  assert.ok(/fold_\('recDecks'/.test(drawerFn) && /Imepakiwa \/ Uploaded at/.test(drawerFn) && /Zilizopitwa \/ Superseded/.test(drawerFn), 'the decks paired, with upload time and superseded count');
+  assert.ok(/fold_\('recDecks'/.test(drawerFn) && /Imepakiwa \/ Uploaded at/.test(drawerFn), 'the decks read, with their dates and upload times');
+  assert.ok(!/Superseded/.test(drawerFn), 'one reading, so nothing is "superseded" -- the decks named are the ones read');
+  assert.ok(/As of the card\\'s day/.test(drawerFn), 'the card\'s switch is the same reading as of the card\'s day');
   assert.ok(/querySelectorAll\('\[data-reccust\]'\)[\s\S]{0,200}recoveryCustomersDrawer_\(el\.getAttribute\('data-reccust'\)\)/.test(app), 'pressing a tile opens the drawer');
 });
 

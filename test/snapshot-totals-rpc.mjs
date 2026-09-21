@@ -27,7 +27,94 @@ const NULMARK = String.fromCharCode(0);
 const SEPMARK = String.fromCharCode(1);
 const gk = parts => parts.map(p => (p == null ? NULMARK : String(p))).join(SEPMARK);
 
+/* recovery_standing(p_dates, p_teams, p_lookback) -- db/RUN-ME-032, clause for clause. */
+function recoveryStandingMirror_(store, a = {}) {
+  const src = store.defaulter_snapshots ? store.defaulter_snapshots.rows : [];
+  const teams = a.p_teams ? a.p_teams.map(String) : null;
+  const look = a.p_lookback == null ? 45 : Number(a.p_lookback);
+  const dk = v => String(v == null ? '' : v).slice(0, 10);
+  const minus = (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - n); return t.toISOString().slice(0, 10); };
+  const rank = r => String(r.created_at || '') + ' ' + String(r.upload_batch || '');   // batchRank
+  const out = [];
+  for (const asOf0 of [...new Set((a.p_dates || []).map(dk))].sort()) {
+    const floor = minus(asOf0, look);
+    // 1-2. latest initial deck per team|weekday, winning batch on it
+    const decks = new Map();
+    for (const r of src) {
+      if (r.snapshot_type !== 'initial') continue;
+      const d = dk(r.snapshot_date);
+      if (d > asOf0 || d < floor) continue;
+      if (teams && !teams.includes(String(r.team))) continue;
+      const k = String(r.team) + '|' + String(r.weekday == null ? '' : r.weekday);
+      const e = decks.get(k);
+      if (!e || d > e.date || (d === e.date && rank(r) > e.rank)) decks.set(k, { date: d, rank: rank(r), batch: r.upload_batch == null ? null : r.upload_batch });
+    }
+    // 3. newest initial row per customer across those decks
+    const ini = new Map();
+    for (const r of src) {
+      if (r.snapshot_type !== 'initial') continue;
+      const k = String(r.team) + '|' + String(r.weekday == null ? '' : r.weekday);
+      const e = decks.get(k);
+      if (!e || dk(r.snapshot_date) !== e.date || (r.upload_batch == null ? null : r.upload_batch) !== e.batch) continue;
+      const cur = ini.get(String(r.ref));
+      const key = dk(r.snapshot_date) + ' ' + String(r.created_at || '');
+      if (!cur || key > cur.key) ini.set(String(r.ref), { key, team: r.team, arrears: n0(r.arrears), date: dk(r.snapshot_date) });
+    }
+    // 4. the latest current deck the company holds as of the date (never team-narrowed, and
+    //    no lookback: it lives until the next one)
+    let curDate = '';
+    for (const r of src) {
+      if (r.snapshot_type !== 'current') continue;
+      const d = dk(r.snapshot_date);
+      if (d > asOf0) continue;
+      if (d > curDate) curDate = d;
+    }
+    if (!curDate) continue;                                   // not measured
+    const cbatch = new Map();
+    for (const r of src) {
+      if (r.snapshot_type !== 'current' || dk(r.snapshot_date) !== curDate) continue;
+      if (teams && !teams.includes(String(r.team))) continue;
+      const k = String(r.team) + '|' + String(r.weekday == null ? '' : r.weekday);
+      const e = cbatch.get(k);
+      if (!e || rank(r) > e.rank) cbatch.set(k, { rank: rank(r), batch: r.upload_batch == null ? null : r.upload_batch });
+    }
+    const cur = new Map();
+    for (const r of src) {
+      if (r.snapshot_type !== 'current' || dk(r.snapshot_date) !== curDate) continue;
+      const k = String(r.team) + '|' + String(r.weekday == null ? '' : r.weekday);
+      const e = cbatch.get(k);
+      if (!e || (r.upload_batch == null ? null : r.upload_batch) !== e.batch) continue;
+      const c = cur.get(String(r.ref));
+      const key = String(r.created_at || '');
+      if (!c || key > c.key) cur.set(String(r.ref), { key, team: r.team, arrears: n0(r.arrears) });
+    }
+    // 5. per customer, then per team
+    const byTeam = new Map();
+    const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, ic: 0, cc: 0, cleared: 0, dates: new Set() }).get(String(t));
+    for (const [ref, i] of ini) {
+      const c = cur.get(ref);
+      const e = cell(i.team);
+      e.initial += i.arrears; e.ic++; e.dates.add(i.date);
+      if (c) { e.current += c.arrears; e.cc++; } else e.cleared++;
+    }
+    for (const [ref, c] of cur) {
+      if (ini.has(ref)) continue;
+      const e = cell(c.team); e.current += c.arrears; e.cc++;
+    }
+    // a team with no initial deck within the lookback is not measured (the SQL's second EXISTS)
+    const hasIni = new Set([...decks.keys()].map(k => k.split('|')[0]));
+    for (const e of [...byTeam.values()].sort((x, y) => String(x.team).localeCompare(String(y.team)))) {
+      if (!hasIni.has(String(e.team))) continue;
+      out.push({ as_of: asOf0, team: e.team, initial: e.initial, current: e.current, recovered: e.initial - e.current,
+        initial_customers: e.ic, current_customers: e.cc, cleared: e.cleared,
+        initial_dates: [...e.dates].sort().join(', ') || null, current_deck: curDate });
+    }
+  }
+  return out;
+}
+
 export const SNAPSHOT_TOTALS_RPC = {
+  recovery_standing: recoveryStandingMirror_,
   /** expected_snapshot_totals(p_from, p_to, p_type, p_teams) */
   expected_snapshot_totals(store, a = {}) {
     const src = store.repayment_snapshots ? store.repayment_snapshots.rows : [];

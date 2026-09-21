@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-i';
+var BUILD = '2026-09-21-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3235,37 +3235,39 @@ function recoveryCustomersDrawer_(date, mode){
     var when = mode === 'present'
       ? 'kama export / as the export' + (d.asOf ? ' · hadi / as of ' + d.asOf : '')
       : (week ? (d.weekOf + ' → ' + d.weekEnd) : (wdLabel(weekdayOf_(d.date)) + ' ' + d.date));
-    /* TWO READINGS, ONE SWITCH. "Kama export" is the upload page's export subtracted -- each
+    /* ONE READING, TWO DATES. "Kama export" is the upload page's export subtracted -- each
        team's latest INITIAL deck against the latest CURRENT deck, whatever their dates: where
-       every defaulter stands now. "Siku ya kadi" is the card's own pairing -- the two decks
-       filed under the card's date: what came back that day. Both are said by name so a figure
-       is never compared with the wrong reading. */
+       every defaulter stands now. "Siku ya kadi" is the SAME reading as of the card's day --
+       the decks as they stood then, which is what the card's figure was read from
+       ("recovery is initial and current only from latest uploads - everywhere"). Both are
+       said by name so a figure is never compared with the wrong date. */
     var modeBar = '<div class="pills" style="margin:6px 0 8px;display:flex;gap:4px;flex-wrap:wrap">'
       + '<button type="button" class="pill' + (mode === 'present' ? ' on' : '') + '" data-recmode="present">Kama export / As the export (present decks)</button>'
-      + '<button type="button" class="pill' + (mode === 'day' ? ' on' : '') + '" data-recmode="day">' + (week ? 'Wiki ya kadi / The card\'s week' : 'Siku ya kadi / The card\'s day') + '</button>'
+      + '<button type="button" class="pill' + (mode === 'day' ? ' on' : '') + '" data-recmode="day">' + (week ? 'Mwisho wa wiki ya kadi / As of the card\'s week end' : 'Hadi siku ya kadi / As of the card\'s day') + '</button>'
       + '</div>';
     var all = d.rows || [];
     var counts = {}; all.forEach(function(r){ counts[r.status] = (counts[r.status] || 0) + 1; });
-    /* THE DECKS THE SYSTEM PAIRED. A figure that disagrees with somebody's own two files is
-       traced here: which upload (time, rows, total) stood for each team's initial and current
-       on the day, and whether an earlier upload of the same team-day was superseded by it.
-       "Unchanged" rows below are the system's current deck still carrying that arrears. */
+    /* THE DECKS THE SYSTEM READ. A figure that disagrees with somebody's own two files is
+       traced here: which upload (date, time, rows, total) stood for each team's initial and
+       current as of the date. "Unchanged" rows below are the system's current deck still
+       carrying that arrears. */
     var deckRows = (d.decks || []).map(function(k){
       return { date: k.date, team: k.team, type: k.type === 'initial' ? 'Awali / Initial' : 'Sasa / Current',
         uploadedAt: k.uploadedAt ? String(k.uploadedAt).replace('T', ' ').slice(0, 16) : '—',
-        rows: k.rows, total: k.total, superseded: k.superseded };
+        rows: k.rows, total: k.total };
     });
     var decksHtml = deckRows.length
-      ? fold_('recDecks', 'Deki zilizooanishwa / Decks the system paired', deckRows.length + ' · timu · siku · aina / team · day · type',
+      ? fold_('recDecks', 'Deki zilizosomwa / Decks the system read', deckRows.length + ' · timu · aina / team · type',
           '<div class="card"><div class="scroll"><table><thead><tr><th>Tarehe / Date</th><th>Timu / Team</th><th>Aina / Type</th>'
-          + '<th>Imepakiwa / Uploaded at</th><th class="r">Safu / Rows</th><th class="r">Jumla / Total</th><th class="r">Zilizopitwa / Superseded</th></tr></thead><tbody>'
+          + '<th>Imepakiwa / Uploaded at</th><th class="r">Safu / Rows</th><th class="r">Jumla / Total</th></tr></thead><tbody>'
           + deckRows.map(function(k){ return '<tr><td>' + esc(k.date) + '</td><td>' + esc(k.team) + '</td><td>' + esc(k.type) + '</td>'
-              + '<td>' + esc(k.uploadedAt) + '</td><td class="r">' + money(k.rows) + '</td><td class="r">' + money(k.total) + '</td>'
-              + '<td class="r' + (k.superseded ? ' warnc' : '') + '">' + (k.superseded || '') + '</td></tr>'; }).join('')
+              + '<td>' + esc(k.uploadedAt) + '</td><td class="r">' + money(k.rows) + '</td><td class="r">' + money(k.total) + '</td></tr>'; }).join('')
           + '</tbody></table></div>'
-          + '<div class="note">' + (mode === 'present'
-              ? 'Deki zilezile ambazo kitufe cha export kwenye ukurasa wa kupakia hutoa: deki ya AWALI ya mwisho ya kila timu na deki ya SASA ya mwisho, bila kujali tarehe zake. / The very decks the upload page\'s export hands out: each team\'s latest INITIAL deck and the latest CURRENT deck, whatever their dates.'
-              : 'Kadi huoanisha deki ya AWALI na ya SASA za tarehe ile ile (siku ya wiki inatokana na tarehe iliyochaguliwa ukipakia), upakiaji wa mwisho kwa kila timu — kilichorudi siku hiyo. / The card pairs the INITIAL and CURRENT decks filed under the SAME date (the weekday comes from the date chosen at upload), latest upload per team: what came back that day.')
+          + '<div class="note">Deki zilezile ambazo kitufe cha export kwenye ukurasa wa kupakia hutoa'
+              + (mode === 'present' ? '' : ', kama zilivyokuwa tarehe ' + esc(d.asOf || ''))
+              + ': deki ya AWALI ya mwisho ya kila timu na siku ya wiki (tarehe iliyochaguliwa ukipakia, upakiaji wa mwisho) toa deki ya SASA ya mwisho ya kampuni. Mteja asiyekuwepo kwenye deki ya sasa hadaiwi. / The very decks the upload page\'s export hands out'
+              + (mode === 'present' ? '' : ', as they stood on ' + esc(d.asOf || ''))
+              + ': each team-and-weekday\'s latest INITIAL deck (the date chosen at upload, latest upload on it) less the company\'s latest CURRENT deck. A customer not on the current deck owes nothing.'
           + '</div></div>')
       : '';
     var sub = function(rows){
@@ -3279,7 +3281,7 @@ function recoveryCustomersDrawer_(date, mode){
           ? '<div class="bar"><input id="recCustQ" placeholder="Tafuta jina / ref / timu — search">'
             + '<select id="recCustStatus"><option value="">Hali zote / All statuses</option>' + statusOpts + '</select></div>'
             + '<div id="recCustBoard"></div>' + decksHtml
-          : '<div class="note">Hakuna deki iliyooanishwa siku hii (awali NA sasa). / No paired deck (initial AND current) on this day.</div>'));
+          : '<div class="note">Hakuna deki ya SASA hadi tarehe hii — haijapimwa. / No CURRENT deck as of this date — not measured.</div>'));
     Array.prototype.forEach.call(document.querySelectorAll('[data-recmode]'), function(el){
       el.onclick = function(){ var m = el.getAttribute('data-recmode'); if (m !== mode) recoveryCustomersDrawer_(date, m); };
     });
@@ -3363,6 +3365,7 @@ VIEWS.dashboard = function(){
           + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), avgSub(p.dAvg, p.avgOn))
           + '</div>'; })()
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
+      + (d.recoveryNote && d.recoveryNote !== rec.note ? '<div class="note">'+esc(d.recoveryNote)+'</div>' : '')
       + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
           d.appsTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['U '+x.unassigned+' · A '+x.assigned, 'mutl'], ['<b>'+x.apps+' apps</b>'], ['TZS '+money(x.amount), 'mutl']]); }),
@@ -3801,6 +3804,7 @@ VIEWS.monthreport = function(){
        three collection percentages, month to date. Null carries the same meaning it does on
        the dashboard tiles: the ledger is still filling -- a dash, never a month of zeros. */
     HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf,teams" style="margin-left:8px">← Dashibodi / Dashboard</button>' + teamPick_(d))
+      + (d.recoveryNote ? '<div class="note">' + esc(d.recoveryNote) + '</div>' : '')
       + '<div class="kpis">'
       + kpi('Mwezi / Month', esc(d.month), esc(d.monthStart)+' → '+esc(d.monthEnd)+' · hadi / so far: '+esc(d.asOfDate))
       + kpi('Maombi ya mikopo / Loan apps', money(c.apps), 'CS agents · yaliyoletwa mwezi huu / brought in this month')
@@ -4875,7 +4879,8 @@ VIEWS.weekly = function(){
   var weekOf = S.args.weekOf || '';
   return srv('weekly', {weekOf:weekOf}).then(function(d){
     var t=d.totals;
-    HEAD = '<div class="kpis">'
+    HEAD = (d.recoveryNote ? '<div class="note">' + esc(d.recoveryNote) + '</div>' : '')
+      + '<div class="kpis">'
       + kpi('Expected', money(t.expected), d.weekOf+' → '+d.weekEnd)
       + kpi('Collected', money(t.collected), t.expected? Math.round(100*t.collected/t.expected)+'%':'', 'good')
       + kpi('Uncollected', money(t.uncollected), null, 'bad')
@@ -5207,6 +5212,7 @@ VIEWS.reports = function(){
     S.lrData = d; lrPicksInit_(d);
     var t = d.totals;
     HEAD = weekBar(d) + (d.note ? '<div class="note">'+esc(d.note)+'</div>' : '')
+      + (d.recoveryNote ? '<div class="note">' + esc(d.recoveryNote) + '</div>' : '')
       + '<div class="kpis">'
       + kpi('Teams', money(t.teams), d.weekday+' · '+(d.date||''))
       + kpi('Initial arrears', money(t.initArrears))
@@ -5271,6 +5277,7 @@ VIEWS.commission = function(){
        THAT month's record. */
     HEAD = weekBar(d, '<span class="chip mut">' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
         + '<button class="syncdot" data-go="cmmonth" data-carry="weekOf" title=""></button>')
+      + (d.recoveryNote ? '<div class="note">' + esc(d.recoveryNote) + '</div>' : '')
       + '<div class="kpis">'
       /* THE SPLIT, BESIDE THE TOTAL. Three schemes pay three different people here --
          recovery on a percentage, early collection per PAID/OVERPAID, and PMO collection on a
@@ -5382,17 +5389,17 @@ VIEWS.commission = function(){
          status) that priced the drop, the amount, and the TZS. Sits where the today table
          stood. */
       /* An empty recovery board has more than one truth behind it, and the note says which --
-         guessing sent somebody to upload the same file a fourth time. Recovery is the day's
-         INITIAL deck minus the same day's CURRENT deck (the dashboard's own rule, the same
-         function), so the note lists, day by day, whether both landed and who was left
-         holding one. */
+         guessing sent somebody to upload the same file a fourth time. Recovery is the STANDING
+         as of the day -- each team's latest INITIAL decks minus the company's latest CURRENT
+         deck (the dashboard's own rule, the same function), so the note lists, day by day,
+         whether the day had a current deck to stand against and who was left holding one. */
       + (!(d.recBoard||[]).length
           ? '<div class="card"><div class="card-h">Recovery — wiki hii / this week</div>'
             + '<div class="note" style="margin:10px 14px">'
-            + 'Urejeshaji wa siku = deki la INITIAL la siku hiyo toa deki la CURRENT la siku hiyo hiyo — kanuni ile ile ya dashibodi.'
-            + ' Hakuna siku ya wiki hii ('+esc((d.recDiag&&d.recDiag.from)||'')+' → '+esc((d.recDiag&&d.recDiag.to)||'')+') yenye deki zote mbili tarehe moja.'
-            + ' / A day’s recovery is that day’s INITIAL deck minus the same day’s CURRENT deck — the dashboard’s rule.'
-            + ' No day this week has both decks on one date, so there is nothing to pay on yet.'
+            + 'Urejeshaji wa siku = deki za INITIAL za mwisho za kila timu toa deki ya CURRENT ya mwisho hadi siku hiyo — kanuni ile ile ya dashibodi.'
+            + ' Hakuna siku ya wiki hii ('+esc((d.recDiag&&d.recDiag.from)||'')+' → '+esc((d.recDiag&&d.recDiag.to)||'')+') yenye deki ya CURRENT ya kupimia.'
+            + ' / A day’s recovery is each team’s latest INITIAL decks minus the latest CURRENT deck as of that day — the dashboard’s rule.'
+            + ' No day this week has a CURRENT deck to stand against, so there is nothing to pay on yet.'
             + ((d.recDiag && d.recDiag.days && d.recDiag.days.length)
                 ? '<br><span style="color:var(--mut)">' + d.recDiag.days.map(function(x){
                     return esc(x.date)+' '+esc(x.weekday||'')+': '
@@ -5411,7 +5418,7 @@ VIEWS.commission = function(){
                    so the total here IS the dashboard's total, and the note says how many days
                    actually had both decks to measure. */
                 + ((d.recDiag && d.recDiag.days)
-                    ? ' · rec = initial − current ya siku hiyo hiyo, kama dashibodi / same figure as the dashboard'
+                    ? ' · rec = initial ya mwisho − current ya mwisho hadi siku hiyo, kama dashibodi / latest initial − latest current as of the day, same figure as the dashboard'
                       + ' · siku zilizopimwa / days measured: ' + money(d.recDiag.measured||0) + ' / ' + money(d.recDiag.days.length)
                     : ''),
               /* SIX RECORDS. Five weekdays, each its own percentage and what that band pays,

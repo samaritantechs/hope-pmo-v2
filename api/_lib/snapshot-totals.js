@@ -881,6 +881,84 @@ export function recoveryByTeam(rows, date, weekday, adj = null) {
   return out;
 }
 
+/* =====================================================================================
+   RECOVERY, THE ONE RULE: THE LATEST INITIAL DECK MINUS THE LATEST CURRENT DECK.
+   =====================================================================================
+     "recovery is initial and current only from latest uploads - everywhere"
+     "The rule must be the latest uploaded file on type of report ... latest file by date picked"
+
+   For a date D: every customer's newest row on the latest INITIAL deck of each team-and-
+   weekday (latest picked date within RECOVERY_LOOKBACK_DAYS, latest upload on it per team)
+   minus their row on the latest CURRENT deck the company holds as of D (a customer not on it
+   owes nothing). Per team: initial, current, recovered, the headcounts, and "cleared". It is
+   the upload page's export, subtracted -- and it is what every screen that says "recovered"
+   now reads: the dashboard's cards and trend, the commission board, the weekly and leader
+   reports, the month record, the presentation and the phone's summary.
+
+   ANSWERED BY THE DATABASE (db/RUN-ME-032-recovery-latest-uploads.sql) -- a per-customer
+   question over 45 days of decks is not one to ask the web server row by row on every
+   screen -- and cached per scope for a minute by the callers. Until that file is run this
+   returns null, every screen keeps the day-pairing it had, and says which file to run. */
+export const RECOVERY_STANDING_FN = 'recovery_standing';
+export const RECOVERY_LOOKBACK_DAYS = 45;
+export const RECOVERY_RULE_NOTE = 'Urejeshaji unasomwa kwa kuoanisha deki za siku moja; endesha db/RUN-ME-032 ili usome deki za mwisho zilizopakiwa. '
+  + '/ Recovery is read by same-day deck pairing; run db/RUN-ME-032 to read the latest uploaded decks.';
+/** Map as_of -> Map teamKey -> { team, initial, current, recovered, initialCustomers,
+    currentCustomers, cleared, initialDates, currentDeck }. A date with no current deck as of
+    it is absent (not measured). null when the function is not installed. */
+export async function recoveryStanding(db, { dates, teams = null } = {}) {
+  const want = [...new Set((dates || []).map(d => String(d == null ? '' : d).slice(0, 10)).filter(Boolean))].sort();
+  if (!want.length) return new Map();
+  if (!db || typeof db.rpc !== 'function') return null;
+  if (knownMissing(db, RECOVERY_STANDING_FN)) return null;
+  const { data, error } = await rpcAll(db, RECOVERY_STANDING_FN,
+    { p_dates: want, p_teams: teamsArg(teams), p_lookback: RECOVERY_LOOKBACK_DAYS });
+  if (error) { noteMissing(db, RECOVERY_STANDING_FN); return null; }
+  const out = new Map();
+  for (const r of (Array.isArray(data) ? data : [])) {
+    const d = String(r.as_of || '').slice(0, 10);
+    if (!d) continue;
+    const m = out.get(d) || out.set(d, new Map()).get(d);
+    m.set(K_(r.team), { team: r.team || '', initial: num(r.initial), current: num(r.current), recovered: num(r.recovered),
+      initialCustomers: num(r.initial_customers), currentCustomers: num(r.current_customers), cleared: num(r.cleared),
+      initialDates: String(r.initial_dates || '').split(', ').filter(Boolean), currentDeck: r.current_deck ? String(r.current_deck).slice(0, 10) : null });
+  }
+  return out;
+}
+/** The Iliyonasia register laid over a standing: a cell for defaulter-initial on one of the
+    team's initial deck dates moves initial; a cell for defaulter-current on the current deck's
+    date moves current -- the same direction withAdjDef_ moves a deck row. */
+export function standingWithAdj(perTeam, adj) {
+  if (!adj || !perTeam) return perTeam;
+  const out = new Map();
+  for (const [k, e] of perTeam) out.set(k, { ...e });
+  const touch = (team, f) => {
+    const k = K_(team);
+    const e = out.get(k) || out.set(k, { team, initial: 0, current: 0, recovered: 0, initialCustomers: 0, currentCustomers: 0, cleared: 0, initialDates: [], currentDeck: null }).get(k);
+    f(e);
+  };
+  for (const c of adj.cells('defaulter-initial')) {
+    const e = out.get(K_(c.team));
+    if (!e || !e.initialDates.includes(String(c.date).slice(0, 10))) continue;
+    touch(c.team, x => { x.initial += c.amount; x.recovered = x.initial - x.current; });
+  }
+  for (const c of adj.cells('defaulter-current')) {
+    const e = out.get(K_(c.team));
+    if (!e || e.currentDeck !== String(c.date).slice(0, 10)) continue;
+    touch(c.team, x => { x.current += c.amount; x.recovered = x.initial - x.current; });
+  }
+  return out;
+}
+/** Sum over a standing's teams. */
+export function standingSum(perTeam) {
+  const t = { initial: 0, current: 0, recovered: 0, initialCustomers: 0, currentCustomers: 0, cleared: 0 };
+  for (const e of (perTeam ? perTeam.values() : [])) {
+    t.initial += e.initial; t.current += e.current; t.recovered += e.recovered;
+    t.initialCustomers += e.initialCustomers; t.currentCustomers += e.currentCustomers; t.cleared += e.cleared;
+  }
+  return t;
+}
+
 export async function deckDatesPerTeam(db, { type = null, weekday = null, from, to, teams = null } = {}) {
   const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
     { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });

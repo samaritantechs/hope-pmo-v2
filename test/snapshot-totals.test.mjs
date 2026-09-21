@@ -140,7 +140,11 @@ const OFFICER = { code: 'O', name: 'REC0', role: 'GMO', teams: ['KONGOWE', 'TEME
     not. Two separate fakes so nothing -- not the one-minute answer cache, not the note about a
     missing function -- can carry across from one to the other. */
 const withMigration = () => fakeDb(book(), { rpc: SNAPSHOT_TOTALS_RPC });
-const withoutMigration = () => fakeDb(book());
+/* "Without" is without the TOTALS functions. recovery_standing (RUN-ME-032) is its own
+   migration and its own rule -- without it a screen keeps the old day pairing and says so
+   -- so it stands in both worlds here, or the comparison is of two rules, not two paths. */
+const STANDING_ONLY = { recovery_standing: SNAPSHOT_TOTALS_RPC.recovery_standing };
+const withoutMigration = () => fakeDb(book(), { rpc: STANDING_ONLY });
 
 /* =====================================================================================
    A THIRD WORLD: THE DECKS ALREADY ADDED UP.
@@ -182,7 +186,9 @@ function builtWorld(nowMs) {
   const calls = { n: 0, spans: [] };
   const counted = {};
   for (const [name, fn] of Object.entries(SNAPSHOT_TOTALS_RPC)) {
-    counted[name] = (s, a) => { calls.n++; calls.spans.push([name, a.p_from, a.p_to]); return fn(s, a); };
+    // recovery_standing is not an aggregate the cache replaces; it is asked in every world.
+    counted[name] = name === 'recovery_standing' ? fn
+      : (s, a) => { calls.n++; calls.spans.push([name, a.p_from, a.p_to]); return fn(s, a); };
   }
   const db = fakeDb({ ...t,
     deck_totals: [...exp.map(r => ({ kind: 'expected', ...r })),
@@ -383,7 +389,7 @@ test('the phone performance strip and HOPE Live agree, both ways', async () => {
     _clearSummaryCache();
     const a = await callApi(fakeDb(withUser(book()), { rpc: SNAPSHOT_TOTALS_RPC }), fn, args, FRIDAY);
     _clearSummaryCache();
-    const b = await callApi(fakeDb(withUser(book())), fn, args, FRIDAY);
+    const b = await callApi(fakeDb(withUser(book()), { rpc: STANDING_ONLY }), fn, args, FRIDAY);
     assert.deepEqual(a, b, fn + ' answered differently when the database did the adding up');
   }
 });
@@ -775,4 +781,65 @@ test('a re-upload still wins outright, and nothing outside today\'s date survive
   const refs = out.rows.map(r => r.ref).sort();
   assert.deepEqual(refs, ['TUE-NEW'],
     'the older Tuesday is still gone, and Monday no longer gets to linger either');
+});
+
+/* =====================================================================================
+   THE ONE RECOVERY RULE, ON ITS OWN: recovery_standing (db/RUN-ME-032) as its transcription
+   answers it, read through recoveryStanding, and the register laid over it.
+     "recovery is initial and current only from latest uploads - everywhere"
+   ===================================================================================== */
+test('recoveryStanding: latest initial decks per team-and-weekday minus the latest current deck, per customer', async () => {
+  const { recoveryStanding, standingWithAdj, standingSum } = await import('../api/_lib/snapshot-totals.js');
+  const D = (ref, team, arrears, type, date, wd, extra = {}) => ({ ref, full_name: 'C' + ref, team, arrears,
+    snapshot_type: type, weekday: wd, snapshot_date: date, upload_batch: 'b' + type + date, created_at: date + 'T04:00:00Z', ...extra });
+  const rows = [
+    // Thursday's KONGOWE deck: 777 at 400 -- and an older Thursday deck from the week before that it replaces.
+    D('777', 'KONGOWE', 400, 'initial', '2026-07-23', 'THU'),
+    D('776', 'KONGOWE', 900, 'initial', '2026-07-16', 'THU'),
+    // Friday's decks; KONGOWE's initial uploaded twice, the later one (555 at 700, 111 gone) wins.
+    D('111', 'KONGOWE', 500, 'initial', '2026-07-24', 'FRI'), D('555', 'KONGOWE', 650, 'initial', '2026-07-24', 'FRI'),
+    D('555', 'KONGOWE', 700, 'initial', '2026-07-24', 'FRI', { upload_batch: 'fix', created_at: '2026-07-24T06:00:00Z' }),
+    D('999', 'MBAGALA', 900, 'initial', '2026-07-24', 'FRI'),
+    // The company's current file on Friday: 555 at 600, 999 at 800; 777 and 111 not on it.
+    D('555', 'KONGOWE', 600, 'current', '2026-07-24', 'FRI'), D('999', 'MBAGALA', 800, 'current', '2026-07-24', 'FRI'),
+    // A Thursday current file too, so Thursday is measured on its own.
+    D('777', 'KONGOWE', 350, 'current', '2026-07-23', 'THU'),
+    // A team with a current row and no initial deck in the window: not measured.
+    D('T1', 'TEMEKE', 100, 'current', '2026-07-24', 'FRI'),
+    // An initial deck older than the lookback: gone.
+    D('OLD', 'KONGOWE', 5000, 'initial', '2026-04-06', 'MON'),
+  ];
+  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const st = await recoveryStanding(db, { dates: ['2026-07-23', '2026-07-24', '2026-07-22'] });
+  // Wednesday: no current deck as of it -- not measured, absent.
+  assert.equal(st.has('2026-07-22'), false);
+  // Thursday: KONGOWE's THU deck (777 400) against Thursday's current (777 350).
+  const thu = st.get('2026-07-23');
+  assert.deepEqual([...thu.keys()], ['KONGOWE']);
+  assert.equal(thu.get('KONGOWE').recovered, 50);
+  // Friday: KONGOWE = THU deck (777 400) + FRI deck's winning upload (555 700) = 1,100 initial;
+  // current 600 (555); 777 cleared. MBAGALA 900 - 800. TEMEKE not measured.
+  const fri = st.get('2026-07-24');
+  assert.deepEqual([...fri.keys()].sort(), ['KONGOWE', 'MBAGALA']);
+  const k = fri.get('KONGOWE');
+  assert.equal(k.initial, 1100); assert.equal(k.current, 600); assert.equal(k.recovered, 500);
+  assert.equal(k.initialCustomers, 2); assert.equal(k.currentCustomers, 1); assert.equal(k.cleared, 1);
+  assert.deepEqual(k.initialDates, ['2026-07-23', '2026-07-24']); assert.equal(k.currentDeck, '2026-07-24');
+  assert.equal(fri.get('MBAGALA').recovered, 100);
+  assert.deepEqual(standingSum(fri), { initial: 2000, current: 1400, recovered: 600, initialCustomers: 3, currentCustomers: 2, cleared: 1 });
+  // Team-narrowed: the current side is the whole company's file, but only the scope's teams answer.
+  const mine = await recoveryStanding(db, { dates: ['2026-07-24'], teams: ['MBAGALA'] });
+  assert.deepEqual([...mine.get('2026-07-24').keys()], ['MBAGALA']);
+  // The register: an initial cell on one of the team's initial dates moves initial; a current
+  // cell on the current deck's date moves current; a cell on any other date is ignored.
+  const adj = { cells: t => t === 'defaulter-initial'
+    ? [{ team: 'KONGOWE', date: '2026-07-23', amount: 100 }, { team: 'KONGOWE', date: '2026-07-20', amount: 999 }]
+    : [{ team: 'MBAGALA', date: '2026-07-24', amount: -50 }] };
+  const corrected = standingWithAdj(fri, adj);
+  assert.equal(corrected.get('KONGOWE').initial, 1200); assert.equal(corrected.get('KONGOWE').recovered, 600);
+  assert.equal(corrected.get('MBAGALA').current, 750); assert.equal(corrected.get('MBAGALA').recovered, 150);
+  assert.equal(fri.get('KONGOWE').initial, 1100, 'the standing itself is left alone');
+  // Without RUN-ME-032: null, once, and the screens fall back with a note.
+  const none = await recoveryStanding(fakeDb({ defaulter_snapshots: rows }), { dates: ['2026-07-24'] });
+  assert.equal(none, null);
 });
