@@ -1019,3 +1019,21 @@ test('the dashboard draws a team pick after the dot, sends it, remembers it, and
   const month = app.slice(mStart, app.indexOf('VIEWS.', mStart + 10));
   assert.ok(/teams: teamPickLoad_\(\)/.test(month) && /teamPick_\(d\)/.test(month), 'the month report takes and shows the same pick');
 });
+
+/* "weekly Recovery cards at dashboard / widgets should be clickable to open list of those
+   respective customers showing their initial arrears, current arrears and recovered, with grand
+   totals." */
+test('every measured recovery tile is pressable and opens the customers behind it with a grand total', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const grid = app.slice(app.indexOf("trendGrid('Weekly recovery trend (Mon–Sun)'"), app.indexOf("Loan pipeline</div>"));
+  assert.equal((grid.match(/, '', press\)/g) || []).length, 2, 'weekday tiles (weekend and Mon-Fri shapes) carry the press');
+  assert.ok(/'tot', recTileAttrs_\('week'\)\)/.test(grid), 'the TOTAL tile opens the week');
+  assert.ok(/var press = recTileAttrs_\(x\.date\)/.test(grid), 'each tile carries its own date');
+  assert.ok(/data-reccust="' \+ esc\(date \|\| ''\)/.test(app), 'the attribute names the date');
+  const drawerFn = app.slice(app.indexOf('function recoveryCustomersDrawer_('), app.indexOf('function weekdayOf_('));
+  assert.ok(/srv\('recoveryCustomers', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\), date: week \? '' : date \}\)/.test(drawerFn), 'asks with the week and the team pick');
+  for (const k of ['initial', 'current', 'recovered']) assert.ok(new RegExp("key:'" + k + "'").test(drawerFn), k + ' column');
+  assert.ok(/sumRow\(d\.rows, \['initial', 'current', 'recovered'\]\)/.test(drawerFn), 'a grand total row');
+  assert.ok(/root\.querySelectorAll\('\[data-xls\]'\)/.test(drawerFn), 'exports are wired inside the drawer');
+  assert.ok(/querySelectorAll\('\[data-reccust\]'\)[\s\S]{0,200}recoveryCustomersDrawer_\(el\.getAttribute\('data-reccust'\)\)/.test(app), 'pressing a tile opens the drawer');
+});

@@ -317,6 +317,35 @@ test('the dashboard narrows to picked teams, never widens, and says what it offe
   assert.deepEqual(m.teamsApplied, ['MBAGALA']);
 });
 
+/* "weekly Recovery cards at dashboard / widgets should be clickable to open list of those
+   respective customers showing their initial arrears, current arrears and recovered, with grand
+   totals." The list is the tile's own subtraction with the customer kept, so it adds up to it. */
+test('the customers behind a recovery tile add up to the tile, for a day and for the week', async () => {
+  const db = dbWithRpc(tables());                       // Friday: 111 500->300, 555 700->600, 999 900->800
+  const day = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY }, NOW);
+  assert.deepEqual(day.rows.map(r => [r.ref, r.initial, r.current, r.recovered]),
+    [['111', 500, 300, 200], ['555', 700, 600, 100], ['999', 900, 800, 100]], 'per customer, biggest recovery first');
+  assert.deepEqual(day.totals, { initial: 2100, current: 1700, recovered: 400, customers: 3 });
+  assert.deepEqual(day.days, [TODAY]);
+  const dash = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  const fri = dash.recTrend.find(x => x.date === TODAY);
+  assert.equal(day.totals.recovered, fri.recovered, 'the grand total IS the tile');
+  // The TOTAL tile: the week, with only Friday measured.
+  const wk = await portalApi(db, ADMIN, 'recoveryCustomers', { weekOf: MON }, NOW);
+  assert.equal(wk.date, null); assert.equal(wk.weekOf, MON);
+  assert.deepEqual(wk.days, [TODAY]);
+  assert.equal(wk.totals.recovered, dash.recTrendTotal.recovered, 'the week list adds up to the TOTAL tile');
+  assert.ok(wk.rows.every(r => r.days === 1));
+  // An unmeasured day is empty, not zeros pretending to be customers.
+  const thu = await portalApi(db, ADMIN, 'recoveryCustomers', { date: YEST }, NOW);
+  assert.deepEqual(thu.rows, []); assert.deepEqual(thu.days, []);
+  // Scoped like everything else: a one-team officer sees their team; the dashboard's pick narrows.
+  const mine = await portalApi(db, GMO, 'recoveryCustomers', { date: TODAY }, NOW);
+  assert.deepEqual(mine.rows.map(r => r.ref), ['111', '555']);
+  const picked = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, teams: ['MBAGALA'] }, NOW);
+  assert.deepEqual(picked.rows.map(r => r.ref), ['999']); assert.deepEqual(picked.teamsApplied, ['MBAGALA']);
+});
+
 test('a team with no branch set yet reads null, not a crash', async () => {
   const d = await run('followup');   // tables()'s default fixture never sets .branch
   assert.ok(d.rows.length, 'the fixture has rows to check');
