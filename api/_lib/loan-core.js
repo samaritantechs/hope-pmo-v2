@@ -566,7 +566,7 @@ async function callVerificationFor_(db, user, phone) {
   }
 }
 async function creditCallCheck(db, user, { loan_id }) {
-  requireTab(user, 'credit');
+  requireTab(user, 'loan_credit');
   const loan = await mustLoan(db, loan_id);
   return callVerificationFor_(db, user, loan.contact);
 }
@@ -857,7 +857,7 @@ async function seniorRecommend(db, user, { loan_id, tier, amount, remarks }) {
    ===================================================================================== */
 
 async function creditQueue(db, user) {
-  requireTab(user, 'credit');
+  requireTab(user, 'loan_credit');
   const rows = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'pending_approval').order('team_recomm', { ascending: false }));
   // Blocked until EVERY mandatory senior review for this amount has happened -- Manager at 1M,
   // GMO at 6M, both required once a loan crosses both thresholds (see the section above).
@@ -879,7 +879,7 @@ async function creditQueue(db, user) {
 const APPLICATION_FEE_RATE = 0.05;
 
 async function creditApprove(db, user, p) {
-  requireTab(user, 'credit');
+  requireTab(user, 'loan_credit');
   const loan = await mustLoan(db, p.loan_id);
   const granted = Number(p.granted_amount) || 0;
   if (!granted) throw badRequest('A granted amount is required.');
@@ -920,7 +920,7 @@ async function creditApprove(db, user, p) {
 }
 
 async function creditReject(db, user, { loan_id, reason }) {
-  requireTab(user, 'credit');
+  requireTab(user, 'loan_credit');
   if (!textOrNull(reason)) throw badRequest('A reason is required for every rejection.');
   const loan = await mustLoan(db, loan_id);
   await transition(db, loan, loan.stage, 'rejected', user, { reject_reason: reason }, reason);
@@ -1176,7 +1176,7 @@ async function financeShiftPayment(db, user, { payment_id, to_ref, reason }) {
 async function reversalsList(db, user) {
   /* The three parties to a reversal, and nobody else: the register names every customer whose
      contract is being unwound, which a team or customer-service code has no business reading. */
-  requireAnyTab(user, ['finance', 'gm', 'credit']);
+  requireAnyTab(user, ['finance', 'gm', 'loan_credit']);
   const rows = await allPaged(db, 'reversals', b => b.select('*').order('requested_at', { ascending: false }));
   const loans = await allPaged(db, 'loans', b => b.select('*').eq('stage', 'disbursed'));
   const openIds = new Set(rows.filter(r => r.status === 'Pending').map(r => String(r.loan_id)));
@@ -1193,7 +1193,7 @@ async function reversalsList(db, user) {
 }
 
 async function reversalRequest(db, user, { loan_id, amount, reason }) {
-  requireTab(user, 'credit');
+  requireTab(user, 'loan_credit');
   if (!textOrNull(reason)) throw badRequest('A reason is required to request a reversal.');
   const loan = await mustLoan(db, loan_id);
   if (loan.stage !== 'disbursed') throw badRequest('Only an authorised-but-unfunded loan can be reversed.');

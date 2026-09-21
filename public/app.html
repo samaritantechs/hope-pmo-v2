@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-20-o';
+var BUILD = '2026-09-21-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -957,7 +957,9 @@ var NAV_LOAN = [
      see GMO_THRESHOLD / MANAGER_THRESHOLD in loan-core.js. */
   { id:'ln_manager_review', label:'Manager Review', tab:'manager', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
   { id:'ln_gmo_review',     label:'GMO Review', tab:'gmo', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
-  { id:'ln_credit',    label:'Credit · Approval', tab:'credit', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
+  /* `loan_credit`, NOT `credit`: HOPE PMO's Credit Analysts tab is `credit`, and one word for
+     both meant a PMO credit role was silently handed this whole section. See LOAN_TABS. */
+  { id:'ln_credit',    label:'Credit · Approval', tab:'loan_credit', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
   { id:'ln_disburse',  label:'Disburse', tab:'manager', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
   { id:'ln_finance',   label:'Finance', tab:'finance', ic:'<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>' },
   /* THREE TABS, NOT TWO. The request half of a reversal is Credit's (reversalRequest is gated
@@ -965,7 +967,7 @@ var NAV_LOAN = [
      finance and gm only, a credit analyst had no way in at all, and a finance user who picked
      "request one" was refused on the tap. Each half of the screen shows only its holder's
      buttons -- see lnHolds_. */
-  { id:'ln_reversals', label:'Reversals', tab:['finance','gm','credit'], ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
+  { id:'ln_reversals', label:'Reversals', tab:['finance','gm','loan_credit'], ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
   { id:'ln_gm',        label:'GM · Carriers', tab:'gm', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>' },
 ];
 
@@ -7711,6 +7713,38 @@ function staffForm(x){
   };
 }
 
+/* Which tick words belong to HOPE Loan -- read off NAV_LOAN itself, so the list the admin
+   ticks and the gate each screen checks are one definition. */
+function loanTabSet_(){
+  var out = {};
+  NAV_LOAN.forEach(function(n){
+    (Array.isArray(n.tab) ? n.tab : (n.tab ? [n.tab] : [])).forEach(function(t){ out[t] = true; });
+  });
+  return out;
+}
+function isLoanTab_(t){ return !!loanTabSet_()[t]; }
+/* The screens a tick word opens, named beside the word, so "gmo" reads as "GMO Review" and
+   not as whatever the admin assumed. */
+function tabScreens_(t){
+  var names = [];
+  if (isLoanTab_(t)) {
+    NAV_LOAN.forEach(function(n){
+      var need = Array.isArray(n.tab) ? n.tab : (n.tab ? [n.tab] : []);
+      if (need.indexOf(t) >= 0 && !n.hidden) names.push(n.label);
+    });
+  } else {
+    NAV.forEach(function(n){ if ((n.tab ? n.tab === t : n.id === t) && !n.hidden) names.push(n.label); });
+    if (t === 'upload') names.push('Upload Reports');
+  }
+  return names;
+}
+function tabTick_(t, have){
+  var screens = tabScreens_(t);
+  return '<label><input type="checkbox" class="rTab" value="'+esc(t)+'"'
+    + (have.indexOf(t)>=0?' checked':'')+'> '+esc(t)
+    + (screens.length ? ' <span style="color:var(--mut);font-size:11px">— '+esc(screens.join(' · '))+'</span>' : '')
+    + '</label>';
+}
 function roleForm(x){
   var isNew = !x;
   var all = (S.roleMeta && S.roleMeta.allTabs) || [];
@@ -7718,10 +7752,18 @@ function roleForm(x){
   drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
     + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
-    + '<div class="fld"><label>Tabs</label><div class="checks">'
-    + all.map(function(t){
-        return '<label><input type="checkbox" class="rTab" value="'+esc(t)+'"'
-          + (have.indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
+    /* TWO LISTS, EACH UNDER ITS OWN NAME. One flat run of words put `gmo`, `manager`, `team`,
+       `finance`, `gm` and `customer_service` beside `dashboard` and `followup` with nothing
+       to say the first six open HOPE LOAN -- so a role called GMO got `gmo` ticked, a manager
+       got `manager`, and each found a second system in their sidebar. Every box now says
+       which system it opens and which screens. */
+    + '<div class="fld"><label>Tabs — HOPE PMO</label><div class="checks">'
+    + all.filter(function(t){ return !isLoanTab_(t); }).map(function(t){ return tabTick_(t, have); }).join('')
+    + '</div></div>'
+    + '<div class="fld"><label>Tabs — HOPE Loan</label>'
+    + '<div class="fldnote">Hizi hufungua HOPE LOAN, si skrini za HOPE PMO. / These open HOPE LOAN screens, not HOPE PMO ones.</div>'
+    + '<div class="checks">'
+    + all.filter(isLoanTab_).map(function(t){ return tabTick_(t, have); }).join('')
     + '</div></div>'
     + '<button class="btn w" id="rSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="rDel">Futa / Delete role</button>'));
@@ -10235,7 +10277,7 @@ function lnHolds_(tab){
   return S.me.role === 'ADMIN' || (S.me.tabs||[]).indexOf(tab) >= 0;
 }
 VIEWS.ln_reversals = function(){
-  var canAsk = lnHolds_('credit');
+  var canAsk = lnHolds_('loan_credit');
   var scope = S.args.scope || (canAsk && !lnHolds_('finance') && !lnHolds_('gm') ? 'eligible' : 'pending');
   if (scope === 'eligible' && !canAsk) scope = 'pending';
   return srv('reversalsList', {}).then(function(d){
