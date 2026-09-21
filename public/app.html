@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-b';
+var BUILD = '2026-09-21-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9169,16 +9169,37 @@ function openCameraOverlay_(onCapture){
     onCapture(dataUrl, cameraLabel);
   };
 }
+/* TWO STATES, NOT ONE. "When a picture is captured show captured label to know it's temporary
+   there.. if in a saved section show saved ✓" -- a capture uploads the moment it is taken, but
+   its PATH only lands on the record when the section is saved. So a fresh capture reads
+   "captured -- not saved yet" (and is marked pending), and it turns into "Saved ✓" when its
+   section's save comes back (markSectionSaved_), the same label a capture that was already on
+   the record opens with. A save that fails leaves it pending, which is the truth. */
+var CAPTURE_SAVED_ = '✓ Imehifadhiwa / Saved';
+var CAPTURE_PENDING_ = '📷 Imepigwa — bado haijahifadhiwa / Captured — not saved yet';
+function markCapturePending_(status){
+  if (!status) return;
+  status.textContent = CAPTURE_PENDING_; status.setAttribute('data-capture-pending', '1'); status.style.color = 'var(--warn, #b45309)';
+}
+function markCaptureSaved_(status){
+  if (!status) return;
+  status.textContent = CAPTURE_SAVED_; status.removeAttribute('data-capture-pending'); status.style.color = 'var(--ok)';
+}
+/** Every pending capture inside a section's panel becomes "Saved ✓" -- called by the one
+    section-save router once the server has said yes, never before. */
+function markSectionSaved_(section){
+  document.querySelectorAll('.ln-stage-panel[data-stage="' + section + '"] [data-capture-pending]').forEach(markCaptureSaved_);
+}
 function wirePhotoCapture_(btnId, statusId, loanId, kind, existingPath, onPath){
   var btn = document.getElementById(btnId), status = document.getElementById(statusId);
   if (!btn) return;
-  function setStatus(has){ if (status) status.textContent = has ? '✓ Imepigwa / Captured' : ''; }
+  function setStatus(has){ if (status) { status.textContent = has ? CAPTURE_SAVED_ : ''; status.style.color = has ? 'var(--ok)' : ''; } }
   setStatus(!!existingPath);
   btn.onclick = function(){
     openCameraOverlay_(function(dataUrl, cameraLabel){
-      btn.disabled = true; if (status) status.textContent = 'Inapakia... / Uploading...';
+      btn.disabled = true; if (status) { status.textContent = 'Inapakia... / Uploading...'; status.style.color = ''; }
       kycUpload_(loanId, kind, dataUrl, cameraLabel)
-        .then(function(r){ onPath(r.path); setStatus(true); btn.disabled = false; })
+        .then(function(r){ onPath(r.path); markCapturePending_(status); btn.disabled = false; })
         .catch(function(e){ btn.disabled = false; setStatus(!!existingPath); toast(String((e && e.message) || e), true); });
     });
   };
@@ -9189,14 +9210,22 @@ function wirePhotoCapture_(btnId, statusId, loanId, kind, existingPath, onPath){
 function wireGpsCapture_(btnId, statusId, existingLat, existingLng, onCoords){
   var btn = document.getElementById(btnId), status = document.getElementById(statusId);
   if (!btn) return;
-  function setStatus(lat, lng){ if (status) status.textContent = (lat != null && lng != null) ? (Number(lat).toFixed(5) + ', ' + Number(lng).toFixed(5)) : ''; }
+  function fmt(lat, lng){ return Number(lat).toFixed(5) + ', ' + Number(lng).toFixed(5); }
+  function setStatus(lat, lng){
+    if (!status) return;
+    var has = lat != null && lng != null;
+    status.textContent = has ? (fmt(lat, lng) + ' · ' + CAPTURE_SAVED_) : '';
+    status.style.color = has ? 'var(--ok)' : ''; status.removeAttribute('data-capture-pending');
+  }
   setStatus(existingLat, existingLng);
   btn.onclick = function(){
     if (!navigator.geolocation) { toast('Simu hii haina GPS. / This device has no GPS.', true); return; }
-    btn.disabled = true; if (status) status.textContent = 'Inatafuta mahali... / Finding location...';
+    btn.disabled = true; if (status) { status.textContent = 'Inatafuta mahali... / Finding location...'; status.style.color = ''; }
     navigator.geolocation.getCurrentPosition(function(pos){
       var lat = pos.coords.latitude, lng = pos.coords.longitude;
-      onCoords(lat, lng); setStatus(lat, lng); btn.disabled = false;
+      onCoords(lat, lng); btn.disabled = false;
+      // Same two states as a photo: taken now, on the record only once the section is saved.
+      if (status) { markCapturePending_(status); status.textContent = fmt(lat, lng) + ' · ' + CAPTURE_PENDING_; }
     }, function(err){
       btn.disabled = false; setStatus(existingLat, existingLng);
       toast('Imeshindikana kupata mahali / could not get location: ' + err.message, true);
@@ -9559,9 +9588,11 @@ function lnTeamAssessForm_(loanRow, planRow){
     while (alts.length < 5) alts.push({});
     var locked = !planMode && Number(loan.track_no) > 1;
     var saveSection_ = function(section, fields){
-      return planMode
+      var p = planMode
         ? lnActKeep_('assessmentPlanDraftSave', { id: planRow.id, section: section, fields: fields }, 'Imehifadhiwa kwenye mpango / Saved on the plan.')
         : lnActKeep_('teamAssessmentSave', { loan_id: loan.id, section: section, fields: fields }, 'Saved.');
+      // Only after the server said yes: every capture in this section now reads "Saved ✓".
+      return p.then(function(r){ markSectionSaved_(section); return r; });
     };
     var idType = c.id_type || 'NIDA';
     var idNo = ID_TYPES[idType] ? (c[ID_TYPES[idType]] || '') : '';

@@ -965,3 +965,20 @@ test('the recommendation form drafts on an Assessment Plan, and the plan drawer 
   const assign = app.slice(app.indexOf("lnAct('managerAssign'"), app.indexOf("lnAct('managerAssign'") + 900);
   assert.ok(/r\.planMerged/.test(assign) && /bad: true/.test(assign), 'Assign reports the merge, and a failed merge in red');
 });
+
+/* "When a picture is captured show captured label to know it's temporary there.. if in a saved
+   section show saved ✓" -- a capture uploads at once but only lands on the record when its
+   section is saved, so the label says which of the two it is. */
+test('a fresh capture reads "not saved yet" and turns to "Saved ✓" only when its section save succeeds', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const photo = app.slice(app.indexOf('function wirePhotoCapture_('), app.indexOf('function wireGpsCapture_('));
+  assert.ok(/CAPTURE_PENDING_ = '[^']*bado haijahifadhiwa[^']*not saved yet'/.test(app), 'the pending wording says it is temporary');
+  assert.ok(/CAPTURE_SAVED_ = '✓ Imehifadhiwa \/ Saved'/.test(app), 'the saved wording carries the tick');
+  assert.ok(/onPath\(r\.path\); markCapturePending_\(status\)/.test(photo), 'a successful upload marks the capture pending, not saved');
+  assert.ok(/setStatus\(!!existingPath\)/.test(photo) && /has \? CAPTURE_SAVED_ : ''/.test(photo), 'a capture already on the record opens as Saved');
+  const gps = app.slice(app.indexOf('function wireGpsCapture_('), app.indexOf('function captureRowPhoto_('));
+  assert.ok(/markCapturePending_\(status\)/.test(gps), 'a fresh pinpoint is pending the same way');
+  const form = app.slice(app.indexOf('function lnTeamAssessForm_(loanRow, planRow)'), app.indexOf('/* ---------- GMO / OPM senior review'));
+  assert.ok(/return p\.then\(function\(r\)\{ markSectionSaved_\(section\); return r; \}\)/.test(form), 'the section router flips them to Saved only after the server said yes');
+  assert.ok(/function markSectionSaved_\(section\)\{\s*document\.querySelectorAll\('\.ln-stage-panel\[data-stage="' \+ section \+ '"\] \[data-capture-pending\]'\)/.test(app), 'and only the captures inside that section\'s panel');
+});
