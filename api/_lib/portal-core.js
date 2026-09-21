@@ -3429,9 +3429,22 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      say WHICH, or the person uploads the same file a fourth time. One line per day of the
      range: was the day measured, how many teams had both decks, how many were holding one. */
   const recDiag = { from: mon, to: sun, days: [], measured: 0 };
+  /* THE WALK RUNS TO THE END OF A FINISHED WEEK, NOT TO ITS FRIDAY.
+
+       "weekly dashboard .... has 70m recovered ... yet commisions have 53m"
+
+     `today` is pinned to Friday on a finished week so the "leo" record has a collection day
+     to stand on -- right for that, and wrong as the end of THIS walk, which stopped there too
+     and dropped Saturday's and Sunday's recovery (17.2m of the 70.9m that week). The same
+     week read on Sunday night had all seven days; read on Monday morning it had five, and
+     every WK band was worked out on the smaller figure. The weekend counts -- recovery-pay.js
+     says so in its own words ("recovered Monday to Sunday over everything the week was given
+     to recover") and the dashboard's weekly tile already adds it. So a finished week walks
+     to its Sunday; a live week still stops at today, and the month at its own `today`. */
+  const recEnd = (scope === 'week' && asOf.past) ? sun : today;
   for (let i = 0; ; i++) {
     const d = addDaysKey(mon, i);
-    if (d > today || d > sun) break;
+    if (d > recEnd || d > sun) break;
     const wd = weekdayOfKey(d);
     const byTeam = recoveryByTeam(myDef, d, wd, adj);
     const landed = type => new Set(myDef
