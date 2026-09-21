@@ -546,6 +546,7 @@ test('the commission screen opens any week, and the month record any month', asy
   assert.equal(juma.pctIJ, 100); assert.equal(juma.tzsIJ, 60000);
   assert.equal(juma.pctWK, 100); assert.equal(juma.weekCommission, 120000);
   assert.equal(juma.commission, 60000, 'the live record of a finished week is its Friday\'s');
+  assert.equal(w.recDiag.days.length, 7, 'a finished week is walked to its Sunday, not its Friday');
   // This week, asked for by its Monday, is the ordinary screen.
   const now = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: MON }, NOW);
   assert.equal(now.pastWeek, false); assert.equal(now.to, addDaysT_(MON, 6));
@@ -563,6 +564,39 @@ test('the commission screen opens any week, and the month record any month', asy
   assert.notEqual(a1.from, a2.from, 'two weeks asked of one database in one minute are two answers');
 });
 const addDaysT_ = (k, n) => { const d = new Date(k + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+
+/* "weekly dashboard .... has 70m recovered ... yet commisions have 53m"
+   The 17m gap was Saturday and Sunday: a finished week's recovery walk stopped at the Friday
+   `today` is pinned to, so the same week read on Sunday night carried seven days and read on
+   Monday morning carried five. The weekend counts toward the week's record (recovery-pay.js:
+   "recovered Monday to Sunday"), and the dashboard's weekly tile already adds it. */
+test('a finished week\'s commission carries its weekend recovery, the same as the dashboard', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(
+    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-17', 'FRI'),
+    D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'),
+    // Saturday: 1,000 -> 400, 600 recovered with no collection sheet behind it.
+    D('711', 'KONGOWE', 1000, 'initial', 45, '2026-07-18', 'SAT'),
+    D('711', 'KONGOWE', 400, 'current', 45, '2026-07-18', 'SAT'),
+    // Sunday: 400 -> 300, another 100.
+    D('711', 'KONGOWE', 400, 'initial', 45, '2026-07-19', 'SUN'),
+    D('711', 'KONGOWE', 300, 'current', 45, '2026-07-19', 'SUN'));
+  t.repayment_snapshots.push(E('711', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'));
+  const w = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: '2026-07-15' }, NOW);
+  assert.equal(w.pastWeek, true);
+  const juma = w.recBoard.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.recIJ, 1000, 'Friday\'s own record is Friday\'s');
+  assert.equal(juma.weekRecovered, 1700, 'the week is Friday plus Saturday plus Sunday');
+  assert.equal(juma.recWK, 1700, 'and the WK record carries the same figure');
+  assert.equal(w.week.find(r => r.officer === 'JUMA G').recovered, 1700, 'so does the Orodha\'s week row');
+  assert.equal(w.totals.recovered, 1000, 'the day total stays the live day\'s (Friday) -- it was never the week');
+  assert.equal(w.recDiag.measured, 3, 'three days had both decks');
+  assert.equal(w.recDiag.days.length, 7);
+  // The dashboard's weekly tile for the same week adds the same three days.
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', { weekOf: '2026-07-15' }, NOW);
+  const recTotal = (dash.recTrend || []).reduce((s, x) => s + num_(x.recovered), 0);
+  assert.equal(recTotal, 1700, 'commission and dashboard are one figure for the week');
+});
 
 /* =====================================================================================
    THE COMMISSION BOARD AND THE DASHBOARD ADD UP TO ONE FIGURE.
