@@ -636,7 +636,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-d';
+var BUILD = '2026-09-21-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2560,6 +2560,19 @@ function wireBar(){
     };
   });
   wireWeekBar();
+  // The team pick: a team pill toggles itself, "All" clears the lot; remembered per code.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-teampick]'), function(el){
+    el.onclick = function(){
+      var t = el.getAttribute('data-teampick');
+      var cur = (teamPickLoad_() || []).slice();
+      if (!t) cur = [];
+      else if (cur.indexOf(t) >= 0) cur.splice(cur.indexOf(t), 1);
+      else cur.push(t);
+      S.args.teams = cur;
+      store(teamPickKey_(), cur.length ? JSON.stringify(cur) : null);
+      render({ force: true });
+    };
+  });
   var fcGo = document.getElementById('fcGo'), fcQ = document.getElementById('fcQ');
   if (fcGo && fcQ) {
     var run = function(){ S.args.q = fcQ.value.trim(); render(); };
@@ -3168,13 +3181,38 @@ function wireWeekBar(){
     el.onclick = function(){ S.args.weekOf = el.getAttribute('data-week-set') || ''; render(); };
   });
 }
+/* THE TEAM PICK, AFTER THE DOT. "I need a team selector after the blue blinker on dashboard
+   that filters the current dashboard data into chosen/selected team(s) among those owned by
+   the current user." One pill per team the code holds (the whole register for a code that
+   holds every team), any number lit at once, "All" to clear; nothing is drawn for a code that
+   holds a single team, since there is nothing to choose. The pick is remembered per code on
+   this device and rides into the month report with the week. The server does the narrowing
+   at the database (narrowToPickedTeams_); these pills only say what was asked for. */
+function teamPickKey_(){ return 'hopeDashTeams_' + ((S.me && S.me.code) || ''); }
+function teamPickLoad_(){
+  if (Array.isArray(S.args.teams)) return S.args.teams;
+  var v = [];
+  try { v = JSON.parse(load(teamPickKey_()) || '[]'); } catch(e) { v = []; }
+  S.args.teams = Array.isArray(v) ? v : [];
+  return S.args.teams;
+}
+function teamPick_(d){
+  var opts = d.teamOptions || [];
+  if (opts.length <= 1) return '';
+  var on = {}; (d.teamsApplied || []).forEach(function(t){ on[t] = true; });
+  var any = (d.teamsApplied || []).length > 0;
+  return '<span class="pills teampick" style="margin-left:8px;display:inline-flex;flex-wrap:wrap;gap:4px;vertical-align:middle">'
+    + '<button type="button" class="pill' + (any ? '' : ' on') + '" data-teampick="">Timu zote / All</button>'
+    + opts.map(function(t){ return '<button type="button" class="pill' + (on[t] ? ' on' : '') + '" data-teampick="' + esc(t) + '">' + esc(t) + '</button>'; }).join('')
+    + '</span>';
+}
 VIEWS.dashboard = function(){
-  return srv('dashboardFull', { weekOf: S.args.weekOf || '' }).then(function(d){
+  return srv('dashboardFull', { weekOf: S.args.weekOf || '', teams: teamPickLoad_() }).then(function(d){
     var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
     /* The unlabeled dot beside the week bar opens the month report and CARRIES the chosen
-       week, so a dashboard slid back to July opens July's report. Deliberately nameless --
-       see the .syncdot note in the stylesheet. */
-    HEAD = weekBar(d, '<button class="syncdot" data-go="monthreport" data-carry="weekOf"></button>')
+       week -- and the team pick -- so a dashboard slid back to July opens July's report for
+       the same teams. Deliberately nameless -- see the .syncdot note in the stylesheet. */
+    HEAD = weekBar(d, '<button class="syncdot" data-go="monthreport" data-carry="weekOf,teams"></button>' + teamPick_(d))
       + '<div class="kpis">'
       + kpi('Current arrears', money(c.curArrears), 'initial upload: ' + money(c.initArrears))
       + kpi('Recovered', money(c.recovered), 'initial − current · ' + money(c.cleared) + ' cleared', 'good')
@@ -3546,7 +3584,7 @@ VIEWS.teamtrend = function(){
 };
 
 VIEWS.monthreport = function(){
-  return srv('monthReport', { weekOf: S.args.weekOf || '' }).then(function(d){
+  return srv('monthReport', { weekOf: S.args.weekOf || '', teams: teamPickLoad_() }).then(function(d){
     var t = d.totals || {};
     var rows = d.rows || [];
     /* WASTANI / AVERAGE, over the weeks that have actually happened -- an average that
@@ -3617,7 +3655,7 @@ VIEWS.monthreport = function(){
        col, col and rec": what the call agents brought in, what the analysts sold, and the
        three collection percentages, month to date. Null carries the same meaning it does on
        the dashboard tiles: the ledger is still filling -- a dash, never a month of zeros. */
-    HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf" style="margin-left:8px">← Dashibodi / Dashboard</button>')
+    HEAD = weekBar(d, '<button class="pill" data-go="dashboard" data-carry="weekOf,teams" style="margin-left:8px">← Dashibodi / Dashboard</button>' + teamPick_(d))
       + '<div class="kpis">'
       + kpi('Mwezi / Month', esc(d.month), esc(d.monthStart)+' → '+esc(d.monthEnd)+' · hadi / so far: '+esc(d.asOfDate))
       + kpi('Maombi ya mikopo / Loan apps', money(c.apps), 'CS agents · yaliyoletwa mwezi huu / brought in this month')

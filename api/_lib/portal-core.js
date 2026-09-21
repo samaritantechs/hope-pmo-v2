@@ -8574,8 +8574,11 @@ function ledgerByTeam_(days, from, to, adj = null) {
    A week that has not started yet is null across the board. */
 async function monthReport(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
-  return cachedAnswer(db, 'monthReport|' + asOf.weekOf, user, nowMs,
-    () => monthReportCompute_(db, user, asOf, nowMs));
+  // The dashboard's pick rides into its month report (the dot carries it), same narrowing.
+  const pick = await narrowToPickedTeams_(db, user, args, nowMs);
+  const out = await cachedAnswer(db, 'monthReport|' + asOf.weekOf, pick.user, nowMs,
+    () => monthReportCompute_(db, pick.user, asOf, nowMs));
+  return { ...out, teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
 }
 async function monthReportCompute_(db, user, asOf, realNowMs) {
   /* WHICH MONTH, AND HOW MUCH OF IT.
@@ -8900,10 +8903,48 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
    while somebody slides the week bar back and forth. Keyed by the RESOLVED week plus the raw
    request (two requests resolving to the same week can carry different overruled-choice
    notes), scoped per team-set, held for the same one minute every other answer lives. */
+/* A TEAM PICK ON TOP OF THE SCOPE -- NARROWER, NEVER WIDER.
+
+     "I need a team selector after the blue blinker on dashboard that filters the current
+      dashboard data into chosen/selected team(s) among those owned by the current user."
+
+   Every read the dashboard makes already scopes at the database on `user.teams` (CLAUDE.md:
+   team scoping happens at the database). So a pick is applied by handing the same compute a
+   user whose team list is the picked subset -- one mechanism, not a second filter bolted on
+   after the rows arrive. The subset can only ever be drawn from what the code holds: a name
+   it does not hold is dropped, not honoured, and a pick that leaves nothing falls back to the
+   code's whole scope rather than to "everything" (an empty list means ALL teams to every read
+   in this file, which is exactly the widening this must never do). Spellings come from the
+   register, matched case-insensitively -- .in() is exact-case. The answer cache keys on the
+   narrowed user's teams (scopeKey), so two picks in one minute are two answers. */
+function teamPickArg_(v) {
+  const list = Array.isArray(v) ? v : String(v == null ? '' : v).split(',');
+  const out = [];
+  for (const t of list) { const x = String(t == null ? '' : t).trim(); if (x && !out.includes(x)) out.push(x); }
+  return out;
+}
+async function narrowToPickedTeams_(db, user, args, nowMs) {
+  const held = (user && Array.isArray(user.teams) && user.teams.length) ? user.teams : null;
+  let options = held;
+  if (!options) {
+    // Wall clock, not the request's nowMs: the dashboard's own compute reads this same memo
+    // on the wall clock a moment later (readTeamsAll), and a memo stamped on a pinned clock
+    // would make that read miss and pay the register twice -- see scopedUser_.
+    const rows = await readTeamsRawMemo_(db);
+    options = [...new Set(rows.map(r => String((r && r.team) == null ? '' : r.team).trim()).filter(Boolean))].sort();
+  }
+  const byK = new Map(options.map(t => [K(t), t]));
+  const picked = [];
+  for (const w of teamPickArg_(args && args.teams)) { const hit = byK.get(K(w)); if (hit && !picked.includes(hit)) picked.push(hit); }
+  return { user: picked.length ? { ...user, teams: picked } : user, teamOptions: options, teamsApplied: picked };
+}
+
 async function dashboardFull(db, user, args, nowMs) {
   const asOf0 = asOfWeek(nowMs, args && args.weekOf);
-  return cachedAnswer(db, 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
-    user, nowMs, () => dashboardFullCompute_(db, user, args, nowMs));
+  const pick = await narrowToPickedTeams_(db, user, args, nowMs);
+  const out = await cachedAnswer(db, 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
+    pick.user, nowMs, () => dashboardFullCompute_(db, pick.user, args, nowMs));
+  return { ...out, teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
 }
 /* THE DASHBOARD'S OWN DIAGNOSIS.
 
