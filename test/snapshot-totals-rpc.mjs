@@ -38,7 +38,7 @@ function recoveryStandingMirror_(store, a = {}) {
   const wd = r => String(r.weekday == null ? '' : r.weekday);
   const bt = r => (r.upload_batch == null ? null : r.upload_batch);
   /* 3. a deck, read once: the winning upload, then one row per customer on it (newest) */
-  const deckCust = new Map();                               // team|weekday|date -> Map ref -> arrears
+  const deckCust = new Map();                               // team|weekday|date -> Map ref -> { arrears, created }
   const readDeck = (team, weekday, date) => {
     const key = team + '|' + weekday + '|' + date;
     if (deckCust.has(key)) return deckCust.get(key);
@@ -52,7 +52,7 @@ function recoveryStandingMirror_(store, a = {}) {
       if (r.snapshot_type !== 'initial' || dk(r.snapshot_date) !== date || String(r.team) !== team || wd(r) !== weekday) continue;
       if (!win || bt(r) !== win.batch) continue;
       const c = m.get(String(r.ref));
-      if (!c || String(r.created_at || '') > c.key) m.set(String(r.ref), { key: String(r.created_at || ''), arrears: n0(r.arrears) });
+      if (!c || String(r.created_at || '') > c.created) m.set(String(r.ref), { created: String(r.created_at || ''), arrears: n0(r.arrears) });
     }
     deckCust.set(key, m);
     return m;
@@ -106,16 +106,22 @@ function recoveryStandingMirror_(store, a = {}) {
     }
     if (!curDate) continue;                                   // not measured
     const cur = readCur(curDate);
-    // 5-7. per team: the decks picked, added, less what the team owes on the current deck
+    // 5. one row per customer across the decks picked: their newest (deck date, then upload time)
+    const ini = new Map();                                    // ref -> { team, arrears, date }
+    for (const k of decks.values()) {
+      for (const [ref, c] of readDeck(k.team, k.weekday, k.date)) {
+        const key = k.date + ' ' + c.created;
+        const have = ini.get(ref);
+        if (!have || key > have.key) ini.set(ref, { key, team: k.team, arrears: c.arrears, date: k.date });
+      }
+    }
+    // 6-8. per team: what those customers owed, less what the team owes on the current deck
     const byTeam = new Map();
     const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, ic: 0, cc: 0, cleared: 0, dates: new Set() }).get(String(t));
-    for (const k of decks.values()) {
-      const e = cell(k.team);
-      e.dates.add(k.date);
-      for (const [ref, c] of readDeck(k.team, k.weekday, k.date)) {
-        e.initial += c.arrears; e.ic++;
-        if (!cur.has(ref)) e.cleared++;
-      }
+    for (const [ref, i] of ini) {
+      const e = cell(i.team);
+      e.initial += i.arrears; e.ic++; e.dates.add(i.date);
+      if (!cur.has(ref)) e.cleared++;
     }
     for (const c of cur.values()) {
       const e = byTeam.get(String(c.team));

@@ -9102,10 +9102,13 @@ async function recoveryCustomersPresent_(db, user, pick, { asOfDate, mode, date,
   const entry = r => {
     const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
     return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
-      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0 }).get(k);
+      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0, iniKey: '' }).get(k);
   };
-  /* A customer who sits on two weekday decks is counted on each -- exactly as the export
-     lists them, and as the database's standing adds each deck (recovery_standing). */
+  /* ONE INITIAL ROW PER CUSTOMER -- their newest -- the same reading recovery_standing takes.
+     The initial file carries the whole book and is uploaded on every weekday's date, so a
+     customer sits on several of the present decks; adding those rows counted them once per
+     deck ("initials aint reading well ... 23,760,795,812" against a 3.4bn book). */
+  const iniKey_ = r => String(r.snapshot_date).slice(0, 10) + ' ' + String(r.created_at || '');
   const decksBy = new Map();
   const note = (type, r) => {
     const k = K(r.team) + '|' + type;
@@ -9113,12 +9116,17 @@ async function recoveryCustomersPresent_(db, user, pick, { asOfDate, mode, date,
     e.dates.add(String(r.snapshot_date).slice(0, 10)); e.rows++; e.total += num(r.arrears);
     if (!e.uploadedAt || String(r.created_at || '') > e.uploadedAt) e.uploadedAt = r.created_at || null;
   };
-  for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onInitial++; note('initial', r); }
+  for (const r of ini) {
+    const e = entry(r); note('initial', r);
+    const k = iniKey_(r);
+    if (e.onInitial && k <= e.iniKey) continue;
+    e.initial = num(r.arrears); e.iniKey = k; e.onInitial = 1; e.dates.add(String(r.snapshot_date).slice(0, 10));
+  }
   for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onCurrent++; note('current', r); }
   const statusOf = e => !e.onCurrent ? 'cleared' : !e.onInitial ? 'new'
     : e.current < e.initial ? 'reduced' : e.current > e.initial ? 'increased' : 'unchanged';
   const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size,
-      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined }))
+      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined, iniKey: undefined }))
     .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
   const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
     recovered: t.recovered + r.recovered, customers: t.customers + 1 }), { initial: 0, current: 0, recovered: 0, customers: 0 });
