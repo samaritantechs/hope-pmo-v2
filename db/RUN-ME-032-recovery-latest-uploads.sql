@@ -22,6 +22,24 @@
 --
 -- Paste the whole file into the SQL editor and run it once. Safe to re-run. Until it is run,
 -- every screen keeps the day-pairing rule it has today and says which file to run.
+--
+-- v2 (2026-09-22): the first cut walked the whole 45-day window of initial rows ONCE PER DATE
+-- ASKED (nine dates on the dashboard: nine scans of over a million rows) and timed out on the
+-- live book, and the screen read that timeout as "not installed". This one:
+--   - lists the decks in the window once (a few thousand rows, off the (type, weekday, date,
+--     team) index) and picks the winning date per team-and-weekday per date from that list;
+--   - reads each deck that won ONCE, straight off the index -- its winning upload, then one
+--     row per customer on it -- and works each (initial deck, current deck) pair out once,
+--     so dates that share decks share the answer instead of repeating it per customer;
+--   - asks the index for one current-deck date per as-of.
+--   A customer who sits on two weekday decks of a team is counted on each, exactly as the
+--   export lists them. Measured on a synthetic book of 1.1m initial and 5.2m current rows
+--   (five times the live current deck), nine dates at once: 14.3 s before, 3.7 s after;
+--   0.9 s on an eight-team scope, 0.2 s for one date and two teams. JIT is off for it: the
+--   compile alone cost over a second on a query this wide.
+--   `materialized` keeps the planner from inlining the small sets and guessing one row each.
+-- If a screen still shows the note, the dashboard's diagnosis card ("Imeshindikana") now
+-- times this function on its own and prints what the database said.
 -- =====================================================================================
 
 create or replace function public.recovery_standing(p_dates date[], p_teams text[] default null, p_lookback int default 45)
@@ -29,111 +47,142 @@ returns table (
   as_of date, team text, initial numeric, current numeric, recovered numeric,
   initial_customers int, current_customers int, cleared int, initial_dates text, current_deck date
 )
-language sql stable as $$
-with d as (
+language sql stable set jit = off as $$
+with d as materialized (
   select distinct unnest(p_dates) as as_of
 ),
--- 1. the latest INITIAL deck per team-and-weekday as of each date, within the lookback
-ini_decks as (
-  select d.as_of, s.team, s.weekday, max(s.snapshot_date) as deck_date
+span as materialized (
+  select min(as_of) - p_lookback as lo, max(as_of) as hi from d
+),
+-- 1. every INITIAL deck in the window, listed once: team, weekday, date. Index-only off
+--    idx_def_snap_lookup (snapshot_type, weekday, snapshot_date, team); a few thousand rows.
+decks as materialized (
+  select distinct s.team, s.weekday, s.snapshot_date
+  from public.defaulter_snapshots s, span
+  where s.snapshot_type = 'initial'
+    and s.snapshot_date >= span.lo
+    and s.snapshot_date <= span.hi
+    and (p_teams is null or s.team = any(p_teams))
+),
+-- 2. the latest deck per team-and-weekday as of each date, within the lookback, off that list
+ini_decks as materialized (
+  select d.as_of, k.team, k.weekday, max(k.snapshot_date) as deck_date
   from d
-  join public.defaulter_snapshots s
-    on s.snapshot_type = 'initial'
-   and s.snapshot_date <= d.as_of
-   and s.snapshot_date >= d.as_of - p_lookback
-  where p_teams is null or s.team = any(p_teams)
-  group by d.as_of, s.team, s.weekday
+  join decks k
+    on k.snapshot_date <= d.as_of
+   and k.snapshot_date >= d.as_of - p_lookback
+  group by d.as_of, k.team, k.weekday
 ),
--- 2. the upload that won on that date for that deck: newest created_at, then batch id
-ini_batch as (
-  select k.as_of, k.team, k.weekday, k.deck_date,
-         (array_agg(s.upload_batch order by s.created_at desc nulls last, s.upload_batch desc nulls last))[1] as batch
-  from ini_decks k
-  join public.defaulter_snapshots s
-    on s.snapshot_type = 'initial'
-   and s.team = k.team
-   and s.weekday is not distinct from k.weekday
-   and s.snapshot_date = k.deck_date
-  group by k.as_of, k.team, k.weekday, k.deck_date
+-- 3. each deck that won, read ONCE, straight off the index (lateral: one index lookup per
+--    deck, never a scan of the table): the upload that won on it (newest created_at, then
+--    batch id -- the batch rule every reader uses), then one row per customer on that upload
+ini_win as materialized (
+  select distinct team, weekday, deck_date from ini_decks
 ),
--- 3. one row per customer across those decks: their newest initial row
-ini_rows as (
-  select distinct on (b.as_of, s.ref)
-         b.as_of, s.ref, s.team, s.arrears, s.snapshot_date
-  from ini_batch b
-  join public.defaulter_snapshots s
-    on s.snapshot_type = 'initial'
-   and s.team = b.team
-   and s.weekday is not distinct from b.weekday
-   and s.snapshot_date = b.deck_date
-   and s.upload_batch is not distinct from b.batch
-  order by b.as_of, s.ref, s.snapshot_date desc, s.created_at desc nulls last
+ini_cust as materialized (
+  select w.team, w.weekday, w.deck_date, x.ref, x.arrears
+  from ini_win w
+  cross join lateral (
+    select distinct on (y.ref) y.ref, y.arrears
+    from (
+      select s.ref, s.arrears, s.upload_batch, s.created_at,
+             first_value(s.upload_batch) over (order by s.created_at desc nulls last, s.upload_batch desc nulls last) as win_batch
+      from public.defaulter_snapshots s
+      where s.snapshot_type = 'initial'
+        and s.snapshot_date = w.deck_date
+        and s.team = w.team
+        and ((w.weekday is not null and s.weekday = w.weekday) or (w.weekday is null and s.weekday is null))
+    ) y
+    where y.upload_batch is not distinct from y.win_batch
+    order by y.ref, y.created_at desc nulls last
+  ) x
 ),
 -- 4. the latest CURRENT deck the company holds as of each date (not narrowed by team: the
 --    file is the whole book, and a team missing from it owes nothing on it). No lookback on
 --    this side, exactly as the upload page's export reads it: "the latest current defaulter
---    file is to live until the next one, no limit" (defaulterBook, portal-core.js)
-cur_date as (
-  select d.as_of, max(s.snapshot_date) as deck_date
+--    file is to live until the next one, no limit" (defaulterBook, portal-core.js). One
+--    max() per date, answered off idx_def_snap_date_type; then each deck read ONCE, as above,
+--    the winning upload picked per team-and-weekday on it.
+cur_date as materialized (
+  select d.as_of,
+         (select max(s.snapshot_date) from public.defaulter_snapshots s
+           where s.snapshot_type = 'current' and s.snapshot_date <= d.as_of) as deck_date
   from d
-  left join public.defaulter_snapshots s
-    on s.snapshot_type = 'current'
-   and s.snapshot_date <= d.as_of
-  group by d.as_of
 ),
-cur_batch as (
-  select c.as_of, c.deck_date, s.team, s.weekday,
-         (array_agg(s.upload_batch order by s.created_at desc nulls last, s.upload_batch desc nulls last))[1] as batch
-  from cur_date c
-  join public.defaulter_snapshots s
-    on s.snapshot_type = 'current'
-   and s.snapshot_date = c.deck_date
+cur_win as materialized (
+  select distinct deck_date from cur_date where deck_date is not null
+),
+cur_cust as materialized (
+  select w.deck_date, x.ref, x.team, x.arrears
+  from cur_win w
+  cross join lateral (
+    select distinct on (y.ref) y.ref, y.team, y.arrears
+    from (
+      select s.ref, s.team, s.arrears, s.upload_batch, s.created_at,
+             first_value(s.upload_batch) over (partition by s.team, s.weekday
+               order by s.created_at desc nulls last, s.upload_batch desc nulls last) as win_batch
+      from public.defaulter_snapshots s
+      where s.snapshot_type = 'current'
+        and s.snapshot_date = w.deck_date
+        and (p_teams is null or s.team = any(p_teams))
+    ) y
+    where y.upload_batch is not distinct from y.win_batch
+    order by y.ref, y.created_at desc nulls last
+  ) x
+),
+-- 5. each (initial deck, current deck) pair that any date needs, worked out ONCE: the deck's
+--    arrears and headcount, and how many of its customers are gone from that current deck.
+--    Two dates that share the same decks share the same answer instead of repeating it.
+pair as materialized (
+  select distinct k.team, k.weekday, k.deck_date, c.deck_date as cur_deck
+  from ini_decks k
+  join cur_date c on c.as_of = k.as_of
   where c.deck_date is not null
-    and (p_teams is null or s.team = any(p_teams))
-  group by c.as_of, c.deck_date, s.team, s.weekday
 ),
-cur_rows as (
-  select distinct on (b.as_of, s.ref)
-         b.as_of, s.ref, s.team, s.arrears
-  from cur_batch b
-  join public.defaulter_snapshots s
-    on s.snapshot_type = 'current'
-   and s.team = b.team
-   and s.weekday is not distinct from b.weekday
-   and s.snapshot_date = b.deck_date
-   and s.upload_batch is not distinct from b.batch
-  order by b.as_of, s.ref, s.created_at desc nulls last
+pair_agg as materialized (
+  select p.team, p.weekday, p.deck_date, p.cur_deck,
+         sum(i.arrears) as initial,
+         count(*) as initial_customers,
+         count(*) filter (where cc.ref is null) as cleared
+  from pair p
+  join ini_cust i
+    on i.team = p.team
+   and i.weekday is not distinct from p.weekday
+   and i.deck_date = p.deck_date
+  left join cur_cust cc
+    on cc.deck_date = p.cur_deck
+   and cc.ref = i.ref
+  group by p.team, p.weekday, p.deck_date, p.cur_deck
 ),
--- 5. initial minus current, per customer, then per team
-per_customer as (
-  select coalesce(i.as_of, c.as_of) as as_of,
-         coalesce(i.ref, c.ref) as ref,
-         coalesce(i.team, c.team) as team,
-         coalesce(i.arrears, 0) as initial,
-         coalesce(c.arrears, 0) as current,
-         (i.ref is not null) as on_initial,
-         (c.ref is not null) as on_current,
-         i.snapshot_date as ini_date
-  from ini_rows i
-  full outer join cur_rows c on c.as_of = i.as_of and c.ref = i.ref
+-- 6. what each team owes on each current deck: everyone on it, new customers included
+cur_team as materialized (
+  select deck_date, team, sum(arrears) as current, count(*) as current_customers
+  from cur_cust
+  group by deck_date, team
 )
-select p.as_of, p.team,
-       sum(p.initial)::numeric as initial,
-       sum(p.current)::numeric as current,
-       (sum(p.initial) - sum(p.current))::numeric as recovered,
-       (count(*) filter (where p.on_initial))::int as initial_customers,
-       (count(*) filter (where p.on_current))::int as current_customers,
-       (count(*) filter (where p.on_initial and not p.on_current))::int as cleared,
-       string_agg(distinct p.ini_date::text, ', ') as initial_dates,
-       (select cd.deck_date from cur_date cd where cd.as_of = p.as_of) as current_deck
-from per_customer p
--- a date with no current deck at all is not measured -- no rows, never "everything recovered"
-where exists (select 1 from cur_date cd where cd.as_of = p.as_of and cd.deck_date is not null)
--- and a team with no initial deck within the lookback is not measured either -- its current
--- rows alone would read as a negative recovery against an initial nobody uploaded
-  and exists (select 1 from ini_decks k where k.as_of = p.as_of and k.team = p.team)
-group by p.as_of, p.team
-order by p.as_of, p.team;
+-- 7. per date and team: the decks picked, added; less the team's current; the headcounts
+select k.as_of, k.team,
+       sum(pa.initial)::numeric as initial,
+       coalesce(max(ct.current), 0)::numeric as current,
+       (sum(pa.initial) - coalesce(max(ct.current), 0))::numeric as recovered,
+       sum(pa.initial_customers)::int as initial_customers,
+       coalesce(max(ct.current_customers), 0)::int as current_customers,
+       sum(pa.cleared)::int as cleared,
+       string_agg(distinct k.deck_date::text, ', ') as initial_dates,
+       c.deck_date as current_deck
+from ini_decks k
+-- a date with no current deck at all is not measured -- no rows, never "everything recovered";
+-- and a team with no initial deck within the lookback is not measured either (it is not in
+-- ini_decks) -- its current rows alone would read as a negative recovery against nothing
+join cur_date c on c.as_of = k.as_of and c.deck_date is not null
+join pair_agg pa
+  on pa.team = k.team
+ and pa.weekday is not distinct from k.weekday
+ and pa.deck_date = k.deck_date
+ and pa.cur_deck = c.deck_date
+left join cur_team ct on ct.deck_date = c.deck_date and ct.team = k.team
+group by k.as_of, k.team, c.deck_date
+order by k.as_of, k.team;
 $$;
 
 grant execute on function public.recovery_standing(date[], text[], int) to anon, authenticated, service_role;

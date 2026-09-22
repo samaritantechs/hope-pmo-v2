@@ -843,3 +843,24 @@ test('recoveryStanding: latest initial decks per team-and-weekday minus the late
   const none = await recoveryStanding(fakeDb({ defaulter_snapshots: rows }), { dates: ['2026-07-24'] });
   assert.equal(none, null);
 });
+
+/* "I ran it still getting 'run db/RUN-ME-032'" -- a function that is installed but FAILED
+   (a timeout on the live book) was read as "not installed", and the screen sent the person
+   back to a file they had just run. The two are told apart, and the failure's own words
+   travel to the screen. */
+test('recoveryStanding: a failing function is not a missing one, and the note says what it said', async () => {
+  const { recoveryStanding, recoveryRuleNote, RECOVERY_RULE_NOTE } = await import('../api/_lib/snapshot-totals.js');
+  const failing = fakeDb({ defaulter_snapshots: [] }, { rpc: { recovery_standing() { throw new Error('canceling statement due to statement timeout'); } } });
+  assert.equal(await recoveryStanding(failing, { dates: ['2026-07-24'] }), null);
+  assert.match(recoveryRuleNote(failing), /recovery_standing \(db\/RUN-ME-032\) failed/);
+  assert.match(recoveryRuleNote(failing), /statement timeout/, 'the database\'s own words');
+  assert.ok(!/run db\/RUN-ME-032 to read/.test(recoveryRuleNote(failing)), 'not sent back to the file');
+  const missing = fakeDb({ defaulter_snapshots: [] });
+  assert.equal(await recoveryStanding(missing, { dates: ['2026-07-24'] }), null);
+  assert.equal(recoveryRuleNote(missing), RECOVERY_RULE_NOTE, 'not installed: the file to run');
+  // And the dashboard's diagnosis times the function on its own and carries its words.
+  const p = await portalApi(failing, ADMIN, 'dashboardProbe', {}, FRIDAY);
+  const step = p.steps.find(s => /recovery standing/.test(s.name));
+  assert.ok(step, 'the probe asks the one rule directly');
+  assert.match(String(step.error), /statement timeout/);
+});

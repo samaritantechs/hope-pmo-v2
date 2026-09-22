@@ -903,6 +903,24 @@ export const RECOVERY_STANDING_FN = 'recovery_standing';
 export const RECOVERY_LOOKBACK_DAYS = 45;
 export const RECOVERY_RULE_NOTE = 'Urejeshaji unasomwa kwa kuoanisha deki za siku moja; endesha db/RUN-ME-032 ili usome deki za mwisho zilizopakiwa. '
   + '/ Recovery is read by same-day deck pairing; run db/RUN-ME-032 to read the latest uploaded decks.';
+/* A FUNCTION THAT IS THERE BUT FAILED IS NOT A FUNCTION THAT IS MISSING.
+     "I ran it still getting 'run db/RUN-ME-032'"
+   The first cut read every error as "not installed" and told the person to run a file they
+   had just run. A timeout, a permissions slip or a bad plan on the live book is a different
+   fault, so the database's own words are kept per connection and put on the screen instead:
+   what failed and what it said, so the next step is the right one. */
+const standingErr = new WeakMap();
+const isMissingFn_ = e => /could not find the function|does not exist|PGRST202|42883|schema cache/i.test(String((e && e.message) || e || ''));
+/** The note a screen carries when the one rule could not be read: which file to run, or
+    what the installed function said when it failed. Null when it answered. */
+export function recoveryRuleNote(db) {
+  const e = db ? standingErr.get(db) : null;
+  if (e && (Date.now() - e.at) < 5 * 60 * 1000) {
+    return 'recovery_standing (db/RUN-ME-032) ilishindwa, urejeshaji unasomwa kwa kuoanisha deki za siku moja: ' + e.msg
+      + ' / recovery_standing (db/RUN-ME-032) failed, recovery is read by same-day deck pairing: ' + e.msg;
+  }
+  return RECOVERY_RULE_NOTE;
+}
 /** Map as_of -> Map teamKey -> { team, initial, current, recovered, initialCustomers,
     currentCustomers, cleared, initialDates, currentDeck }. A date with no current deck as of
     it is absent (not measured). null when the function is not installed. */
@@ -911,9 +929,18 @@ export async function recoveryStanding(db, { dates, teams = null } = {}) {
   if (!want.length) return new Map();
   if (!db || typeof db.rpc !== 'function') return null;
   if (knownMissing(db, RECOVERY_STANDING_FN)) return null;
-  const { data, error } = await rpcAll(db, RECOVERY_STANDING_FN,
-    { p_dates: want, p_teams: teamsArg(teams), p_lookback: RECOVERY_LOOKBACK_DAYS });
-  if (error) { noteMissing(db, RECOVERY_STANDING_FN); return null; }
+  let res;
+  try {
+    res = await rpcAll(db, RECOVERY_STANDING_FN,
+      { p_dates: want, p_teams: teamsArg(teams), p_lookback: RECOVERY_LOOKBACK_DAYS });
+  } catch (e) { res = { data: null, error: e }; }
+  const { data, error } = res;
+  if (error) {
+    if (isMissingFn_(error)) { noteMissing(db, RECOVERY_STANDING_FN); standingErr.delete(db); }
+    else standingErr.set(db, { at: Date.now(), msg: String((error && error.message) || error).slice(0, 200) });
+    return null;
+  }
+  standingErr.delete(db);
   const out = new Map();
   for (const r of (Array.isArray(data) ? data : [])) {
     const d = String(r.as_of || '').slice(0, 10);

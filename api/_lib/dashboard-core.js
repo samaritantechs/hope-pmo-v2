@@ -5,7 +5,7 @@ import { resolveLatestPerKey, upperTeams , teamMatchList } from './snapshots.js'
 import { cachedAnswer } from './answer-cache.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, defaulterTotalsLatest,
   tCustomers, tExpected, tCollected, tUncollected, tArrears,
-  recoveryStanding, standingWithAdj, standingSum, RECOVERY_RULE_NOTE } from './snapshot-totals.js';
+  recoveryStanding, standingWithAdj, standingSum, recoveryRuleNote } from './snapshot-totals.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
@@ -196,7 +196,7 @@ async function buildDashboardUncached(db, user, nowMs) {
     // The newest side of the standing is the current deck; that is the day "latest" names.
     latest = curDeck ? { day: null, date: curDeck, recovered: sum.recovered } : null;
   } else if (!decks.note) {
-    decks.note = RECOVERY_RULE_NOTE;
+    decks.note = recoveryRuleNote(db);
   }
 
   // ---- Recovery denominator, per the basis rule ----
