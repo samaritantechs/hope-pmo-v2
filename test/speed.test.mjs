@@ -26,7 +26,7 @@ import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_R
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi } = await import('../api/_lib/portal-core.js');
-const { callApi } = await import('../api/_lib/call-core.js');
+const { callApi, _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
 const { loanApi } = await import('../api/_lib/loan-core.js');
 const { USER_TABS } = await import('../api/_lib/auth.js');
 
@@ -324,7 +324,13 @@ for (const B of BUDGETS) {
 /* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one
    of these is a field officer standing in the sun on mobile data. */
 const PHONE = [
-  ['Calls: boot',        'api_callBoot',          ['DEV1'], 12,  5000],
+  /* 12 -> 7: this was carrying roughly double the real headroom with no comment explaining it,
+     while the dedicated test below ("opening the app is one wait, not ten") already holds the
+     same call to 6 trips. Real measured cost is 5; 7 leaves one trip of headroom above that,
+     matching how tightly neighbouring rows like "Calls: today list" are set, and stops a
+     regression to, say, 8-11 trips from silently passing this looser guard while the tighter
+     dedicated test (correctly) catches it. */
+  ['Calls: boot',        'api_callBoot',          ['DEV1'], 7,  5000],
   /* One trip tighter since the OFFICER/LEADER short-circuit: a plain handset no longer pays
      a settings read per list load to ask what the PMO role is called. Moved DOWN on purpose --
      a budget that quietly grows back is the failure this file exists to stop. */
@@ -401,6 +407,15 @@ for (const [label, fn, args, tripBudget, rowBudget] of PHONE) {
     t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER',
       device_id: 'DEV1', active: true });
     t.teams = t.teams.map(x => (x.team === TEAMS[0] ? { ...x, team_code: 'TEAM01' } : x));
+    if (fn === 'api_widget') {
+      /* The widget's summaryFor answer is kept in summaryCache, a bare MODULE-LEVEL Map keyed
+         only by team scope -- not per fakeDb, the way cachedAnswer's cache in answer-cache.js
+         is. "Calls: daily summary" runs immediately before this, for the same scope and the
+         same NOW, and would otherwise leave a warm entry behind: this test would then measure
+         a cache hit (~5 trips) instead of the cold cost the budget below is actually meant to
+         guard. Cleared here so this test always pays the real, documented cost. */
+      _clearSummaryCache(); _clearWidgetCache();
+    }
     const c = counting(t);
     await callApi(c.db, fn, args, NOW);
     const { trips, rows } = c.stat();
