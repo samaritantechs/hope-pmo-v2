@@ -258,13 +258,18 @@ const PAGE_KEY = {
   call_agents: 'user_id',
   deck_totals_days: ['kind', 'snapshot_date'],
   deck_totals: ['kind', 'snapshot_date', 'snapshot_type', 'weekday', 'team', 'upload_batch'],
-  // Three more that fell into the same hole after this map was written: each was added by its
-  // own later migration (device register, imprest, hints) and nobody carried it in here, so
-  // every fetchAll of them has been paying the SAME error-storm cost this map exists to stop --
+  // Two more that fell into the same hole after this map was written: each was added by its
+  // own later migration (device register, imprest) and nobody carried it in here, so every
+  // fetchAll of them has been paying the SAME error-storm cost this map exists to stop --
   // devices most of all, since byToken() reads it on every handset's heartbeat.
   devices: 'imei',
   imprest_roles: 'role',
-  hints: 'tab',
+  // hints is NOT here on purpose. Its table once read `tab text primary key` (still schema.sql's
+  // own text, which is stale for this one) -- but db/migrations/2026-07-27-hints-many-per-tab.sql
+  // dropped that and gave it `id` instead, because tab was never really unique: many tips
+  // rotate under one tab, and the upsert that loads a tip sheet needs a key that isn't shared
+  // by a dozen rows. The default already answers 'id' correctly; naming tab here would be
+  // WORSE than the gap this map exists to close, ordering by a column real rows repeat.
 };
 
 /** The table a built query points at, read off the URL PostgREST is about to be asked for.
