@@ -6,7 +6,7 @@ import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestD
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
-  recoveryByTeam } from './snapshot-totals.js';
+  recoveryByTeam, defaulterInitialRows } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
@@ -601,8 +601,29 @@ const FU_REPAIR_CHUNK = 400;
 
    WITHOUT THE MIGRATION it falls back to the old single-date read. Deliberately: the honest
    alternative would be reading a month of decks to work the dates out here, and that is exactly
-   the kind of read this system has spent days removing. The screen says which it used. */
+   the kind of read this system has spent days removing. The screen says which it used.
+
+   THE INITIAL BASELINE IS NOW READ PER CUSTOMER, NOT PER TEAM-AND-WEEKDAY GROUP -- the same fix
+   RUN-ME-032 made to recovery_standing, for the identical reason: weekday on this sheet is not a
+   stable fact about a customer, the real book re-uploads most defaulters daily, and picking one
+   shared "winning" date for a whole (team, weekday) group silently strands a customer whose own
+   latest file sits on a different, still-recent date within the lookback. db/RUN-ME-033 answers
+   the same per-customer question recovery_standing's ini_candidates does, so the two can never
+   disagree about who a defaulter's baseline is. See defaulterInitialRows in snapshot-totals.js.
+   WITHOUT THAT MIGRATION this falls back to deckDatesPerTeam's grouping below, unchanged. */
 const DECK_LOOKBACK_DAYS = 45;
+
+/* The RPC path returns every defaulter_snapshots column (it is already the resolved book, not a
+   month of raw rows -- see db/RUN-ME-033's own note on why narrowing was not worth doing in the
+   database). A caller that asked for a narrower `columns` list still gets exactly that shape
+   back, same as the .select(columns) path gives -- withBatchKeys keeps the same guarantee that
+   upload_batch and created_at ride along even when a caller's own list left them out. */
+function projectColumns_(rows, columns) {
+  const cols = withBatchKeys(columns);
+  if (cols === '*') return rows;
+  const keys = cols.split(',').map(s => s.trim()).filter(Boolean);
+  return rows.map(r => { const o = {}; for (const k of keys) o[k] = r[k]; return o; });
+}
 
 async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns } = {}) {
   /* A PINNED DATE IS ALREADY THE ANSWER. The Monday baseline asks for one specific day, so
@@ -636,6 +657,18 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
     const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
       { notAfter: to, teams: user.teams, columns });
     return { ...snap, perTeam: false };
+  }
+  /* EVERY CUSTOMER'S OWN LATEST INITIAL ROW, resolved per customer -- see db/RUN-ME-033 and its
+     own comment above DECK_LOOKBACK_DAYS. This replaces the team-and-weekday grouping below
+     outright when the migration is installed; the grouped path stays only as the fallback for a
+     database that has not run it yet (same contract as everywhere else in this file). */
+  const rpcRows = await defaulterInitialRows(db, { to, teams: user.teams, lookback: DECK_LOOKBACK_DAYS });
+  if (rpcRows) {
+    const rows = columns ? projectColumns_(rpcRows, columns) : rpcRows;
+    const dates = [...new Set(rows.map(r => String(r.snapshot_date).slice(0, 10)))].sort();
+    return { rows, date: dates[dates.length - 1] || null, dates,
+      weekdays: [...new Set(rows.map(r => r.weekday).filter(Boolean))].sort(),
+      batch: rows.length ? 'per-customer' : null, perTeam: true };
   }
   const from = addDaysKey(to, -DECK_LOOKBACK_DAYS);
   const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });

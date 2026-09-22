@@ -130,8 +130,38 @@ function recoveryStandingMirror_(store, a = {}) {
   return out;
 }
 
+/* defaulter_initial_rows(p_to, p_teams, p_lookback) -- db/RUN-ME-033, clause for clause: each
+   customer's own latest INITIAL row within the lookback -- the identical rule
+   recoveryStandingMirror_'s own iniRowsFor applies above, restated here because this returns the
+   resolved ROWS themselves (every column defaulterBook's callers read), not a sum. */
+function defaulterInitialRowsMirror_(store, a = {}) {
+  const src = store.defaulter_snapshots ? store.defaulter_snapshots.rows : [];
+  const teams = a.p_teams ? a.p_teams.map(String) : null;
+  const look = a.p_lookback == null ? 45 : Number(a.p_lookback);
+  const to = String(a.p_to || '').slice(0, 10);
+  const dk = v => String(v == null ? '' : v).slice(0, 10);
+  const minus = (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - n); return t.toISOString().slice(0, 10); };
+  const floor = minus(to, look);
+  const inScope = r => !teams || teams.includes(String(r.team));
+  // date, then the batch rule (created_at, then upload_batch) as the tiebreaker -- the same key
+  // ini_candidates' row_number() ranks by, and the same one iniRowsFor above already uses.
+  const rank = r => dk(r.snapshot_date) + ' ' + String(r.created_at || '') + ' ' + String(r.upload_batch || '');
+  const best = new Map();                            // ref -> { key, row }
+  for (const r of src) {
+    if (r.snapshot_type !== 'initial' || !inScope(r)) continue;
+    const d = dk(r.snapshot_date);
+    if (d > to || d < floor) continue;
+    const ref = String(r.ref);
+    const key = rank(r);
+    const have = best.get(ref);
+    if (!have || key > have.key) best.set(ref, { key, row: r });
+  }
+  return [...best.values()].map(x => ({ ...x.row }));
+}
+
 export const SNAPSHOT_TOTALS_RPC = {
   recovery_standing: recoveryStandingMirror_,
+  defaulter_initial_rows: defaulterInitialRowsMirror_,
   /** expected_snapshot_totals(p_from, p_to, p_type, p_teams) */
   expected_snapshot_totals(store, a = {}) {
     const src = store.repayment_snapshots ? store.repayment_snapshots.rows : [];
