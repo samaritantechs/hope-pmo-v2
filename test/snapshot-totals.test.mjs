@@ -860,6 +860,44 @@ test('recoveryStanding: a PERIOD reads the initial deck at its own start, the cu
   assert.equal(noFn, null);
 });
 
+/* "your own rules against mine are what i doubt if you influence data from expected into
+   defaulter recovery" led to checking the initial side against the real book, and the real
+   book showed weekday is not a stable fact about a customer at all -- the same ref cycles
+   through all seven tags as the calendar rolls, uploaded fresh most days. v1-v4 grouped decks
+   BY weekday and picked one shared "winning" date for the whole (team, weekday) group, which
+   meant a customer simply absent from the file on that one specific date fell out of the
+   total entirely -- even with a perfectly good, recent file of their own sitting inside the
+   lookback under a different date. Measured on the real book: 73 million of real, recent
+   arrears silently missing this way. v5 resolves the initial side per customer instead. */
+test('recoveryStanding: a customer not on their team\'s newest weekday-tagged deck still counts, if their own file is recent', async () => {
+  const { recoveryStanding, standingKey } = await import('../api/_lib/snapshot-totals.js');
+  const D = (ref, team, arrears, type, date, wd, extra = {}) => ({ ref, full_name: 'C' + ref, team, arrears,
+    snapshot_type: type, weekday: wd, snapshot_date: date, upload_batch: 'b' + type + date, created_at: date + 'T04:00:00Z', ...extra });
+  const rows = [
+    // A re-uploaded daily, cycling through all seven weekday tags as the calendar rolls --
+    // the real book's own pattern. A's own latest WED tag (the 22nd) is fresher than B's.
+    D('A', 'T1', 1000, 'initial', '2026-09-16', 'WED'),
+    D('A', 'T1', 1000, 'initial', '2026-09-22', 'WED'),
+    // B uploaded ONCE, tagged WED the same as A that day, then never again -- a straggler,
+    // still well inside the 45-day lookback. Under the old rule, T1's WED group's winning
+    // date became the 22nd (A's later upload), and B -- absent from THAT date's file -- fell
+    // out of the initial total completely, as if they had never been uploaded at all.
+    D('B', 'T1', 5000, 'initial', '2026-09-16', 'WED'),
+    D('A', 'T1', 400, 'current', '2026-09-22', 'WED'),
+    // B is not on today's current file either -- absent from it, so recovered in full, the
+    // same no-lookback rule the current side has always followed.
+  ];
+  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const day = await recoveryStanding(db, { periods: ['2026-09-22'] });
+  const t1 = day.get(standingKey('2026-09-22', '2026-09-22')).get('T1');
+  assert.equal(t1.initial, 6000, 'A\'s 1,000 and B\'s 5,000, both counted -- B was never superseded, only outpaced');
+  assert.equal(t1.initialCustomers, 2);
+  assert.equal(t1.current, 400);
+  assert.equal(t1.recovered, 5600);
+  assert.equal(t1.cleared, 1, 'B, absent from today\'s current file, reads as cleared -- not as never having existed');
+  assert.deepEqual(t1.initialDates.sort(), ['2026-09-16', '2026-09-22'], 'both dates that actually fed the total are named');
+});
+
 test('recoveryStanding: a failing function is not a missing one, and the note says what it said', async () => {
   const { recoveryStanding, recoveryRuleNote, RECOVERY_RULE_NOTE } = await import('../api/_lib/snapshot-totals.js');
   const failing = fakeDb({ defaulter_snapshots: [] }, { rpc: { recovery_standing() { throw new Error('canceling statement due to statement timeout'); } } });

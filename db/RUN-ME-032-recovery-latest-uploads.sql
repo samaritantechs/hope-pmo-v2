@@ -15,8 +15,9 @@
 --
 -- WHAT THIS ANSWERS, for each (from, as_of) period asked and a team scope:
 --
---   INITIAL   per team, the latest INITIAL deck dated on or before FROM (within the lookback),
---             the latest upload on it -- the batch rule every reader uses -- one row per customer
+--   INITIAL   per customer, their own latest INITIAL row dated on or before FROM (within the
+--             lookback), the latest upload on it -- the batch rule every reader uses -- one
+--             row per customer, whichever team and whatever weekday tag it carries
 --   CURRENT   the latest CURRENT deck the company holds on or before AS_OF (latest picked date,
 --             latest upload per team on it), one row per customer; a customer not on it owes
 --             nothing; a team missing from it owes nothing
@@ -27,18 +28,32 @@
 --   (Monday, its end): Monday morning against the latest evening. The month asks (the 1st,
 --   today). A repair is an upload with the date picked -- the latest upload on that date wins.
 --
+-- WEEKDAY IS NOT A STABLE FACT ABOUT A CUSTOMER, AND v4 TREATED IT AS ONE. v1-v4 grouped
+-- decks by (team, weekday) and picked ONE shared "winning" date for the whole group, on the
+-- theory that a customer's weekday tag was a fixed thing about them, the way it genuinely is
+-- on the Expected Repayment sheet. It is not, here: the real book re-uploads most defaulters
+-- daily, and the tag on each row is just whichever day of the week that particular upload
+-- landed on -- so the same customer cycles through all seven tags as the calendar rolls
+-- forward. Grouping by weekday meant a customer who simply was not in the file on their
+-- team's one shared "peak" date for a tag fell out of the total entirely, even with a
+-- perfectly good, recent file sitting inside the lookback under a different date. Measured on
+-- the real book (2026-09-22): the group-wise total read 3,438,384,681; every customer's own
+-- true latest, resolved person by person, was 3,511,832,777 -- 73 million of real, recent
+-- arrears silently falling through the gap. v5 resolves the initial side per customer instead
+-- (see ini_candidates below); weekday is still stored and still read, but no longer decides
+-- which row wins.
+--
 -- WHY IN THE DATABASE: this is a per-customer question over up to 45 days of decks. Asking
 -- the web server for those rows on every dashboard, every commission board and every phone
 -- summary is the read this system was rebuilt to stop making (RUN-ME-022). Answered here it
--- is one call per screen, and the answer is cached per scope for a minute on the server.
--- Each deck that any period needs is read ONCE, straight off the index; JIT is off for the
--- function (the compile alone cost over a second on a query this wide); `materialized` keeps
--- the planner from inlining the small sets and guessing one row each.
+-- is one call per screen, and the answer is cached per scope for a minute on the server. JIT
+-- is off for the function (the compile alone cost over a second on a query this wide);
+-- `materialized` keeps the planner from inlining the small sets and guessing one row each.
 --
--- Paste the whole file into the SQL editor and run it once. Safe to re-run (it replaces the
--- earlier recovery_standing(date[], text[], int) as well). Until it is run, every screen keeps
--- the day-pairing rule it had and says which file to run; if the function fails, the note
--- carries the database's own words, and the dashboard's diagnosis card times it on its own.
+-- Paste the whole file into the SQL editor and run it once. Safe to re-run (it replaces every
+-- earlier signature of recovery_standing too). Until it is run, every screen keeps the
+-- day-pairing rule it had and says which file to run; if the function fails, the note carries
+-- the database's own words, and the dashboard's diagnosis card times it on its own.
 -- =====================================================================================
 
 drop function if exists public.recovery_standing(date[], text[], int);
@@ -55,68 +70,46 @@ with p as materialized (
   from unnest(p_from, p_to) as u(f, t)
   where u.f is not null and u.t is not null
 ),
-span as materialized (
-  select min(from_date) - p_lookback as lo, max(from_date) as hi from p
-),
--- 1. every INITIAL deck date per team-and-weekday in the window, listed once (index-only,
---    a few thousand rows off idx_def_snap_lookup).
-ini_dates as materialized (
-  select distinct s.team, s.weekday, s.snapshot_date
-  from public.defaulter_snapshots s, span
-  where s.snapshot_type = 'initial'
-    and s.snapshot_date >= span.lo
-    and s.snapshot_date <= span.hi
-    and (p_teams is null or s.team = any(p_teams))
-),
--- 2. per period START and team-and-weekday: the latest deck on or before it, within the
---    lookback -- the same grouping defaulterBook's export reading uses, so a team whose
---    Thursday deck has not been re-uploaded since still carries it.
-ini_deck as materialized (
-  select p.from_date, k.team, k.weekday, max(k.snapshot_date) as deck_date
+-- 1-2. EVERY CUSTOMER'S OWN LATEST INITIAL ROW, per period start, within the lookback --
+--    resolved PER CUSTOMER, never per team-and-weekday group.
+--
+--    "your own rules against mine are what i doubt if you influence data from expected into
+--     defaulter recovery" led to checking this against the real book, and the real book
+--     answered a different question: weekday on this sheet is not a stable fact about a
+--     customer at all. The same ref cycles through all seven tags as the calendar rolls --
+--     uploaded fresh most days, tagged with whatever weekday that upload happened to land on
+--     -- so grouping decks BY weekday and picking one shared "winning" date for the whole
+--     group can strand a customer who simply was not in the file on that one specific date,
+--     even though their own latest file sits well inside the lookback. Measured on the real
+--     book (2026-09-22): the group-wise version read 3,438,384,681 as the initial book; every
+--     customer's own true latest, deduped person by person, was 3,511,832,777 -- 73 million of
+--     real, recent arrears silently falling through a gap between two teams'-worth of shared
+--     "peak" dates.
+--
+--    A window function does this in one pass: for each (period start, ref), rank their own
+--    rows newest first -- by date, then by the batch rule (newest created_at, then batch id)
+--    as the tiebreaker on their own latest date -- and keep the top one. Partitioned by ref
+--    ALONE, not team-and-ref: a customer moved between teams counts once, under whichever team
+--    their own single latest row actually names, the same as the group-wise version did.
+--    idx_def_snap_date_type (snapshot_date, snapshot_type) carries the type+range filter;
+--    weekday is read but no longer part of how a row is chosen.
+ini_candidates as materialized (
+  select p.from_date, s.team, s.ref, s.arrears, s.snapshot_date,
+         row_number() over (
+           partition by p.from_date, s.ref
+           order by s.snapshot_date desc, s.created_at desc nulls last, s.upload_batch desc nulls last
+         ) as rn
   from p
-  join ini_dates k
-    on k.snapshot_date <= p.from_date
-   and k.snapshot_date >= p.from_date - p_lookback
-  group by p.from_date, k.team, k.weekday
+  join public.defaulter_snapshots s
+    on s.snapshot_type = 'initial'
+   and s.snapshot_date <= p.from_date
+   and s.snapshot_date >= p.from_date - p_lookback
+   and (p_teams is null or s.team = any(p_teams))
 ),
--- 3. each initial deck that won, read ONCE off the index (lateral: one index lookup per
---    deck): the upload that won on it (newest created_at, then batch id -- the batch rule
---    every reader uses), then one row per customer on that upload
-ini_win as materialized (
-  select distinct team, weekday, deck_date from ini_deck
-),
-ini_cust as materialized (
-  select w.team, w.weekday, w.deck_date, x.ref, x.arrears, x.created_at
-  from ini_win w
-  cross join lateral (
-    select distinct on (y.ref) y.ref, y.arrears, y.created_at
-    from (
-      select s.ref, s.arrears, s.upload_batch, s.created_at,
-             first_value(s.upload_batch) over (order by s.created_at desc nulls last, s.upload_batch desc nulls last) as win_batch
-      from public.defaulter_snapshots s
-      where s.snapshot_type = 'initial'
-        and s.snapshot_date = w.deck_date
-        and s.team = w.team
-        and ((w.weekday is not null and s.weekday = w.weekday) or (w.weekday is null and s.weekday is null))
-    ) y
-    where y.upload_batch is not distinct from y.win_batch
-    order by y.ref, y.created_at desc nulls last
-  ) x
-),
--- 4. per period start: ONE ROW PER CUSTOMER across the team-and-weekday decks picked for it
---    -- their newest. A customer on more than one of those decks (their own team re-uploaded
---    on two different weekdays) counts once.
 ini_rows as materialized (
-  select k.from_date, c.ref,
-         (array_agg(c.team    order by c.deck_date desc, c.created_at desc nulls last))[1] as team,
-         (array_agg(c.arrears order by c.deck_date desc, c.created_at desc nulls last))[1] as arrears,
-         max(c.deck_date) as snapshot_date
-  from ini_deck k
-  join ini_cust c
-    on c.team = k.team
-   and c.weekday is not distinct from k.weekday
-   and c.deck_date = k.deck_date
-  group by k.from_date, c.ref
+  select from_date, team, ref, arrears, snapshot_date
+  from ini_candidates
+  where rn = 1
 ),
 -- 5. the latest CURRENT deck the company holds on or before each period END (not narrowed by
 --    team: the file is the whole book, and a team missing from it owes nothing on it). No

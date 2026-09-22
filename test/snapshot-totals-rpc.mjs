@@ -71,28 +71,26 @@ function recoveryStandingMirror_(store, a = {}) {
     seenP.add(f + '|' + t); periods.push({ from: f, to: t });
   }
   periods.sort((x, y) => (x.from + x.to).localeCompare(y.from + y.to));
-  // Per FROM date: the latest initial deck per team-and-weekday on or before it, within the
-  // lookback -- then one row per customer across those decks, their newest.
+  /* Per FROM date: EVERY CUSTOMER'S OWN LATEST initial row within the lookback -- resolved per
+     customer, never per team-and-weekday group (see RUN-ME-032's own note: weekday on this
+     sheet is not a stable fact about a customer -- the same ref cycles through all seven tags
+     as the calendar rolls, so a shared "winning date" per group can strand a customer whose
+     own latest file sits on a different, still-recent date). One ranking key per row -- date,
+     then the batch rule (created_at, then upload_batch) as the tiebreaker on that date -- kept
+     highest per ref, exactly what ini_candidates' row_number() does in the SQL. */
   const iniRowsCache = new Map();
   const iniRowsFor = from => {
     if (iniRowsCache.has(from)) return iniRowsCache.get(from);
     const floor = minus(from, look);
-    const decks = new Map();                                // team|weekday -> date
+    const rows = new Map();                                 // ref -> { team, arrears, date, key }
     for (const r of src) {
       if (r.snapshot_type !== 'initial' || !inScope(r)) continue;
       const d = dk(r.snapshot_date);
       if (d > from || d < floor) continue;
-      const k = String(r.team) + '|' + wd(r);
-      if (!decks.has(k) || d > decks.get(k)) decks.set(k, d);
-    }
-    const rows = new Map();                                 // ref -> { team, arrears, date }
-    for (const d of new Set(decks.values())) {
-      for (const [key, c] of readDeck('initial', d)) {
-        const [team] = key.split('|');
-        const rowKey = d + ' ' + c.created;
-        const have = rows.get(c.ref);
-        if (!have || rowKey > have.key) rows.set(c.ref, { key: rowKey, team, arrears: c.arrears, date: d });
-      }
+      const ref = String(r.ref);
+      const key = d + ' ' + rank(r);
+      const have = rows.get(ref);
+      if (!have || key > have.key) rows.set(ref, { key, team: r.team, arrears: n0(r.arrears), date: d });
     }
     iniRowsCache.set(from, rows);
     return rows;
