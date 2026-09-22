@@ -898,6 +898,40 @@ test('recoveryStanding: a customer not on their team\'s newest weekday-tagged de
   assert.deepEqual(t1.initialDates.sort(), ['2026-09-16', '2026-09-22'], 'both dates that actually fed the total are named');
 });
 
+/* defaulterBook (portal-core.js) reads the SAME initial baseline through deckDatesPerTeam's
+   (team, weekday) grouping, and had the identical flaw for the identical reason -- see
+   db/RUN-ME-033-defaulter-book-initial.sql. This is the same fixture as the recoveryStanding
+   test just above, read through defaulterInitialRows directly: B must not be stranded just
+   because A's fresher, same-weekday-tagged upload moved their team's WED group's winning date
+   past the one file B ever sent. */
+test('defaulterInitialRows: a customer not on their team\'s newest weekday-tagged deck still counts, if their own file is recent', async () => {
+  const { defaulterInitialRows } = await import('../api/_lib/snapshot-totals.js');
+  const D = (ref, team, arrears, date, wd) => ({ ref, full_name: 'C' + ref, team, arrears,
+    snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'b' + date, created_at: date + 'T04:00:00Z' });
+  const rows = [
+    D('A', 'T1', 1000, '2026-09-16', 'WED'),
+    D('A', 'T1', 1000, '2026-09-22', 'WED'),
+    D('B', 'T1', 5000, '2026-09-16', 'WED'),
+  ];
+  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const out = await defaulterInitialRows(db, { to: '2026-09-22', lookback: 45 });
+  const byRef = Object.fromEntries(out.map(r => [r.ref, r]));
+  assert.equal(out.length, 2, 'A and B, both counted -- B was never superseded, only outpaced');
+  assert.equal(byRef.A.arrears, 1000);
+  assert.equal(String(byRef.A.snapshot_date), '2026-09-22', 'A\'s own newest row');
+  assert.equal(byRef.B.arrears, 5000);
+  assert.equal(String(byRef.B.snapshot_date), '2026-09-16', 'B\'s only row, still inside the lookback');
+});
+
+/* the fallback: without the migration, defaulterBook must keep reading exactly as it always
+   has -- the team-and-weekday grouping, unchanged, not a crash and not an empty book. */
+test('defaulterInitialRows: null when the function is not installed, same contract as recoveryStanding', async () => {
+  const { defaulterInitialRows } = await import('../api/_lib/snapshot-totals.js');
+  const db = fakeDb({ defaulter_snapshots: [] }, {});
+  const out = await defaulterInitialRows(db, { to: '2026-09-22', lookback: 45 });
+  assert.equal(out, null);
+});
+
 test('recoveryStanding: a failing function is not a missing one, and the note says what it said', async () => {
   const { recoveryStanding, recoveryRuleNote, RECOVERY_RULE_NOTE } = await import('../api/_lib/snapshot-totals.js');
   const failing = fakeDb({ defaulter_snapshots: [] }, { rpc: { recovery_standing() { throw new Error('canceling statement due to statement timeout'); } } });

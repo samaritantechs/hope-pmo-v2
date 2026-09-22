@@ -8323,6 +8323,32 @@ test('an explicit weekday choice is still exactly that', async () => {
   assert.ok(!d.rows.some(r => r.ref === 'ESTHER'), 'she is in TUE\'s deck, not MON\'s');
 });
 
+/* defaulterBook's initial baseline read through deckDatesPerTeam's (team, weekday) grouping had
+   the identical flaw db/RUN-ME-032 found and fixed in recovery_standing: weekday is not a stable
+   fact about a customer here, the real book re-uploads most defaulters daily, and picking one
+   shared "winning" date for a (team, weekday) group can strand a customer whose own latest file
+   sits on a different, still-recent date. db/RUN-ME-033 fixes it the same way -- per customer,
+   not per group. See defaulterInitialRows in snapshot-totals.js. */
+test('the initial baseline does not strand a customer outpaced by a teammate\'s fresher same-weekday upload', async () => {
+  const t = tables();
+  t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
+    credit: 'ANALYST A', expected: 'E', bike: 'B' });
+  const mk = (ref, arrears, date) => ({ ref, full_name: ref + ' NAME', team: 'GOBA', arrears,
+    status: 'Partial Defaulter', ds: '2-4', dc: 2, disb_date: '2026-07-09',
+    snapshot_type: 'initial', weekday: 'WED', snapshot_date: date,
+    upload_batch: 'b' + date, created_at: date + 'T04:00:00Z' });
+  // A re-uploaded twice, cycling to a fresher WED tag on the 22nd; B uploaded once, on the
+  // 16th, tagged WED that day too, and never again -- still well inside the 45-day lookback.
+  // Under the old grouping, GOBA's WED slot moved to the 22nd and B fell out entirely.
+  t.defaulter_snapshots.push(mk('A', 1000, '2026-07-22'));
+  t.defaulter_snapshots.push(mk('B', 5000, '2026-07-16'));
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { type: 'initial' }, NOW);
+  assert.ok(d.rows.some(r => r.ref === 'A'), 'A, on the newest date, is there');
+  assert.ok(d.rows.some(r => r.ref === 'B'), 'B, outpaced but not superseded, must still count');
+  const goba = d.rows.filter(r => r.team === 'GOBA').reduce((s, r) => s + Number(r.arrears || 0), 0);
+  assert.equal(goba, 6000, 'both of GOBA\'s baselines add up -- neither silently dropped');
+});
+
 /* =====================================================================================
    THE SWEEP THAT EMPTIED THE OFFICERS' LIST.
    =====================================================================================

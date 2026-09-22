@@ -1021,3 +1021,39 @@ export async function deckDatesPerTeam(db, { type = null, weekday = null, from, 
   }
   return by;
 }
+
+/* =====================================================================================
+   defaulterBook's INITIAL BASELINE, PER CUSTOMER -- the same fix as recovery_standing v5.
+
+   deckDatesPerTeam (above) groups decks by (team, weekday) and picks one shared winning date
+   for the whole group -- exactly the grouping RUN-ME-032 found stranding real, recent arrears in
+   recovery_standing, for the same reason: weekday is not a stable fact about a customer on this
+   sheet, so a customer whose own latest file lands on a different date within the lookback falls
+   out of the group's one winning date entirely. defaulterBook's initial-baseline path (customer
+   exports, the Credit Info Report, the "present" reading) reads through deckDatesPerTeam and has
+   the identical flaw.
+
+   db/RUN-ME-033-defaulter-book-initial.sql answers the same question recovery_standing's
+   ini_candidates does -- each customer's own latest INITIAL row within the lookback, by date
+   then the batch rule -- but returns the RESOLVED ROWS themselves (every column) rather than a
+   sum, because this is what the exports and the customer lists actually read. */
+export const DEFAULTER_INITIAL_ROWS_FN = 'defaulter_initial_rows';
+
+/** Every customer's own latest INITIAL row on or before `to`, within `lookback` days -- resolved
+    per customer, never per team-and-weekday group. Returns the raw rows (every
+    defaulter_snapshots column), or null when the function is not installed or failed, which is
+    the caller's signal to fall back to deckDatesPerTeam's grouping, unchanged. */
+export async function defaulterInitialRows(db, { to, teams = null, lookback = 45 } = {}) {
+  if (!db || typeof db.rpc !== 'function') return null;
+  if (knownMissing(db, DEFAULTER_INITIAL_ROWS_FN)) return null;
+  let res;
+  try {
+    res = await rpcAll(db, DEFAULTER_INITIAL_ROWS_FN, { p_to: to, p_teams: teamsArg(teams), p_lookback: lookback });
+  } catch (e) { res = { data: null, error: e }; }
+  const { data, error } = res;
+  if (error) {
+    if (isMissingFn_(error)) noteMissing(db, DEFAULTER_INITIAL_ROWS_FN);
+    return null;
+  }
+  return Array.isArray(data) ? data : [];
+}
