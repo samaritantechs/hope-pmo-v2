@@ -1237,6 +1237,60 @@ test('speed [hopeloan]: registering a customer does not scan the customers table
 });
 
 /* =====================================================================================
+   FUNDING A BATCH, AND IMPORTING PAYMENTS, MUST COST A HANDFUL OF ROUND TRIPS -- NOT ONE
+   PER LOAN OR PER REF.
+   =====================================================================================
+   financeMarkFunded used to cost 3 round trips PER LOAN (mustLoan, the update, the event
+   insert), run one loan at a time; financeImportPayments used to call closeIfFullyPaid_ once
+   per DISTINCT ref among the imported rows, each of those costing up to 4 more round trips of
+   its own -- an import of 150 distinct loans could cost over 600. Both are now one read, one
+   write and one event insert for the WHOLE batch (financeImportPayments also pays the one
+   insert that lands the payment rows themselves). Measured at 3 and 5 round trips; the budgets
+   below sit a little above that, and the point of asking twice, at two very different batch
+   sizes, is to prove the cost is FLAT rather than merely under budget once. */
+function fundableLoans_(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: 'fb' + i, loan_id: 'FBREF' + i, docket_no: 'FB-' + i, full_name: 'C' + i, team: TEAMS[i % 40],
+    stage: 'disbursed', principal_amt: 300000, net_disbursed: 300000, loan_amt: 408000,
+  }));
+}
+test('speed [hopeloan]: financeMarkFunded on a batch stays flat as the batch grows', async () => {
+  const loans20 = fundableLoans_(20);
+  const c20 = counting({ loans: loans20, loan_events: [] });
+  await loanApi(c20.db, LOAN_ADMIN, 'financeMarkFunded', { loan_ids: loans20.map(l => l.id) });
+  const s20 = c20.stat();
+  assert.ok(s20.trips <= 6, `funding 20 loans took ${s20.trips} round trips (budget 6, measured 3).`);
+
+  const loans200 = fundableLoans_(200);
+  const c200 = counting({ loans: loans200, loan_events: [] });
+  await loanApi(c200.db, LOAN_ADMIN, 'financeMarkFunded', { loan_ids: loans200.map(l => l.id) });
+  const s200 = c200.stat();
+  assert.equal(s200.trips, s20.trips, 'ten times the loans must not cost more round trips');
+});
+
+function fundedLoansForImport_(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: 'ib' + i, loan_id: 'IBREF' + i, docket_no: 'IB-' + i, full_name: 'C' + i, team: TEAMS[i % 40],
+    stage: 'funded', principal_amt: 300000, net_disbursed: 300000, loan_amt: 100000,
+  }));
+}
+test('speed [hopeloan]: financeImportPayments across many distinct refs stays flat', async () => {
+  const loans50 = fundedLoansForImport_(50);
+  const rows50 = loans50.map((l, i) => ({ ref: l.loan_id, amount: 100000, trans_no: 'T' + i, paid_at: '2026-01-05' }));
+  const c50 = counting({ loans: loans50, payment_imports: [], loan_events: [] });
+  await loanApi(c50.db, LOAN_ADMIN, 'financeImportPayments', { rows: rows50 });
+  const s50 = c50.stat();
+  assert.ok(s50.trips <= 10, `importing 50 refs took ${s50.trips} round trips (budget 10, measured 5).`);
+
+  const loans150 = fundedLoansForImport_(150);
+  const rows150 = loans150.map((l, i) => ({ ref: l.loan_id, amount: 100000, trans_no: 'T' + i, paid_at: '2026-01-05' }));
+  const c150 = counting({ loans: loans150, payment_imports: [], loan_events: [] });
+  await loanApi(c150.db, LOAN_ADMIN, 'financeImportPayments', { rows: rows150 });
+  const s150 = c150.stat();
+  assert.equal(s150.trips, s50.trips, 'three times the distinct refs must not cost more round trips');
+});
+
+/* =====================================================================================
    THE RE-UPLOADED WEEK, WHICH IS THE ORDINARY WEEK.
    =====================================================================================
      "commissions - Imeshindikana / Seva haijibu ndani ya sekunde 45"
