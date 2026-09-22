@@ -786,18 +786,20 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
     const weekBoard = cm.recBoard.reduce((s, r) => s + r.weekRecovered, 0);
     assert.equal(weekBoard, dash.recTrendTotal.recovered, `${world}: the board's week is the dashboard's week`);
     /* THE FIGURES THEMSELVES, so the equality above is not two zeros agreeing. Each day is the
-       standing as of that day. Monday: 300. Tuesday: the corrected 600 wins over the 900 it
-       replaced (K1 900 -> 600), and MBAGALA is missing from Tuesday's current file, so M1's
-       400 stands recovered in full: 700. Wednesday: the current file names only M1 at 300, so
-       K1's 900 stands recovered and M1 100: 1,000. Thursday: nothing new, 1,000. Friday: the
-       Friday decks land (400) on top: 1,700 -- and the week IS Friday's standing. */
-    assert.deepEqual(WEEK.map(d => tile(d).recovered), [300, 700, 1000, 1000, 1700], world);
-    assert.equal(dash.recTrendTotal.recovered, 1700, `${world}: the week is the standing at its end, not the days added`);
+       standing as of that day: every initial deck picked for it ADDED (a customer on two
+       weekday decks is on each, exactly as the export lists them), less the team's current.
+       Monday: 300. Tuesday: K1 sits on Monday's deck (1,000) and Tuesday's (900, the corrected
+       current 600 wins over the 900 it replaced): 1,300; MBAGALA is missing from Tuesday's
+       current file, so M1's 500 + 400 stand recovered in full: 2,200. Wednesday: the current
+       file names only M1 at 300: KONGOWE 1,900, MBAGALA 600: 2,500. Thursday: nothing new.
+       Friday: the Friday decks land on top: 3,200 -- and the week IS Friday's standing. */
+    assert.deepEqual(WEEK.map(d => tile(d).recovered), [300, 2200, 2500, 2500, 3200], world);
+    assert.equal(dash.recTrendTotal.recovered, 3200, `${world}: the week is the standing at its end, not the days added`);
     assert.equal(cm.totals.recovered, tile(TODAY).recovered, `${world}: today's total is today's tile`);
     const juma = cm.recBoard.find(r => r.officer === 'JUMA G');
-    assert.deepEqual(juma.records.slice(0, 5).map(r => r.recovered), [300, 300, 900, 900, 1200], world);
+    assert.deepEqual(juma.records.slice(0, 5).map(r => r.recovered), [300, 1300, 1900, 1900, 2200], world);
     const none = cm.recBoard.find(r => r.officer === '(unassigned)');
-    assert.deepEqual(none.records.slice(0, 5).map(r => r.recovered), [0, 400, 100, 100, 500], world);
+    assert.deepEqual(none.records.slice(0, 5).map(r => r.recovered), [0, 900, 600, 600, 1000], world);
     // The note says which days were measured and what was left holding one deck.
     const tue = cm.recDiag.days.find(x => x.date === '2026-07-21');
     assert.equal(tue.measured, true); assert.equal(tue.paired, 2); assert.equal(tue.initialOnly, 1);

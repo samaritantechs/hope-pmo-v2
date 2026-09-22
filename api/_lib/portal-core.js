@@ -8,7 +8,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
   recoveryByTeam } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
-import { recoveryStanding, standingWithAdj, standingSum, RECOVERY_RULE_NOTE } from './snapshot-totals.js';
+import { recoveryStanding, standingWithAdj, standingSum, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord,
   PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf } from './pmo.js';
@@ -2699,7 +2699,7 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
      copying each leader's NAME AND POSITION as text. See api/_lib/performance.js. */
   recordPerformance(db, teamsOut, teamRows, mon, nowMs, perTarget);
 
-  return { weekOf: mon, weekEnd: fri, days, ...recoveryRuleOf_(stand),
+  return { weekOf: mon, weekEnd: fri, days, ...recoveryRuleOf_(stand, db),
     // What was ASKED for, so the week bar can say when a choice was overruled and why.
     weekRequested: asOf.requested, weekFuture: asOf.future, pastWeek: asOf.past,
     teams: teamsOut, teamTotals, perTarget, teamCount: teamsOut.length,
@@ -3198,7 +3198,7 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
         unstaffed: (by['(unassigned)'] ? by['(unassigned)'].rows.length : 0) });
     }
   }
-  return { segments, segDays: dayDate, segRoles: LEADER_ROLES.slice(), ...recoveryRuleOf_(stand),
+  return { segments, segDays: dayDate, segRoles: LEADER_ROLES.slice(), ...recoveryRuleOf_(stand, db),
     segMetrics: LEADER_METRICS.map(x => ({ metric: x.metric, label: x.label, dflt: !!x.dflt })) };
 }
 
@@ -3933,7 +3933,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   };
 
   return { scope, from: mon, to: scope === 'month' ? today : sun,
-    recBoard, colBoard, recDiag, ...recoveryRuleOf_(stand),
+    recBoard, colBoard, recDiag, ...recoveryRuleOf_(stand, db),
     /* The recovery ladder itself, so the screen draws the bands from the one definition rather
        than repeating them in HTML -- a pay table written twice is a pay table that disagrees
        with itself the first time one of them is edited. */
@@ -8941,7 +8941,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
     weekOf: mon, weekEnd: addDaysKey(mon, 6),
     asOfDate: today, pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future,
     ledgerReady: !!days,
-    ...recoveryRuleOf_(stand),
+    ...recoveryRuleOf_(stand, db),
     rows,
     totals: {
       sales: salesTotal, loans: sales.length, monthTarget, salesPct: totSalesPct,
@@ -8984,7 +8984,7 @@ function standingRows_(perTeam, side) {
     arrears_amt: side === 'initial' ? e.initial : e.current,
     customers: side === 'initial' ? e.initialCustomers : e.currentCustomers }));
 }
-const recoveryRuleOf_ = st => (st ? { recoveryRule: 'latest', recoveryNote: null } : { recoveryRule: 'pairing', recoveryNote: RECOVERY_RULE_NOTE });
+const recoveryRuleOf_ = (st, db) => (st ? { recoveryRule: 'latest', recoveryNote: null } : { recoveryRule: 'pairing', recoveryNote: recoveryRuleNote(db) });
 
 /* A TEAM PICK ON TOP OF THE SCOPE -- NARROWER, NEVER WIDER.
 
@@ -9102,11 +9102,10 @@ async function recoveryCustomersPresent_(db, user, pick, { asOfDate, mode, date,
   const entry = r => {
     const k = K(r.ref) || (K(r.full_name) + '|' + K(r.team));
     return byKey.get(k) || byKey.set(k, { ref: r.ref || '', full_name: r.full_name || '', contact: r.contact || '',
-      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0, iniKey: '' }).get(k);
+      team: r.team || '', initial: 0, current: 0, recovered: 0, days: 0, dates: new Set(), onInitial: 0, onCurrent: 0 }).get(k);
   };
-  /* ONE INITIAL ROW PER CUSTOMER -- their newest, the same DISTINCT ON the database's standing
-     takes -- so a customer who sits on two weekday decks is not owed twice. */
-  const iniKey_ = r => String(r.snapshot_date).slice(0, 10) + ' ' + String(r.created_at || '');
+  /* A customer who sits on two weekday decks is counted on each -- exactly as the export
+     lists them, and as the database's standing adds each deck (recovery_standing). */
   const decksBy = new Map();
   const note = (type, r) => {
     const k = K(r.team) + '|' + type;
@@ -9114,17 +9113,12 @@ async function recoveryCustomersPresent_(db, user, pick, { asOfDate, mode, date,
     e.dates.add(String(r.snapshot_date).slice(0, 10)); e.rows++; e.total += num(r.arrears);
     if (!e.uploadedAt || String(r.created_at || '') > e.uploadedAt) e.uploadedAt = r.created_at || null;
   };
-  for (const r of ini) {
-    const e = entry(r); note('initial', r);
-    const k = iniKey_(r);
-    if (e.onInitial && k <= e.iniKey) continue;
-    e.initial = num(r.arrears); e.iniKey = k; e.onInitial = 1; e.dates.add(String(r.snapshot_date).slice(0, 10));
-  }
+  for (const r of ini) { const e = entry(r); e.initial += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onInitial++; note('initial', r); }
   for (const r of cur) { const e = entry(r); e.current += num(r.arrears); e.dates.add(String(r.snapshot_date).slice(0, 10)); e.onCurrent++; note('current', r); }
   const statusOf = e => !e.onCurrent ? 'cleared' : !e.onInitial ? 'new'
     : e.current < e.initial ? 'reduced' : e.current > e.initial ? 'increased' : 'unchanged';
   const out = [...byKey.values()].map(e => ({ ...e, recovered: e.initial - e.current, days: e.dates.size,
-      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined, iniKey: undefined }))
+      status: statusOf(e), dates: undefined, onInitial: undefined, onCurrent: undefined }))
     .sort((a, b) => b.recovered - a.recovered || String(a.full_name).localeCompare(String(b.full_name)));
   const totals = out.reduce((t, r) => ({ initial: t.initial + r.initial, current: t.current + r.current,
     recovered: t.recovered + r.recovered, customers: t.customers + 1 }), { initial: 0, current: 0, recovered: 0, customers: 0 });
@@ -9198,6 +9192,12 @@ async function dashboardProbe(db, user, args, nowMs) {
   await probe('access codes', () => fetchAll(() => db.from('access_codes').select('name, code, role, teams')));
   await probe('early list · karatasi ya awali / initial sheet', () => earlyList(db, { today, teams: user.teams }));
   await probe('month ledger slice · wiki hii / live week', () => totalsAggSlice(db, { from: mon > monthStart ? mon : monthStart, to: today }));
+  // The one recovery rule, asked directly so its own time and its own words are on the list.
+  await probe('recovery standing · kanuni moja / the one rule (RUN-ME-032)', async () => {
+    const st = await recoveryStanding(db, { dates: [today], teams: user.teams });
+    if (!st) throw new Error(recoveryRuleNote(db));
+    return [...(st.get(today) || new Map()).values()];
+  });
   return { steps, total: Date.now() - t0, stepCapMs: PROBE_STEP_MS, weekOf: mon, asOfDate: today };
 }
 /* How long the dashboard will spend on the month ledger per load -- deliberately well under
@@ -9877,7 +9877,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),
     },
-    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel, ...recoveryRuleOf_(stand),
+    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
     /* Whether the M. columns on the Orodha are real this load, or still filling. The screen
