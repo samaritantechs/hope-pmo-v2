@@ -4871,19 +4871,37 @@ async function saveCallAgent(db, user, p) {
 
 /** The roles that live as a column on the teams table, in the order the tab shows them. */
 const STAFF_TEAM_ROLES = TEAM_ROLE_COLS;
-/** And the one that does not. Its teams are an array on the access code. */
+/** And the two that do not. Each one's teams are an array on the access code, not a name typed
+    per team -- see STAFF_COLLECTION_ROLE's own note, which applies here just the same:
+    "legal and collection officers assigned to their teams in access codes aint being so on the
+    teams and staff table" -- legal held the exact same shape of portfolio and never got the
+    same merge. */
 const STAFF_COLLECTION_ROLE = 'collection';
+const STAFF_LEGAL_ROLE = 'legal';
+/** The role name on an access code that marks somebody as a legal officer with a portfolio of
+    teams -- same reasoning as PMO_ROLE (pmo.js): a setting because it is typed by a person into
+    a form, matched with case and punctuation forgiven so a spelling that does not match is
+    fixable without a deploy, plus a bare LEGAL as the word that needs no configuration at all. */
+const LEGAL_ROLE_KEY = 'LEGAL_ROLE';
+const LEGAL_ROLE_DEFAULT = 'LEGAL';
+const normRole_ = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+function isLegalRole(role, want) {
+  const r = normRole_(role);
+  if (!r) return false;
+  return r === normRole_(want || LEGAL_ROLE_DEFAULT) || (' ' + r + ' ').includes(' LEGAL ');
+}
 
 /** Everybody, with the teams they hold -- merged from the teams table's role columns and from
-    the access codes that carry the collection role. */
+    the access codes that carry the collection or legal role. */
 async function staffRoster(db, user) {
   const [teamRows, codeRows, cfg, book] = await Promise.all([
     fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
     fetchAll(() => db.from('access_codes').select('code, name, role, teams')),
-    settingsMany(db, [PMO_ROLE_KEY]),
+    settingsMany(db, [PMO_ROLE_KEY, LEGAL_ROLE_KEY]),
     appPhoneBook(db),
   ]);
   const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const legalRoleName = cfg.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT);
   const mine = teamRows.filter(t => teamAllowed(user, t.team));
   const allTeams = mine.map(t => t.team);
 
@@ -4931,13 +4949,31 @@ async function staffRoster(db, user) {
       roleLabel: pmoRoleName, code: c.code, teams: held.sort(), source: 'access_code' },
       collNo.get(K(c.name || c.code))));
   }
+  /* The legal officers, from their access codes -- same shape as collection, same reason: a
+     legal officer's teams are a portfolio on their code, not a name typed once per team. */
+  const legalNo = new Map();
+  for (const t of mine) {
+    if (t.legal && t.legal_no && !legalNo.has(K(t.legal))) {
+      legalNo.set(K(t.legal), t.legal_no);
+    }
+  }
+  for (const c of codeRows) {
+    if (!isLegalRole(c.role, legalRoleName)) continue;
+    if (!c.teams || !c.teams.length) continue;
+    const held = upperTeams(c.teams).filter(t => teamAllowed(user, t));
+    out.push(withPhone({ name: c.name || c.code, role: STAFF_LEGAL_ROLE,
+      roleLabel: legalRoleName, code: c.code, teams: held.sort(), source: 'access_code' },
+      legalNo.get(K(c.name || c.code))));
+  }
 
   return {
     staff: out.sort((a, b) => (a.roleLabel + a.name).localeCompare(b.roleLabel + b.name)),
     allTeams,
     roles: STAFF_TEAM_ROLES.map(r => ({ key: r, label: r.toUpperCase(), source: 'teams' }))
-      .concat([{ key: STAFF_COLLECTION_ROLE, label: pmoRoleName, source: 'access_code' }]),
+      .concat([{ key: STAFF_COLLECTION_ROLE, label: pmoRoleName, source: 'access_code' },
+        { key: STAFF_LEGAL_ROLE, label: legalRoleName, source: 'access_code' }]),
     collectionRole: pmoRoleName,
+    legalRole: legalRoleName,
   };
 }
 
@@ -4952,40 +4988,53 @@ async function staffRoster(db, user) {
  *  every other role on them for no reason, and on a database having a bad minute that is forty
  *  chances to fail instead of two.
  */
+/** The write side of a portfolio role (collection, legal): the person's teams live on their
+    access code, so this is ONE write however many teams they hold -- the whole reason that
+    storage was chosen over a name repeated on every team row. Shared because collection and
+    legal are the same shape of save, and a second hand-copied version is a second place for
+    the "written in the registry's spelling" fix below to be forgotten in. */
+async function savePortfolioRole_(db, { role, roleLabel, matchFn, name, code, want }) {
+  const codes = await fetchAll(() => db.from('access_codes').select('code, name, role, teams'));
+  const row = codes.find(c => (code ? c.code === code : K(c.name) === K(name)) && matchFn(c.role));
+  if (!row) {
+    throw badRequest(`No ${roleLabel} access code found for "${name}". `
+      + `A ${roleLabel.toLowerCase()} officer is an access code with that role -- create the `
+      + 'code first, under Settings, then set their teams here.');
+  }
+  /* WRITTEN IN THE REGISTRY'S SPELLING, never in capitals. This editor used to store TUNDURU
+     on the code, and the code's list is the scope the database is asked for -- so the one
+     mixed-case team was filed out of her book by the very screen that gave it to her. */
+  const teams = registrySpellings([...want], await readTeamsRaw(db)).sort();
+  const { error } = await db.from('access_codes').update({ teams }).eq('code', row.code);
+  if (error) throw new Error(error.message);
+  noteCodesWritten(db);                       // the codes lay over the sheet: every board re-reads
+  return { role, name: row.name || name, teams, changed: 1, cleared: 0 };
+}
+
 async function saveStaffTeams(db, user, p) {
   requireAdmin(user);
   const role = String((p && p.role) || '').trim().toLowerCase();
   const name = String((p && p.name) || '').trim();
   if (!name) throw badRequest('A staff name is required.');
   const want = new Set(upperTeams((p && p.teams) || []));
+  const code = String((p && p.code) || '').trim();
 
   if (role === STAFF_COLLECTION_ROLE) {
-    /* Their teams are a list on their access code, so this is ONE write however many teams
-       they hold -- which is the whole reason that storage was chosen. */
-    const codes = await fetchAll(() => db.from('access_codes').select('code, name, role, teams'));
     const cfg = await settingsMany(db, [PMO_ROLE_KEY]);
     const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
-    const wanted = String((p && p.code) || '').trim();
-    const row = codes.find(c => (wanted ? c.code === wanted : K(c.name) === K(name))
-      && isPmoRole(c.role, pmoRoleName));
-    if (!row) {
-      throw badRequest(`No ${pmoRoleName} access code found for "${name}". `
-        + 'A collection officer is an access code with that role -- create the code first, '
-        + 'under Settings, then set their teams here.');
-    }
-    /* WRITTEN IN THE REGISTRY'S SPELLING, never in capitals. This editor used to store TUNDURU
-       on the code, and the code's list is the scope the database is asked for -- so the one
-       mixed-case team was filed out of her book by the very screen that gave it to her. */
-    const teams = registrySpellings([...want], await readTeamsRaw(db)).sort();
-    const { error } = await db.from('access_codes').update({ teams }).eq('code', row.code);
-    if (error) throw new Error(error.message);
-    noteCodesWritten(db);                     // the codes lay over the sheet: every board re-reads
-    return { role, name: row.name || name, teams, changed: 1, cleared: 0 };
+    return savePortfolioRole_(db, { role, roleLabel: pmoRoleName,
+      matchFn: r => isPmoRole(r, pmoRoleName), name, code, want });
+  }
+  if (role === STAFF_LEGAL_ROLE) {
+    const cfg = await settingsMany(db, [LEGAL_ROLE_KEY]);
+    const legalRoleName = cfg.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT);
+    return savePortfolioRole_(db, { role, roleLabel: legalRoleName,
+      matchFn: r => isLegalRole(r, legalRoleName), name, code, want });
   }
 
   if (!STAFF_TEAM_ROLES.includes(role)) {
     throw badRequest(`Unknown role "${role}". Expected one of: `
-      + STAFF_TEAM_ROLES.concat([STAFF_COLLECTION_ROLE]).join(', '));
+      + STAFF_TEAM_ROLES.concat([STAFF_COLLECTION_ROLE, STAFF_LEGAL_ROLE]).join(', '));
   }
 
   const teamRows = await readTeamsRaw(db);  // writers see the sheet as stored, not the code overlay
@@ -7765,10 +7814,11 @@ async function staffExport(db, user) {
     fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
     fetchAll(() => db.from('access_codes').select('code, name, role, teams')),
     fetchAll(() => db.from('call_users').select('name, phone, team, is_leader, leader_teams, active')),
-    settingsMany(db, [PMO_ROLE_KEY]),
+    settingsMany(db, [PMO_ROLE_KEY, LEGAL_ROLE_KEY]),
     appPhoneBook(db),
   ]);
   const pmoRoleName = cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const legalRoleName = cfg.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT);
   const mine = teamRows.filter(t => teamAllowed(user, t.team));
 
   const lines = [];
@@ -7781,8 +7831,8 @@ async function staffExport(db, user) {
   };
 
   const ROLE_LABELS = { opm: 'OPM', recovery: 'RECOVERY', gmo: 'GMO', manager: 'MANAGER',
-    credit: 'C. ANALYST', expected: 'EXPECTED', bike: 'BIKE', legal: 'LEGAL',
-    collection: K(pmoRoleName) || 'COLLECTION' };
+    credit: 'C. ANALYST', expected: 'EXPECTED', bike: 'BIKE',
+    legal: K(legalRoleName) || 'LEGAL', collection: K(pmoRoleName) || 'COLLECTION' };
 
   // Layer one: the sheet's supervisors, team by team, app number first.
   for (const c of PHONE_ROLE_COLS) {
@@ -7794,15 +7844,17 @@ async function staffExport(db, user) {
     }
   }
 
-  // Layer two: collection officers, whose teams live on their code, not on the sheet.
+  // Layer two: collection and legal officers, whose teams live on their code, not on the sheet.
   for (const cd of codeRows) {
-    if (!isPmoRole(cd.role, pmoRoleName)) continue;
+    const isColl = isPmoRole(cd.role, pmoRoleName), isLegal = !isColl && isLegalRole(cd.role, legalRoleName);
+    if (!isColl && !isLegal) continue;
     if (!cd.teams || !cd.teams.length) continue;
     const name = String(cd.name || cd.code).trim();
     const hit = book.get(K(name));
+    const label = isColl ? ROLE_LABELS.collection : ROLE_LABELS.legal;
     for (const tm of upperTeams(cd.teams)) {
       if (!teamAllowed(user, tm)) continue;
-      push(ROLE_LABELS.collection, tm, name, hit ? hit.phone : '');
+      push(label, tm, name, hit ? hit.phone : '');
     }
   }
 

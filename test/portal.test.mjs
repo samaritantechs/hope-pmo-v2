@@ -5678,6 +5678,7 @@ const STAFF_BOOK = () => ({
     { code: 'C1', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['ALPHA', 'BETA'] },
     { code: 'C2', name: 'KAMARIA', role: 'PMO COLLECTION', teams: ['GAMMA'] },
     { code: 'C3', name: 'SEES ALL', role: 'PMO COLLECTION', teams: [] },
+    { code: 'L1', name: 'ESTHER', role: 'LEGAL', teams: ['ALPHA', 'GAMMA'] },
     { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null },
   ],
   settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }],
@@ -5706,6 +5707,59 @@ test('the roster shows the collection officers beside everybody else', async () 
 
   assert.ok(r.roles.some(x => x.key === 'collection'), 'collection is offered as a role');
   assert.deepEqual(r.allTeams, ['ALPHA', 'BETA', 'DELTA', 'GAMMA']);
+});
+
+/* "legal and collection officers assigned to their teams in access codes aint being so on the
+   teams and staff table" -- legal officers hold a portfolio the exact same way collection
+   officers do (a list on their access code, one person over many teams), and were never merged
+   in: STAFF_TEAM_ROLES only ever named the seven columns on the teams table, and nothing at all
+   read a LEGAL access code's teams. */
+test('the roster shows the legal officers the same way it shows collection', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  const r = await portalApi(db, STAFF_ADMIN, 'staffRoster', {}, NOW);
+
+  const esther = r.staff.find(s => s.name === 'ESTHER');
+  assert.equal(esther.role, 'legal');
+  assert.deepEqual(esther.teams, ['ALPHA', 'GAMMA']);
+  assert.equal(esther.code, 'L1', 'the code travels, so a save edits the right person');
+
+  assert.ok(r.roles.some(x => x.key === 'legal' && x.source === 'access_code'),
+    'legal is offered as a role, and named as a portfolio one -- the drawer reads this to know '
+    + 'to show the "needs an access code" note');
+  assert.equal(r.legalRole, 'LEGAL');
+});
+
+test('a legal officer is one write, however many teams they hold', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  const res = await portalApi(db, STAFF_ADMIN, 'saveStaffTeams',
+    { role: 'legal', code: 'L1', name: 'ESTHER', teams: ['beta', 'DELTA', 'BETA'] }, NOW);
+
+  const row = db._dump('access_codes').find(c => c.code === 'L1');
+  assert.deepEqual(row.teams, ['BETA', 'DELTA'],
+    'normalised to uppercase and de-duplicated, like every other team list in the system');
+  assert.equal(res.changed, 1, 'one write, because their teams are a list on the person');
+  // And the teams table's own legal column is not touched at all -- that is not where a
+  // portfolio legal officer's teams live.
+  assert.equal(db._dump('teams').find(t => t.team === 'GAMMA').gmo, 'OTHER P');
+});
+
+test('a legal officer with no access code is refused, and told what to do', async () => {
+  const db = fakeDb(STAFF_BOOK());
+  await assert.rejects(
+    () => portalApi(db, STAFF_ADMIN, 'saveStaffTeams',
+      { role: 'legal', name: 'NOBODY', teams: ['ALPHA'] }, NOW),
+    /access code/i,
+    'the error has to say WHERE a legal officer comes from, or it is a dead end');
+});
+
+test('a legal role is recognised however it is spelled, and never sweeps in collection', async () => {
+  const t = STAFF_BOOK();
+  t.access_codes.push({ code: 'L2', name: 'MWANASHERIA W', role: 'Legal Officer', teams: ['DELTA'] });
+  const r = await portalApi(fakeDb(t), STAFF_ADMIN, 'staffRoster', {}, NOW);
+  assert.ok(r.staff.some(s => s.name === 'MWANASHERIA W' && s.role === 'legal'));
+  // Still only KAMARIA and CATHERINE, not ESTHER, are collection.
+  assert.deepEqual(r.staff.filter(s => s.role === 'collection').map(s => s.name).sort(),
+    ['CATHERINE', 'KAMARIA']);
 });
 
 test('one save moves a person across teams, and clears the ones they left', async () => {
@@ -9319,6 +9373,17 @@ test('staffExport carries the collection officers, one row per team on their cod
   const hers = d.rows.filter(r => r[2] === 'CATHERINE' && r[0] !== 'LEADER (APP)');
   assert.equal(hers.length, 2, 'one row per team she holds');
   assert.ok(hers.every(r => r[3] === '0766000555'));
+});
+
+// The exact same gap, one role over: a legal officer's teams are a portfolio on their access
+// code too, and staffExport's collection layer never looked at any role but PMO's.
+test('staffExport carries the legal officers, one row per team on their code', async () => {
+  const book = tables();
+  book.access_codes.push({ code: 'L9', name: 'ESTHER', role: 'LEGAL', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });
+  const d = await portalApi(fakeDb(book), ADMIN, 'staffExport', {}, NOW);
+  const hers = d.rows.filter(r => r[2] === 'ESTHER' && r[0] !== 'LEADER (APP)');
+  assert.equal(hers.length, 2, 'one row per team she holds');
+  assert.ok(hers.every(r => r[0] === 'LEGAL'));
 });
 
 test('staffExport includes the app\'s field officers -- the people no sheet carries', async () => {
