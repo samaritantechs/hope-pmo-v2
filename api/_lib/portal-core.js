@@ -18,7 +18,7 @@ import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 /* WHAT A STATE MEANS AS AN ORDER, from the file the HANDSET reads it out of. The office's
    panes and the phone's own endpoint must never hold two opinions about whether `lost` means
    lock -- so there is one function, and this side imports it rather than restating it. */
-import { commandFor } from './device-core.js';
+import { commandFor, noteDeviceSettingsWritten } from './device-core.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
@@ -5241,6 +5241,14 @@ async function settingSet(db, user, p) {
      flips it and then goes to check must see the effect, not wonder for thirty seconds
      whether it took -- so writing any setting drops the cache. */
   clearSystemOpenCache(db);
+  /* The company phone register's own settings memo (device-core.js's readBeatSettings) is a
+     SEPARATE cache from the one just dropped above -- a different module, a different WeakMap
+     -- so an admin editing DEVICE_LOCK_BRAND or DEVICE_BEAT_SECONDS here would otherwise wait
+     out its own TTL before the next handset to beat saw the change. This is the only place any
+     DEVICE_* setting is ever written (see the Settings screen), so it is dropped on every key
+     rather than only the ones spelled DEVICE_ -- a WeakMap delete costs nothing to pay for
+     free on the keys that are not one. */
+  noteDeviceSettingsWritten(db);
   return { key: p.key };
 }
 
@@ -5255,6 +5263,7 @@ async function settingDelete(db, user, p) {
   const { error } = await db.from('settings').delete().eq('key', key);
   if (error) throw new Error(error.message);
   clearSystemOpenCache(db);
+  noteDeviceSettingsWritten(db);           // see the note beside settingSet's own call
   return { key, deleted: true };
 }
 

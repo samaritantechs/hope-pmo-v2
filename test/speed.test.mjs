@@ -28,6 +28,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ||
 const { portalApi } = await import('../api/_lib/portal-core.js');
 const { callApi } = await import('../api/_lib/call-core.js');
 const { loanApi } = await import('../api/_lib/loan-core.js');
+const { deviceApi } = await import('../api/_lib/device-core.js');
 const { USER_TABS } = await import('../api/_lib/auth.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
@@ -813,6 +814,128 @@ test('speed: the second handset does not re-read the teams role columns', async 
      between them cost nothing extra at all. */
   assert.ok(second <= first, `the second handset cost more than the first: ${second} vs ${first}`);
   assert.ok(second <= 6, `${second} trips for a warm handset -- the role map is being re-read`);
+});
+
+/* =====================================================================================
+   A BEAT READ `settings` FOUR TIMES, AND NONE OF IT WAS SHARED WITH THE NEXT HANDSET.
+   =====================================================================================
+   lockWords, graceFor, bootGraceFor and paceFor each asked `settings` for their own few keys,
+   independently, every single beat -- the lock screen's words, the offline grace, the boot
+   window, the pace. Two hundred company handsets beating through the same warm process paid
+   for that four times over, on a table that changes a few times a year.
+
+   BEFORE: byToken (1) + the devices write (1) + four separate settings reads (4) = 6 trips,
+   every beat, forever. AFTER: byToken (1) + the write (1) + ONE combined settings read (1) on
+   a cold cache, and the SECOND handset through the same warm process pays nothing for settings
+   at all -- exactly the shape the teams role map already proved above. */
+test('speed: the second handset does not re-read the settings table on its beat', async () => {
+  const devices = [
+    { imei: '350000000000001', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'a'.repeat(32), holder: 'OFFICER ONE',
+      issued_at: '2026-06-01T00:00:00Z', shift_server: null, shift_batch: null },
+    { imei: '350000000000002', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'b'.repeat(32), holder: 'OFFICER TWO',
+      issued_at: '2026-06-01T00:00:00Z', shift_server: null, shift_batch: null },
+  ];
+  const settings = [
+    { key: 'DEVICE_LOCK_BRAND', value: 'HOPE MICROCREDIT' },
+    { key: 'DEVICE_HELP_PHONE', value: '0659077770' },
+    { key: 'DEVICE_BEAT_SECONDS', value: '900' },
+    { key: 'DEVICE_PENDING_BEAT_SECONDS', value: '25' },
+    { key: 'DEVICE_OFFLINE_GRACE_HOURS', value: '336' },
+    { key: 'DEVICE_BOOT_GRACE_MINUTES', value: '5' },
+    { key: 'DEVICE_BOOT_GRACE_EVERY_HOURS', value: '24' },
+  ];
+  const c = counting({ devices, settings, device_events: [] });
+
+  const beat1 = await deviceApi(c.db, 'dev_beat', [{ token: 'a'.repeat(32) }], NOW);
+  const first = c.stat().trips;
+  const beat2 = await deviceApi(c.db, 'dev_beat', [{ token: 'b'.repeat(32) }], NOW);
+  const second = c.stat().trips - first;
+
+  // Correctness first: the merge must not have changed a single answer on the wire.
+  assert.equal(beat1.brand, 'HOPE MICROCREDIT');
+  assert.equal(beat1.helpPhone, '0659077770');
+  assert.equal(beat1.graceHours, 336);
+  assert.equal(beat1.bootGraceMinutes, 5);
+  assert.equal(beat1.nextBeatSeconds, 900);
+  assert.deepEqual(beat2, { ...beat1, imei: beat2.imei },
+    'both handsets read the identical settings off the identical warm cache');
+
+  assert.ok(first <= 4, `${first} trips for the FIRST beat -- the settings reads should have merged into one`);
+  /* The SECOND handset is the one that shows it: byToken (1) plus the write (1), and nothing
+     at all for settings -- the warm cache from the first beat answers it for free. */
+  assert.ok(second <= 2, `${second} trips for a warm handset's beat -- the settings table is being re-read`);
+});
+
+/* An admin edits DEVICE_LOCK_BRAND (or any setting) through settingSet, and the very next
+   beat -- even on the SAME warm process, inside the memo's own TTL -- must see it. Proves the
+   busting hook portal-core.js's settingSet calls (noteDeviceSettingsWritten) actually reaches
+   device-core.js's own cache, which is a SEPARATE WeakMap from settingsCache/system-gate's. */
+test('speed: an admin editing a DEVICE_ setting is seen on the very next beat, not after the TTL', async () => {
+  const devices = [
+    { imei: '350000000000003', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'c'.repeat(32), holder: null, issued_at: null,
+      shift_server: null, shift_batch: null },
+  ];
+  const t = { teams: [], access_codes: [], settings: [
+    { key: 'DEVICE_LOCK_BRAND', value: 'HOPE MICROCREDIT' },
+  ], roles: [], devices, device_events: [] };
+  const db = fakeDb(t);
+  const ADMIN2 = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] };
+
+  const before = await deviceApi(db, 'dev_beat', [{ token: 'c'.repeat(32) }], NOW);
+  assert.equal(before.brand, 'HOPE MICROCREDIT');
+
+  await portalApi(db, ADMIN2, 'settingSet', { key: 'DEVICE_LOCK_BRAND', value: 'HOOP FINANCE' }, NOW);
+
+  const after = await deviceApi(db, 'dev_beat', [{ token: 'c'.repeat(32) }], NOW);
+  assert.equal(after.brand, 'HOOP FINANCE',
+    'the memo must be dropped on write, not merely wait out its TTL');
+});
+
+/* =====================================================================================
+   shifted() WROTE THE ROW TWICE. ONE UPDATE, WITH THE SHIFT ORDER CLEARED IN THE SAME PATCH,
+   COSTS ONE ROUND TRIP INSTEAD OF TWO -- with the pre-migration fallback kept exactly as
+   narrow as beat()'s own (a column-not-found error, and nothing else, retries once).
+   ===================================================================================== */
+test('speed: shifted() clears the shift order in the same write, not a second one', async () => {
+  const devices = [
+    { imei: '350000000000010', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'd'.repeat(32), holder: null, issued_at: null,
+      shift_server: 'https://other.example', shift_batch: 'e'.repeat(32) },
+  ];
+  const c = counting({ devices, settings: [], device_events: [] });
+
+  const out = await deviceApi(c.db, 'dev_shifted', [{ token: 'd'.repeat(32) }], NOW);
+  const { trips } = c.stat();
+
+  assert.equal(out.ok, true);
+  const row = c.db._dump('devices').find(x => x.imei === '350000000000010');
+  assert.equal(row.state, 'released');
+  assert.equal(row.shift_server, null, 'the order is still cleared');
+  assert.equal(row.shift_batch, null, 'the order is still cleared');
+  const ev = c.db._dump('device_events').find(x => x.event === 'shifted');
+  assert.ok(ev, 'the transition is still filed');
+
+  // byToken (1) + ONE combined update (1) + the device_events insert (1) = 3, not 4.
+  assert.ok(trips <= 3, `${trips} trips for shifted() -- the shift order is being cleared in a second write`);
+});
+
+test('speed: shifted() still works pre-migration, when shift_server/shift_batch do not exist yet', async () => {
+  const devices = [
+    { imei: '350000000000011', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'f'.repeat(32), holder: null, issued_at: null },
+  ];
+  const db = fakeDb({ devices, settings: [], device_events: [] },
+    { missingColumns: { devices: ['shift_server', 'shift_batch'] } });
+
+  const out = await deviceApi(db, 'dev_shifted', [{ token: 'f'.repeat(32) }], NOW);
+  assert.equal(out.ok, true, 'the state transition must not fail just because the migration has not run');
+  const row = db._dump('devices').find(x => x.imei === '350000000000011');
+  assert.equal(row.state, 'released');
+  const ev = db._dump('device_events').find(x => x.event === 'shifted');
+  assert.ok(ev, 'the transition is filed even without the shift columns');
 });
 
 /* =====================================================================================
