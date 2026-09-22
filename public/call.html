@@ -466,7 +466,7 @@ function paintCallWorkspace_(){
 function toggleCallWorkspace_(){
   if (S.workspace === 'hopeloan') {
     S.workspace = 'hopepmo'; S.wsCode = '';
-    S.cache = {}; S.cacheAt = {};          // sandbox rows must never survive the way back
+    S.cache = {}; S.cacheAt = {}; S.fetching = {}; S.repCacheAt = 0;          // sandbox rows must never survive the way back
     paintCallWorkspace_();
     toast("HOPE PMO");
     boot();
@@ -480,7 +480,7 @@ function toggleCallWorkspace_(){
      server has actually answered from the sandbox. */
   S.wsCode = code.trim();
   S.workspace = 'hopeloan';
-  S.cache = {}; S.cacheAt = {};            // live rows must never be re-shown as sandbox ones
+  S.cache = {}; S.cacheAt = {}; S.fetching = {}; S.repCacheAt = 0;            // live rows must never be re-shown as sandbox ones
   toast('Inajaribu HOPE Loan / trying HOPE Loan\u2026');
   srv('api_callBoot', DEV).then(function(){
     paintCallWorkspace_();                 // confirmed: now say so
@@ -488,7 +488,7 @@ function toggleCallWorkspace_(){
   }).catch(function(e){
     // Refused or unreachable -- go straight back, and say why in the server's own words.
     S.workspace = 'hopepmo'; S.wsCode = '';
-    S.cache = {}; S.cacheAt = {};
+    S.cache = {}; S.cacheAt = {}; S.fetching = {}; S.repCacheAt = 0;
     paintCallWorkspace_();
     toast(String((e && e.message) || e), true);
   });
@@ -564,7 +564,7 @@ var DEV = deviceId();
 // date to todays date unles the dates altered". Only the DEFAULT moved; repFrom/repTo are
 // still two independent boxes an officer can widen back out to a week (or any range) at will,
 // and once touched they stay exactly what was typed -- see the onchange handlers below.
-var S = { boot:null, view:'today', cache:{}, cacheAt:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repFrom:todayKeyLocal_(), repTo:todayKeyLocal_(), repTeam:'', repLeader:'', repRole:'', syncEverySec:300, permOk:null,
+var S = { boot:null, view:'today', cache:{}, cacheAt:{}, fetching:{}, reqId:0, isAdmin:false, rows:[], q:'', curRef:null, comments:[], repData:null, repCacheAt:0, repCacheKey:null, repFrom:todayKeyLocal_(), repTo:todayKeyLocal_(), repTeam:'', repLeader:'', repRole:'', syncEverySec:300, permOk:null,
           /* ALWAYS BOOTS TO THE REAL BOOK. Never remembered across a page load: the sandbox has
              to be chosen deliberately, on this visit, and the code that authorises it is held
              in memory only -- never in localStorage, where a shared handset would keep an
@@ -832,7 +832,8 @@ function dropCacheIfStale_(version){
   if (S.dataVersion === v) return false;
   var had = Object.keys(S.cache || {}).length > 0;
   S.dataVersion = v;
-  if (had) { S.cache = {}; S.cacheAt = {}; S.expdf = null; }
+  if (had) { S.cache = {}; S.cacheAt = {}; S.fetching = {}; S.expdf = null; }
+  S.repCacheAt = 0;   // the report is server data too -- force a re-fetch next time Ripoti opens
   saveCacheToDevice_();
   return had;
 }
@@ -919,7 +920,7 @@ function boot(){
 function doLogout(){
   try { localStorage.setItem('hcLoggedOut', '1'); } catch(e){}
   if (S.syncTimer) { clearInterval(S.syncTimer); S.syncTimer = null; }
-  S.boot = null; S.entered = false; S.cache = {}; S.cacheAt = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
+  S.boot = null; S.entered = false; S.cache = {}; S.cacheAt = {}; S.fetching = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
   /* SIGNING OUT IS THE ONLY THING THAT TAKES THE STRIP AWAY, and it must take the saved copy
      with it -- one team's figures must not be sitting there when the next officer signs in on
      the same handset. */
@@ -1391,7 +1392,14 @@ function ensureAllSources_(){
   var need = ['today','tomorrow','defaulters'].filter(function(s){ return !sourceFresh_(s); });
   if (!need.length) return Promise.resolve();
   return Promise.all(need.map(function(s){
-    return srv('api_callList', DEV, s).then(function(d){ S.cache[s] = d.rows || []; S.cacheAt[s] = Date.now(); saveCacheToDevice_(); }).catch(function(){ S.cache[s] = S.cache[s] || []; });
+    // A fetch for this source is already on the wire -- ride it instead of starting another.
+    // Without this, every keystroke before the first request resolves re-issues the same
+    // api_callList call, because sourceFresh_ only turns true once .then() below has run.
+    if (S.fetching[s]) return S.fetching[s];
+    var p = srv('api_callList', DEV, s).then(function(d){ S.cache[s] = d.rows || []; S.cacheAt[s] = Date.now(); saveCacheToDevice_(); }).catch(function(){ S.cache[s] = S.cache[s] || []; });
+    var tracked = p.then(function(){ delete S.fetching[s]; }, function(){ delete S.fetching[s]; });
+    S.fetching[s] = tracked;
+    return tracked;
   }));
 }
 function globalSearchRows_(q){
@@ -1605,7 +1613,11 @@ function setView(v){
   S.view = v;
   $all('#tabs button').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-v')===v); });
   saveUi_();
-  if (v === 'reports') { renderReports(); return; }
+  if (v === 'reports') {
+    if (reportsFresh_()) { drawReports(); return; }   // same filters, still within cooldown -- no re-ask
+    renderReports();
+    return;
+  }
   var src = LIST_SOURCE[v];
   if (!src) return;
   // An EMPTY cached source is not data, it is the absence of it -- and it was being served
@@ -2023,11 +2035,21 @@ function wireSheetForm(r){
 }
 
 /* ================= leader reports ================= */
+// Same cooldown the list tabs use (CACHE_COOLDOWN_MS), keyed to the four inputs that change
+// the answer -- so switching to Ripoti and straight back with nothing changed redraws what is
+// already in hand instead of re-asking the server the same question.
+function reportsKey_(){ return S.repFrom + '|' + S.repTo + '|' + S.repTeam + '|' + S.repLeader; }
+function reportsFresh_(){
+  return !!(S.repData && S.repCacheKey === reportsKey_() && S.repCacheAt && (Date.now() - S.repCacheAt < CACHE_COOLDOWN_MS));
+}
 function renderReports(){
   var body = $('#body');
   body.innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
+  var key = reportsKey_();
   srv('api_callReport', DEV, S.repFrom, S.repTo, S.repTeam, S.repLeader).then(function(d){
     S.repData = d;
+    S.repCacheKey = key;
+    S.repCacheAt = Date.now();
     // A new range, team or leader is a new question -- last question's sort order carried
     // over would be an accident, not a choice, so it resets here rather than in drawReports,
     // which also runs on a plain re-sort click and must NOT clear itself.
