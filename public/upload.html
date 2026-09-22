@@ -1352,6 +1352,20 @@ $('go').addEventListener('click', function(){
                 + '\n\u26A0 WARNING: these are almost the same customers as the other Expected report for '
                 + 'this date. Leo and Kesho will show the same people, and one day will go uncalled.'
               : '')
+          /* THE ABNORMAL-PAYMENTS COUNT, ADDED UP RATHER THAN READ OFF ONE SLICE.
+             `receivedAbnormal` is undefined for every upload type except received payments, and
+             a number (0 or more) for that one -- checked with !== undefined rather than truthy
+             so a file with genuinely NONE still gets its sentence. sendInSlices_ has already
+             summed it across every slice by the time this runs, so this is the whole file's
+             count even when the file went in as a dozen separate requests. */
+          + (res.body.receivedAbnormal !== undefined
+              ? '\n' + (res.body.receivedAbnormal
+                  ? res.body.receivedAbnormal + ' of these payments are irregular (not a multiple of TZS '
+                    + (res.body.receivedStep || 500).toLocaleString('en-US') + ') and are now flagged on the '
+                    + 'Abnormal Payments screen and the dashboard. No separate abnormal sheet is needed.'
+                  : 'None of these payments are irregular by the multiples rule. The Abnormal Payments '
+                    + 'screen works itself out from this table, so there is nothing else to upload.')
+              : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
           /* THE DECK TOTALS, SAID EITHER WAY. A day whose totals were not added up is read
@@ -1519,6 +1533,13 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
      its own answer, and this took the LAST one's number as the file's. 888 is the size of the
      final slice, not the size of the failure. Summed, like the row count beside it. */
   var synced = 0;
+  /* THE SAME FAULT, ON RECEIVED PAYMENTS. `receivedAbnormal` is how many of a slice's rows are
+     irregular, and it used to travel home only inside that slice's own `message` text -- so a
+     large received-payments file reported irregular payments for whichever slice happened to
+     answer last, silently dropping whatever the earlier slices found. It is a plain number now,
+     summed exactly like `synced` above, and the page (not the server) builds the sentence from
+     the total once the file is all in -- see the "Done" handler below. */
+  var receivedAbnormal = 0;
   /* WHERE WE ARE, rather than which fixed slice we are on. `at` is the next unsent row and
      `size` can shrink between slices, so the plan is recomputed every time instead of being
      fixed up front -- `total` is only ever "this one plus however many are still to come at
@@ -1548,12 +1569,16 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
         }
         inserted += (res.body.inserted || 0);
         synced += (res.body.followupSynced || 0);
+        // undefined on every non-received-payments upload; checked, not summed, so that stays
+        // undefined at the end too rather than turning into a stray zero on a Done message.
+        if (res.body.receivedAbnormal !== undefined) receivedAbnormal += (res.body.receivedAbnormal || 0);
         at += take; idx += 1;
         if (at >= data.length) {
           // The last slice's answer is the file's answer -- it is the one that did the retiring
           // and moved the phones' stamp -- but the COUNTS belong to the whole file.
           res.body.inserted = inserted;
           if (synced) res.body.followupSynced = synced;
+          if (res.body.receivedAbnormal !== undefined) res.body.receivedAbnormal = receivedAbnormal;
           if (shrunk) res.body.sliceShrunk = { to: size, times: shrunk };
           if (onProgress) onProgress(idx, idx);
           return res;
