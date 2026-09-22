@@ -217,6 +217,23 @@ test('the two tables with no id name their real keys instead of being refused fi
   }
 });
 
+test('three tables added after this map was written still name their real keys', async () => {
+  const { fakeDb } = await import('./fake-db.mjs');
+  const { pageKeyFor } = await import('../api/_lib/supabase.js');
+  /* THE SAME ERROR STORM, three more times. `devices` (imei), `imprest_roles` (role) and
+     `hints` (tab) each arrived in a later migration and nobody carried them into this map, so
+     every fetchAll of them has been sending Postgres an `order=id.asc` none of the three can
+     answer -- byToken() worst of all, which reads `devices` on every handset's heartbeat.
+     Caught from the pair of queries PostgREST actually sent for one such read: the first (full
+     columns, no ORDER BY) is the plain retry after the second (fewer columns, ORDER BY "id"
+     ASC) was refused -- two round trips for what should be one, same shape as the deck_totals
+     incident above. */
+  const db = fakeDb({ devices: [], imprest_roles: [], hints: [] });
+  assert.equal(pageKeyFor(db.from('devices').select('*')), 'imei');
+  assert.equal(pageKeyFor(db.from('imprest_roles').select('*')), 'role');
+  assert.equal(pageKeyFor(db.from('hints').select('*')), 'tab');
+});
+
 test('a server that will not accept the order still returns the rows', async () => {
   const { fetchAll } = await import('../api/_lib/supabase.js');
   /* An un-migrated table, a view, a renamed column: PostgREST answers 400 and names the

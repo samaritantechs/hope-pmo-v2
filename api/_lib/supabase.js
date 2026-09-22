@@ -258,6 +258,13 @@ const PAGE_KEY = {
   call_agents: 'user_id',
   deck_totals_days: ['kind', 'snapshot_date'],
   deck_totals: ['kind', 'snapshot_date', 'snapshot_type', 'weekday', 'team', 'upload_batch'],
+  // Three more that fell into the same hole after this map was written: each was added by its
+  // own later migration (device register, imprest, hints) and nobody carried it in here, so
+  // every fetchAll of them has been paying the SAME error-storm cost this map exists to stop --
+  // devices most of all, since byToken() reads it on every handset's heartbeat.
+  devices: 'imei',
+  imprest_roles: 'role',
+  hints: 'tab',
 };
 
 /** The table a built query points at, read off the URL PostgREST is about to be asked for.

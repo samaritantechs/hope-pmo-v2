@@ -3922,8 +3922,11 @@ test('hints group many tips per tab, and fall back across languages', async () =
     ],
   });
   const d = await portalApi(db, ADMIN, 'hints', {}, NOW);
-  assert.deepEqual(d.tips.en.all, ['Upload daily.', 'Check the deck.']);
-  assert.deepEqual(d.tips.sw.all, ['Pakia kila siku.', 'Check the deck.']);   // no Swahili -> English stands in
+  // `tab` is hints' own primary key -- exact-case, so 'all' and 'ALL' are two real rows -- and
+  // a paged read now settles ties on it (see supabase.js's PAGE_KEY), same as every other
+  // table with no `id`. Ascending and case-sensitive puts 'ALL' (h2) before 'all' (h1).
+  assert.deepEqual(d.tips.en.all, ['Check the deck.', 'Upload daily.']);
+  assert.deepEqual(d.tips.sw.all, ['Check the deck.', 'Pakia kila siku.']);   // no Swahili -> English stands in
   assert.deepEqual(d.tips.en.followup, ['Piga simu mapema.']);                // no English -> Swahili stands in
   assert.equal('' in d.tips.en, false);
 });
