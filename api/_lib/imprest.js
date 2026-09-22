@@ -35,7 +35,7 @@
  *  the navs are the roles, not roles". Gated centrally in portal-core.js's FN_TAB, the same
  *  mechanism every other screen in this system uses -- nothing here re-invents a door.
  */
-import { fetchAll } from './supabase.js';
+import { fetchAll, runQuery } from './supabase.js';
 import { num } from './recovery.js';
 import { sendMail, noticeHtml, noticeButton } from './mail.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
@@ -89,18 +89,37 @@ async function readRoles_(db) {
 }
 /** Role names known elsewhere in the system, for the approver's "add a rate" autocomplete --
     never a restriction on what may be typed, only a way to avoid a rate row nothing looks up
-    because of one missing letter. */
+    because of one missing letter.
+
+    MEMOISED PER DATABASE CLIENT, FIFTEEN SECONDS -- same idiom as readTeamsRawMemo_ in
+    portal-core.js: impreq (the form's preview), impappr (the owner) and a page flipping
+    between them all ask for this within moments of each other, and it is advisory only, never
+    validated against, so a few seconds of staleness costs nothing a wrong keystroke in the
+    other direction would not already cost. Kept local to this file rather than imported from
+    portal-core.js, which imports FROM here -- a shared helper would be a cycle. */
+const ROLE_NAMES_TTL_MS = 15000;
+const roleNamesCache = new WeakMap();
 async function readRoleNames_(db) {
-  const seen = new Set();
-  for (const table of ['roles', 'access_codes']) {
-    try {
-      for (const r of await fetchAll(() => db.from(table).select('role'))) {
-        const k = K(r.role);
-        if (k) seen.add(k);
-      }
-    } catch (e) { /* table not there, or not readable -- the rate table's own rows still answer */ }
-  }
-  return [...seen].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const at = Date.now();
+  const hit = roleNamesCache.get(db);
+  if (hit && hit.names && (at - hit.at) < ROLE_NAMES_TTL_MS) return hit.names;
+  if (hit && hit.pending) return hit.pending;
+  const read = async () => {
+    const seen = new Set();
+    for (const table of ['roles', 'access_codes']) {
+      try {
+        for (const r of await fetchAll(() => db.from(table).select('role'))) {
+          const k = K(r.role);
+          if (k) seen.add(k);
+        }
+      } catch (e) { /* table not there, or not readable -- the rate table's own rows still answer */ }
+    }
+    return [...seen].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  };
+  const pending = read().then(names => { roleNamesCache.set(db, { at: Date.now(), names }); return names; },
+    e => { if (roleNamesCache.get(db) && roleNamesCache.get(db).pending === pending) roleNamesCache.delete(db); throw e; });
+  roleNamesCache.set(db, { at, pending });
+  return pending;
 }
 
 export async function imprestRoles(db, user) {
@@ -283,28 +302,56 @@ export async function imprestMine(db, user) {
 }
 
 /** THE GM's QUEUE. Every request, pending first; the counts are over the whole table so they
-    do not move as the list is narrowed. */
+    do not move as the list is narrowed.
+
+    THE COUNTS ARE FOUR HEAD COUNTS, NOT A WHOLE-TABLE READ -- same idiom as stageCounts() in
+    portal-core.js: a count sends no rows, and the KPI strip needs exactly four of them
+    (pending/approved/rejected/toRetire), never the wide free-text columns (purpose, comment)
+    that IMP_COLS carries. Only the subset the caller actually asked for (the frontend defaults
+    to 'pending' -- see IMPQ_STATE in app.html) is fetched with full columns; an unrecognised or
+    blank `state` still means "all", exactly as it always has, so a whole-book request still
+    reads the whole book -- just once, not five times over. */
 export async function imprestQueue(db, user, args) {
   const a = args || {};
-  let rows;
+  const want = String(a.state || '').trim();
+
+  const headCount = async build => {
+    const { count, error } = await runQuery(build);
+    if (error) throw error;
+    return count || 0;
+  };
+  let counts;
   try {
-    rows = await fetchAll(() => db.from('imprest_requests').select(IMP_COLS));
+    counts = {
+      pending: await headCount(() => db.from('imprest_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pending')),
+      approved: await headCount(() => db.from('imprest_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'approved')),
+      rejected: await headCount(() => db.from('imprest_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'rejected')),
+      toRetire: await headCount(() => db.from('imprest_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'approved').is('retired_at', null)),
+    };
   } catch (e) {
     if (!tableMissing(e)) throw e;
     return { ok: true, rows: [], notReady: true, counts: { pending: 0, approved: 0, rejected: 0, toRetire: 0 } };
   }
-  const all = rows.map(r => impRow(r, user.code));
-  const want = String(a.state || '').trim();
-  const shown = want === 'pending' ? all.filter(r => r.status === 'pending')
-    : want === 'decided' ? all.filter(r => r.status !== 'pending')
-    : want === 'toRetire' ? all.filter(r => r.status === 'approved' && !r.retiredAt) : all;
-  return { ok: true,
-    counts: {
-      pending: all.filter(r => r.status === 'pending').length,
-      approved: all.filter(r => r.status === 'approved').length,
-      rejected: all.filter(r => r.status === 'rejected').length,
-      toRetire: all.filter(r => r.status === 'approved' && !r.retiredAt).length,
-    },
+
+  let rows;
+  try {
+    rows = await fetchAll(() => {
+      let q = db.from('imprest_requests').select(IMP_COLS);
+      if (want === 'pending') q = q.eq('status', 'pending');
+      else if (want === 'decided') q = q.neq('status', 'pending');
+      else if (want === 'toRetire') q = q.eq('status', 'approved').is('retired_at', null);
+      return q;
+    });
+  } catch (e) {
+    if (!tableMissing(e)) throw e;
+    return { ok: true, rows: [], notReady: true, counts };
+  }
+  const shown = rows.map(r => impRow(r, user.code));
+  return { ok: true, counts,
     rows: shown.sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1)
       || (y.at || 0) - (x.at || 0)) };
 }
@@ -497,22 +544,43 @@ export async function imprestPhotos(db, user, args) {
 
 /** THE REPORT: every request in a period, with its retirement beside it -- filtered on TRAVEL
     DATE, same as every other period filter in this system reads by the trip rather than by
-    the click. Held by imprep: the GM's own review copy and the accountant's funding desk. */
+    the click. Held by imprep: the GM's own review copy and the accountant's funding desk.
+
+    THE RANGE GOES INTO THE QUERY, not into a filter run after the whole table has crossed the
+    wire -- imprest_requests_travel_date_idx (db/RUN-ME-031-imprest.sql) exists for exactly
+    this. imprest_retirements is then read AFTER imprest_requests, scoped to the narrowed set's
+    own ids: a period never needs a retirement for a request outside it, and this table only
+    ever grows. A genuine "whole book" request -- neither `from` nor `to` given -- still reads
+    both tables whole, same as it always has; there is nothing to narrow by. */
 export async function imprestReport(db, user, args) {
   const a = args || {};
+  const from = isDay(a.from) ? String(a.from) : null;
+  const to = isDay(a.to) ? String(a.to) : null;
+  const want = String(a.status || '').trim();
+
   let rows, rets;
   try {
-    [rows, rets] = await Promise.all([
-      fetchAll(() => db.from('imprest_requests').select(IMP_COLS)),
-      fetchAll(() => db.from('imprest_retirements').select(IMP_RET_COLS)),
-    ]);
+    if (from || to) {
+      rows = await fetchAll(() => {
+        let q = db.from('imprest_requests').select(IMP_COLS);
+        if (from) q = q.gte('travel_date', from);
+        if (to) q = q.lte('travel_date', to);
+        return q;
+      });
+      const ids = rows.map(r => String(r.id));
+      rets = ids.length
+        ? await fetchAll(() => db.from('imprest_retirements').select(IMP_RET_COLS).in('request_id', ids))
+        : [];
+    } else {
+      [rows, rets] = await Promise.all([
+        fetchAll(() => db.from('imprest_requests').select(IMP_COLS)),
+        fetchAll(() => db.from('imprest_retirements').select(IMP_RET_COLS)),
+      ]);
+    }
   } catch (e) {
     if (!tableMissing(e)) throw e;
     return { ok: true, rows: [], notReady: true, totals: {} };
   }
-  const from = isDay(a.from) ? String(a.from) : null;
-  const to = isDay(a.to) ? String(a.to) : null;
-  const want = String(a.status || '').trim();
   const retBy = new Map(rets.map(r => [String(r.request_id), r]));
   const inPeriod = rows.map(r => impRow(r, user.code))
     .filter(r => !from || (r.travelDate && r.travelDate >= from))

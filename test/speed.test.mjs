@@ -29,6 +29,7 @@ const { portalApi } = await import('../api/_lib/portal-core.js');
 const { callApi } = await import('../api/_lib/call-core.js');
 const { loanApi } = await import('../api/_lib/loan-core.js');
 const { USER_TABS } = await import('../api/_lib/auth.js');
+const { fetchAll } = await import('../api/_lib/supabase.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TEAMS = Array.from({ length: 40 }, (_, i) => 'TEAM' + String(i + 1).padStart(2, '0'));
@@ -76,7 +77,81 @@ function bigBook() {
     t.complaints.push({ id: 'k' + i, ref: 'R' + i, team: TEAMS[i % TEAMS.length],
       complainant: 'MAMA ' + i, details: 'x', created_at: day(i % 7) + 'T08:00:00Z' });
   }
+  Object.assign(t, imprestBook());
   return t;
+}
+
+/* THE IMPREST BOOK -- a year and a half of travel dates, mixed statuses, a little under a
+   quarter of it retired with receipts on file, so imprestReport and imprestQueue's budgets
+   below measure something shaped like the real book rather than an empty table. Sized like
+   this file's other fixtures: hundreds of rows, not tens -- and, deliberately, not the tens of
+   thousands a defaulter deck runs to, because an imprest book is a company's cash requests, not
+   its customers.
+
+   Deterministic, like every fixture in this file: `bucket = i % 20` decides pending/approved/
+   rejected (8/9/3 of the twenty), and because 20 is even, `i % 2` inside an approved bucket is
+   CONSTANT across that bucket -- so exactly five of the nine approved buckets come out retired
+   and four stay "to retire". Worked out once here rather than left to be rediscovered: pending
+   360, approved 405 (retired 225, to retire 180), rejected 135, of 900. */
+const IMPREST_ROLE_NAMES = ['FIELD OFFICER', 'DRIVER', 'SUPERVISOR', 'RECOVERY OFFICER', 'AUDITOR'];
+function imprestBook() {
+  const requests = [], retirements = [], photos = [];
+  // 540 distinct travel dates -- a year and a half back from NOW -- so a report narrowed to
+  // one real day reads a sliver of the book rather than a fortieth of it.
+  const travelDay = i => new Date(Date.parse('2026-07-24') - (i % 540) * 86400000).toISOString().slice(0, 10);
+  const N = 900;
+  for (let i = 0; i < N; i++) {
+    const id = 'imp-' + i;
+    // Every tenth request is OFFICER's own (code 'O') -- imprestMine needs a real, non-whole
+    // slice of the book to measure, not zero and not everything.
+    const staffCode = i % 10 === 0 ? 'O' : 'STF' + (i % 60);
+    const role = IMPREST_ROLE_NAMES[i % IMPREST_ROLE_NAMES.length];
+    const travelDate = travelDay(i);
+    const accomDays = 1 + (i % 4);
+    const accomRate = 15000 + 5000 * (i % 3);
+    const fareAmount = 8000 * (1 + i % 3);
+    const accomAmount = accomDays * accomRate;
+    const total = fareAmount + accomAmount;
+    const bucket = i % 20;
+    const status = bucket < 8 ? 'pending' : bucket < 17 ? 'approved' : 'rejected';
+    const approvedAmount = status === 'approved' ? Math.round(total * 0.9) : null;
+    const decidedAt = status === 'pending' ? null
+      : new Date(Date.parse(travelDate + 'T00:00:00Z') + 86400000).toISOString();
+    const retired = status === 'approved' && (i % 2 === 0);
+    const retireTotal = retired ? Math.round(total * 0.85) : null;
+    requests.push({
+      id, requested_at: travelDate + 'T06:00:00Z', staff_code: staffCode, staff_name: 'OFFICER ' + staffCode,
+      staff_role: role, full_name: 'OFFICER ' + staffCode, mobile: '0700000000', recipient_name: 'OFFICER ' + staffCode,
+      email: staffCode.toLowerCase() + '@hope.example', imprest_role: role, pay_mode: 'MOBILE', account_no: '0700000000',
+      travel_date: travelDate, destination: 'DESTINATION ' + (i % 40),
+      fare_trips: 1 + (i % 3), fare_per_trip: 4000, fare_amount: fareAmount,
+      accom_days: accomDays, accom_rate: accomRate, accom_amount: accomAmount,
+      other1_desc: null, other1_amount: 0, other2_desc: null, other2_amount: 0, other3_desc: null, other3_amount: 0,
+      total_amount: total,
+      // A wide free-text field, on purpose -- the exact column imprestQueue used to drag along
+      // for every row of the whole table just to answer four counts.
+      purpose: 'Field visit to review collection and follow-up with the team on outstanding balances. '.repeat(3),
+      status, approved_amount: approvedAmount, comment: status === 'rejected' ? 'Not this quarter' : null,
+      decided_by: status === 'pending' ? null : 'THE GM', decided_at: decidedAt, decided_via_email: false,
+      funded_amount: status === 'approved' ? approvedAmount : null,
+      funded_by: status === 'approved' ? 'THE ACCOUNTANT' : null,
+      funded_at: status === 'approved' ? decidedAt : null,
+      retired_at: retired ? decidedAt : null, retire_total: retireTotal,
+      retire_balance: retired ? approvedAmount - retireTotal : null,
+    });
+    if (retired) {
+      retirements.push({ id: 'ret-' + i, request_id: id, filed_at: decidedAt, filed_by_code: staffCode,
+        filed_by_name: 'OFFICER ' + staffCode, fare_actual: fareAmount, accom_actual: Math.round(accomAmount * 0.85),
+        other1_actual: 0, other2_actual: 0, other3_actual: 0, total_actual: retireTotal,
+        notes: 'Receipts attached.', photo_count: 2 });
+      for (let p = 1; p <= 2; p++) {
+        photos.push({ id: id + '-p' + p, request_id: id, seq: p, data: 'data:image/jpeg;base64,AAAA', bytes: 900 });
+      }
+    }
+  }
+  return { imprest_requests: requests, imprest_retirements: retirements, imprest_photos: photos,
+    imprest_roles: IMPREST_ROLE_NAMES.map(r => ({ role: r, accommodation_per_day: 15000,
+      updated_by: 'A', updated_at: '2026-01-01T00:00:00Z' })) };
 }
 
 /** Counts every request the code sends, exactly as fetchAll issues them.
@@ -237,6 +312,34 @@ const BUDGETS = [
   ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],
   ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  6,   800,  6,  800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
+  /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
+     through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
+     world differs (imprest calls no rpc), so both budget columns are the same measured number.
+
+     imprestQueue's four counts (pending/approved/rejected/toRetire) are HEAD counts now, same
+     idiom as stageCounts() -- 0 rows each -- so "pending", the screen's own default (IMPQ_STATE
+     in app.html), pays for the 360 pending rows it actually shows and nothing of the other 540.
+     "all" still reads the whole table once, which is what an explicit "Yote / All" asks for.
+     Measured: pending 6 trips / 400 rows (40 of them the teams-scope read every OFFICER call
+     pays); all 6 trips / 940 rows -- against the OLD SHAPE's fixed cost of one full read
+     regardless of filter, which on this same 900-row book was 6 trips / 940 rows for EVERY
+     state, pending included. Pending is the number that moved. */
+  ['Imprest queue (pending)', 'imprestQueue',  { state: 'pending' }, OFFICER, 7,  500, 7,  500],
+  ['Imprest queue (all)',     'imprestQueue',  {}, OFFICER, 7, 1100, 7, 1100],
+  /* imprestReport pushes the travel-date range into the query (imprest_requests_travel_date_idx,
+     db/RUN-ME-031-imprest.sql) and then scopes imprest_retirements to that narrowed set's own
+     ids -- so a single day's report pays for a sliver of the book, not the 900-request/225-
+     retirement whole of it. Trips do not move (still one read per table either way, one of
+     which used to run unfiltered and now runs narrowed); rows do. Measured: whole history
+     3 trips / 1,165 rows; one day (2026-07-24, the two requests travelling that day) 3 trips /
+     42 rows. A genuine whole-book request (no from/to at all) is untouched on purpose -- there
+     is nothing to narrow it by. */
+  ['Imprest report (whole history)', 'imprestReport', {}, OFFICER, 4, 1300, 4, 1300],
+  ['Imprest report (one day)', 'imprestReport', { from: '2026-07-24', to: '2026-07-24' }, OFFICER, 4, 120, 4, 120],
+  /* imprestMine: the requester's own history, scoped by staff_code at the query -- every tenth
+     fixture request is OFFICER's own (90 of 900), plus the rate table and its two-table name
+     union for the "add a rate" autocomplete. Measured: 5 trips / 135 rows. */
+  ['Imprest: my history',     'imprestMine',   {}, OFFICER, 6,  200,  6,  200],
   ['Calls report',            'callReport',          {}, ADMIN,  6,   200,  6,  200],
   ['Teams & Staff',           'teams',               {}, ADMIN,  5,   200,  5,  200],
   ['Access codes (Settings)', 'accessCodes',         {}, ADMIN,  5,   100,  5,  100],
@@ -619,6 +722,109 @@ test('scoping abnormal payments at the database keeps EXACTLY the rows it kept b
   assert.equal(asAdmin.rows.length, 2, 'but the admin still sees it -- nothing is lost from the table');
 });
 
+/* THE SAME PROOF FOR IMPREST -- narrowing the query must not narrow the ANSWER, only the cost
+   of getting it. `imprestQueueOldWay` is the pre-fix algorithm, character for character: fetch
+   the whole table through the same fetchAll this file's real code uses, then filter and sort it
+   in JavaScript. Run against the SAME fakeDb as the real (fixed) call, it sees rows in the
+   identical fetch order fetchAll always produces (ordered by `id`, the page tiebreaker) -- so a
+   row-for-row, order-for-order comparison against imprestQueue is a fair one, not an artefact
+   of two different orderings agreeing by chance. */
+async function imprestQueueOldWay(db, want) {
+  const rows = await fetchAll(() => db.from('imprest_requests')
+    .select('id, status, retired_at, retire_total, requested_at'));
+  const all = rows.map(r => ({ id: String(r.id), status: r.status || 'pending',
+    retiredAt: (r.retired_at && r.retire_total != null) ? Date.parse(r.retired_at) : null,
+    at: r.requested_at ? Date.parse(r.requested_at) : null }));
+  const shown = want === 'pending' ? all.filter(r => r.status === 'pending')
+    : want === 'decided' ? all.filter(r => r.status !== 'pending')
+    : want === 'toRetire' ? all.filter(r => r.status === 'approved' && !r.retiredAt) : all;
+  return { ids: shown.sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1)
+      || (y.at || 0) - (x.at || 0)).map(r => r.id),
+    counts: {
+      pending: all.filter(r => r.status === 'pending').length,
+      approved: all.filter(r => r.status === 'approved').length,
+      rejected: all.filter(r => r.status === 'rejected').length,
+      toRetire: all.filter(r => r.status === 'approved' && !r.retiredAt).length,
+    } };
+}
+test('imprest queue: the HEAD-counted, filtered read returns EXACTLY the rows and counts the unfiltered-then-JS-filtered approach did', async () => {
+  const db = fakeDb(bigBook());
+  for (const want of ['pending', 'decided', 'toRetire', '', 'not-a-real-state']) {
+    const old = await imprestQueueOldWay(db, want);
+    const q = await portalApi(db, OFFICER, 'imprestQueue', want ? { state: want } : {}, NOW);
+    assert.deepEqual(q.rows.map(r => r.id), old.ids,
+      `imprestQueue state=${JSON.stringify(want)} must return the same rows, in the same order`);
+    assert.deepEqual(q.counts, old.counts,
+      `imprestQueue state=${JSON.stringify(want)} must report the same KPI counts as before`);
+  }
+});
+
+/* Same idea for the report: `reportExpected` reads imprestReport's OWN published logic (the
+   date filter, the status filter, the totals) straight off the raw fixture rows -- what the
+   whole-book Promise.all used to hand it before any narrowing existed. Rows are compared as a
+   SET (sorted ids), not an exact sequence: both the old and the new code sort a report only by
+   `at`, and many requests in this fixture share a travel date and therefore a requested_at --
+   so which of two same-instant rows prints first was never a promise either version made. The
+   totals, which are sums and counts, are compared exactly. */
+function isDayLike_(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function reportExpected(t, args) {
+  const a = args || {};
+  const from = isDayLike_(a.from) ? a.from : null;
+  const to = isDayLike_(a.to) ? a.to : null;
+  const want = String(a.status || '').trim();
+  const inPeriod = t.imprest_requests
+    .filter(r => !from || r.travel_date >= from)
+    .filter(r => !to || r.travel_date <= to)
+    .map(r => ({ id: String(r.id), status: r.status,
+      retiredAt: !!(r.retired_at && r.retire_total != null),
+      approved: r.approved_amount == null ? null : Number(r.approved_amount),
+      fundedAmount: r.funded_amount == null ? null : Number(r.funded_amount),
+      retireTotal: r.retire_total == null ? null : Number(r.retire_total),
+      retireBalance: r.retire_balance == null ? null : Number(r.retire_balance) }));
+  const shown = inPeriod.filter(r => {
+    if (want === 'retired') return !!r.retiredAt;
+    if (want === 'toRetire') return r.status === 'approved' && !r.retiredAt;
+    if (want === 'toFund') return r.status === 'approved' && r.fundedAmount == null;
+    return !['pending', 'approved', 'rejected'].includes(want) || r.status === want;
+  });
+  const approvedRows = inPeriod.filter(r => r.status === 'approved');
+  return { ids: shown.map(r => r.id).sort(),
+    totals: {
+      count: inPeriod.length,
+      pending: inPeriod.filter(r => r.status === 'pending').length,
+      rejected: inPeriod.filter(r => r.status === 'rejected').length,
+      approved: approvedRows.length,
+      approvedAmount: approvedRows.reduce((s, r) => s + (r.approved || 0), 0),
+      funded: approvedRows.filter(r => r.fundedAmount != null).length,
+      fundedAmount: approvedRows.reduce((s, r) => s + (r.fundedAmount || 0), 0),
+      toFund: approvedRows.filter(r => r.fundedAmount == null).length,
+      retired: approvedRows.filter(r => r.retiredAt).length,
+      toRetire: approvedRows.filter(r => !r.retiredAt).length,
+      spent: approvedRows.reduce((s, r) => s + (r.retiredAt ? (r.retireTotal || 0) : 0), 0),
+      toRefund: approvedRows.reduce((s, r) => s + (r.retireBalance != null && r.retireBalance > 0 ? r.retireBalance : 0), 0),
+      toReimburse: approvedRows.reduce((s, r) => s + (r.retireBalance != null && r.retireBalance < 0 ? -r.retireBalance : 0), 0),
+    } };
+}
+test('imprest report: narrowing travel_date at the database keeps EXACTLY the rows and totals it kept before', async () => {
+  const t = bigBook();
+  const cases = [
+    {},                                                     // the genuine whole-book request
+    { from: '2026-07-24', to: '2026-07-24' },                // one real day -- the sliver
+    { from: '2026-06-01', to: '2026-06-30' },                 // a month, with retirements in it
+    { from: '2026-06-01', to: '2026-06-30', status: 'approved' },
+    { from: '2026-06-01', to: '2026-06-30', status: 'toRetire' },
+    { to: '2026-01-01' },                                     // open-ended on one side
+  ];
+  for (const args of cases) {
+    const expected = reportExpected(t, args);
+    const rep = await portalApi(fakeDb(t), OFFICER, 'imprestReport', args, NOW);
+    assert.deepEqual(rep.rows.map(r => r.id).sort(), expected.ids,
+      `imprestReport ${JSON.stringify(args)} must return the same set of rows as before`);
+    assert.deepEqual(rep.totals, expected.totals,
+      `imprestReport ${JSON.stringify(args)} must report the same totals as before`);
+  }
+});
+
 /* =====================================================================================
    THE WHOLE-SYSTEM GUARD, AND THE REASON IT EXISTS.
 
@@ -643,7 +849,14 @@ test('scoping abnormal payments at the database keeps EXACTLY the rows it kept b
    added, without anybody remembering to add it here. If it trips, the fix is virtually never
    to raise the ceiling -- it is to put the team filter in the query.
    ===================================================================================== */
-const ONE_TEAM = { code: 'O', name: 'REC TEAM01', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
+/* tabs: [] used to be a no-op -- FN_TAB gates only the imprest functions, nothing else this
+   sweep touches, so ONE_TEAM held blank tabs for years without missing a single screen. Imprest
+   changed that: without impreq/impappr/imprep it hit tabGate_'s Forbidden before a single query
+   ran, and the catch below reads a refusal exactly like "not permitted, not applicable" -- so
+   imprestMine/imprestQueue/imprestReport/imprestRoles were silently invisible to BOTH sweeps
+   below, the one whole-book book on this file has no test for at all. Ticked now, the same three
+   tabs OFFICER already carries through USER_TABS above. */
+const ONE_TEAM = { code: 'O', name: 'REC TEAM01', role: 'GMO', teams: [TEAMS[0]], tabs: ['impreq', 'impappr', 'imprep'] };
 const OFFICER_ROW_CEILING = 4000;
 
 /* Functions that CHANGE something. A speed sweep must not fire them, and their cost is not a
