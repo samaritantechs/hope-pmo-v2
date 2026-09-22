@@ -26,9 +26,11 @@ import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_R
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi } = await import('../api/_lib/portal-core.js');
-const { callApi } = await import('../api/_lib/call-core.js');
+const { callApi, _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
 const { loanApi } = await import('../api/_lib/loan-core.js');
+const { deviceApi } = await import('../api/_lib/device-core.js');
 const { USER_TABS } = await import('../api/_lib/auth.js');
+const { fetchAll } = await import('../api/_lib/supabase.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
 const TEAMS = Array.from({ length: 40 }, (_, i) => 'TEAM' + String(i + 1).padStart(2, '0'));
@@ -76,7 +78,81 @@ function bigBook() {
     t.complaints.push({ id: 'k' + i, ref: 'R' + i, team: TEAMS[i % TEAMS.length],
       complainant: 'MAMA ' + i, details: 'x', created_at: day(i % 7) + 'T08:00:00Z' });
   }
+  Object.assign(t, imprestBook());
   return t;
+}
+
+/* THE IMPREST BOOK -- a year and a half of travel dates, mixed statuses, a little under a
+   quarter of it retired with receipts on file, so imprestReport and imprestQueue's budgets
+   below measure something shaped like the real book rather than an empty table. Sized like
+   this file's other fixtures: hundreds of rows, not tens -- and, deliberately, not the tens of
+   thousands a defaulter deck runs to, because an imprest book is a company's cash requests, not
+   its customers.
+
+   Deterministic, like every fixture in this file: `bucket = i % 20` decides pending/approved/
+   rejected (8/9/3 of the twenty), and because 20 is even, `i % 2` inside an approved bucket is
+   CONSTANT across that bucket -- so exactly five of the nine approved buckets come out retired
+   and four stay "to retire". Worked out once here rather than left to be rediscovered: pending
+   360, approved 405 (retired 225, to retire 180), rejected 135, of 900. */
+const IMPREST_ROLE_NAMES = ['FIELD OFFICER', 'DRIVER', 'SUPERVISOR', 'RECOVERY OFFICER', 'AUDITOR'];
+function imprestBook() {
+  const requests = [], retirements = [], photos = [];
+  // 540 distinct travel dates -- a year and a half back from NOW -- so a report narrowed to
+  // one real day reads a sliver of the book rather than a fortieth of it.
+  const travelDay = i => new Date(Date.parse('2026-07-24') - (i % 540) * 86400000).toISOString().slice(0, 10);
+  const N = 900;
+  for (let i = 0; i < N; i++) {
+    const id = 'imp-' + i;
+    // Every tenth request is OFFICER's own (code 'O') -- imprestMine needs a real, non-whole
+    // slice of the book to measure, not zero and not everything.
+    const staffCode = i % 10 === 0 ? 'O' : 'STF' + (i % 60);
+    const role = IMPREST_ROLE_NAMES[i % IMPREST_ROLE_NAMES.length];
+    const travelDate = travelDay(i);
+    const accomDays = 1 + (i % 4);
+    const accomRate = 15000 + 5000 * (i % 3);
+    const fareAmount = 8000 * (1 + i % 3);
+    const accomAmount = accomDays * accomRate;
+    const total = fareAmount + accomAmount;
+    const bucket = i % 20;
+    const status = bucket < 8 ? 'pending' : bucket < 17 ? 'approved' : 'rejected';
+    const approvedAmount = status === 'approved' ? Math.round(total * 0.9) : null;
+    const decidedAt = status === 'pending' ? null
+      : new Date(Date.parse(travelDate + 'T00:00:00Z') + 86400000).toISOString();
+    const retired = status === 'approved' && (i % 2 === 0);
+    const retireTotal = retired ? Math.round(total * 0.85) : null;
+    requests.push({
+      id, requested_at: travelDate + 'T06:00:00Z', staff_code: staffCode, staff_name: 'OFFICER ' + staffCode,
+      staff_role: role, full_name: 'OFFICER ' + staffCode, mobile: '0700000000', recipient_name: 'OFFICER ' + staffCode,
+      email: staffCode.toLowerCase() + '@hope.example', imprest_role: role, pay_mode: 'MOBILE', account_no: '0700000000',
+      travel_date: travelDate, destination: 'DESTINATION ' + (i % 40),
+      fare_trips: 1 + (i % 3), fare_per_trip: 4000, fare_amount: fareAmount,
+      accom_days: accomDays, accom_rate: accomRate, accom_amount: accomAmount,
+      other1_desc: null, other1_amount: 0, other2_desc: null, other2_amount: 0, other3_desc: null, other3_amount: 0,
+      total_amount: total,
+      // A wide free-text field, on purpose -- the exact column imprestQueue used to drag along
+      // for every row of the whole table just to answer four counts.
+      purpose: 'Field visit to review collection and follow-up with the team on outstanding balances. '.repeat(3),
+      status, approved_amount: approvedAmount, comment: status === 'rejected' ? 'Not this quarter' : null,
+      decided_by: status === 'pending' ? null : 'THE GM', decided_at: decidedAt, decided_via_email: false,
+      funded_amount: status === 'approved' ? approvedAmount : null,
+      funded_by: status === 'approved' ? 'THE ACCOUNTANT' : null,
+      funded_at: status === 'approved' ? decidedAt : null,
+      retired_at: retired ? decidedAt : null, retire_total: retireTotal,
+      retire_balance: retired ? approvedAmount - retireTotal : null,
+    });
+    if (retired) {
+      retirements.push({ id: 'ret-' + i, request_id: id, filed_at: decidedAt, filed_by_code: staffCode,
+        filed_by_name: 'OFFICER ' + staffCode, fare_actual: fareAmount, accom_actual: Math.round(accomAmount * 0.85),
+        other1_actual: 0, other2_actual: 0, other3_actual: 0, total_actual: retireTotal,
+        notes: 'Receipts attached.', photo_count: 2 });
+      for (let p = 1; p <= 2; p++) {
+        photos.push({ id: id + '-p' + p, request_id: id, seq: p, data: 'data:image/jpeg;base64,AAAA', bytes: 900 });
+      }
+    }
+  }
+  return { imprest_requests: requests, imprest_retirements: retirements, imprest_photos: photos,
+    imprest_roles: IMPREST_ROLE_NAMES.map(r => ({ role: r, accommodation_per_day: 15000,
+      updated_by: 'A', updated_at: '2026-01-01T00:00:00Z' })) };
 }
 
 /** Counts every request the code sends, exactly as fetchAll issues them.
@@ -237,6 +313,34 @@ const BUDGETS = [
   ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],
   ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  6,   800,  6,  800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
+  /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
+     through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
+     world differs (imprest calls no rpc), so both budget columns are the same measured number.
+
+     imprestQueue's four counts (pending/approved/rejected/toRetire) are HEAD counts now, same
+     idiom as stageCounts() -- 0 rows each -- so "pending", the screen's own default (IMPQ_STATE
+     in app.html), pays for the 360 pending rows it actually shows and nothing of the other 540.
+     "all" still reads the whole table once, which is what an explicit "Yote / All" asks for.
+     Measured: pending 6 trips / 400 rows (40 of them the teams-scope read every OFFICER call
+     pays); all 6 trips / 940 rows -- against the OLD SHAPE's fixed cost of one full read
+     regardless of filter, which on this same 900-row book was 6 trips / 940 rows for EVERY
+     state, pending included. Pending is the number that moved. */
+  ['Imprest queue (pending)', 'imprestQueue',  { state: 'pending' }, OFFICER, 7,  500, 7,  500],
+  ['Imprest queue (all)',     'imprestQueue',  {}, OFFICER, 7, 1100, 7, 1100],
+  /* imprestReport pushes the travel-date range into the query (imprest_requests_travel_date_idx,
+     db/RUN-ME-031-imprest.sql) and then scopes imprest_retirements to that narrowed set's own
+     ids -- so a single day's report pays for a sliver of the book, not the 900-request/225-
+     retirement whole of it. Trips do not move (still one read per table either way, one of
+     which used to run unfiltered and now runs narrowed); rows do. Measured: whole history
+     3 trips / 1,165 rows; one day (2026-07-24, the two requests travelling that day) 3 trips /
+     42 rows. A genuine whole-book request (no from/to at all) is untouched on purpose -- there
+     is nothing to narrow it by. */
+  ['Imprest report (whole history)', 'imprestReport', {}, OFFICER, 4, 1300, 4, 1300],
+  ['Imprest report (one day)', 'imprestReport', { from: '2026-07-24', to: '2026-07-24' }, OFFICER, 4, 120, 4, 120],
+  /* imprestMine: the requester's own history, scoped by staff_code at the query -- every tenth
+     fixture request is OFFICER's own (90 of 900), plus the rate table and its two-table name
+     union for the "add a rate" autocomplete. Measured: 5 trips / 135 rows. */
+  ['Imprest: my history',     'imprestMine',   {}, OFFICER, 6,  200,  6,  200],
   ['Calls report',            'callReport',          {}, ADMIN,  6,   200,  6,  200],
   ['Teams & Staff',           'teams',               {}, ADMIN,  5,   200,  5,  200],
   ['Access codes (Settings)', 'accessCodes',         {}, ADMIN,  5,   100,  5,  100],
@@ -324,7 +428,13 @@ for (const B of BUDGETS) {
 /* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one
    of these is a field officer standing in the sun on mobile data. */
 const PHONE = [
-  ['Calls: boot',        'api_callBoot',          ['DEV1'], 12,  5000],
+  /* 12 -> 7: this was carrying roughly double the real headroom with no comment explaining it,
+     while the dedicated test below ("opening the app is one wait, not ten") already holds the
+     same call to 6 trips. Real measured cost is 5; 7 leaves one trip of headroom above that,
+     matching how tightly neighbouring rows like "Calls: today list" are set, and stops a
+     regression to, say, 8-11 trips from silently passing this looser guard while the tighter
+     dedicated test (correctly) catches it. */
+  ['Calls: boot',        'api_callBoot',          ['DEV1'], 7,  5000],
   /* One trip tighter since the OFFICER/LEADER short-circuit: a plain handset no longer pays
      a settings read per list load to ask what the PMO role is called. Moved DOWN on purpose --
      a budget that quietly grows back is the failure this file exists to stop. */
@@ -401,6 +511,15 @@ for (const [label, fn, args, tripBudget, rowBudget] of PHONE) {
     t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER',
       device_id: 'DEV1', active: true });
     t.teams = t.teams.map(x => (x.team === TEAMS[0] ? { ...x, team_code: 'TEAM01' } : x));
+    if (fn === 'api_widget') {
+      /* The widget's summaryFor answer is kept in summaryCache, a bare MODULE-LEVEL Map keyed
+         only by team scope -- not per fakeDb, the way cachedAnswer's cache in answer-cache.js
+         is. "Calls: daily summary" runs immediately before this, for the same scope and the
+         same NOW, and would otherwise leave a warm entry behind: this test would then measure
+         a cache hit (~5 trips) instead of the cold cost the budget below is actually meant to
+         guard. Cleared here so this test always pays the real, documented cost. */
+      _clearSummaryCache(); _clearWidgetCache();
+    }
     const c = counting(t);
     await callApi(c.db, fn, args, NOW);
     const { trips, rows } = c.stat();
@@ -619,6 +738,109 @@ test('scoping abnormal payments at the database keeps EXACTLY the rows it kept b
   assert.equal(asAdmin.rows.length, 2, 'but the admin still sees it -- nothing is lost from the table');
 });
 
+/* THE SAME PROOF FOR IMPREST -- narrowing the query must not narrow the ANSWER, only the cost
+   of getting it. `imprestQueueOldWay` is the pre-fix algorithm, character for character: fetch
+   the whole table through the same fetchAll this file's real code uses, then filter and sort it
+   in JavaScript. Run against the SAME fakeDb as the real (fixed) call, it sees rows in the
+   identical fetch order fetchAll always produces (ordered by `id`, the page tiebreaker) -- so a
+   row-for-row, order-for-order comparison against imprestQueue is a fair one, not an artefact
+   of two different orderings agreeing by chance. */
+async function imprestQueueOldWay(db, want) {
+  const rows = await fetchAll(() => db.from('imprest_requests')
+    .select('id, status, retired_at, retire_total, requested_at'));
+  const all = rows.map(r => ({ id: String(r.id), status: r.status || 'pending',
+    retiredAt: (r.retired_at && r.retire_total != null) ? Date.parse(r.retired_at) : null,
+    at: r.requested_at ? Date.parse(r.requested_at) : null }));
+  const shown = want === 'pending' ? all.filter(r => r.status === 'pending')
+    : want === 'decided' ? all.filter(r => r.status !== 'pending')
+    : want === 'toRetire' ? all.filter(r => r.status === 'approved' && !r.retiredAt) : all;
+  return { ids: shown.sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1)
+      || (y.at || 0) - (x.at || 0)).map(r => r.id),
+    counts: {
+      pending: all.filter(r => r.status === 'pending').length,
+      approved: all.filter(r => r.status === 'approved').length,
+      rejected: all.filter(r => r.status === 'rejected').length,
+      toRetire: all.filter(r => r.status === 'approved' && !r.retiredAt).length,
+    } };
+}
+test('imprest queue: the HEAD-counted, filtered read returns EXACTLY the rows and counts the unfiltered-then-JS-filtered approach did', async () => {
+  const db = fakeDb(bigBook());
+  for (const want of ['pending', 'decided', 'toRetire', '', 'not-a-real-state']) {
+    const old = await imprestQueueOldWay(db, want);
+    const q = await portalApi(db, OFFICER, 'imprestQueue', want ? { state: want } : {}, NOW);
+    assert.deepEqual(q.rows.map(r => r.id), old.ids,
+      `imprestQueue state=${JSON.stringify(want)} must return the same rows, in the same order`);
+    assert.deepEqual(q.counts, old.counts,
+      `imprestQueue state=${JSON.stringify(want)} must report the same KPI counts as before`);
+  }
+});
+
+/* Same idea for the report: `reportExpected` reads imprestReport's OWN published logic (the
+   date filter, the status filter, the totals) straight off the raw fixture rows -- what the
+   whole-book Promise.all used to hand it before any narrowing existed. Rows are compared as a
+   SET (sorted ids), not an exact sequence: both the old and the new code sort a report only by
+   `at`, and many requests in this fixture share a travel date and therefore a requested_at --
+   so which of two same-instant rows prints first was never a promise either version made. The
+   totals, which are sums and counts, are compared exactly. */
+function isDayLike_(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function reportExpected(t, args) {
+  const a = args || {};
+  const from = isDayLike_(a.from) ? a.from : null;
+  const to = isDayLike_(a.to) ? a.to : null;
+  const want = String(a.status || '').trim();
+  const inPeriod = t.imprest_requests
+    .filter(r => !from || r.travel_date >= from)
+    .filter(r => !to || r.travel_date <= to)
+    .map(r => ({ id: String(r.id), status: r.status,
+      retiredAt: !!(r.retired_at && r.retire_total != null),
+      approved: r.approved_amount == null ? null : Number(r.approved_amount),
+      fundedAmount: r.funded_amount == null ? null : Number(r.funded_amount),
+      retireTotal: r.retire_total == null ? null : Number(r.retire_total),
+      retireBalance: r.retire_balance == null ? null : Number(r.retire_balance) }));
+  const shown = inPeriod.filter(r => {
+    if (want === 'retired') return !!r.retiredAt;
+    if (want === 'toRetire') return r.status === 'approved' && !r.retiredAt;
+    if (want === 'toFund') return r.status === 'approved' && r.fundedAmount == null;
+    return !['pending', 'approved', 'rejected'].includes(want) || r.status === want;
+  });
+  const approvedRows = inPeriod.filter(r => r.status === 'approved');
+  return { ids: shown.map(r => r.id).sort(),
+    totals: {
+      count: inPeriod.length,
+      pending: inPeriod.filter(r => r.status === 'pending').length,
+      rejected: inPeriod.filter(r => r.status === 'rejected').length,
+      approved: approvedRows.length,
+      approvedAmount: approvedRows.reduce((s, r) => s + (r.approved || 0), 0),
+      funded: approvedRows.filter(r => r.fundedAmount != null).length,
+      fundedAmount: approvedRows.reduce((s, r) => s + (r.fundedAmount || 0), 0),
+      toFund: approvedRows.filter(r => r.fundedAmount == null).length,
+      retired: approvedRows.filter(r => r.retiredAt).length,
+      toRetire: approvedRows.filter(r => !r.retiredAt).length,
+      spent: approvedRows.reduce((s, r) => s + (r.retiredAt ? (r.retireTotal || 0) : 0), 0),
+      toRefund: approvedRows.reduce((s, r) => s + (r.retireBalance != null && r.retireBalance > 0 ? r.retireBalance : 0), 0),
+      toReimburse: approvedRows.reduce((s, r) => s + (r.retireBalance != null && r.retireBalance < 0 ? -r.retireBalance : 0), 0),
+    } };
+}
+test('imprest report: narrowing travel_date at the database keeps EXACTLY the rows and totals it kept before', async () => {
+  const t = bigBook();
+  const cases = [
+    {},                                                     // the genuine whole-book request
+    { from: '2026-07-24', to: '2026-07-24' },                // one real day -- the sliver
+    { from: '2026-06-01', to: '2026-06-30' },                 // a month, with retirements in it
+    { from: '2026-06-01', to: '2026-06-30', status: 'approved' },
+    { from: '2026-06-01', to: '2026-06-30', status: 'toRetire' },
+    { to: '2026-01-01' },                                     // open-ended on one side
+  ];
+  for (const args of cases) {
+    const expected = reportExpected(t, args);
+    const rep = await portalApi(fakeDb(t), OFFICER, 'imprestReport', args, NOW);
+    assert.deepEqual(rep.rows.map(r => r.id).sort(), expected.ids,
+      `imprestReport ${JSON.stringify(args)} must return the same set of rows as before`);
+    assert.deepEqual(rep.totals, expected.totals,
+      `imprestReport ${JSON.stringify(args)} must report the same totals as before`);
+  }
+});
+
 /* =====================================================================================
    THE WHOLE-SYSTEM GUARD, AND THE REASON IT EXISTS.
 
@@ -643,7 +865,22 @@ test('scoping abnormal payments at the database keeps EXACTLY the rows it kept b
    added, without anybody remembering to add it here. If it trips, the fix is virtually never
    to raise the ceiling -- it is to put the team filter in the query.
    ===================================================================================== */
-const ONE_TEAM = { code: 'O', name: 'REC TEAM01', role: 'GMO', teams: [TEAMS[0]], tabs: [] };
+/* tabs: [] was NOT a no-op, and this comment used to claim it was. FN_TAB gates many screens
+   besides imprest -- dashboard, expected, followup, weekly, complaints, restructure, abnormal,
+   credit, teams and more all name a tab ONE_TEAM has never held -- and every one of them hits
+   tabGate_'s Forbidden before a single query runs. The catch below reads that refusal exactly
+   like "not permitted, not applicable" and skips it, so THIS SWEEP HAS NEVER COVERED EVERY
+   READ-ONLY PORTAL FUNCTION the way its own header above claims; it covers only the ones a
+   blank-tabs officer can reach. That gap predates this change and is not fixed by it.
+
+   What this change DOES fix: imprestMine/imprestQueue/imprestReport/imprestRoles were among
+   the silently-skipped functions, and are the one whole-book book this file otherwise has no
+   test for at all. Ticking impreq/impappr/imprep -- the same three tabs OFFICER already
+   carries through USER_TABS above, and used by no other FN_TAB entry -- brings exactly those
+   four into both sweeps below without touching what any other function is gated on. Closing
+   the rest of the gap means giving ONE_TEAM a fuller, still-single-team tab set and is a
+   separate piece of work, not attempted here. */
+const ONE_TEAM = { code: 'O', name: 'REC TEAM01', role: 'GMO', teams: [TEAMS[0]], tabs: ['impreq', 'impappr', 'imprep'] };
 const OFFICER_ROW_CEILING = 4000;
 
 /* Functions that CHANGE something. A speed sweep must not fire them, and their cost is not a
@@ -816,6 +1053,128 @@ test('speed: the second handset does not re-read the teams role columns', async 
 });
 
 /* =====================================================================================
+   A BEAT READ `settings` FOUR TIMES, AND NONE OF IT WAS SHARED WITH THE NEXT HANDSET.
+   =====================================================================================
+   lockWords, graceFor, bootGraceFor and paceFor each asked `settings` for their own few keys,
+   independently, every single beat -- the lock screen's words, the offline grace, the boot
+   window, the pace. Two hundred company handsets beating through the same warm process paid
+   for that four times over, on a table that changes a few times a year.
+
+   BEFORE: byToken (1) + the devices write (1) + four separate settings reads (4) = 6 trips,
+   every beat, forever. AFTER: byToken (1) + the write (1) + ONE combined settings read (1) on
+   a cold cache, and the SECOND handset through the same warm process pays nothing for settings
+   at all -- exactly the shape the teams role map already proved above. */
+test('speed: the second handset does not re-read the settings table on its beat', async () => {
+  const devices = [
+    { imei: '350000000000001', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'a'.repeat(32), holder: 'OFFICER ONE',
+      issued_at: '2026-06-01T00:00:00Z', shift_server: null, shift_batch: null },
+    { imei: '350000000000002', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'b'.repeat(32), holder: 'OFFICER TWO',
+      issued_at: '2026-06-01T00:00:00Z', shift_server: null, shift_batch: null },
+  ];
+  const settings = [
+    { key: 'DEVICE_LOCK_BRAND', value: 'HOPE MICROCREDIT' },
+    { key: 'DEVICE_HELP_PHONE', value: '0659077770' },
+    { key: 'DEVICE_BEAT_SECONDS', value: '900' },
+    { key: 'DEVICE_PENDING_BEAT_SECONDS', value: '25' },
+    { key: 'DEVICE_OFFLINE_GRACE_HOURS', value: '336' },
+    { key: 'DEVICE_BOOT_GRACE_MINUTES', value: '5' },
+    { key: 'DEVICE_BOOT_GRACE_EVERY_HOURS', value: '24' },
+  ];
+  const c = counting({ devices, settings, device_events: [] });
+
+  const beat1 = await deviceApi(c.db, 'dev_beat', [{ token: 'a'.repeat(32) }], NOW);
+  const first = c.stat().trips;
+  const beat2 = await deviceApi(c.db, 'dev_beat', [{ token: 'b'.repeat(32) }], NOW);
+  const second = c.stat().trips - first;
+
+  // Correctness first: the merge must not have changed a single answer on the wire.
+  assert.equal(beat1.brand, 'HOPE MICROCREDIT');
+  assert.equal(beat1.helpPhone, '0659077770');
+  assert.equal(beat1.graceHours, 336);
+  assert.equal(beat1.bootGraceMinutes, 5);
+  assert.equal(beat1.nextBeatSeconds, 900);
+  assert.deepEqual(beat2, { ...beat1, imei: beat2.imei },
+    'both handsets read the identical settings off the identical warm cache');
+
+  assert.ok(first <= 4, `${first} trips for the FIRST beat -- the settings reads should have merged into one`);
+  /* The SECOND handset is the one that shows it: byToken (1) plus the write (1), and nothing
+     at all for settings -- the warm cache from the first beat answers it for free. */
+  assert.ok(second <= 2, `${second} trips for a warm handset's beat -- the settings table is being re-read`);
+});
+
+/* An admin edits DEVICE_LOCK_BRAND (or any setting) through settingSet, and the very next
+   beat -- even on the SAME warm process, inside the memo's own TTL -- must see it. Proves the
+   busting hook portal-core.js's settingSet calls (noteDeviceSettingsWritten) actually reaches
+   device-core.js's own cache, which is a SEPARATE WeakMap from settingsCache/system-gate's. */
+test('speed: an admin editing a DEVICE_ setting is seen on the very next beat, not after the TTL', async () => {
+  const devices = [
+    { imei: '350000000000003', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'c'.repeat(32), holder: null, issued_at: null,
+      shift_server: null, shift_batch: null },
+  ];
+  const t = { teams: [], access_codes: [], settings: [
+    { key: 'DEVICE_LOCK_BRAND', value: 'HOPE MICROCREDIT' },
+  ], roles: [], devices, device_events: [] };
+  const db = fakeDb(t);
+  const ADMIN2 = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] };
+
+  const before = await deviceApi(db, 'dev_beat', [{ token: 'c'.repeat(32) }], NOW);
+  assert.equal(before.brand, 'HOPE MICROCREDIT');
+
+  await portalApi(db, ADMIN2, 'settingSet', { key: 'DEVICE_LOCK_BRAND', value: 'HOOP FINANCE' }, NOW);
+
+  const after = await deviceApi(db, 'dev_beat', [{ token: 'c'.repeat(32) }], NOW);
+  assert.equal(after.brand, 'HOOP FINANCE',
+    'the memo must be dropped on write, not merely wait out its TTL');
+});
+
+/* =====================================================================================
+   shifted() WROTE THE ROW TWICE. ONE UPDATE, WITH THE SHIFT ORDER CLEARED IN THE SAME PATCH,
+   COSTS ONE ROUND TRIP INSTEAD OF TWO -- with the pre-migration fallback kept exactly as
+   narrow as beat()'s own (a column-not-found error, and nothing else, retries once).
+   ===================================================================================== */
+test('speed: shifted() clears the shift order in the same write, not a second one', async () => {
+  const devices = [
+    { imei: '350000000000010', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'd'.repeat(32), holder: null, issued_at: null,
+      shift_server: 'https://other.example', shift_batch: 'e'.repeat(32) },
+  ];
+  const c = counting({ devices, settings: [], device_events: [] });
+
+  const out = await deviceApi(c.db, 'dev_shifted', [{ token: 'd'.repeat(32) }], NOW);
+  const { trips } = c.stat();
+
+  assert.equal(out.ok, true);
+  const row = c.db._dump('devices').find(x => x.imei === '350000000000010');
+  assert.equal(row.state, 'released');
+  assert.equal(row.shift_server, null, 'the order is still cleared');
+  assert.equal(row.shift_batch, null, 'the order is still cleared');
+  const ev = c.db._dump('device_events').find(x => x.event === 'shifted');
+  assert.ok(ev, 'the transition is still filed');
+
+  // byToken (1) + ONE combined update (1) + the device_events insert (1) = 3, not 4.
+  assert.ok(trips <= 3, `${trips} trips for shifted() -- the shift order is being cleared in a second write`);
+});
+
+test('speed: shifted() still works pre-migration, when shift_server/shift_batch do not exist yet', async () => {
+  const devices = [
+    { imei: '350000000000011', item: 'A05', state: 'enrolled', state_reason: null,
+      reported: 'unlocked', enrol_token: 'f'.repeat(32), holder: null, issued_at: null },
+  ];
+  const db = fakeDb({ devices, settings: [], device_events: [] },
+    { missingColumns: { devices: ['shift_server', 'shift_batch'] } });
+
+  const out = await deviceApi(db, 'dev_shifted', [{ token: 'f'.repeat(32) }], NOW);
+  assert.equal(out.ok, true, 'the state transition must not fail just because the migration has not run');
+  const row = db._dump('devices').find(x => x.imei === '350000000000011');
+  assert.equal(row.state, 'released');
+  const ev = db._dump('device_events').find(x => x.event === 'shifted');
+  assert.ok(ev, 'the transition is filed even without the shift columns');
+});
+
+/* =====================================================================================
    HOPE LOAN'S OWN BUDGETS.
    =====================================================================================
    A second system on the same deployment is a second system on the same connection pool, so
@@ -898,6 +1257,60 @@ test('speed [hopeloan]: registering a customer does not scan the customers table
     { full_name: 'NEW PERSON', mobile: '0715000123', team: TEAMS[0], amount: 300000 });
   const { rows } = c.stat();
   assert.ok(rows <= 20, `registration read ${rows} rows -- the serial is scanning the table again`);
+});
+
+/* =====================================================================================
+   FUNDING A BATCH, AND IMPORTING PAYMENTS, MUST COST A HANDFUL OF ROUND TRIPS -- NOT ONE
+   PER LOAN OR PER REF.
+   =====================================================================================
+   financeMarkFunded used to cost 3 round trips PER LOAN (mustLoan, the update, the event
+   insert), run one loan at a time; financeImportPayments used to call closeIfFullyPaid_ once
+   per DISTINCT ref among the imported rows, each of those costing up to 4 more round trips of
+   its own -- an import of 150 distinct loans could cost over 600. Both are now one read, one
+   write and one event insert for the WHOLE batch (financeImportPayments also pays the one
+   insert that lands the payment rows themselves). Measured at 3 and 5 round trips; the budgets
+   below sit a little above that, and the point of asking twice, at two very different batch
+   sizes, is to prove the cost is FLAT rather than merely under budget once. */
+function fundableLoans_(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: 'fb' + i, loan_id: 'FBREF' + i, docket_no: 'FB-' + i, full_name: 'C' + i, team: TEAMS[i % 40],
+    stage: 'disbursed', principal_amt: 300000, net_disbursed: 300000, loan_amt: 408000,
+  }));
+}
+test('speed [hopeloan]: financeMarkFunded on a batch stays flat as the batch grows', async () => {
+  const loans20 = fundableLoans_(20);
+  const c20 = counting({ loans: loans20, loan_events: [] });
+  await loanApi(c20.db, LOAN_ADMIN, 'financeMarkFunded', { loan_ids: loans20.map(l => l.id) });
+  const s20 = c20.stat();
+  assert.ok(s20.trips <= 6, `funding 20 loans took ${s20.trips} round trips (budget 6, measured 3).`);
+
+  const loans200 = fundableLoans_(200);
+  const c200 = counting({ loans: loans200, loan_events: [] });
+  await loanApi(c200.db, LOAN_ADMIN, 'financeMarkFunded', { loan_ids: loans200.map(l => l.id) });
+  const s200 = c200.stat();
+  assert.equal(s200.trips, s20.trips, 'ten times the loans must not cost more round trips');
+});
+
+function fundedLoansForImport_(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: 'ib' + i, loan_id: 'IBREF' + i, docket_no: 'IB-' + i, full_name: 'C' + i, team: TEAMS[i % 40],
+    stage: 'funded', principal_amt: 300000, net_disbursed: 300000, loan_amt: 100000,
+  }));
+}
+test('speed [hopeloan]: financeImportPayments across many distinct refs stays flat', async () => {
+  const loans50 = fundedLoansForImport_(50);
+  const rows50 = loans50.map((l, i) => ({ ref: l.loan_id, amount: 100000, trans_no: 'T' + i, paid_at: '2026-01-05' }));
+  const c50 = counting({ loans: loans50, payment_imports: [], loan_events: [] });
+  await loanApi(c50.db, LOAN_ADMIN, 'financeImportPayments', { rows: rows50 });
+  const s50 = c50.stat();
+  assert.ok(s50.trips <= 10, `importing 50 refs took ${s50.trips} round trips (budget 10, measured 5).`);
+
+  const loans150 = fundedLoansForImport_(150);
+  const rows150 = loans150.map((l, i) => ({ ref: l.loan_id, amount: 100000, trans_no: 'T' + i, paid_at: '2026-01-05' }));
+  const c150 = counting({ loans: loans150, payment_imports: [], loan_events: [] });
+  await loanApi(c150.db, LOAN_ADMIN, 'financeImportPayments', { rows: rows150 });
+  const s150 = c150.stat();
+  assert.equal(s150.trips, s50.trips, 'three times the distinct refs must not cost more round trips');
 });
 
 /* =====================================================================================

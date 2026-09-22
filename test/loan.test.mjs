@@ -948,6 +948,171 @@ test('shifting a payment onto a ref can be the transaction that finally closes i
 });
 
 /* =====================================================================================
+   EQUIVALENCE -- the batched financeMarkFunded / financeImportPayments must compute the
+   exact same answer the old per-item loop did, not merely a faster-looking one.
+   =====================================================================================
+   Each OLD_ helper below is the pre-batching algorithm, reproduced call-for-call (this is the
+   ground truth being compared against, not the code under test). Run against a freshly cloned
+   fixture alongside the real, batched loanApi call, then diff the two `loans` tables and the
+   two `loan_events` tables. funded_at/updated_at are excluded from the diff -- both
+   implementations stamp "now" and the two runs do not share a clock tick -- everything else,
+   including real_end_date (driven by the fixture's own paid_at values, not wall-clock time),
+   is compared exactly. */
+
+async function financeMarkFundedOld_(db, user, { loan_ids, batch }) {
+  const ids = Array.isArray(loan_ids) ? loan_ids : [loan_ids];
+  let n = 0;
+  for (const id of ids) {
+    const { data: rows } = await db.from('loans').select('*').eq('id', id);
+    const loan = rows[0];
+    if (!loan) throw new Error('That loan could not be found.');
+    if (loan.stage !== 'disbursed') continue;
+    const patch = { funded_at: new Date().toISOString(), funded_by: user.name, funding_batch: batch };
+    const { error } = await db.from('loans')
+      .update({ ...patch, stage: 'funded', updated_at: new Date().toISOString() }).eq('id', loan.id);
+    if (error) throw new Error(error.message);
+    await db.from('loan_events').insert({
+      loan_id: loan.id, from_stage: 'disbursed', to_stage: 'funded',
+      actor: user && user.name, actor_role: user && user.role,
+      amount: patch.principal_amt || patch.net_disbursed || patch.team_recomm || null,
+      note: 'Funded via ' + batch,
+    });
+    n++;
+  }
+  return { funded: n, batch };
+}
+
+async function closeIfFullyPaidOld_(db, user, ref) {
+  if (!ref) return;
+  const { data: loanRows } = await db.from('loans').select('*').eq('loan_id', ref);
+  const loan = loanRows[0];
+  if (!loan || loan.stage !== 'funded' || !(Number(loan.loan_amt) > 0)) return;
+  const { data: payments } = await db.from('payment_imports').select('amount, paid_at').eq('ref', ref);
+  const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  if (paid < Number(loan.loan_amt)) return;
+  const lastPaidAt = payments.reduce((max, p) => {
+    const d = p.paid_at ? String(p.paid_at).slice(0, 10) : null;
+    return d && (!max || d > max) ? d : max;
+  }, null);
+  const { error } = await db.from('loans').update({
+    stage: 'closed', real_end_date: lastPaidAt || todayEAT_(), updated_at: new Date().toISOString(),
+  }).eq('id', loan.id);
+  if (error) throw new Error(error.message);
+  await db.from('loan_events').insert({
+    loan_id: loan.id, from_stage: 'funded', to_stage: 'closed',
+    actor: user && user.name, actor_role: user && user.role, amount: null,
+    note: 'Closed -- fully repaid (' + paid + ' against ' + loan.loan_amt + ')',
+  });
+}
+
+async function financeImportPaymentsOld_(db, user, { rows, batch }) {
+  const clean = (rows || []).map(r => ({
+    batch, ref: r.ref || null, docket: r.docket || null, full_name: r.full_name || null,
+    team: r.team || null, amount: Number(r.amount) || 0, paid_at: r.paid_at || null,
+    trans_no: r.trans_no || null, paid_by: r.paid_by || null, source: 'manual', imported_by: user.name,
+  })).filter(r => r.ref && r.amount);
+  const { error } = await db.from('payment_imports').insert(clean);
+  if (error) throw new Error(error.message);
+  for (const ref of new Set(clean.map(r => r.ref))) await closeIfFullyPaidOld_(db, user, ref);
+  return { imported: clean.length, batch };
+}
+
+// Strips the two wall-clock fields neither implementation can be made to agree on bit-for-bit,
+// and sorts by id so the comparison does not depend on write order.
+function stableLoans_(db) {
+  return (db._dump('loans') || [])
+    .map(({ funded_at, updated_at, ...rest }) => rest)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+}
+function stableEvents_(db) {
+  return (db._dump('loan_events') || [])
+    // `id` is a generated sequence number shared across every fakeDb in the process (see
+    // FakeQuery._seq) -- two independent runs never land on the same ids even when every
+    // other field matches, so it is not part of what "identical" means here.
+    .map(({ id, ...rest }) => rest)
+    .sort((a, b) => String(a.loan_id).localeCompare(String(b.loan_id)) || String(a.to_stage).localeCompare(String(b.to_stage)));
+}
+
+test('financeMarkFunded on a mixed batch matches the old per-loan loop exactly', async () => {
+  const stages = ['disbursed', 'disbursed', 'approved', 'disbursed', 'funded', 'disbursed', 'assigned', 'disbursed'];
+  const fixture = stages.map((stage, i) => ({
+    id: 'm' + i, loan_id: 'MREF' + i, docket_no: 'D' + i, full_name: 'C' + i, team: 'MABIBO',
+    stage, principal_amt: 300000, net_disbursed: 300000, loan_amt: 408000,
+  }));
+  const ids = fixture.map(l => l.id);
+
+  const dbOld = fakeDb({ loans: fixture, loan_events: [] });
+  const dbNew = fakeDb({ loans: fixture, loan_events: [] });
+  const rOld = await financeMarkFundedOld_(dbOld, FINANCE, { loan_ids: ids, batch: 'FUND-EQUIV' });
+  const rNew = await loanApi(dbNew, FINANCE, 'financeMarkFunded', { loan_ids: ids, batch: 'FUND-EQUIV' });
+
+  assert.equal(rNew.funded, rOld.funded, 'same count of loans actually funded');
+  assert.equal(rNew.funded, 5, 'sanity: 5 of the 8 fixture loans start disbursed');
+  assert.deepEqual(stableLoans_(dbNew), stableLoans_(dbOld), 'identical final loans table');
+  assert.deepEqual(stableEvents_(dbNew), stableEvents_(dbOld), 'identical loan_events rows');
+  // funded_at/updated_at were stripped above for the diff -- confirm the batched version still
+  // actually stamps them, rather than the diff having silently made that check toothless. Only
+  // the loans this run itself moved from 'disbursed' -- m4 starts already 'funded' and is
+  // never touched, so it carries no funded_at either, exactly as before.
+  const justFunded = fixture.filter(l => l.stage === 'disbursed').map(l => l.id);
+  for (const id of justFunded) {
+    const l = dbNew._dump('loans').find(x => x.id === id);
+    assert.ok(l.funded_at, id + ' is funded but carries no funded_at');
+    assert.ok(l.updated_at, id + ' is funded but carries no updated_at');
+  }
+});
+
+test('financeImportPayments on a mixed batch of refs matches the old per-ref loop exactly', async () => {
+  const fixture = [
+    { id: 'f1', loan_id: 'REF1', stage: 'funded', loan_amt: 100000, principal_amt: 100000 },   // closes exactly
+    { id: 'f2', loan_id: 'REF2', stage: 'funded', loan_amt: 100000, principal_amt: 100000 },   // short -- stays open
+    { id: 'f3', loan_id: 'REF3', stage: 'funded', loan_amt: 150000, principal_amt: 150000 },   // closes with a prior payment already on file
+    { id: 'f5', loan_id: 'REF5', stage: 'disbursed', loan_amt: 200000, principal_amt: 200000 }, // not funded -- must never auto-close
+    { id: 'f7', loan_id: 'REF7', stage: 'funded', loan_amt: 0, principal_amt: 0 },              // loan_amt <= 0 -- never closes
+    { id: 'f8', loan_id: 'REF8', stage: 'funded', loan_amt: 50000, principal_amt: 50000 },      // closes on TWO rows in this same import
+    { id: 'f9', loan_id: 'REF9', stage: 'funded', loan_amt: 20000, principal_amt: 20000 },      // closes with no paid_at at all -- today's date
+  ].map(l => ({ docket_no: l.id, full_name: l.id, team: 'MABIBO', ...l }));
+  const existingPayments = [
+    { id: 'pp1', ref: 'REF3', amount: 100000, paid_at: '2025-12-20' },
+  ];
+  const importRows = [
+    { ref: 'REF1', amount: 100000, paid_at: '2026-01-05', trans_no: 'T1' },
+    { ref: 'REF2', amount: 60000, paid_at: '2026-01-06', trans_no: 'T2' },
+    { ref: 'REF3', amount: 50000, paid_at: '2026-01-10', trans_no: 'T3' },
+    { ref: 'REF5', amount: 999999, paid_at: '2026-01-01', trans_no: 'T5' },
+    { ref: 'REF-GHOST', amount: 5000, paid_at: '2026-01-01', trans_no: 'T6' },   // no matching loan at all
+    { ref: 'REF7', amount: 1000, paid_at: '2026-01-01', trans_no: 'T7' },
+    { ref: 'REF8', amount: 30000, paid_at: '2026-01-02', trans_no: 'T8a' },
+    { ref: 'REF8', amount: 20000, paid_at: '2026-01-09', trans_no: 'T8b' },
+    { ref: 'REF9', amount: 20000, paid_at: null, trans_no: 'T9' },
+  ];
+
+  const dbOld = fakeDb({ loans: fixture, payment_imports: existingPayments, loan_events: [] });
+  const dbNew = fakeDb({ loans: fixture, payment_imports: existingPayments, loan_events: [] });
+  const rOld = await financeImportPaymentsOld_(dbOld, FINANCE, { rows: importRows, batch: 'PAY-EQUIV' });
+  const rNew = await loanApi(dbNew, FINANCE, 'financeImportPayments', { rows: importRows, batch: 'PAY-EQUIV' });
+
+  assert.equal(rNew.imported, rOld.imported);
+  assert.equal(rNew.imported, importRows.length);
+  assert.deepEqual(stableLoans_(dbNew), stableLoans_(dbOld), 'identical final loans table');
+  assert.deepEqual(stableEvents_(dbNew), stableEvents_(dbOld), 'identical loan_events rows');
+
+  // And pin down what "identical" actually means here, so a bug shared by both OLD_ and the
+  // real code -- which the diff above cannot catch -- still fails this test.
+  const byId = Object.fromEntries(dbNew._dump('loans').map(l => [l.id, l]));
+  assert.equal(byId.f1.stage, 'closed'); assert.equal(byId.f1.real_end_date, '2026-01-05');
+  assert.equal(byId.f2.stage, 'funded', 'short of the total -- stays open');
+  assert.equal(byId.f3.stage, 'closed', 'closed by the prior payment plus this import together');
+  assert.equal(byId.f3.real_end_date, '2026-01-10', 'the LATEST payment on file, old or new');
+  assert.equal(byId.f5.stage, 'disbursed', 'never funded -- a stray payment cannot close it');
+  assert.equal(byId.f7.stage, 'funded', 'loan_amt <= 0 never closes');
+  assert.equal(byId.f8.stage, 'closed', 'two rows in the SAME import together cover it');
+  assert.equal(byId.f8.real_end_date, '2026-01-09');
+  assert.equal(byId.f9.stage, 'closed', 'closes even with no paid_at on file');
+  assert.equal(byId.f9.real_end_date, todayEAT_());
+});
+
+/* =====================================================================================
    ILIYONASA -- signed and attributable, never an anonymous edit.
    ===================================================================================== */
 

@@ -613,6 +613,7 @@ var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'',
           sort2:null, asc2:false,
           args:{}, filters:{}, foot:'', roles:[], lang:'sw', tips:null, tipTimer:null, rid:0,
           targets:{},                       // the three % targets, from hints (see the colour rule)
+          teamsCache:null, teamsCacheAt:0,   // see srvTeams_ -- the roster shared by Adjust/Teams/Settings
           /* ALWAYS BOOTS TO 'hopepmo', NEVER REMEMBERED. Only an admin ever sees the switch at
              all, and even for them a page load lands on the real book by default every time --
              the sandbox has to be chosen on purpose, on this visit, never carried in from a
@@ -647,7 +648,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-22-a';
+var BUILD = '2026-09-22-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -671,6 +672,7 @@ function srv(fn, args){
   if (!READ_FNS[fn]) {
     VC.store = {};                       // something changed: nothing remembered is trustworthy
     if (VC.watch) VC.watch.ok = false;   // and a screen built on top of a change is not either
+    S.teamsCache = null;                 // the roster this held may be exactly what just changed
   }
   /* A DEADLINE. The platform gives up on a function at sixty seconds; this stops just short,
      so a screen that is never going to arrive says so instead of spinning until somebody
@@ -741,6 +743,16 @@ function srv(fn, args){
       }
       throw new Error((x.body && x.body.error) || ('HTTP '+x.status));
     });
+}
+/* THE TEAMS ROSTER, SHARED ACROSS TABS. Adjust, Teams and Settings each ask for the whole
+   teams table on their own, just to read a handful of names off it -- so hopping between the
+   three admin tabs in one sitting re-fetched the same small list every time. Short-lived
+   (VC_MS, the same window the rest of this file treats a screen as still current) and thrown
+   away the instant anything writes -- see the READ_FNS check in srv() above -- so this never
+   outlives a change the way a longer cache could. */
+function srvTeams_(){
+  if (S.teamsCache && (Date.now() - S.teamsCacheAt < VC_MS)) return Promise.resolve(S.teamsCache);
+  return srv('teams').then(function(d){ S.teamsCache = d; S.teamsCacheAt = Date.now(); return d; });
 }
 
 /* THE ONE CALL THIS PORTAL EVER MAKES TO A SERVER THAT IS NOT ITS OWN.
@@ -6021,7 +6033,7 @@ var ADJ_COUNT_LABELS = {
 };
 VIEWS.adjust = function(){
   return Promise.all([srv('adjustments', { from: S.args.from || '', to: S.args.to || '' }),
-                      srv('teams').catch(function(){ return { rows: [] }; })]).then(function(r){
+                      srvTeams_().catch(function(){ return { rows: [] }; })]).then(function(r){
     var d = r[0], tm = r[1];
     var tg = d.totals || {};
     /* WHAT THE PICKER MAY OFFER IS THE SERVER'S TO SAY, and once it was not: both selects
@@ -7775,7 +7787,7 @@ function roleCol(nameKey, phoneKey, label){
     } };
 }
 VIEWS.teams = function(){
-  return Promise.all([srv('teams'), srv('callAgents').catch(function(){ return null; }),
+  return Promise.all([srvTeams_(), srv('callAgents').catch(function(){ return null; }),
                       srv('staffRoster').catch(function(){ return null; })]).then(function(rr){
     var d = rr[0]; S.csAgents = rr[1]; S.staff = rr[2];
     // Every team name, for the merge picker in the drawer -- so the destination is CHOSEN from
@@ -8404,7 +8416,7 @@ function sgFill_(sg){
 }
 VIEWS.settings = function(){
   return Promise.all([srv('settings'), srv('accessCodes'), srv('officerAccounts'),
-      srv('systemOpenGet'), srv('teams')]).then(function(r){
+      srv('systemOpenGet'), srvTeams_()]).then(function(r){
     var st=r[0], ac=r[1], cu=r[2], so=r[3], tm=r[4];
     var sg = S.storage || null;
     if (!sg){

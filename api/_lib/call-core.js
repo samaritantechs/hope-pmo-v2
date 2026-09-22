@@ -2112,14 +2112,11 @@ async function announcement(db) {
    Kept in the running process, which serverless hosting reuses between requests but may throw
    away at any moment. That is fine: an empty cache just means doing the work, which is what
    used to happen every time. */
-const WIDGET_TTL_MS = 120000;
-const widgetCache = new Map();
-function widgetKey_(user) {
-  return (user.teams ? upperTeams(user.teams).slice().sort().join(',') : 'ALL');
-}
 // Kept under its old name: it always meant "forget the figures", and now there is only one
-// place to forget them.
-export function _clearWidgetCache() { widgetCache.clear(); summaryCache.clear(); }   // tests only
+// place to forget them -- summaryCache, the ONE CACHE below. The widget used to keep a second
+// Map (and its own TTL and scope key) beside it; that Map was never read from or written to
+// once the figures moved to summaryCache, so it is gone and this just clears the one that's real.
+export function _clearWidgetCache() { summaryCache.clear(); }   // tests only
 
 async function widget(db, [code], nowMs) {
   const raw = String(code == null ? '' : code).trim();

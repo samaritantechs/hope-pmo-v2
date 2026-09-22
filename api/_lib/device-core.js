@@ -132,11 +132,74 @@ async function readSettings(db, keys) {
   }
 }
 
-async function lockWords(db) {
+/* EVERY SETTING A BEAT COULD POSSIBLY WANT, IN ONE LIST -- so there is one round trip to ask
+   for all of them rather than four, one per helper below. Whether a particular beat actually
+   USES all nine (a retiring phone skips the lock words and the boot window) does not change
+   what is asked for: they all come off the same small table in the same request, and picking
+   fewer of them would only save bytes nobody is paying for -- see readSettings' own note in
+   portal-core.js on why a config-sized table is read whole rather than key by key. */
+const PACE_SETTINGS = ['DEVICE_BEAT_SECONDS', 'DEVICE_PENDING_BEAT_SECONDS'];
+const GRACE_SETTINGS = ['DEVICE_OFFLINE_GRACE_HOURS'];
+const BOOT_GRACE_SETTINGS = ['DEVICE_BOOT_GRACE_MINUTES', 'DEVICE_BOOT_GRACE_EVERY_HOURS'];
+const ALL_BEAT_SETTINGS = [...LOCK_SETTINGS, ...PACE_SETTINGS, ...GRACE_SETTINGS, ...BOOT_GRACE_SETTINGS];
+
+/* THREE HUNDRED HANDSETS, THE SAME NINE ROWS, FOR AS LONG AS THIS PROCESS STAYS WARM.
+   =========================================================================================
+   A beat used to ask `settings` four separate times -- lock words, pace, offline grace, boot
+   grace -- and none of it was remembered between one handset's beat and the next one through
+   the SAME warm process. Two hundred phones beating through a morning is two hundred repeats
+   of four reads whose answer had not moved since the first one.
+
+   So it is read ONCE per beat (not four) and kept warm for a short while after, the same shape
+   as readSettings/settingsCache in portal-core.js and isSystemOpen in system-gate.js: a
+   WeakMap keyed on the database client, a short TTL, and the read held IN FLIGHT as well as
+   the answer -- a burst of concurrent beats hitting a cold cache waits on the ONE request
+   already under way rather than each starting its own.
+
+   THE TTL IS SHORTER THAN THE OTHER TWO (15s against 20s and 30s) because this table is asked
+   far more often here -- every beat, from every handset, not once per portal screen -- so the
+   window an admin's change takes to reach a phone is worth keeping tight even though nobody
+   notices fifteen seconds on a fleet that does not poll faster than every ten.
+
+   A FAILED READ IS CACHED TOO. readSettings above already turns "the table would not answer"
+   into null rather than a throw (see the note above it), and null is remembered for the same
+   TTL as a real answer -- a struggling settings table gets asked once, not once per handset,
+   which is exactly the rule this file exists to hold. Every reader below already treats null
+   as "could not ask" and degrades the same way it always did; only the number of trips paid to
+   learn that changes. */
+const BEAT_SETTINGS_TTL_MS = 15000;
+const beatSettingsCache = new WeakMap();          // db -> { at, rows } | { at, pending }
+
+/** Dropped the moment an admin write could have touched any of the keys above -- see
+    settingSet (and settingDelete) in portal-core.js, the one place DEVICE_* settings are
+    actually written, from the Settings screen like any other key. Without this an admin who
+    changes the lock message would have to wait out the TTL to see their own change reach the
+    next handset that beats. */
+export function noteDeviceSettingsWritten(db) { beatSettingsCache.delete(db); }
+
+async function readBeatSettings(db, nowMs) {
+  const at = nowMs || Date.now();
+  const hit = beatSettingsCache.get(db);
+  if (hit && Object.prototype.hasOwnProperty.call(hit, 'rows') && (at - hit.at) < BEAT_SETTINGS_TTL_MS) {
+    return hit.rows;
+  }
+  if (hit && hit.pending && (at - hit.at) < BEAT_SETTINGS_TTL_MS) return hit.pending;
+  // readSettings() never throws -- it already turns a failure into null -- so there is no
+  // in-flight entry left dangling on a rejection the way a read that CAN throw would need to
+  // guard against (compare memoRead_ in portal-core.js, whose underlying reads can throw).
+  const pending = readSettings(db, ALL_BEAT_SETTINGS).then(rows => {
+    beatSettingsCache.set(db, { at, rows });
+    return rows;
+  });
+  beatSettingsCache.set(db, { at, pending });
+  return pending;
+}
+
+function lockWords(rows) {
   // Unreadable settings read the same as unset ones here: the lock screen falls back to the
   // default brand and drops the help number rather than promising one it does not have.
-  const rows = (await readSettings(db, LOCK_SETTINGS)) || [];
-  const get = k => { const r = rows.find(x => S(x.key) === k); return r ? S(r.value) : ''; };
+  const list = rows || [];
+  const get = k => { const r = list.find(x => S(x.key) === k); return r ? S(r.value) : ''; };
   const brand = get('DEVICE_LOCK_BRAND') || DEFAULT_BRAND;
   const phone = get('DEVICE_HELP_PHONE');
   /* Two defaults, not one, because "Piga namba ." is what a single default with an unset
@@ -205,8 +268,7 @@ function logoFor(setting) {
    maintenance windows, so a phone asleep in a drawer drifts past whatever is set here. */
 const BEAT_SECONDS = 15 * 60;
 const PENDING_BEAT_SECONDS = 25;
-async function paceFor(db) {
-  const rows = await readSettings(db, ['DEVICE_BEAT_SECONDS', 'DEVICE_PENDING_BEAT_SECONDS']);
+function paceFor(rows) {
   const pick = (key, dflt, min) => {
     if (rows === null) return dflt;                    // could not ask: the standing default
     const hit = rows.find(r => S(r.key) === key);
@@ -251,10 +313,10 @@ async function paceFor(db) {
    who cannot do their round -- the call app is on that same handset. Somebody who has
    actually quit will still hit it; a fortnight of silence from a working officer will not. */
 const DEFAULT_GRACE_HOURS = 24 * 14;
-async function graceFor(db, dev) {
+function graceFor(rows, dev) {
   if (!S(dev.holder) && !dev.issued_at) return null;          // still in the store: never
-  const rows = (await readSettings(db, ['DEVICE_OFFLINE_GRACE_HOURS'])) || [];
-  const raw = rows.length ? Number(S(rows[0].value)) : NaN;
+  const hit = (rows || []).find(r => S(r.key) === 'DEVICE_OFFLINE_GRACE_HOURS');
+  const raw = hit ? Number(S(hit.value)) : NaN;
   return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : DEFAULT_GRACE_HOURS;
 }
 
@@ -279,12 +341,11 @@ async function graceFor(db, dev) {
         whole purpose -- we can see the handset and it can hear us. */
 const DEFAULT_BOOT_GRACE_MINUTES = 5;
 const DEFAULT_BOOT_GRACE_EVERY_HOURS = 24;
-async function bootGraceFor(db) {
+function bootGraceFor(rows) {
   /* AND HERE THE FAILURE IS NOT THE DEFAULT. Every other read above degrades towards the
      phone staying exactly as locked as it already is; this one would degrade towards OPENING
      a door, so a settings table we could not reach means no window at all. An unset key is a
      different matter and still falls through to five minutes. */
-  const rows = await readSettings(db, ['DEVICE_BOOT_GRACE_MINUTES', 'DEVICE_BOOT_GRACE_EVERY_HOURS']);
   if (rows === null) return { minutes: 0, everyHours: 24 };
   const pick = (key, dflt) => {
     const hit = rows.find(r => S(r.key) === key);
@@ -411,11 +472,12 @@ async function beat(db, [payload], nowMs) {
      in a former employee's storage is the opposite of releasing it. */
   /* A RELEASED PHONE GETS NO MARK EITHER, for the same reason it gets no words: leaving our
      logo cached on a former employee's handset is the opposite of handing it back. */
+  const settingsRows = await readBeatSettings(db, nowMs);
   const words = retire ? { brand: null, message: null, helpPhone: null, logo: null, logoVersion: null }
-                       : await lockWords(db);
-  const grace = await graceFor(db, dev);
-  const boot = retire ? { minutes: 0, everyHours: 0 } : await bootGraceFor(db);
-  const pace = await paceFor(db);
+                       : lockWords(settingsRows);
+  const grace = graceFor(settingsRows, dev);
+  const boot = retire ? { minutes: 0, everyHours: 0 } : bootGraceFor(settingsRows);
+  const pace = paceFor(settingsRows);
   /* HAS THIS PHONE DONE WHAT IT WAS TOLD? Compare the order against what the handset just
      said it is doing -- `reported` from this very beat when it spoke, the stored value when
      it did not. A phone that has never reported at all counts as unlocked, which is true: it
@@ -499,21 +561,25 @@ async function shifted(db, [payload], nowMs) {
   const dev = await byToken(db, payload);
   const at = new Date(nowMs).toISOString();
   const reason = 'imehamishwa kwenda ofisi nyingine (shift) / shifted to another office';
-  const { error } = await db.from('devices').update({
+  /* ONE UPDATE, NOT TWO. Clearing the shift order used to be a second, separate write after
+     this one -- best-effort, because a devices table pre-migration for shift_server/shift_batch
+     has neither column to clear and this call must not fail on that account. Folding it into
+     the SAME patch costs one round trip instead of two on every migrated database, and the
+     pre-migration case is handled exactly the way beat()'s own patch is: a column-not-found
+     error drops just those two fields and retries once, rather than a blanket try/catch around
+     a write of its own. */
+  const patch = {
     state: 'released', state_reason: reason, state_by: 'shift', state_at: at,
-    released_at: at, updated_at: at,
-  }).eq('imei', dev.imei);
+    released_at: at, updated_at: at, shift_server: null, shift_batch: null,
+  };
+  let { error } = await db.from('devices').update(patch).eq('imei', dev.imei);
+  if (error && /shift_server|shift_batch/.test(String(error.message || ''))) {
+    const { shift_server, shift_batch, ...rest } = patch;
+    ({ error } = await db.from('devices').update(rest).eq('imei', dev.imei));
+  }
   if (error) throw new Error(error.message);
   await db.from('device_events').insert([{ imei: dev.imei, event: 'shifted',
     from_state: dev.state, to_state: 'released', reason, actor: 'device', at }]);
-  /* Clearing the shift order is best-effort and not required for correctness -- the row is
-     already `released`, which is all beat() checks before it would ever offer this order
-     again -- but a devices table pre-migration for shift_server/shift_batch has neither
-     column to clear, and this call must not fail on that account. */
-  try {
-    await db.from('devices').update({ shift_server: null, shift_batch: null })
-      .eq('imei', dev.imei);
-  } catch (ignored) { /* pre-migration: nothing to clear */ }
   return { ok: true };
 }
 
@@ -527,7 +593,7 @@ async function hello(db, [payload], nowMs) {
   const dev = await byToken(db, p);
   const at = new Date(nowMs).toISOString();
   await db.from('devices').update({ last_seen: at, updated_at: at }).eq('imei', dev.imei);
-  const words = await lockWords(db);
+  const words = lockWords(await readBeatSettings(db, nowMs));
   return { ok: true, imei: dev.imei, item: dev.item || null, state: dev.state,
     holder: dev.holder || null,
     command: commandFor(dev.state), reason: S(dev.state_reason) || null,

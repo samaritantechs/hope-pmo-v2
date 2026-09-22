@@ -248,7 +248,7 @@ const LIKELY_CAPS = new Set([1000, 2000, 5000, 10000, 20000, 25000, 50000, 10000
 
    Unique is the whole point -- see the note above on what an ambiguous order does to a paged
    read -- so a partial key here would be worse than none. */
-const PAGE_KEY = {
+export const PAGE_KEY = {
   teams: 'team',
   access_codes: 'code',
   roles: 'role',
