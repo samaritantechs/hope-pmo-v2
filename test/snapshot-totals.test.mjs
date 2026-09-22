@@ -788,75 +788,87 @@ test('a re-upload still wins outright, and nothing outside today\'s date survive
    answers it, read through recoveryStanding, and the register laid over it.
      "recovery is initial and current only from latest uploads - everywhere"
    ===================================================================================== */
-test('recoveryStanding: latest initial decks per team-and-weekday minus the latest current deck, per customer', async () => {
-  const { recoveryStanding, standingWithAdj, standingSum } = await import('../api/_lib/snapshot-totals.js');
+/* "initials aint reading well! Current arrears 3,412,547,121 / initial upload: 23,760,795,812"
+   -- the whole book goes up as the INITIAL file every morning; it is the previous evening's
+   CURRENT file. So "latest initial minus latest current" independently of each other is one
+   day's movement and can never be a week -- what a period needs is the initial deck AT ITS
+   OWN START, less the current deck at its own end. */
+test('recoveryStanding: a PERIOD reads the initial deck at its own start, the current deck at its own end', async () => {
+  const { recoveryStanding, standingWithAdj, standingSum, standingKey } = await import('../api/_lib/snapshot-totals.js');
   const D = (ref, team, arrears, type, date, wd, extra = {}) => ({ ref, full_name: 'C' + ref, team, arrears,
     snapshot_type: type, weekday: wd, snapshot_date: date, upload_batch: 'b' + type + date, created_at: date + 'T04:00:00Z', ...extra });
   const rows = [
-    // Thursday's KONGOWE deck: 777 at 400 -- and an older Thursday deck from the week before that it replaces.
-    D('777', 'KONGOWE', 400, 'initial', '2026-07-23', 'THU'),
-    D('776', 'KONGOWE', 900, 'initial', '2026-07-16', 'THU'),
-    // Friday's decks; KONGOWE's initial uploaded twice, the later one (555 at 700, 111 gone) wins.
-    D('111', 'KONGOWE', 500, 'initial', '2026-07-24', 'FRI'), D('555', 'KONGOWE', 650, 'initial', '2026-07-24', 'FRI'),
-    D('555', 'KONGOWE', 700, 'initial', '2026-07-24', 'FRI', { upload_batch: 'fix', created_at: '2026-07-24T06:00:00Z' }),
+    // Monday's own weekday-slot upload: 111 and 555 for KONGOWE, 999 for MBAGALA.
+    D('111', 'KONGOWE', 500, 'initial', '2026-07-20', 'MON'),
+    D('555', 'KONGOWE', 700, 'initial', '2026-07-20', 'MON'),
+    D('999', 'MBAGALA', 900, 'initial', '2026-07-20', 'MON'),
+    // Friday's own weekday-slot upload -- a DIFFERENT slot from Monday's (each weekday is
+    // its own deck, the same grouping defaulterBook's export reading uses). 555's arrears
+    // grew since Monday; 111 was never named on the FRI slot, so it still stands from
+    // Monday's own slot until THAT slot is next refreshed.
+    D('555', 'KONGOWE', 750, 'initial', '2026-07-24', 'FRI'),
     D('999', 'MBAGALA', 900, 'initial', '2026-07-24', 'FRI'),
-    // The company's current file on Friday: 555 at 600, 999 at 800; 777 and 111 not on it.
-    D('555', 'KONGOWE', 600, 'current', '2026-07-24', 'FRI'), D('999', 'MBAGALA', 800, 'current', '2026-07-24', 'FRI'),
-    // A Thursday current file too, so Thursday is measured on its own.
-    D('777', 'KONGOWE', 350, 'current', '2026-07-23', 'THU'),
-    // A team with a current row and no initial deck in the window: not measured.
+    // Friday evening's CURRENT file, the company's whole book. 111 is gone from it -- cleared.
+    D('555', 'KONGOWE', 600, 'current', '2026-07-24', 'FRI'),
+    D('999', 'MBAGALA', 800, 'current', '2026-07-24', 'FRI'),
+    // TEMEKE has a current row but no initial deck anywhere in the lookback: not measured.
     D('T1', 'TEMEKE', 100, 'current', '2026-07-24', 'FRI'),
     // An initial deck older than the lookback: gone.
     D('OLD', 'KONGOWE', 5000, 'initial', '2026-04-06', 'MON'),
   ];
   const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
-  const st = await recoveryStanding(db, { dates: ['2026-07-23', '2026-07-24', '2026-07-22'] });
-  // Wednesday: no current deck as of it -- not measured, absent.
-  assert.equal(st.has('2026-07-22'), false);
-  // Thursday: KONGOWE's THU deck (777 400) against Thursday's current (777 350).
-  const thu = st.get('2026-07-23');
-  assert.deepEqual([...thu.keys()], ['KONGOWE']);
-  assert.equal(thu.get('KONGOWE').recovered, 50);
-  // Friday: KONGOWE = THU deck (777 400) + FRI deck's winning upload (555 700) = 1,100 initial;
-  // current 600 (555); 777 cleared. MBAGALA 900 - 800. TEMEKE not measured.
-  const fri = st.get('2026-07-24');
-  assert.deepEqual([...fri.keys()].sort(), ['KONGOWE', 'MBAGALA']);
-  const k = fri.get('KONGOWE');
-  assert.equal(k.initial, 1100); assert.equal(k.current, 600); assert.equal(k.recovered, 500);
-  assert.equal(k.initialCustomers, 2); assert.equal(k.currentCustomers, 1); assert.equal(k.cleared, 1);
-  assert.deepEqual(k.initialDates, ['2026-07-23', '2026-07-24']); assert.equal(k.currentDeck, '2026-07-24');
-  assert.equal(fri.get('MBAGALA').recovered, 100);
-  assert.deepEqual(standingSum(fri), { initial: 2000, current: 1400, recovered: 600, initialCustomers: 3, currentCustomers: 2, cleared: 1 });
+  // A single day (Friday, Friday): each weekday slot's own latest deck on or before Friday --
+  // Monday's slot (111 500) AND Friday's own, newer slot for 555 (750, not 700).
+  const day = await recoveryStanding(db, { periods: ['2026-07-24'] });
+  const dayK = day.get(standingKey('2026-07-24', '2026-07-24'));
+  assert.deepEqual([...dayK.keys()].sort(), ['KONGOWE', 'MBAGALA'], 'TEMEKE has no initial deck: not measured');
+  const dk = dayK.get('KONGOWE');
+  assert.equal(dk.initial, 1250); assert.equal(dk.current, 600); assert.equal(dk.recovered, 650);
+  assert.equal(dk.initialCustomers, 2); assert.equal(dk.currentCustomers, 1); assert.equal(dk.cleared, 1);
+  assert.deepEqual(dk.initialDates.sort(), ['2026-07-20', '2026-07-24']);
+  assert.equal(dk.currentDeck, '2026-07-24');
+  assert.equal(dayK.get('MBAGALA').recovered, 100);
+  // The WEEK (Monday through Friday): reads only what was picked ON OR BEFORE Monday -- 555's
+  // MONDAY figure (700), not Friday's later 750 -- less Friday's current deck. A different
+  // figure from the day above, on the very same decks.
+  const week = await recoveryStanding(db, { periods: [{ from: '2026-07-20', to: '2026-07-24' }] });
+  const wk = week.get(standingKey('2026-07-20', '2026-07-24'));
+  assert.deepEqual([...wk.keys()].sort(), ['KONGOWE', 'MBAGALA']);
+  const k = wk.get('KONGOWE');
+  assert.equal(k.initial, 1200); assert.equal(k.current, 600); assert.equal(k.recovered, 600);
+  assert.equal(k.initialCustomers, 2); assert.equal(k.currentCustomers, 1); assert.equal(k.cleared, 1, '111, gone from the current deck');
+  assert.deepEqual(k.initialDates, ['2026-07-20']); assert.equal(k.currentDeck, '2026-07-24');
+  assert.equal(wk.get('MBAGALA').recovered, 100);
+  assert.deepEqual(standingSum(wk), { initial: 2100, current: 1400, recovered: 700, initialCustomers: 3, currentCustomers: 2, cleared: 1 });
+  // A day with no current deck by its end at all: not measured, absent.
+  const none1 = await recoveryStanding(db, { periods: ['2026-07-22'] });
+  assert.equal(none1.has(standingKey('2026-07-22', '2026-07-22')), false);
   // Team-narrowed: the current side is the whole company's file, but only the scope's teams answer.
-  const mine = await recoveryStanding(db, { dates: ['2026-07-24'], teams: ['MBAGALA'] });
-  assert.deepEqual([...mine.get('2026-07-24').keys()], ['MBAGALA']);
-  // The register: an initial cell on one of the team's initial dates moves initial; a current
+  const mine = await recoveryStanding(db, { periods: [{ from: '2026-07-20', to: '2026-07-24' }], teams: ['MBAGALA'] });
+  assert.deepEqual([...mine.get(standingKey('2026-07-20', '2026-07-24')).keys()], ['MBAGALA']);
+  // The register: an initial cell on the period's own initial date moves initial; a current
   // cell on the current deck's date moves current; a cell on any other date is ignored.
   const adj = { cells: t => t === 'defaulter-initial'
-    ? [{ team: 'KONGOWE', date: '2026-07-23', amount: 100 }, { team: 'KONGOWE', date: '2026-07-20', amount: 999 }]
-    : [{ team: 'MBAGALA', date: '2026-07-24', amount: -50 }] };
-  const corrected = standingWithAdj(fri, adj);
-  assert.equal(corrected.get('KONGOWE').initial, 1200); assert.equal(corrected.get('KONGOWE').recovered, 600);
-  assert.equal(corrected.get('MBAGALA').current, 750); assert.equal(corrected.get('MBAGALA').recovered, 150);
-  assert.equal(fri.get('KONGOWE').initial, 1100, 'the standing itself is left alone');
+    ? [{ team: 'KONGOWE', date: '2026-07-20', amount: 100 }, { team: 'KONGOWE', date: '2026-07-24', amount: 999 }]
+    : [{ team: 'KONGOWE', date: '2026-07-24', amount: -50 }] };
+  const corrected = standingWithAdj(wk, adj);
+  assert.equal(corrected.get('KONGOWE').initial, 1300); assert.equal(corrected.get('KONGOWE').current, 550);
+  assert.equal(corrected.get('KONGOWE').recovered, 750);
+  assert.equal(wk.get('KONGOWE').initial, 1200, 'the standing itself is left alone');
   // Without RUN-ME-032: null, once, and the screens fall back with a note.
-  const none = await recoveryStanding(fakeDb({ defaulter_snapshots: rows }), { dates: ['2026-07-24'] });
-  assert.equal(none, null);
+  const noFn = await recoveryStanding(fakeDb({ defaulter_snapshots: rows }), { periods: [{ from: '2026-07-20', to: '2026-07-24' }] });
+  assert.equal(noFn, null);
 });
 
-/* "I ran it still getting 'run db/RUN-ME-032'" -- a function that is installed but FAILED
-   (a timeout on the live book) was read as "not installed", and the screen sent the person
-   back to a file they had just run. The two are told apart, and the failure's own words
-   travel to the screen. */
 test('recoveryStanding: a failing function is not a missing one, and the note says what it said', async () => {
   const { recoveryStanding, recoveryRuleNote, RECOVERY_RULE_NOTE } = await import('../api/_lib/snapshot-totals.js');
   const failing = fakeDb({ defaulter_snapshots: [] }, { rpc: { recovery_standing() { throw new Error('canceling statement due to statement timeout'); } } });
-  assert.equal(await recoveryStanding(failing, { dates: ['2026-07-24'] }), null);
+  assert.equal(await recoveryStanding(failing, { periods: ['2026-07-24'] }), null);
   assert.match(recoveryRuleNote(failing), /recovery_standing \(db\/RUN-ME-032\) failed/);
   assert.match(recoveryRuleNote(failing), /statement timeout/, 'the database\'s own words');
   assert.ok(!/run db\/RUN-ME-032 to read/.test(recoveryRuleNote(failing)), 'not sent back to the file');
   const missing = fakeDb({ defaulter_snapshots: [] });
-  assert.equal(await recoveryStanding(missing, { dates: ['2026-07-24'] }), null);
+  assert.equal(await recoveryStanding(missing, { periods: ['2026-07-24'] }), null);
   assert.equal(recoveryRuleNote(missing), RECOVERY_RULE_NOTE, 'not installed: the file to run');
   // And the dashboard's diagnosis times the function on its own and carries its words.
   const p = await portalApi(failing, ADMIN, 'dashboardProbe', {}, FRIDAY);

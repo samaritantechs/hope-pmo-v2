@@ -28,7 +28,7 @@ const { callApi } = await import('../api/_lib/call-core.js');
 const { USER_TABS, ADMIN_TABS, LOAN_TABS } = await import('../api/_lib/auth.js');
 const { todayKey: todayKeyOf } = await import('../api/_lib/time.js');
 const NOW = Date.parse('2026-07-24T09:00:00Z');            // Friday noon EAT
-const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20';
+const TODAY = '2026-07-24', YEST = '2026-07-23', MON = '2026-07-20', MONTH1 = '2026-07-01';
 const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['upload', 'settings'] };
 /* GRANTED, EXPLICITLY, because the blanket is gone. These tests are about TEAM SCOPING --
    an officer seeing only their own rows -- and they used to lean on every screen being open
@@ -76,6 +76,17 @@ function tables() {
       D('111', 'KONGOWE', 500, 'initial'), D('555', 'KONGOWE', 700, 'initial'),
       D('111', 'KONGOWE', 300, 'current'), D('555', 'KONGOWE', 600, 'current', 200),
       D('999', 'MBAGALA', 900, 'initial'), D('999', 'MBAGALA', 800, 'current'),
+      /* MONDAY'S OWN INITIAL DECK, same customers and amounts as Friday's -- the whole book
+         goes up as the initial file every morning ("initials aint reading well ... the whole
+         book is uploaded daily"), so a WEEK's period (Monday's own deck through Friday's
+         current) has a real baseline, not just Friday's day figure standing in for it. */
+      D('111', 'KONGOWE', 500, 'initial', 45, MON, 'MON'), D('555', 'KONGOWE', 700, 'initial', 45, MON, 'MON'),
+      D('999', 'MBAGALA', 900, 'initial', 45, MON, 'MON'),
+      /* AND THE MONTH'S OWN 1ST, same reasoning one period up: the month asks (the 1st, today),
+         so it needs its own morning deck too, on the weekday the 1st actually falls -- Wednesday
+         this month -- distinct from Monday's and Friday's weekday slots. */
+      D('111', 'KONGOWE', 500, 'initial', 45, MONTH1, 'WED'), D('555', 'KONGOWE', 700, 'initial', 45, MONTH1, 'WED'),
+      D('999', 'MBAGALA', 900, 'initial', 45, MONTH1, 'WED'),
     ],
     followup_status: [
       { ref: '555', team: 'KONGOWE', full_name: 'C555', contact: '0714000555', arrears: 600, rejesho: 100, status: 'Defaulter', ds: '3-6', fu_status: 'AMETOA AHADI', promise_date: YEST, promise_amt: 200, comment_by: 'JUMA G', comment_at: YEST + 'T08:00:00Z' },
@@ -331,12 +342,12 @@ test('the customers behind a recovery tile add up to the tile, for a day and for
   const dash = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
   const fri = dash.recTrend.find(x => x.date === TODAY);
   assert.equal(day.totals.recovered, fri.recovered, 'the grand total IS the tile');
-  // The TOTAL tile: the week, with only Friday measured.
+  // The TOTAL tile: the week's own PERIOD -- Monday's initial deck through Friday's current.
   const wk = await portalApi(db, ADMIN, 'recoveryCustomers', { weekOf: MON, mode: 'day' }, NOW);
   assert.equal(wk.date, null); assert.equal(wk.weekOf, MON);
-  assert.deepEqual(wk.days, [TODAY]);
+  assert.deepEqual(wk.days, [MON, TODAY]);
   assert.equal(wk.totals.recovered, dash.recTrendTotal.recovered, 'the week list adds up to the TOTAL tile');
-  assert.ok(wk.rows.every(r => r.days === 1));
+  assert.ok(wk.rows.every(r => r.days === 2), 'each customer carries their Monday initial and Friday current dates');
   // An unmeasured day is empty, not zeros pretending to be customers.
   const thu = await portalApi(db, ADMIN, 'recoveryCustomers', { date: YEST, mode: 'day' }, NOW);
   assert.deepEqual(thu.rows, []); assert.deepEqual(thu.days, []);
@@ -407,7 +418,12 @@ test('the recovery list, as the export: present initial vs present current, what
   assert.ok(day.rows.some(r => r.ref === '777'));
   const dash = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
   assert.equal(dash.recTrend.find(x => x.date === TODAY).recovered, 800, 'and the card IS the list\'s total');
-  assert.equal(dash.recTrendTotal.recovered, 800, 'the week\'s total is the standing at its end, not the days added');
+  /* The WEEK's own figure is the PERIOD from Monday to Friday. 777 sits on its OWN THU slot
+     (a different weekday from KONGOWE's MON/FRI slots), on or before Monday it is not yet
+     uploaded at all... but Monday's own from-date lookback still finds it: 777's slot first
+     appears Thursday, which is AFTER the week's Monday start, so it is not part of the week's
+     picked decks -- the week reads what stood at ITS OWN start, same as any other period. */
+  assert.equal(dash.recTrendTotal.recovered, 400, 'the week\'s figure is Monday\'s baseline through Friday, not everything present today');
   assert.equal(dash.recoveryRule, 'latest');
   const thu = await portalApi(db, ADMIN, 'recoveryCustomers', { date: YEST, mode: 'day' }, NOW);
   assert.equal(thu.measured, false); assert.deepEqual(thu.rows, []);
@@ -629,10 +645,18 @@ test('commission pays the recovery officer a % and the early officer a flat rate
    ===================================================================================== */
 test('the month record is the weeks worked out one by one and added, with a column set per week', async () => {
   const t = tables();
-  // A week earlier (W3, 13-19 July): Friday's decks 2000 -> 1000 against 1000 uncollected --
-  // a 100% day and a 100% week, both on the top band.
+  // This test builds its own single-customer story across the month's weeks, so it strips the
+  // shared book's WED-tagged month baseline (see tables()'s own note) -- otherwise 111/555's
+  // slot, on a weekday of its own, would stand alongside 711's in every week from W3 on and
+  // never be superseded by it.
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.snapshot_date === MONTH1 && r.snapshot_type === 'initial'));
+  // A week earlier (W3, 13-19 July): the week's OWN Monday deck 2000, Friday's current 1000,
+  // against 1000 uncollected -- a 100% day and a 100% week, both on the top band. A period
+  // reads the initial deck as of the week's OWN start, so 711's baseline is dated that
+  // Monday (the 13th), not mid-week -- W3's own MON-tagged slot, superseded for W4 by the
+  // shared book's own Monday deck at the 20th, so the two weeks never see each other's book.
   t.defaulter_snapshots.push(
-    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-17', 'FRI'),
+    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-13', 'MON'),
     D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'));
   t.repayment_snapshots.push(E('711', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'));
   const m = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month' }, NOW);
@@ -641,21 +665,18 @@ test('the month record is the weeks worked out one by one and added, with a colu
   assert.deepEqual(m.weeks[0], { key: 'W1', from: '2026-07-01', to: '2026-07-05' }, 'the first week is clipped to the month');
   assert.deepEqual(m.weeks[3], { key: 'W4', from: MON, to: TODAY }, 'the live week ends today');
   const juma = m.recBoard.find(r => r.officer === 'JUMA G');
-  // W3: Friday 100% (60,000) + the week 100% (60,000). W4: the standing at Friday is 300 of
-  // 1,000 (the 17th's deck is replaced by the 24th's), 21.4% for the week -- under the floor.
-  // The month is the two added, never the month scored once.
+  /* W3's own PERIOD is (Monday the 13th, its end): 100% (120,000). W4's own PERIOD is
+     (Monday the 20th, today): the shared book's 300 of 1,400 uncollected, 21.4% -- under the
+     floor, paid at the ladder's next band down (20,000), not zero. The month is the two
+     weeks' own periods added, never the month scored once -- and never leaking into each
+     other: W3's book never reaches W4, W4's never reaches back into W3. */
   assert.equal(juma.pctW3, 100); assert.equal(juma.recW3, 1000); assert.equal(juma.tzsW3, 120000);
-  assert.equal(juma.pctW4, 21.4); assert.equal(juma.recW4, 300);
-  /* UNDER THE ONE RULE A DAY'S FIGURE IS THE STANDING AS OF THAT DAY. Monday to Thursday of W4
-     still hold the 17th's decks (2000 -> 1000), so each of those days reads 1,000 recovered;
-     Thursday has a sheet (400 uncollected) and so pays a band on it. Stated here so a change
-     to how the daily bands are scored is a deliberate one, not a surprise. */
-  assert.equal(juma.tzsW4, 60000);
+  assert.equal(juma.pctW4, 21.4); assert.equal(juma.recW4, 300); assert.equal(juma.tzsW4, 20000);
   assert.equal(juma.tzsW1, 0); assert.equal(juma.pctW1, null, 'a week with nothing in it is not a zero per cent');
   assert.equal(juma.weekRecovered, 1300);
-  assert.equal(juma.weekCommission, 180000, 'the month pays what its weeks paid');
+  assert.equal(juma.weekCommission, 140000, 'the month pays what its weeks paid');
   assert.equal(juma.weekPct, 54.2, '1,300 over the month\'s 2,400 uncollected');
-  assert.equal(m.totals.split.recWeek, 180000);
+  assert.equal(m.totals.split.recWeek, 140000);
   assert.equal(m.recoveryRule, 'latest');
   assert.equal(juma.records.length, 4, 'one record per week of the month');
   assert.equal(juma.records[2].key, 'W3'); assert.equal(juma.records[2].weekly, true);
@@ -663,8 +684,13 @@ test('the month record is the weeks worked out one by one and added, with a colu
 
 test('the commission screen opens any week, and the month record any month', async () => {
   const t = tables();
+  // This test builds its own single-customer story, so it strips the shared book's WED-tagged
+  // month baseline too (see the month record test's own note).
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.snapshot_date === MONTH1 && r.snapshot_type === 'initial'));
+  // 711's baseline is dated the week's own Monday (a period reads the initial deck as of the
+  // period's start) -- see the month test's own note.
   t.defaulter_snapshots.push(
-    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-17', 'FRI'),
+    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-13', 'MON'),
     D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'));
   t.repayment_snapshots.push(E('711', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'));
   // Any date in the week: a Wednesday snaps to its Monday, and the week reads as finished.
@@ -680,8 +706,9 @@ test('the commission screen opens any week, and the month record any month', asy
   // This week, asked for by its Monday, is the ordinary screen.
   const now = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: MON }, NOW);
   assert.equal(now.pastWeek, false); assert.equal(now.to, addDaysT_(MON, 6));
-  // Thursday's band on the standing the 17th's decks still hold -- see the month test above.
-  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 60000);
+  // The live week's own period (Monday the 20th through today) never reaches back into 711's
+  // week -- it reads the shared book's own Monday deck instead, 21.4% under the floor.
+  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 20000);
   // Last month: the whole of June, five weeks, nothing in it.
   const jun = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month', month: '2026-06' }, NOW);
   assert.equal(jun.from, '2026-06-01'); assert.equal(jun.to, '2026-06-30'); assert.equal(jun.month, '2026-06');
@@ -703,19 +730,19 @@ const addDaysT_ = (k, n) => { const d = new Date(k + 'T00:00:00Z'); d.setUTCDate
    commission board and on the dashboard's weekly tile alike. */
 test('a finished week\'s commission carries its weekend recovery, the same as the dashboard', async () => {
   const t = tables();
+  // This test builds its own single-customer story, so it strips the shared book's WED-tagged
+  // month baseline too (see the month record test's own note).
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.snapshot_date === MONTH1 && r.snapshot_type === 'initial'));
+  // 711's baseline is dated the week's own Monday (a period reads the initial deck as of the
+  // period's start, see the month test's own note); the current deck then keeps dropping
+  // through the weekend -- Friday 2,000, Saturday 1,500, Sunday 1,200 -- so Friday's own DAY
+  // figure (1,000) and the WEEK's own figure (1,800, reading all the way to Sunday) are two
+  // different, real numbers off the very same customer.
   t.defaulter_snapshots.push(
-    // Friday: 711's deck 2,000 -> 1,000.
-    D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-17', 'FRI'),
-    D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'),
-    // Saturday: 712's deck lands at 1,000; the day's current file holds 711 at 1,000 and 712 at 400.
-    D('712', 'KONGOWE', 1000, 'initial', 45, '2026-07-18', 'SAT'),
-    D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-18', 'SAT'),
-    D('712', 'KONGOWE', 400, 'current', 45, '2026-07-18', 'SAT'),
-    // Sunday: 713's deck at 400; the current file: 711 900, 712 400, 713 300.
-    D('713', 'KONGOWE', 400, 'initial', 45, '2026-07-19', 'SUN'),
-    D('711', 'KONGOWE', 900, 'current', 45, '2026-07-19', 'SUN'),
-    D('712', 'KONGOWE', 400, 'current', 45, '2026-07-19', 'SUN'),
-    D('713', 'KONGOWE', 300, 'current', 45, '2026-07-19', 'SUN'));
+    D('711', 'KONGOWE', 3000, 'initial', 45, '2026-07-13', 'MON'),
+    D('711', 'KONGOWE', 2000, 'current', 45, '2026-07-17', 'FRI'),
+    D('711', 'KONGOWE', 1500, 'current', 45, '2026-07-18', 'SAT'),
+    D('711', 'KONGOWE', 1200, 'current', 45, '2026-07-19', 'SUN'));
   t.repayment_snapshots.push(E('711', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'));
   const w = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: '2026-07-15' }, NOW);
   assert.equal(w.pastWeek, true);
@@ -729,7 +756,7 @@ test('a finished week\'s commission carries its weekend recovery, the same as th
   assert.equal(w.recDiag.days.length, 7);
   // The dashboard's weekly tile for the same week is the same standing at the same Sunday.
   const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', { weekOf: '2026-07-15' }, NOW);
-  assert.deepEqual(dash.recTrend.slice(4).map(x => x.recovered), [1000, 1600, 1800], 'Friday, Saturday, Sunday as they stood');
+  assert.deepEqual(dash.recTrend.slice(4).map(x => x.recovered), [1000, 1500, 1800], 'Friday, Saturday, Sunday as they stood');
   assert.equal(dash.recTrendTotal.recovered, 1800, 'commission and dashboard are one figure for the week');
   // And the weekly report reads the finished week to the same Sunday.
   const wk = await portalApi(dbWithRpc(t), ADMIN, 'weekly', { weekOf: '2026-07-15' }, NOW);
@@ -756,7 +783,14 @@ test('a finished week\'s commission carries its weekend recovery, the same as th
    pairing stands in and the screen says so. */
 test('the commission board adds up to the dashboard\'s recovery, day by day, in both worlds', async () => {
   const book = () => {
-    const t = tables();                                   // Friday: KONGOWE 300, MBAGALA 100
+    const t = tables();
+    /* This fixture builds its OWN Monday-to-Friday week for K1/M1, including its own earlier
+       CURRENT decks (Monday, Tuesday) -- and the whole-company current deck picked for any
+       date is the single latest one company-wide, so once Friday's shared 111/555/999 current
+       file exists it would become "the" current deck for every day from Friday onward,
+       standing in for K1/M1 too. So this fixture is fully isolated: it drops the shared
+       111/555/999 decks entirely and carries only what it adds below. */
+    t.defaulter_snapshots = [];
     const on = (date, wd, rows) => rows.map(([ref, team, arrears, type]) => D(ref, team, arrears, type, 45, date, wd));
     t.defaulter_snapshots.push(
       // Monday: both teams' decks. KONGOWE 1000 -> 700, MBAGALA 500 -> 500.
@@ -769,6 +803,8 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
       { ...D('K1', 'KONGOWE', 600, 'current', 45, '2026-07-21', 'TUE'), upload_batch: 'fix', created_at: '2026-07-21T09:00:00Z' },
       // Wednesday: a current file naming only MBAGALA, and no initial deck of its own.
       ...on('2026-07-22', 'WED', [['M1', 'MBAGALA', 300, 'current']]),
+      // Friday: both current decks drop further.
+      ...on(TODAY, 'FRI', [['K1', 'KONGOWE', 300, 'current'], ['M1', 'MBAGALA', 100, 'current']]),
     );
     return t;
   };
@@ -786,21 +822,25 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
     const weekBoard = cm.recBoard.reduce((s, r) => s + r.weekRecovered, 0);
     assert.equal(weekBoard, dash.recTrendTotal.recovered, `${world}: the board's week is the dashboard's week`);
     /* THE FIGURES THEMSELVES, so the equality above is not two zeros agreeing. Each day is the
-       standing as of that day: ONE row per customer, their newest across the decks picked (the
-       initial file is uploaded again and again, so K1 is on Monday's deck AND Tuesday's -- and
-       counts once), less the team's current. Monday: 300. Tuesday: K1's newest is Tuesday's
-       900, and the corrected current 600 wins over the 900 it replaced: 300; MBAGALA is missing
-       from Tuesday's current file, so M1's newest (400) stands recovered in full: 700.
-       Wednesday: the current file names only M1 at 300, so K1's 900 stands recovered and M1
-       100: 1,000. Thursday: nothing new, 1,000. Friday: the Friday decks land on top: 1,700
-       -- and the week IS Friday's standing. */
-    assert.deepEqual(WEEK.map(d => tile(d).recovered), [300, 700, 1000, 1000, 1700], world);
-    assert.equal(dash.recTrendTotal.recovered, 1700, `${world}: the week is the standing at its end, not the days added`);
+       SINGLE-DAY standing as of that day: the initial deck latest on or before it, less the
+       current deck latest on or before it. Monday: 300. Tuesday: K1's newest initial is
+       Tuesday's 900, and the corrected current 600 wins over the 900 it replaced: 300;
+       MBAGALA is missing from Tuesday's current file, so M1's newest (400) stands recovered
+       in full: 700. Wednesday: the current file names only M1 at 300, so K1's 900 stands
+       recovered and M1 100: 1,000. Thursday: nothing new lands, but WEDNESDAY's current file
+       is now the latest one that exists, and it does not name K1 at all -- so K1 reads as
+       cleared, recovered in full: 900 (K1) + 100 (M1) = 1,000. Friday: K1 REAPPEARS on
+       Friday's own current file at 300, so K1's own recovery drops back to 900-300=600, and
+       M1's to 400-100=300 -- the week's own total is the standing at ITS end (Friday), not the
+       days added, and a customer coming back onto the current book is exactly why it can read
+       lower than an earlier day's. */
+    assert.deepEqual(WEEK.map(d => tile(d).recovered), [300, 700, 1000, 1000, 900], world);
+    assert.equal(dash.recTrendTotal.recovered, 1100, `${world}: the week is the standing at its end, not the days added`);
     assert.equal(cm.totals.recovered, tile(TODAY).recovered, `${world}: today's total is today's tile`);
     const juma = cm.recBoard.find(r => r.officer === 'JUMA G');
-    assert.deepEqual(juma.records.slice(0, 5).map(r => r.recovered), [300, 300, 900, 900, 1200], world);
+    assert.deepEqual(juma.records.slice(0, 5).map(r => r.recovered), [300, 300, 900, 900, 600], world);
     const none = cm.recBoard.find(r => r.officer === '(unassigned)');
-    assert.deepEqual(none.records.slice(0, 5).map(r => r.recovered), [0, 400, 100, 100, 500], world);
+    assert.deepEqual(none.records.slice(0, 5).map(r => r.recovered), [0, 400, 100, 100, 300], world);
     // The note says which days were measured and what was left holding one deck.
     const tue = cm.recDiag.days.find(x => x.date === '2026-07-21');
     assert.equal(tue.measured, true); assert.equal(tue.paired, 2); assert.equal(tue.initialOnly, 1);
@@ -814,7 +854,10 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
   const dash0 = await portalApi(fakeDb(book()), ADMIN, 'dashboardFull', {}, NOW);
   assert.equal(cm0.recoveryRule, 'pairing'); assert.equal(dash0.recoveryRule, 'pairing');
   assert.match(String(cm0.recoveryNote), /RUN-ME-032/); assert.match(String(dash0.recoveryNote), /RUN-ME-032/);
-  assert.deepEqual(WEEK.map(d => dash0.recTrend.find(x => x.date === d).recovered), [300, 700, 0, 0, 400]);
+  /* Under the fallback (same-date pairing), Friday's current-only file has no initial deck
+     dated 07-24 to pair against, so Friday is unmeasured -- unlike the standing above, which
+     reads Friday's initial as the latest deck on or before it (Tuesday's). */
+  assert.deepEqual(WEEK.map(d => dash0.recTrend.find(x => x.date === d).recovered), [300, 700, 0, 0, 0]);
   for (const d of WEEK) {
     const column = cm0.recBoard.reduce((s, r) => s + ((r.records.find(x => x.date === d) || {}).recovered || 0), 0);
     assert.equal(column, dash0.recTrend.find(x => x.date === d).recovered, `fallback: the board's ${d} column is the tile`);
@@ -828,6 +871,12 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
    measured, never "minus 500 against April". */
 test('an initial deck older than the lookback does not stand against this week\'s current', async () => {
   const t = tables();
+  // This test is specifically about a lookback GAP with no fresher initial deck to fill it,
+  // so it strips the Monday AND the month's WED baseline the shared fixture otherwise carries
+  // (see tables()'s own note) -- otherwise KONGOWE's own fresh deck, on either weekday, would
+  // answer the question instead.
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r =>
+    !((r.snapshot_date === MON || r.snapshot_date === MONTH1) && r.snapshot_type === 'initial'));
   t.defaulter_snapshots.push(
     { ref: 'M1', team: 'KONGOWE', arrears: 1000, snapshot_type: 'initial', weekday: 'MON',
       snapshot_date: '2026-04-06', upload_batch: 'im', created_at: '2026-04-06T04:00:00Z' },
@@ -850,8 +899,11 @@ test('the recovery band amounts are the admin\'s to set; the percentages are not
       30k - 60k". The fixture's Friday (initial 2000 -> 1000 against 1000 uncollected) is a
      100% day and a 100% week: two records on the top band. */
   const t = tables();
-  // Only these decks and this sheet, so the day is exactly 1,000 of 1,000.
+  // Only these decks and this sheet, so the day is exactly 1,000 of 1,000. Monday's own deck
+  // matches Friday's (the week reads its initial deck as of its own start), so the week's
+  // own record pays on the same 100% as the day's.
   t.defaulter_snapshots = [
+    D('711', 'KONGOWE', 2000, 'initial', 45, MON, 'MON'),
     D('711', 'KONGOWE', 2000, 'initial', 45, TODAY, 'FRI'),
     D('711', 'KONGOWE', 1000, 'current', 45, TODAY, 'FRI')];
   t.repayment_snapshots = [E('711', 'KONGOWE', 1000, 'UNPAID', 0, TODAY)];
@@ -2968,7 +3020,9 @@ test('a negative Iliyonasia reduces what was received, and an unattributed one i
        minus current, so +50,000 on each moves both ends of the subtraction by the same amount
        and the difference is untouched. Not because the rows are inert -- see the direction
        test, where each one alone moves recovery, in opposite directions. */
-    { id: 'a3', adj_date: MON, target: 'defaulter-current', team: 'KONGOWE', amount: 50000 },
+    // The current cell is dated the week's own current deck (Friday); the initial cell is
+    // dated the week's own initial deck (Monday) -- the two dates a week PERIOD actually reads.
+    { id: 'a3', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 50000 },
     { id: 'a4', adj_date: MON, target: 'defaulter-initial', team: 'KONGOWE', amount: 50000 },
   ];
   const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
@@ -3210,9 +3264,10 @@ test('the month ledger moves recovery the same way every other screen does', asy
   assert.equal(await run_({ id: 'm2', adj_date: TODAY, target: 'defaulter-current',
     team: 'KONGOWE', amount: 500 }), was - 500,
     'and money onto it must lower it');
-  assert.equal(await run_({ id: 'm3', adj_date: TODAY, target: 'defaulter-initial',
+  assert.equal(await run_({ id: 'm3', adj_date: MONTH1, target: 'defaulter-initial',
     team: 'KONGOWE', amount: 500 }), was + 500,
-    'the morning deck pulls the other way -- recovery is initial minus current');
+    'the morning deck pulls the other way -- recovery is initial minus current, dated the ' +
+    'month\'s own 1st, the deck the month period actually reads');
   /* AND PAST ZERO, unclamped, for the reason in withAdjDef_: a floor here would be the ledger
      quietly applying less than was typed, which is the fault that started all of this. */
   assert.equal(await run_({ id: 'm4', adj_date: TODAY, target: 'defaulter-current',
@@ -5092,7 +5147,11 @@ test('a scoped officer sees only their own team on the trend', async () => {
    The whole current book as one sheet, and the stats pane in the system reads the SAME answer,
    so the file somebody emails out and the screen somebody reads cannot disagree. */
 test('the credit info report carries every current defaulter and their standing', async () => {
-  const d = await run('creditInfo', {}, ADMIN, fakeDb(tables()));
+  // This test is specifically about the NO-Monday-deck fallback, so it strips the Monday
+  // baseline the shared fixture otherwise carries (see tables()'s own note).
+  const t = tables();
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.snapshot_date === MON && r.snapshot_type === 'initial'));
+  const d = await run('creditInfo', {}, ADMIN, fakeDb(t));
 
   // The sheet's shape: one heading per key, in one order, from one list.
   assert.equal(d.headers.length, d.keys.length);

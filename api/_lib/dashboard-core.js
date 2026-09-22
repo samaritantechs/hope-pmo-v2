@@ -5,7 +5,7 @@ import { resolveLatestPerKey, upperTeams , teamMatchList } from './snapshots.js'
 import { cachedAnswer } from './answer-cache.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange, defaulterTotalsLatest,
   tCustomers, tExpected, tCollected, tUncollected, tArrears,
-  recoveryStanding, standingWithAdj, standingSum, recoveryRuleNote } from './snapshot-totals.js';
+  recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. One line, used everywhere, so "did this one get narrowed?" is answerable by
@@ -179,8 +179,9 @@ async function buildDashboardUncached(db, user, nowMs) {
      per-scope-per-minute cache, so forty handsets on a scope ask the database once. It is
      asked AFTER the wave above because it replaces its answer, not beside it; a missing
      function answers null in one round trip and the pairing stands, with a note. */
-  const stand0 = await recoveryStanding(db, { dates: [today], teams: user.teams });
-  const standToday = stand0 && stand0.get(today) ? standingWithAdj(stand0.get(today), adj) : null;
+  const stand0 = await recoveryStanding(db, { periods: [today], teams: user.teams });
+  const todayKeyed = standingKey(today, today);
+  const standToday = stand0 && stand0.get(todayKeyed) ? standingWithAdj(stand0.get(todayKeyed), adj) : null;
   let recoveryRule = 'pairing';
   if (stand0) {
     recoveryRule = 'latest';

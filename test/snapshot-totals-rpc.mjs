@@ -27,7 +27,7 @@ const NULMARK = String.fromCharCode(0);
 const SEPMARK = String.fromCharCode(1);
 const gk = parts => parts.map(p => (p == null ? NULMARK : String(p))).join(SEPMARK);
 
-/* recovery_standing(p_dates, p_teams, p_lookback) -- db/RUN-ME-032, clause for clause. */
+/* recovery_standing(p_from, p_to, p_teams, p_lookback) -- db/RUN-ME-032, clause for clause. */
 function recoveryStandingMirror_(store, a = {}) {
   const src = store.defaulter_snapshots ? store.defaulter_snapshots.rows : [];
   const teams = a.p_teams ? a.p_teams.map(String) : null;
@@ -37,85 +37,80 @@ function recoveryStandingMirror_(store, a = {}) {
   const rank = r => String(r.created_at || '') + ' ' + String(r.upload_batch || '');   // batchRank
   const wd = r => String(r.weekday == null ? '' : r.weekday);
   const bt = r => (r.upload_batch == null ? null : r.upload_batch);
-  /* 3. a deck, read once: the winning upload, then one row per customer on it (newest) */
-  const deckCust = new Map();                               // team|weekday|date -> Map ref -> { arrears, created }
-  const readDeck = (team, weekday, date) => {
-    const key = team + '|' + weekday + '|' + date;
-    if (deckCust.has(key)) return deckCust.get(key);
-    let win = null;
-    for (const r of src) {
-      if (r.snapshot_type !== 'initial' || dk(r.snapshot_date) !== date || String(r.team) !== team || wd(r) !== weekday) continue;
-      if (!win || rank(r) > win.rank) win = { rank: rank(r), batch: bt(r) };
-    }
-    const m = new Map();
-    for (const r of src) {
-      if (r.snapshot_type !== 'initial' || dk(r.snapshot_date) !== date || String(r.team) !== team || wd(r) !== weekday) continue;
-      if (!win || bt(r) !== win.batch) continue;
-      const c = m.get(String(r.ref));
-      if (!c || String(r.created_at || '') > c.created) m.set(String(r.ref), { created: String(r.created_at || ''), arrears: n0(r.arrears) });
-    }
-    deckCust.set(key, m);
-    return m;
-  };
-  /* 4. the current deck on a date, read once: the winning upload per team-and-weekday on it,
-        then one row per customer (newest); the whole company's file, narrowed to the scope */
-  const curCust = new Map();                                // date -> Map ref -> { team, arrears }
-  const readCur = date => {
-    if (curCust.has(date)) return curCust.get(date);
+  const inScope = r => !teams || teams.includes(String(r.team));
+  // A deck DATE, read once off the index: the winning upload per team-and-weekday on it
+  // (newest created_at, then batch id), then one row per customer (newest).
+  const deckCache = new Map();                              // type|date -> Map key -> row
+  const readDeck = (type, date) => {
+    const ck = type + '|' + date;
+    if (deckCache.has(ck)) return deckCache.get(ck);
     const wins = new Map();
     for (const r of src) {
-      if (r.snapshot_type !== 'current' || dk(r.snapshot_date) !== date) continue;
-      if (teams && !teams.includes(String(r.team))) continue;
+      if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || !inScope(r)) continue;
       const k = String(r.team) + '|' + wd(r);
       const e = wins.get(k);
       if (!e || rank(r) > e.rank) wins.set(k, { rank: rank(r), batch: bt(r) });
     }
-    const m = new Map();
+    const m = new Map();                                   // initial: team|ref ; current: ref
     for (const r of src) {
-      if (r.snapshot_type !== 'current' || dk(r.snapshot_date) !== date) continue;
-      if (teams && !teams.includes(String(r.team))) continue;
+      if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || !inScope(r)) continue;
       const e = wins.get(String(r.team) + '|' + wd(r));
       if (!e || bt(r) !== e.batch) continue;
-      const c = m.get(String(r.ref));
-      if (!c || String(r.created_at || '') > c.key) m.set(String(r.ref), { key: String(r.created_at || ''), team: r.team, arrears: n0(r.arrears) });
+      const key = type === 'initial' ? String(r.team) + '|' + String(r.ref) : String(r.ref);
+      const c = m.get(key);
+      if (!c || String(r.created_at || '') > c.created) m.set(key, { created: String(r.created_at || ''), team: r.team, ref: String(r.ref), arrears: n0(r.arrears) });
     }
-    curCust.set(date, m);
+    deckCache.set(ck, m);
     return m;
   };
-  const out = [];
-  for (const asOf0 of [...new Set((a.p_dates || []).map(dk))].sort()) {
-    const floor = minus(asOf0, look);
-    // 1-2. the latest initial deck per team|weekday as of the date, within the lookback
-    const decks = new Map();
+  const periods = [];
+  const seenP = new Set();
+  for (let i = 0; i < (a.p_from || []).length; i++) {
+    const f = dk(a.p_from[i]), t = dk((a.p_to || [])[i]);
+    if (!f || !t || seenP.has(f + '|' + t)) continue;
+    seenP.add(f + '|' + t); periods.push({ from: f, to: t });
+  }
+  periods.sort((x, y) => (x.from + x.to).localeCompare(y.from + y.to));
+  // Per FROM date: the latest initial deck per team-and-weekday on or before it, within the
+  // lookback -- then one row per customer across those decks, their newest.
+  const iniRowsCache = new Map();
+  const iniRowsFor = from => {
+    if (iniRowsCache.has(from)) return iniRowsCache.get(from);
+    const floor = minus(from, look);
+    const decks = new Map();                                // team|weekday -> date
     for (const r of src) {
-      if (r.snapshot_type !== 'initial') continue;
+      if (r.snapshot_type !== 'initial' || !inScope(r)) continue;
       const d = dk(r.snapshot_date);
-      if (d > asOf0 || d < floor) continue;
-      if (teams && !teams.includes(String(r.team))) continue;
+      if (d > from || d < floor) continue;
       const k = String(r.team) + '|' + wd(r);
-      const e = decks.get(k);
-      if (!e || d > e.date) decks.set(k, { team: String(r.team), weekday: wd(r), date: d });
+      if (!decks.has(k) || d > decks.get(k)) decks.set(k, d);
     }
-    // the latest current deck the company holds as of the date (never team-narrowed, no lookback)
+    const rows = new Map();                                 // ref -> { team, arrears, date }
+    for (const d of new Set(decks.values())) {
+      for (const [key, c] of readDeck('initial', d)) {
+        const [team] = key.split('|');
+        const rowKey = d + ' ' + c.created;
+        const have = rows.get(c.ref);
+        if (!have || rowKey > have.key) rows.set(c.ref, { key: rowKey, team, arrears: c.arrears, date: d });
+      }
+    }
+    iniRowsCache.set(from, rows);
+    return rows;
+  };
+  const out = [];
+  for (const { from, to } of periods) {
+    // the latest current deck the company holds on or before the period end (no lookback)
     let curDate = '';
     for (const r of src) {
       if (r.snapshot_type !== 'current') continue;
       const d = dk(r.snapshot_date);
-      if (d > asOf0) continue;
+      if (d > to) continue;
       if (d > curDate) curDate = d;
     }
-    if (!curDate) continue;                                   // not measured
-    const cur = readCur(curDate);
-    // 5. one row per customer across the decks picked: their newest (deck date, then upload time)
-    const ini = new Map();                                    // ref -> { team, arrears, date }
-    for (const k of decks.values()) {
-      for (const [ref, c] of readDeck(k.team, k.weekday, k.date)) {
-        const key = k.date + ' ' + c.created;
-        const have = ini.get(ref);
-        if (!have || key > have.key) ini.set(ref, { key, team: k.team, arrears: c.arrears, date: k.date });
-      }
-    }
-    // 6-8. per team: what those customers owed, less what the team owes on the current deck
+    if (!curDate) continue;                                 // not measured
+    const cur = readDeck('current', curDate);
+    const ini = iniRowsFor(from);
+    // per team: what the initial decks' customers owed, less what the team owes now
     const byTeam = new Map();
     const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, ic: 0, cc: 0, cleared: 0, dates: new Set() }).get(String(t));
     for (const [ref, i] of ini) {
@@ -125,11 +120,11 @@ function recoveryStandingMirror_(store, a = {}) {
     }
     for (const c of cur.values()) {
       const e = byTeam.get(String(c.team));
-      if (!e) continue;                                       // no initial deck in the window: not measured
+      if (!e) continue;                                     // no initial deck for the period: not measured
       e.current += c.arrears; e.cc++;
     }
     for (const e of [...byTeam.values()].sort((x, y) => String(x.team).localeCompare(String(y.team)))) {
-      out.push({ as_of: asOf0, team: e.team, initial: e.initial, current: e.current, recovered: e.initial - e.current,
+      out.push({ from_date: from, as_of: to, team: e.team, initial: e.initial, current: e.current, recovered: e.initial - e.current,
         initial_customers: e.ic, current_customers: e.cc, cleared: e.cleared,
         initial_dates: [...e.dates].sort().join(', ') || null, current_deck: curDate });
     }

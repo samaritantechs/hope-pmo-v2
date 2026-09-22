@@ -882,21 +882,24 @@ export function recoveryByTeam(rows, date, weekday, adj = null) {
 }
 
 /* =====================================================================================
-   RECOVERY, THE ONE RULE: THE LATEST INITIAL DECK MINUS THE LATEST CURRENT DECK.
+   RECOVERY, THE ONE RULE: OVER A PERIOD, THE INITIAL DECK AT ITS START LESS THE CURRENT DECK
+   AT ITS END.
    =====================================================================================
      "recovery is initial and current only from latest uploads - everywhere"
      "The rule must be the latest uploaded file on type of report ... latest file by date picked"
 
-   For a date D: every customer's newest row on the latest INITIAL deck of each team-and-
-   weekday (latest picked date within RECOVERY_LOOKBACK_DAYS, latest upload on it per team)
-   minus their row on the latest CURRENT deck the company holds as of D (a customer not on it
-   owes nothing). Per team: initial, current, recovered, the headcounts, and "cleared". It is
-   the upload page's export, subtracted -- and it is what every screen that says "recovered"
-   now reads: the dashboard's cards and trend, the commission board, the weekly and leader
-   reports, the month record, the presentation and the phone's summary.
+   The whole book goes up as the INITIAL file every morning -- it is the previous evening's
+   CURRENT file -- and the CURRENT file goes up every evening (db/RUN-ME-032 has the measured
+   shape). So for a period (from, to): per team, the latest initial deck dated on or before
+   `from` (within RECOVERY_LOOKBACK_DAYS, latest upload on it), one row per customer, less the
+   latest current deck the company holds on or before `to` (a customer not on it owes nothing,
+   a team missing from it owes nothing). A day's card is (d, d): the morning file against the
+   evening's. The week is (Monday, its end); the month (the 1st, today). It is what every
+   screen that says "recovered" reads: the dashboard's cards and trend, the commission board,
+   the weekly and leader reports, the month record, the presentation and the phone's summary.
 
    ANSWERED BY THE DATABASE (db/RUN-ME-032-recovery-latest-uploads.sql) -- a per-customer
-   question over 45 days of decks is not one to ask the web server row by row on every
+   question over up to 45 days of decks is not one to ask the web server row by row on every
    screen -- and cached per scope for a minute by the callers. Until that file is run this
    returns null, every screen keeps the day-pairing it had, and says which file to run. */
 export const RECOVERY_STANDING_FN = 'recovery_standing';
@@ -921,18 +924,36 @@ export function recoveryRuleNote(db) {
   }
   return RECOVERY_RULE_NOTE;
 }
-/** Map as_of -> Map teamKey -> { team, initial, current, recovered, initialCustomers,
-    currentCustomers, cleared, initialDates, currentDeck }. A date with no current deck as of
-    it is absent (not measured). null when the function is not installed. */
-export async function recoveryStanding(db, { dates, teams = null } = {}) {
-  const want = [...new Set((dates || []).map(d => String(d == null ? '' : d).slice(0, 10)).filter(Boolean))].sort();
+/** A period's key in the standing map: `from|to`. A single day is (d, d). */
+export const standingKey = (from, to) => String(from || '').slice(0, 10) + '|' + String(to || '').slice(0, 10);
+/** Periods as the callers write them -- a date string (one day) or { from, to } -- made
+    uniform, deduplicated, sorted. */
+export function standingPeriods(periods) {
+  const seen = new Map();
+  for (const x of (periods || [])) {
+    if (!x) continue;
+    const from = typeof x === 'string' ? x : x.from, to = typeof x === 'string' ? x : x.to;
+    const f = String(from || '').slice(0, 10), t = String(to || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t) || f > t) continue;
+    seen.set(f + '|' + t, { from: f, to: t });
+  }
+  return [...seen.values()].sort((a, b) => (a.from + a.to).localeCompare(b.from + b.to));
+}
+/** Map standingKey(from, to) -> Map teamKey -> { team, initial, current, recovered,
+    initialCustomers, currentCustomers, cleared, initialDates, currentDeck }. initialDates is
+    the initial deck date(s) read at the period's start, one per team-and-weekday picked
+    (v1-v3's own rule) -- a team can carry more than one when its decks land on different
+    weekdays. A period whose end has no current deck yet is absent (not measured). null when
+    the function is not installed or failed (see recoveryRuleNote). */
+export async function recoveryStanding(db, { periods, teams = null } = {}) {
+  const want = standingPeriods(periods);
   if (!want.length) return new Map();
   if (!db || typeof db.rpc !== 'function') return null;
   if (knownMissing(db, RECOVERY_STANDING_FN)) return null;
   let res;
   try {
     res = await rpcAll(db, RECOVERY_STANDING_FN,
-      { p_dates: want, p_teams: teamsArg(teams), p_lookback: RECOVERY_LOOKBACK_DAYS });
+      { p_from: want.map(x => x.from), p_to: want.map(x => x.to), p_teams: teamsArg(teams), p_lookback: RECOVERY_LOOKBACK_DAYS });
   } catch (e) { res = { data: null, error: e }; }
   const { data, error } = res;
   if (error) {
@@ -943,12 +964,13 @@ export async function recoveryStanding(db, { dates, teams = null } = {}) {
   standingErr.delete(db);
   const out = new Map();
   for (const r of (Array.isArray(data) ? data : [])) {
-    const d = String(r.as_of || '').slice(0, 10);
-    if (!d) continue;
-    const m = out.get(d) || out.set(d, new Map()).get(d);
+    const k = standingKey(r.from_date, r.as_of);
+    if (k === '|') continue;
+    const m = out.get(k) || out.set(k, new Map()).get(k);
     m.set(K_(r.team), { team: r.team || '', initial: num(r.initial), current: num(r.current), recovered: num(r.recovered),
       initialCustomers: num(r.initial_customers), currentCustomers: num(r.current_customers), cleared: num(r.cleared),
-      initialDates: String(r.initial_dates || '').split(', ').filter(Boolean), currentDeck: r.current_deck ? String(r.current_deck).slice(0, 10) : null });
+      initialDates: String(r.initial_dates || '').split(', ').filter(Boolean),
+      currentDeck: r.current_deck ? String(r.current_deck).slice(0, 10) : null });
   }
   return out;
 }
