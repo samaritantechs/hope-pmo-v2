@@ -3268,11 +3268,17 @@ function recTileAttrs_(date){
    customer kept). An Iliyonasia on the team-day is a line of its own so the total still
    matches. Exports (Excel/JPG/CSV) are wired here because the drawer is drawn after the
    screen's own wiring has run. */
-function recoveryCustomersDrawer_(date, mode){
+function recoveryCustomersDrawer_(date){
   var week = date === 'week';
-  mode = mode === 'day' ? 'day' : 'present';
+  /* ONE READING, NO CHOICE. "i want recovery to be real, choosing nothing" -- this used to
+     open on 'present' (the upload page's export, whatever today's decks happen to be) with a
+     toggle to switch to the card's own reading, and a figure tapped off the dashboard could
+     disagree with the very list meant to explain it until somebody found and pressed that
+     toggle. The card's own reading is now the only one this drawer ever shows: the exact
+     decks the card itself was computed from, so the total on screen and the total in the list
+     are the same number by construction, never a choice away from it. */
   drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="sub">Inapakia... / Loading...</div>');
-  srv('recoveryCustomers', { weekOf: S.args.weekOf || '', teams: teamPickLoad_(), date: week ? '' : date, mode: mode }).then(function(d){
+  srv('recoveryCustomers', { weekOf: S.args.weekOf || '', teams: teamPickLoad_(), date: week ? '' : date, mode: 'day' }).then(function(d){
     var STATUS_ = { cleared: ['Amemaliza / Cleared', 'good'], reduced: ['Imepungua / Reduced', 'good'],
       unchanged: ['Haijabadilika / Unchanged', 'mut'], increased: ['Imeongezeka / Increased', 'bad'],
       'new': ['Mpya / New on current', 'bad'], adjustment: ['Iliyonasia / Adjustment', 'warn'] };
@@ -3282,19 +3288,7 @@ function recoveryCustomersDrawer_(date, mode){
       { key:'recovered', label:'Imerejeshwa / Recovered', kind:'money' },
       { key:'status', label:'Hali / Status', kind:'chip', chip:function(r){ var x = STATUS_[r.status] || [r.status || '', 'mut']; return { text: x[0], cls: x[1] }; } }];
     if (week) cols.push({ key:'days', label:'Siku / Days', kind:'num' });
-    var when = mode === 'present'
-      ? 'kama export / as the export' + (d.asOf ? ' · hadi / as of ' + d.asOf : '')
-      : (week ? (d.weekOf + ' → ' + d.weekEnd) : (wdLabel(weekdayOf_(d.date)) + ' ' + d.date));
-    /* ONE READING, TWO DATES. "Kama export" is the upload page's export subtracted -- each
-       team's latest INITIAL deck against the latest CURRENT deck, whatever their dates: where
-       every defaulter stands now. "Siku ya kadi" is the SAME reading as of the card's day --
-       the decks as they stood then, which is what the card's figure was read from
-       ("recovery is initial and current only from latest uploads - everywhere"). Both are
-       said by name so a figure is never compared with the wrong date. */
-    var modeBar = '<div class="pills" style="margin:6px 0 8px;display:flex;gap:4px;flex-wrap:wrap">'
-      + '<button type="button" class="pill' + (mode === 'present' ? ' on' : '') + '" data-recmode="present">Kama export / As the export (present decks)</button>'
-      + '<button type="button" class="pill' + (mode === 'day' ? ' on' : '') + '" data-recmode="day">' + (week ? 'Mwisho wa wiki ya kadi / As of the card\'s week end' : 'Hadi siku ya kadi / As of the card\'s day') + '</button>'
-      + '</div>';
+    var when = week ? (d.weekOf + ' → ' + d.weekEnd) : (wdLabel(weekdayOf_(d.date)) + ' ' + d.date);
     var all = d.rows || [];
     var counts = {}; all.forEach(function(r){ counts[r.status] = (counts[r.status] || 0) + 1; });
     /* THE DECKS THE SYSTEM READ. A figure that disagrees with somebody's own two files is
@@ -3313,11 +3307,9 @@ function recoveryCustomersDrawer_(date, mode){
           + deckRows.map(function(k){ return '<tr><td>' + esc(k.date) + '</td><td>' + esc(k.team) + '</td><td>' + esc(k.type) + '</td>'
               + '<td>' + esc(k.uploadedAt) + '</td><td class="r">' + money(k.rows) + '</td><td class="r">' + money(k.total) + '</td></tr>'; }).join('')
           + '</tbody></table></div>'
-          + '<div class="note">Deki zilezile ambazo kitufe cha export kwenye ukurasa wa kupakia hutoa'
-              + (mode === 'present' ? '' : ', kama zilivyokuwa tarehe ' + esc(d.asOf || ''))
-              + ': deki ya AWALI ya mwisho ya kila timu na siku ya wiki (tarehe iliyochaguliwa ukipakia, upakiaji wa mwisho) toa deki ya SASA ya mwisho ya kampuni. Mteja asiyekuwepo kwenye deki ya sasa hadaiwi. / The very decks the upload page\'s export hands out'
-              + (mode === 'present' ? '' : ', as they stood on ' + esc(d.asOf || ''))
-              + ': each team-and-weekday\'s latest INITIAL deck (the date chosen at upload, latest upload on it) less the company\'s latest CURRENT deck. A customer not on the current deck owes nothing.'
+          + '<div class="note">Deki zilezile ambazo kadi hii ilisoma, kama zilivyokuwa tarehe ' + esc(d.asOf || '')
+              + ': deki ya AWALI ya mwisho ya kila timu na siku ya wiki (tarehe iliyochaguliwa ukipakia, upakiaji wa mwisho) toa deki ya SASA ya mwisho ya kampuni. Mteja asiyekuwepo kwenye deki ya sasa hadaiwi. / The very decks this card read, as they stood on '
+              + esc(d.asOf || '') + ': each team-and-weekday\'s latest INITIAL deck (the date chosen at upload, latest upload on it) less the company\'s latest CURRENT deck. A customer not on the current deck owes nothing.'
           + '</div></div>')
       : '';
     var sub = function(rows){
@@ -3326,15 +3318,12 @@ function recoveryCustomersDrawer_(date, mode){
         + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
     };
     var statusOpts = Object.keys(STATUS_).map(function(k){ return counts[k] ? '<option value="' + k + '">' + STATUS_[k][0] + ' (' + counts[k] + ')</option>' : ''; }).join('');
-    drawer('<h3>Wateja waliorejesha / Recovery customers · ' + esc(when) + '</h3>' + modeBar
+    drawer('<h3>Wateja waliorejesha / Recovery customers · ' + esc(when) + '</h3>'
       + (all.length
           ? '<div class="bar"><input id="recCustQ" placeholder="Tafuta jina / ref / timu — search">'
             + '<select id="recCustStatus"><option value="">Hali zote / All statuses</option>' + statusOpts + '</select></div>'
             + '<div id="recCustBoard"></div>' + decksHtml
           : '<div class="note">Hakuna deki ya SASA hadi tarehe hii — haijapimwa. / No CURRENT deck as of this date — not measured.</div>'));
-    Array.prototype.forEach.call(document.querySelectorAll('[data-recmode]'), function(el){
-      el.onclick = function(){ var m = el.getAttribute('data-recmode'); if (m !== mode) recoveryCustomersDrawer_(date, m); };
-    });
     if (!all.length) return;
     var host = document.getElementById('recCustBoard');
     function paint_(){

@@ -1039,10 +1039,13 @@ test('every measured recovery tile is pressable and opens the customers behind i
   assert.ok(/var press = recTileAttrs_\(x\.date\)/.test(grid), 'each tile carries its own date');
   assert.ok(/data-reccust="' \+ esc\(date \|\| ''\)/.test(app), 'the attribute names the date');
   const drawerFn = app.slice(app.indexOf('function recoveryCustomersDrawer_('), app.indexOf('function weekdayOf_('));
-  assert.ok(/srv\('recoveryCustomers', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\), date: week \? '' : date, mode: mode \}\)/.test(drawerFn), 'asks with the week, the team pick and the reading');
-  assert.ok(/mode = mode === 'day' \? 'day' : 'present'/.test(drawerFn), 'the export\'s reading is the default');
-  assert.ok(/data-recmode="present"/.test(drawerFn) && /data-recmode="day"/.test(drawerFn), 'both readings are offered by name');
-  assert.ok(/recoveryCustomersDrawer_\(date, m\)/.test(drawerFn), 'and the switch re-reads');
+  /* "i want recovery to be real, choosing nothing" -- the drawer used to open on 'present' (the
+     export's reading, whatever today's decks happen to be) with a toggle to the card's own
+     reading, so a figure tapped off the dashboard could disagree with the very list meant to
+     explain it until somebody found and pressed that toggle. There is now exactly one reading:
+     the card's own, always. */
+  assert.ok(/srv\('recoveryCustomers', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\), date: week \? '' : date, mode: 'day' \}\)/.test(drawerFn), 'asks for the card\'s own reading, always');
+  assert.ok(!/data-recmode/.test(drawerFn), 'no toggle -- there is nothing to choose between');
   for (const k of ['initial', 'current', 'recovered']) assert.ok(new RegExp("key:'" + k + "'").test(drawerFn), k + ' column');
   assert.ok(/sumRow\(rows, \['initial', 'current', 'recovered'\]\)/.test(drawerFn), 'a grand total row, over the rows on screen');
   assert.ok(/root\.querySelectorAll\('\[data-xls\]'\)/.test(drawerFn), 'exports are wired inside the drawer');
@@ -1051,7 +1054,6 @@ test('every measured recovery tile is pressable and opens the customers behind i
   assert.ok(/key:'status'/.test(drawerFn), 'a status column');
   assert.ok(/fold_\('recDecks'/.test(drawerFn) && /Imepakiwa \/ Uploaded at/.test(drawerFn), 'the decks read, with their dates and upload times');
   assert.ok(!/Superseded/.test(drawerFn), 'one reading, so nothing is "superseded" -- the decks named are the ones read');
-  assert.ok(/As of the card\\'s day/.test(drawerFn), 'the card\'s switch is the same reading as of the card\'s day');
   assert.ok(/querySelectorAll\('\[data-reccust\]'\)[\s\S]{0,200}recoveryCustomersDrawer_\(el\.getAttribute\('data-reccust'\)\)/.test(app), 'pressing a tile opens the drawer');
 });
 
