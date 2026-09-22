@@ -1095,22 +1095,50 @@ async function financeBankReport(db, user) {
   };
 }
 
+/** ONE READ, ONE WRITE, ONE EVENT INSERT FOR THE WHOLE BATCH -- not 3 round trips per loan.
+    Every loan in a funding batch gets the identical patch (funded_at/funded_by/funding_batch);
+    the only per-loan logic is the disbursed check, which used to cost its own `mustLoan` trip
+    per id and now runs in JS against the one read already in hand. Reproduces the old
+    per-id loop's behaviour exactly, including what it did almost by accident: a duplicate id
+    in the list is read once, funded once, and every later repeat of it is silently a no-op
+    (its stage is no longer 'disbursed' by the time the dedup would otherwise re-check it) --
+    so ids are deduped up front rather than double-writing the update or the event.
+
+    An id that names no loan at all still fails loudly, with `mustLoan`'s own words, and still
+    fails the WHOLE call -- but now before anything is written, rather than after whichever
+    earlier ids in the list had already been funded. That is a deliberate, safer change from
+    the old partial-write-then-throw shape, and nothing in this codebase relies on the old one:
+    `loan_ids` only ever arrives as a list of ids the caller just read off the bank report. */
 async function financeMarkFunded(db, user, { loan_ids, batch }) {
   requireTab(user, 'finance');
   const ids = Array.isArray(loan_ids) ? loan_ids : [loan_ids];
+  const uniqueIds = [...new Set(ids.map(id => String(id)))];
   const batchName = textOrNull(batch) || ('FUND-' + todayKey(Date.now()));
-  let n = 0;
-  for (const id of ids) {
-    const loan = await mustLoan(db, id);
-    if (loan.stage !== 'disbursed') continue;
-    /* THE STAGE THAT DOES NOT EXIST TODAY. Funding is the only thing that starts the schedule
-       and puts a loan into the book that expected/defaulters logic will one day read. */
-    await transition(db, loan, 'disbursed', 'funded', user, {
-      funded_at: new Date().toISOString(), funded_by: user.name, funding_batch: batchName,
-    }, 'Funded via ' + batchName);
-    n++;
+  const loans = await allPaged(db, 'loans', b => b.select('*').in('id', uniqueIds));
+  const byId = new Map(loans.map(l => [String(l.id), l]));
+  for (const id of uniqueIds) {
+    if (!byId.has(id)) throw badRequest('That loan could not be found.');
   }
-  return { funded: n, batch: batchName };
+  /* THE STAGE THAT DOES NOT EXIST TODAY. Funding is the only thing that starts the schedule
+     and puts a loan into the book that expected/defaulters logic will one day read. */
+  const eligible = uniqueIds.map(id => byId.get(id)).filter(l => l.stage === 'disbursed');
+  if (!eligible.length) return { funded: 0, batch: batchName };
+  const nowIso = new Date().toISOString();
+  const { error } = await db.from('loans').update({
+    funded_at: nowIso, funded_by: user.name, funding_batch: batchName,
+    stage: 'funded', updated_at: nowIso,
+  }).in('id', eligible.map(l => l.id));
+  if (error) throw new Error(error.message);
+  const note = 'Funded via ' + batchName;
+  // Same fire-and-forget rule as logEvent: the audit trail must never be able to fail the
+  // write it is recording, batched or not.
+  try {
+    await db.from('loan_events').insert(eligible.map(l => ({
+      loan_id: l.id, from_stage: 'disbursed', to_stage: 'funded',
+      actor: user && user.name, actor_role: user && user.role, amount: null, note,
+    })));
+  } catch { /* never blocks the real write */ }
+  return { funded: eligible.length, batch: batchName };
 }
 
 /** "CreditInfo asks for a Real End Date, which needs a closing event to hang on rather than
@@ -1121,23 +1149,59 @@ async function financeMarkFunded(db, user, { loan_ids, batch }) {
     only ever CLOSES. A shift that moves money away and drops a loan back under full payment
     does not reopen it automatically; whether a closed contract un-closes is a human call, not
     something a stray transfer should decide by itself. */
+/** THE BATCHED VERSION OF THE RULE ABOVE, and the ONLY implementation of it -- closeIfFullyPaid_
+    below is now a one-ref call into this, so an import touching many refs and a single shifted
+    payment run the exact same close-if-covered logic rather than two copies of it drifting
+    apart (CLAUDE.md: "one definition of a rule, in one place").
+
+    Costs a handful of round trips for the WHOLE list of refs, not per ref: one read of the
+    funded loans among them, one read of every payment on those loans' refs (summed and dated
+    in JS, per ref), and -- only if anything actually closes -- one upsert (not a plain update:
+    each closing loan stamps its OWN Real End Date, the latest payment on file for THAT loan,
+    so the write cannot be one uniform patch) plus one batched loan_events insert. */
+async function closeFullyPaidBatch_(db, user, refs) {
+  const wanted = [...new Set((refs || []).filter(Boolean))];
+  if (!wanted.length) return;
+  const loans = await allPaged(db, 'loans', b => b.select('*').in('loan_id', wanted).eq('stage', 'funded'));
+  const eligible = loans.filter(l => Number(l.loan_amt) > 0);
+  if (!eligible.length) return;
+  const payments = await allPaged(db, 'payment_imports',
+    b => b.select('ref, amount, paid_at').in('ref', eligible.map(l => l.loan_id)));
+  const byRef = new Map();
+  for (const p of payments) {
+    const g = byRef.get(p.ref) || { paid: 0, lastPaidAt: null };
+    g.paid += Number(p.amount) || 0;
+    // The Real End Date is when the balance actually reached zero, i.e. the latest payment on
+    // file for this loan -- not today, if this import is finance catching up on a backlog.
+    const d = p.paid_at ? String(p.paid_at).slice(0, 10) : null;
+    if (d && (!g.lastPaidAt || d > g.lastPaidAt)) g.lastPaidAt = d;
+    byRef.set(p.ref, g);
+  }
+  const todayFallback = todayKey(Date.now());
+  const closing = eligible
+    .map(loan => {
+      const g = byRef.get(loan.loan_id) || { paid: 0, lastPaidAt: null };
+      return { loan, paid: g.paid, real_end_date: g.lastPaidAt || todayFallback };
+    })
+    .filter(c => c.paid >= Number(c.loan.loan_amt));
+  if (!closing.length) return;
+  const nowIso = new Date().toISOString();
+  const { error } = await db.from('loans').upsert(closing.map(c => ({
+    id: c.loan.id, stage: 'closed', real_end_date: c.real_end_date, updated_at: nowIso,
+  })), { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+  try {
+    await db.from('loan_events').insert(closing.map(c => ({
+      loan_id: c.loan.id, from_stage: 'funded', to_stage: 'closed',
+      actor: user && user.name, actor_role: user && user.role, amount: null,
+      note: 'Closed -- fully repaid (' + c.paid + ' against ' + c.loan.loan_amt + ')',
+    })));
+  } catch { /* never blocks the real write */ }
+}
+
 async function closeIfFullyPaid_(db, user, ref) {
   if (!ref) return;
-  const loanRows = await allPaged(db, 'loans', b => b.select('*').eq('loan_id', ref));
-  const loan = loanRows[0];
-  if (!loan || loan.stage !== 'funded' || !(Number(loan.loan_amt) > 0)) return;
-  const payments = await allPaged(db, 'payment_imports', b => b.select('amount, paid_at').eq('ref', ref));
-  const paid = payments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  if (paid < Number(loan.loan_amt)) return;
-  // The Real End Date is when the balance actually reached zero, i.e. the latest payment on
-  // file for this loan -- not today, if this import is finance catching up on a backlog.
-  const lastPaidAt = payments.reduce((max, p) => {
-    const d = p.paid_at ? String(p.paid_at).slice(0, 10) : null;
-    return d && (!max || d > max) ? d : max;
-  }, null);
-  await transition(db, loan, 'funded', 'closed', user, {
-    real_end_date: lastPaidAt || todayKey(Date.now()),
-  }, 'Closed -- fully repaid (' + paid + ' against ' + loan.loan_amt + ')');
+  await closeFullyPaidBatch_(db, user, [ref]);
 }
 
 async function financeImportPayments(db, user, { rows, batch }) {
@@ -1160,7 +1224,9 @@ async function financeImportPayments(db, user, { rows, batch }) {
   }
   const { error } = await db.from('payment_imports').insert(clean);
   if (error) throw new Error(error.message);
-  for (const ref of new Set(clean.map(r => r.ref))) await closeIfFullyPaid_(db, user, ref);
+  // ONE batched close-check for every distinct ref in the import, not one call per ref --
+  // closeFullyPaidBatch_ dedupes internally, same as the Set this used to build here.
+  await closeFullyPaidBatch_(db, user, clean.map(r => r.ref));
   return { imported: clean.length, batch: batchName };
 }
 
@@ -1285,9 +1351,17 @@ async function reversalGmDecide(db, user, { id, approve, note }) {
   if (approve) {
     const loan = await mustLoan(db, r.loan_id);
     /* CLOSED, NOT DELETED. "keep reversed loan as closed contract when another application
-       comes it deals with next loan" -- the docket lives on for the next track. */
-    await transition(db, loan, 'disbursed', 'reversed', user, {}, 'Reversal authorised by GM: ' + r.reason);
-    await db.from('loans').update({ stage: 'closed' }).eq('id', loan.id);
+       comes it deals with next loan" -- the docket lives on for the next track.
+
+       ONE write, not two: this used to stamp 'reversed' and then, in the very same request,
+       immediately overwrite it with 'closed' -- two round trips to land on a state the first
+       write was never meant to be seen in, and the loan_events row that DID get written
+       (only the first update went through transition/logEvent) named a stage, 'reversed',
+       that the loan was never left sitting in and that nothing downstream reads: nothing in
+       this codebase filters or reports on stage === 'reversed'. Landing on 'closed' directly
+       is the same final row, one fewer trip, and an audit trail that actually names the stage
+       the loan is left in instead of one only ever true for the instant between two writes. */
+    await transition(db, loan, 'disbursed', 'closed', user, {}, 'Reversal authorised by GM: ' + r.reason);
   }
   return { ok: true };
 }
