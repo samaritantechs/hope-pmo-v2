@@ -53,11 +53,16 @@ create table if not exists settings (
   value text
 );
 
+-- tab is NOT the key: a tab rotates through many tips, so the row identity is its own id --
+-- see db/migrations/2026-07-27-hints-many-per-tab.sql, which moved a fresh-install schema
+-- (this file) off exactly the one-tip-per-tab shape that migration exists to undo.
 create table if not exists hints (
-  tab text primary key,
+  id uuid primary key default gen_random_uuid(),
+  tab text,
   message text,
   sw_message text
 );
+create index if not exists idx_hints_tab on hints(tab);
 
 -- =====================================================================================
 -- LOAN PIPELINE -- one row per loan, moved through `stage` instead of 8 separate sheets.
