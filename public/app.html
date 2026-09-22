@@ -647,7 +647,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-21-k';
+var BUILD = '2026-09-22-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -7734,7 +7734,7 @@ function wireDevices(){
 // Collection officer's name into at all. The column itself already exists once
 // db/migrations/2026-08-09-team-contacts.sql has been run (it is additive/optional -- saveTeam
 // silently drops the field until then); this is the other half, the form to fill it from.
-var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike','collection'];
+var TEAM_ROLES = ['opm','recovery','gmo','manager','credit','expected','bike','collection','legal'];
 /* THERE IS NO CREDIT ID ANY MORE. An analyst used to be carried by the number they appear under
    in the sale-approvals report, and every report then had to translate that number back into a
    person. Now the approvals report is read by NAME against the CREDIT column below, so there is
@@ -7890,9 +7890,10 @@ function agentForm(x){
  *  that made this worth building: a reassignment done ten rows at a time and abandoned half way
  *  leaves a team pointing at somebody who has left, and nothing on any screen says so.
  *
- *  The role decides where the save goes. Six of the seven live as a column on the teams table;
- *  a COLLECTION officer's teams are a list on their access code. Nobody using this screen has
- *  to know that -- the server writes to whichever place the role actually lives in. */
+ *  The role decides where the save goes. The seven supervisory roles live as a column on the
+ *  teams table; a COLLECTION or LEGAL officer's teams are a list on their access code instead.
+ *  Nobody using this screen has to know that -- the server writes to whichever place the role
+ *  actually lives in. */
 function staffForm(x){
   var meta = S.staff || { roles: [], allTeams: [] };
   var isNew = !x;
@@ -7906,11 +7907,12 @@ function staffForm(x){
     + roles.map(function(r){
         return '<option value="'+esc(r.key)+'"'+((x && x.role===r.key)?' selected':'')+'>'+esc(r.label)+'</option>';
       }).join('') + '</select></div>'
-    /* A collection officer IS an access code with that role. Saying so here means the refusal
-       from the server is never the first time anybody hears it. */
-    + '<div class="note" id="sfNote" style="display:none">Afisa wa makusanyo lazima awe na msimbo wa kuingia'
-    + ' wenye wadhifa huo. / A collection officer must already have an access code with that role —'
-    + ' create it under Settings first, then set their teams here.</div>'
+    /* A PORTFOLIO ROLE (collection, legal) IS an access code with that role -- their teams live
+       there, not on this table. Saying so here means the refusal from the server is never the
+       first time anybody hears it. Which roles those are, and what to call them, come from the
+       server's own roles list (source:'access_code'), never hardcoded here -- a second portfolio
+       role added later needs no matching edit on this screen. */
+    + '<div class="note" id="sfNote" style="display:none"></div>'
     + '<div class="fld"><label>Timu / Teams <span id="sfCount" class="sub"></span></label>'
     + '<div style="margin:4px 0 8px"><button class="btn sm ghost" type="button" id="sfAll">Chagua zote / All</button> '
     + '<button class="btn sm ghost" type="button" id="sfNone">Ondoa zote / None</button></div>'
@@ -7926,7 +7928,12 @@ function staffForm(x){
     var n = 0;
     Array.prototype.forEach.call(boxes(), function(c){ if (c.checked) n++; });
     $('#sfCount').textContent = '(' + n + ')';
-    $('#sfNote').style.display = ($('#sfRole').value === 'collection') ? '' : 'none';
+    var cur = roles.filter(function(r){ return r.key === $('#sfRole').value; })[0];
+    var portfolio = !!(cur && cur.source === 'access_code');
+    $('#sfNote').style.display = portfolio ? '' : 'none';
+    if (portfolio) $('#sfNote').innerHTML = 'Afisa wa aina hii lazima awe na msimbo wa kuingia wenye wadhifa "'
+      + esc(cur.label) + '". / A ' + esc(cur.label) + ' officer must already have an access code with'
+      + ' that role — create it under Settings first, then set their teams here.';
   };
   Array.prototype.forEach.call(boxes(), function(c){ c.onchange = recount; });
   $('#sfRole').onchange = recount;
