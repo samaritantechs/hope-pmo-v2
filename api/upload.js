@@ -753,8 +753,15 @@ export default withApi(async (req, res) => {
          It does -- the Abnormal screen and the dashboard tile both work irregular payments out
          from this very table -- but nothing ever SAID so, and an update that happens invisibly
          is indistinguishable from one that does not happen. The abnormal sheet is not uploaded
-         any more, so this line is the only receipt. One keyed settings read; the count is
-         arithmetic over rows already in hand. */
+         any more, so this is the only receipt. One keyed settings read; the count is arithmetic
+         over rows already in hand -- cheap enough to leave running on every slice of a big file,
+         unlike the heavier steps below that are gated to the last one.
+
+         COMPUTED HERE, BUT NOT WORDED HERE. `receivedAbnormal` travels back as a plain number
+         (see the return below), and the sentence a person reads is built on the PAGE from the
+         total of every slice's number, not from this one slice's. A file sent as one request is
+         one slice, and the page's number is this one unchanged -- nothing about the ordinary
+         case depends on any of this. */
       {
         const { data: st } = await supabase.from('settings').select('value').eq('key', 'ABNORMAL_STEP').maybeSingle();
         const step = st && Number(st.value) > 0 ? Number(st.value) : 500;
@@ -1039,6 +1046,11 @@ export default withApi(async (req, res) => {
      bookkeeping stamp did not save. */
   // On the LAST slice only. Moving the stamp half way through would send two hundred phones to
   // fetch figures built on a file that is not all there yet.
+  // NOT ON THE CLOCK, same reasoning as unmarkDeckTotals above: one write, by primary key, to a
+  // table of a handful of rows -- the cheapest write in this whole function, not the kind of
+  // step the budget exists to guard. Gating it behind isLastPart already keeps it to once per
+  // upload rather than once per slice, which is what made the retire and the sweep below worth
+  // a clock check; this has nothing left to save by adding one.
   if (isLastPart) {
     try {
       await supabase.from('settings')
@@ -1062,21 +1074,44 @@ export default withApi(async (req, res) => {
      Today and Tomorrow for one date, the two tabs resolve to the same customers and officers
      work one list twice while the other day goes uncalled.
      The system cannot tell which of the two was the mistake, so it does not guess: it says
-     what it found, at the moment it can still be undone. */
+     what it found, at the moment it can still be undone.
+
+     DIAGNOSTIC ONLY, so it belongs beside the other optional steps in this function -- the
+     gated retire, the sweep, the deck-totals build -- and it used to be the one exception to
+     their pattern, with no isLastPart guard and no clock check at all.
+
+     ON EVERY SLICE was wrong twice over. It cost a round trip on every slice of a file over
+     UPLOAD_SLICE_ROWS, for an answer nobody reads until the upload is done -- there is nothing
+     meaningful to compare before the file is complete. And the ONE comparison that runs on the
+     last slice was reading `records`, which by then is only the LAST slice's rows: a file
+     sliced into nine parts was being judged on a ninth of itself, the same shape of bug the
+     header comment on retireFollowupAfterDeck describes for the register. A big Leo/Kesho
+     duplicate could undercount its overlap far below the 95% line and never be flagged, or
+     flag on a partial match that was never really the whole story.
+
+     So this now runs ONCE, on the last slice, on the clock like its neighbours -- and reads
+     back every ref THIS UPLOAD wrote, by batch, the same technique retireFollowupAfterDeck
+     uses to see the whole deck rather than whichever slice happened to run last. */
   let sameAsToday = 0;
-  if (type === 'expected-tomorrow' || type === 'expected-today') {
-    const other = type === 'expected-tomorrow' ? 'today' : 'tomorrow';
-    const { data: existing } = await supabase.from('repayment_snapshots')
-      .select('ref').eq('snapshot_type', other).eq('snapshot_date', meta.date).limit(2000);
-    if (existing && existing.length) {
-      const have = new Set(existing.map(r => String(r.ref)));
-      const mine = new Set(records.map(r => String(r.ref)));
-      let shared = 0;
-      for (const r of mine) if (have.has(r)) shared++;
-      // Two lists for different days share SOME customers; being all but identical is the
-      // signature of the same file uploaded twice.
-      if (shared / Math.max(mine.size, 1) >= 0.95) sameAsToday = shared;
-    }
+  if (isLastPart && (type === 'expected-tomorrow' || type === 'expected-today') && clock.worth()) {
+    try {
+      const mySnapshotType = type === 'expected-tomorrow' ? 'tomorrow' : 'today';
+      const other = mySnapshotType === 'tomorrow' ? 'today' : 'tomorrow';
+      const { data: existing } = await supabase.from('repayment_snapshots')
+        .select('ref').eq('snapshot_type', other).eq('snapshot_date', meta.date).limit(2000);
+      if (existing && existing.length) {
+        const have = new Set(existing.map(r => String(r.ref)));
+        const mineRows = await fetchAll(() => supabase.from('repayment_snapshots')
+          .select('ref').eq('snapshot_type', mySnapshotType).eq('upload_batch', uploadBatch));
+        const mine = new Set((mineRows || []).map(r => String(r.ref)));
+        let shared = 0;
+        for (const r of mine) if (have.has(r)) shared++;
+        // Two lists for different days share SOME customers; being all but identical is the
+        // signature of the same file uploaded twice.
+        if (shared / Math.max(mine.size, 1) >= 0.95) sameAsToday = shared;
+      }
+    } catch (e) { /* diagnostic only -- an upload that landed must never be reported as failed
+                     because this warning could not be worked out */ }
   }
 
   /* THE WORKING LIST IS REBUILT ON THE LAST SLICE ONLY, and that is not an optimisation.
@@ -1381,6 +1416,15 @@ export default withApi(async (req, res) => {
        reads: true means the file is not all in yet and nothing has been rebuilt from it. */
     ...(part ? { part: { index: partIndex, total: partTotal, partial: !isLastPart } } : {}),
     followupSynced, followupRetired: followupRetired || undefined, behaviour, sameAsToday,
+    /* PER SLICE, ON PURPOSE -- see the note at the case 'received' block. The count is cheap
+       (one settings read, arithmetic over rows already in hand) so it is left running on every
+       slice rather than gated like the heavier steps above. What was wrong is not where this is
+       computed but where it was READ: as a NUMBER it travels back on every slice like `inserted`
+       and `followupSynced`, so the page can add the slices up rather than reporting only the
+       last one's share. table === 'received_payments' or undefined tells the page whether this
+       upload is one that has this field to sum at all. */
+    receivedAbnormal: table === 'received_payments' ? receivedAbnormal : undefined,
+    receivedStep: table === 'received_payments' ? receivedStep : undefined,
     deferred: (followupDeferred || sweepDeferred)
       ? { retire: followupDeferred || undefined, sweep: sweepDeferred || undefined } : undefined,
     /* SAY WHAT WAS NOT DONE. This was `deckBuilt || undefined` -- so a build that FAILED sent
@@ -1422,9 +1466,14 @@ export default withApi(async (req, res) => {
          from one that did not happen. */
       loansRelinked ? `${loansRelinked} loan(s) were recognised as already in the pipeline under an older identity (a docket or name from before their LOAN ID existed) and their existing rows were UPDATED rather than duplicated.` : '',
       loansMerged ? `${loansMerged} duplicate row(s) -- the same loan filed twice by earlier uploads under two identities -- were merged into one. Sales and pipeline counts no longer double-count them.` : '',
-      table === 'received_payments' ? (receivedAbnormal
-        ? `${receivedAbnormal} of these payments are irregular (not a multiple of TZS ${receivedStep.toLocaleString('en-US')}) and are now flagged on the Abnormal Payments screen and the dashboard. No separate abnormal sheet is needed.`
-        : 'None of these payments are irregular by the multiples rule. The Abnormal Payments screen works itself out from this table, so there is nothing else to upload.') : '',
+      /* THE ABNORMAL-PAYMENTS SENTENCE MOVED TO THE PAGE, deliberately, and it is not here any
+         more -- see the note beside `receivedAbnormal` above. This `message` is per-SLICE text:
+         the page keeps only the LAST slice's copy of it (see sendInSlices_), so a sentence built
+         from a per-slice count here would say "412 of these payments are irregular" when the
+         other several thousand rows of the file went in under an earlier request and were never
+         asked about. `receivedAbnormal` travels back as a NUMBER on every slice instead, exactly
+         like `inserted`, so the page can add the slices up and build this sentence itself from a
+         total that is actually the whole file's. */
       newTeams.length ? `Also auto-created ${newTeams.length} new team(s), not seen before: ${newTeams.join(', ')}. Worth a glance -- if any of these is actually a typo of an existing team, fix it in this table directly rather than leaving a duplicate.` : '',
       /* A COLUMN THROWN AWAY IN SILENCE IS THE WORST KIND OF SUCCESS. The file was read right,
          the database has no such column yet, and without this line the upload says "done" while
