@@ -653,8 +653,7 @@ test('the month record is the weeks worked out one by one and added, with a colu
   // A week earlier (W3, 13-19 July): the week's OWN Monday deck 2000, Friday's current 1000,
   // against 1000 uncollected -- a 100% day and a 100% week, both on the top band. A period
   // reads the initial deck as of the week's OWN start, so 711's baseline is dated that
-  // Monday (the 13th), not mid-week -- W3's own MON-tagged slot, superseded for W4 by the
-  // shared book's own Monday deck at the 20th, so the two weeks never see each other's book.
+  // Monday (the 13th), not mid-week.
   t.defaulter_snapshots.push(
     D('711', 'KONGOWE', 2000, 'initial', 45, '2026-07-13', 'MON'),
     D('711', 'KONGOWE', 1000, 'current', 45, '2026-07-17', 'FRI'));
@@ -666,17 +665,24 @@ test('the month record is the weeks worked out one by one and added, with a colu
   assert.deepEqual(m.weeks[3], { key: 'W4', from: MON, to: TODAY }, 'the live week ends today');
   const juma = m.recBoard.find(r => r.officer === 'JUMA G');
   /* W3's own PERIOD is (Monday the 13th, its end): 100% (120,000). W4's own PERIOD is
-     (Monday the 20th, today): the shared book's 300 of 1,400 uncollected, 21.4% -- under the
-     floor, paid at the ladder's next band down (20,000), not zero. The month is the two
-     weeks' own periods added, never the month scored once -- and never leaking into each
-     other: W3's book never reaches W4, W4's never reaches back into W3. */
+     (Monday the 20th, today): the initial side is resolved PER CUSTOMER, not per team-and-
+     weekday group (RUN-ME-032 v5) -- 711's own 2,000 was uploaded the 13th and nothing newer
+     for 711 SPECIFICALLY has landed since, so it is still their own latest within the 45-day
+     lookback and it counts for W4 exactly as it did for W3, alongside the shared book's own
+     Monday-the-20th deck for 111/555 (1,200). W4's initial is therefore 3,200, not just the
+     shared book's 1,200 -- a teammate getting a fresher upload does not erase 711's own real,
+     recent balance. 711 is also absent from today's current file (their own current is the
+     17th's), so under the current side's own no-lookback rule they read as recovered in full
+     there too: 3,200 initial less 900 current (only 111/555 are on today's file) is 2,300,
+     comfortably past the top band. The month is still the two weeks' own periods added, never
+     the month scored once. */
   assert.equal(juma.pctW3, 100); assert.equal(juma.recW3, 1000); assert.equal(juma.tzsW3, 120000);
-  assert.equal(juma.pctW4, 21.4); assert.equal(juma.recW4, 300); assert.equal(juma.tzsW4, 20000);
+  assert.equal(juma.pctW4, 164.3); assert.equal(juma.recW4, 2300); assert.equal(juma.tzsW4, 180000);
   assert.equal(juma.tzsW1, 0); assert.equal(juma.pctW1, null, 'a week with nothing in it is not a zero per cent');
-  assert.equal(juma.weekRecovered, 1300);
-  assert.equal(juma.weekCommission, 140000, 'the month pays what its weeks paid');
-  assert.equal(juma.weekPct, 54.2, '1,300 over the month\'s 2,400 uncollected');
-  assert.equal(m.totals.split.recWeek, 140000);
+  assert.equal(juma.weekRecovered, 3300);
+  assert.equal(juma.weekCommission, 300000, 'the month pays what its weeks paid');
+  assert.equal(juma.weekPct, 137.5, '3,300 over the month\'s 2,400 uncollected, past 100% and unclamped');
+  assert.equal(m.totals.split.recWeek, 300000);
   assert.equal(m.recoveryRule, 'latest');
   assert.equal(juma.records.length, 4, 'one record per week of the month');
   assert.equal(juma.records[2].key, 'W3'); assert.equal(juma.records[2].weekly, true);
@@ -706,9 +712,11 @@ test('the commission screen opens any week, and the month record any month', asy
   // This week, asked for by its Monday, is the ordinary screen.
   const now = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: MON }, NOW);
   assert.equal(now.pastWeek, false); assert.equal(now.to, addDaysT_(MON, 6));
-  // The live week's own period (Monday the 20th through today) never reaches back into 711's
-  // week -- it reads the shared book's own Monday deck instead, 21.4% under the floor.
-  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 20000);
+  // The live week's own period (Monday the 20th through today): 711's own initial (the 13th)
+  // is still their own latest within the lookback -- nothing newer for 711 specifically has
+  // landed -- so it still counts here too, alongside the shared book's own Monday deck. See
+  // the month record test's own note for the full figure.
+  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 180000);
   // Last month: the whole of June, five weeks, nothing in it.
   const jun = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month', month: '2026-06' }, NOW);
   assert.equal(jun.from, '2026-06-01'); assert.equal(jun.to, '2026-06-30'); assert.equal(jun.month, '2026-06');
