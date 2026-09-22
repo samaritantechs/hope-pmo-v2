@@ -14,6 +14,7 @@ import { deckKindOfTable, unmarkDeckTotals, buildDeckTotals, topUpDeckTotals } f
    open the dashboard next and least able to tell a stale figure from a lost file. One line,
    no read, no write -- it throws away a map. */
 import { noteAnswersChanged } from './_lib/answer-cache.js';
+import { noteDeviceSettingsWritten } from './_lib/device-core.js';
 import { weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, importExpected, importExpectedSummary, importDefaulterSummary,
@@ -1091,27 +1092,31 @@ export default withApi(async (req, res) => {
 
      So this now runs ONCE, on the last slice, on the clock like its neighbours -- and reads
      back every ref THIS UPLOAD wrote, by batch, the same technique retireFollowupAfterDeck
-     uses to see the whole deck rather than whichever slice happened to run last. */
+     uses to see the whole deck rather than whichever slice happened to run last.
+
+     AND IT IS ON THE CLOCK THE SAME WAY, not just gated on having enough left to START. The
+     `existing` probe is capped at 2000, but `mineRows` pages the whole batch with fetchAll --
+     on a big Expected file, on a database having a bad morning, that is exactly the read most
+     likely to run past the platform's limit and turn a completed upload into a 504. This is a
+     diagnostic nobody NEEDS this second; skipping it costs nothing but the message. */
   let sameAsToday = 0;
   if (isLastPart && (type === 'expected-tomorrow' || type === 'expected-today') && clock.worth()) {
-    try {
+    sameAsToday = await beforeDeadline((async () => {
       const mySnapshotType = type === 'expected-tomorrow' ? 'tomorrow' : 'today';
       const other = mySnapshotType === 'tomorrow' ? 'today' : 'tomorrow';
       const { data: existing } = await supabase.from('repayment_snapshots')
         .select('ref').eq('snapshot_type', other).eq('snapshot_date', meta.date).limit(2000);
-      if (existing && existing.length) {
-        const have = new Set(existing.map(r => String(r.ref)));
-        const mineRows = await fetchAll(() => supabase.from('repayment_snapshots')
-          .select('ref').eq('snapshot_type', mySnapshotType).eq('upload_batch', uploadBatch));
-        const mine = new Set((mineRows || []).map(r => String(r.ref)));
-        let shared = 0;
-        for (const r of mine) if (have.has(r)) shared++;
-        // Two lists for different days share SOME customers; being all but identical is the
-        // signature of the same file uploaded twice.
-        if (shared / Math.max(mine.size, 1) >= 0.95) sameAsToday = shared;
-      }
-    } catch (e) { /* diagnostic only -- an upload that landed must never be reported as failed
-                     because this warning could not be worked out */ }
+      if (!existing || !existing.length) return 0;
+      const have = new Set(existing.map(r => String(r.ref)));
+      const mineRows = await fetchAll(() => supabase.from('repayment_snapshots')
+        .select('ref').eq('snapshot_type', mySnapshotType).eq('upload_batch', uploadBatch));
+      const mine = new Set((mineRows || []).map(r => String(r.ref)));
+      let shared = 0;
+      for (const r of mine) if (have.has(r)) shared++;
+      // Two lists for different days share SOME customers; being all but identical is the
+      // signature of the same file uploaded twice.
+      return shared / Math.max(mine.size, 1) >= 0.95 ? shared : 0;
+    })().catch(() => 0), clock.left(), 0);
   }
 
   /* THE WORKING LIST IS REBUILT ON THE LAST SLICE ONLY, and that is not an optimisation.
@@ -1274,6 +1279,10 @@ export default withApi(async (req, res) => {
      the next upload of that date does. */
   // The figures on every screen have just changed. See the import note.
   noteAnswersChanged(supabase);
+  // A settings sheet can change a DEVICE_* value (lock wording, beat pace, grace hours) --
+  // the same bust the admin UI's settingSet already fires, so the next heartbeat sees it
+  // within seconds instead of riding out the beat-settings cache's own TTL.
+  if (table === 'settings') noteDeviceSettingsWritten(supabase);
   let deckBuilt = false;
   if (isLastPart && deckKind && meta.date && clock.worth(6000)) {
     try {

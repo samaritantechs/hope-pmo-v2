@@ -865,13 +865,21 @@ test('imprest report: narrowing travel_date at the database keeps EXACTLY the ro
    added, without anybody remembering to add it here. If it trips, the fix is virtually never
    to raise the ceiling -- it is to put the team filter in the query.
    ===================================================================================== */
-/* tabs: [] used to be a no-op -- FN_TAB gates only the imprest functions, nothing else this
-   sweep touches, so ONE_TEAM held blank tabs for years without missing a single screen. Imprest
-   changed that: without impreq/impappr/imprep it hit tabGate_'s Forbidden before a single query
-   ran, and the catch below reads a refusal exactly like "not permitted, not applicable" -- so
-   imprestMine/imprestQueue/imprestReport/imprestRoles were silently invisible to BOTH sweeps
-   below, the one whole-book book on this file has no test for at all. Ticked now, the same three
-   tabs OFFICER already carries through USER_TABS above. */
+/* tabs: [] was NOT a no-op, and this comment used to claim it was. FN_TAB gates many screens
+   besides imprest -- dashboard, expected, followup, weekly, complaints, restructure, abnormal,
+   credit, teams and more all name a tab ONE_TEAM has never held -- and every one of them hits
+   tabGate_'s Forbidden before a single query runs. The catch below reads that refusal exactly
+   like "not permitted, not applicable" and skips it, so THIS SWEEP HAS NEVER COVERED EVERY
+   READ-ONLY PORTAL FUNCTION the way its own header above claims; it covers only the ones a
+   blank-tabs officer can reach. That gap predates this change and is not fixed by it.
+
+   What this change DOES fix: imprestMine/imprestQueue/imprestReport/imprestRoles were among
+   the silently-skipped functions, and are the one whole-book book this file otherwise has no
+   test for at all. Ticking impreq/impappr/imprep -- the same three tabs OFFICER already
+   carries through USER_TABS above, and used by no other FN_TAB entry -- brings exactly those
+   four into both sweeps below without touching what any other function is gated on. Closing
+   the rest of the gap means giving ONE_TEAM a fuller, still-single-team tab set and is a
+   separate piece of work, not attempted here. */
 const ONE_TEAM = { code: 'O', name: 'REC TEAM01', role: 'GMO', teams: [TEAMS[0]], tabs: ['impreq', 'impappr', 'imprep'] };
 const OFFICER_ROW_CEILING = 4000;
 

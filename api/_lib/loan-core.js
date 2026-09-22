@@ -1357,10 +1357,15 @@ async function reversalGmDecide(db, user, { id, approve, note }) {
        immediately overwrite it with 'closed' -- two round trips to land on a state the first
        write was never meant to be seen in, and the loan_events row that DID get written
        (only the first update went through transition/logEvent) named a stage, 'reversed',
-       that the loan was never left sitting in and that nothing downstream reads: nothing in
-       this codebase filters or reports on stage === 'reversed'. Landing on 'closed' directly
-       is the same final row, one fewer trip, and an audit trail that actually names the stage
-       the loan is left in instead of one only ever true for the instant between two writes. */
+       that the loan was never left sitting in. STAGE_ORDER (below) does count and display a
+       'reversed' bucket on the pipeline screen, so a loan that is genuinely mid-reversal on a
+       given day is meant to show there -- what changes here is that this function no longer
+       lands a loan in that bucket only for the instant between two writes, and (a real fix,
+       not only a trip saved) the old second write's error was never checked, so a transient
+       failure there could have stranded a loan at 'reversed' with nothing to ever move it on;
+       transition()'s own write here is checked like every other one in this file. Landing on
+       'closed' directly is the same final row, one fewer trip, and an audit trail that names
+       the stage the loan is actually left in. */
     await transition(db, loan, 'disbursed', 'closed', user, {}, 'Reversal authorised by GM: ' + r.reason);
   }
   return { ok: true };
