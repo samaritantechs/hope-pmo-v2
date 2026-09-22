@@ -29,14 +29,18 @@
 --   - lists the decks in the window once (a few thousand rows, off the (type, weekday, date,
 --     team) index) and picks the winning date per team-and-weekday per date from that list;
 --   - reads each deck that won ONCE, straight off the index -- its winning upload, then one
---     row per customer on it -- and works each (initial deck, current deck) pair out once,
---     so dates that share decks share the answer instead of repeating it per customer;
+--     row per customer on it -- and only then joins those per-deck sets to the dates asked;
 --   - asks the index for one current-deck date per as-of.
---   A customer who sits on two weekday decks of a team is counted on each, exactly as the
---   export lists them. Measured on a synthetic book of 1.1m initial and 5.2m current rows
---   (five times the live current deck), nine dates at once: 14.3 s before, 3.7 s after;
---   0.9 s on an eight-team scope, 0.2 s for one date and two teams. JIT is off for it: the
---   compile alone cost over a second on a query this wide.
+--   JIT is off for it: the compile alone cost over a second on a query this wide.
+-- v3 (2026-09-22): "initials aint reading well! Current arrears 3,412,547,121 / initial
+-- upload: 23,760,795,812". The initial file carries the whole book and is uploaded on every
+-- weekday's date, so a customer sits on all seven of the decks picked; v2 added the decks and
+-- counted every customer seven times. ONE ROW PER CUSTOMER, their newest, as v1 had it and
+-- as a per-customer lookup on the two exported files finds -- and as the customer list reads.
+--   Checked row for row against the transcription on Postgres 16. Timed on a synthetic book
+--   in the live shape (the whole book of 20,000 customers uploaded as the initial deck AND as
+--   the current deck every working day for 60 days: 2.1m rows), the dashboard's nine dates at
+--   once, all teams: 3.0 s; one date on a two-team scope: 0.2 s. Cached per scope per minute.
 --   `materialized` keeps the planner from inlining the small sets and guessing one row each.
 -- If a screen still shows the note, the dashboard's diagnosis card ("Imeshindikana") now
 -- times this function on its own and prints what the database said.
@@ -80,10 +84,10 @@ ini_win as materialized (
   select distinct team, weekday, deck_date from ini_decks
 ),
 ini_cust as materialized (
-  select w.team, w.weekday, w.deck_date, x.ref, x.arrears
+  select w.team, w.weekday, w.deck_date, x.ref, x.arrears, x.created_at
   from ini_win w
   cross join lateral (
-    select distinct on (y.ref) y.ref, y.arrears
+    select distinct on (y.ref) y.ref, y.arrears, y.created_at
     from (
       select s.ref, s.arrears, s.upload_batch, s.created_at,
              first_value(s.upload_batch) over (order by s.created_at desc nulls last, s.upload_batch desc nulls last) as win_batch
@@ -130,59 +134,59 @@ cur_cust as materialized (
     order by y.ref, y.created_at desc nulls last
   ) x
 ),
--- 5. each (initial deck, current deck) pair that any date needs, worked out ONCE: the deck's
---    arrears and headcount, and how many of its customers are gone from that current deck.
---    Two dates that share the same decks share the same answer instead of repeating it.
-pair as materialized (
-  select distinct k.team, k.weekday, k.deck_date, c.deck_date as cur_deck
+-- 5. per date: ONE ROW PER CUSTOMER across the decks picked for it -- their newest. The
+--    initial file is uploaded again and again (every weekday's date carries the customers
+--    it carries), so a customer is on several of the decks picked; adding the decks would
+--    count them once per deck -- 23.7bn of "initial" against a 3.4bn book. Their newest row
+--    is what they owed when last listed, and it is what a per-customer lookup on the two
+--    exported files finds.
+ini_rows as materialized (
+  select k.as_of, c.ref,
+         (array_agg(c.team    order by c.deck_date desc, c.created_at desc nulls last))[1] as team,
+         (array_agg(c.arrears order by c.deck_date desc, c.created_at desc nulls last))[1] as arrears,
+         max(c.deck_date) as snapshot_date
   from ini_decks k
-  join cur_date c on c.as_of = k.as_of
-  where c.deck_date is not null
+  join ini_cust c
+    on c.team = k.team
+   and c.weekday is not distinct from k.weekday
+   and c.deck_date = k.deck_date
+  group by k.as_of, c.ref
 ),
-pair_agg as materialized (
-  select p.team, p.weekday, p.deck_date, p.cur_deck,
+-- 6. per date and team: what those customers owed, and how many are gone from the current
+--    deck the date reads (a date with no current deck is not measured: no rows)
+ini_agg as materialized (
+  select i.as_of, i.team,
          sum(i.arrears) as initial,
          count(*) as initial_customers,
-         count(*) filter (where cc.ref is null) as cleared
-  from pair p
-  join ini_cust i
-    on i.team = p.team
-   and i.weekday is not distinct from p.weekday
-   and i.deck_date = p.deck_date
-  left join cur_cust cc
-    on cc.deck_date = p.cur_deck
-   and cc.ref = i.ref
-  group by p.team, p.weekday, p.deck_date, p.cur_deck
+         count(*) filter (where cc.ref is null) as cleared,
+         string_agg(distinct i.snapshot_date::text, ', ') as initial_dates
+  from ini_rows i
+  join cur_date c on c.as_of = i.as_of and c.deck_date is not null
+  left join cur_cust cc on cc.deck_date = c.deck_date and cc.ref = i.ref
+  group by i.as_of, i.team
 ),
--- 6. what each team owes on each current deck: everyone on it, new customers included
+-- 7. what each team owes on each current deck: everyone on it, new customers included
 cur_team as materialized (
   select deck_date, team, sum(arrears) as current, count(*) as current_customers
   from cur_cust
   group by deck_date, team
 )
--- 7. per date and team: the decks picked, added; less the team's current; the headcounts
-select k.as_of, k.team,
-       sum(pa.initial)::numeric as initial,
-       coalesce(max(ct.current), 0)::numeric as current,
-       (sum(pa.initial) - coalesce(max(ct.current), 0))::numeric as recovered,
-       sum(pa.initial_customers)::int as initial_customers,
-       coalesce(max(ct.current_customers), 0)::int as current_customers,
-       sum(pa.cleared)::int as cleared,
-       string_agg(distinct k.deck_date::text, ', ') as initial_dates,
+-- 8. per date and team: initial less current. A team with no initial deck within the
+--    lookback is not here at all -- its current rows alone would read as a negative
+--    recovery against an initial nobody uploaded.
+select a.as_of, a.team,
+       a.initial::numeric as initial,
+       coalesce(ct.current, 0)::numeric as current,
+       (a.initial - coalesce(ct.current, 0))::numeric as recovered,
+       a.initial_customers::int as initial_customers,
+       coalesce(ct.current_customers, 0)::int as current_customers,
+       a.cleared::int as cleared,
+       a.initial_dates,
        c.deck_date as current_deck
-from ini_decks k
--- a date with no current deck at all is not measured -- no rows, never "everything recovered";
--- and a team with no initial deck within the lookback is not measured either (it is not in
--- ini_decks) -- its current rows alone would read as a negative recovery against nothing
-join cur_date c on c.as_of = k.as_of and c.deck_date is not null
-join pair_agg pa
-  on pa.team = k.team
- and pa.weekday is not distinct from k.weekday
- and pa.deck_date = k.deck_date
- and pa.cur_deck = c.deck_date
-left join cur_team ct on ct.deck_date = c.deck_date and ct.team = k.team
-group by k.as_of, k.team, c.deck_date
-order by k.as_of, k.team;
+from ini_agg a
+join cur_date c on c.as_of = a.as_of
+left join cur_team ct on ct.deck_date = c.deck_date and ct.team = a.team
+order by a.as_of, a.team;
 $$;
 
 grant execute on function public.recovery_standing(date[], text[], int) to anon, authenticated, service_role;
