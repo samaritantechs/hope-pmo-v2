@@ -65,6 +65,34 @@
 -- the older batch's interval ends the day it began -- valid_to = valid_from - 1 -- and it can
 -- never be anyone's answer, the same as it never reached rn = 1 under v5.
 --
+-- v6 WAS STILL SLOW, AND THE FOLLOW-UP EXPLAIN SAID WHY. The 7-period call came down from
+-- 27.9s to 9.99s -- real, but still a "century to load" and still close enough to the role's
+-- statement_timeout to fail outright some of the time (which is worse than failing every time:
+-- a screen that is sometimes right and sometimes the old day-pairing fallback shows different
+-- numbers on different loads with nothing to say why). The plan named the cost:
+--
+--     Buffers: shared hit=17996 read=69267
+--
+-- Eighty percent of the pages touched were NOT in cache. ini_ranked reads five columns (ref,
+-- team, arrears, created_at, upload_batch) that are not IN the index it used
+-- (idx_def_snap_date_type -- only snapshot_date and snapshot_type), so every matching row cost
+-- a real, scattered disk read to fetch the rest of it from the table -- on a table whose
+-- physical order has nothing to do with snapshot_date after months of interleaved daily
+-- uploads. RUN-ME-034 adds a partial, covering index carrying exactly those five columns for
+-- snapshot_type = 'initial', which lets this turn into an INDEX ONLY SCAN with zero heap
+-- fetches. But the covering index alone is not enough: at the selectivity this query runs at,
+-- Postgres's own cost model does not reliably prefer it over a bitmap-and-heap scan or a plain
+-- sequential one -- proven by testing it both ways on a 2.4-million-row fixture built to match
+-- the real book's shape (months of history, not just the lookback). So this function turns
+-- those two paths off for itself: `set enable_bitmapscan = off set enable_seqscan = off`. Both
+-- are soft switches -- if the covering index is ever missing, Postgres still has a plan, just
+-- the slower one this function had before, never a failure. With both changes in together, the
+-- same scan measured 102 shared-buffer hits and 4,944 disk reads with zero heap fetches --
+-- about a fourteenth of the reads it needed before, on the identical rows.
+--
+-- RUN-ME-034 MUST BE RUN TOO -- this function alone, without that index, is not the fix; it is
+-- half of it, forcing a choice that only pays off once the index exists to choose.
+--
 -- WHY IN THE DATABASE: this is a per-customer question over up to 45 days of decks. Asking
 -- the web server for those rows on every dashboard, every commission board and every phone
 -- summary is the read this system was rebuilt to stop making (RUN-ME-022). Answered here it
@@ -72,10 +100,11 @@
 -- is off for the function (the compile alone cost over a second on a query this wide);
 -- `materialized` keeps the planner from inlining the small sets and guessing one row each.
 --
--- Paste the whole file into the SQL editor and run it once. Safe to re-run (it replaces every
--- earlier signature of recovery_standing too). Until it is run, every screen keeps the
--- day-pairing rule it had and says which file to run; if the function fails, the note carries
--- the database's own words, and the dashboard's diagnosis card times it on its own.
+-- Paste the whole file into the SQL editor and run it once, and RUN-ME-034 too (either order).
+-- Safe to re-run (it replaces every earlier signature of recovery_standing too). Until it is
+-- run, every screen keeps the day-pairing rule it had and says which file to run; if the
+-- function fails, the note carries the database's own words, and the dashboard's diagnosis card
+-- times it on its own.
 -- =====================================================================================
 
 drop function if exists public.recovery_standing(date[], text[], int);
@@ -86,7 +115,7 @@ returns table (
   from_date date, as_of date, team text, initial numeric, current numeric, recovered numeric,
   initial_customers int, current_customers int, cleared int, initial_dates text, current_deck date
 )
-language sql stable set jit = off as $$
+language sql stable set jit = off set enable_bitmapscan = off set enable_seqscan = off as $$
 with p as materialized (
   select distinct u.f as from_date, u.t as as_of
   from unnest(p_from, p_to) as u(f, t)
