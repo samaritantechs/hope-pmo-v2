@@ -923,6 +923,49 @@ test('defaulterInitialRows: a customer not on their team\'s newest weekday-tagge
   assert.equal(String(byRef.B.snapshot_date), '2026-09-16', 'B\'s only row, still inside the lookback');
 });
 
+/* v5 got the RULE right and then timed out answering it several ways at once: it re-ranked
+   every customer's rows fresh for every period asked, so the dashboard's weekly trend -- seven
+   single-day periods, one call, each with its own 45-day lookback -- rescanned and re-sorted
+   nearly the same six-week window seven times. Measured on the real book: 3.3s for one period,
+   27.9s and an 818MB temp-disk spill for seven, long enough to hit the role's statement_timeout
+   and fall the whole reading back to the old day-pairing rule. v6 ranks each customer's rows
+   ONCE, over the union of every period's window, and turns that ranking into a per-row validity
+   interval instead of re-ranking per period. This proves that rewrite still answers different
+   periods with their own correct, different figures, and still applies the same-day batch rule
+   -- a customer corrected twice on ONE date must resolve to the newer batch, for every period
+   that date can answer, not just the exact one asked first. */
+test('recoveryStanding: several periods in one call still get their own correct, different figures', async () => {
+  const { recoveryStanding, standingKey } = await import('../api/_lib/snapshot-totals.js');
+  const D = (ref, arrears, date, wd, createdAt, batch) => ({ ref, full_name: 'C' + ref, team: 'T1', arrears,
+    snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: batch, created_at: createdAt });
+  const rows = [
+    // X: corrected same-day -- a morning batch (9000) superseded by an evening one (3000). The
+    // evening batch must win for EVERY period this date can answer, not just the one asked for
+    // it specifically.
+    D('X', 9000, '2026-09-16', 'WED', '2026-09-16T04:00:00Z', 'morning'),
+    D('X', 3000, '2026-09-16', 'WED', '2026-09-16T18:00:00Z', 'evening'),
+    // Y: two different uploads, ten days apart -- different periods must read different rows.
+    D('Y', 500, '2026-09-10', 'THU', '2026-09-10T04:00:00Z', 'y10'),
+    D('Y', 700, '2026-09-20', 'SUN', '2026-09-20T04:00:00Z', 'y20'),
+    // A current deck, so every period asked is "measured" (recoveryStanding reads nothing at
+    // all for a period whose end has no current deck) -- the number itself is not this test's
+    // point.
+    { ref: 'X', full_name: 'CX', team: 'T1', arrears: 100, snapshot_type: 'current', weekday: 'TUE',
+      snapshot_date: '2026-09-22', upload_batch: 'cx', created_at: '2026-09-22T18:00:00Z' },
+  ];
+  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
+  const out = await recoveryStanding(db, {
+    periods: [{ from: '2026-09-16', to: '2026-09-22' }, { from: '2026-09-15', to: '2026-09-22' }, '2026-09-22'],
+  });
+  const at = f => out.get(standingKey(f, '2026-09-22')).get('T1');
+  assert.equal(at('2026-09-15').initial, 500, 'before X exists at all -- only Y\'s first row');
+  assert.equal(at('2026-09-15').initialCustomers, 1);
+  assert.equal(at('2026-09-16').initial, 3500, 'X\'s EVENING batch (3000), never the superseded morning one (9000), plus Y\'s first row (500)');
+  assert.equal(at('2026-09-16').initialCustomers, 2);
+  assert.equal(at('2026-09-22').initial, 3700, 'X unchanged at 3000, Y moved on to its later row (700)');
+  assert.equal(at('2026-09-22').initialCustomers, 2);
+});
+
 /* the fallback: without the migration, defaulterBook must keep reading exactly as it always
    has -- the team-and-weekday grouping, unchanged, not a crash and not an empty book. */
 test('defaulterInitialRows: null when the function is not installed, same contract as recoveryStanding', async () => {
