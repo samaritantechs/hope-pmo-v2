@@ -65,6 +65,16 @@
 -- the older batch's interval ends the day it began -- valid_to = valid_from - 1 -- and it can
 -- never be anyone's answer, the same as it never reached rn = 1 under v5.
 --
+-- v6 ALSO DOUBLE-COUNTED EVERY MONDAY, AND EVERY WIDER PERIOD SHARING A START DATE WITH A
+-- NARROWER ONE. v5's row_number() ranked candidates by the from_date VALUE, so when two
+-- different periods shared that value -- a day's own tile and the week range that starts on
+-- the same day, which is every single Monday -- the ranking merged them back down to one
+-- winner without anyone intending it to. v6's plain range-join has no such step: it matched
+-- BOTH periods against the SAME customers and counted every one of them once per period
+-- sharing their date. Measured on the real book: a Monday tile that should have read about
+-- 107 million read 3.59 BILLION. Fixed by deduplicating ini_rows on from_date BEFORE the join
+-- back to p, not after -- see its own comment below.
+--
 -- v6 WAS STILL SLOW, AND THE FOLLOW-UP EXPLAIN SAID WHY. The 7-period call came down from
 -- 27.9s to 9.99s -- real, but still a "century to load" and still close enough to the role's
 -- statement_timeout to fail outright some of the time (which is worse than failing every time:
@@ -159,16 +169,28 @@ ini_intervals as materialized (
          coalesce(next_newer_date - 1, 'infinity'::date) as valid_to
   from ini_ranked
 ),
--- 5. EACH PERIOD AGAINST THOSE INTERVALS -- cheap: one row per customer per distinct date, a
---    small set next to the raw table, and nothing left to sort. The lookback still applies per
---    PERIOD (least(...) below), because a row can be "the newest so far" and still be older
---    than this particular period's own 45-day window allows.
+-- 5. EACH DISTINCT FROM_DATE AGAINST THOSE INTERVALS -- cheap: one row per customer per
+--    distinct date, a small set next to the raw table, and nothing left to sort. The lookback
+--    still applies per FROM_DATE (least(...) below), because a row can be "the newest so far"
+--    and still be older than that from_date's own 45-day window allows.
+--
+--    DISTINCT FROM_DATE, NOT p ITSELF -- a single Monday is two different periods every single
+--    week: the day's own tile (from = to = Monday) AND the week range (from = Monday, to =
+--    week's end), both carrying from_date = Monday. p keeps them as two rows (their as_of
+--    differs, and the current side genuinely needs both), but this join only ever cares about
+--    from_date -- so joining it straight to p, unmodified, matched each of those two rows
+--    against the SAME customers and counted every one of them twice. Measured on the real
+--    book: a Monday tile that should have read about 107 million read 3.59 BILLION instead,
+--    each customer's arrears added in as many times as a period happened to share their date.
+--    One DISTINCT here is the whole fix -- ini_agg's own join back to p (by from_date, the
+--    value, not the row) still gives every period, single day or range alike, its own correct
+--    total from this single deduplicated set.
 ini_rows as materialized (
-  select p.from_date, ii.team, ii.ref, ii.arrears, ii.valid_from as snapshot_date
-  from p
+  select fd.from_date, ii.team, ii.ref, ii.arrears, ii.valid_from as snapshot_date
+  from (select distinct from_date from p) fd
   join ini_intervals ii
-    on p.from_date >= ii.valid_from
-   and p.from_date <= least(ii.valid_to, ii.valid_from + p_lookback)
+    on fd.from_date >= ii.valid_from
+   and fd.from_date <= least(ii.valid_to, ii.valid_from + p_lookback)
 ),
 -- 6. the latest CURRENT deck the company holds on or before each period END (not narrowed by
 --    team: the file is the whole book, and a team missing from it owes nothing on it). No
