@@ -464,6 +464,29 @@ async function kycUploadForPlan_(db, user, { plan_id, kind, data_url }) {
   return { path };
 }
 
+/** The captured contract pages, as data URLs, in capture order -- for the WhatsApp share
+    button ("Share on WhatsApp button must go with the existing images in their order"). A
+    wa.me link cannot carry an attachment, but the browser's own share sheet can (navigator.
+    share with a files array); the sheet still needs actual bytes to hand to it, not a path
+    into a private bucket, so this hands them over the same authenticated door every other
+    read in this system uses -- no signed URL, nothing that outlives one request. Same
+    download-and-embed step finalizeContractOnApproval_ already takes per page; a page that
+    fails to download is skipped rather than failing the whole share. */
+async function contractPhotosForShare(db, user, { loan_id }) {
+  requireTab(user, 'team');
+  const loan = await mustLoan(db, loan_id);
+  const paths = Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls : [];
+  const images = [];
+  for (const path of paths) {
+    const { data, error } = await db.storage.from(KYC_BUCKET).download(path);
+    if (error || !data) continue;
+    const bytes = Buffer.from(await data.arrayBuffer());
+    const isPng = /\.png$/i.test(path);
+    images.push('data:' + (isPng ? 'image/png' : 'image/jpeg') + ';base64,' + bytes.toString('base64'));
+  }
+  return { images };
+}
+
 /** Appends one captured contract-page path to the loan's array and marks the assessment
     "contract_signed" the moment the first page lands. A read-modify-write, not an atomic
     array append -- one officer works one loan at a time here, never concurrent writers on the
@@ -1728,7 +1751,7 @@ async function mergePlanIntoLoan_(db, user, loan) {
 const FN = {
   csSearch, csRegister, csComplaint, branchList,
   managerQueue, managerAssign, managerReject,
-  teamQueue, teamAssessDetail, teamAssessmentSave, teamSubmit, kycUpload,
+  teamQueue, teamAssessDetail, teamAssessmentSave, teamSubmit, kycUpload, contractPhotosForShare,
   seniorQueue, seniorRecommend,
   creditQueue, creditApprove, creditReject, creditCallCheck,
   disburseWindowStatus, disburseQueue, managerDisburse, managerDisburseReject, managerReturnToCredit,
