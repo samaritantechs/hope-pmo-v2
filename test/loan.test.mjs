@@ -1539,6 +1539,30 @@ test('Assessment Plan: photos are captured under the plan, and the contract is r
   await assert.rejects(() => loanApi(db, OTHER, 'kycUpload', { plan_id: 'p1', kind: 'photo', data_url: png }), e => e.status === 403);
 });
 
+test('planPhotosForShare hands back every captured plan photo, in the form\'s own reading order', async () => {
+  const db = fakeDb({ assessment_plans: [{ id: 'p1', team: 'MABIBO', full_name: 'ASHA', phone: '0763357860', planned_date: soonKey_() }] });
+  const png = 'data:image/png;base64,' + Buffer.from('not-really-a-png').toString('base64');
+  const { path: photoPath } = await loanApi(db, TEAM, 'kycUpload', { plan_id: 'p1', kind: 'photo', data_url: png });
+  const { path: bizPath } = await loanApi(db, TEAM, 'kycUpload', { plan_id: 'p1', kind: 'business', data_url: png });
+  await loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'p1', section: 'personal', fields: { photo_url: photoPath } });
+  await loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'p1', section: 'business', fields: { verified: true, business_verify_photo_url: bizPath } });
+  // A guarantor named but no photo taken -- not everything drafted has a picture to share.
+  await loanApi(db, TEAM, 'assessmentPlanDraftSave', { id: 'p1', section: 'guarantor',
+    fields: { guarantors: [{ full_name: 'A GUARANTOR', phone: '0715000001', relationship: 'Sister' }] } });
+
+  const { images } = await loanApi(db, TEAM, 'planPhotosForShare', { plan_id: 'p1' });
+  assert.equal(images.length, 2, 'the personal photo and the business photo -- nothing invented for the guarantor');
+  for (const img of images) assert.ok(/^data:image\/png;base64,/.test(img), 'a real image, not just a path');
+  const OTHER = { ...TEAM, code: 'T9', teams: ['KAWE'] };
+  await assert.rejects(() => loanApi(db, OTHER, 'planPhotosForShare', { plan_id: 'p1' }), e => e.status === 403);
+});
+
+test('planPhotosForShare on a plan with nothing drafted yet comes back empty, not an error', async () => {
+  const db = fakeDb({ assessment_plans: [{ id: 'p1', team: 'MABIBO', full_name: 'ASHA', phone: '0763357860', planned_date: soonKey_() }] });
+  const { images } = await loanApi(db, TEAM, 'planPhotosForShare', { plan_id: 'p1' });
+  assert.deepEqual(images, []);
+});
+
 async function seedPlan_(db, user, { id, team, draft }) {
   await loanApi(db, user, 'assessmentPlanSave', { full_name: 'ASHA', phone: '0763357860', planned_date: soonKey_(), team });
   const row = db._dump('assessment_plans').find(r => r.team === team && !r._seeded);
