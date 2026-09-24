@@ -636,7 +636,8 @@ var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay
   csSearch:1, managerQueue:1, teamQueue:1, seniorQueue:1, creditQueue:1, disburseQueue:1,
   disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1,
   reversalsList:1, paymentsList:1, complaintsList:1, adjustments:1,
-  imprestRoles:1, imprestMine:1, imprestQueue:1, imprestReport:1, imprestPhotos:1 };
+  imprestRoles:1, imprestMine:1, imprestQueue:1, imprestReport:1, imprestPhotos:1,
+  contractPhotosForShare:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
 // the key you would work out from the state afterwards -- keep the real one, or later touches
@@ -648,7 +649,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-22-b';
+var BUILD = '2026-09-24-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -10147,17 +10148,44 @@ function lnTeamAssessForm_(loanRow, planRow){
           .then(function(){ $('#lnContractAddBtn').disabled = contractCount >= 10; });
       });
     };
-    // Text and a note only -- there is no way to attach the actual photos to a wa.me link (the
-    // same limit the existing WhatsApp demand-message button already lives with); the pages
-    // themselves are already safe in the private bucket and travel with the loan record.
+    /* "Share on WhatsApp button must go with the existing images in their order, the 1st
+       picture with the whole KYC text automatic" -- a wa.me link cannot carry an attachment
+       (the same limit the existing WhatsApp demand-message button lives with), but the
+       browser's own share sheet can: navigator.share takes a files array AND a text caption
+       in one call, and on the phones this is actually used from (Android/iOS WhatsApp), that
+       caption lands on the share as a whole -- which is where WhatsApp's own composer puts it,
+       against the first attachment. Where the device or browser cannot share files this way
+       (most desktops), it falls back to the same text-only wa.me link as before, and says so. */
     $('#lnContractWaBtn').onclick = function(){
-      var caption = 'HOPE LOAN -- Mkataba / Contract\n'
-        + 'Ref: ' + (loan.loan_id || '') + '   Docket: ' + (loan.docket_no || '') + '\n'
-        + 'Jina / Name: ' + loan.full_name + '\n'
-        + 'Kiasi / Amount: ' + money(Number($('#lnRecAmt').value) || loan.requested_amt || 0) + '\n'
-        + 'Kurasa za mkataba zilizopigwa picha / Contract pages captured: ' + contractCount + '/10';
-      window.open('https://wa.me/?text=' + encodeURIComponent(caption), '_blank');
+      var btn = $('#lnContractWaBtn');
+      var canShareFiles = !!(navigator.canShare && navigator.share);
+      if (!canShareFiles) { openWaTextOnly_(); return; }
+      btn.disabled = true;
+      srv('contractPhotosForShare', { loan_id: loan.id }).then(function(r){
+        var urls = (r && r.images) || [];
+        return Promise.all(urls.map(function(u){ return fetch(u).then(function(res){ return res.blob(); }); }));
+      }).then(function(blobs){
+        var files = blobs.map(function(b, i){
+          return new File([b], 'contract-' + (i + 1) + '.' + (b.type.indexOf('png') >= 0 ? 'png' : 'jpg'), { type: b.type });
+        });
+        var text = buildKycText_();
+        if (files.length && navigator.canShare({ files: files })) {
+          return navigator.share({ files: files, text: text, title: 'HOPE LOAN -- Mkataba / Contract' });
+        }
+        // No pages captured yet, or this browser accepts navigator.share but not files: text
+        // still goes, same as the plain wa.me path, through the one channel that is left.
+        return navigator.share({ text: text, title: 'HOPE LOAN -- Mkataba / Contract' });
+      }).catch(function(e){
+        if (e && e.name === 'AbortError') return;   // the officer closed the share sheet -- not a failure
+        toast(String((e && e.message) || e) || 'Imeshindikana kushiriki. / Could not share.', true);
+        openWaTextOnly_();
+      }).then(function(){ btn.disabled = false; }, function(){ btn.disabled = false; });
     };
+    function openWaTextOnly_(){
+      window.open('https://wa.me/?text=' + encodeURIComponent(buildKycText_()), '_blank');
+      toast('Kivinjari hiki hakiwezi kushiriki picha moja kwa moja -- maandishi tu yametumwa. / '
+        + 'This browser cannot share the photos directly -- text only was sent.');
+    }
     }
 
     var COORDS = { custRes: { lat: c.residence_lat, lng: c.residence_lng },
@@ -10269,14 +10297,13 @@ function lnTeamAssessForm_(loanRow, planRow){
       lnReasonPrompt_(function(reason){ lnAct('teamSubmit', { loan_id: loan.id, decision: 'REJECTED', reason: reason }, 'Rejected.', function(){ go('ln_team'); }); });
     };
 
-    // ---- copy KYC for WhatsApp -- text only; if a pinpoint was captured this visit it is not
-    //      yet saved server-side, so the copy reads live DOM/capture state, not the stale `c`/`g`
-    //      this drawer opened with. Maps links, not photos -- a photo needs the private bucket's
-    //      signed URL to open at all, and is not something to paste into a chat unprotected. ----
+    // ---- the KYC text -- one builder, read by the Copy button AND the WhatsApp share button
+    //      above, so the two can never say something different about the same loan. If a
+    //      pinpoint was captured this visit it is not yet saved server-side, so this reads live
+    //      DOM/capture state, not the stale `c`/`g` this drawer opened with. Maps links, not
+    //      photos -- see the share button's own note for how the photos travel instead. ----
     function mapLink_(coord){ return (coord && coord.lat != null && coord.lng != null) ? ('https://maps.google.com/?q=' + coord.lat + ',' + coord.lng) : null; }
-    function toggleCopyBtn(){ $('#lnCopyKyc').disabled = !Number($('#lnRecAmt').value); }
-    $('#lnRecAmt').oninput = toggleCopyBtn; toggleCopyBtn();
-    $('#lnCopyKyc').onclick = function(){
+    function buildKycText_(){
       var idType = $('#lnIdType').value, idNo = $('#lnIdNo').value.trim();
       var lines = [
         '*HOPE LOAN - KYC*',
@@ -10310,7 +10337,12 @@ function lnTeamAssessForm_(loanRow, planRow){
         lines.push('', '*Mahali / Locations*');
         locLines.forEach(function(x){ lines.push(x[0] + ': ' + x[1]); });
       }
-      var text = lines.join('\n');
+      return lines.join('\n');
+    }
+    function toggleCopyBtn(){ $('#lnCopyKyc').disabled = !Number($('#lnRecAmt').value); }
+    $('#lnRecAmt').oninput = toggleCopyBtn; toggleCopyBtn();
+    $('#lnCopyKyc').onclick = function(){
+      var text = buildKycText_();
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(function(){ toast('Imenakiliwa. / Copied.'); })
           .catch(function(){ toast('Imeshindikana kunakili. / Could not copy.', true); });

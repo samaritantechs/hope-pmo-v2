@@ -764,8 +764,14 @@ test('the recommendation stage offers a 10-page contract capture and a WhatsApp 
     'each captured page uploads with kind contract');
   const waStart = app.indexOf("$('#lnContractWaBtn').onclick");
   const waWire = app.slice(waStart, app.indexOf("$('#lnSavePersonal').onclick", waStart));
-  assert.ok(/wa\.me\/\?text=/.test(waWire), 'the share button opens a wa.me link');
-  assert.ok(/window\.open\(/.test(waWire), 'it actually opens the link (window.open, now safe -- see onCreateWindow)');
+  // "Share on WhatsApp button must go with the existing images in their order, the 1st
+  // picture with the whole KYC text automatic" -- the button hands the captured pages, in
+  // capture order, and the KYC caption to the browser's own share sheet.
+  assert.ok(/contractPhotosForShare/.test(waWire), 'it asks the server for the captured pages, in order');
+  assert.ok(/navigator\.share\(/.test(waWire), 'and shares them (with the images) through the share sheet');
+  assert.ok(/buildKycText_\(\)/.test(waWire), 'the whole KYC text rides as the share\'s caption');
+  assert.ok(/wa\.me\/\?text=/.test(waWire), 'a browser that cannot share files at all still gets the text-only fallback');
+  assert.ok(/window\.open\(/.test(waWire), 'the fallback actually opens the link (window.open, now safe -- see onCreateWindow)');
 });
 
 /* "horizontal (not vertical) assessment stage switcher with business as 2nd stage" and

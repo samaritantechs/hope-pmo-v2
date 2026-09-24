@@ -1247,6 +1247,28 @@ test('contract photos accumulate on the loan and are capped at ten; the first on
     /Already at 10/);
 });
 
+test('contractPhotosForShare hands back the captured pages as data URLs, in capture order', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+  await new Promise(r => setTimeout(r, 2));
+  await loanApi(db, TEAM, 'kycUpload', { loan_id: loanId, kind: 'contract', data_url: TINY_PNG });
+  const loan = (await db.from('loans').select('*').eq('id', loanId)).data[0];
+  assert.equal(loan.contract_photo_urls.length, 2);
+
+  const { images } = await loanApi(db, TEAM, 'contractPhotosForShare', { loan_id: loanId });
+  assert.equal(images.length, 2, 'one data URL per captured page');
+  for (const img of images) assert.ok(/^data:image\/png;base64,/.test(img), 'a real image, not just a path');
+  await assert.rejects(() => loanApi(db, CS, 'contractPhotosForShare', { loan_id: loanId }), /"team"/i);
+});
+
+test('contractPhotosForShare on a loan with no contract pages yet comes back empty, not an error', async () => {
+  const db = fakeDb({});
+  const { loanId } = await registerAssignAssess(db, 300000);
+  const { images } = await loanApi(db, TEAM, 'contractPhotosForShare', { loan_id: loanId });
+  assert.deepEqual(images, []);
+});
+
 test('an unapproved loan\'s contract photos are purged once they are more than three days old', async () => {
   const db = fakeDb({});
   const { loanId } = await registerAssignAssess(db, 300000);
