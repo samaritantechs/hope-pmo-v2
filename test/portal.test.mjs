@@ -665,24 +665,24 @@ test('the month record is the weeks worked out one by one and added, with a colu
   assert.deepEqual(m.weeks[0], { key: 'W1', from: '2026-07-01', to: '2026-07-05' }, 'the first week is clipped to the month');
   assert.deepEqual(m.weeks[3], { key: 'W4', from: MON, to: TODAY }, 'the live week ends today');
   const juma = m.recBoard.find(r => r.officer === 'JUMA G');
-  /* W3's own PERIOD is (Monday the 13th, its end): 100% (120,000). W4's own PERIOD is
-     (Monday the 20th, today): under v8 BOTH sides read the single whole-company latest deck of
-     their date, no per-customer reach-back. Monday the 20th already carries its OWN initial
-     file (111/555 at 1,200 for this team) -- that file supersedes 711's older 13th upload
-     entirely, the same trade the current side always made: a team's (or here, a customer's)
-     own file not landing on the picked date means nothing stands for them on it, not that an
-     older row keeps counting. W4's initial is the shared book's 1,200 alone; 711 does not
-     enter it. Today's current file is 900 (111/555 only -- 711's own current is the 17th's,
-     off today's file, but with no initial share to subtract from either, that is moot). W4 is
-     therefore 1,200 less 900, 300 recovered -- below the top band this time. The month is
-     still the two weeks' own periods added, never the month scored once. */
-  assert.equal(juma.pctW3, 100); assert.equal(juma.recW3, 1000); assert.equal(juma.tzsW3, 120000);
-  assert.equal(juma.pctW4, 21.4); assert.equal(juma.recW4, 300); assert.equal(juma.tzsW4, 20000);
+  /* A week's own recovered is its own days added (sumRangeStand_): "a weektotal is just sum
+     from sums of each day for defaults ... defaulters reappear so its weekly summary is a
+     different [treatment]" -- unlike Expected, where a customer is read once per due date, a
+     defaulter is read again on every day their deck is asked for, on purpose, and each of
+     those days' own grand total counts. W3: 711's deck stands unchanged from the 17th through
+     the 19th (no fresher upload lands), so the SAME 1,000 reads on Fri, Sat and Sun alike --
+     three days, 3,000 added, comfortably past the top band even at 300%. W4: Monday through
+     Thursday all read the shared book's Monday deck (1,200) against 711's own 17th current
+     (1,000, the latest on or before those days) -- 200 a day, four days, 800; today (Friday)
+     the shared book's own fresh initial AND current both land (1,200 and 900) -- 300 more. W4
+     is therefore 800 + 300, 1,100. */
+  assert.equal(juma.pctW3, 300); assert.equal(juma.recW3, 3000); assert.equal(juma.tzsW3, 120000);
+  assert.equal(juma.pctW4, 78.6); assert.equal(juma.recW4, 1100); assert.equal(juma.tzsW4, 50000);
   assert.equal(juma.tzsW1, 0); assert.equal(juma.pctW1, null, 'a week with nothing in it is not a zero per cent');
-  assert.equal(juma.weekRecovered, 1300);
-  assert.equal(juma.weekCommission, 140000, 'the month pays what its weeks paid');
-  assert.equal(juma.weekPct, 54.2, '1,300 over the month\'s 2,400 uncollected');
-  assert.equal(m.totals.split.recWeek, 140000);
+  assert.equal(juma.weekRecovered, 4100);
+  assert.equal(juma.weekCommission, 170000, 'the month pays what its weeks paid');
+  assert.equal(juma.weekPct, 170.8, '4,100 over the month\'s 2,400 uncollected');
+  assert.equal(m.totals.split.recWeek, 230000, 'the company total, MBAGALA\'s own share included');
   assert.equal(m.recoveryRule, 'latest');
   assert.equal(juma.records.length, 4, 'one record per week of the month');
   assert.equal(juma.records[2].key, 'W3'); assert.equal(juma.records[2].weekly, true);
@@ -706,16 +706,18 @@ test('the commission screen opens any week, and the month record any month', asy
   assert.equal(w.asOfDate, '2026-07-17', 'a finished week is read as of its Friday');
   const juma = w.recBoard.find(r => r.officer === 'JUMA G');
   assert.equal(juma.pctIJ, 100); assert.equal(juma.tzsIJ, 60000);
-  assert.equal(juma.pctWK, 100); assert.equal(juma.weekCommission, 120000);
+  // The week is its own days added (sumRangeStand_): 711's deck stands unchanged Fri-Sun, so
+  // the same 1,000 reads three times over -- 3,000, still the top band. See the month record
+  // test's own note (this is the same W3 as there).
+  assert.equal(juma.pctWK, 300); assert.equal(juma.weekCommission, 120000);
   assert.equal(juma.commission, 60000, 'the live record of a finished week is its Friday\'s');
   assert.equal(w.recDiag.days.length, 7, 'a finished week is walked to its Sunday, not its Friday');
   // This week, asked for by its Monday, is the ordinary screen.
   const now = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: MON }, NOW);
   assert.equal(now.pastWeek, false); assert.equal(now.to, addDaysT_(MON, 6));
-  // The live week's own period (Monday the 20th through today): the shared book's own Monday
-  // deck supersedes 711's older 13th upload entirely, so 711 does not enter this period at all.
-  // See the month record test's own note for the full figure (this is the same W4 as there).
-  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 20000);
+  // The live week's own period (Monday the 20th through today), its own days added. See the
+  // month record test's own note for the full figure (this is the same W4 as there).
+  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 50000);
   // Last month: the whole of June, five weeks, nothing in it.
   const jun = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month', month: '2026-06' }, NOW);
   assert.equal(jun.from, '2026-06-01'); assert.equal(jun.to, '2026-06-30'); assert.equal(jun.month, '2026-06');
@@ -732,9 +734,10 @@ const addDaysT_ = (k, n) => { const d = new Date(k + 'T00:00:00Z'); d.setUTCDate
 
 /* "weekly dashboard .... has 70m recovered ... yet commisions have 53m"
    The 17m gap was Saturday and Sunday: a finished week's recovery walk stopped at the Friday
-   `today` is pinned to. Under the one rule a finished week's figure is the STANDING AT ITS
-   SUNDAY -- the latest initial decks minus the latest current deck as of then -- on the
-   commission board and on the dashboard's weekly tile alike. */
+   `today` is pinned to. A finished week is walked all the way to its Sunday, on the commission
+   board and the dashboard's weekly tile alike -- and under "a weektotal is just sum from sums
+   of each day for defaults" (sumRangeStand_) each of those weekend days' own grand total is
+   added in, same as any other day of the week. */
 test('a finished week\'s commission carries its weekend recovery, the same as the dashboard', async () => {
   const t = tables();
   // This test builds its own single-customer story, so it strips the shared book's WED-tagged
@@ -742,9 +745,9 @@ test('a finished week\'s commission carries its weekend recovery, the same as th
   t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.snapshot_date === MONTH1 && r.snapshot_type === 'initial'));
   // 711's baseline is dated the week's own Monday (a period reads the initial deck as of the
   // period's start, see the month test's own note); the current deck then keeps dropping
-  // through the weekend -- Friday 2,000, Saturday 1,500, Sunday 1,200 -- so Friday's own DAY
-  // figure (1,000) and the WEEK's own figure (1,800, reading all the way to Sunday) are two
-  // different, real numbers off the very same customer.
+  // through the weekend -- Friday 2,000, Saturday 1,500, Sunday 1,200 -- so each of those three
+  // days reads its OWN grand total off the same customer's shrinking balance, and the week
+  // adds all three: 1,000 + 1,500 + 1,800, 4,300.
   t.defaulter_snapshots.push(
     D('711', 'KONGOWE', 3000, 'initial', 45, '2026-07-13', 'MON'),
     D('711', 'KONGOWE', 2000, 'current', 45, '2026-07-17', 'FRI'),
@@ -755,19 +758,19 @@ test('a finished week\'s commission carries its weekend recovery, the same as th
   assert.equal(w.pastWeek, true);
   const juma = w.recBoard.find(r => r.officer === 'JUMA G');
   assert.equal(juma.recIJ, 1000, 'Friday\'s own record is the standing at Friday');
-  assert.equal(juma.weekRecovered, 1800, 'the week is the standing at Sunday: 3,400 on the decks less 1,600 still owed');
-  assert.equal(juma.recWK, 1800, 'and the WK record carries the same figure');
-  assert.equal(w.week.find(r => r.officer === 'JUMA G').recovered, 1800, 'so does the Orodha\'s week row');
+  assert.equal(juma.weekRecovered, 4300, 'the week is Friday, Saturday and Sunday\'s own grand totals added: 1,000 + 1,500 + 1,800');
+  assert.equal(juma.recWK, 4300, 'and the WK record carries the same figure');
+  assert.equal(w.week.find(r => r.officer === 'JUMA G').recovered, 4300, 'so does the Orodha\'s week row');
   assert.equal(w.totals.recovered, 1000, 'the day total stays the live day\'s (Friday) -- it was never the week');
   assert.equal(w.recDiag.measured, 3, 'three days had a current deck to stand against');
   assert.equal(w.recDiag.days.length, 7);
-  // The dashboard's weekly tile for the same week is the same standing at the same Sunday.
+  // The dashboard's weekly tile for the same week adds the same three days' own grand totals.
   const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', { weekOf: '2026-07-15' }, NOW);
   assert.deepEqual(dash.recTrend.slice(4).map(x => x.recovered), [1000, 1500, 1800], 'Friday, Saturday, Sunday as they stood');
-  assert.equal(dash.recTrendTotal.recovered, 1800, 'commission and dashboard are one figure for the week');
+  assert.equal(dash.recTrendTotal.recovered, 4300, 'commission and dashboard are one figure for the week');
   // And the weekly report reads the finished week to the same Sunday.
   const wk = await portalApi(dbWithRpc(t), ADMIN, 'weekly', { weekOf: '2026-07-15' }, NOW);
-  assert.equal(wk.teams.find(r => r.team === 'KONGOWE').recovered, 1800);
+  assert.equal(wk.teams.find(r => r.team === 'KONGOWE').recovered, 4300);
 });
 
 /* =====================================================================================
@@ -838,11 +841,10 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
        is now the latest one that exists, and it does not name K1 at all -- so K1 reads as
        cleared, recovered in full: 900 (K1) + 100 (M1) = 1,000. Friday: K1 REAPPEARS on
        Friday's own current file at 300, so K1's own recovery drops back to 900-300=600, and
-       M1's to 400-100=300 -- the week's own total is the standing at ITS end (Friday), not the
-       days added, and a customer coming back onto the current book is exactly why it can read
-       lower than an earlier day's. */
+       M1's to 400-100=300. The week's own total is these five days' own grand totals added
+       (sumRangeStand_): 300+700+1,000+1,000+900, 3,900. */
     assert.deepEqual(WEEK.map(d => tile(d).recovered), [300, 700, 1000, 1000, 900], world);
-    assert.equal(dash.recTrendTotal.recovered, 1100, `${world}: the week is the standing at its end, not the days added`);
+    assert.equal(dash.recTrendTotal.recovered, 3900, `${world}: the week is its own days added`);
     assert.equal(cm.totals.recovered, tile(TODAY).recovered, `${world}: today's total is today's tile`);
     const juma = cm.recBoard.find(r => r.officer === 'JUMA G');
     assert.deepEqual(juma.records.slice(0, 5).map(r => r.recovered), [300, 300, 900, 900, 600], world);
@@ -3024,15 +3026,18 @@ test('a negative Iliyonasia reduces what was received, and an unattributed one i
     /* NO TEAM. It cannot be attributed to one, and inventing an attribution would make the
        team rows stop adding up to the total -- a discrepancy nobody could account for. */
     { id: 'a2', adj_date: MON, target: 'expected-current', team: null, amount: 99000 },
-    /* THE SAME AMOUNT ON BOTH ARREARS BOOKS CANCELS, and it is worth one line of a test that
-       it cancels for the RIGHT reason. Each is added to the deck it names, recovery is initial
-       minus current, so +50,000 on each moves both ends of the subtraction by the same amount
-       and the difference is untouched. Not because the rows are inert -- see the direction
-       test, where each one alone moves recovery, in opposite directions. */
-    // The current cell is dated the week's own current deck (Friday); the initial cell is
-    // dated the week's own initial deck (Monday) -- the two dates a week PERIOD actually reads.
+    /* THE SAME AMOUNT ON BOTH ARREARS BOOKS, THE SAME DAY, CANCELS, and it is worth one line
+       of a test that it cancels for the RIGHT reason. Recovery is initial minus current, so
+       +50,000 on each moves both ends of ONE day's own subtraction by the same amount and that
+       day's own difference is untouched. Not because the rows are inert -- see the direction
+       test, where each one alone moves recovery, in opposite directions. A week's own total is
+       its days added (sumRangeStand_) now, not one boundary pair, so BOTH cells have to land
+       on the SAME day's own initial and current to cancel -- one dated Monday and the other
+       Friday would each move a DIFFERENT day's own reading instead of offsetting one.
+       KONGOWE's own initial happens to land fresh today too (the shared book's own daily
+       upload), so today is where both cells are dated. */
     { id: 'a3', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 50000 },
-    { id: 'a4', adj_date: MON, target: 'defaulter-initial', team: 'KONGOWE', amount: 50000 },
+    { id: 'a4', adj_date: TODAY, target: 'defaulter-initial', team: 'KONGOWE', amount: 50000 },
   ];
   const plain = await portalApi(dbWithRpc(tables()), ADMIN, 'weekly', {}, NOW);
   const d = await portalApi(dbWithRpc(t), ADMIN, 'weekly', {}, NOW);
@@ -3273,10 +3278,14 @@ test('the month ledger moves recovery the same way every other screen does', asy
   assert.equal(await run_({ id: 'm2', adj_date: TODAY, target: 'defaulter-current',
     team: 'KONGOWE', amount: 500 }), was - 500,
     'and money onto it must lower it');
-  assert.equal(await run_({ id: 'm3', adj_date: MONTH1, target: 'defaulter-initial',
+  // The month's own total is its days added (sumRangeStand_) now, not one boundary pair from
+  // the 1st to today, so the cell has to land on a day that is actually PART of that sum to
+  // move it -- KONGOWE's own initial happens to land fresh today too (the shared book's own
+  // daily upload), and today is measured (it has a current deck to stand against); the 1st is
+  // not (no current deck exists that early), so a cell dated there moves nothing.
+  assert.equal(await run_({ id: 'm3', adj_date: TODAY, target: 'defaulter-initial',
     team: 'KONGOWE', amount: 500 }), was + 500,
-    'the morning deck pulls the other way -- recovery is initial minus current, dated the ' +
-    'month\'s own 1st, the deck the month period actually reads');
+    'the morning deck pulls the other way -- recovery is initial minus current');
   /* AND PAST ZERO, unclamped, for the reason in withAdjDef_: a floor here would be the ledger
      quietly applying less than was typed, which is the fault that started all of this. */
   assert.equal(await run_({ id: 'm4', adj_date: TODAY, target: 'defaulter-current',

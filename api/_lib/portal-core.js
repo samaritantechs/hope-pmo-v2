@@ -2451,7 +2451,7 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
   // week, and the dashboard's weekly tile reads the same day (see recTrendTotal).
   const wkEnd = addDaysKey(mon, 6) < today0 ? addDaysKey(mon, 6) : today0;
   const stand = await recoveryStandingFor_(db, user,
-    [0, 1, 2, 3, 4].map(i => addDaysKey(mon, i)).filter(d => d <= today0), nowMs, adj, [[mon, wkEnd]]);
+    [0, 1, 2, 3, 4, 5, 6].map(i => addDaysKey(mon, i)).filter(d => d <= today0), nowMs, adj);
   const days = [];
   for (let i = 0; i < 5; i++) {
     const date = addDaysKey(mon, i);
@@ -2537,10 +2537,10 @@ async function weeklyCompute_(db, user, { weekOf }, nowMs) {
     for (const r of cur) { const b = gt(r.team); b.recovered -= num(r.arrears_amt); if (isToday) b.recToday -= num(r.arrears_amt); }
   }
   if (stand) {
-    /* The week per team is the PERIOD (Monday's morning deck, the week-end evening deck);
-       "leo" is today's own single-day period -- the one rule, the same figures the dashboard's
-       card and weekly tile show. */
-    for (const e of (rangeStand_(stand, mon, wkEnd) || new Map()).values()) gt(e.team).recovered = e.recovered;
+    /* The week per team is each of its own days added (sumRangeStand_ -- see its own note);
+       "leo" is today's own single-day period -- the same figures the dashboard's card and
+       weekly tile show. */
+    for (const e of (sumRangeStand_(stand, mon, wkEnd) || new Map()).values()) gt(e.team).recovered = e.recovered;
     if (today0 >= mon && today0 <= fri) for (const e of (dayStand_(stand, today0) || new Map()).values()) gt(e.team).recToday = e.recovered;
   }
   const myMonIni = scoped(user, monIni.rows), myEndCur = scoped(user, endCur.rows);
@@ -3366,10 +3366,9 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const weekEndOf_ = w => (w.to < standEnd ? w.to : standEnd);
   const standDays = [];
   for (let i = 0; ; i++) { const d = addDaysKey(mon, i); if (d > standEnd) break; standDays.push(d); }
-  // Each week's own PERIOD: its own start (clipped into the range, same as its other figures)
-  // through its own end -- never the whole range scored as one long week.
-  const standRanges = weeks.map(w => [w.from, weekEndOf_(w)]);
-  const stand = await recoveryStandingFor_(db, user, standDays, nowMs, adj, standRanges);
+  // Every day of the range, so each week's own figure can be summed from its own days -- see
+  // sumRangeStand_'s own note.
+  const stand = await recoveryStandingFor_(db, user, standDays, nowMs, adj);
   /* THE WALK RUNS TO THE END OF A FINISHED WEEK, NOT TO ITS FRIDAY.
 
        "weekly dashboard .... has 70m recovered ... yet commisions have 53m"
@@ -3480,9 +3479,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         const weekdays = w.days5.map(d => ({ date: d, recovered: cell(d).recovered, base: uncolOn(d) }));
         let recovered = 0, base = 0;
         if (stand) {
-          // The week's figure is the PERIOD (its own start through its own end), not its days
-          // added -- see recTrendTotal.
-          const m = rangeStand_(stand, w.from, weekEndOf_(w));
+          // The week's figure is each of its own days added -- see sumRangeStand_'s own note.
+          const m = sumRangeStand_(stand, w.from, weekEndOf_(w));
           if (m) for (const t of m.values()) if (officerOf(teamBy, t.team, 'recovery') === name) recovered += t.recovered;
         } else for (const [d, src] of recByDay) if (d >= w.from && d <= w.to && src[name]) recovered += src[name].recovered;
         for (const d of w.days5) base += uncolOn(d);
@@ -8635,18 +8633,12 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
        same walk, so a month's Col % is one figure in both places or it is a bug. */
     adjReceived_(db, user, { from: monthStart, to: today }),
   ]);
-  /* RECOVERY UNDER THE ONE RULE: each week's own PERIOD (its own start through its own end,
-     the same clipping the row loop below uses), and the month's own (its 1st through today).
-     Worked out here, before the row loop, so the standing is one read. */
-  const weekRanges_ = [];
-  for (let f = monthStart; f <= monthEnd; ) {
-    const sun = addDaysKey(weekMondayKey(Date.parse(f + 'T12:00:00Z')), 6);
-    const to = sun < monthEnd ? sun : monthEnd;
-    if (f <= today) weekRanges_.push([f, to <= today ? to : today]);
-    f = addDaysKey(to, 1);
-  }
-  const stand = await recoveryStandingFor_(db, user, [], realNowMs == null ? asOf.ms : realNowMs, adj,
-    [[monthStart, today], ...weekRanges_]);
+  /* RECOVERY UNDER THE ONE RULE: every day from the 1st through today, so each week's own
+     figure (and the month's own) can be summed from its own days -- see sumRangeStand_'s own
+     note. Worked out here, before the row loop, so the standing is one read. */
+  const monthDays_ = [];
+  for (let d = monthStart; d <= today; d = addDaysKey(d, 1)) monthDays_.push(d);
+  const stand = await recoveryStandingFor_(db, user, monthDays_, realNowMs == null ? asOf.ms : realNowMs, adj);
   const sales = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
   const appRows = scoped(user, appsRaw).filter(l => {
     const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
@@ -8721,8 +8713,8 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
       return d >= from && d <= done;
     });
     const s = (days && started) ? ledgerSum_(days, user, from, done, adj) : null;
-    // The week's recovered under the one rule: the PERIOD from this week's own start to its own end.
-    if (s && stand) s.recR = standingSum(rangeStand_(stand, from, done)).recovered;
+    // The week's recovered under the one rule: each of its own days, added -- see sumRangeStand_.
+    if (s && stand) s.recR = standingSum(sumRangeStand_(stand, from, done)).recovered;
     const salesAmt = started ? wk.reduce((t, l) => t + amtOf(l), 0) : null;
     // A week's sales are judged against a quarter of the month's target.
     const salesPct = started ? pct(salesAmt, monthTarget / 4) : null;
@@ -8756,7 +8748,7 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
   }
 
   const total = days ? ledgerSum_(days, user, monthStart, today, adj) : null;
-  if (total && stand) total.recR = standingSum(rangeStand_(stand, monthStart, today)).recovered;
+  if (total && stand) total.recR = standingSum(sumRangeStand_(stand, monthStart, today)).recovered;
   const salesTotal = sales.reduce((t, l) => t + amtOf(l), 0);
   const totSalesPct = pct(salesTotal, monthTarget);
   const totColPct = total ? pct(total.colC, total.colE) : null;
@@ -8870,7 +8862,8 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
         if (!teamAllowed(user, T)) continue;
         const m = wk[T], s = reach(T);
         s.collection[w.key] = pct(m.c, m.e);
-        const stT = stand ? ((rangeStand_(stand, w.from, done) || new Map()).get(T) || null) : null;
+        // Each of this week's own days, summed -- see sumRangeStand_'s own note.
+        const stT = stand ? ((sumRangeStand_(stand, w.from, done) || new Map()).get(T) || null) : null;
         s.recovery[w.key] = stand ? (stT ? pct(stT.recovered, m.u) : null) : (m.pairedDays > 0 ? pct(m.rec, m.u) : null);
       }
     }
@@ -8963,7 +8956,43 @@ async function recoveryStandingFor_(db, user, days, nowMs, adj = null, ranges = 
 }
 /** Look up a standing by day (from = to = d) or by [from, to]. */
 const dayStand_ = (stand, d) => (stand ? stand.get(standingKey(d, d)) || null : null);
+/** A single boundary's own snapshot -- the deck standing AT that one [from, to] pair, unmixed
+    with any other date. Still right for a display that wants one deck's own reading (a team's
+    baseline as of Monday, say) -- never for "recovered" over a period, see sumRangeStand_. */
 const rangeStand_ = (stand, from, to) => (stand ? stand.get(standingKey(from, to)) || null : null);
+/* =====================================================================================
+   A WEEK'S (OR MONTH'S) RECOVERED IS THE SUM OF ITS OWN DAYS' GRAND TOTALS.
+
+     "Totals are totals as each day is standing alone even week is stand alone of grand
+      totals not customers." / "a weektotal is just sum from sums of each day for defaults,
+      unlike expected could have weekly with customers b/se it's customers don't repeat. But
+      defaulters reappear so it's weekly summary is a different stall treatment"
+
+   Expected has one row per customer per due date -- a customer does not repeat inside a week,
+   so a week's figure there can afford to be customer-matched. A defaulter reappears on every
+   day's deck until they clear, so the SAME customer's SAME day is read again and again on
+   purpose -- that repetition is not a bug to engineer around, it is the whole shape of this
+   book, and the grand total treats every day precisely alike: read that day's own initial
+   against that day's own current, whole, and add it to whichever other days are being asked
+   for. Never a single boundary pair (Monday's deck less Friday's) -- that blames a week's
+   worth of newly-flagged defaulters on a baseline that was never asked to carry them, which is
+   the -59m the owner rejected. Never a lookback, and never per-customer matching either --
+   grand totals, the same one rule applied to a day and to a week alike. */
+function sumRangeStand_(stand, from, to) {
+  if (!stand) return null;
+  const out = new Map();
+  for (let d = from; d <= to; d = addDaysKey(d, 1)) {
+    const day = dayStand_(stand, d);
+    if (!day) continue;
+    for (const [k, e] of day) {
+      const acc = out.get(k) || out.set(k, { team: e.team, initial: 0, current: 0, recovered: 0,
+        initialCustomers: 0, currentCustomers: 0, cleared: 0 }).get(k);
+      acc.initial += e.initial; acc.current += e.current; acc.recovered += e.recovered;
+      acc.initialCustomers += e.initialCustomers; acc.currentCustomers += e.currentCustomers; acc.cleared += e.cleared;
+    }
+  }
+  return out;
+}
 /** Pseudo deck rows from a standing, for the readers that still fold rows by team. */
 function standingRows_(perTeam, side) {
   return [...(perTeam ? perTeam.values() : [])].map(e => ({ team: e.team,
@@ -9375,9 +9404,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      and Orodha, the week's total, and last week's end for the arrows. One call, cached per
      scope. Null = RUN-ME-032 not run; everything below then keeps its day pairing. */
   const weekEnd = sun < realToday ? sun : realToday;
+  // This week's days AND last week's -- both get summed for a period figure now (sumRangeStand_),
+  // never read as one boundary pair, so both weeks' own days have to be in hand.
   const stand = await recoveryStandingFor_(db, user,
-    WD7.map((_, i) => addDaysKey(mon, i)).filter(d => d <= realToday), nowMs, adj,
-    [[mon, weekEnd], [prevMon, prevSun]]);
+    [...WD7.map((_, i) => addDaysKey(mon, i)), ...WD7.map((_, i) => addDaysKey(prevMon, i))]
+      .filter(d => d <= realToday), nowMs, adj);
   const standToday = dayStand_(stand, today);
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
@@ -9552,10 +9583,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      uncollected is Monday to Friday's OWN sheets, once each -- the weekend branch of the same
      rule -- which is not what adding the seven tiles' denominators would give. */
   const recTrendTotal = (() => {
-    /* Under the one rule the week's figure is the standing over its own PERIOD -- Monday's
-       morning deck less the week-end evening deck -- not seven days added: a customer's
-       recovery stands once, however many days it is looked at. */
-    const recovered = stand ? standingSum(rangeStand_(stand, mon, weekEnd)).recovered : recTrend.reduce((s, x) => s + x.recovered, 0);
+    // The week's figure IS the seven tiles added -- see sumRangeStand_'s own note.
+    const recovered = stand ? standingSum(sumRangeStand_(stand, mon, weekEnd)).recovered : recTrend.reduce((s, x) => s + x.recovered, 0);
     const uncollected = recTrend.slice(0, 5).reduce((s, x) => s + x.dayUncollected, 0);
     const adjusted = recTrend.slice(0, 5).reduce((s, x) => s + (x.dayAdjusted || 0), 0);
     return { recovered, uncollected, adjusted, unrecovered: Math.max(0, uncollected - recovered),
@@ -9590,10 +9619,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     }
     let measured = false;
     if (stand) {
-      // The standing over the PERIOD from this week's own Monday to its end (or today, inside
-      // a live week) -- the one rule.
+      // Each of this week's own days, summed (or today, inside a live week) -- see
+      // sumRangeStand_'s own note.
       const end = to < realToday ? to : realToday;
-      const m = rangeStand_(stand, from, end);
+      const m = sumRangeStand_(stand, from, end);
       if (m && m.size) { measured = true; rec = standingSum(m).recovered; }
     } else for (let i = 0; i < 7; i++) {
       // The same function the trend tiles and the commission board read -- see recTrend.
@@ -10654,9 +10683,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   // Week: each day's own (initial - current) summed per officer, exactly like the trend row.
   const dailyRec = {};
   if (stand) {
-    // The week per officer is the standing over the PERIOD (Monday through the week's end) --
-    // not the days added.
-    for (const t of (rangeStand_(stand, mon, obEnd) || new Map()).values()) {
+    // The week per officer is each of its own days added -- see sumRangeStand_'s own note.
+    for (const t of (sumRangeStand_(stand, mon, obEnd) || new Map()).values()) {
       const who = officerOf(teamBy, t.team, 'recovery');
       dailyRec[who] = (dailyRec[who] || 0) + t.recovered;
     }
