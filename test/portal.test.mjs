@@ -9320,6 +9320,43 @@ test('two registrations under one name: the leader\'s, then the newest', async (
     'the leader registration wins even though the officer one is newer');
 });
 
+/* =====================================================================================
+   THE TEAMS TABLE NAMES A PORTFOLIO OFFICER, NOT JUST A ROW OFFICER.
+   =====================================================================================
+   "colection and legal officers aint being seen in the teams and staff table" -- Collection
+   and Legal officers' teams live on their OWN access code (a code can cover many teams), never
+   typed into each team row -- so a reader of the row alone never learns who they are, even
+   though the Staff list (staffRoster, same source) already knew.
+*/
+test('the teams table names the Collection and Legal officer from their access-code portfolio', async () => {
+  const book = tables();
+  book.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  book.access_codes.push({ code: 'L', name: 'ESTHER', role: 'LEGAL', teams: ['KONGOWE'], tabs: [] });
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  const kongowe = d.rows.find(r => r.team === 'KONGOWE');
+  assert.equal(kongowe.collection, 'CATHERINE', 'her portfolio covers KONGOWE, even though no row ever typed her name');
+  assert.equal(kongowe.legal, 'ESTHER');
+  const mbagala = d.rows.find(r => r.team === 'MBAGALA');
+  assert.ok(!mbagala.collection, 'her portfolio does not cover MBAGALA');
+  assert.ok(!mbagala.legal);
+});
+
+test('a name already typed on the row wins over the portfolio', async () => {
+  const book = tables();
+  book.teams.find(x => x.team === 'KONGOWE').collection = 'TYPED IN BY HAND';
+  book.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').collection, 'TYPED IN BY HAND',
+    'the row already had an answer -- the portfolio only fills what is blank');
+});
+
+test('a portfolio code with no teams names nobody, same as staffRoster', async () => {
+  const book = tables();
+  book.access_codes.push({ code: 'P', name: 'SEES ALL', role: 'PMO COLLECTION', teams: [], tabs: [] });
+  const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
+  assert.ok(!d.rows.find(r => r.team === 'KONGOWE').collection);
+});
+
 test('the staff roster carries each person\'s number and says where it came from', async () => {
   const book = tables();
   book.teams.find(x => x.team === 'KONGOWE').credit_no = '0755000111';

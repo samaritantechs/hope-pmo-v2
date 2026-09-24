@@ -5049,16 +5049,48 @@ function overlayPhones(t, book) {
   return out;
 }
 
+/** Which access-code-portfolio officer, if any, covers each team -- collection and legal
+    officers' teams live on their code (see staffRoster's own note), not typed per team, so a
+    reader of the raw teams table alone never learns who they are. First code found wins on an
+    overlapping portfolio (two people accidentally holding the same team); that is the one
+    shape this does not resolve, and it is rare enough not to be worth a second rule for. */
+function portfolioByTeam_(codeRows, roleMatches) {
+  const byTeam = new Map();
+  for (const c of codeRows) {
+    if (!roleMatches(c.role)) continue;
+    if (!c.teams || !c.teams.length) continue;
+    for (const t of upperTeams(c.teams)) if (!byTeam.has(t)) byTeam.set(t, { name: c.name || c.code, code: c.code });
+  }
+  return byTeam;
+}
 async function teams(db, user) {
-  const [rows, roleRows, book] = await Promise.all([
+  const [rows, roleRows, book, codeRows, cfg] = await Promise.all([
     fetchAll(() => db.from('teams').select('*').order('team', { ascending: true })),
     fetchAll(() => db.from('roles').select('*').order('role', { ascending: true })),
     appPhoneBook(db),
+    fetchAll(() => db.from('access_codes').select('code, name, role, teams')),
+    settingsMany(db, [PMO_ROLE_KEY, LEGAL_ROLE_KEY]),
   ]);
   // Roles live beside the teams because they answer the same question -- who does what -- and
   // a role's tab list was previously readable but not editable from anywhere in the UI, so
   // onboarding a new kind of officer meant a trip to the SQL editor.
-  let mine = rows.filter(r => teamAllowed(user, r.team)).map(r => overlayPhones(r, book));
+  const collByTeam = portfolioByTeam_(codeRows, r => isPmoRole(r, cfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT)));
+  const legalByTeam = portfolioByTeam_(codeRows, r => isLegalRole(r, cfg.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT)));
+  /* "colection and legal officers aint being seen in the teams and staff table" -- the STAFF
+     list (staffRoster, below) already reads these two off their access codes, but the main
+     TEAMS table read the raw row alone, where their name was never typed -- nobody has to type
+     it, that is the whole point of a portfolio living on the code instead of on every team it
+     covers. Filled in here, before phones, the same source staffRoster reads, so the two
+     screens can never name a different collection or legal officer for the same team. A name
+     already typed on the row still wins -- this only fills what the row itself leaves blank. */
+  const withPortfolio_ = r => {
+    const T = String(r.team || '').trim().toUpperCase();
+    const patch = {};
+    if (!r.collection) { const hit = collByTeam.get(T); if (hit) patch.collection = hit.name; }
+    if (!r.legal) { const hit = legalByTeam.get(T); if (hit) patch.legal = hit.name; }
+    return Object.keys(patch).length ? { ...r, ...patch } : r;
+  };
+  let mine = rows.filter(r => teamAllowed(user, r.team)).map(r => overlayPhones(withPortfolio_(r), book));
   // The team code is what field officers sign in with. Same rule as access codes: a read-only
   // supervisor sees that a team HAS a code, never what it is.
   if (user.readOnly) mine = mine.map(r => (r.team_code ? { ...r, team_code: '••••' } : r));
