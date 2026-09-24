@@ -27,20 +27,34 @@ const NULMARK = String.fromCharCode(0);
 const SEPMARK = String.fromCharCode(1);
 const gk = parts => parts.map(p => (p == null ? NULMARK : String(p))).join(SEPMARK);
 
-/* recovery_standing(p_from, p_to, p_teams, p_lookback) -- db/RUN-ME-032, clause for clause. */
+/* recovery_standing(p_from, p_to, p_teams, p_lookback) -- db/RUN-ME-032 v8, clause for clause.
+   Both sides are now the SAME rule, applied twice: the single latest whole-company deck of
+   that type on or before the date asked for, batch-resolved per (team, weekday) on it, one row
+   per customer -- no lookback, on either side. p_lookback is accepted (existing callers still
+   pass it) but no longer used; kept only so the signature does not have to change again. */
 function recoveryStandingMirror_(store, a = {}) {
   const src = store.defaulter_snapshots ? store.defaulter_snapshots.rows : [];
   const teams = a.p_teams ? a.p_teams.map(String) : null;
-  const look = a.p_lookback == null ? 45 : Number(a.p_lookback);
   const dk = v => String(v == null ? '' : v).slice(0, 10);
-  const minus = (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - n); return t.toISOString().slice(0, 10); };
   const rank = r => String(r.created_at || '') + ' ' + String(r.upload_batch || '');   // batchRank
   const wd = r => String(r.weekday == null ? '' : r.weekday);
   const bt = r => (r.upload_batch == null ? null : r.upload_batch);
   const inScope = r => !teams || teams.includes(String(r.team));
-  // A deck DATE, read once off the index: the winning upload per team-and-weekday on it
-  // (newest created_at, then batch id), then one row per customer (newest).
-  const deckCache = new Map();                              // type|date -> Map key -> row
+  // The single latest date the WHOLE COMPANY holds a deck of `type` on or before `notAfter`.
+  const latestDate = (type, notAfter) => {
+    let best = '';
+    for (const r of src) {
+      if (r.snapshot_type !== type) continue;
+      const d = dk(r.snapshot_date);
+      if (d > notAfter) continue;
+      if (d > best) best = d;
+    }
+    return best || null;
+  };
+  // A deck DATE, read once: the winning upload per team-and-weekday on it (newest created_at,
+  // then batch id), then one row per customer (newest) -- identical rule for initial and
+  // current alike, the same as ini_cust/cur_cust in the SQL.
+  const deckCache = new Map();                              // type|date -> Map ref -> row
   const readDeck = (type, date) => {
     const ck = type + '|' + date;
     if (deckCache.has(ck)) return deckCache.get(ck);
@@ -51,14 +65,14 @@ function recoveryStandingMirror_(store, a = {}) {
       const e = wins.get(k);
       if (!e || rank(r) > e.rank) wins.set(k, { rank: rank(r), batch: bt(r) });
     }
-    const m = new Map();                                   // initial: team|ref ; current: ref
+    const m = new Map();                                    // ref -> row
     for (const r of src) {
       if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || !inScope(r)) continue;
       const e = wins.get(String(r.team) + '|' + wd(r));
       if (!e || bt(r) !== e.batch) continue;
-      const key = type === 'initial' ? String(r.team) + '|' + String(r.ref) : String(r.ref);
-      const c = m.get(key);
-      if (!c || String(r.created_at || '') > c.created) m.set(key, { created: String(r.created_at || ''), team: r.team, ref: String(r.ref), arrears: n0(r.arrears) });
+      const ref = String(r.ref);
+      const c = m.get(ref);
+      if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref, arrears: n0(r.arrears) });
     }
     deckCache.set(ck, m);
     return m;
@@ -71,49 +85,19 @@ function recoveryStandingMirror_(store, a = {}) {
     seenP.add(f + '|' + t); periods.push({ from: f, to: t });
   }
   periods.sort((x, y) => (x.from + x.to).localeCompare(y.from + y.to));
-  /* Per FROM date: EVERY CUSTOMER'S OWN LATEST initial row within the lookback -- resolved per
-     customer, never per team-and-weekday group (see RUN-ME-032's own note: weekday on this
-     sheet is not a stable fact about a customer -- the same ref cycles through all seven tags
-     as the calendar rolls, so a shared "winning date" per group can strand a customer whose
-     own latest file sits on a different, still-recent date). One ranking key per row -- date,
-     then the batch rule (created_at, then upload_batch) as the tiebreaker on that date -- kept
-     highest per ref, exactly what ini_candidates' row_number() does in the SQL. */
-  const iniRowsCache = new Map();
-  const iniRowsFor = from => {
-    if (iniRowsCache.has(from)) return iniRowsCache.get(from);
-    const floor = minus(from, look);
-    const rows = new Map();                                 // ref -> { team, arrears, date, key }
-    for (const r of src) {
-      if (r.snapshot_type !== 'initial' || !inScope(r)) continue;
-      const d = dk(r.snapshot_date);
-      if (d > from || d < floor) continue;
-      const ref = String(r.ref);
-      const key = d + ' ' + rank(r);
-      const have = rows.get(ref);
-      if (!have || key > have.key) rows.set(ref, { key, team: r.team, arrears: n0(r.arrears), date: d });
-    }
-    iniRowsCache.set(from, rows);
-    return rows;
-  };
   const out = [];
   for (const { from, to } of periods) {
-    // the latest current deck the company holds on or before the period end (no lookback)
-    let curDate = '';
-    for (const r of src) {
-      if (r.snapshot_type !== 'current') continue;
-      const d = dk(r.snapshot_date);
-      if (d > to) continue;
-      if (d > curDate) curDate = d;
-    }
-    if (!curDate) continue;                                 // not measured
+    const iniDate = latestDate('initial', from);
+    const curDate = latestDate('current', to);
+    if (!iniDate || !curDate) continue;                     // not measured
+    const ini = readDeck('initial', iniDate);
     const cur = readDeck('current', curDate);
-    const ini = iniRowsFor(from);
-    // per team: what the initial decks' customers owed, less what the team owes now
+    // per team: what the initial deck's customers owed, less what the team owes now
     const byTeam = new Map();
-    const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, ic: 0, cc: 0, cleared: 0, dates: new Set() }).get(String(t));
+    const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, ic: 0, cc: 0, cleared: 0 }).get(String(t));
     for (const [ref, i] of ini) {
       const e = cell(i.team);
-      e.initial += i.arrears; e.ic++; e.dates.add(i.date);
+      e.initial += i.arrears; e.ic++;
       if (!cur.has(ref)) e.cleared++;
     }
     for (const c of cur.values()) {
@@ -124,44 +108,14 @@ function recoveryStandingMirror_(store, a = {}) {
     for (const e of [...byTeam.values()].sort((x, y) => String(x.team).localeCompare(String(y.team)))) {
       out.push({ from_date: from, as_of: to, team: e.team, initial: e.initial, current: e.current, recovered: e.initial - e.current,
         initial_customers: e.ic, current_customers: e.cc, cleared: e.cleared,
-        initial_dates: [...e.dates].sort().join(', ') || null, current_deck: curDate });
+        initial_dates: iniDate, current_deck: curDate });
     }
   }
   return out;
 }
 
-/* defaulter_initial_rows(p_to, p_teams, p_lookback) -- db/RUN-ME-033, clause for clause: each
-   customer's own latest INITIAL row within the lookback -- the identical rule
-   recoveryStandingMirror_'s own iniRowsFor applies above, restated here because this returns the
-   resolved ROWS themselves (every column defaulterBook's callers read), not a sum. */
-function defaulterInitialRowsMirror_(store, a = {}) {
-  const src = store.defaulter_snapshots ? store.defaulter_snapshots.rows : [];
-  const teams = a.p_teams ? a.p_teams.map(String) : null;
-  const look = a.p_lookback == null ? 45 : Number(a.p_lookback);
-  const to = String(a.p_to || '').slice(0, 10);
-  const dk = v => String(v == null ? '' : v).slice(0, 10);
-  const minus = (d, n) => { const t = new Date(d + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() - n); return t.toISOString().slice(0, 10); };
-  const floor = minus(to, look);
-  const inScope = r => !teams || teams.includes(String(r.team));
-  // date, then the batch rule (created_at, then upload_batch) as the tiebreaker -- the same key
-  // ini_candidates' row_number() ranks by, and the same one iniRowsFor above already uses.
-  const rank = r => dk(r.snapshot_date) + ' ' + String(r.created_at || '') + ' ' + String(r.upload_batch || '');
-  const best = new Map();                            // ref -> { key, row }
-  for (const r of src) {
-    if (r.snapshot_type !== 'initial' || !inScope(r)) continue;
-    const d = dk(r.snapshot_date);
-    if (d > to || d < floor) continue;
-    const ref = String(r.ref);
-    const key = rank(r);
-    const have = best.get(ref);
-    if (!have || key > have.key) best.set(ref, { key, row: r });
-  }
-  return [...best.values()].map(x => ({ ...x.row }));
-}
-
 export const SNAPSHOT_TOTALS_RPC = {
   recovery_standing: recoveryStandingMirror_,
-  defaulter_initial_rows: defaulterInitialRowsMirror_,
   /** expected_snapshot_totals(p_from, p_to, p_type, p_teams) */
   expected_snapshot_totals(store, a = {}) {
     const src = store.repayment_snapshots ? store.repayment_snapshots.rows : [];

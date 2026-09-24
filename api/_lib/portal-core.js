@@ -2,11 +2,11 @@ import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
-import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , pickLatestPerCustomer, withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
-  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver , deckDatesPerTeam, deckKey,
-  recoveryByTeam, defaulterInitialRows } from './snapshot-totals.js';
+  tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
+  recoveryByTeam } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
@@ -580,172 +580,43 @@ const FIND_COLS = 'ref, full_name, contact, guarantor_name, guarantor_contact, t
 const FU_REPAIR_CHUNK = 400;
 
 /* =====================================================================================
-   THE DEFAULTER BOOK: EVERY TEAM'S OWN LATEST DECK, EVERY WEEKDAY, ONCE PER CUSTOMER.
+   THE DEFAULTER BOOK: THE LATEST WHOLE-COMPANY DECK OF WHICHEVER TYPE WAS ASKED FOR.
 
    Three rules had to be made per-team rather than global before a defaulter could reliably be
-   seen. Two were already done; this adds the third and last:
+   seen, and all three now live inside latestDeckAnyWeekday, applied the SAME WAY to 'initial'
+   and 'current' alike:
 
-     WHICH BATCH   fixed once -- was per DAY, threw away sixteen teams when a day arrived as
-                   seventeen files
-     WHICH WEEKDAY fixed once -- a defaulter is a defaulter every day; only the Exp.Def
-                   rotation is weekday-shaped
-     WHICH DATE    THIS. `latestSnapshotDate` asks the WHOLE TABLE for its newest date, so one
-                   team uploaded with a newer date made every team with an older deck vanish
-                   entirely -- which is why re-uploading her team changed nothing. Her deck was
-                   landing perfectly and being filtered out by somebody else's upload.
+     WHICH BATCH   was per DAY, threw away sixteen teams when a day arrived as seventeen files
+     WHICH WEEKDAY a defaulter is a defaulter every day; only the Exp.Def rotation is
+                   weekday-shaped, so every weekday's deck is read, not just today's
+     WHICH DATE    the single latest date the WHOLE COMPANY holds a deck of that type, on or
+                   before the date asked for -- a team missing from it owes nothing on it, full
+                   stop, the same trade "i bulked paid clients, many of them brother!" forced
+                   onto the current side and RUN-ME-032 v8 now applies to initial too.
 
-   ONE ROUND TRIP TO LEARN THE DATES -- the team-day totals function, a GROUP BY that sends no
-   customer rows -- and then ONE READ PER DISTINCT DATE, which in practice is one or two. Teams
-   are grouped by the date they resolved to, so no team's rows are fetched for a day it has
-   nothing on.
-
-   WITHOUT THE MIGRATION it falls back to the old single-date read. Deliberately: the honest
-   alternative would be reading a month of decks to work the dates out here, and that is exactly
-   the kind of read this system has spent days removing. The screen says which it used.
-
-   THE INITIAL BASELINE IS NOW READ PER CUSTOMER, NOT PER TEAM-AND-WEEKDAY GROUP -- the same fix
-   RUN-ME-032 made to recovery_standing, for the identical reason: weekday on this sheet is not a
-   stable fact about a customer, the real book re-uploads most defaulters daily, and picking one
-   shared "winning" date for a whole (team, weekday) group silently strands a customer whose own
-   latest file sits on a different, still-recent date within the lookback. db/RUN-ME-033 answers
-   the same per-customer question recovery_standing's ini_candidates does, so the two can never
-   disagree about who a defaulter's baseline is. See defaulterInitialRows in snapshot-totals.js.
-   WITHOUT THAT MIGRATION this falls back to deckDatesPerTeam's grouping below, unchanged. */
-const DECK_LOOKBACK_DAYS = 45;
-
-/* The RPC path returns every defaulter_snapshots column (it is already the resolved book, not a
-   month of raw rows -- see db/RUN-ME-033's own note on why narrowing was not worth doing in the
-   database). A caller that asked for a narrower `columns` list still gets exactly that shape
-   back, same as the .select(columns) path gives -- withBatchKeys keeps the same guarantee that
-   upload_batch and created_at ride along even when a caller's own list left them out. */
-function projectColumns_(rows, columns) {
-  const cols = withBatchKeys(columns);
-  if (cols === '*') return rows;
-  const keys = cols.split(',').map(s => s.trim()).filter(Boolean);
-  return rows.map(r => { const o = {}; for (const k of keys) o[k] = r[k]; return o; });
-}
-
+   THIS USED TO READ initial PER CUSTOMER, REACHING UP TO 45 DAYS BACK for anyone missing from
+   the day's own file -- built to answer "how much does the company currently owe", where
+   reaching back is right. But the customer-list exports, the Credit Info Report and every
+   per-customer "recovered" figure this function feeds are answering a DIFFERENT question --
+   what did the latest upload say, against what the one before it said -- and for THAT question
+   reaching back is wrong: a customer whose last row was from 12 days ago, absent from today's
+   current file too, did not clear TODAY -- crediting the whole amount to today is exactly the
+   mistake recovery_standing v8 stopped making, and this function answered the identical
+   question the identical wrong way until now. See RUN-ME-032's own note for the real numbers
+   this cost (a Monday reading 90+ million where the true figure was 7-18 million, every day,
+   for as long as the reach-back was in either query). Both readings are now the same rule,
+   applied twice: the single latest deck of each type, nothing older, ever offered instead. */
 async function defaulterBook(db, user, { type = 'current', notAfter, onDate, columns } = {}) {
-  /* A PINNED DATE IS ALREADY THE ANSWER. The Monday baseline asks for one specific day, so
-     there is no "which date does each team have" question to ask -- resolving per team would
-     only be a way of quietly reading a different day than the one requested. */
-  if (onDate) {
-    const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
-      { onDate, teams: user.teams, columns });
-    return { ...snap, perTeam: false };
-  }
-  const to = notAfter;
-  /* CURRENT DEFAULTERS LIVE UNTIL THE NEXT UPLOAD REPLACES THEM -- NO LOOKBACK, NO GRACE.
-     "the latest current defaulter file is to live until the next one, no limit" -- and the
-     other independent reports (approved, received, expected) "just there to keep record how
-     we closed the day but they dont decide defaulters". Confirmed after "i bulked paid
-     clients, many of them brother!" kept recurring: a team missing from today's whole-company
-     CURRENT file has zero current defaulters, full stop -- not a team whose own upload merely
-     lagged a day. So this pins to the single latest date across the WHOLE table (same as the
-     "migration not run" fallback a few lines down always has) and never reaches back through
-     the per-team, up-to-45-day lookback below.
-
-     THIS DELIBERATELY REOPENS A DOOR THE GOBA/MBEYA TESTS BELOW WERE WRITTEN TO CLOSE: a team
-     on an older date now reads as zero for CURRENT, not as "their own latest deck" -- see
-     deckDatesPerTeam's own comment in snapshot-totals.js for the real incident that door was
-     built for. Weighed and accepted on purpose, for 'current' only: a paid-off team's ghosts
-     must not outlive one more whole-company upload. 'initial' baselines (and anything else
-     that calls this) still take the per-team path below, unchanged -- a customer's baseline
-     arrears is not re-uploaded on the same cadence a defaulter list is, and staying sticky
-     there is still the safer failure. */
-  if (type === 'current') {
-    const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
-      { notAfter: to, teams: user.teams, columns });
-    return { ...snap, perTeam: false };
-  }
-  /* EVERY CUSTOMER'S OWN LATEST INITIAL ROW, resolved per customer -- see db/RUN-ME-033 and its
-     own comment above DECK_LOOKBACK_DAYS. This replaces the team-and-weekday grouping below
-     outright when the migration is installed; the grouped path stays only as the fallback for a
-     database that has not run it yet (same contract as everywhere else in this file). */
-  const rpcRows = await defaulterInitialRows(db, { to, teams: user.teams, lookback: DECK_LOOKBACK_DAYS });
-  if (rpcRows) {
-    const rows = columns ? projectColumns_(rpcRows, columns) : rpcRows;
-    const dates = [...new Set(rows.map(r => String(r.snapshot_date).slice(0, 10)))].sort();
-    return { rows, date: dates[dates.length - 1] || null, dates,
-      weekdays: [...new Set(rows.map(r => r.weekday).filter(Boolean))].sort(),
-      batch: rows.length ? 'per-customer' : null, perTeam: true };
-  }
-  const from = addDaysKey(to, -DECK_LOOKBACK_DAYS);
-  const dates = await deckDatesPerTeam(db, { type, from, to, teams: user.teams });
-  if (!dates || !dates.size) {
-    // No migration, or nothing in the window -- the previous behaviour, unchanged.
-    const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
-      { notAfter: to, teams: user.teams, columns });
-    return { ...snap, perTeam: false };
-  }
-  /* Group the resolved decks by the date THEY landed on. A deck is a team AND a weekday, so
-     Monday's GOBA and Thursday's GOBA are two different decks that were uploaded on two
-     different days -- reading only the team's newest date kept whichever weekdays went up last
-     and dropped the rest of the week. In practice this is still a handful of distinct dates,
-     because a week's uploads cluster. */
-  const byDate = new Map();                    // date -> { teams:Set, weekdays:Set, want:Set }
-  for (const [key, d] of dates) {
-    if (!byDate.has(d)) byDate.set(d, { teams: new Set(), weekdays: new Set(), want: new Set() });
-    const g = byDate.get(d);
-    const [team, wd] = key.split('|');
-    g.teams.add(team);
-    g.weekdays.add(wd);
-    g.want.add(key);
-  }
-  /* ONE DATE AT A TIME, NOT ALL OF THEM AT ONCE.
-
-     This loop used to be a Promise.all, and that was defensible while it resolved ONE date per
-     team: a week's uploads cluster, so it was two requests in flight. Per weekday it is one per
-     distinct upload day -- six or seven in a normal week, and more on a deployment that has been
-     catching up. Firing those together is precisely the change that was tried once on the paging
-     side and reverted the same day: every screen fires several of these at once, and with two
-     hundred handsets the multiplied concurrency exhausted the connection pool. Logins started
-     failing with "failed to fetch" and the data-heavy tabs errored.
-
-     Sequential costs latency on one screen. Concurrent costs the whole system. */
-  const all = [];
-  for (const [d, g] of byDate) {
-    /* Narrowed on BOTH columns at the database, then matched on the exact pairs here. The
-       filters cannot express "these team/weekday combinations" on their own, so they fetch the
-       rectangle and this keeps the cells -- but the rectangle is one date's rows for teams that
-       genuinely have a deck on it, not a week of everything. */
-    const rows = await fetchAll(() => {
-      let q = db.from('defaulter_snapshots').select(withBatchKeys(columns))
-        .eq('snapshot_type', type).eq('snapshot_date', d).in('team', teamMatchList([...g.teams]));
-      const wds = [...g.weekdays].filter(Boolean);
-      // Only when every resolved deck on this date names a weekday -- a null weekday is a real
-      // stored value and an .in() list can never match it.
-      if (wds.length === g.weekdays.size) q = q.in('weekday', wds);
-      return q;
-    });
-    for (const r of rows) if (g.want.has(deckKey(r.team, r.weekday))) all.push(r);
-  }
-  /* TWO DIFFERENT DUPLICATES, TWO DIFFERENT FIXES, BOTH NEEDED.
-     "Some customers were texted arrears when I exported the sms file ... yet she aint in the
-     defaulters file" -- ANASTAZIA JUMBE NGOI, SINGIDA. Her team's deck had been corrected with
-     a same-day re-upload that no longer named her (she was no longer a defaulter), but the one
-     step this used to run -- pickLatestPerCustomer, straight over `all` -- resolves the winning
-     row PER CUSTOMER: with nothing in the newer batch to compare her old row against, her old
-     row just won by default, and she came back from the dead into every export and every
-     screen. pickLatestBatchRows carries the correct rule instead -- an upload that stops naming
-     somebody IS the correction, so the whole older batch loses, that customer included.
-
-     But pickLatestBatchRows resolves its winner PER TEAM, and `all` can hold two different
-     WEEKDAY decks of the same team that both happen to land on the same date in two different
-     batches -- resolve across them undivided and one whole deck loses to the other's batch
-     stamp, the exact fault `recByDay` further down this file already grouped by weekday to
-     avoid, for the same reason. So: batch-resolve within each weekday first (fixes the
-     resurrection), THEN pickLatestPerCustomer across the result (still needed -- see its own
-     comment above -- for the separate, legitimate case of one customer genuinely sitting in
-     two different weekdays' decks on the same date, who must still count once, not twice). */
-  const perDeck = [...new Set(all.map(r => K(r.weekday)))]
-    .flatMap(wd => pickLatestBatchRows(all.filter(r => K(r.weekday) === wd)));
-  const rows = pickLatestPerCustomer(perDeck);
-  const seen = [...byDate.keys()].sort();
-  return { rows, date: seen[seen.length - 1] || null, dates: seen,
-    weekdays: [...new Set(all.map(r => r.weekday).filter(Boolean))].sort(),
-    batch: rows.length ? (rows[0].upload_batch || 'legacy') : null, perTeam: true };
+  const snap = await latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: type },
+    onDate ? { onDate, teams: user.teams, columns } : { notAfter, teams: user.teams, columns });
+  return { ...snap, perTeam: false };
 }
+
+/* Purely informational, and unrelated to recovery_standing's own rule (which has no window at
+   all any more, see RUN-ME-032 v8): Find customer still tells an admin when a customer's newest
+   deck row of ANY type has gone stale -- six weeks with no fresh upload at all for them, on
+   either sheet, is worth a note pointing at the upload page. */
+const DECK_LOOKBACK_DAYS = 45;
 
 /* HOW MUCH ONE CALL MAY PUT RIGHT.
 
