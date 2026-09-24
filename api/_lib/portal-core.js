@@ -9607,7 +9607,26 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
          that happens the Rec % beside it goes above 100, which is where the room should be
          looking anyway. */
       unrecovered: Math.max(0, unc - rec),
-      uploaded: stand ? !!stD : !!(ini.length || cur.length),
+      /* WHETHER A DECK EXISTS FOR THIS EXACT DAY -- not whether `stand` had an ANSWER for it.
+           "When a report ain't uploaded initial and current should stay 0, not reading of
+            yesterday's"
+         recovery_standing (RUN-ME-032) is a CARRY-FORWARD rule ON PURPOSE -- "the latest
+         current defaulter file is to live until the next one is uploaded" -- so `stD` is
+         non-null the moment ANY earlier deck ever existed, Friday included when only Thursday
+         has been uploaded: `rec`/`from`/`to` above are quietly Thursday's money, standing in
+         as of today, exactly as the commission board (which pays on this same standing) and
+         the week total (which sums these same days) both require -- see the test that ties
+         this tile to the commission board's own column, day by day. That figure is correct
+         and stays.
+
+         What was wrong is narrower: this ONE tile also has to say whether TODAY'S OWN deck is
+         what produced it, so the screen can show "not uploaded yet" instead of Thursday's
+         money silently wearing Friday's label. `stD`'s mere existence answers "does a standing
+         exist as of this date", which -- being a carry-forward rule -- is true from the day
+         after the first ever upload onward, so gating on it never actually fired. ini/cur are
+         filtered to this exact snapshot_date above, so they are the one honest answer to "was
+         a deck uploaded today", independent of whether the standing RPC is installed. */
+      uploaded: !!(ini.length || cur.length),
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
       full: i >= 5 && rec > 0 };
   });

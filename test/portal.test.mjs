@@ -844,6 +844,16 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
        M1's to 400-100=300. The week's own total is these five days' own grand totals added
        (sumRangeStand_): 300+700+1,000+1,000+900, 3,900. */
     assert.deepEqual(WEEK.map(d => tile(d).recovered), [300, 700, 1000, 1000, 900], world);
+    /* THURSDAY'S 1,000 IS STANDING, NOT A DECK -- "nothing new lands" that day, above. The
+       money is right and stays (the commission board pays on it too, checked above); what has
+       to be right ALONGSIDE it is that this ONE tile still says so, so the screen can draw
+       "not uploaded yet" instead of Wednesday's file quietly wearing Thursday's label. This
+       is the exact shape of "colection and legal officers aint being seen" 's sibling report:
+       "When a report ain't uploaded initial and current should stay 0, not reading of
+        yesterday's" -- reading recovery_standing's mere existence as "uploaded" (the bug)
+       said true for Thursday because Wednesday's deck still answers for it; only checking
+       whether a deck is dated Thursday itself (the fix) says false. */
+    assert.deepEqual(WEEK.map(d => tile(d).uploaded), [true, true, true, false, true], world);
     assert.equal(dash.recTrendTotal.recovered, 3900, `${world}: the week is its own days added`);
     assert.equal(cm.totals.recovered, tile(TODAY).recovered, `${world}: today's total is today's tile`);
     const juma = cm.recBoard.find(r => r.officer === 'JUMA G');
