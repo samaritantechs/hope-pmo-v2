@@ -753,55 +753,6 @@ export const tPaidOver    = rows => rows.reduce((s, r) => s + num(r.paid_n) + nu
 
 
 /* =====================================================================================
-   EVERY TEAM'S OWN LATEST DECK -- and why the date had to stop being one number.
-
-     "i rebuilt and also reuploaded still ester aint there .. means we missing customers to
-      make followups to"
-
-   The batch rule was fixed once already: it used to keep the newest upload of a DAY, which
-   threw away sixteen teams when a day arrived as seventeen files, and it now resolves per team.
-   THE DATE WAS NEVER GIVEN THE SAME TREATMENT. `latestSnapshotDate` asks the whole table for
-   its newest snapshot_date and every read then pins to that one day -- so the moment ANY team
-   is uploaded with a newer date, every team whose deck is older disappears completely.
-
-   Not a few rows. The entire team. Reproduced exactly: two teams, GOBA dated two days back and
-   MBEYA dated today, and GOBA is simply not in the answer.
-
-   That is why re-uploading did not help. Her team's deck was landing perfectly and being
-   filtered out by somebody else's more recent upload.
-
-   THE ANSWER IS A GROUP BY, SO IT BELONGS IN THE DATABASE. The team-day totals function already
-   returns one summary row per team per day per batch, which is exactly the map needed, and it
-   costs ONE round trip and sends no customer rows at all. Without the migration this returns
-   null and the caller keeps the old single-date behaviour -- deliberately, because the honest
-   fallback here would be reading a month of decks, and that is precisely the kind of read this
-   whole system has spent days removing. */
-/* =====================================================================================
-   AND THE DATE IS PER TEAM *PER WEEKDAY*, WHICH IS THE UNIT A DECK ACTUALLY IS.
-
-     "Wamerudishwa 8086 ... (deki 8,783 · rejista 12,391 · 2026-08-10 · MON, TUE)"
-
-   Eight thousand restored and the phones still short, and that line says why: the rebuild had
-   read a deck of 8,783 against a register of 12,391, and it found only TWO WEEKDAYS in it.
-
-   Resolving one date per team looks right and is not. A team does not have "a deck" -- it has
-   one deck PER WEEKDAY, and each of those is uploaded on its own day. Monday's and Tuesday's
-   went up on the 10th; Wednesday's, Thursday's and Friday's went up earlier in the week. Taking
-   the team's newest date and reading only that day therefore keeps whichever weekdays happened
-   to be uploaded most recently and silently drops the rest of the week -- every customer on
-   them, on every screen and every handset.
-
-   It is the same fault as the two before it, one level further down, and it hid behind them:
-   fixing WHICH BATCH exposed WHICH DATE, and fixing WHICH DATE per team exposed that a team is
-   not the unit either. The key is team AND weekday, which is what a deck is.
-
-   The grouping is free -- the totals function already returns weekday on every summary row, so
-   this is the same single round trip reading one more column of what it was already sending. */
-export const deckKey = (team, weekday) =>
-  String(team == null ? '' : team).trim().toUpperCase() + '|'
-  + String(weekday == null ? '' : weekday).trim().toUpperCase();
-
-/* =====================================================================================
    RECOVERY ON A DAY, PER TEAM -- THE ONE DEFINITION.
    =====================================================================================
      "see the total rec reading at dashboards and the one at commissions which is not okay.
@@ -1008,52 +959,13 @@ export function standingSum(perTeam) {
   return t;
 }
 
-export async function deckDatesPerTeam(db, { type = null, weekday = null, from, to, teams = null } = {}) {
-  const agg = await callTotals(db, DEFAULTER_TOTALS_FN,
-    { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams), p_weekday: weekday });
-  if (!agg) return null;                       // migration not run -- caller falls back
-  const by = new Map();                        // TEAM|WEEKDAY -> that deck's own newest date
-  for (const r of agg) {
-    const d = String(r.snapshot_date || '').slice(0, 10);
-    if (!d) continue;
-    const k = deckKey(r.team, r.weekday);
-    if (!by.has(k) || d > by.get(k)) by.set(k, d);
-  }
-  return by;
-}
-
-/* =====================================================================================
-   defaulterBook's INITIAL BASELINE, PER CUSTOMER -- the same fix as recovery_standing v5.
-
-   deckDatesPerTeam (above) groups decks by (team, weekday) and picks one shared winning date
-   for the whole group -- exactly the grouping RUN-ME-032 found stranding real, recent arrears in
-   recovery_standing, for the same reason: weekday is not a stable fact about a customer on this
-   sheet, so a customer whose own latest file lands on a different date within the lookback falls
-   out of the group's one winning date entirely. defaulterBook's initial-baseline path (customer
-   exports, the Credit Info Report, the "present" reading) reads through deckDatesPerTeam and has
-   the identical flaw.
-
-   db/RUN-ME-033-defaulter-book-initial.sql answers the same question recovery_standing's
-   ini_candidates does -- each customer's own latest INITIAL row within the lookback, by date
-   then the batch rule -- but returns the RESOLVED ROWS themselves (every column) rather than a
-   sum, because this is what the exports and the customer lists actually read. */
-export const DEFAULTER_INITIAL_ROWS_FN = 'defaulter_initial_rows';
-
-/** Every customer's own latest INITIAL row on or before `to`, within `lookback` days -- resolved
-    per customer, never per team-and-weekday group. Returns the raw rows (every
-    defaulter_snapshots column), or null when the function is not installed or failed, which is
-    the caller's signal to fall back to deckDatesPerTeam's grouping, unchanged. */
-export async function defaulterInitialRows(db, { to, teams = null, lookback = 45 } = {}) {
-  if (!db || typeof db.rpc !== 'function') return null;
-  if (knownMissing(db, DEFAULTER_INITIAL_ROWS_FN)) return null;
-  let res;
-  try {
-    res = await rpcAll(db, DEFAULTER_INITIAL_ROWS_FN, { p_to: to, p_teams: teamsArg(teams), p_lookback: lookback });
-  } catch (e) { res = { data: null, error: e }; }
-  const { data, error } = res;
-  if (error) {
-    if (isMissingFn_(error)) noteMissing(db, DEFAULTER_INITIAL_ROWS_FN);
-    return null;
-  }
-  return Array.isArray(data) ? data : [];
-}
+/* deckDatesPerTeam and defaulterInitialRows (RUN-ME-033) used to learn, then resolve, each
+   customer's own latest INITIAL row within a 45-day lookback -- built to answer "how much does
+   the company currently owe", not the question defaulterBook actually answers ("what did the
+   latest upload say"). Reaching back attributed clearings from days or weeks ago to whichever
+   single day happened to ask, which is why a Monday tile that should have read about 107
+   million read 3.59 billion, and a company that has always recovered 7-18 million a day read
+   90-107 million for as long as the reach-back was in either query. See RUN-ME-032's own note
+   for the full story. defaulterBook now reads 'initial' exactly the way it already read
+   'current' -- the single latest whole-company deck, no lookback -- through
+   latestDeckAnyWeekday in snapshots.js, so this pair of functions has no caller left. */

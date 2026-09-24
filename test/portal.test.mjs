@@ -388,42 +388,43 @@ test('the recovery list names the decks it read, the latest upload for the picke
    had the error" -- the export hands out the PRESENT decks (each team's latest initial, the
    latest current), whatever their dates; the card pairs one date's two decks. The list's
    default reads exactly as the export does, through the same function. */
-test('the recovery list, as the export: present initial vs present current, whatever their dates', async () => {
+test('the recovery list, as the export: present initial vs present current, uniformly the latest date', async () => {
   const t = tables();
-  // A Thursday initial deck for KONGOWE naming 777 at 400, with no Thursday current deck: the
-  // card for Thursday is unmeasured, and the card for Friday never sees 777. The export does:
-  // 777 is on a present initial deck and absent from the present current deck -> cleared.
+  /* A Thursday initial deck for KONGOWE naming 777 at 400, superseded the next day by the whole
+     company's own Friday initial upload. "recovery is initial and current only from latest
+     uploads - everywhere": the export is now the SAME single-latest-date reading the card
+     uses, not a separate per-team one -- so 777 does not linger in the export either. */
   t.defaulter_snapshots.push(D('777', 'KONGOWE', 400, 'initial', 45, YEST, 'THU'));
   const db = dbWithRpc(t);
   const exp = await portalApi(db, ADMIN, 'defaulters', { type: 'initial' }, NOW);
-  assert.ok(exp.rows.some(r => r.ref === '777'), 'the export carries 777 on the present initial deck');
+  assert.ok(!exp.rows.some(r => r.ref === '777'), '777 sat only on the superseded Thursday file');
+  assert.equal(exp.date, TODAY, 'the export reads the single latest initial date');
   const present = await portalApi(db, ADMIN, 'recoveryCustomers', {}, NOW);
   assert.equal(present.mode, 'present', 'the default reading is the export\'s');
   const k = Object.fromEntries(present.rows.map(x => [x.ref, x]));
-  assert.equal(k['777'].status, 'cleared'); assert.equal(k['777'].recovered, 400);
-  assert.equal(present.totals.recovered, 800, 'Friday\'s 400 plus Thursday\'s 777 -- what the two exported files subtract to');
+  assert.equal(k['111'].status, 'reduced'); assert.equal(k['111'].recovered, 200);
+  assert.ok(!('777' in k), 'the list agrees with the export it mirrors -- no lingering customer');
+  assert.equal(present.totals.recovered, 400, '111\'s 200 plus 555\'s 100 plus 999\'s 100 -- nothing else');
   // The very same decks the export hands out, row for row.
   const expCur = await portalApi(db, ADMIN, 'defaulters', { type: 'current' }, NOW);
   assert.equal(present.totals.initial, exp.rows.reduce((s, r) => s + Number(r.arrears || 0), 0));
   assert.equal(present.totals.current, expCur.rows.reduce((s, r) => s + Number(r.arrears || 0), 0));
   const kd = present.decks.find(d => d.team === 'KONGOWE' && d.type === 'initial');
-  assert.equal(kd.date, [YEST, TODAY].join(', '), 'the decks fold names the dates each team\'s deck came from');
-  assert.equal(kd.rows, 3);
-  /* "customer list ok, card totals, not yet ... recovery is initial and current only from
-     latest uploads - everywhere": the card's day reading is the SAME reading as of that day,
-     so Friday's card carries 777 too, and Thursday -- no current deck yet -- is not measured. */
+  assert.equal(kd.date, TODAY, 'the decks fold names the one date this team\'s deck came from');
+  assert.equal(kd.rows, 2);
+  /* "recovery is initial and current only from latest uploads - everywhere": the card's day
+     reading agrees with the export's, so Friday's card does not carry 777 either, and
+     Thursday -- no current deck yet -- is not measured. */
   const day = await portalApi(db, ADMIN, 'recoveryCustomers', { date: TODAY, mode: 'day' }, NOW);
   assert.equal(day.mode, 'day'); assert.equal(day.asOf, TODAY);
-  assert.equal(day.totals.recovered, 800, 'the day reading is the present reading as of that day');
-  assert.ok(day.rows.some(r => r.ref === '777'));
+  assert.equal(day.totals.recovered, 400, 'the day reading is the present reading as of that day');
+  assert.ok(!day.rows.some(r => r.ref === '777'));
   const dash = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
-  assert.equal(dash.recTrend.find(x => x.date === TODAY).recovered, 800, 'and the card IS the list\'s total');
-  /* The WEEK's own figure is the PERIOD from Monday to Friday. 777 sits on its OWN THU slot
-     (a different weekday from KONGOWE's MON/FRI slots), on or before Monday it is not yet
-     uploaded at all... but Monday's own from-date lookback still finds it: 777's slot first
-     appears Thursday, which is AFTER the week's Monday start, so it is not part of the week's
-     picked decks -- the week reads what stood at ITS OWN start, same as any other period. */
-  assert.equal(dash.recTrendTotal.recovered, 400, 'the week\'s figure is Monday\'s baseline through Friday, not everything present today');
+  assert.equal(dash.recTrend.find(x => x.date === TODAY).recovered, 400, 'and the card IS the list\'s total');
+  /* The WEEK's own figure is the PERIOD from Monday to Friday: Monday's own whole-company
+     initial file (111/555/999 at 500/700/900, same amounts as Friday's) less Friday's own
+     current file. 777's Thursday-only row never enters the week's picked decks at all. */
+  assert.equal(dash.recTrendTotal.recovered, 400, 'the week\'s figure, same single-date rule at each end');
   assert.equal(dash.recoveryRule, 'latest');
   const thu = await portalApi(db, ADMIN, 'recoveryCustomers', { date: YEST, mode: 'day' }, NOW);
   assert.equal(thu.measured, false); assert.deepEqual(thu.rows, []);
@@ -665,24 +666,23 @@ test('the month record is the weeks worked out one by one and added, with a colu
   assert.deepEqual(m.weeks[3], { key: 'W4', from: MON, to: TODAY }, 'the live week ends today');
   const juma = m.recBoard.find(r => r.officer === 'JUMA G');
   /* W3's own PERIOD is (Monday the 13th, its end): 100% (120,000). W4's own PERIOD is
-     (Monday the 20th, today): the initial side is resolved PER CUSTOMER, not per team-and-
-     weekday group (RUN-ME-032 v5) -- 711's own 2,000 was uploaded the 13th and nothing newer
-     for 711 SPECIFICALLY has landed since, so it is still their own latest within the 45-day
-     lookback and it counts for W4 exactly as it did for W3, alongside the shared book's own
-     Monday-the-20th deck for 111/555 (1,200). W4's initial is therefore 3,200, not just the
-     shared book's 1,200 -- a teammate getting a fresher upload does not erase 711's own real,
-     recent balance. 711 is also absent from today's current file (their own current is the
-     17th's), so under the current side's own no-lookback rule they read as recovered in full
-     there too: 3,200 initial less 900 current (only 111/555 are on today's file) is 2,300,
-     comfortably past the top band. The month is still the two weeks' own periods added, never
-     the month scored once. */
+     (Monday the 20th, today): under v8 BOTH sides read the single whole-company latest deck of
+     their date, no per-customer reach-back. Monday the 20th already carries its OWN initial
+     file (111/555 at 1,200 for this team) -- that file supersedes 711's older 13th upload
+     entirely, the same trade the current side always made: a team's (or here, a customer's)
+     own file not landing on the picked date means nothing stands for them on it, not that an
+     older row keeps counting. W4's initial is the shared book's 1,200 alone; 711 does not
+     enter it. Today's current file is 900 (111/555 only -- 711's own current is the 17th's,
+     off today's file, but with no initial share to subtract from either, that is moot). W4 is
+     therefore 1,200 less 900, 300 recovered -- below the top band this time. The month is
+     still the two weeks' own periods added, never the month scored once. */
   assert.equal(juma.pctW3, 100); assert.equal(juma.recW3, 1000); assert.equal(juma.tzsW3, 120000);
-  assert.equal(juma.pctW4, 164.3); assert.equal(juma.recW4, 2300); assert.equal(juma.tzsW4, 180000);
+  assert.equal(juma.pctW4, 21.4); assert.equal(juma.recW4, 300); assert.equal(juma.tzsW4, 20000);
   assert.equal(juma.tzsW1, 0); assert.equal(juma.pctW1, null, 'a week with nothing in it is not a zero per cent');
-  assert.equal(juma.weekRecovered, 3300);
-  assert.equal(juma.weekCommission, 300000, 'the month pays what its weeks paid');
-  assert.equal(juma.weekPct, 137.5, '3,300 over the month\'s 2,400 uncollected, past 100% and unclamped');
-  assert.equal(m.totals.split.recWeek, 300000);
+  assert.equal(juma.weekRecovered, 1300);
+  assert.equal(juma.weekCommission, 140000, 'the month pays what its weeks paid');
+  assert.equal(juma.weekPct, 54.2, '1,300 over the month\'s 2,400 uncollected');
+  assert.equal(m.totals.split.recWeek, 140000);
   assert.equal(m.recoveryRule, 'latest');
   assert.equal(juma.records.length, 4, 'one record per week of the month');
   assert.equal(juma.records[2].key, 'W3'); assert.equal(juma.records[2].weekly, true);
@@ -712,11 +712,10 @@ test('the commission screen opens any week, and the month record any month', asy
   // This week, asked for by its Monday, is the ordinary screen.
   const now = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: MON }, NOW);
   assert.equal(now.pastWeek, false); assert.equal(now.to, addDaysT_(MON, 6));
-  // The live week's own period (Monday the 20th through today): 711's own initial (the 13th)
-  // is still their own latest within the lookback -- nothing newer for 711 specifically has
-  // landed -- so it still counts here too, alongside the shared book's own Monday deck. See
-  // the month record test's own note for the full figure.
-  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 180000);
+  // The live week's own period (Monday the 20th through today): the shared book's own Monday
+  // deck supersedes 711's older 13th upload entirely, so 711 does not enter this period at all.
+  // See the month record test's own note for the full figure (this is the same W4 as there).
+  assert.equal(now.recBoard.find(r => r.officer === 'JUMA G').weekCommission, 20000);
   // Last month: the whole of June, five weeks, nothing in it.
   const jun = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month', month: '2026-06' }, NOW);
   assert.equal(jun.from, '2026-06-01'); assert.equal(jun.to, '2026-06-30'); assert.equal(jun.month, '2026-06');
@@ -873,15 +872,17 @@ test('the commission board adds up to the dashboard\'s recovery, day by day, in 
   assert.equal(cm0.recBoard.reduce((s, r) => s + r.weekRecovered, 0), dash0.recTrendTotal.recovered);
 });
 
-/* The old commission walk paired a current deck against the same weekday's deck from weeks
-   before -- an initial from April against a current in July. The one rule looks back 45
-   days for a team's initial decks and no further: a team with none in that window is not
-   measured, never "minus 500 against April". */
-test('an initial deck older than the lookback does not stand against this week\'s current', async () => {
+/* v5 through v7's initial side looked back 45 days for a team's own deck and no further -- a
+   team with nothing in that window was not measured. v8 drops the window entirely, on BOTH
+   sides: "recovery is initial and current only from latest uploads - everywhere" is the single
+   most recent deck, however old, until a newer one supersedes it -- the same "no limit" rule
+   the current side always had (see RUN-ME-032's own note). An initial deck from April DOES
+   stand against a current from July, if nothing newer has landed for that team since. */
+test('an initial deck stands until a newer one supersedes it, however old it is', async () => {
   const t = tables();
-  // This test is specifically about a lookback GAP with no fresher initial deck to fill it,
-  // so it strips the Monday AND the month's WED baseline the shared fixture otherwise carries
-  // (see tables()'s own note) -- otherwise KONGOWE's own fresh deck, on either weekday, would
+  // This test is specifically about a team with nothing FRESHER than its old April deck, so it
+  // strips the Monday AND the month's WED baseline the shared fixture otherwise carries (see
+  // tables()'s own note) -- otherwise KONGOWE's own fresher deck, on either weekday, would
   // answer the question instead.
   t.defaulter_snapshots = t.defaulter_snapshots.filter(r =>
     !((r.snapshot_date === MON || r.snapshot_date === MONTH1) && r.snapshot_type === 'initial'));
@@ -893,13 +894,13 @@ test('an initial deck older than the lookback does not stand against this week\'
   );
   const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
   const juma = d.recBoard.find(r => r.officer === 'JUMA G');
-  assert.equal(juma.records.find(x => x.date === MON).recovered, 0,
-    'a current with no initial deck in the window measures nothing -- not 500 against April');
+  assert.equal(juma.records.find(x => x.date === MON).recovered, 500,
+    'April\'s 1,000 less Monday\'s 500 -- the April deck is still the latest one on or before Monday');
   const diag = d.recDiag.days.find(x => x.date === MON);
-  assert.equal(diag.measured, false);
-  assert.equal(diag.currentOnly, 1);
+  assert.equal(diag.measured, true, 'a deck this old still measures -- no window to fall outside of');
+  assert.equal(diag.currentOnly, 1, 'informational only: no deck was physically filed under Monday\'s own date');
   const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
-  assert.equal(dash.recTrend.find(x => x.date === MON).recovered, 0, 'and the dashboard reads the same day the same way');
+  assert.equal(dash.recTrend.find(x => x.date === MON).recovered, 500, 'and the dashboard reads the same day the same way');
 });
 
 test('the recovery band amounts are the admin\'s to set; the percentages are not', async () => {
@@ -8269,14 +8270,16 @@ test('only an admin may rebuild the register', async () => {
    Not a few rows -- the whole team. And it is why re-uploading her team changed nothing: her
    deck was landing perfectly and being filtered out by somebody else's more recent upload.
 
-   THAT FIX STILL STANDS -- for 'initial' baselines, and for anything else that reads a deck
-   type teams might genuinely upload on different days. It no longer applies to 'current'
-   defaulters: see the comment on defaulterBook's own 'current' branch in portal-core.js.
-   "the latest current defaulter file is to live until the next one, no limit" -- confirmed
-   after paid-off customers kept resurfacing from a stale deck the exact same shape as GOBA's
-   here. A team missing from today's whole-company CURRENT file is now read as zero, not as
-   "their own latest deck" -- the tests below were rewritten to prove that on purpose, not
-   because the old protection was wrong for what it was built for. */
+   THAT FIX ITSELF STILL STANDS -- reading every weekday's deck, not just today's, and never
+   letting one team's fresher upload filter another team's older one out of existence. What
+   changed, twice since, is how far back a MISSING team's own last deck is allowed to reach:
+   first CURRENT dropped its stickiness ("the latest current defaulter file is to live until
+   the next one, no limit" -- confirmed after paid-off customers kept resurfacing from a stale
+   deck the exact same shape as GOBA's here), and then RUN-ME-032 v8 made INITIAL read the
+   identical way -- "recovery is initial and current only from latest uploads - everywhere". A
+   team missing from the single latest whole-company file, of EITHER type, now reads as zero,
+   not as "their own latest deck" -- the tests below were rewritten to prove that on purpose,
+   not because the old protection was wrong for what it was built for. */
 function twoTeamBook(gobaDate, type) {
   const t = tables();
   t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
@@ -8302,11 +8305,12 @@ test('a team missing from today\'s CURRENT file reads as zero, not their own old
   assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'MBEYA, on today\'s, still does');
 });
 
-test('...but an INITIAL baseline still protects a team on an older date -- only CURRENT changed', async () => {
+test('...and now an INITIAL baseline reads zero on an older date too -- v8 made both sides the same', async () => {
   const t = twoTeamBook('2026-07-22', 'initial');
   const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { type: 'initial' }, NOW);
-  assert.ok(d.rows.some(r => r.ref === 'ESTHER'),
-    'a baseline is not re-uploaded on a defaulter\'s cadence -- staying sticky is still right here');
+  assert.ok(!d.rows.some(r => r.ref === 'ESTHER'),
+    'GOBA\'s two-day-old INITIAL deck no longer counts either -- the same rule, both sides');
+  assert.ok(d.rows.some(r => r.ref === 'OTHER'), 'MBEYA, on today\'s, still does');
 });
 
 test('rebuilding the register no longer reaches into an old CURRENT deck either', async () => {
@@ -8321,32 +8325,6 @@ test('an explicit weekday choice is still exactly that', async () => {
   const t = twoTeamBook('2026-07-22');
   const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { weekday: 'MON' }, NOW);
   assert.ok(!d.rows.some(r => r.ref === 'ESTHER'), 'she is in TUE\'s deck, not MON\'s');
-});
-
-/* defaulterBook's initial baseline read through deckDatesPerTeam's (team, weekday) grouping had
-   the identical flaw db/RUN-ME-032 found and fixed in recovery_standing: weekday is not a stable
-   fact about a customer here, the real book re-uploads most defaulters daily, and picking one
-   shared "winning" date for a (team, weekday) group can strand a customer whose own latest file
-   sits on a different, still-recent date. db/RUN-ME-033 fixes it the same way -- per customer,
-   not per group. See defaulterInitialRows in snapshot-totals.js. */
-test('the initial baseline does not strand a customer outpaced by a teammate\'s fresher same-weekday upload', async () => {
-  const t = tables();
-  t.teams.push({ team: 'GOBA', opm: null, recovery: 'R', gmo: 'G', manager: 'M',
-    credit: 'ANALYST A', expected: 'E', bike: 'B' });
-  const mk = (ref, arrears, date) => ({ ref, full_name: ref + ' NAME', team: 'GOBA', arrears,
-    status: 'Partial Defaulter', ds: '2-4', dc: 2, disb_date: '2026-07-09',
-    snapshot_type: 'initial', weekday: 'WED', snapshot_date: date,
-    upload_batch: 'b' + date, created_at: date + 'T04:00:00Z' });
-  // A re-uploaded twice, cycling to a fresher WED tag on the 22nd; B uploaded once, on the
-  // 16th, tagged WED that day too, and never again -- still well inside the 45-day lookback.
-  // Under the old grouping, GOBA's WED slot moved to the 22nd and B fell out entirely.
-  t.defaulter_snapshots.push(mk('A', 1000, '2026-07-22'));
-  t.defaulter_snapshots.push(mk('B', 5000, '2026-07-16'));
-  const d = await portalApi(dbWithRpc(t), ADMIN, 'defaulters', { type: 'initial' }, NOW);
-  assert.ok(d.rows.some(r => r.ref === 'A'), 'A, on the newest date, is there');
-  assert.ok(d.rows.some(r => r.ref === 'B'), 'B, outpaced but not superseded, must still count');
-  const goba = d.rows.filter(r => r.team === 'GOBA').reduce((s, r) => s + Number(r.arrears || 0), 0);
-  assert.equal(goba, 6000, 'both of GOBA\'s baselines add up -- neither silently dropped');
 });
 
 /* =====================================================================================

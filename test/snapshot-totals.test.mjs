@@ -704,25 +704,6 @@ test('a week wide enough to be truncated still reports every team', async () => 
   assert.equal(tArrears(out), rows.length * 1000, 'and the arrears add up to the whole book');
 });
 
-test('the newest deck date is learned for every team, not just the first thousand rows', async () => {
-  /* This is the one that hid ESTER PETER OMARY of team GOBA. `deckDatesPerTeam` builds the map
-     of "which date is this deck's newest upload", and a deck missing from the map is a deck
-     nobody on it is ever called from.
-
-     The key is TEAM AND WEEKDAY, not team. A team does not have "a deck" -- it has one per
-     weekday, each uploaded on its own day. */
-  const { deckDatesPerTeam, deckKey } = await import('../api/_lib/snapshot-totals.js');
-  const { teams, rows } = wideBook();
-  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
-  const map = await deckDatesPerTeam(db, { type: 'current', from: DAYS[0], to: DAYS[4] });
-  assert.ok(map, 'the function is there, so a map comes back');
-  for (const t of teams) {
-    for (const wd of WD) {
-      assert.equal(map.get(deckKey(t, wd)), DAYS[4], `no deck date for ${t} ${wd}`);
-    }
-  }
-});
-
 /* =====================================================================================
    CURRENT DEFAULTERS NO LONGER READ EACH WEEKDAY AT ITS OWN DATE.
    =====================================================================================
@@ -736,8 +717,8 @@ test('the newest deck date is learned for every team, not just the first thousan
    clients, many of them brother!" turned out to be the SAME mechanism keeping a team's stale,
    already-cleared deck alive. With no more per-weekday files to protect, holding onto an older
    weekday's deck only ever means resurrecting defaulters the newest whole-company upload no
-   longer names. See defaulterBook's 'current' branch in portal-core.js for the code that
-   changed; deckDatesPerTeam itself is untouched and still runs for 'initial' baselines. */
+   longer names. See defaulterBook's 'current' branch in portal-core.js -- 'initial' now reads
+   the identical way, no lookback, see recovery_standing v8's own note for why. */
 test('CURRENT reads only the single latest date -- an older weekday no longer lingers', async () => {
   const { portalApi } = await import('../api/_lib/portal-core.js');
   const NOWF = Date.parse('2026-07-24T09:00:00Z');
@@ -792,45 +773,49 @@ test('a re-upload still wins outright, and nothing outside today\'s date survive
    -- the whole book goes up as the INITIAL file every morning; it is the previous evening's
    CURRENT file. So "latest initial minus latest current" independently of each other is one
    day's movement and can never be a week -- what a period needs is the initial deck AT ITS
-   OWN START, less the current deck at its own end. */
-test('recoveryStanding: a PERIOD reads the initial deck at its own start, the current deck at its own end', async () => {
+   OWN START, less the current deck at its own end.
+
+   v8: NO LOOKBACK ON EITHER SIDE. v5 through v7 reached up to 45 days back for a customer
+   missing from a specific day's own initial file -- built to answer "how much does the company
+   currently owe", where reaching back is right. recovery_standing answers a different question
+   -- "what did the latest upload say, minus what did the next one say" -- and reaching back for
+   THAT question is wrong: it credits a clearing that may have happened weeks ago to whichever
+   single day happens to ask. Measured on the real book: a Monday that had always read 7-18
+   million read 90+ million for as long as the reach-back was in the query. Both sides now read
+   exactly the same way: the single latest whole-company deck of that type on or before the
+   date asked for. A team missing from that one deck owes nothing on it, on EITHER side now --
+   "recovered is just initial - current of latest uploads of those files". */
+test('recoveryStanding: a PERIOD reads the single latest initial deck at its own start, the single latest current deck at its own end', async () => {
   const { recoveryStanding, standingWithAdj, standingSum, standingKey } = await import('../api/_lib/snapshot-totals.js');
   const D = (ref, team, arrears, type, date, wd, extra = {}) => ({ ref, full_name: 'C' + ref, team, arrears,
     snapshot_type: type, weekday: wd, snapshot_date: date, upload_batch: 'b' + type + date, created_at: date + 'T04:00:00Z', ...extra });
   const rows = [
-    // Monday's own weekday-slot upload: 111 and 555 for KONGOWE, 999 for MBAGALA.
+    // Monday's whole-company initial file: 111 and 555 for KONGOWE, 999 for MBAGALA.
     D('111', 'KONGOWE', 500, 'initial', '2026-07-20', 'MON'),
     D('555', 'KONGOWE', 700, 'initial', '2026-07-20', 'MON'),
     D('999', 'MBAGALA', 900, 'initial', '2026-07-20', 'MON'),
-    // Friday's own weekday-slot upload -- a DIFFERENT slot from Monday's (each weekday is
-    // its own deck, the same grouping defaulterBook's export reading uses). 555's arrears
-    // grew since Monday; 111 was never named on the FRI slot, so it still stands from
-    // Monday's own slot until THAT slot is next refreshed.
-    D('555', 'KONGOWE', 750, 'initial', '2026-07-24', 'FRI'),
-    D('999', 'MBAGALA', 900, 'initial', '2026-07-24', 'FRI'),
-    // Friday evening's CURRENT file, the company's whole book. 111 is gone from it -- cleared.
+    // Friday's initial file: MBAGALA re-uploaded (999, a little higher); KONGOWE's team did
+    // not send anything on Friday at all. Under v8 that is a team with no deck on the single
+    // latest date, not a team whose older file still stands.
+    D('999', 'MBAGALA', 950, 'initial', '2026-07-24', 'FRI'),
+    // Friday evening's CURRENT file, the company's whole book. 111 is not on it -- cleared,
+    // from Monday's own reading where 111 still existed at all.
     D('555', 'KONGOWE', 600, 'current', '2026-07-24', 'FRI'),
     D('999', 'MBAGALA', 800, 'current', '2026-07-24', 'FRI'),
-    // TEMEKE has a current row but no initial deck anywhere in the lookback: not measured.
+    // TEMEKE has a current row but no initial deck at all, on any date: not measured.
     D('T1', 'TEMEKE', 100, 'current', '2026-07-24', 'FRI'),
-    // An initial deck older than the lookback: gone.
-    D('OLD', 'KONGOWE', 5000, 'initial', '2026-04-06', 'MON'),
   ];
   const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
-  // A single day (Friday, Friday): each weekday slot's own latest deck on or before Friday --
-  // Monday's slot (111 500) AND Friday's own, newer slot for 555 (750, not 700).
+  // A single day (Friday, Friday): the single latest initial deck on or before Friday is
+  // Friday's own -- MBAGALA only. KONGOWE sent nothing that day and is simply absent.
   const day = await recoveryStanding(db, { periods: ['2026-07-24'] });
   const dayK = day.get(standingKey('2026-07-24', '2026-07-24'));
-  assert.deepEqual([...dayK.keys()].sort(), ['KONGOWE', 'MBAGALA'], 'TEMEKE has no initial deck: not measured');
-  const dk = dayK.get('KONGOWE');
-  assert.equal(dk.initial, 1250); assert.equal(dk.current, 600); assert.equal(dk.recovered, 650);
-  assert.equal(dk.initialCustomers, 2); assert.equal(dk.currentCustomers, 1); assert.equal(dk.cleared, 1);
-  assert.deepEqual(dk.initialDates.sort(), ['2026-07-20', '2026-07-24']);
-  assert.equal(dk.currentDeck, '2026-07-24');
-  assert.equal(dayK.get('MBAGALA').recovered, 100);
-  // The WEEK (Monday through Friday): reads only what was picked ON OR BEFORE Monday -- 555's
-  // MONDAY figure (700), not Friday's later 750 -- less Friday's current deck. A different
-  // figure from the day above, on the very same decks.
+  assert.deepEqual([...dayK.keys()], ['MBAGALA'], 'KONGOWE has no initial deck on Friday itself: not measured, not reached back for');
+  const mk = dayK.get('MBAGALA');
+  assert.equal(mk.initial, 950); assert.equal(mk.current, 800); assert.equal(mk.recovered, 150);
+  assert.deepEqual(mk.initialDates, ['2026-07-24']); assert.equal(mk.currentDeck, '2026-07-24');
+  // A period STARTING Monday: the single latest initial deck on or before Monday is Monday's
+  // own -- both teams, Friday's later MBAGALA figure never enters it.
   const week = await recoveryStanding(db, { periods: [{ from: '2026-07-20', to: '2026-07-24' }] });
   const wk = week.get(standingKey('2026-07-20', '2026-07-24'));
   assert.deepEqual([...wk.keys()].sort(), ['KONGOWE', 'MBAGALA']);
@@ -838,7 +823,7 @@ test('recoveryStanding: a PERIOD reads the initial deck at its own start, the cu
   assert.equal(k.initial, 1200); assert.equal(k.current, 600); assert.equal(k.recovered, 600);
   assert.equal(k.initialCustomers, 2); assert.equal(k.currentCustomers, 1); assert.equal(k.cleared, 1, '111, gone from the current deck');
   assert.deepEqual(k.initialDates, ['2026-07-20']); assert.equal(k.currentDeck, '2026-07-24');
-  assert.equal(wk.get('MBAGALA').recovered, 100);
+  assert.equal(wk.get('MBAGALA').initial, 900, 'Monday\'s own MBAGALA figure, not Friday\'s later one');
   assert.deepEqual(standingSum(wk), { initial: 2100, current: 1400, recovered: 700, initialCustomers: 3, currentCustomers: 2, cleared: 1 });
   // A day with no current deck by its end at all: not measured, absent.
   const none1 = await recoveryStanding(db, { periods: ['2026-07-22'] });
@@ -860,119 +845,23 @@ test('recoveryStanding: a PERIOD reads the initial deck at its own start, the cu
   assert.equal(noFn, null);
 });
 
-/* "your own rules against mine are what i doubt if you influence data from expected into
-   defaulter recovery" led to checking the initial side against the real book, and the real
-   book showed weekday is not a stable fact about a customer at all -- the same ref cycles
-   through all seven tags as the calendar rolls, uploaded fresh most days. v1-v4 grouped decks
-   BY weekday and picked one shared "winning" date for the whole (team, weekday) group, which
-   meant a customer simply absent from the file on that one specific date fell out of the
-   total entirely -- even with a perfectly good, recent file of their own sitting inside the
-   lookback under a different date. Measured on the real book: 73 million of real, recent
-   arrears silently missing this way. v5 resolves the initial side per customer instead. */
-test('recoveryStanding: a customer not on their team\'s newest weekday-tagged deck still counts, if their own file is recent', async () => {
+/* Same-day corrections still resolve to the newer batch -- unchanged by dropping the lookback,
+   because both sides still batch-resolve per (team, weekday) on whichever ONE date wins. */
+test('recoveryStanding: a same-day correction still resolves to the newer batch, on the initial side too', async () => {
   const { recoveryStanding, standingKey } = await import('../api/_lib/snapshot-totals.js');
-  const D = (ref, team, arrears, type, date, wd, extra = {}) => ({ ref, full_name: 'C' + ref, team, arrears,
-    snapshot_type: type, weekday: wd, snapshot_date: date, upload_batch: 'b' + type + date, created_at: date + 'T04:00:00Z', ...extra });
+  const D = (ref, arrears, type, date, wd, createdAt, batch) => ({ ref, full_name: 'C' + ref, team: 'T1', arrears,
+    snapshot_type: type, weekday: wd, snapshot_date: date, upload_batch: batch, created_at: createdAt });
   const rows = [
-    // A re-uploaded daily, cycling through all seven weekday tags as the calendar rolls --
-    // the real book's own pattern. A's own latest WED tag (the 22nd) is fresher than B's.
-    D('A', 'T1', 1000, 'initial', '2026-09-16', 'WED'),
-    D('A', 'T1', 1000, 'initial', '2026-09-22', 'WED'),
-    // B uploaded ONCE, tagged WED the same as A that day, then never again -- a straggler,
-    // still well inside the 45-day lookback. Under the old rule, T1's WED group's winning
-    // date became the 22nd (A's later upload), and B -- absent from THAT date's file -- fell
-    // out of the initial total completely, as if they had never been uploaded at all.
-    D('B', 'T1', 5000, 'initial', '2026-09-16', 'WED'),
-    D('A', 'T1', 400, 'current', '2026-09-22', 'WED'),
-    // B is not on today's current file either -- absent from it, so recovered in full, the
-    // same no-lookback rule the current side has always followed.
+    // X: a morning initial upload (9000) superseded by an evening correction (3000), same date.
+    D('X', 9000, 'initial', '2026-09-16', 'WED', '2026-09-16T04:00:00Z', 'morning'),
+    D('X', 3000, 'initial', '2026-09-16', 'WED', '2026-09-16T18:00:00Z', 'evening'),
+    D('X', 100, 'current', '2026-09-16', 'WED', '2026-09-16T20:00:00Z', 'cx'),
   ];
   const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
-  const day = await recoveryStanding(db, { periods: ['2026-09-22'] });
-  const t1 = day.get(standingKey('2026-09-22', '2026-09-22')).get('T1');
-  assert.equal(t1.initial, 6000, 'A\'s 1,000 and B\'s 5,000, both counted -- B was never superseded, only outpaced');
-  assert.equal(t1.initialCustomers, 2);
-  assert.equal(t1.current, 400);
-  assert.equal(t1.recovered, 5600);
-  assert.equal(t1.cleared, 1, 'B, absent from today\'s current file, reads as cleared -- not as never having existed');
-  assert.deepEqual(t1.initialDates.sort(), ['2026-09-16', '2026-09-22'], 'both dates that actually fed the total are named');
-});
-
-/* defaulterBook (portal-core.js) reads the SAME initial baseline through deckDatesPerTeam's
-   (team, weekday) grouping, and had the identical flaw for the identical reason -- see
-   db/RUN-ME-033-defaulter-book-initial.sql. This is the same fixture as the recoveryStanding
-   test just above, read through defaulterInitialRows directly: B must not be stranded just
-   because A's fresher, same-weekday-tagged upload moved their team's WED group's winning date
-   past the one file B ever sent. */
-test('defaulterInitialRows: a customer not on their team\'s newest weekday-tagged deck still counts, if their own file is recent', async () => {
-  const { defaulterInitialRows } = await import('../api/_lib/snapshot-totals.js');
-  const D = (ref, team, arrears, date, wd) => ({ ref, full_name: 'C' + ref, team, arrears,
-    snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'b' + date, created_at: date + 'T04:00:00Z' });
-  const rows = [
-    D('A', 'T1', 1000, '2026-09-16', 'WED'),
-    D('A', 'T1', 1000, '2026-09-22', 'WED'),
-    D('B', 'T1', 5000, '2026-09-16', 'WED'),
-  ];
-  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
-  const out = await defaulterInitialRows(db, { to: '2026-09-22', lookback: 45 });
-  const byRef = Object.fromEntries(out.map(r => [r.ref, r]));
-  assert.equal(out.length, 2, 'A and B, both counted -- B was never superseded, only outpaced');
-  assert.equal(byRef.A.arrears, 1000);
-  assert.equal(String(byRef.A.snapshot_date), '2026-09-22', 'A\'s own newest row');
-  assert.equal(byRef.B.arrears, 5000);
-  assert.equal(String(byRef.B.snapshot_date), '2026-09-16', 'B\'s only row, still inside the lookback');
-});
-
-/* v5 got the RULE right and then timed out answering it several ways at once: it re-ranked
-   every customer's rows fresh for every period asked, so the dashboard's weekly trend -- seven
-   single-day periods, one call, each with its own 45-day lookback -- rescanned and re-sorted
-   nearly the same six-week window seven times. Measured on the real book: 3.3s for one period,
-   27.9s and an 818MB temp-disk spill for seven, long enough to hit the role's statement_timeout
-   and fall the whole reading back to the old day-pairing rule. v6 ranks each customer's rows
-   ONCE, over the union of every period's window, and turns that ranking into a per-row validity
-   interval instead of re-ranking per period. This proves that rewrite still answers different
-   periods with their own correct, different figures, and still applies the same-day batch rule
-   -- a customer corrected twice on ONE date must resolve to the newer batch, for every period
-   that date can answer, not just the exact one asked first. */
-test('recoveryStanding: several periods in one call still get their own correct, different figures', async () => {
-  const { recoveryStanding, standingKey } = await import('../api/_lib/snapshot-totals.js');
-  const D = (ref, arrears, date, wd, createdAt, batch) => ({ ref, full_name: 'C' + ref, team: 'T1', arrears,
-    snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: batch, created_at: createdAt });
-  const rows = [
-    // X: corrected same-day -- a morning batch (9000) superseded by an evening one (3000). The
-    // evening batch must win for EVERY period this date can answer, not just the one asked for
-    // it specifically.
-    D('X', 9000, '2026-09-16', 'WED', '2026-09-16T04:00:00Z', 'morning'),
-    D('X', 3000, '2026-09-16', 'WED', '2026-09-16T18:00:00Z', 'evening'),
-    // Y: two different uploads, ten days apart -- different periods must read different rows.
-    D('Y', 500, '2026-09-10', 'THU', '2026-09-10T04:00:00Z', 'y10'),
-    D('Y', 700, '2026-09-20', 'SUN', '2026-09-20T04:00:00Z', 'y20'),
-    // A current deck, so every period asked is "measured" (recoveryStanding reads nothing at
-    // all for a period whose end has no current deck) -- the number itself is not this test's
-    // point.
-    { ref: 'X', full_name: 'CX', team: 'T1', arrears: 100, snapshot_type: 'current', weekday: 'TUE',
-      snapshot_date: '2026-09-22', upload_batch: 'cx', created_at: '2026-09-22T18:00:00Z' },
-  ];
-  const db = fakeDb({ defaulter_snapshots: rows }, { rpc: SNAPSHOT_TOTALS_RPC });
-  const out = await recoveryStanding(db, {
-    periods: [{ from: '2026-09-16', to: '2026-09-22' }, { from: '2026-09-15', to: '2026-09-22' }, '2026-09-22'],
-  });
-  const at = f => out.get(standingKey(f, '2026-09-22')).get('T1');
-  assert.equal(at('2026-09-15').initial, 500, 'before X exists at all -- only Y\'s first row');
-  assert.equal(at('2026-09-15').initialCustomers, 1);
-  assert.equal(at('2026-09-16').initial, 3500, 'X\'s EVENING batch (3000), never the superseded morning one (9000), plus Y\'s first row (500)');
-  assert.equal(at('2026-09-16').initialCustomers, 2);
-  assert.equal(at('2026-09-22').initial, 3700, 'X unchanged at 3000, Y moved on to its later row (700)');
-  assert.equal(at('2026-09-22').initialCustomers, 2);
-});
-
-/* the fallback: without the migration, defaulterBook must keep reading exactly as it always
-   has -- the team-and-weekday grouping, unchanged, not a crash and not an empty book. */
-test('defaulterInitialRows: null when the function is not installed, same contract as recoveryStanding', async () => {
-  const { defaulterInitialRows } = await import('../api/_lib/snapshot-totals.js');
-  const db = fakeDb({ defaulter_snapshots: [] }, {});
-  const out = await defaulterInitialRows(db, { to: '2026-09-22', lookback: 45 });
-  assert.equal(out, null);
+  const out = await recoveryStanding(db, { periods: ['2026-09-16'] });
+  const t1 = out.get(standingKey('2026-09-16', '2026-09-16')).get('T1');
+  assert.equal(t1.initial, 3000, 'the evening batch, never the superseded morning one');
+  assert.equal(t1.initialCustomers, 1);
 });
 
 test('recoveryStanding: a failing function is not a missing one, and the note says what it said', async () => {
