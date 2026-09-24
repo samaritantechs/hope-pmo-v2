@@ -464,18 +464,17 @@ async function kycUploadForPlan_(db, user, { plan_id, kind, data_url }) {
   return { path };
 }
 
-/** The captured contract pages, as data URLs, in capture order -- for the WhatsApp share
-    button ("Share on WhatsApp button must go with the existing images in their order"). A
-    wa.me link cannot carry an attachment, but the browser's own share sheet can (navigator.
-    share with a files array); the sheet still needs actual bytes to hand to it, not a path
-    into a private bucket, so this hands them over the same authenticated door every other
-    read in this system uses -- no signed URL, nothing that outlives one request. Same
-    download-and-embed step finalizeContractOnApproval_ already takes per page; a page that
-    fails to download is skipped rather than failing the whole share. */
-async function contractPhotosForShare(db, user, { loan_id }) {
-  requireTab(user, 'team');
-  const loan = await mustLoan(db, loan_id);
-  const paths = Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls : [];
+/** Bucket paths, in the order given, back as data URLs -- for a WhatsApp share button ("Share
+    on WhatsApp button must go with the existing images in their order"). A wa.me link cannot
+    carry an attachment, but the browser's own share sheet can (navigator.share with a files
+    array); the sheet still needs actual bytes to hand to it, not a path into a private bucket,
+    so this hands them over the same authenticated door every other read in this system uses --
+    no signed URL, nothing that outlives one request. Same download step
+    finalizeContractOnApproval_ already takes per contract page; a path that fails to download
+    is skipped rather than failing the whole share. One definition, read by both the loan side
+    (contractPhotosForShare) and the plan side (planPhotosForShare) so neither can drift from
+    how the other turns a stored path into something a phone can actually share. */
+async function pathsAsDataUrls_(db, paths) {
   const images = [];
   for (const path of paths) {
     const { data, error } = await db.storage.from(KYC_BUCKET).download(path);
@@ -484,7 +483,13 @@ async function contractPhotosForShare(db, user, { loan_id }) {
     const isPng = /\.png$/i.test(path);
     images.push('data:' + (isPng ? 'image/png' : 'image/jpeg') + ';base64,' + bytes.toString('base64'));
   }
-  return { images };
+  return images;
+}
+async function contractPhotosForShare(db, user, { loan_id }) {
+  requireTab(user, 'team');
+  const loan = await mustLoan(db, loan_id);
+  const paths = Array.isArray(loan.contract_photo_urls) ? loan.contract_photo_urls : [];
+  return { images: await pathsAsDataUrls_(db, paths) };
 }
 
 /** Appends one captured contract-page path to the loan's array and marks the assessment
@@ -1664,6 +1669,38 @@ function draftSections_(draft) {
   return [...SECTIONS].filter(s => draft[s] && typeof draft[s] === 'object' && Object.keys(draft[s]).length);
 }
 
+/** Every photo the five-section draft has captured so far, in the order the form itself reads
+    top to bottom: the customer's own photo and consent-form pages, their residence and its
+    letter, the business, then each guarantor's own photo, residence and letter in turn. A
+    plan cannot hold a signed contract (kycUploadForPlan_ refuses that kind outright -- there
+    is no loan to sign one for yet), but every OTHER photo this screen takes lives under
+    plans/<id>/ in the same private bucket the loan side reads from, under the same field
+    names lnPlanAsDetail_ reads them back by on the client. Signatures are left out on purpose
+    -- "assessment pictures" means what was photographed, not a scribble pad. */
+function planImagePaths_(draft) {
+  const p = draft.personal || {}, r = draft.residence || {}, b = draft.business || {};
+  const guarantors = (draft.guarantor && draft.guarantor.guarantors) || [];
+  const paths = [
+    p.photo_url, p.other_number_form_url, p.other_number_form_holder_url,
+    r.residence_verify_photo_url, r.residence_verify_photo2_url, r.residence_verify_photo3_url,
+    r.residence_verify_photo4_url, r.local_govt_letter_url,
+    b.business_verify_photo_url, b.business_verify_photo2_url, b.business_verify_photo3_url,
+  ];
+  for (const g of guarantors) {
+    paths.push(g.photo_url, g.residence_verify_photo_url, g.residence_verify_photo2_url,
+      g.residence_verify_photo3_url, g.residence_verify_photo4_url, g.local_govt_letter_url);
+  }
+  return paths.filter(Boolean);
+}
+/* "my system will be used for assessment pictures ... they get the kyc and Whatsapp share
+   buttons at assessment plan" -- the plan-side counterpart of contractPhotosForShare, same
+   authenticated download rather than a signed URL, same shape of answer. */
+async function planPhotosForShare(db, user, { plan_id }) {
+  requireTab(user, 'team');
+  const plan = await mustPlan_(db, user, plan_id);
+  return { images: await pathsAsDataUrls_(db, planImagePaths_(draftOf_(plan))) };
+}
+
 /* THE PRE-FILLABLE RECOMMENDATION -- SAVED ON THE PLAN, SUBMITTED ONLY ONCE THERE IS A LOAN.
 
      "allow the pre-fillable info of loan recommendation at assessment plan and saving only -
@@ -1762,7 +1799,7 @@ const FN = {
   carriersList, carrierSave,
   adjustmentSave, adjustmentsList,
   pipelineSummary,
-  assessmentPlanList, assessmentPlanSave, assessmentPlanDelete, assessmentPlanDraftSave,
+  assessmentPlanList, assessmentPlanSave, assessmentPlanDelete, assessmentPlanDraftSave, planPhotosForShare,
 };
 
 export async function loanApi(db, user, fn, args) {

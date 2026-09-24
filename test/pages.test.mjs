@@ -766,12 +766,15 @@ test('the recommendation stage offers a 10-page contract capture and a WhatsApp 
   const waWire = app.slice(waStart, app.indexOf("$('#lnSavePersonal').onclick", waStart));
   // "Share on WhatsApp button must go with the existing images in their order, the 1st
   // picture with the whole KYC text automatic" -- the button hands the captured pages, in
-  // capture order, and the KYC caption to the browser's own share sheet.
-  assert.ok(/contractPhotosForShare/.test(waWire), 'it asks the server for the captured pages, in order');
-  assert.ok(/navigator\.share\(/.test(waWire), 'and shares them (with the images) through the share sheet');
-  assert.ok(/buildKycText_\(\)/.test(waWire), 'the whole KYC text rides as the share\'s caption');
-  assert.ok(/wa\.me\/\?text=/.test(waWire), 'a browser that cannot share files at all still gets the text-only fallback');
-  assert.ok(/window\.open\(/.test(waWire), 'the fallback actually opens the link (window.open, now safe -- see onCreateWindow)');
+  // capture order, and the KYC caption to the browser's own share sheet, through the one
+  // shareOnWhatsApp_ helper both this button and the plan's own share button call.
+  assert.ok(/shareOnWhatsApp_\(\$\('#lnContractWaBtn'\), function\(\)\{ return srv\('contractPhotosForShare', \{ loan_id: loan\.id \}\)/.test(waWire),
+    'it asks the server for the captured pages, in order');
+  const helper = app.slice(app.indexOf('function openWaTextOnly_('), app.indexOf('function mapLink_('));
+  assert.ok(/navigator\.share\(/.test(helper), 'and shares them (with the images) through the share sheet');
+  assert.ok(/buildKycText_\(\)/.test(helper), 'the whole KYC text rides as the share\'s caption');
+  assert.ok(/wa\.me\/\?text=/.test(helper), 'a browser that cannot share files at all still gets the text-only fallback');
+  assert.ok(/window\.open\(/.test(helper), 'the fallback actually opens the link (window.open, now safe -- see onCreateWindow)');
 });
 
 /* "horizontal (not vertical) assessment stage switcher with business as 2nd stage" and
@@ -959,8 +962,15 @@ test('the recommendation form drafts on an Assessment Plan, and the plan drawer 
   assert.ok(/lnActKeep_\('teamAssessmentSave', \{ loan_id: loan\.id, section: section, fields: fields \}/.test(form), 'loan mode saves the recommendation as before');
   assert.equal((form.match(/saveSection_\('(personal|business|residence|guarantor|recommendation)'/g) || []).length, 5, 'all five sections go through the one router');
   assert.ok(!/lnActKeep_\('teamAssessmentSave', \{ loan_id: loan\.id, section: '/.test(form), 'no section save bypasses it');
-  assert.ok(/if \(planMode\) return;\s*\n\s*\$\('#lnSubmitRec'\)/.test(form), 'submit and reject are never wired on a plan');
-  assert.ok(/planMode\s*\?\s*'<div class="note"[^]*?Submit live at Team/.test(form), 'and the contract/copy/submit block is replaced by a note on a plan');
+  assert.ok(/if \(!planMode\) \{\s*\n\s*\$\('#lnSubmitRec'\)/.test(form), 'submit and reject are never wired on a plan');
+  // "my system will be used for assessment pictures ... they get the kyc and Whatsapp share
+  // buttons at assessment plan" -- everything but the signed contract itself is now offered
+  // on a plan too (there is no loan yet to sign one for).
+  assert.ok(/planMode[^]*?\?\s*'<div class="card">[^]*?id="lnPlanWaBtn"/.test(form), 'a plan gets its own WhatsApp share button');
+  assert.ok(/planMode[^]*?id="lnCopyKyc" disabled/.test(form.slice(0, form.indexOf('lnContractCount'))), 'and the Copy KYC button, before the contract-only branch');
+  assert.ok(/Mkataba na kuwasilisha vinapatikana kwenye Team/.test(form), 'only the contract and Submit are said to live at Team &middot; Recommendation');
+  assert.ok(/if \(planMode\) \{\s*\n\s*\$\('#lnPlanWaBtn'\)\.onclick = function\(\)\{\s*\n\s*shareOnWhatsApp_\(\$\('#lnPlanWaBtn'\), function\(\)\{ return srv\('planPhotosForShare', \{ plan_id: planRow\.id \}\)/.test(form),
+    'the plan share button asks for the plan\'s own photos, not a loan\'s');
   const up = app.slice(app.indexOf('function kycUpload_('), app.indexOf('function wireCanvasPad_('));
   assert.ok(/\^plan:\(\.\+\)\$/.test(up) && /plan_id: pm\[1\]/.test(up), 'a plan: id in the loan slot uploads under the plan');
   const planForm = app.slice(app.indexOf('function lnAssessPlanForm_('), app.indexOf('function busy_('));
