@@ -114,8 +114,13 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 @keyframes dsLit{0%{background:rgba(255,255,255,.20)}100%{background:transparent}}
 .daystrip.lit{animation:dsLit .7s ease-out;border-radius:8px}
 .daystrip.warn .ds-tag{background:rgba(255,190,80,.28);color:#FFE9BF}
-.daystrip.stale{opacity:.62}
-.daystrip.stale .ds-tag{background:rgba(255,255,255,.06)}
+/* STALE IS A DIFFERENT FACT FROM WARN -- warn is "the request failed", stale is "this request
+   worked, and it is still yesterday's money". A dimmed strip reads as "not fully loaded yet",
+   which an officer taps past; the figures beside it are real and usable, they are just not
+   today's, so the tag has to say that at a glance an officer at the door will not miss. */
+.daystrip.stale{background:rgba(220,38,38,.24);border-radius:10px;padding:3px 8px}
+.daystrip.stale .ds-tag{background:#DC2626;color:#fff}
+.daystrip.stale b{color:#FFD2D2}
 
 main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 12px 90px}
 .searchbar{position:relative;margin-bottom:10px}
@@ -1327,7 +1332,18 @@ function loadDaySummary(force){
     _sumVer = d.dataVersion || null;
     // Sat/Sun the server returns week-to-date; drawSummary_ reads d.period for the tag.
     $('#dayStrip').classList.remove('warn');
-    drawSummary_(d, false, _sumAt);
+    /* A LIVE ANSWER CAN STILL BE YESTERDAY'S MONEY.
+         "When a report ain't uploaded initial and current should stay 0 ... though the phone
+          app could still show yesterday's final deck with the above date strip in red"
+       recovery_standing carries the last uploaded deck forward until the next one lands, on
+       purpose -- so a fresh, successful fetch on a Friday morning before Friday's deck is in
+       still answers with Thursday's money. That is the right number to keep showing an officer
+       at the door; calling it "leo" is not. recToday already names the day its money actually
+       belongs to (isToday) -- sent whether or not this check reads it -- so this costs no
+       extra request. Weekends are excluded: there Friday's money IS the honest answer by
+       design, and recToday.isToday reads false every Sat/Sun regardless. */
+    var todayCarried = d.period !== 'week' && d.recToday && d.recToday.isToday === false;
+    drawSummary_(d, todayCarried, _sumAt);
     saveSummary_(d, _sumAt);
     // A brief flash, so a refresh that moves no figure is still visibly a refresh.
     var el = $('#dayStrip');
