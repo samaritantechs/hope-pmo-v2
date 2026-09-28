@@ -548,12 +548,56 @@ reasons keeps that decision; an incoming claim never argues it away.
 
 ### What shift cannot do
 
-- **It cannot reach a locked screen that is showing right now.** A pinned lock screen has no
-  Settings and no way to receive a new order at all until it unlocks or is put back on a
-  cable — same limit every order already has.
+- **It cannot reach a locked phone that has no network.** A locked phone still beats — the
+  beat is a background job and the pinned screen does not stop it, which is the same reason
+  Fungua reaches a locked phone at all. What a pinned screen *does* hide is Settings, so a
+  locked handset with no wifi and no data cannot be given either from the glass; the order
+  waits until it comes back into coverage, or goes on a cable. (An earlier version of this
+  line said a showing lock screen could not receive an order at all. It can; the app has
+  never checked the screen before beating.)
 - **It cannot move a released phone.** Achia stops the beat entirely (`BeatJob.cancel`), so
   there is nothing left listening for a shift order. Shift such a phone *before* releasing
   it, or re-enrol it first.
+- **Its batch is good for a day.** `claim()` refuses a batch older than 24 hours, silently.
+  Hoop renews an unclaimed order on its own reads (below); an order placed by hand from this
+  side that a phone did not collect within the day has to be placed again.
+
+### Arriving from Hoop: sold stock, automatically
+
+> "transfereed stock from Hoop to Hope should switch lock logo to Hope and appear in Hope
+> Unlocking too"
+
+A handset Hoop sells to HOPE MICROCREDIT is HOPE's from that day, and Hoop's register now
+hands it over on its own — the sale in Hoop's sales book queues the shift, Hoop's next Devices
+or NEW STOCK open asks this server for the batch (`/api/shift-batch`, under the shared
+`DEVICE_SHIFT_SECRET`), and the phone moves on its own next beat. Nobody here presses
+anything. What that looks like from this side:
+
+- **The row appears here the moment Hoop asks for the batch** — before the phone has moved —
+  enrolled by `SHIFT:HOOP`, with the **model** Hoop knew (`details` on the batch call), no
+  holder, and reading *kutoka HOOP / from HOOP* in the *Held by* column until somebody issues
+  it. It is on **both** panes from that moment; a phone still to arrive reads *never called
+  home* until its first beat lands.
+- **It arrives locked if it left locked.** The claim carries Hoop's `locked`, and this
+  register applies it onto the fresh row (§ *It goes with its current state*). The next beat
+  then carries HOPE's words and HOPE's mark, so the customer's screen names the office that
+  can actually help them.
+- **The desk unlocks it here** — Kufungua simu → Fungua — exactly like any other phone. Hoop
+  cannot: its row reads *imehamishwa* and refuses orders.
+- **Arrival wipes any order left on the row.** If this register once sent that phone to Hoop
+  and its *dev_shifted* back to us was lost, the row still carried `shift_server` + batch;
+  the handset's first beat back here would have collected it and gone straight back to Hoop.
+  A row Hoop hands over is stamped `enrolled_by SHIFT:HOOP` / `enrolled_at` now and its shift
+  columns cleared — it reads *kutoka HOOP* even if a store keeper first typed it in.
+- **Self-lock is off for these rows.** A row with no holder and no `issued_at` is treated as
+  store stock and never self-locks when it goes dark (§ *The offline rule*). That is the safe
+  default for a handset nobody here has met; issue it to a holder to turn the grace window
+  on.
+
+**`/api/lock-version` is served here too now**, rewritten to Hoop's (`vercel.json`), so a
+handset that beats to HOPE keeps self-updating from the one signed build both companies run.
+Without it a phone shifted in would have stayed on whatever build it arrived with for the rest
+of its life.
 - **It does not know the other office's address on its own the first time.** `DEVICE_SHIFT_PARTNER`
   has to be set, once, from a source somebody trusts — there is no standing channel between
   two separate companies' servers for one to discover the other automatically. After that it
