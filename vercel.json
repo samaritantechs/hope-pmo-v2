@@ -35,6 +35,10 @@
     {
       "source": "/live",
       "destination": "/live.html"
+    },
+    {
+      "source": "/api/lock-version",
+      "destination": "https://hoop-pmo.vercel.app/api/lock-version"
     }
   ],
   "functions": {

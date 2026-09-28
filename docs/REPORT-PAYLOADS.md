@@ -132,7 +132,8 @@ column added to the report needs no change at the reader's end. The same answer 
 ### deviceList · deviceHistory — the company phone register
 `deviceList` args: `q` (IMEI, holder name, team or model), `state`, `refused` (see below), `shiftPartner` (see below) · answer:
 `ready, rows[{imei, item, holder, team, role, issuedAt, state, reason, by, at, reported, lastSeen, battery, android,
-appVersion, reportedImei, lat, lng, locAcc, locAt, lockState, neverSeen, stale, lockedNeverSpoke, shiftPending, shiftTo}]`,
+appVersion, reportedImei, lat, lng, locAcc, locAt, lockState, neverSeen, stale, lockedNeverSpoke, shiftPending, shiftTo,
+origin}]`,
 `total`, `q`, `searching`, `refused[{imei, at, tries, onRegister}]`, `shiftPartner`,
 `counts{enrolled, locked, lockPending, released, lost, neverSeen, stale, lockedNeverSpoke, shiftPending, issued, inStore}`.
 `deviceHistory` args: `imei` · answer: `found, device{…}, events[{event, from, to, reason, actor, at}]`.
@@ -153,7 +154,9 @@ with nothing recorded at all.
 
 `shiftPending` / `shiftTo` reflect a `deviceShift` order sitting unconfirmed on the row: the handset clears both itself the
 moment it claims a token at the other office (`dev_shifted`, see `docs/DEVICE-LOCKING.md` §9). See that section for the whole
-mechanism — no wipe, no cable, the phone never gives up Device Owner.
+mechanism — no wipe, no cable, the phone never gives up Device Owner. `origin` is the other office's name (`HOOP`) on a row
+that office handed over through `/api/shift-batch` (enrolled by `SHIFT:HOOP`), `null` on anything enrolled here; the panes
+print it in *Held by* while the row has no holder, so Hoop's sold stock does not read as phones in the store.
 
 `shiftPartner` is asked for only by the Locking pane (the only one that can order a shift) and is `null` otherwise. It is
 `DEVICE_SHIFT_PARTNER` or the built-in default (`https://hoop-pmo.vercel.app`) — the address the Hamisha / Shift drawer opens

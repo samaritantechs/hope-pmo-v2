@@ -7001,6 +7001,11 @@ function deviceRow_(r, nowMs) {
     locAcc: r.last_loc_acc == null ? null : Number(r.last_loc_acc),
     locAt: r.last_loc_at || null,
     enrolledAt: r.enrolled_at || null, enrolledBy: r.enrolled_by || null,
+    /* WHERE IT CAME FROM, when another office handed it over. shift-batch enrols as
+       'SHIFT:<office>', so a row nobody here ever provisioned still says whose it was --
+       Hoop's sold stock arrives this way now, locked, with no holder, and a desk reading
+       "stoo / in store" about a phone in a customer's pocket needs this one word. */
+    origin: /^SHIFT:/i.test(String(r.enrolled_by || '')) ? String(r.enrolled_by).slice(6).trim() || 'other' : null,
     /* HAS THE PHONE DONE WHAT IT WAS TOLD? `pending` is the column somebody chases: an order
        given that the handset has not confirmed. A phone that has never spoken is not pending
        against an unlock -- it is simply not locked, which is true. */

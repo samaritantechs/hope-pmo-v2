@@ -829,6 +829,41 @@ test('the receiving side mints a batch only for the shared secret, compared in c
   }
 });
 
+/* HOOP HANDS OVER SOLD STOCK ON ITS OWN NOW (its api/_lib/handover.js), and sends what it knows
+   about each phone with the batch call. The model lands on the rows this call mints and nowhere
+   else: a row this office already had keeps its own. */
+test('the batch call may carry each phone\'s model, and it lands only on the rows just minted', async () => {
+  const { shiftBatch } = await import('../api/shift-batch.js');
+  const saved = process.env.DEVICE_SHIFT_SECRET;
+  try {
+    process.env.DEVICE_SHIFT_SECRET = 'shared-secret-xyz';
+    const t = tables();
+    t.devices.push({ imei: '303030303030325', state: 'locked', item: 'OURS', enrol_token: 'tok-ours',
+      enrolled_by: 'STORE KEEPER', enrolled_at: new Date(NOW - 86400000).toISOString() });
+    const db = fakeDb(t);
+    const r = await shiftBatch(db, { secret: 'shared-secret-xyz', imeis: ['303030303030324', '303030303030325', '303030303030326'],
+      from: 'HOOP', details: [{ imei: '303030303030324', item: 'SAMSUNG A07-64GB' }, { imei: '303030303030325', item: 'THEIRS' },
+        { imei: '303030303030326', item: '' }, { imei: 'NOT-IN-BATCH', item: 'X' }] });
+    assert.equal(r.enrolled, 2);
+    assert.equal(r.items, 1, 'one model landed: the fresh row that had one to give');
+    const rows = db._dump('devices');
+    assert.equal(rows.find(d => d.imei === '303030303030324').item, 'SAMSUNG A07-64GB');
+    assert.equal(rows.find(d => d.imei === '303030303030325').item, 'OURS', 'a row this office already had keeps its own model');
+    assert.equal(rows.find(d => d.imei === '303030303030326').item, null, 'nothing to give, nothing written');
+    assert.ok(!rows.find(d => d.imei === 'NOT-IN-BATCH'), 'details never mint a row on their own');
+
+    /* And the desk can tell where it came from: the row reads "kutoka HOOP" until somebody
+       issues it, on both panes, instead of looking like a phone sitting in the store. */
+    const list = await run(db, UNLOCKER, 'deviceList', {});
+    const fresh = list.rows.find(x => x.imei === '303030303030324');
+    assert.equal(fresh.origin, 'HOOP');
+    assert.equal(fresh.holder, null);
+    assert.equal(list.rows.find(x => x.imei === '303030303030325').origin, null, 'our own enrolments carry no origin');
+  } finally {
+    if (saved === undefined) delete process.env.DEVICE_SHIFT_SECRET; else process.env.DEVICE_SHIFT_SECRET = saved;
+  }
+});
+
 test('a phone that has shifted away is off both panes and every count, but a search still finds it', async () => {
   const db = fakeDb(tables());
   const e = await run(db, LOCKER, 'deviceEnrol', { imeis: '303030303030330, 303030303030331' });
