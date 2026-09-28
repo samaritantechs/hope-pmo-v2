@@ -7210,6 +7210,23 @@ async function deviceEnrol(db, user, args, nowMs = Date.now()) {
       .update({ enrol_batch: batch, enrol_batch_at: at }).in('imei', rejoin);
     if (error) throw new Error(error.message);
   }
+  /* A PHONE COMING (BACK) FROM THE OTHER OFFICE -- api/shift-batch.js enrols on Hoop's behalf
+     as SHIFT:<office> -- IS RECORDED AS ARRIVING NOW, AND ANY ORDER STILL ON ITS ROW IS WIPED.
+     If this register once sent that phone away (Hamisha) and the phone's dev_shifted never
+     reached us, the row still carries shift_server + shift_batch; left there, the handset's
+     very first beat back here would hand it that stale order and send it straight back. The
+     row's enrolled_by/enrolled_at are also what `origin` on the Devices pane reads. One extra
+     write, on the server-to-server path only -- never the bench. */
+  const arriving = user.code === 'shift' ? rejoin : [];
+  if (arriving.length) {
+    const patch = { enrolled_by: user.name, enrolled_at: at, shift_server: null, shift_batch: null, shift_at: null, updated_at: at };
+    let { error } = await db.from('devices').update(patch).in('imei', arriving);
+    if (error && /shift_server|shift_batch|shift_at/.test(String(error.message || ''))) {
+      const { shift_server, shift_batch, shift_at, ...rest } = patch;
+      ({ error } = await db.from('devices').update(rest).in('imei', arriving));
+    }
+    if (error) throw new Error(error.message);
+  }
   /* HANDED BACK, THEN ENROLLED AGAIN, AND FUNGA HAS TO JUST WORK. Releasing leaves the row
      reading `released`; enrolling a handset IS the statement that it is under our control
      again, so it is recorded as one.

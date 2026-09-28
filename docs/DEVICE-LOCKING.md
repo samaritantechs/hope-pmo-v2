@@ -584,6 +584,11 @@ anything. What that looks like from this side:
   can actually help them.
 - **The desk unlocks it here** — Kufungua simu → Fungua — exactly like any other phone. Hoop
   cannot: its row reads *imehamishwa* and refuses orders.
+- **Arrival wipes any order left on the row.** If this register once sent that phone to Hoop
+  and its *dev_shifted* back to us was lost, the row still carried `shift_server` + batch;
+  the handset's first beat back here would have collected it and gone straight back to Hoop.
+  A row Hoop hands over is stamped `enrolled_by SHIFT:HOOP` / `enrolled_at` now and its shift
+  columns cleared — it reads *kutoka HOOP* even if a store keeper first typed it in.
 - **Self-lock is off for these rows.** A row with no holder and no `issued_at` is treated as
   store stock and never self-locks when it goes dark (§ *The offline rule*). That is the safe
   default for a handset nobody here has met; issue it to a holder to turn the grace window
