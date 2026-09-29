@@ -2,7 +2,7 @@ import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
-import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch , latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
+import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch, pickFirstBatch, latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
@@ -11,7 +11,7 @@ import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord,
-  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf } from './pmo.js';
+  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf, collectionOf } from './pmo.js';
 import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct, recoveryLadder, recoveryBelowOf,
   parseBandTzs, REC_BAND_TZS_KEY } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
@@ -10589,8 +10589,13 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        it costs no wall time, null on a deployment that has not built the table. */
     adjReceived_(db, user, { from: mon, to: sun }),
     /* THE WEEK'S INITIAL SHEETS, for the early-collection week board -- see earlyWeek below.
-       Team-day totals like the day sheets beside them: one small read. */
-    expectedTotalsInRange(db, { type: 'initial', from: mon, to: fri, teams: user.teams }),
+       Team-day totals like the day sheets beside them: one small read.
+       TO THREE DAYS PAST TODAY, not just to Friday: the day-progress slide reads every upload
+       of the NEXT list (earlyList looks that far ahead), which on a Friday is Monday's sheet --
+       past the week's end. Same read, a few team-day rows wider; earlyWeek picks its five
+       dates out by exact match, so the extra days never leak into it. */
+    expectedTotalsInRange(db, { type: 'initial', from: mon,
+      to: addDaysKey(today, 3) > fri ? addDaysKey(today, 3) : fri, teams: user.teams }),
   ]);
   const pmoRoleName = cfgS.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const teamBy = {};
@@ -10624,14 +10629,15 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     const m = {};
     for (const r of rows) {
       const b = bucket(m, officerOf(teamBy, r.team, 'expected'),
-        { uncollected: 0, paidOver: 0, expected: 0, collected: 0, teamSet: {} });
+        { uncollected: 0, paidOver: 0, expected: 0, collected: 0, customers: 0, teamSet: {} });
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
       b.uncollected += num(r.uncollected_amt);
       if (r.team) b.teamSet[K(r.team)] = 1;
       b.paidOver += num(r.paid_n) + num(r.over_n);
+      b.customers += num(r.customers);
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
-      teams: Object.keys(b.teamSet).length,
+      teams: Object.keys(b.teamSet).length, customers: b.customers,
       expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
       .sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct))
       // Numbered after sorting, so S/N is the ranking rather than an accident of map order.
@@ -10995,6 +11001,101 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const pmoTzs = parsePmoBandTzs(cfgS.get(PMO_BAND_TZS_KEY, ''));
   const pmoRows = pmoBoard(pmoRoster, pmoByDay, today, pmoDays, pmoLadder(pmoTzs), pmoBelowOf(pmoTzs));
 
+  /* ---- DAY PROGRESS: the three office units, from the day's FIRST upload to its latest. ----
+
+       "the first upload of the day has 80% for that person, then we mark progress till end of
+        the day what has been achieved from start of the day ... someone starts a day with 80%
+        and pushes to 92%, and another relaxed buddy starts with 90% closes with 93%. So we'll
+        need to see who pushed more percentages and who is the most stuck guy behind"
+
+     Every board above reads a day's LATEST batch (pickLatestBatch). This one also reads the
+     FIRST upload CREATED today, per team -- pickFirstBatch, the same rule read backwards -- and
+     joins the two on the officer. NO NEW READ: the team-day totals already carry every batch of
+     the day, so both ends come out of rows this screen holds.
+
+     A team with no upload created today starts where it stands, movement nil: a list uploaded
+     last night and untouched since reads "no upload today", not as a team that went nowhere on
+     purpose. Iliyonasia is laid on BOTH ends alike -- it is a day's correction, not an upload,
+     so it moves neither end against the other, and "now" stays the figure the slide beside this
+     one shows for the same person. */
+  const createdToday_ = r => !!r.created_at && todayKey(Date.parse(r.created_at)) === today;
+  const splitDay_ = rows => {
+    const latest = pickLatestBatchRows(rows);
+    const firstBy = new Map();
+    for (const r of pickFirstBatch(rows.filter(createdToday_))) firstBy.set(K(r.team), r);
+    // Aligned with `latest` one to one, so a caller can walk the two side by side per team.
+    return { latest, start: latest.map(r => firstBy.get(K(r.team)) || r) };
+  };
+  const uploadsToday_ = (rows, mine) => {
+    const s = new Set();
+    for (const r of rows) if (createdToday_(r) && mine(r)) s.add(String(r.upload_batch || ''));
+    return s.size;
+  };
+  const gained_ = (a, b) => (a == null || b == null) ? null : Math.round((b - a) * 10) / 10;
+  // Most points gained first; an officer with no percentage at all sinks rather than reading
+  // as nil movement. Numbered after sorting, so S/N is the ranking.
+  const rankGain_ = rows => rows
+    .sort((a, b) => (b.deltaPct == null ? -1e9 : b.deltaPct) - (a.deltaPct == null ? -1e9 : a.deltaPct)
+      || String(a.officer).localeCompare(String(b.officer)))
+    .map((r, i) => ({ sn: i + 1, ...r }));
+
+  // COL -- the PMO collection officers over today's day sheet, teams off their access code.
+  const colDayRows = myExp.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'today');
+  const colSplit = splitDay_(colDayRows);
+  const colStart = withAdj_(colSplit.start, adj, 'expected-current', today);
+  const colNow = withAdj_(colSplit.latest, adj, 'expected-current', today);
+  const dpCol = rankGain_(pmoRoster.map(p => {
+    const mine = new Set((p.teams || []).map(t => K(t)));
+    const pick = rows => rows.filter(r => mine.has(K(r.team)));
+    const s = collectionOf(pick(colStart)), n = collectionOf(pick(colNow));
+    const paidOver = pick(colNow).reduce((a, r) => a + num(r.paid_n) + num(r.over_n), 0);
+    return { officer: p.name, teams: (p.teams || []).length,
+      uploads: uploadsToday_(colDayRows, r => mine.has(K(r.team))),
+      startPct: s.pct, pct: n.pct, deltaPct: gained_(s.pct, n.pct),
+      customers: n.customers, remaining: Math.max(0, n.customers - paidOver),
+      startUncollected: s.uncollected, uncollected: n.uncollected };
+  }));
+
+  // EARLY -- the Expected officers over the NEXT list, the same initial sheet earlyToday reads.
+  const earlyDayRows = (tomorrow.source === 'initial' && tomorrow.date)
+    ? myExpInit.filter(r => String(r.snapshot_date) === String(tomorrow.date)) : [];
+  const earlySplit = splitDay_(earlyDayRows);
+  const eStartBy = new Map(earlyBoard(withAdj_(earlySplit.start, adj, 'expected-initial', tomorrow.date))
+    .map(r => [r.officer, r]));
+  const dpEarly = rankGain_(earlyBoard(withAdj_(earlySplit.latest, adj, 'expected-initial', tomorrow.date)).map(n => {
+    const s = eStartBy.get(n.officer) || null;
+    return { officer: n.officer, teams: n.teams,
+      uploads: uploadsToday_(earlyDayRows, r => officerOf(teamBy, r.team, 'expected') === n.officer),
+      startPct: s ? s.pct : null, pct: n.pct, deltaPct: gained_(s ? s.pct : null, n.pct),
+      customers: n.customers, remaining: Math.max(0, n.customers - n.paidOver),
+      startUncollected: s ? s.uncollected : null, uncollected: n.uncollected };
+  }));
+
+  /* REC -- movement is deck to deck: today's first CURRENT upload against its latest, per team,
+     so it is the arrears that actually fell during the day. "Now" is recToday's own figure (the
+     standing, where RUN-ME-032 is run) so this slide and the recovery slide agree on the
+     person; "start" is that figure less the movement. Both percentages divide by the same
+     uncollected recToday divides by -- today's own on a weekday, the week's at the weekend. */
+  const curDayRows = myDef.filter(r => String(r.snapshot_date) === today && r.snapshot_type === 'current' && r.weekday === wd);
+  const recSplit = splitDay_(curDayRows);
+  const moveBy = {};
+  recSplit.latest.forEach((l, i) => {
+    const who = officerOf(teamBy, l.team, 'recovery');
+    moveBy[who] = (moveBy[who] || 0) + (num(recSplit.start[i].arrears_amt) - num(l.arrears_amt));
+  });
+  const dpRec = rankGain_(recToday.map(n => {
+    const move = moveBy[n.officer] || 0;
+    const start = n.recovered - move;
+    const sPct = pctOf(start, n.uncollected);
+    return { officer: n.officer,
+      teams: teamRows.filter(t => officerOf(teamBy, t.team, 'recovery') === n.officer).length,
+      uploads: uploadsToday_(curDayRows, r => officerOf(teamBy, r.team, 'recovery') === n.officer),
+      startRecovered: start, recovered: n.recovered, deltaAmt: move,
+      startPct: sPct, pct: n.pct, deltaPct: gained_(sPct, n.pct), uncollected: n.uncollected };
+  }));
+  const dayProgress = { date: today, weekday: wd, earlyDate: tomorrow.date, earlySource: tomorrow.source,
+    early: dpEarly, col: dpCol, rec: dpRec };
+
   /* ---- FOLLOW-UP STATUS across ALL defaulters (what the whole book looks like) ---- */
   const real = myFu.filter(r => !(r.status == null && r.arrears == null));
   const fsm = {};
@@ -11017,6 +11118,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     pmo: pmoRows.map(pmoPublicRow),
     pmoBasis: basis.kind, pmoBasisLabel: basis.label,
     earlySource: tomorrow.source, earlyDate: tomorrow.date, earlyAhead: !!tomorrow.ahead,
+    dayProgress,
     fuStatus, fuTotal: real.length,
     weekUncollected: weekUncol };
 }

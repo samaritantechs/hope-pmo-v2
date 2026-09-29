@@ -4074,6 +4074,74 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(promised.arrears, 600);
 });
 
+/* DAY PROGRESS -- each office unit from the day's FIRST upload to its latest.
+     "someone starts a day with 80% and pushes to 92%, and another relaxed buddy starts with 90%
+      closes with 93%. So we'll need to see who pushed more percentages and who is the most
+      stuck guy behind"
+   Every board reads a day's latest batch; this slide also reads the first upload CREATED that
+   day, per team, and joins the two on the officer. The fixture uploads each of the three books
+   twice on the same day, so each unit has a start and a now that differ. */
+test('day progress: each office unit from the day\'s first upload to its latest, ranked on points gained', async () => {
+  const t = tables();
+  const later = (row, batch, hhmm) => ({ ...row, upload_batch: batch, created_at: TODAY + 'T' + hhmm + ':00Z' });
+  t.repayment_snapshots.push(
+    // TODAY's day sheet again at 09:00: both KONGOWE customers now paid (04:00 had 111 unpaid).
+    later(E('111', 'KONGOWE', 1000, 'PAID', 0), 'b2', '09:00'),
+    later(E('222', 'KONGOWE', 500, 'PAID', 0), 'b2', '09:00'),
+    // The NEXT list (initial sheet), first at 04:00 with one unpaid, again at 10:00 all paid.
+    E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('882', 'KONGOWE', 600, 'UNPAID', 0, TODAY, 'initial'),
+    later(E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'), 'i2', '10:00'),
+    later(E('882', 'KONGOWE', 600, 'PAID', 0, TODAY, 'initial'), 'i2', '10:00'));
+  // A second CURRENT deck at 11:00: KONGOWE's arrears fall from 900 (300+600) to 500 (100+400).
+  t.defaulter_snapshots.push(
+    later(D('111', 'KONGOWE', 100, 'current'), 'c2', '11:00'),
+    later(D('555', 'KONGOWE', 400, 'current'), 'c2', '11:00'));
+  t.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  const b = await run('officerBoards', {}, ADMIN, dbWithRpc(t));
+  const dp = b.dayProgress;
+  assert.equal(dp.date, TODAY);
+
+  // COL: CATHERINE's day started at 500 of 1,500 collected and stands at 1,500 of 1,500.
+  const cat = dp.col.find(r => r.officer === 'CATHERINE');
+  assert.equal(cat.startPct, 33.3); assert.equal(cat.pct, 100); assert.equal(cat.deltaPct, 66.7);
+  assert.equal(cat.uploads, 2, 'two uploads of the day sheet today');
+  assert.equal(cat.customers, 2); assert.equal(cat.remaining, 0, 'nobody left unpaid on the latest upload');
+  assert.equal(cat.startUncollected, 1000); assert.equal(cat.uncollected, 0);
+  assert.equal(cat.pct, b.pmo.find(r => r.officer === 'CATHERINE').pct, '"now" IS the PMO slide\'s own figure');
+
+  // EARLY: EARLY E's next list started at 62.5% and stands at 100%.
+  const early = dp.early.find(r => r.officer === 'EARLY E');
+  assert.equal(early.startPct, 62.5); assert.equal(early.pct, 100); assert.equal(early.deltaPct, 37.5);
+  assert.equal(early.uploads, 2); assert.equal(early.remaining, 0); assert.equal(early.customers, 2);
+  assert.equal(early.pct, b.earlyToday.find(r => r.officer === 'EARLY E').pct, '"now" IS the early slide\'s own figure');
+
+  /* REC: the arrears JUMA G chases fell 400 between the first and the latest current deck.
+     "Now" is the recovery slide's own figure -- the standing -- so the two slides agree on the
+     person; "start" is that less the movement. KONGOWE's day sheet is fully collected on its
+     latest upload, so there is no uncollected to divide by: the percentage is honestly null,
+     and the shillings still say what happened. */
+  const juma = dp.rec.find(r => r.officer === 'JUMA G');
+  const recNow = b.recToday.find(r => r.officer === 'JUMA G');
+  assert.equal(juma.recovered, recNow.recovered);
+  assert.equal(juma.deltaAmt, 400);
+  assert.equal(juma.startRecovered, recNow.recovered - 400);
+  assert.equal(juma.uploads, 2);
+  assert.equal(juma.pct, recNow.pct);
+  assert.equal(juma.pct, null);
+  // MBAGALA's deck went up once: it starts where it stands -- nil movement, one upload.
+  const none = dp.rec.find(r => r.officer === '(unassigned)');
+  assert.equal(none.deltaAmt, 0); assert.equal(none.uploads, 1); assert.equal(none.deltaPct, 0);
+  // Ranked on points gained, an officer without a percentage last, numbered after the sort.
+  assert.deepEqual(dp.rec.map(r => r.officer), ['(unassigned)', 'JUMA G']);
+  assert.deepEqual(dp.rec.map(r => r.sn), [1, 2]);
+
+  /* ONE UPLOAD ONLY: nothing moved, and the slide says so rather than inventing a gain -- the
+     bare book has every officer starting exactly where they stand. */
+  const bare = (await run('officerBoards', {}, ADMIN, dbWithRpc(tables()))).dayProgress;
+  for (const r of bare.rec) { assert.equal(r.deltaAmt, 0); assert.equal(r.uploads, 1); }
+});
+
 test('presentation boards never show an officer another team\'s money', async () => {
   const b = await run('officerBoards', {}, GMO);
   const names = JSON.stringify(b);
