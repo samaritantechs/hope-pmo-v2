@@ -276,6 +276,37 @@
   /* And a last resort: if a board is still wider than the screen, it scrolls INSIDE its own
      box rather than pushing the whole slide sideways and hiding the navigation arrows. */
   #pres .pscroll{overflow-x:auto;max-width:100%}
+  /* DAY PROGRESS -- the three office units on ONE slide, and it has to fit: sixteen officers
+     with a bar apiece. Three columns, each sized to the screen the way the tables are (clamp on
+     width for the type, on height for the row spacing), so a laptop and a television both show
+     the whole thing without anybody scrolling in a meeting. */
+  #pres .pprog{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(10px,1.4vw,26px)}
+  @media (max-width:900px){ #pres .pprog{grid-template-columns:1fr} }
+  #pres .pgrp{background:var(--psoft);border:1px solid var(--pedge);border-radius:14px;padding:clamp(8px,1.2vw,22px);min-width:0}
+  #pres .pgh{color:var(--plab);font-size:clamp(10px,1vw,15px);text-transform:uppercase;letter-spacing:.05em;font-weight:800;
+    margin-bottom:clamp(4px,.6vh,10px);display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  #pres .pgh small{text-transform:none;letter-spacing:0;font-weight:600;opacity:.75;white-space:nowrap}
+  /* Six rows a column has to fill a television, not huddle in its top half: the type follows
+     the width and the spacing follows the HEIGHT, so a tall screen spreads the rows out. */
+  #pres .prow{padding:clamp(3px,1.1vh,16px) 0;border-top:1px solid var(--pedge);font-size:clamp(10px,1.15vw,22px);line-height:1.25}
+  #pres .prow:first-of-type{border-top:0}
+  #pres .prow.none{opacity:.5}
+  #pres .pr1{display:flex;align-items:baseline;gap:8px;min-width:0}
+  #pres .pr1 .pn{width:1.6em;color:var(--plab);font-weight:800;flex:none}
+  #pres .pr1 .po{font-weight:800;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #pres .pr1 .pd{font-weight:800;flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
+  #pres .pr1 .pd.up{color:#16A34A} #pres .pr1 .pd.down{color:#DC2626} #pres .pr1 .pd.flat{opacity:.6}
+  #pres .pbar{position:relative;height:clamp(6px,1.1vh,15px);border-radius:6px;background:var(--pedge);margin:clamp(3px,.6vh,9px) 0;overflow:hidden}
+  #pres .pbar i{position:absolute;top:0;bottom:0;border-radius:6px}
+  #pres .pbar .ps{left:0;background:var(--plab);opacity:.55}
+  #pres .pbar .pg{background:#16A34A}
+  #pres .pbar .pls{background:#DC2626}
+  #pres .pr2{display:flex;justify-content:space-between;gap:8px;font-size:.82em;opacity:.85;white-space:nowrap;overflow:hidden;font-variant-numeric:tabular-nums}
+  #pres .pr2 span{overflow:hidden;text-overflow:ellipsis}
+  /* Its own flex item, after the name: the NAME gives way to the ellipsis, never the tag. */
+  #pres .ptag{font-size:.7em;font-weight:800;padding:1px 6px;border-radius:999px;flex:none;white-space:nowrap}
+  #pres .ptag.best{background:rgba(22,163,74,.18);color:#16A34A}
+  #pres .ptag.stuck{background:rgba(220,38,38,.18);color:#DC2626}
   /* tips toast */
   #tip{position:fixed;right:18px;bottom:18px;max-width:330px;background:var(--card);border:1px solid var(--line);
     border-left:3px solid var(--b500);border-radius:12px;padding:12px 14px;font-size:12.5px;color:var(--ink);
@@ -649,7 +680,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-28-a';
+var BUILD = '2026-09-29-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8893,6 +8924,20 @@ function presSlides(){
         {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},
         {key:'pctIJ', label:'IJ', kind:'pct', target:'col'},
         col('weekUncollected','Uncollected (week)','money'), {key:'weekPct', label:'Coll % (week)', kind:'pct', target:'col'}] });
+    /* DAY PROGRESS -- the three office units from the day's FIRST upload to its latest.
+         "we'll need to see who pushed more percentages and who is the most stuck guy behind"
+       One slide, three columns, each ranked on the percentage points gained since the day's
+       first upload -- so the person who took 80 to 92 sits above the one who took 90 to 93,
+       whatever their absolute figure. Recovery carries the shillings beside the percentage.
+       Drawn by presDraw's own 'progress' branch (presProgGroup_), sized to fit all three. */
+    var dp = b.dayProgress || {};
+    var dpUnits = [
+      { key:'early', label:'Early col', sub:'orodha ya kesho / next list' + (dp.earlyDate ? ' · ' + dp.earlyDate : ''), rows: dp.early || [], money:false },
+      { key:'col', label:'Collection', sub:'leo / today', rows: dp.col || [], money:false },
+      { key:'rec', label:'Recovery', sub:'leo / today', rows: dp.rec || [], money:true } ];
+    slides.push({ id:'dayprog', kind:'progress',
+      title:'Maendeleo ya leo / Day progress — tangu upload ya kwanza / since the first upload' + (dp.date ? ' · ' + dp.date : ''),
+      units: dpUnits, rows: dpUnits.reduce(function(a, u){ return a.concat(u.rows); }, []) });
     /* "the callagents/customer service reports of assigned and unassigned at presentation i
         need it to always be sum of weekly from mon to sun"
        csWeek is already the Mon-Sun sum -- the title said neither which days nor that it was a
@@ -9031,7 +9076,7 @@ function presRender(){
         + '<input type="number" id="presSecs" min="5" max="300" value="'+(S.presSecs||15)+'" style="width:80px">'
         + '<span style="font-size:12px;color:var(--mut)">Esc kutoka · ← → kubadili slaidi / Esc exits, arrows change slide</span>');
     S.rows = S.slides.map(function(sl,i){ return { n:i+1, slide:sl.title, kind:sl.kind,
-      rows: sl.kind==='table' ? sl.rows.length : sl.items.length }; });
+      rows: sl.rows ? sl.rows.length : sl.items.length }; });
     S.cols = [col('slide','Slide'), col('kind','Type'), col('rows','Rows','num')];
     ONROW = function(r){ presStart(r.n - 1); };
 }
@@ -9063,6 +9108,8 @@ function presDraw(){
   if (s.kind === 'kpi'){
     body = '<div class="pkpis">' + s.items.map(function(it){
       return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+'</div></div>'; }).join('') + '</div>';
+  } else if (s.kind === 'progress'){
+    body = '<div class="pprog">' + s.units.map(presProgGroup_).join('') + '</div>';
   } else {
     /* THE GRAND TOTAL, on the wall as well as on the tab. It is the number the meeting reads
        out, and a projected table without one sends somebody to a calculator while the slide is
@@ -9102,6 +9149,49 @@ function presDraw(){
     + (S.presBlank ? '<div class="pblank" onclick="presBlank(false)">'
         + '<div class="pbx">&#10005;</div>'
         + '<div class="pbnote">Bofya popote kurudi / tap anywhere to come back</div></div>' : '');
+}
+
+/** ONE UNIT'S COLUMN on the day-progress slide: rank, name, a bar from where the day started
+    to where it stands, and the figures under it. The bar's faint part is the morning's figure,
+    the green part what was gained since, red what was lost (a corrected re-upload can move a
+    figure down). The top mover and the most stuck are tagged -- and only when there is a real
+    difference to tag: two officers both at nil are neither. */
+function presProgGroup_(u){
+  var rows = u.rows || [];
+  var deltas = rows.map(function(r){ return r.deltaPct; }).filter(function(v){ return v != null; });
+  var hi = deltas.length ? Math.max.apply(null, deltas) : null;
+  var lo = deltas.length ? Math.min.apply(null, deltas) : null;
+  var tag = function(r){
+    if (rows.length < 2 || hi == null || hi === lo || r.deltaPct == null) return '';
+    if (r.deltaPct === hi) return '<span class="ptag best">▲ zaidi / most</span>';
+    if (r.deltaPct === lo) return '<span class="ptag stuck">▼ amekwama / stuck</span>';
+    return '';
+  };
+  var clampPct = function(v){ return Math.max(0, Math.min(100, Number(v) || 0)); };
+  var signed = function(n){ return (n > 0 ? '+' : '−') + money(Math.abs(n)); };
+  var html = '<div class="pgrp"><div class="pgh"><span>' + esc(u.label) + '</span><small>' + esc(u.sub) + '</small></div>';
+  if (!rows.length) html += '<div class="prow none">hakuna upload leo / nothing uploaded today</div>';
+  rows.forEach(function(r){
+    var none = !r.uploads;
+    var s = r.startPct, n = r.pct, d = r.deltaPct;
+    var sC = clampPct(s), nC = clampPct(n);
+    var bar = '<div class="pbar"><i class="ps" style="width:' + Math.min(sC, nC) + '%"></i>'
+      + (nC > sC ? '<i class="pg" style="left:' + sC + '%;width:' + (nC - sC) + '%"></i>' : '')
+      + (nC < sC ? '<i class="pls" style="left:' + nC + '%;width:' + (sC - nC) + '%"></i>' : '') + '</div>';
+    var dCls = d == null ? 'flat' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
+    var dTxt = d == null ? '—' : (d > 0 ? '+' : '') + d.toFixed(1) + ' pts';
+    var line2 = u.money
+      ? 'TZS ' + money(r.startRecovered) + ' → ' + money(r.recovered)
+        + (r.deltaAmt ? ' (' + signed(r.deltaAmt) + ')' : '') + ' · uncol ' + money(r.uncollected)
+      : 'wamebaki / left ' + money(r.remaining) + ' / ' + money(r.customers) + ' · uncol TZS ' + money(r.uncollected);
+    html += '<div class="prow' + (none ? ' none' : '') + '">'
+      + '<div class="pr1"><span class="pn">' + r.sn + '</span><span class="po">' + esc(r.officer) + '</span>' + tag(r)
+      + '<span class="pd ' + dCls + '">' + pct(s) + ' → ' + pct(n) + ' · ' + dTxt + '</span></div>'
+      + bar
+      + '<div class="pr2"><span>' + (none ? 'hakuna upload leo / no upload today' : esc(line2)) + '</span>'
+      + '<span>' + (r.uploads || 0) + ' upload' + (r.uploads === 1 ? '' : 's') + '</span></div></div>';
+  });
+  return html + '</div>';
 }
 
 /** BLACK THE SCREEN WITHOUT LOSING THE DECK.

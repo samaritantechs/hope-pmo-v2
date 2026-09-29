@@ -500,6 +500,22 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
+/* THE DAY-PROGRESS SLIDE: the three office units from the day's first upload to its latest,
+   on ONE slide, ranked on points gained -- "who pushed more percentages and who is the most
+   stuck guy behind". Its own kind, because a table cannot fit sixteen officers with a bar each. */
+test('the presentation carries a day-progress slide for the three office units', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  assert.ok(/slides\.push\(\{ id:'dayprog', kind:'progress'/.test(view), 'the slide exists, with its own kind');
+  assert.ok(/b\.dayProgress/.test(view), 'and it reads officerBoards\' dayProgress');
+  for (const unit of ['early', 'col', 'rec']) assert.ok(new RegExp("key:'" + unit + "'").test(view), unit + ' is on it');
+  const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presBlank'));
+  assert.ok(/s\.kind === 'progress'/.test(draw), 'presDraw has a branch for it');
+  assert.ok(/function presProgGroup_\(/.test(app), 'drawn by its own helper');
+  // The deck list's row count must not assume every non-KPI slide is a table.
+  assert.ok(/rows: sl\.rows \? sl\.rows\.length : sl\.items\.length/.test(app));
+});
+
 /* A "dt" COLUMN WHOSE VALUE IS ALREADY A NUMBER MUST NOT BE RE-PARSED AS A STRING.
    -----------------------------------------------------------------------------------
      "time stamp is reading as 1789799553103"
