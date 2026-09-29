@@ -288,7 +288,7 @@
   #pres .pgh small{text-transform:none;letter-spacing:0;font-weight:600;opacity:.75;white-space:nowrap}
   /* Six rows a column has to fill a television, not huddle in its top half: the type follows
      the width and the spacing follows the HEIGHT, so a tall screen spreads the rows out. */
-  #pres .prow{padding:clamp(3px,1.1vh,16px) 0;border-top:1px solid var(--pedge);font-size:clamp(10px,1.15vw,22px);line-height:1.25}
+  #pres .prow{padding:clamp(3px,1.4vh,20px) 0;border-top:1px solid var(--pedge);font-size:clamp(10px,1vw,19px);line-height:1.25}
   #pres .prow:first-of-type{border-top:0}
   #pres .prow.none{opacity:.5}
   #pres .pr1{display:flex;align-items:baseline;gap:8px;min-width:0}
@@ -296,7 +296,7 @@
   #pres .pr1 .po{font-weight:800;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #pres .pr1 .pd{font-weight:800;flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
   #pres .pr1 .pd.up{color:#16A34A} #pres .pr1 .pd.down{color:#DC2626} #pres .pr1 .pd.flat{opacity:.6}
-  #pres .pbar{position:relative;height:clamp(6px,1.1vh,15px);border-radius:6px;background:var(--pedge);margin:clamp(3px,.6vh,9px) 0;overflow:hidden}
+  #pres .pbar{position:relative;height:clamp(6px,1.1vh,15px);border-radius:6px;background:var(--pedge);margin:clamp(3px,.7vh,10px) 0;overflow:hidden}
   #pres .pbar i{position:absolute;top:0;bottom:0;border-radius:6px}
   #pres .pbar .ps{left:0;background:var(--plab);opacity:.55}
   #pres .pbar .pg{background:#16A34A}
@@ -9180,9 +9180,12 @@ function presProgGroup_(u){
       + (nC < sC ? '<i class="pls" style="left:' + nC + '%;width:' + (sC - nC) + '%"></i>' : '') + '</div>';
     var dCls = d == null ? 'flat' : d > 0 ? 'up' : d < 0 ? 'down' : 'flat';
     var dTxt = d == null ? '—' : (d > 0 ? '+' : '') + d.toFixed(1) + ' pts';
+    /* Recovery carries the shillings beside its percentage ("have both rec% and rec-Amount");
+       early and collection carry who is still to pay and what is still out ("show remaining
+       counts, amount uncollected and col% for early and col people"). */
     var line2 = u.money
       ? 'TZS ' + money(r.startRecovered) + ' → ' + money(r.recovered)
-        + (r.deltaAmt ? ' (' + signed(r.deltaAmt) + ')' : '') + ' · uncol ' + money(r.uncollected)
+        + (r.deltaAmt ? ' (' + signed(r.deltaAmt) + ')' : '')
       : 'wamebaki / left ' + money(r.remaining) + ' / ' + money(r.customers) + ' · uncol TZS ' + money(r.uncollected);
     html += '<div class="prow' + (none ? ' none' : '') + '">'
       + '<div class="pr1"><span class="pn">' + r.sn + '</span><span class="po">' + esc(r.officer) + '</span>' + tag(r)
