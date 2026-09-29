@@ -9047,6 +9047,15 @@ function sumRangeStand_(stand, from, to) {
   }
   return out;
 }
+/** WAS A DEFAULTER DECK FILED ON THIS DAY -- the day's OWN initial or current, on its own weekday.
+      "if defaults haven't been uploaded today should be initial and current 0, recovered 0 -
+       Reality! No matter callapp showing outdated list"
+    recovery_standing answers for ANY date once one deck has ever existed -- that is its job
+    ("the latest current defaulter file is to live until the next one is uploaded"), and the
+    phone's strip reads it that way on purpose, under a red tag. A screen whose figures are
+    captioned "today" cannot ask it whether today was uploaded; it asks the rows. */
+const deckFiledOn_ = (rows, d, wd) => rows.some(r => String(r.snapshot_date) === d && r.weekday === wd
+  && (r.snapshot_type === 'initial' || r.snapshot_type === 'current'));
 /** Pseudo deck rows from a standing, for the readers that still fold rows by team. */
 function standingRows_(perTeam, side) {
   return [...(perTeam ? perTeam.values() : [])].map(e => ({ team: e.team,
@@ -9749,10 +9758,17 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   /* Today's own weekday, so the headline counts and the team board describe ONE deck rather
      than whichever two happened to be uploaded last. This is the same rule the RECOVERED card
      has always used -- the card was right and these were not. */
+  /* TODAY'S CARDS READ TODAY'S DECK OR NOTHING. The standing carries yesterday's deck forward
+     until today's lands -- right for the phone's strip (which says so in red) and for the month
+     column below, which is a running figure; wrong under a card captioned "today". So the
+     standing feeds today's cards, the Orodha's T. column and the defaulter counts ONLY when a
+     deck was actually filed today; otherwise they read 0 and `deckToday` says why. */
+  const deckToday = deckFiledOn_(myDefWeek, today, wdToday);
+  const standNow = deckToday ? standToday : null;
   // Today's decks under the one rule (the latest as of today), or the day's pair as fallback.
-  const iniToday = stand ? standingRows_(standToday, 'initial') : defDay_(myDefWeek, today, 'initial', wdToday);
-  const curToday = stand ? standingRows_(standToday, 'current') : defDay_(myDefWeek, today, 'current', wdToday);
-  const pairedToday = stand ? !!(standToday && standToday.size) : !!(iniToday.length && curToday.length);
+  const iniToday = stand ? standingRows_(standNow, 'initial') : defDay_(myDefWeek, today, 'initial', wdToday);
+  const curToday = stand ? standingRows_(standNow, 'current') : defDay_(myDefWeek, today, 'current', wdToday);
+  const pairedToday = stand ? !!(standNow && standNow.size) : !!(iniToday.length && curToday.length);
 
   const T = {};
   const slot = t => {
@@ -9968,7 +9984,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       recovered: teams.reduce((s, t) => s + t.recovered, 0),
       defaulters: tCustomers(curToday),
       defaultersInitial: tCustomers(iniToday),
-      cleared: stand ? standingSum(standToday).cleared : Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
+      cleared: stand ? standingSum(standNow).cleared : Math.max(0, tCustomers(iniToday) - tCustomers(curToday)),
       salesWeek: teams.reduce((s, t) => s + t.sales, 0),
       salesLoans: myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) >= mon && String(l.approved_date || '').slice(0, 10) <= sun).length,
       /* NO MONTH FIGURES HERE. They lived in three tiles on this row for exactly one week of
@@ -9982,6 +9998,8 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
+    // False = no defaulter deck was filed today, so the today figures above are honest zeros.
+    deckToday,
     /* Whether the M. columns on the Orodha are real this load, or still filling. The screen
        says which, so a column of dashes is read as "not yet" and not as "nothing happened". */
     monthReady: !!monthByTeam,
@@ -10744,7 +10762,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const obEnd = sun < today ? sun : today;
   const stand = await recoveryStandingFor_(db, user,
     WD7.map((_, i) => addDaysKey(mon, i)).filter(d => d <= today), nowMs, adj, [[mon, obEnd]]);
-  const standToday = dayStand_(stand, today);
+  // Same rule as the dashboard's cards (deckFiledOn_): today's boards read today's deck or nothing.
+  const standToday = deckFiledOn_(myDef, today, wd) ? dayStand_(stand, today) : null;
   const iniToday = stand ? standingRows_(standToday, 'initial') : defDay_(today, 'initial', wd);
   const curToday = stand ? standingRows_(standToday, 'current') : defDay_(today, 'current', wd);
   /* THE PER-OFFICER TODAY BOARD IS THE COMMISSION BOARD'S OWN FIGURE.

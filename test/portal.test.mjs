@@ -4158,6 +4158,44 @@ test('day progress: each office unit from the day\'s first upload to its latest,
   for (const r of bare.rec) { assert.equal(r.deltaAmt, 0); assert.equal(r.uploads, 1); }
 });
 
+/* NO DECK TODAY, NO FIGURE -- "if defaults haven't been uploaded today should be initial and
+   current 0, recovered 0 - Reality! No matter callapp showing outdated list".
+   recovery_standing carries Monday's deck forward to Friday by design; the dashboard's cards
+   and the officer boards, captioned "today", must not wear it. The phone's strip (buildDashboard
+   in dashboard-core.js) is deliberately NOT under this rule -- it keeps the carried figure, in
+   red -- so this test reads the two portal screens only. */
+test('dashboard cards and officer boards read zero on a day with no defaulter deck of its own', async () => {
+  const t = tables();
+  // Every deck dated today goes; Monday's and the month's stay, so the standing still has an
+  // answer for today (Monday's initial less Monday's ... nothing -- an initial-only standing).
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.snapshot_date !== TODAY);
+  t.defaulter_snapshots.push(D('111', 'KONGOWE', 350, 'current', 45, MON, 'MON'));
+  const dash = await portalApi(dbWithRpc(t), ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(dash.recoveryRule, 'latest', 'the standing is installed -- this is the carry-forward world');
+  assert.equal(dash.deckToday, false);
+  assert.equal(dash.paired, false);
+  for (const k of ['curArrears', 'initArrears', 'recovered', 'defaulters', 'defaultersInitial', 'cleared']) {
+    assert.equal(dash.cards[k], 0, k + ' reads 0, not Monday\'s deck');
+  }
+  const kongowe = dash.teamPerf.find(x => x.team === 'KONGOWE');
+  assert.equal(kongowe.recovered, 0); assert.equal(kongowe.curArrears, 0); assert.equal(kongowe.initArrears, 0);
+  assert.equal(kongowe.tRecPct, null, 'not measured today -- null, never a percentage of a borrowed deck');
+  // Monday's own tile is untouched: that day HAD a deck, and the week still adds up its days.
+  assert.equal(dash.recTrend.find(x => x.date === MON).uploaded, true);
+  assert.equal(dash.recTrend.find(x => x.date === TODAY).uploaded, false);
+
+  const b = await portalApi(dbWithRpc(t), ADMIN, 'officerBoards', {}, NOW);
+  const juma = b.recToday.find(r => r.officer === 'JUMA G');
+  assert.ok(!juma || (juma.recovered === 0 && juma.initial === 0 && juma.current === 0),
+    'the recovery-by-officer slide\'s today column is zero too');
+  assert.equal(b.dayProgress.rec.find(r => r.officer === 'JUMA G')?.recovered ?? 0, 0);
+
+  // And the moment today's deck lands, the same book reads it -- the shared fixture's own day.
+  const live = await portalApi(dbWithRpc(tables()), ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(live.deckToday, true);
+  assert.ok(live.cards.recovered > 0);
+});
+
 test('presentation boards never show an officer another team\'s money', async () => {
   const b = await run('officerBoards', {}, GMO);
   const names = JSON.stringify(b);
