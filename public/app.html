@@ -685,7 +685,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-29-b';
+var BUILD = '2026-09-29-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3428,9 +3428,12 @@ VIEWS.dashboard = function(){
        the same teams. Deliberately nameless -- see the .syncdot note in the stylesheet. */
     HEAD = weekBar(d, '<button class="syncdot" data-go="monthreport" data-carry="weekOf,teams"></button>' + teamPick_(d))
       + '<div class="kpis">'
-      + kpi('Current arrears', money(c.curArrears), 'initial upload: ' + money(c.initArrears))
-      + kpi('Recovered', money(c.recovered), 'initial − current · ' + money(c.cleared) + ' cleared', 'good')
-      + kpi('Defaulters', money(c.defaulters), 'of ' + money(c.defaultersInitial) + ' on the initial list')
+      /* NO DECK TODAY, NO FIGURE -- the three cards read zero until today's deck lands (see
+         deckToday in dashboardFull), and the subtitle says that is why, so 0 recovered reads as
+         "not uploaded yet" and never as "nothing came back". */
+      + kpi('Current arrears', money(c.curArrears), d.deckToday === false ? 'deki ya leo haijapakiwa / today\'s deck not uploaded yet' : 'initial upload: ' + money(c.initArrears))
+      + kpi('Recovered', money(c.recovered), d.deckToday === false ? 'haijapakiwa bado / not uploaded yet' : 'initial − current · ' + money(c.cleared) + ' cleared', d.deckToday === false ? '' : 'good')
+      + kpi('Defaulters', money(c.defaulters), d.deckToday === false ? 'haijapakiwa bado / not uploaded yet' : 'of ' + money(c.defaultersInitial) + ' on the initial list')
       + kpi('Sales this week', money(c.salesWeek),
             (d.weeklyTarget>0 ? Math.round(1000*c.salesWeek/d.weeklyTarget)/10+'% of '+money(d.weeklyTarget)
               +' weekly ('+d.teamCount+' teams) · ' : '') + money(c.salesLoans)+' loans this week')
