@@ -11052,6 +11052,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     return { officer: p.name, teams: (p.teams || []).length,
       uploads: uploadsToday_(colDayRows, r => mine.has(K(r.team))),
       startPct: s.pct, pct: n.pct, deltaPct: gained_(s.pct, n.pct),
+      // The parts behind both percentages, so the column's TOTAL can be a ratio of sums.
+      startExpected: s.expected, startCollected: s.collected, expected: n.expected, collected: n.collected,
       customers: n.customers, remaining: Math.max(0, n.customers - paidOver),
       startUncollected: s.uncollected, uncollected: n.uncollected };
   }));
@@ -11067,6 +11069,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     return { officer: n.officer, teams: n.teams,
       uploads: uploadsToday_(earlyDayRows, r => officerOf(teamBy, r.team, 'expected') === n.officer),
       startPct: s ? s.pct : null, pct: n.pct, deltaPct: gained_(s ? s.pct : null, n.pct),
+      startExpected: s ? s.expected : 0, startCollected: s ? s.collected : 0,
+      expected: n.expected, collected: n.collected,
       customers: n.customers, remaining: Math.max(0, n.customers - n.paidOver),
       startUncollected: s ? s.uncollected : null, uncollected: n.uncollected };
   }));
@@ -11093,8 +11097,56 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       startRecovered: start, recovered: n.recovered, deltaAmt: move,
       startPct: sPct, pct: n.pct, deltaPct: gained_(sPct, n.pct), uncollected: n.uncollected };
   }));
+  /* THE GRAND TOTAL UNDER EACH COLUMN -- "Add grand totals for maendeleo slide on the 3 parts".
+     A ratio of the sums, never a mean of the rows' percentages: three officers at 100%, 100%
+     and 80% of very different books do not make the unit 93%. Uploads is the most any one
+     officer's teams saw today, so the total row is greyed only when NOBODY uploaded. */
+  const sumOf_ = (rows, k) => rows.reduce((a, r) => a + num(r[k]), 0);
+  const colTotal_ = rows => {
+    if (!rows.length) return null;
+    const sp = pctOf(sumOf_(rows, 'startCollected'), sumOf_(rows, 'startExpected'));
+    const p = pctOf(sumOf_(rows, 'collected'), sumOf_(rows, 'expected'));
+    return { officer: 'JUMLA / TOTAL', teams: sumOf_(rows, 'teams'),
+      uploads: Math.max(0, ...rows.map(r => num(r.uploads))),
+      startPct: sp, pct: p, deltaPct: gained_(sp, p),
+      customers: sumOf_(rows, 'customers'), remaining: sumOf_(rows, 'remaining'),
+      startUncollected: sumOf_(rows, 'startUncollected'), uncollected: sumOf_(rows, 'uncollected') };
+  };
+  const recTotal_ = rows => {
+    if (!rows.length) return null;
+    const start = sumOf_(rows, 'startRecovered'), rec = sumOf_(rows, 'recovered'), unc = sumOf_(rows, 'uncollected');
+    const sp = pctOf(start, unc), p = pctOf(rec, unc);
+    return { officer: 'JUMLA / TOTAL', teams: sumOf_(rows, 'teams'),
+      uploads: Math.max(0, ...rows.map(r => num(r.uploads))),
+      startRecovered: start, recovered: rec, deltaAmt: sumOf_(rows, 'deltaAmt'),
+      startPct: sp, pct: p, deltaPct: gained_(sp, p), uncollected: unc };
+  };
+  /* AND THE AVERAGE OFFICER -- "totals and average of everything". A second row, the mean of
+     each column over the officers who have a figure for it, beside the total rather than
+     instead of it: the total says how the UNIT did, the average says what one officer's day
+     looked like. Percentages here are means of the rows' own percentages, on purpose -- that
+     is what an average of officers is -- and a row without one is left out, not counted as
+     nought. */
+  const avgOf_ = (rows, k, dp = 0) => {
+    const v = rows.map(r => r[k]).filter(x => x != null && !isNaN(x));
+    if (!v.length) return null;
+    const m = v.reduce((a, x) => a + Number(x), 0) / v.length;
+    return Math.round(m * Math.pow(10, dp)) / Math.pow(10, dp);
+  };
+  const colAvg_ = rows => rows.length ? { officer: 'WASTANI / AVERAGE', teams: avgOf_(rows, 'teams', 1),
+    uploads: Math.max(0, ...rows.map(r => num(r.uploads))),
+    startPct: avgOf_(rows, 'startPct', 1), pct: avgOf_(rows, 'pct', 1), deltaPct: avgOf_(rows, 'deltaPct', 1),
+    customers: avgOf_(rows, 'customers'), remaining: avgOf_(rows, 'remaining'),
+    startUncollected: avgOf_(rows, 'startUncollected'), uncollected: avgOf_(rows, 'uncollected') } : null;
+  const recAvg_ = rows => rows.length ? { officer: 'WASTANI / AVERAGE', teams: avgOf_(rows, 'teams', 1),
+    uploads: Math.max(0, ...rows.map(r => num(r.uploads))),
+    startRecovered: avgOf_(rows, 'startRecovered'), recovered: avgOf_(rows, 'recovered'), deltaAmt: avgOf_(rows, 'deltaAmt'),
+    startPct: avgOf_(rows, 'startPct', 1), pct: avgOf_(rows, 'pct', 1), deltaPct: avgOf_(rows, 'deltaPct', 1),
+    uncollected: avgOf_(rows, 'uncollected') } : null;
   const dayProgress = { date: today, weekday: wd, earlyDate: tomorrow.date, earlySource: tomorrow.source,
-    early: dpEarly, col: dpCol, rec: dpRec };
+    early: dpEarly, col: dpCol, rec: dpRec,
+    earlyTotal: colTotal_(dpEarly), colTotal: colTotal_(dpCol), recTotal: recTotal_(dpRec),
+    earlyAvg: colAvg_(dpEarly), colAvg: colAvg_(dpCol), recAvg: recAvg_(dpRec) };
 
   /* ---- FOLLOW-UP STATUS across ALL defaulters (what the whole book looks like) ---- */
   const real = myFu.filter(r => !(r.status == null && r.arrears == null));

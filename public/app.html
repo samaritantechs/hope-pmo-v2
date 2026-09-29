@@ -288,15 +288,20 @@
   #pres .pgh small{text-transform:none;letter-spacing:0;font-weight:600;opacity:.75;white-space:nowrap}
   /* Six rows a column has to fill a television, not huddle in its top half: the type follows
      the width and the spacing follows the HEIGHT, so a tall screen spreads the rows out. */
-  #pres .prow{padding:clamp(3px,1.4vh,20px) 0;border-top:1px solid var(--pedge);font-size:clamp(10px,1vw,19px);line-height:1.25}
+  #pres .prow{padding:clamp(2px,1.1vh,18px) 0;border-top:1px solid var(--pedge);font-size:clamp(10px,1vw,19px);line-height:1.25}
   #pres .prow:first-of-type{border-top:0}
   #pres .prow.none{opacity:.5}
+  /* The grand total, ruled off like the tables' own JUMLA row. */
+  #pres .prow.ptotal{border-top:2px solid var(--pline);background:var(--psoft);margin-top:4px;
+    padding-left:clamp(4px,.5vw,8px);padding-right:clamp(4px,.5vw,8px);border-radius:8px}
+  #pres .prow.ptotal .po{color:var(--plab)}
+  #pres .prow.pavg{border-top:1px solid var(--pedge);margin-top:0;background:transparent}
   #pres .pr1{display:flex;align-items:baseline;gap:8px;min-width:0}
   #pres .pr1 .pn{width:1.6em;color:var(--plab);font-weight:800;flex:none}
   #pres .pr1 .po{font-weight:800;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #pres .pr1 .pd{font-weight:800;flex:none;white-space:nowrap;font-variant-numeric:tabular-nums}
   #pres .pr1 .pd.up{color:#16A34A} #pres .pr1 .pd.down{color:#DC2626} #pres .pr1 .pd.flat{opacity:.6}
-  #pres .pbar{position:relative;height:clamp(6px,1.1vh,15px);border-radius:6px;background:var(--pedge);margin:clamp(3px,.7vh,10px) 0;overflow:hidden}
+  #pres .pbar{position:relative;height:clamp(6px,1.1vh,15px);border-radius:6px;background:var(--pedge);margin:clamp(2px,.5vh,9px) 0;overflow:hidden}
   #pres .pbar i{position:absolute;top:0;bottom:0;border-radius:6px}
   #pres .pbar .ps{left:0;background:var(--plab);opacity:.55}
   #pres .pbar .pg{background:#16A34A}
@@ -680,7 +685,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-29-a';
+var BUILD = '2026-09-29-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8932,9 +8937,9 @@ function presSlides(){
        Drawn by presDraw's own 'progress' branch (presProgGroup_), sized to fit all three. */
     var dp = b.dayProgress || {};
     var dpUnits = [
-      { key:'early', label:'Early col', sub:'orodha ya kesho / next list' + (dp.earlyDate ? ' · ' + dp.earlyDate : ''), rows: dp.early || [], money:false },
-      { key:'col', label:'Collection', sub:'leo / today', rows: dp.col || [], money:false },
-      { key:'rec', label:'Recovery', sub:'leo / today', rows: dp.rec || [], money:true } ];
+      { key:'early', label:'Early col', sub:'orodha ya kesho / next list' + (dp.earlyDate ? ' · ' + dp.earlyDate : ''), rows: dp.early || [], total: dp.earlyTotal || null, avg: dp.earlyAvg || null, money:false },
+      { key:'col', label:'Collection', sub:'leo / today', rows: dp.col || [], total: dp.colTotal || null, avg: dp.colAvg || null, money:false },
+      { key:'rec', label:'Recovery', sub:'leo / today', rows: dp.rec || [], total: dp.recTotal || null, avg: dp.recAvg || null, money:true } ];
     slides.push({ id:'dayprog', kind:'progress',
       title:'Maendeleo ya leo / Day progress — tangu upload ya kwanza / since the first upload' + (dp.date ? ' · ' + dp.date : ''),
       units: dpUnits, rows: dpUnits.reduce(function(a, u){ return a.concat(u.rows); }, []) });
@@ -9171,7 +9176,11 @@ function presProgGroup_(u){
   var signed = function(n){ return (n > 0 ? '+' : '−') + money(Math.abs(n)); };
   var html = '<div class="pgrp"><div class="pgh"><span>' + esc(u.label) + '</span><small>' + esc(u.sub) + '</small></div>';
   if (!rows.length) html += '<div class="prow none">hakuna upload leo / nothing uploaded today</div>';
-  rows.forEach(function(r){
+  /* The TOTAL and AVERAGE rows are drawn by the same code as an officer's row, so the three
+     cannot differ in shape; they carry no rank and no tag. The server worked the total's
+     percentages out from the sums and the average's as the mean per officer (see
+     colTotal_/recTotal_ and colAvg_/recAvg_ in officerBoards). */
+  rows.concat(u.total ? [{ ...u.total, isTotal: true }] : [], u.avg ? [{ ...u.avg, isTotal: true, isAvg: true }] : []).forEach(function(r){
     var none = !r.uploads;
     var s = r.startPct, n = r.pct, d = r.deltaPct;
     var sC = clampPct(s), nC = clampPct(n);
@@ -9187,8 +9196,8 @@ function presProgGroup_(u){
       ? 'TZS ' + money(r.startRecovered) + ' → ' + money(r.recovered)
         + (r.deltaAmt ? ' (' + signed(r.deltaAmt) + ')' : '')
       : 'wamebaki / left ' + money(r.remaining) + ' / ' + money(r.customers) + ' · uncol TZS ' + money(r.uncollected);
-    html += '<div class="prow' + (none ? ' none' : '') + '">'
-      + '<div class="pr1"><span class="pn">' + r.sn + '</span><span class="po">' + esc(r.officer) + '</span>' + tag(r)
+    html += '<div class="prow' + (none ? ' none' : '') + (r.isTotal ? ' ptotal' : '') + (r.isAvg ? ' pavg' : '') + '">'
+      + '<div class="pr1"><span class="pn">' + (r.isTotal ? '' : r.sn) + '</span><span class="po">' + esc(r.officer) + '</span>' + (r.isTotal ? '' : tag(r))
       + '<span class="pd ' + dCls + '">' + pct(s) + ' → ' + pct(n) + ' · ' + dTxt + '</span></div>'
       + bar
       + '<div class="pr2"><span>' + (none ? 'hakuna upload leo / no upload today' : esc(line2)) + '</span>'
