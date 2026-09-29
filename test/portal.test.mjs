@@ -4136,6 +4136,22 @@ test('day progress: each office unit from the day\'s first upload to its latest,
   assert.deepEqual(dp.rec.map(r => r.officer), ['(unassigned)', 'JUMA G']);
   assert.deepEqual(dp.rec.map(r => r.sn), [1, 2]);
 
+  /* THE GRAND TOTAL AND THE AVERAGE OFFICER under each column -- "totals and average of
+     everything". The total is a ratio of sums; the average is the mean of the rows' own
+     figures, leaving out a row with none rather than counting it as nought. */
+  assert.equal(dp.colTotal.officer, 'JUMLA / TOTAL');
+  assert.equal(dp.colTotal.startPct, 33.3); assert.equal(dp.colTotal.pct, 100); assert.equal(dp.colTotal.deltaPct, 66.7);
+  assert.equal(dp.colTotal.remaining, 0); assert.equal(dp.colTotal.customers, 2); assert.equal(dp.colTotal.uploads, 2);
+  assert.equal(dp.colAvg.officer, 'WASTANI / AVERAGE');
+  assert.equal(dp.colAvg.pct, 100); assert.equal(dp.colAvg.deltaPct, 66.7);
+  assert.equal(dp.earlyTotal.startPct, 62.5); assert.equal(dp.earlyTotal.pct, 100);
+  assert.equal(dp.earlyAvg.startPct, 62.5);
+  assert.equal(dp.recTotal.deltaAmt, 400, 'the unit\'s movement is its officers\' added');
+  assert.equal(dp.recTotal.recovered, juma.recovered + none.recovered);
+  assert.equal(dp.recTotal.startRecovered, dp.recTotal.recovered - 400);
+  assert.equal(dp.recAvg.deltaAmt, 200, 'two officers, 400 and 0 -- the average officer moved 200');
+  assert.equal(dp.recAvg.pct, none.pct, 'JUMA G has no percentage, so the average is the other officer\'s alone');
+
   /* ONE UPLOAD ONLY: nothing moved, and the slide says so rather than inventing a gain -- the
      bare book has every officer starting exactly where they stand. */
   const bare = (await run('officerBoards', {}, ADMIN, dbWithRpc(tables()))).dayProgress;

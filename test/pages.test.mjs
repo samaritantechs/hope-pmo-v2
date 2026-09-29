@@ -512,6 +512,11 @@ test('the presentation carries a day-progress slide for the three office units',
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presBlank'));
   assert.ok(/s\.kind === 'progress'/.test(draw), 'presDraw has a branch for it');
   assert.ok(/function presProgGroup_\(/.test(app), 'drawn by its own helper');
+  for (const k of ['earlyTotal', 'colTotal', 'recTotal', 'earlyAvg', 'colAvg', 'recAvg']) {
+    assert.ok(new RegExp('dp\\.' + k + '\\b').test(view), k + ' reaches the slide');
+  }
+  assert.ok(/u\.total \? \[\{ \.\.\.u\.total, isTotal: true \}\]/.test(app) && /u\.avg \? \[\{ \.\.\.u\.avg, isTotal: true, isAvg: true \}\]/.test(app),
+    'the total and the average are drawn as rows of the same column');
   // The deck list's row count must not assume every non-KPI slide is a table.
   assert.ok(/rows: sl\.rows \? sl\.rows\.length : sl\.items\.length/.test(app));
 });
