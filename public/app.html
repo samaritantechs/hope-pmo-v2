@@ -383,6 +383,9 @@
   /* drawer */
   .drawer-bg{position:fixed;inset:0;background:rgba(8,17,34,.45);display:none;z-index:60;align-items:flex-end;justify-content:center}
   .drawer{background:var(--bg);width:100%;max-width:560px;max-height:90vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
+  /* A drawer that holds a TABLE, not a form: seven money columns in 560px is a strip somebody
+     scrolls sideways through -- "widen the recovery card ... its so thick for the content". */
+  .drawer.wide{max-width:min(1240px,96vw)}
   .drawer h3{margin:0 0 4px;font-size:16px}
   .drawer .sub{color:var(--mut);font-size:12.5px;margin-bottom:12px}
 
@@ -691,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-g';
+var BUILD = '2026-09-30-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3330,7 +3333,7 @@ function recoveryCustomersDrawer_(date){
      toggle. The card's own reading is now the only one this drawer ever shows: the exact
      decks the card itself was computed from, so the total on screen and the total in the list
      are the same number by construction, never a choice away from it. */
-  drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="sub">Inapakia... / Loading...</div>');
+  drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="sub">Inapakia... / Loading...</div>', { wide: true });
   srv('recoveryCustomers', { weekOf: S.args.weekOf || '', teams: teamPickLoad_(), date: week ? '' : date, mode: 'day' }).then(function(d){
     var STATUS_ = { cleared: ['Amemaliza / Cleared', 'good'], reduced: ['Imepungua / Reduced', 'good'],
       unchanged: ['Haijabadilika / Unchanged', 'mut'], increased: ['Imeongezeka / Increased', 'bad'],
@@ -3376,7 +3379,7 @@ function recoveryCustomersDrawer_(date){
           ? '<div class="bar"><input id="recCustQ" placeholder="Tafuta jina / ref / timu — search">'
             + '<select id="recCustStatus"><option value="">Hali zote / All statuses</option>' + statusOpts + '</select></div>'
             + '<div id="recCustBoard"></div>' + decksHtml
-          : '<div class="note">Hakuna deki ya SASA hadi tarehe hii — haijapimwa. / No CURRENT deck as of this date — not measured.</div>'));
+          : '<div class="note">Hakuna deki ya SASA hadi tarehe hii — haijapimwa. / No CURRENT deck as of this date — not measured.</div>'), { wide: true });
     if (!all.length) return;
     var host = document.getElementById('recCustBoard');
     function paint_(){
@@ -3401,7 +3404,7 @@ function recoveryCustomersDrawer_(date){
     }
     $('#recCustQ').oninput = paint_; $('#recCustStatus').onchange = paint_;
     paint_();
-  }).catch(function(e){ drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="note bad">' + esc(String((e && e.message) || e)) + '</div>'); });
+  }).catch(function(e){ drawer('<h3>Wateja waliorejesha / Recovery customers</h3><div class="note bad">' + esc(String((e && e.message) || e)) + '</div>', { wide: true }); });
 }
 function weekdayOf_(key){
   var t = Date.parse(String(key || '').slice(0, 10) + 'T12:00:00Z');
@@ -11319,7 +11322,10 @@ window.addEventListener('popstate', function(e){
 function navOpen_(){ document.body.classList.add('navopen'); backLayerOpen_('nav'); }
 function navClose_(){ document.body.classList.remove('navopen'); backLayerClose_('nav'); }
 
-function drawer(html){
+/** opts.wide: a table-shaped drawer takes the screen's width (see .drawer.wide); every other
+    drawer keeps the form width, and the class is dropped the moment a normal one opens. */
+function drawer(html, opts){
+  $('#drawer').classList.toggle('wide', !!(opts && opts.wide));
   $('#drawer').innerHTML = html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
   $('#drawerBg').style.display = 'flex';
   fitPanelToKeyboard_('drawerBg');
