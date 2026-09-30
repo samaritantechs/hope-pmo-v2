@@ -685,7 +685,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-a';
+var BUILD = '2026-09-30-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3654,6 +3654,10 @@ VIEWS.dashboard = function(){
        back out (they live on the month report's leaders list); the two amounts the
        percentages are made from sit before them. */
     S.cols = [
+      /* WHOSE TEAM, before which team -- "add OPM column between S/N and team name". Off the
+         teams table with the row (see slot() in dashboardFull); a name key, so it goes red under
+         the line together with the team it runs. */
+      ttl(col('opm','OPM'), 'Operations manager / OPM wa timu'),
       col('team','Team'),
       pc('tSalesPct','T.Sales','Sales % leo / today, of the team’s daily target'),
       pc('mSalesPct','M.Sales','Sales % mwezi huu / month to date, of the monthly target'),
