@@ -89,8 +89,13 @@ function isStatementTimeout(err) {
 }
 
 /** Insert or upsert `records`, a chunk at a time, shrinking the chunk if the database says the
-    statement was too long. `onConflict` null means a plain insert. */
-async function writeInChunks(db, table, records, onConflict) {
+    statement was too long. `onConflict` null means a plain insert.
+
+    `ignoreDuplicates`: a row whose key is already stored is LEFT AS IT IS rather than written
+    over (ON CONFLICT DO NOTHING), and the database says back which rows it actually took --
+    so the count returned is rows NEW to the table, not rows sent. Same number of trips: the
+    rows come back on the write itself. This is how received payments are stored once. */
+async function writeInChunks(db, table, records, onConflict, ignoreDuplicates) {
   let size = WRITE_CHUNK_MAX;
   let written = 0;
   let i = 0;
@@ -98,8 +103,10 @@ async function writeInChunks(db, table, records, onConflict) {
     const slice = records.slice(i, i + size);
     // tries: 2 -- one immediate retry for a blip. Anything more belongs to the halving below,
     // which is a better answer than the same too-large statement a third time.
-    const { error } = await runQuery(() => (onConflict
-      ? db.from(table).upsert(slice, { onConflict })
+    const { data, error } = await runQuery(() => (onConflict
+      ? (ignoreDuplicates
+          ? db.from(table).upsert(slice, { onConflict, ignoreDuplicates: true }).select('id')
+          : db.from(table).upsert(slice, { onConflict }))
       : db.from(table).insert(slice)), 2);
     if (error) {
       if (isStatementTimeout(error) && size > WRITE_CHUNK_MIN) {
@@ -113,7 +120,7 @@ async function writeInChunks(db, table, records, onConflict) {
         + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${records.length.toLocaleString('en-US')} were already written before this stopped -- uploading the file again is safe and will finish the job)` : ''));
     }
     i += slice.length;
-    written += slice.length;
+    written += ignoreDuplicates ? (Array.isArray(data) ? data.length : 0) : slice.length;
   }
   return written;
 }
@@ -1004,6 +1011,17 @@ export default withApi(async (req, res) => {
        file that was already partly loaded collapses instead of doubling every comment in it.
        Importing years of history is never done in one clean go. */
     followup_comments: 'id',
+    /* Keyed on the payment's own identity (importers.js paymentId) -- "i randomly upload
+       received payments, so sometimes they are duplicate we shouldnt store duplicates". The
+       copy already stored is kept (ignoreDuplicates below), the new one is not written, and
+       the count sent back is what was NEW. A Replace still clears the file's days first, so a
+       corrected re-upload of a day still replaces it. */
+    received_payments: 'id',
+  };
+  /* What the key MEANS, for the sentence below -- "matched on id" tells a person nothing. */
+  const keyWords = {
+    received_payments: 'the transaction id (or the date, customer ref, amount, paying phone and sender together, where the sheet has no transaction id)',
+    loans: 'the loan\'s own identity', followup_comments: 'the comment\'s own identity',
   };
 
   // Hints are the one sheet that is REPLACED wholesale. A tab has MANY tips -- the reader
@@ -1024,7 +1042,12 @@ export default withApi(async (req, res) => {
     records = d.records; collapsed = d.collapsed;
   }
 
-  await writeInChunks(supabase, table, records, upsertTables[table] || null);
+  /* Received payments are the one table written with ignoreDuplicates: a payment already in
+     the book is left alone and counted as a duplicate, never stored twice. Everything else
+     keeps its behaviour: upsert corrects in place, insert appends. */
+  const keepFirst = table === 'received_payments';
+  const written = await writeInChunks(supabase, table, records, upsertTables[table] || null, keepFirst);
+  const duplicates = keepFirst ? Math.max(0, records.length - written) : undefined;
 
   /* THE DAY'S CACHED TOTALS ARE NOW OUT OF DATE, AND THIS IS THE FIRST MOMENT ANYTHING KNOWS IT.
      One delete by primary key, on every slice, before anything else -- so from this instant that
@@ -1417,7 +1440,12 @@ export default withApi(async (req, res) => {
 
 
   return {
-    inserted: records.length, table, uploadBatch, uploadDate, replaced,
+    // Rows NEW to the table. For every table but received payments that is every row sent.
+    inserted: duplicates === undefined ? records.length : written,
+    /* Payments already in the book, left as they were. A NUMBER on every slice (undefined on
+       every other upload type), so the page can add the slices up -- see receivedAbnormal. */
+    duplicates,
+    table, uploadBatch, uploadDate, replaced,
     autoSwept, autoRetired, autoRegister,
     fileRows: dataRows, skipped: skipped || undefined,
     /* Which slice this was. The page adds them up and only shows a result when the last one
@@ -1489,7 +1517,7 @@ export default withApi(async (req, res) => {
          the very field the admin uploaded the sheet to change is left exactly as it was. */
       teamsDroppedCols && teamsDroppedCols.length ? `⚠️ Your file also carried ${teamsDroppedCols.join(', ')} — this database has no such column yet, so ${teamsDroppedCols.length === 1 ? 'it was' : 'they were'} NOT saved and the rest of the file went in as normal. Run the outstanding migration in db/migrations (region, zone and the per-role phone numbers come from 2026-08-09-team-contacts.sql), then upload this same sheet again.` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
-      collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
+      collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${keyWords[table] || upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',
       followupRetired ? `\u2713 ${followupRetired} customer(s) this deck no longer names were taken off the officers' working list. Their comments and history are untouched, and the next deck that names them puts them straight back.` : '',
       /* SAID, NOT SWALLOWED. Housekeeping that ran out of clock is reported in the same

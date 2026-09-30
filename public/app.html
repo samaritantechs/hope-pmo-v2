@@ -694,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-i';
+var BUILD = '2026-09-30-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3339,8 +3339,9 @@ function recoveryCustomersDrawer_(date){
       unchanged: ['Haijabadilika / Unchanged', 'mut'], increased: ['Imeongezeka / Increased', 'bad'],
       'new': ['Mpya / New on current', 'bad'], adjustment: ['Iliyonasia / Adjustment', 'warn'] };
     var cols = [col('full_name', 'Mteja / Customer'), col('ref', 'Ref'), col('team', 'Timu / Team'),
-      { key:'initial', label:'Madeni awali / Initial arrears', kind:'money' },
-      { key:'current', label:'Madeni sasa / Current arrears', kind:'money' },
+      // "name initial and current, not a paraphrase" -- the words everybody already uses.
+      { key:'initial', label:'Initial', kind:'money' },
+      { key:'current', label:'Current', kind:'money' },
       { key:'recovered', label:'Imerejeshwa / Recovered', kind:'money' },
       { key:'status', label:'Hali / Status', kind:'chip', chip:function(r){ var x = STATUS_[r.status] || [r.status || '', 'mut']; return { text: x[0], cls: x[1] }; } }];
     if (week) cols.push({ key:'days', label:'Siku / Days', kind:'num' });

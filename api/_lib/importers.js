@@ -454,11 +454,36 @@ export function importTeams(csvRows) {
    read the wrong way round moves money between months. Every other date-bearing importer here
    already did this -- this one did not, which was a real risk sitting quietly behind the
    header bug. */
+/** A PAYMENT IS STORED ONCE, HOWEVER OFTEN ITS SHEET IS UPLOADED.
+
+      "i randomly upload received payments, so sometimes they are duplicate we shouldnt store
+       duplicates"
+
+    The identity is the carrier's own TRANSACTION ID where the sheet carries one -- it names one
+    movement of money and nothing else ever shares it. Where a row has none (a bank deposit
+    typed by hand), it is the date, the customer's ref, the amount, the paying phone and the
+    sender together: the same amount from the same phone for the same customer on the same day
+    is the same payment. Same trick as loanId: the identity becomes the row's primary key, so
+    the DATABASE refuses the second copy (upload.js writes this table with ignoreDuplicates) and
+    nobody has to remember to check. db/RUN-ME-035 computes the identical key in SQL to re-key
+    and de-duplicate what was stored before this existed. */
+export function paymentIdentity(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  // String(Number(x)) so 5000, "5000" and "5000.00" are one amount, as they are one payment.
+  const amt = String(Number(o.amount_paid) || 0);
+  return t(o.transaction_id)
+    || [t(o.paid_at).slice(0, 10), t(o.ref_no), amt, t(o.payment_no), t(o.sender_name)].join('|');
+}
+export function paymentId(o) {
+  const hex = createHash('md5').update(paymentIdentity(o)).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function importReceivedPayments(csvRows) {
   const objs = rowsToObjects(csvRows);
   const dayFirst = inferDayFirst(objs.map(({ raw: r, h }) =>
     col(r, h, 'PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE')));
-  return objs.map(({ raw: r, h }) => ({
+  return objs.map(({ raw: r, h }) => withPaymentId_({
     paid_at: dateOrNull(col(r, h, 'PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE'), dayFirst),
     team: normTeam(col(r, h, 'TEAM')),
     customer_name: textOrNull(col(r, h, 'CUSTOMER NAME')),
@@ -471,6 +496,8 @@ export function importReceivedPayments(csvRows) {
     sender_name: textOrNull(col(r, h, 'SENDER NAME')),
   }));
 }
+// The id is derived from the row's OWN fields, so it is stamped after they are read.
+const withPaymentId_ = row => ({ id: paymentId(row), ...row });
 
 /** 'ALL' or blank -> null (the ALL-teams convention auth.js already honors); otherwise a
     comma/semicolon list -> text[]. Used by the two admin sheets below. */

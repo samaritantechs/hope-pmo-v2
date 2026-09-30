@@ -1336,3 +1336,26 @@ test('midnight and end-of-day both land on the same weekday', async () => {
    "we should see defaulters from defaulters ... now you pulling defaulters from expected yet
    i upload my defaulters manually thats abusing me brother". The defaulters file writes the
    defaulters list; see the deck tests in portal.test.mjs for the rule that replaced this. */
+
+/* ONE ROW PER PAYMENT -- "i randomly upload received payments, so sometimes they are
+   duplicate we shouldnt store duplicates". The row's id is its identity, computed the same
+   way every time, so the database itself refuses the second copy. */
+const { paymentId, paymentIdentity } = await import('../api/_lib/importers.js');
+test('received payments: a payment is keyed on its own identity, so the same sheet twice is the same rows', () => {
+  const row = ['ASHA', '26552917454906', '2201403386', '79500', '226552917454906', '8/8/2026',
+    'processed', 'e', '255675218973', 'TIGO', 'ASHA', 'B', 'TEMEKE', '0686852827'];
+  const [a] = importRcv([RCV_HEADER, row]);
+  const [b] = importRcv([RCV_HEADER, row.slice()]);
+  assert.match(a.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/, 'a uuid, the column\'s type');
+  assert.equal(a.id, b.id, 'the same payment gets the same id every time it is read');
+  assert.equal(paymentIdentity(a), '26552917454906', 'the transaction id is the identity where there is one');
+  // The carrier's id names the payment whatever else the sheet says about it.
+  assert.equal(paymentId({ transaction_id: ' 26552917454906 ', amount_paid: 1 }), a.id);
+  // No transaction id: the date, ref, amount, phone and sender together -- and the amount is
+  // one amount however the sheet wrote it.
+  const bank = { paid_at: '2026-08-08', ref_no: 'r9', amount_paid: '5000.00', payment_no: '0755000111', sender_name: 'Asha' };
+  assert.equal(paymentIdentity(bank), '2026-08-08|R9|5000|0755000111|ASHA');
+  assert.equal(paymentId(bank), paymentId({ ...bank, amount_paid: 5000 }));
+  assert.notEqual(paymentId(bank), paymentId({ ...bank, amount_paid: 6000 }), 'a different amount is a different payment');
+  assert.notEqual(paymentId(bank), paymentId({ ...bank, paid_at: '2026-08-09' }), 'and so is another day');
+});
