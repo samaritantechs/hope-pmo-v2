@@ -612,6 +612,18 @@ test('the presentation asks for the dashboard first, the boards after, and plays
     'a dashboard timeout on the presentation runs the same self-diagnosis as the dashboard tab');
 });
 
+/* THE IMPREST GATE ON THE PAGE -- the server refuses a request while an approved imprest is
+   unretired (imprestRequest); the page says so up front, in the server's words, and closes the
+   button so the form is not filled for nothing. */
+test('the imprest request page closes the form while an approved imprest is unretired', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.impreq = function'), app.indexOf('VIEWS.impappr = function'));
+  assert.ok(/var blocked = !!\(d\.unretired && d\.unretired\.length\);/.test(view), 'the gate is the server\'s list, not a client guess');
+  assert.ok(/esc\(d\.unretiredNote \|\| ''\)/.test(view), 'and the sentence is the server\'s own');
+  assert.ok(/\(roles\.length && !blocked\)\?'':' disabled'/.test(view) && /data-blocked="1"/.test(view), 'the button is closed and marked');
+  assert.ok(/send\.getAttribute\('data-blocked'\) === '1'/.test(app), 'the live-preview recalculation cannot reopen it');
+});
+
 /* A "dt" COLUMN WHOSE VALUE IS ALREADY A NUMBER MUST NOT BE RE-PARSED AS A STRING.
    -----------------------------------------------------------------------------------
      "time stamp is reading as 1789799553103"
