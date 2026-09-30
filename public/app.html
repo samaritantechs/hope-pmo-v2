@@ -383,9 +383,9 @@
   /* drawer */
   .drawer-bg{position:fixed;inset:0;background:rgba(8,17,34,.45);display:none;z-index:60;align-items:flex-end;justify-content:center}
   .drawer{background:var(--bg);width:100%;max-width:560px;max-height:90vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px}
-  /* A drawer that holds a TABLE, not a form: seven money columns in 560px is a strip somebody
+  /* A drawer that holds a TABLE, not a form, takes the WHOLE screen of whatever device it is on: seven money columns in 560px is a strip somebody
      scrolls sideways through -- "widen the recovery card ... its so thick for the content". */
-  .drawer.wide{max-width:min(1240px,96vw)}
+  .drawer.wide{max-width:100%;border-radius:0}
   .drawer h3{margin:0 0 4px;font-size:16px}
   .drawer .sub{color:var(--mut);font-size:12.5px;margin-bottom:12px}
 
@@ -694,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-h';
+var BUILD = '2026-09-30-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
