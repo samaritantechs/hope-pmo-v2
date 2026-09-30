@@ -11019,6 +11019,17 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     .filter(c => c.teams && c.teams.length)
     .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
     .map(c => ({ name: c.name, teams: c.teams }));
+  /* THE TEAMS NOBODY'S CODE HOLDS, AS ONE ROW.
+       "expected slide in presentation aint showing row of unassigned teams as early col and
+        recovery does"
+     Those two boards bucket by the team's officer column, so a blank becomes "(unassigned)";
+     this one is built from the codes, so a team no code holds simply vanished from the wall.
+     Same word, same place in the ranking, so the room can see what is being collected by
+     nobody. This roster only: the commission board builds its own and pays from it, and
+     nobody is paid for these. */
+  const held = new Set(pmoRoster.flatMap(p => (p.teams || []).map(t => K(t))));
+  const loose = teamRows.filter(t => teamAllowed(user, t.team) && !held.has(K(t.team))).map(t => t.team);
+  if (loose.length) pmoRoster.push({ name: '(unassigned)', teams: loose });
   const pmoByDay = new Map();
   // Corrected the same way the boards above are -- one register, one rule, one figure.
   for (let i = 0; i < 7; i++) { const d = addDaysKey(mon, i); pmoByDay.set(d, myExpDay_(d)); }

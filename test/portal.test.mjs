@@ -4054,6 +4054,22 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   // nobody, so it is the one team the "(unassigned)" row stands for.
   assert.equal(juma.teams, 1);
   assert.equal(mbagala.teams, 1);
+  /* PMO COLLECTION NAMES THE TEAMS NO CODE HOLDS, like the other two boards name a blank
+     officer column: CATHERINE's code holds KONGOWE, so MBAGALA -- 800 expected, nothing in --
+     is the "(unassigned)" row, and the day-progress column carries it too. */
+  const t2 = tables();
+  t2.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  const b2 = await run('officerBoards', {}, ADMIN, dbWithRpc(t2));
+  const loose = b2.pmo.find(r => r.officer === '(unassigned)');
+  assert.ok(loose, 'a team no code holds is on the board, not missing from it');
+  assert.equal(loose.teams, 1); assert.equal(loose.uncollected, 800); assert.equal(loose.pct, 0);
+  assert.equal(b2.pmo.find(r => r.officer === 'CATHERINE').teams, 1);
+  assert.ok(b2.dayProgress.col.find(r => r.officer === '(unassigned)'));
+  // Every team held by somebody: no such row.
+  const t3 = tables();
+  t3.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });
+  assert.equal((await run('officerBoards', {}, ADMIN, dbWithRpc(t3))).pmo.find(r => r.officer === '(unassigned)'), undefined);
+
   // Without an initial sheet the board is EMPTY -- the day sheets are never a fallback.
   const bare = await run('officerBoards', {}, ADMIN, dbWithRpc(tables()));
   assert.equal(bare.earlyWeek.find(r => r.officer === 'EARLY E'), undefined,
@@ -4145,11 +4161,18 @@ test('day progress: each office unit from the day\'s first upload to its latest,
   /* THE GRAND TOTAL AND THE AVERAGE OFFICER under each column -- "totals and average of
      everything". The total is a ratio of sums; the average is the mean of the rows' own
      figures, leaving out a row with none rather than counting it as nought. */
+  /* The Collection column carries TWO rows here: CATHERINE (KONGOWE, 500 of 1,500 -> 1,500 of
+     1,500) and "(unassigned)" for MBAGALA, which no code holds (800 expected, nothing in, one
+     upload). So the total is 500 of 2,300 -> 1,500 of 2,300, and the average officer is the
+     mean of the two. */
+  const unheld = dp.col.find(r => r.officer === '(unassigned)');
+  assert.equal(unheld.pct, 0); assert.equal(unheld.customers, 1); assert.equal(unheld.remaining, 1); assert.equal(unheld.uploads, 1);
   assert.equal(dp.colTotal.officer, 'JUMLA / TOTAL');
-  assert.equal(dp.colTotal.startPct, 33.3); assert.equal(dp.colTotal.pct, 100); assert.equal(dp.colTotal.deltaPct, 66.7);
-  assert.equal(dp.colTotal.remaining, 0); assert.equal(dp.colTotal.customers, 2); assert.equal(dp.colTotal.uploads, 2);
+  assert.equal(dp.colTotal.startPct, 21.7); assert.equal(dp.colTotal.pct, 65.2); assert.equal(dp.colTotal.deltaPct, 43.5);
+  assert.equal(dp.colTotal.remaining, 1); assert.equal(dp.colTotal.customers, 3); assert.equal(dp.colTotal.uploads, 2);
   assert.equal(dp.colAvg.officer, 'WASTANI / AVERAGE');
-  assert.equal(dp.colAvg.pct, 100); assert.equal(dp.colAvg.deltaPct, 66.7);
+  assert.equal(dp.colAvg.pct, 50, 'the mean of 100 and 0');
+  assert.equal(dp.colAvg.deltaPct, Math.round((66.7 + 0) / 2 * 10) / 10, 'the mean of the two rows\' own gains');
   assert.equal(dp.earlyTotal.startPct, 62.5); assert.equal(dp.earlyTotal.pct, 100);
   assert.equal(dp.earlyAvg.startPct, 62.5);
   assert.equal(dp.recTotal.deltaAmt, 400, 'the unit\'s movement is its officers\' added');
