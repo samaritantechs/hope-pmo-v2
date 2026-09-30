@@ -500,6 +500,21 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
+/* THE COLLECTION SLIDE'S CAPTION -- "add a caption below of unassigned teams, ill need to
+   always notice them from there. so the only slide with unassigned teams caption is of
+   collection". */
+test('only the PMO collection slide carries the unassigned-teams caption, drawn under its total', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  assert.equal((view.match(/caption:/g) || []).length, 1, 'one slide with a caption');
+  const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
+  assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
+  assert.ok(/b\.unassignedTeams/.test(view), 'fed by officerBoards');
+  const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
+  assert.ok(/<\/tbody><\/table><\/div>';\s*\n\s*\/\/[^\n]*\n\s*if \(s\.caption\) body \+= '<div class="pcap">'/.test(draw),
+    'drawn after the table and its total row');
+});
+
 /* THE JPG'S SCALE IS A SLOPE, NOT A CLIFF -- "The image quality has suddenly decreased into
    blurred.. I got a list of approximately 100 teams". saveJpg used to fall from 2x straight
    to 1x when the drawing would not fit at 2x; it now takes the largest scale the canvas budget
