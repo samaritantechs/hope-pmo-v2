@@ -198,6 +198,30 @@ const impRow = (r, me) => ({
   retireBalance: r.retire_balance == null ? null : Number(r.retire_balance),
 });
 
+/* ONE IMPREST AT A TIME: NO NEW REQUEST WHILE AN APPROVED ONE IS UNRETIRED.
+
+     "No more imprest requests with pending retirements per user, b/se people are just going
+      further so if one requests and got unretired imprest, tell them to retire previous
+      approved imprests first!"
+
+   The rule, in one place: an APPROVED request whose retirement has not been FILED (retire_total
+   still null -- the same test impRow's retiredAt makes, so "unretired" means the same thing on
+   this refusal, on the requester's own page and on the GM's queue). A pending request does not
+   block -- the money has not left the office -- and neither does a rejected one. Read raw, on
+   the requester's own code, so a form that was sitting open cannot slip a second request past
+   it: the check runs at the button, not when the page was drawn. */
+const UNRETIRED_COLS = 'id, travel_date, destination, approved_amount, retired_at, retire_total';
+async function unretiredOf_(db, code) {
+  const rows = await fetchAll(() => db.from('imprest_requests').select(UNRETIRED_COLS)
+    .eq('staff_code', code || '~none~').eq('status', 'approved').is('retire_total', null));
+  return rows.sort((x, y) => String(x.travel_date || '').localeCompare(String(y.travel_date || '')));
+}
+const unretiredNote_ = rows => 'Una imprest ' + rows.length + ' iliyoidhinishwa bila retirement ('
+  + rows.map(r => (r.travel_date ? String(r.travel_date).slice(0, 10) : '?') + (r.destination ? ' ' + r.destination : '')
+    + ' · TZS ' + money0(num(r.approved_amount))).join('; ')
+  + '). Retire hiyo kwanza, kisha omba. / You have ' + rows.length + ' approved imprest'
+  + (rows.length === 1 ? '' : 's') + ' not yet retired. Retire the previous one first, then request.';
+
 /* --------------------------------------------------------------------------------- THE ASK
    "impRequest": staff_code is stamped from the SESSION, never trusted from the form; the
    accommodation rate is LOOKED UP from imprest_roles and stamped, never taken from the form's
@@ -205,6 +229,11 @@ const impRow = (r, me) => ({
    was in force when the button was pressed. */
 export async function imprestRequest(db, user, args, nowMs) {
   const a = args || {};
+  // The gate first, so a person who cannot ask is told that and not sent back for a comma.
+  let owed;
+  try { owed = await unretiredOf_(db, user.code); }
+  catch (e) { if (!tableMissing(e)) throw e; bad(IMP_NOT_READY); }
+  if (owed.length) bad(unretiredNote_(owed));
   const fullName = S_(a.fullName, 120);
   if (!fullName) bad('Andika jina kamili. / Enter your full name.');
   const email = S_(a.email, 160);
@@ -297,7 +326,14 @@ export async function imprestMine(db, user) {
     return { ok: true, rows: [], roles: [], notReady: true };
   }
   const roles = await imprestRoles(db, user);
+  /* The gate, said on the page before anyone types -- the SAME rows this history already holds,
+     through the same test imprestRequest applies, so the form is closed exactly when the button
+     would refuse. `unretired` carries the ids, `unretiredNote` the sentence the refusal uses. */
+  const owed = rows.filter(r => String(r.status) === 'approved' && r.retire_total == null)
+    .sort((x, y) => String(x.travel_date || '').localeCompare(String(y.travel_date || '')));
   return { ok: true, roles: roles.roles || [],
+    unretired: owed.map(r => String(r.id)),
+    unretiredNote: owed.length ? unretiredNote_(owed) : '',
     rows: rows.map(r => impRow(r, user.code)).sort((x, y) => (y.at || 0) - (x.at || 0)) };
 }
 

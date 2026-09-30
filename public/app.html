@@ -691,7 +691,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-f';
+var BUILD = '2026-09-30-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6618,6 +6618,7 @@ VIEWS.impreq = function(){
     var toRetire = appr.filter(function(r){ return !r.retiredAt; });
     var spent = appr.reduce(function(s,r){ return s+(r.retiredAt?(r.retireTotal||0):0); }, 0);
     var toRefund = appr.reduce(function(s,r){ return s+(r.retireBalance!=null&&r.retireBalance>0?r.retireBalance:0); }, 0);
+    var blocked = !!(d.unretired && d.unretired.length);
     /* THE PERSONAL DASHBOARD -- "dashboards of applications per signed in user". Built here,
        from the same rows the history table below already holds: no second read for it. */
     HEAD = '<div class="kpis">'
@@ -6630,6 +6631,14 @@ VIEWS.impreq = function(){
       + '</div>'
       + (roles.length ? '' : '<div class="note bad" style="margin:8px 0">Mwidhinishaji bado hajaweka viwango vya wadhifa (malazi kwa siku). Muombe aweke kwenye Idhini ya imprest → Viwango. '
         + '/ The approver has not set any role rates yet — ask them to add one under Imprest approval → Rates.</div>')
+      /* ONE IMPREST AT A TIME -- "if one requests and got unretired imprest, tell them to retire
+         previous approved imprests first!" The server refuses the request (imprestRequest,
+         imprest.js); this says so up front, in the server's own words, and closes the button
+         so nobody fills the whole form to be told at the end. The list below is where they
+         retire: tap the row, then Retire. */
+      + (blocked ? '<div class="note bad" style="margin:8px 0;display:block">⛔ <b>Ombi jipya limefungwa / New requests are closed.</b> '
+        + esc(d.unretiredNote || '') + '<br><span style="font-size:11.5px">Bofya ombi hilo kwenye orodha hapa chini &rarr; Retire. '
+        + '/ Tap that request in the list below &rarr; Retire.</span></div>' : '')
       + '<div class="card"><div class="card-h">Ombi jipya / New imprest request'
         + '<span class="sub">chanya = gharama halisi / positive costs, seva inahesabu upya kwa kiwango cha wadhifa / the server recomputes at the role\'s own rate</span></div>'
         + '<div class="cleanbox">'
@@ -6669,7 +6678,8 @@ VIEWS.impreq = function(){
           }).join('')
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px;font-size:15px"><b>JUMLA / TOTAL</b><b id="imqTotal">0</b></div>'
         + '<div class="fld"><label>Madhumuni ya safari / Objectives — purpose of trip *</label><textarea id="imqPurpose" rows="3"></textarea></div>'
-        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+(roles.length?'':' disabled')+'>Tuma ombi / Submit request</button>'
+        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+((roles.length && !blocked)?'':' disabled')+(blocked?' data-blocked="1"':'')+'>'
+          + (blocked ? 'Retire imprest ya awali kwanza / Retire the previous imprest first' : 'Tuma ombi / Submit request') + '</button>'
         + '<div id="imqOut" class="note" style="display:none;margin-top:8px"></div>'
         + '</div></div>';
     S.rows = rows;
@@ -11906,7 +11916,8 @@ function wireForms(){
       var rateEl = document.getElementById('imqRate'), fareEl = document.getElementById('imqFare'), accomEl = document.getElementById('imqAccom');
       if (rateEl) rateEl.value = money(rate); if (fareEl) fareEl.value = money(fare); if (accomEl) accomEl.value = money(accom);
       document.getElementById('imqTotal').textContent = invalid?'—':money(fare+accom+others);
-      send.disabled = invalid;
+      // A button closed by the unretired-imprest gate stays closed whatever the figures do.
+      send.disabled = invalid || send.getAttribute('data-blocked') === '1';
     };
     ['imqRole','imqTrips','imqTrip','imqDays','imqO1a','imqO2a','imqO3a'].forEach(function(id){
       var el = document.getElementById(id); if (el){ el.oninput=recalc; el.onchange=recalc; }

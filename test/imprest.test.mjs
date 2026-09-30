@@ -127,6 +127,41 @@ test('my history shows only my own requests', async () => {
   assert.ok(mine.rows[0].mine);
 });
 
+/* ONE IMPREST AT A TIME -- "No more imprest requests with pending retirements per user ...
+   tell them to retire previous approved imprests first!" Approved and unretired blocks the next
+   ask; pending does not (no money has left), and the page says the same thing the refusal says. */
+test('a new request is refused while an approved imprest is unretired, and allowed again once it is', async () => {
+  const db = db_();
+  const ask = extra => portalApi(db, STAFF, 'imprestRequest', { fullName: 'John', email: 'j@x.com',
+    imprestRole: 'field officer', travelDate: TODAY, destination: 'MTWARA', purpose: 'x', accomDays: 2, ...extra }, NOW);
+  const first = await ask();
+  // Pending is not a debt: a second ask while the first waits on the GM goes through.
+  const second = await ask({ destination: 'LINDI' });
+  let mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unretired, [], 'nothing owed while both are pending');
+  assert.equal(mine.unretiredNote, '');
+
+  await portalApi(db, GM, 'imprestDecide', { id: first.id, approve: true, approvedAmount: 40000 }, NOW);
+  await assert.rejects(ask({ destination: 'TANGA' }), /bila retirement[\s\S]*Retire hiyo kwanza[\s\S]*not yet retired/,
+    'approved and unretired: the next request is refused, and told why');
+  mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unretired, [first.id], 'the page is told which one is owed');
+  assert.match(mine.unretiredNote, /MTWARA/);
+  assert.match(mine.unretiredNote, /40,000/, 'the approved amount, not the asked one');
+  // Somebody else is not blocked by John's debt.
+  await portalApi(db, STAFF2, 'imprestRequest', { fullName: 'Mary', email: 'm@x.com',
+    imprestRole: 'field officer', travelDate: TODAY, purpose: 'y', accomDays: 1 }, NOW);
+
+  await portalApi(db, STAFF, 'imprestRetire', { id: first.id, accomActual: 30000, photos: [RECEIPT] }, NOW);
+  const third = await ask({ destination: 'TANGA' });
+  assert.ok(third.id, 'retired: the gate opens again');
+  mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unretired, []);
+  // The second (still pending) request being approved now closes the gate again.
+  await portalApi(db, GM, 'imprestDecide', { id: second.id, approve: true }, NOW);
+  await assert.rejects(ask(), /Retire hiyo kwanza|Retire the previous one first/);
+});
+
 /* ===================================================================== THE GM'S DECISION */
 async function askOne(db, user = STAFF, extra = {}) {
   return portalApi(db, user, 'imprestRequest', { fullName: user.name, email: 's@x.com',
