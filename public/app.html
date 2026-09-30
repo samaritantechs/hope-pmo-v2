@@ -689,7 +689,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-d';
+var BUILD = '2026-09-30-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9044,7 +9044,7 @@ function presSlides(){
        whole 12-row slide descends continuously from busiest to quietest and the S/N reads as
        one ranking. The 'Least active' label in the left column is what marks the second half. */
     slides.push({ id:'calls', kind:'table',
-      title:'HOPE Calls — maafisa wote leo / all officers today, busiest first'
+      title:'HOPE Calls — busiest first'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),
       rows: callRows,
       cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest' ? 'good' : r.end==='Least active' ? 'bad' : ''; } },
