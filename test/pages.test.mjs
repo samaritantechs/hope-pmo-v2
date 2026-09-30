@@ -500,6 +500,16 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
+/* THE DASHBOARD ORODHA OPENS WITH THE OPM -- "add OPM column between S/N and team name". The
+   S/N is the table engine's own first column, so OPM is the first declared one, then Team. */
+test('the dashboard Orodha names the OPM before the team', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const dash = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('THE MONTH REPORT --'));
+  assert.ok(/S\.cols = \[[\s\S]*?ttl\(col\('opm','OPM'\)[^\n]*\),\s*\n\s*col\('team','Team'\),/.test(dash),
+    'OPM is the first declared column, Team the second');
+  assert.ok(/NAME_KEYS = \{[^}]*\bopm:1/.test(app), 'and OPM is a name cell, so it reddens with the team under the line');
+});
+
 /* THE THREE UNIT SLIDES SAY WHO IS LEFT, HOW MANY TEAMS, AND EVERY OFFICER'S CALLS.
    "put nos of remaining ... between teams and uncollected", "No of teams between officer and
    initial on recovery slide", "list all officers in the 3 units and format red the least actives". */
