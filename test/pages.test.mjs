@@ -500,6 +500,24 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
+/* THE JPG'S SCALE IS A SLOPE, NOT A CLIFF -- "The image quality has suddenly decreased into
+   blurred.. I got a list of approximately 100 teams". saveJpg used to fall from 2x straight
+   to 1x when the drawing would not fit at 2x; it now takes the largest scale the canvas budget
+   allows, so a picture that cannot have 2x still gets 1.7x rather than 1x. */
+test('the JPG export takes the largest scale the canvas budget allows, never a cliff to 1x', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const fn = app.slice(app.indexOf('function inkBox_'), app.indexOf("img.src = 'data:image/svg+xml"));
+  assert.ok(/var sc = Math\.max\(1, Math\.min\(JPG_SCALE, 8000 \/ GW, 20000 \/ GH\)\);/.test(fn),
+    'the scale is the budget divided by the drawing, capped at JPG_SCALE and floored at 1');
+  assert.ok(!/\? JPG_SCALE : 1;/.test(fn), 'the two-value cliff is gone');
+  // The arithmetic itself, as the browser will run it: a drawing that fits 2x gets 2x; one
+  // that is 1.2x too wide for 2x gets ~1.66x, not 1x; one that is far too big gets exactly 1x.
+  const scaleFor = (GW, GH) => { let sc = Math.max(1, Math.min(2, 8000 / GW, 20000 / GH)); return Math.floor(sc * 100) / 100; };
+  assert.equal(scaleFor(3000, 6000), 2);
+  assert.equal(scaleFor(4800, 6000), 1.66);
+  assert.equal(scaleFor(3000, 30000), 1);
+});
+
 /* THE DASHBOARD ORODHA OPENS WITH THE OPM -- "add OPM column between S/N and team name". The
    S/N is the table engine's own first column, so OPM is the first declared one, then Team. */
 test('the dashboard Orodha names the OPM before the team', () => {

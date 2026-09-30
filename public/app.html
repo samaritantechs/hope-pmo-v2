@@ -685,7 +685,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-b';
+var BUILD = '2026-09-30-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2348,7 +2348,14 @@ function saveJpg(el){
        of it. Costs one scan of the edges of a bitmap, on a click. */
     var W = w + 2 * JPG_PAD, H = h + 2 * JPG_PAD;
     var GW = Math.ceil(W * 1.3) + 60, GH = Math.ceil(H * 1.3) + 60;
-    var sc = (GW * JPG_SCALE <= 8000 && GH * JPG_SCALE <= 20000) ? JPG_SCALE : 1;
+    /* THE CEILING IS A SLOPE, NOT A CLIFF. This dropped straight from 2x to 1x the moment the
+       drawing would not fit at 2x -- and a hundred-team Orodha, one column wider with the OPM,
+       crossed that line, so the posted picture went soft overnight ("the image quality has
+       suddenly decreased into blurred"). The largest scale the canvas budget allows is taken
+       instead: 1.7x of a picture that cannot have 2x is still nearly three times the pixels
+       of 1x, and the budget itself (8000 x 20000) is what a phone's canvas will still hold. */
+    var sc = Math.max(1, Math.min(JPG_SCALE, 8000 / GW, 20000 / GH));
+    sc = Math.floor(sc * 100) / 100;
     var sw = Math.ceil(GW * sc), sh = Math.ceil(GH * sc);
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+sw+'" height="'+sh+'"'
       + ' viewBox="0 0 '+GW+' '+GH+'">'
