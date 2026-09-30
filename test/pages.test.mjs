@@ -583,6 +583,35 @@ test('the presentation carries a day-progress slide for the three office units',
   assert.ok(/rows: sl\.rows \? sl\.rows\.length : sl\.items\.length/.test(app));
 });
 
+/* THE PRESENTATION LOADS IN TWO STEPS AND SURVIVES EITHER ONE FAILING.
+     "server not responding in time - presentation page aint loading"
+   It used to Promise.all the dashboard and the officer boards -- the two heaviest reads, side by
+   side, and one failure took the page. The dashboard tab already loads its boards after its
+   core and fails them in their own place; this is the same rule brought to the deck. */
+test('the presentation asks for the dashboard first, the boards after, and plays without the boards', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.present = function'), app.indexOf('var PRES_REFRESH_MS'));
+  assert.ok(!/Promise\.all\(\[srv/.test(view), 'the two heaviest reads are never fired side by side');
+  assert.ok(/srv\('dashboardFull', wk\)\.then\(function\(d\)\{/.test(view), 'the dashboard comes first');
+  assert.ok(/presRender\(\);\s*presBoards_\(wk\);/.test(view), 'the page is drawn from it, then the boards are asked for');
+  assert.ok(/srv\('officerBoards', wk\)\.then\(function\(b\)\{ mine\.b = b; mine\.bWhy = ''; \},\s*function\(e\)\{ mine\.bWhy = String/.test(view),
+    'a boards failure is kept with its reason instead of thrown');
+  assert.ok(/if \(S\.presData !== mine \|\| S\.view !== 'present'\) return;/.test(view), 'nothing is drawn over a tab the person has left');
+  const slides = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  assert.ok(/if \(!b\)\{\s*slides\.push\(\{ id:'boards', kind:'note'/.test(slides), 'without the boards the deck carries a note slide in their place');
+  assert.ok(/S\.presData\.bWhy/.test(slides), 'and the note says why');
+  assert.ok((slides.match(/slides\.push\(coltrend\)/g) || []).length === 2, 'the collection trend plays either way');
+  const refetch = app.slice(app.indexOf('function presRefetch'), app.indexOf('function presSlides'));
+  assert.ok(!/Promise\.all\(\[srv/.test(refetch), 'the three-minute refresh follows the same order');
+  assert.ok(/return srv\('officerBoards', wk\)\.then\(function\(b\)\{ mine\.b = b; mine\.bWhy = ''; \}, function\(\)\{\}\);/.test(refetch),
+    'a missed boards refresh keeps the last boards');
+  const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
+  assert.ok(/s\.kind === 'note'/.test(draw), 'presDraw draws the note');
+  assert.ok(/id="presBoardsRetry"/.test(app) && /getElementById\('presBoardsRetry'\)/.test(app), 'the page offers a retry, and it is wired');
+  assert.ok(/\(S\.view === 'dashboard' \|\| S\.view === 'present'\) && \/45\|sekunde/.test(app),
+    'a dashboard timeout on the presentation runs the same self-diagnosis as the dashboard tab');
+});
+
 /* A "dt" COLUMN WHOSE VALUE IS ALREADY A NUMBER MUST NOT BE RE-PARSED AS A STRING.
    -----------------------------------------------------------------------------------
      "time stamp is reading as 1789799553103"

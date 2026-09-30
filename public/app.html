@@ -280,6 +280,8 @@
   #pres .pcap{margin-top:clamp(8px,1.4vh,18px);font-size:clamp(11px,1.05vw,17px);line-height:1.5;color:var(--pink)}
   #pres .pcap .pcaph{font-weight:800;color:#DC2626;text-transform:uppercase;letter-spacing:.04em;font-size:.9em}
   #pres .pcap b{color:var(--plab)}
+  /* The stand-in slide for boards that are loading or did not load: readable from the back of the room. */
+  #pres .pnote{padding:10vh 6vw;text-align:center;font-size:clamp(16px,2.2vw,40px);line-height:1.5;color:var(--pink)}
   /* DAY PROGRESS -- the three office units on ONE slide, and it has to fit: sixteen officers
      with a bar apiece. Three columns, each sized to the screen the way the tables are (clamp on
      width for the type, on height for the row spacing), so a laptop and a television both show
@@ -689,7 +691,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-e';
+var BUILD = '2026-09-30-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2742,6 +2744,8 @@ function wireBar(){
   });
   var ps = document.getElementById('presStart');
   if (ps) ps.onclick = function(){ S.presSecs = Number(document.getElementById('presSecs').value) || 15; presStart(0); };
+  var pbr = document.getElementById('presBoardsRetry');
+  if (pbr) pbr.onclick = function(){ presBoards_(S.presWk || { weekOf: S.args.weekOf || '' }); presRedraw_(); };
   // Segment and team choices persist -- the same meeting runs every week and nobody wants to
   // re-tick nine boxes each Monday.
   /* TICKING A BOX MUST NOT REBUILD THE SCREEN. render() here re-ran the whole view, and this
@@ -3139,7 +3143,8 @@ function failed(e){
   /* THE DASHBOARD DIAGNOSES ITSELF. A timeout says only that it timed out; the probe times
      each of the dashboard's reads on its own and lists them, slowest in red, so the picture of
      this card says WHICH read is holding the screen -- see dashboardProbe in portal-core.js. */
-  if (S.view === 'dashboard' && /45|sekunde|second|abort|timeout|504/i.test(raw)) dashProbe_();
+  // The presentation's first read IS the dashboard, so the same probe answers for it too.
+  if ((S.view === 'dashboard' || S.view === 'present') && /45|sekunde|second|abort|timeout|504/i.test(raw)) dashProbe_();
 }
 function dashProbe_(){
   var host = document.createElement('div');
@@ -8799,16 +8804,59 @@ VIEWS.present = function(){
   // week's officer boards -- which is the sort of thing nobody notices in a dark room.
   var wk = { weekOf: S.args.weekOf || '' };
   S.presWk = wk;
-  return Promise.all([srv('dashboardFull', wk), srv('officerBoards', wk)]).then(function(r){
+  /* ONE READ, THEN THE OTHER -- NOT BOTH AT ONCE, AND NEITHER TAKES THE OTHER DOWN.
+
+       "server not responding in time - presentation page aint loading"
+
+     This asked for the dashboard AND the officer boards in one Promise.all: the two heaviest
+     answers in the system, fired side by side at the same database, and the first to fail took
+     the whole page with it -- the person got one red sentence and nothing to project. The
+     dashboard tab learned this months ago (DASH_LOAD_BOARDS_: the boards wait for the core and
+     fail in their own place) and this screen never did.
+
+     Now the dashboard answers first and the page is drawn from it at once; the boards are asked
+     for on their own AFTER it has answered, so the two never compete for the same database, and
+     if they do not arrive the deck says so on a slide of its own -- the reason, and a retry --
+     while the slides that need only the dashboard play as normal. A timeout on the dashboard
+     read runs the same self-diagnosis the dashboard tab runs (failed(), dashProbe_). */
+  return srv('dashboardFull', wk).then(function(d){
     /* KEPT, so ticking a segment box does not go back to the server. Rebuilding this screen is
        the most expensive thing the system does -- the dashboard AND the officer boards, a
        hundred-odd round trips -- and it was being done again on every tick of every checkbox.
        The figures do not change because somebody chose not to project a slide. */
-    S.presData = { d: r[0], b: r[1] };
+    S.presData = { d: d, b: null, bWhy: '', bLoading: false };
     S.presUpdated = new Date();
-    return presRender();
+    presRender();
+    presBoards_(wk);
   });
 };
+
+/** The officer boards, asked for on their own once the dashboard is up. Whatever comes back --
+    the boards or the reason they did not -- lands on the figures this page was built from, and
+    the page and the deck are redrawn in place; nothing is drawn if the person has moved on to
+    another tab or another week in the meantime. */
+function presBoards_(wk){
+  var mine = S.presData;
+  if (!mine) return Promise.resolve();
+  mine.bLoading = true; mine.bWhy = '';
+  return srv('officerBoards', wk).then(function(b){ mine.b = b; mine.bWhy = ''; },
+    function(e){ mine.bWhy = String((e && e.message) || e); })
+    .then(function(){
+      mine.bLoading = false;
+      if (S.presData !== mine || S.view !== 'present') return;
+      presRedraw_();
+    });
+}
+/** Rebuild the segment page and, if the deck is playing, the slide on the wall -- staying on
+    the slide it was on. */
+function presRedraw_(){
+  var el = document.getElementById('pres');
+  var playing = el && el.style.display === 'block';
+  var keep = S.presI || 0;
+  presRender();
+  paint(true);
+  if (playing){ S.presI = Math.min(keep, Math.max(0, S.slides.length - 1)); presDraw(); }
+}
 
 /* THE DECK KEEPS UP WITH THE DAY -- "Hopecalls in presentation aint autoupdating".
    The figures were fetched once, when the tab opened, and then the deck ran on them all
@@ -8822,9 +8870,15 @@ var PRES_REFRESH_MS = 3 * 60 * 1000;
 function presRefetch(){
   if (document.getElementById('pres').style.display !== 'block') return;
   var wk = S.presWk || { weekOf: S.args.weekOf || '' };
-  Promise.all([srv('dashboardFull', wk), srv('officerBoards', wk)]).then(function(r){
-    if (!r[0] || !r[1]) return;
-    S.presData = { d: r[0], b: r[1] };
+  var mine = S.presData;
+  // The same order as the tab's first load: the dashboard, THEN the boards, never side by side.
+  // A miss on the boards keeps the last boards drawn; a miss on the dashboard keeps everything.
+  srv('dashboardFull', wk).then(function(d){
+    if (S.presData !== mine) return;
+    mine.d = d;
+    return srv('officerBoards', wk).then(function(b){ mine.b = b; mine.bWhy = ''; }, function(){});
+  }).then(function(){
+    if (S.presData !== mine || !mine.d) return;
     S.presUpdated = new Date();
     var keep = S.presI;
     presApply();
@@ -8861,6 +8915,23 @@ function presSlides(){
         col('uncollected','Uncollected'+tpLab,'money'), col('collPct','Collection %'+tpLab,'pct'),
         col('recPctMon','Rec % vs Mon','pct'), col('recPctYest','Rec % vs yest','pct'),
         col('recPctWeek','Rec % vs week','pct')] });
+    // Built here, pushed in its usual place below -- or right after the note when the boards
+    // are missing, so the deck keeps the slides that need only the dashboard.
+    var coltrend = { id:'coltrend', kind:'table', title:'Weekly collection trend', rows:d.colTrend,
+      cols:[col('weekday','Day'), col('expected','Expected','money'), col('collected','Collected','money'),
+        col('uncollected','Uncollected','money'), {key:'pct', label:'Coll %', kind:'pct', target:'col'}] };
+    /* NO BOARDS YET, OR NONE AT ALL: one slide says so in their place -- while they load, and
+       with the reason if they did not -- rather than the whole deck refusing to play. Every
+       slide below this point reads b; the ones above and coltrend read only the dashboard. */
+    if (!b){
+      slides.push({ id:'boards', kind:'note', title:'Bodi za maafisa / Officer boards', rows:[],
+        text: S.presData.bLoading
+          ? '⏳ Zinapakia… / Loading… — slaidi za dashibodi ziko tayari / the dashboard slides are ready'
+          : '⚠ Hazikupakia / Did not load — ' + (S.presData.bWhy || '')
+            + '\n(bofya Jaribu tena kwenye ukurasa / press Retry on the page)' });
+      slides.push(coltrend);
+      return slides;
+    }
     /* THE LABEL, NOT JUST THE FIGURE -- "am seeing the header saying yesterday on screen here
        so am confused b/se i know we using todays". It was: this said "yesterday" Tuesday
        through Friday while the row beside it (b.recToday) was already today's uncollected --
@@ -9053,9 +9124,7 @@ function presSlides(){
     slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
       cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
         col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
-    slides.push({ id:'coltrend', kind:'table', title:'Weekly collection trend', rows:d.colTrend,
-      cols:[col('weekday','Day'), col('expected','Expected','money'), col('collected','Collected','money'),
-        col('uncollected','Uncollected','money'), {key:'pct', label:'Coll %', kind:'pct', target:'col'}] });
+    slides.push(coltrend);
     slides.push({ id:'fu', kind:'table', title:'Follow-up status — all defaulters', rows:b.fuStatus.slice(0,12),
       cols:[col('status','Status'), col('customers','Customers','num'), {key:'pct', label:'% of book', kind:'pct', lowGood:true},
         col('arrears','Arrears','money')] });
@@ -9091,8 +9160,15 @@ function presApply(){
 function presRender(){
     var d = S.presData.d;
     var slides = presApply();
+    // The boards' own state, on the page: loading, or not loaded and why, with a retry.
+    var boardsNote = S.presData.b ? ''
+      : S.presData.bLoading
+        ? '<div class="note" style="display:block">⏳ Bodi za maafisa zinapakia / the officer boards are loading'
+          + ' — slaidi za dashibodi ziko tayari, unaweza kuanza / the dashboard slides are ready, you can start.</div>'
+        : '<div class="note bad" style="display:block">Bodi za maafisa hazikupakia / the officer boards did not load'
+          + ' — ' + esc(S.presData.bWhy || '') + ' <button class="btn sm" id="presBoardsRetry">Jaribu tena / Retry</button></div>';
 
-    HEAD = weekBar(d) + '<div class="kpis">'
+    HEAD = weekBar(d) + boardsNote + '<div class="kpis">'
       + kpi('Slides', money(S.slides.length), (S.presOff.length? money(S.presOff.length)+' hidden' : 'live figures, not a screenshot'), '', 'presCount')
       + kpi('Seconds per slide', String(S.presSecs || 15), 'change below')
       + kpi('Weekday', esc(d.weekday), d.weekOf) + '</div>'
@@ -9151,6 +9227,9 @@ function presDraw(){
       return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+'</div></div>'; }).join('') + '</div>';
   } else if (s.kind === 'progress'){
     body = '<div class="pprog">' + s.units.map(presProgGroup_).join('') + '</div>';
+  } else if (s.kind === 'note'){
+    // A slide that says what is NOT on the wall, and why -- see presSlides' boards note.
+    body = '<div class="pnote">' + esc(s.text).replace(/\n/g, '<br>') + '</div>';
   } else {
     /* THE GRAND TOTAL, on the wall as well as on the tab. It is the number the meeting reads
        out, and a projected table without one sends somebody to a calculator while the slide is
