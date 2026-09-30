@@ -276,6 +276,10 @@
   /* And a last resort: if a board is still wider than the screen, it scrolls INSIDE its own
      box rather than pushing the whole slide sideways and hiding the navigation arrows. */
   #pres .pscroll{overflow-x:auto;max-width:100%}
+  /* The caption under a table slide: a heading word, then one line per unit. */
+  #pres .pcap{margin-top:clamp(8px,1.4vh,18px);font-size:clamp(11px,1.05vw,17px);line-height:1.5;color:var(--pink)}
+  #pres .pcap .pcaph{font-weight:800;color:#DC2626;text-transform:uppercase;letter-spacing:.04em;font-size:.9em}
+  #pres .pcap b{color:var(--plab)}
   /* DAY PROGRESS -- the three office units on ONE slide, and it has to fit: sixteen officers
      with a bar apiece. Three columns, each sized to the screen the way the tables are (clamp on
      width for the type, on height for the row spacing), so a laptop and a television both show
@@ -685,7 +689,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-c';
+var BUILD = '2026-09-30-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8942,7 +8946,16 @@ function presSlides(){
        from -- each day banded on its own and added up -- and the week's figure alone is the one
        number the officers are NOT paid on. Today is one of these five columns, so it is no
        longer shown twice. */
+    /* THE CAPTION UNDER THE COLLECTION SLIDE -- the unassigned teams of all three units, by
+       name, the way a figure caption sits under a table in a document:
+         "todays collection is so essential so i always need to see the alert from there ...
+          add a caption below of unassigned teams, ill need to always notice them from there"
+       Only this slide carries it. Three lines, a count each, the names, nothing else. */
+    var ua = b.unassignedTeams || { early: [], col: [], rec: [] };
+    var uaLine = function(label, list){
+      return '<div><b>' + label + ' (' + list.length + '):</b> ' + (list.length ? esc(list.join(', ')) : '—') + '</div>'; };
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
+      caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec),
       rows:(b.pmo||[]).slice(0,12),
       cols:[col('officer','PMO'), col('teams','Teams','num'),
         {key:'pctJ3', label:'J3', kind:'pct', target:'col'}, {key:'pctJ4', label:'J4', kind:'pct', target:'col'},
@@ -9156,6 +9169,8 @@ function presDraw(){
       + (tot ? '<tr class="ptot"><td></td>' + s.cols.map(function(c,i){
           return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>' : '')
       + '</tbody></table></div>';
+    // A slide's caption sits under its table, after the total -- see the PMO slide's own.
+    if (s.caption) body += '<div class="pcap">' + s.caption + '</div>';
   }
   document.getElementById('pres').innerHTML =
     '<div class="phead"><span>'+esc(s.title)+'</span>'

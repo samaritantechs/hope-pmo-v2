@@ -4065,6 +4065,10 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(loose.teams, 1); assert.equal(loose.uncollected, 800); assert.equal(loose.pct, 0);
   assert.equal(b2.pmo.find(r => r.officer === 'CATHERINE').teams, 1);
   assert.ok(b2.dayProgress.col.find(r => r.officer === '(unassigned)'));
+  /* AND THE CAPTION'S LISTS: which teams have nobody, per unit, by name. MBAGALA names no
+     expected or recovery officer; CATHERINE's code holds KONGOWE only. */
+  assert.deepEqual(b2.unassignedTeams, { early: ['MBAGALA'], col: ['MBAGALA'], rec: ['MBAGALA'] });
+  assert.deepEqual(b.unassignedTeams.col, ['KONGOWE', 'MBAGALA'], 'no PMO code at all: every team is unheld');
   // Every team held by somebody: no such row.
   const t3 = tables();
   t3.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });

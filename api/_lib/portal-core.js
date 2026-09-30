@@ -11195,7 +11195,17 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const fuStatus = Object.values(fsm).map(b => ({ status: b.key, customers: b.customers, arrears: b.arrears,
     pct: pctOf(b.customers, real.length) })).sort((a, b) => b.customers - a.customers);
 
-  return { weekday: wd, weekOf: mon, today, deckWarning,
+  /* THE UNASSIGNED TEAMS OF ALL THREE UNITS, BY NAME -- the collection slide's caption.
+       "todays collection is so essential so i always need to see the alert from there ... add
+        a caption below of unassigned teams, ill need to always notice them from there"
+     Early and recovery are a blank officer column on the teams table (the same test officerOf
+     makes); collection is the teams no PMO code holds (`loose`, above). Scoped like every row
+     on these boards, so a team-restricted code never learns another team is unmanned. */
+  const myTeamRows = teamRows.filter(t => teamAllowed(user, t.team));
+  const noOne = col => myTeamRows.filter(t => !String(t[col] || '').trim()).map(t => t.team).sort();
+  const unassignedTeams = { early: noOne('expected'), col: loose.slice().sort(), rec: noOne('recovery') };
+
+  return { weekday: wd, weekOf: mon, today, deckWarning, unassignedTeams,
     initialCount: iniCustomers, currentCount: curCustomers,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
     callToday, callWeek, callWeekWorst, csToday, csWeek, csExcluded,
