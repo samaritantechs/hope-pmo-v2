@@ -629,7 +629,7 @@ test('the imprest request page closes the form while an approved imprest is unre
    Opt-in per drawer; a form drawer that opens next drops the class. */
 test('the recovery customers drawer opens wide, and a normal drawer takes the width back', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  assert.ok(/\.drawer\.wide\{max-width:min\(1240px,96vw\)\}/.test(app), 'the wide rule');
+  assert.ok(/\.drawer\.wide\{max-width:100%;border-radius:0\}/.test(app), "the wide rule fills the device, whatever its width");
   assert.ok(/function drawer\(html, opts\)\{\s*\$\('#drawer'\)\.classList\.toggle\('wide', !!\(opts && opts\.wide\)\);/.test(app),
     'drawer() toggles the class from the option -- on for wide, off for everything else');
   const fn = app.slice(app.indexOf('function recoveryCustomersDrawer_'), app.indexOf('function weekdayOf_'));
