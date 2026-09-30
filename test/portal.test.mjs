@@ -4047,7 +4047,13 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(early.collected, 1000);                        // the one PAID row on the initial sheet
   assert.equal(early.uncollected, 600);
   assert.equal(early.paidOver, 1);
+  assert.equal(early.customers, 2);
+  assert.equal(early.remaining, 1, 'two on the list, one paid -- one still to pay');
   assert.equal(early.pct, 62.5);
+  // The recovery slide's team count comes off the roster: KONGOWE is JUMA G's; MBAGALA names
+  // nobody, so it is the one team the "(unassigned)" row stands for.
+  assert.equal(juma.teams, 1);
+  assert.equal(mbagala.teams, 1);
   // Without an initial sheet the board is EMPTY -- the day sheets are never a fallback.
   const bare = await run('officerBoards', {}, ADMIN, dbWithRpc(tables()));
   assert.equal(bare.earlyWeek.find(r => r.officer === 'EARLY E'), undefined,

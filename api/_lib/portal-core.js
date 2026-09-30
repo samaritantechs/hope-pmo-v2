@@ -10656,6 +10656,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
       teams: Object.keys(b.teamSet).length, customers: b.customers,
+      /* WHO IS STILL TO PAY -- unpaid and underpaid, as a count: "put nos of remaining ... so
+         that we always know progress of each like 300 where ... paid+overpaid 600 of 900". */
+      remaining: Math.max(0, b.customers - b.paidOver),
       expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
       .sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct))
       // Numbered after sorting, so S/N is the ranking rather than an accident of map order.
@@ -10741,6 +10744,10 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     return Object.values(m).map(b => {
       const rec = dailyRecovered ? b.recovered : (b.initial - b.current);
       return { officer: b.key, initial: b.initial, current: b.current, uncollected: b.uncollected,
+        // How many teams this officer holds on the roster -- "No of teams between officer and
+        // initial on recovery slide". Off the teams table, not the deck, so a team with no
+        // deck today is still counted as theirs.
+        teams: teamRows.filter(t => officerOf(teamBy, t.team, 'recovery') === b.key).length,
         // Debt crisis only means something across a WEEK: a customer cannot fall into default
         // between breakfast and lunch, so on the daily board this is noise dressed as news.
         debtCrisis: dailyRecovered ? Math.min(0, b.initial - b.current) : null,
