@@ -624,6 +624,19 @@ test('the imprest request page closes the form while an approved imprest is unre
   assert.ok(/send\.getAttribute\('data-blocked'\) === '1'/.test(app), 'the live-preview recalculation cannot reopen it');
 });
 
+/* THE RECOVERY CUSTOMERS DRAWER IS A TABLE, SO IT TAKES THE SCREEN'S WIDTH -- "widen the
+   recovery card that opens when i click the day recovery widget, its so thick for the content".
+   Opt-in per drawer; a form drawer that opens next drops the class. */
+test('the recovery customers drawer opens wide, and a normal drawer takes the width back', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/\.drawer\.wide\{max-width:min\(1240px,96vw\)\}/.test(app), 'the wide rule');
+  assert.ok(/function drawer\(html, opts\)\{\s*\$\('#drawer'\)\.classList\.toggle\('wide', !!\(opts && opts\.wide\)\);/.test(app),
+    'drawer() toggles the class from the option -- on for wide, off for everything else');
+  const fn = app.slice(app.indexOf('function recoveryCustomersDrawer_'), app.indexOf('function weekdayOf_'));
+  const calls = fn.match(/drawer\([\s\S]*?\{ wide: true \}\)/g) || [];
+  assert.equal(calls.length, 3, 'loading, loaded and failed: all three states of this drawer are wide');
+});
+
 /* A "dt" COLUMN WHOSE VALUE IS ALREADY A NUMBER MUST NOT BE RE-PARSED AS A STRING.
    -----------------------------------------------------------------------------------
      "time stamp is reading as 1789799553103"
@@ -1130,13 +1143,13 @@ test('a fresh capture reads "not saved yet" and turns to "Saved ✓" only when i
    overlay had its own already). */
 test('the drawer, the presentation and the phone menu each give the Back button an entry to pop, and close on it', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  const helper = app.slice(app.indexOf('var BACK_LAYERS_ = []'), app.indexOf('function drawer(html)'));
+  const helper = app.slice(app.indexOf('var BACK_LAYERS_ = []'), app.indexOf('function drawer(html'));
   assert.ok(/history\.pushState\(\{ hopeLayer: name \}/.test(helper), 'opening a layer pushes one tagged entry');
   assert.ok(/if \(BACK_LAYERS_\.indexOf\(name\) >= 0\) return;/.test(helper), 'once, however often the layer redraws while open');
   assert.ok(/if \(!BACK_POPPING_\) \{ try \{ history\.back\(\); \}/.test(helper), 'closing by button consumes the entry it pushed');
   assert.ok(/addEventListener\('popstate'/.test(helper) && /BACK_CLOSERS_\[top\]\(\)/.test(helper), 'Back closes the top layer');
   assert.ok(/e\.state\.hopeLayer === top \|\| e\.state\.hopeCam/.test(helper), 'a pop that lands on our own entry (the camera above us closing) is left alone');
-  const drawer = app.slice(app.indexOf('function drawer(html)'), app.indexOf("$('#drawerBg').onclick"));
+  const drawer = app.slice(app.indexOf('function drawer(html'), app.indexOf("$('#drawerBg').onclick"));
   assert.ok(/backLayerOpen_\('drawer'\)/.test(drawer) && /backLayerClose_\('drawer'\)/.test(drawer), 'the drawer is a layer');
   const pres = app.slice(app.indexOf('function presStart('), app.indexOf('function presDraw('));
   assert.ok(/backLayerOpen_\('pres'\)/.test(pres) && /backLayerClose_\('pres'\)/.test(pres), 'the presentation is a layer');
