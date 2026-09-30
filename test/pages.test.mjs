@@ -500,6 +500,25 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
+/* THE THREE UNIT SLIDES SAY WHO IS LEFT, HOW MANY TEAMS, AND EVERY OFFICER'S CALLS.
+   "put nos of remaining ... between teams and uncollected", "No of teams between officer and
+   initial on recovery slide", "list all officers in the 3 units and format red the least actives". */
+test('the early, recovery and calls slides carry the remaining count, the team count and every officer', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
+  const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
+  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
+    'remaining and customers sit between Teams and Uncollected on the early slide');
+  const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
+  assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('initial','Initial','money'\)/.test(rec),
+    'the team count sits between Officer and Initial on the recovery slide');
+  const calls = view.slice(view.indexOf('var callRows'), view.indexOf("id:'credit'"));
+  assert.ok(/rows: callRows,/.test(calls), 'the calls slide lists every officer of the pool, not six at each end');
+  assert.ok(!/callTop\.concat\(callLow\)/.test(view), 'the old twelve-row cut is gone');
+  assert.ok(/i >= callPool\.length - 6 \|\| !\(Number\(x\.calls\) \|\| 0\)/.test(calls), 'least active = bottom six or nil calls');
+  assert.ok(/r\.end==='Least active' \? 'bad'/.test(calls), 'and they are the ones in red');
+});
+
 /* THE DAY-PROGRESS SLIDE: the three office units from the day's first upload to its latest,
    on ONE slide, ranked on points gained -- "who pushed more percentages and who is the most
    stuck guy behind". Its own kind, because a table cannot fit sixteen officers with a bar each. */

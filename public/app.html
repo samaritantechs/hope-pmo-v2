@@ -685,7 +685,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-29-c';
+var BUILD = '2026-09-30-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -8876,7 +8876,8 @@ function presSlides(){
         || String(a.officer).localeCompare(String(b2.officer)); });
     slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — best weekly Rec % first',
       rows: recRows.slice(0,12),
-      cols:[col('officer','Officer'), col('initial','Initial','money'), col('current','Current','money'),
+      cols:[col('officer','Officer'), col('teams','Teams','num'),
+        col('initial','Initial','money'), col('current','Current','money'),
         col('tUncollected', recUncolLabel, 'money'),
         col('tRecovered','Recovered today','money'), {key:'tPct', label:'Rec % (today)', kind:'pct', target:'rec'},
         col('uncollected','Uncollected (week)','money'),
@@ -8900,7 +8901,12 @@ function presSlides(){
          ratio of their sums. */
       title:'Early collection — kesho / next list' + (b.earlyDate ? ' (' + b.earlyDate + ')' : '') + ' and this week',
       rows: earlyRows.slice(0,12),
+      /* WHO IS STILL TO PAY, as a count, beside how many are on the list -- "put nos of
+         remaining (unpaid+underpaid) ... so that we always know progress of each like 300 where
+         ... paid+overpaid 600 of 900 total customers". Two plain numbers rather than "300 / 900"
+         in one cell, so the JUMLA row can add each of them up. */
       cols:[col('officer','Officer'), col('teams','Teams','num'),
+        col('remaining','Wamebaki / Left','num'), col('customers','Wateja / Customers','num'),
         col('uncollected','Uncollected (kesho)','money'), {key:'pct', label:'Coll % (kesho)', kind:'pct', target:'ecol'},
         col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}] });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
@@ -8998,9 +9004,14 @@ function presSlides(){
     var callPoolWorst = callDayAllWorst.filter(function(x){ return PMO_UNITS[x.unit]; });
     var unitOnly = callPool.length > 0;
     if (!unitOnly) { callPool = callDayAll; callPoolWorst = callDayAllWorst; }
-    var callTop = callPool.slice(0, 6).map(function(x){ return { ...x, end:'Busiest' }; });
-    var topNames = {};
-    callTop.forEach(function(x){ topNames[x.agent] = 1; });
+    /* EVERY OFFICER OF THE THREE UNITS, busiest first -- "the hope calls slide should list all
+       officers in the 3 units and format red the least actives". A slide that only ever had
+       room for six at each end let a quiet officer sit unseen in the middle. The top six keep
+       their green mark; the least active -- the bottom six, and anybody at nil calls however
+       long the list -- are marked red. The S/N still reads as one ranking, top to bottom. */
+    var callRows = callPool.map(function(x, i){
+      var least = i >= callPool.length - 6 || !(Number(x.calls) || 0);
+      return { ...x, end: (i < 6 && !least) ? 'Busiest' : least ? 'Least active' : '' }; });
     /* "the least active should just change just the left 'least active' but continue flowing
        high to low no of calls in that sense the s/n makes sence" -- the worst list arrives
        fewest-first, which put the absolute-zero officer at row 7 and the counts RISING down
@@ -9008,13 +9019,11 @@ function presSlides(){
        people (picked from the worst end); .reverse() only prints them high-to-low, so the
        whole 12-row slide descends continuously from busiest to quietest and the S/N reads as
        one ranking. The 'Least active' label in the left column is what marks the second half. */
-    var callLow = callPoolWorst.filter(function(x){ return !topNames[x.agent]; })
-      .slice(0, 6).reverse().map(function(x){ return { ...x, end:'Least active' }; });
     slides.push({ id:'calls', kind:'table',
-      title:'HOPE Calls — busiest and least active leo / today'
+      title:'HOPE Calls — maafisa wote leo / all officers today, busiest first'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),
-      rows: callTop.concat(callLow),
-      cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest'?'good':'bad'; } },
+      rows: callRows,
+      cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest' ? 'good' : r.end==='Least active' ? 'bad' : ''; } },
         col('agent','Officer'), col('unit','Unit'), col('team','Team'), col('calls','Calls','num'),
         col('duration','Talk time','dur'), col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
     slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
