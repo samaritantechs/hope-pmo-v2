@@ -326,3 +326,44 @@ test('a file small enough for one request still carries its own receivedAbnormal
   const body = await driveSlicer(500, [{ receivedAbnormal: 9, receivedStep: 500 }]);
   assert.equal(body.receivedAbnormal, 9, 'the ordinary, unsliced case must behave exactly as the server answered');
 });
+
+/* =====================================================================================
+   PAYMENTS ARE STORED ONCE -- "i randomly upload received payments, so sometimes they are
+   duplicate we shouldnt store duplicates". Keyed on the payment's identity and written with
+   ignoreDuplicates: the copy already in the book stays, the new one is not written, and the
+   answer says how many were new and how many were already there.
+   ===================================================================================== */
+test('received payments: a payment already in the book is not stored twice, and the upload says so', async () => {
+  const header = ['PAYMENT DATE', 'TEAM', 'CUSTOMER NAME', 'TRANSACTION ID', 'AMOUNT PAID'];
+  const p1 = ['2026-09-01', 'TEAM1', 'A', 'T1', 500];
+  const p2 = ['2026-09-01', 'TEAM1', 'B', 'T2', 1000];
+  const p3 = ['2026-09-02', 'TEAM1', 'C', 'T3', 700];
+  const c = countingDb(baseTables());
+  // The same payment twice IN ONE FILE is written once.
+  let res = await callUpload(c.db, { code: 'A', type: 'received', meta: {}, rows: [header, p1, p2, p2.slice()] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.inserted, 2);
+  assert.equal(res.body.duplicates, 0, 'nothing was in the book yet');
+  assert.equal(res.body.collapsed, 1, 'the in-file repeat is reported');
+  assert.equal(c.dump('received_payments').length, 2);
+  // The same sheet again, with one new payment on it: one new row, two already there.
+  res = await callUpload(c.db, { code: 'A', type: 'received', meta: {}, rows: [header, p1, p2, p3] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.inserted, 1, 'only the new payment counts as inserted');
+  assert.equal(res.body.duplicates, 2, 'the two already in the book are counted, not stored');
+  assert.equal(c.dump('received_payments').length, 3);
+  // Nothing new at all is still a successful upload that stored nothing.
+  res = await callUpload(c.db, { code: 'A', type: 'received', meta: {}, rows: [header, p1, p2, p3] });
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.inserted, 0);
+  assert.equal(res.body.duplicates, 3);
+  assert.equal(c.dump('received_payments').length, 3, 'the book did not grow');
+  // The copy already stored is the one kept: its original batch stamp is untouched.
+  const first = c.dump('received_payments').find(r => r.transaction_id === 'T1');
+  assert.equal(first.customer_name, 'A');
+  // A non-payments upload carries no `duplicates` at all, so the page never words one.
+  const d = countingDb(baseTables());
+  res = await callUpload(d.db, { code: 'A', type: 'expected', meta: { date: '2026-09-01', weekday: 'MON' },
+    rows: [EXPECTED_HEADER, expectedRow(1)] });
+  assert.equal(res.body.duplicates, undefined);
+});

@@ -1338,7 +1338,8 @@ $('go').addEventListener('click', function(){
     });
   }).then(function(res){
       $('go').disabled = false; $('go').textContent = 'Upload';
-      var zeroRows = res.body && (res.body.inserted === 0);
+      // A payments file that was ALL already in the book inserted nothing and is not a failure.
+      var zeroRows = res.body && (res.body.inserted === 0) && !res.body.duplicates;
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false && !zeroRows){
         msg.className = 'msg ok';
         msg.textContent = 'Done — ' + res.body.inserted + ' row(s) into ' + res.body.table + '.'
@@ -1365,6 +1366,15 @@ $('go').addEventListener('click', function(){
                     + 'Abnormal Payments screen and the dashboard. No separate abnormal sheet is needed.'
                   : 'None of these payments are irregular by the multiples rule. The Abnormal Payments '
                     + 'screen works itself out from this table, so there is nothing else to upload.')
+              : '')
+          /* PAYMENTS STORED ONCE -- "i randomly upload received payments, so sometimes they are
+             duplicate we shouldnt store duplicates". `duplicates` is the whole file's count,
+             summed across slices like receivedAbnormal; a number only on a payments upload. */
+          + (res.body.duplicates
+              ? '\n\u2713 ' + res.body.duplicates.toLocaleString('en-US') + ' malipo tayari yalikuwemo (transaction ile ile) '
+                + '\u2014 hayakuhifadhiwa mara mbili. / ' + res.body.duplicates.toLocaleString('en-US')
+                + ' payment(s) were already in the book (same transaction) and were NOT stored twice.'
+                + (res.body.inserted === 0 ? ' Nothing in this file was new.' : '')
               : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
@@ -1540,6 +1550,8 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
      summed exactly like `synced` above, and the page (not the server) builds the sentence from
      the total once the file is all in -- see the "Done" handler below. */
   var receivedAbnormal = 0;
+  // And the payments already in the book -- a number on every slice of a payments file.
+  var duplicates = 0, sawDuplicates = false;
   /* WHERE WE ARE, rather than which fixed slice we are on. `at` is the next unsent row and
      `size` can shrink between slices, so the plan is recomputed every time instead of being
      fixed up front -- `total` is only ever "this one plus however many are still to come at
@@ -1572,6 +1584,7 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
         // undefined on every non-received-payments upload; checked, not summed, so that stays
         // undefined at the end too rather than turning into a stray zero on a Done message.
         if (res.body.receivedAbnormal !== undefined) receivedAbnormal += (res.body.receivedAbnormal || 0);
+        if (res.body.duplicates !== undefined) { sawDuplicates = true; duplicates += (res.body.duplicates || 0); }
         at += take; idx += 1;
         if (at >= data.length) {
           // The last slice's answer is the file's answer -- it is the one that did the retiring
@@ -1579,6 +1592,7 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
           res.body.inserted = inserted;
           if (synced) res.body.followupSynced = synced;
           if (res.body.receivedAbnormal !== undefined) res.body.receivedAbnormal = receivedAbnormal;
+          if (sawDuplicates) res.body.duplicates = duplicates;
           if (shrunk) res.body.sliceShrunk = { to: size, times: shrunk };
           if (onProgress) onProgress(idx, idx);
           return res;
