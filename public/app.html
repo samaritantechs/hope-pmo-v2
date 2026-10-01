@@ -694,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-09-30-j';
+var BUILD = '2026-10-01-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3307,6 +3307,19 @@ function wireWeekBar(){
   Array.prototype.forEach.call(document.querySelectorAll('[data-week-set]'), function(el){
     el.onclick = function(){ S.args.weekOf = el.getAttribute('data-week-set') || ''; render(); };
   });
+  // The Abnormal Payments day strip: a day either side, a typed day, the latest day, or all.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-abn-step]'), function(el){
+    el.onclick = function(){
+      var cur = (document.getElementById('abnDate') || {}).value || '';
+      if (!cur) return;
+      S.args.date = addDays(cur, Number(el.getAttribute('data-abn-step')) || 0); render();
+    };
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('[data-abn-set]'), function(el){
+    el.onclick = function(){ S.args.date = el.getAttribute('data-abn-set') || ''; render(); };
+  });
+  var abnDate = document.getElementById('abnDate');
+  if (abnDate) abnDate.onchange = function(){ if (abnDate.value) { S.args.date = abnDate.value; render(); } };
 }
 /* THE TEAM PICK, AFTER THE DOT. "I need a team selector after the blue blinker on dashboard
    that filters the current dashboard data into chosen/selected team(s) among those owned by
@@ -6828,11 +6841,24 @@ VIEWS.imprep = function(){
 };
 
 VIEWS.abnormal = function(){
-  return srv('abnormal').then(function(d){
+  /* ONE DAY AT A TIME -- "Pmos make daily followup .. they can't be always finding huge list".
+     Opens on the latest day that has payments (S.args.date blank), steps a day at a time, and
+     "whole fortnight" is the old everything-kept reading. The server does the choosing
+     (abnormalDay_); this only says which day was asked for. */
+  return srv('abnormal', { date: S.args.date || '' }).then(function(d){
     var amt = d.rows.reduce(function(s,r){ return s+(Number(r.paid)||0); }, 0);
-    HEAD = '<div class="kpis">'
+    var day = d.mode === 'day' ? (d.date || '') : '';
+    var dayBar = '<div class="bar" style="margin-bottom:8px">'
+      + '<button class="btn sm ghost" data-abn-step="-1"' + (day ? '' : ' disabled') + '>&larr; Jana / Day before</button>'
+      + '<input type="date" id="abnDate" value="' + esc(day) + '" style="width:150px">'
+      + '<button class="btn sm ghost" data-abn-step="1"' + (day ? '' : ' disabled') + '>Kesho / Day after &rarr;</button>'
+      + '<button class="btn sm' + (d.mode === 'day' && !S.args.date ? '' : ' ghost') + '" data-abn-set="">Siku ya mwisho / Latest day</button>'
+      + '<button class="btn sm' + (d.mode === 'all' ? '' : ' ghost') + '" data-abn-set="all">Wiki 2 zote / Whole fortnight</button>'
+      + '</div>';
+    HEAD = dayBar + '<div class="kpis">'
       + kpi('Flagged payments', money(d.count),
-            'si vizidishio vya TZS ' + money(d.step||500) + ' / not whole multiples of '
+            (d.mode === 'day' ? esc(wdLabel(weekdayOf_(day)) + ' ' + day) + ' · ' : '')
+              + 'si vizidishio vya TZS ' + money(d.step||500) + ' / not whole multiples of '
               + money(d.step||500), d.count?'bad':'good')
       + kpi('Flagged amount', money(amt), 'verify with the field officers', d.count?'warnc':'good')
       + '</div>'

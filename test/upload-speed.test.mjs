@@ -367,3 +367,24 @@ test('received payments: a payment already in the book is not stored twice, and 
     rows: [EXPECTED_HEADER, expectedRow(1)] });
   assert.equal(res.body.duplicates, undefined);
 });
+
+/* "The abnormal table too.. and it contains duplicates too" -- the same ignoreDuplicates
+   write on the abnormal sheet, and the same answer. */
+test('abnormal payments: a row already in the book is not stored twice, and the upload says so', async () => {
+  const header = ['TEAM', 'REF NO', 'CUSTOMER NAME', 'TRANSACTION ID', 'PAID'];
+  const r1 = ['TEAM1', 'R1', 'A', 'TX1', 1234];
+  const r2 = ['TEAM1', 'R2', 'B', 'TX2', 777];
+  const c = countingDb(baseTables({ abnormal_payments: [] }));
+  let res = await callUpload(c.db, { code: 'A', type: 'abnormal', meta: {}, rows: [header, r1, r2, r2.slice()] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.inserted, 2);
+  assert.equal(res.body.duplicates, 0);
+  assert.equal(res.body.collapsed, 1, 'the in-file repeat is reported');
+  res = await callUpload(c.db, { code: 'A', type: 'abnormal', meta: {}, rows: [header, r1, r2, ['TEAM1', 'R3', 'C', 'TX3', 501]] });
+  assert.equal(res.body.inserted, 1, 'only the new row counts as inserted');
+  assert.equal(res.body.duplicates, 2, 'the two already in the book are counted, not stored');
+  assert.equal(c.dump('abnormal_payments').length, 3, 'the book did not double');
+  // The two-week trim is asked for at the end of the clock, and a database without the
+  // function (RUN-ME-036 not yet run) is tolerated exactly like the other two trims.
+  assert.ok(c.log.some(l => l.table === 'rpc:prune_abnormal_payments'), 'prune_abnormal_payments is called on the last slice');
+});

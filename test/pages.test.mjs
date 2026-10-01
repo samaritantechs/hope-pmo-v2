@@ -1226,3 +1226,16 @@ test('the dashboard paints its core alone; the officer boards load on a tap; a d
   assert.ok(/n < 1 && READ_FNS\[fn\] && \(!e \|\| !e\.status\)/.test(srv), 'a read with no HTTP answer at all is retried once; a write never');
   assert.ok(/setTimeout\(res, 1500\)/.test(srv), 'after a short pause');
 });
+
+/* THE ABNORMAL TAB OPENS ON ONE DAY -- "Pmos make daily followup .. they can't be always
+   finding huge list" -- with a day strip: a day either side, a typed day, the latest, or all. */
+test('the abnormal payments tab asks for a day and carries a day strip', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.abnormal = function'), app.indexOf('VIEWS.credit = function'));
+  assert.ok(/srv\('abnormal', \{ date: S\.args\.date \|\| '' \}\)/.test(view), 'the day asked for travels; blank is the latest');
+  for (const h of ['data-abn-step="-1"', 'data-abn-step="1"', 'id="abnDate"', 'data-abn-set=""', 'data-abn-set="all"']) {
+    assert.ok(view.includes(h), h + ' is on the strip');
+  }
+  assert.ok(/getAttribute\('data-abn-step'\)/.test(app) && /getAttribute\('data-abn-set'\)/.test(app), 'and the strip is wired');
+  assert.ok(/abnDate\.onchange/.test(app), 'a typed day is wired too');
+});

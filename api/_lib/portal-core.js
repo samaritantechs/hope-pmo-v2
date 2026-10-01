@@ -1347,11 +1347,13 @@ async function followupReport(db, user, { from, to }, nowMs) {
    deliberately: it stays the single definition of who may see what, and this is only an
    optimisation of how much has to travel to reach the same answer. An ALL-teams user (teams
    null) is unfiltered, as they always were. */
-async function listTable(db, user, table, order = 'created_at') {
+async function listTable(db, user, table, order = 'created_at', refine = null) {
   const rows = await fetchAll(() => {
     let q = db.from(table).select('*').order(order, { ascending: false });
     // As stored and in capitals, never capitals alone -- see teamMatchList for Tunduru.
     if (user && user.teams && user.teams.length) q = q.in('team', teamMatchList(user.teams));
+    // A caller's own narrowing (a day, say) goes INTO the query, never onto the rows after.
+    if (refine) q = refine(q);
     return q;
   });
   const mine = scoped(user, rows);
@@ -2165,11 +2167,33 @@ export function isAbnormalAmount(amount, step) {
   return Math.abs(a % st) > 1e-9;
 }
 
+/* ONE DAY AT A TIME -- "Pmos make daily followup .. they can't be always finding huge list".
+   The tab used to open on the whole window (sixty days asked, a fortnight kept): every flagged
+   payment in the book, for a person whose job is to ring today's. It now opens on ONE DAY:
+   the LATEST day that has a payment in the book (whatever was last uploaded, since sheets
+   arrive randomly), or the day asked for (`date`), and `date: 'all'` is the old whole-window
+   reading. The uploaded abnormal sheet carries no date of its own, so its rows are placed by
+   the day they were uploaded (created_at) -- a sheet uploaded today is today's list. One
+   small, team-scoped read finds the latest day; the dashboard tile keeps its own window. */
+async function abnormalDay_(db, user, args, nowMs) {
+  const day = String((args && args.date) || '').trim();
+  if (day === 'all') return { ...abnormalWindow(nowMs, args), mode: 'all', latest: null };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return { from: day, to: day, mode: 'day', latest: null };
+  const today = todayKey(nowMs);
+  const last = await fetchAll(() => onTeams(db.from('received_payments').select('paid_at')
+    .lte('paid_at', today).order('paid_at', { ascending: false }).limit(1), user.teams));
+  const latest = last.length && last[0].paid_at ? String(last[0].paid_at).slice(0, 10) : today;
+  return { from: latest, to: latest, mode: 'day', latest };
+}
+
 async function abnormal(db, user, args, nowMs) {
-  const { from, to } = abnormalWindow(nowMs, args);
+  const { from, to, mode, latest } = await abnormalDay_(db, user, args, nowMs);
 
   const [base, cfg, paid] = await Promise.all([
-    listTable(db, user, 'abnormal_payments'),
+    // The uploaded sheet's rows belong to the day they were uploaded -- the only day they
+    // have -- and that day is asked of the database, not filtered off the rows afterwards.
+    listTable(db, user, 'abnormal_payments', 'created_at',
+      mode === 'day' ? q => q.gte('created_at', from + 'T00:00:00Z').lte('created_at', to + 'T23:59:59.999Z') : null),
     settingsMany(db, [ABN_STEP_KEY]),
     /* Scoped and windowed IN THE QUERY. This table only ever grows.
 
@@ -2211,6 +2235,7 @@ async function abnormal(db, user, args, nowMs) {
       source: 'received',
     }));
   for (const r of base.rows) r.source = r.source || 'upload';
+  base.mode = mode; base.date = mode === 'day' ? from : null; base.latest = latest;
 
   base.rows = base.rows.concat(derived)
     .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
