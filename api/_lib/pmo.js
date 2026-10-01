@@ -230,7 +230,11 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
          about which day is which. */
       ...Object.fromEntries(perDay.flatMap((d, i) => {
         const k = PMO_DAY_KEYS[i];
-        return k ? [['pct' + k, d.pct], ['tzs' + k, d.tzs]] : [];
+        /* Each day's two amounts beside its percentage (colJ3/expJ3 ...), so a board's grand
+           cell under the day is collected over expected across every officer -- never the
+           mean of their percentages. Same keys the early-collection week already uses, so the
+           same PCT_FROM entries serve both boards. */
+        return k ? [['pct' + k, d.pct], ['tzs' + k, d.tzs], ['col' + k, d.collected], ['exp' + k, d.expected]] : [];
       })),
     };
   });
@@ -260,5 +264,11 @@ export function pmoPublicRow(r, i) {
        does. Listed one by one rather than copied wholesale, so a future field added to the
        board cannot arrive on the slide by accident. */
     ...Object.fromEntries(PMO_DAY_KEYS.map(k => ['pct' + k, r['pct' + k] == null ? null : r['pct' + k]])),
-    weekUncollected: r.weekUncollected, weekPct: r.weekPct };
+    /* AND THE AMOUNTS EACH PERCENTAGE IS MADE OF -- the customers' money, not anybody's pay --
+       so the slide's JUMLA cell under each day and under the week is collected over expected
+       across every officer, never the mean of their percentages ("not average of the above
+       percentages"). Still no tzs, no band, no bonus: nothing here says what anyone earned. */
+    ...Object.fromEntries(PMO_DAY_KEYS.flatMap(k => [['col' + k, r['col' + k] || 0], ['exp' + k, r['exp' + k] || 0]])),
+    weekUncollected: r.weekUncollected, weekPct: r.weekPct,
+    weekCollected: r.weekCollected || 0, weekExpected: r.weekExpected || 0 };
 }

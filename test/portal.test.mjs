@@ -682,6 +682,12 @@ test('the month record is the weeks worked out one by one and added, with a colu
   assert.equal(juma.weekRecovered, 4100);
   assert.equal(juma.weekCommission, 170000, 'the month pays what its weeks paid');
   assert.equal(juma.weekPct, 170.8, '4,100 over the month\'s 2,400 uncollected');
+  /* THE DENOMINATORS RIDE ON THE ROW -- "each cell on grand total of recovery to be the
+     percentage of recovered vs uncollected not average of the above percentages". The board's
+     JUMLA cell divides the officers' recovered by their uncollected, so each must be there. */
+  assert.equal(juma.baseW3, 1000, 'W3: 3,000 recovered over 1,000');
+  assert.equal(juma.baseW4, 1400, 'W4: 1,100 recovered over 1,400');
+  assert.equal(juma.weekBase, 2400);
   assert.equal(m.totals.split.recWeek, 230000, 'the company total, MBAGALA\'s own share included');
   assert.equal(m.recoveryRule, 'latest');
   assert.equal(juma.records.length, 4, 'one record per week of the month');
@@ -4463,9 +4469,15 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   for (const key of ['pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ']) {
     assert.equal(key in k, true, key + ' must reach the slide');
   }
+  /* The amounts each percentage is made of travel too -- the customers' money, not pay -- so
+     the slide's JUMLA cell under a day is collected over expected across the officers, never
+     the mean of their percentages ("not average of the above percentages"). */
   assert.deepEqual(Object.keys(k).sort(),
     ['officer', 'pct', 'sn', 'teams', 'uncollected', 'weekPct', 'weekUncollected',
-     'pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ'].sort());
+     'weekCollected', 'weekExpected',
+     'pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ',
+     'colJ3', 'colJ4', 'colJ5', 'colAL', 'colIJ',
+     'expJ3', 'expJ4', 'expJ5', 'expAL', 'expIJ'].sort());
 });
 
 test('the five bands pay what the plan says they pay', async () => {

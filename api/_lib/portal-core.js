@@ -3674,6 +3674,10 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       row['rec' + r.key] = r.recovered;
       row['pct' + r.key] = r.pct;
       row['tzs' + r.key] = r.tzs;
+      /* THE RECORD'S OWN DENOMINATOR, so the board's grand cell is recovered over uncollected
+         across every officer -- "not average of the above percentages". A pct with no base
+         beside it could only ever be averaged. */
+      row['base' + r.key] = r.base;
     }
     return row;
   }).sort((a, b) => b.weekCommission - a.weekCommission
@@ -3785,6 +3789,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     const e = wd.reduce((s, x) => s + num(x.expected), 0), c = wd.reduce((s, x) => s + num(x.collected), 0);
     r['pct' + w.key] = e > 0 ? Math.round((c / e) * 1000) / 10 : null;
     r['tzs' + w.key] = wd.reduce((s, x) => s + num(x.tzs), 0);
+    // The week's two amounts, so the month board's grand cell is their ratio, not a mean.
+    r['col' + w.key] = c; r['exp' + w.key] = e;
   }
 
   /* Last week's percentage per officer, so "beat your own previous week" can be checked rather
