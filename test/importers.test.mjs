@@ -1359,3 +1359,20 @@ test('received payments: a payment is keyed on its own identity, so the same she
   assert.notEqual(paymentId(bank), paymentId({ ...bank, amount_paid: 6000 }), 'a different amount is a different payment');
   assert.notEqual(paymentId(bank), paymentId({ ...bank, paid_at: '2026-08-09' }), 'and so is another day');
 });
+
+/* "The abnormal table too.. and it contains duplicates too" -- the same identity rule on the
+   abnormal sheet, which carries no date of its own. */
+const { abnormalId, abnormalIdentity } = await import('../api/_lib/importers.js');
+test('abnormal payments: a row is keyed on its own identity, so the same sheet twice is the same rows', () => {
+  const header = ['TEAM', 'CUSTOMER NO', 'PAYMENT NO', 'REF NO', 'CUSTOMER NAME', 'TRANSACTION ID', 'PAID', 'REF ID', 'SENDER NAME'];
+  const row = ['KONGOWE', '0712000111', '0755000222', 'R99', 'AMINA H', 'TX123', '12,345', 'RID9', 'MAMA A'];
+  const [a] = importAbn([header, row]);
+  const [b] = importAbn([header, row.slice()]);
+  assert.match(a.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(a.id, b.id, 'the same row gets the same id every time it is read');
+  assert.equal(abnormalIdentity(a), 'TX123', 'the transaction id first');
+  assert.equal(abnormalIdentity({ ref_id: ' rid9 ', ref_no: 'R99', paid: 5 }), 'RID9', 'then the ref id');
+  assert.equal(abnormalIdentity({ ref_no: 'r99', paid: '12345.00', phone_number: '755000222', sender_name: 'Mama A' }),
+    'R99|12345|755000222|MAMA A', 'then the customer ref, amount, phone and sender together');
+  assert.notEqual(abnormalId({ ref_no: 'R99', paid: 12345 }), abnormalId({ ref_no: 'R99', paid: 12346 }));
+});

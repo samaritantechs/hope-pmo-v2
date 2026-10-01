@@ -1017,10 +1017,13 @@ export default withApi(async (req, res) => {
        the count sent back is what was NEW. A Replace still clears the file's days first, so a
        corrected re-upload of a day still replaces it. */
     received_payments: 'id',
+    // "The abnormal table too.. and it contains duplicates too" -- importers.js abnormalId.
+    abnormal_payments: 'id',
   };
   /* What the key MEANS, for the sentence below -- "matched on id" tells a person nothing. */
   const keyWords = {
     received_payments: 'the transaction id (or the date, customer ref, amount, paying phone and sender together, where the sheet has no transaction id)',
+    abnormal_payments: 'the transaction id (or the ref id, or the customer ref, amount, paying phone and sender together, where the sheet has neither)',
     loans: 'the loan\'s own identity', followup_comments: 'the comment\'s own identity',
   };
 
@@ -1042,10 +1045,10 @@ export default withApi(async (req, res) => {
     records = d.records; collapsed = d.collapsed;
   }
 
-  /* Received payments are the one table written with ignoreDuplicates: a payment already in
-     the book is left alone and counted as a duplicate, never stored twice. Everything else
-     keeps its behaviour: upsert corrects in place, insert appends. */
-  const keepFirst = table === 'received_payments';
+  /* The two payment books are written with ignoreDuplicates: a payment already in the book
+     is left alone and counted as a duplicate, never stored twice. Everything else keeps its
+     behaviour: upsert corrects in place, insert appends. */
+  const keepFirst = table === 'received_payments' || table === 'abnormal_payments';
   const written = await writeInChunks(supabase, table, records, upsertTables[table] || null, keepFirst);
   const duplicates = keepFirst ? Math.max(0, records.length - written) : undefined;
 
@@ -1368,6 +1371,14 @@ export default withApi(async (req, res) => {
   if (isLastPart && clock.worth(3000)) {
     await pruneInSlices(limit => runQuery(() => supabase.rpc('prune_received_payments',
       { p_keep_weeks: 2, p_limit: limit })), clock, { sliceMs: 2000, reserveMs: 5000 });
+  }
+  /* AND THE ABNORMAL BOOK, on the same two-week clock -- "The abnormal table too". The smallest
+     of the three by far (one sheet a day, when it is uploaded at all), trimmed by the stamp the
+     upload gave each row, after the other two and only if the clock still holds a slice. Not
+     installed until RUN-ME-036 is run, and tolerated exactly like the other two. */
+  if (isLastPart && clock.worth(3000)) {
+    await pruneInSlices(limit => runQuery(() => supabase.rpc('prune_abnormal_payments',
+      { p_keep_weeks: 2, p_limit: limit })), clock, { sliceMs: 2000, reserveMs: 3000 });
   }
   /* =====================================================================================
      THE LINE THAT EMPTIED THE OFFICERS' LIST.

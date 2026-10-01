@@ -535,6 +535,22 @@ export function importUserRoles(csvRows) {
    exactly the data nobody notices is missing until the day they need it.
    --------------------------------------------------------------------------------------- */
 
+/** THE SAME RULE FOR THE ABNORMAL SHEET -- "The abnormal table too.. and it contains
+    duplicates too". The carrier's TRANSACTION ID, else its REF ID, else the customer's ref,
+    the amount, the paying phone and the sender together (this sheet carries no date of its
+    own; created_at is the upload's stamp, which two uploads of one row would not share).
+    db/RUN-ME-036 computes the identical key in SQL. */
+export function abnormalIdentity(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  const amt = String(Number(o.paid) || 0);
+  return t(o.transaction_id) || t(o.ref_id)
+    || [t(o.ref_no), amt, t(o.phone_number), t(o.sender_name)].join('|');
+}
+export function abnormalId(o) {
+  const hex = createHash('md5').update(abnormalIdentity(o)).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function importAbnormal(csvRows) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     gmo: textOrNull(col(r, h, 'GMO')),
@@ -560,7 +576,9 @@ export function importAbnormal(csvRows) {
     transaction_id: textOrNull(col(r, h, 'TRANSACTION ID')),
     paid: num(col(r, h, 'PAID')),
     payment: textOrNull(col(r, h, 'PAYMENT')),
-  })).filter(x => x.ref_no || x.customer_name || x.transaction_id);
+  })).filter(x => x.ref_no || x.customer_name || x.transaction_id)
+    // The id is derived from the row's OWN fields, so it is stamped after they are read.
+    .map(x => ({ id: abnormalId(x), ...x }));
 }
 
 export function importComplaints(csvRows) {
