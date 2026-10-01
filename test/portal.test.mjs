@@ -7624,13 +7624,20 @@ test('abnormal payments: what the sheet said is NEVER overwritten', async () => 
   assert.equal(a4.pmo_stage, undefined, 'and it is not marked as filled, because it was not');
 });
 
-test('abnormal payments: a reference in neither book is left blank, not guessed at', async () => {
-  /* An unknown customer wrongly labelled "early collection" sends somebody to the wrong desk,
-     which is worse than an empty cell that says "find out". */
+test('abnormal payments: a reference in neither book goes to the team\'s recovery officer', async () => {
+  /* "For those that fall to no pmo after team lookups ... Grant them to the recovery pmo
+     assigned to that team". A customer nobody is chasing is the recovery desk's business. */
   const d = await portalApi(dbWithRpc(abnBook()), ADMIN, 'abnormal', {}, NOW);
   const a5 = d.rows.find(r => r.id === 'A5');
-  assert.ok(!a5.pmo, 'no stage could be established, so nothing is claimed');
-  assert.equal(d.pmoFilled, 3, 'three of the four blanks were answerable');
+  assert.equal(a5.pmo, 'JUMA G', 'KONGOWE\'s recovery officer');
+  assert.equal(a5.pmo_stage, 'RECOVERY');
+  assert.equal(a5.pmo_fallback, true, 'and it is marked as the fallback, not an established stage');
+  assert.equal(d.pmoFilled, 4, 'all four blanks were answered');
+  // A team with no recovery officer named: still blank -- nobody to ring is said, not guessed.
+  const t = abnBook();
+  t.teams[0] = { ...t.teams[0], recovery: '' };
+  const d2 = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.ok(!d2.rows.find(r => r.id === 'A5').pmo);
 });
 
 test('abnormal payments: REF ID survives the round trip -- it was never on screen before', async () => {
