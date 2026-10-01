@@ -3690,9 +3690,11 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       const name = officerOf(teamBy, r.team, 'expected');
       if (!seesExpOfficer(name)) continue;
       const per = colOff.get(name) || colOff.set(name, new Map()).get(name);
-      const b = per.get(d) || per.set(d, { expected: 0, collected: 0, paid: 0, over: 0 }).get(d);
+      const b = per.get(d) || per.set(d, { expected: 0, collected: 0, paid: 0, over: 0, customers: 0 }).get(d);
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
       b.paid += num(r.paid_n); b.over += num(r.over_n);
+      // How many were expected at all, so the widget can say "paid+overpaid out of all expected".
+      b.customers += num(r.customers);
     }
   }
   const pctOfDay = b => (b && b.expected > 0)
@@ -3717,10 +3719,10 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
         collected: t.collected, expected: t.expected, paid: t.paid, over: t.over,
         tzs: Math.round(t.paid * cfg.paidTzs + t.over * cfg.overTzs) };
     });
-    const tot = { expected: 0, collected: 0, paid: 0, over: 0 };
+    const tot = { expected: 0, collected: 0, paid: 0, over: 0, customers: 0 };
     for (const b of per.values()) {
       tot.expected += b.expected; tot.collected += b.collected;
-      tot.paid += b.paid; tot.over += b.over;
+      tot.paid += b.paid; tot.over += b.over; tot.customers += b.customers;
     }
     const tb = per.get(today);
     const row = {
@@ -3742,6 +3744,8 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       weekPct: pctOfDay(tot), weekPaid: tot.paid, weekOver: tot.over,
       weekCollected: tot.collected, weekExpected: tot.expected,
       weekN: tot.paid + tot.over,
+      // Everyone expected over the range: the "b" of the widget's "a/b paid+overpaid of all expected".
+      weekCustomers: tot.customers,
       weekCommission: Math.round(tot.paid * cfg.paidTzs + tot.over * cfg.overTzs),
       days,
     };

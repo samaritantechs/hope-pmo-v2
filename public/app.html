@@ -694,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-01-c';
+var BUILD = '2026-10-01-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5712,16 +5712,41 @@ VIEWS.cmmonth = function(){
               + ' &middot; ' + esc(d.from||'') + ' &rarr; ' + esc(d.to||'') + '</span>'
               + ' <button class="btn sm ghost" data-arg="month" data-val="' + esc(thisM) + '">Rudi mwezi huu / Back to this month</button>'))
       + '<div class="kpis">'
-      + kpi(d.teamsScoped ? 'Timu zangu — mwezi hadi sasa / My teams — month to date' : 'Company total — month to date',
-          money(d.totals.week),
-          'rec ' + money(sp.recWeek||0) + ' · early ' + money(sp.colWeek||0) + ' · PMO ' + money(sp.pmoWeek||0),
-          d.totals.week ? 'good' : '')
-      + kpi('Recovery — mwezi', money(sp.recWeek||0),
-          money((d.recBoard||[]).length) + ' officer(s)')
-      + kpi('Early Collection — mwezi', money(sp.colWeek||0),
-          money((d.colBoard||[]).length) + ' officer(s)')
-      + kpi('PMO Collection — mwezi', money(sp.pmoWeek||0),
-          'bonasi ni ya wiki, haimo hapa / the weekly bonus is not in this figure')
+      + (function(){
+          /* THE THREE UNIT WIDGETS READ PERFORMANCE, NOT MONEY.
+               "for rec, early col and col widgets remove the total since its on the first
+                company widget, leave the officers and add the percentage performance"
+             Each unit's percentage is the RATIO of its officers' amounts over the month (the
+             same figure its board's JUMLA row shows), never a mean of their percentages; the
+             amounts it is made of sit under it, with the officer count. The company widget
+             keeps the money and gains the average of the three unit percentages. */
+          var sumOf = function(rows, k){ return (rows||[]).reduce(function(s,r){ return s + (Number(r[k])||0); }, 0); };
+          var ratio = function(n, dn){ return dn > 0 ? Math.round(n / dn * 1000) / 10 : null; };
+          var pc = function(p){ return p == null ? '—' : money(p) + '%'; };
+          var tone = function(p, t){ var tg = targetOf_({ target: t }); return (p == null || tg == null) ? '' : (p >= tg ? 'good' : 'bad'); };
+          var rUncol = sumOf(d.recBoard, 'weekBase'), rRec = sumOf(d.recBoard, 'weekRecovered'), rPct = ratio(rRec, rUncol);
+          var eExp = sumOf(d.colBoard, 'weekExpected'), eCol = sumOf(d.colBoard, 'weekCollected'), ePct = ratio(eCol, eExp);
+          var eN = sumOf(d.colBoard, 'weekN'), eCust = sumOf(d.colBoard, 'weekCustomers');
+          var pExp = sumOf(d.pmo, 'weekExpected'), pCol = sumOf(d.pmo, 'weekCollected'), pPct = ratio(pCol, pExp);
+          var units = [ePct, pPct, rPct].filter(function(x){ return x != null; });
+          var perf = units.length ? Math.round(units.reduce(function(s,x){ return s + x; }, 0) / units.length * 10) / 10 : null;
+          return kpi(d.teamsScoped ? 'Timu zangu — mwezi hadi sasa / My teams — month to date' : 'Company total — month to date',
+              money(d.totals.week),
+              'rec ' + money(sp.recWeek||0) + ' · early ' + money(sp.colWeek||0) + ' · PMO ' + money(sp.pmoWeek||0)
+                + ' · utendaji / PMO performance ' + pc(perf) + ' = wastani wa / avg of early col ' + pc(ePct)
+                + ' · col ' + pc(pPct) + ' · rec ' + pc(rPct),
+              d.totals.week ? 'good' : '')
+            + kpi('Recovery — mwezi', pc(rPct),
+                'uncol ' + money(rUncol) + ' · imerejeshwa / recovered ' + money(rRec)
+                  + ' · ' + money((d.recBoard||[]).length) + ' officer(s)', tone(rPct, 'rec'))
+            + kpi('Early Collection — mwezi', pc(ePct),
+                'expected ' + money(eExp) + ' · early collected ' + money(eCol)
+                  + ' · ' + money(eN) + '/' + money(eCust) + ' paid+overpaid kati ya wateja wote expected / of all expected'
+                  + ' · ' + money((d.colBoard||[]).length) + ' officer(s)', tone(ePct, 'ecol'))
+            + kpi('PMO Collection — mwezi', pc(pPct),
+                'expected ' + money(pExp) + ' · collected ' + money(pCol)
+                  + ' · ' + money((d.pmo||[]).length) + ' officer(s)', tone(pPct, 'col'));
+        })()
       + '</div>'
       + (d.payText ? '<div class="note" style="background:var(--b50);border-color:var(--b100);color:var(--b800)">'
           + esc(d.payText) + '</div>' : '')

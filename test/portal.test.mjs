@@ -616,6 +616,8 @@ test('commission pays the recovery officer a % and the early officer a flat rate
   const e2 = d2.colBoard.find(r => r.officer === 'EARLY E');
   assert.ok(e2, 'the early officer is on the board');
   assert.equal(e2.weekN, 3, 'PAID+OVERPAID counted from the INITIAL sheet (2 paid + 1 over), not the today sheet\'s 1');
+  // "a/b - (paid+overpaid out of all expected)": the b is everyone on the initial sheet.
+  assert.equal(e2.weekCustomers, 4, 'four customers were expected on the initial sheet');
   assert.equal(e2.weekCommission, 2 * 1000 + 1 * 1500, 'paid at the flat rates off the initial counts');
 
   /* "aint seeing todays col expected people on orodha" -- an officer whose initial book was
