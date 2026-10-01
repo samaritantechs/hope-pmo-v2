@@ -1273,3 +1273,19 @@ test('a percentage column with `from` totals as a ratio of the parts, and the bo
   assert.ok(/from:\['recovered','uncollected'\]/.test(pres), 'and the recovery slide\'s week column');
   assert.ok(/wCollected: w\.collected, wExpected: w\.expected/.test(app), 'the early slide carries the week\'s parts for PCT_FROM.wPct');
 });
+
+/* THE MONTH'S FOUR WIDGETS -- "for rec, early col and col widgets remove the total since its
+   on the first company widget, leave the officers and add the percentage performance ... on the
+   company widget add pmo performance avrg (erly col, col, rec)". */
+test('the commission month widgets read each unit\'s ratio, and the company widget their average', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.cmmonth = function'), app.indexOf("board('cmMRec'"));
+  assert.ok(/rPct = ratio\(rRec, rUncol\)/.test(view), 'recovery: recovered over uncollected');
+  assert.ok(/ePct = ratio\(eCol, eExp\)/.test(view) && /pPct = ratio\(pCol, pExp\)/.test(view), 'early col and PMO: collected over expected');
+  assert.ok(/kpi\('Recovery — mwezi', pc\(rPct\)/.test(view), 'the recovery widget shows the percentage, not the money');
+  assert.ok(/kpi\('Early Collection — mwezi', pc\(ePct\)/.test(view) && /money\(eN\) \+ '\/' \+ money\(eCust\)/.test(view), 'early col: the percentage and a/b of all expected');
+  assert.ok(/kpi\('PMO Collection — mwezi', pc\(pPct\)/.test(view), 'PMO: the percentage');
+  assert.ok(!/kpi\('Recovery — mwezi', money\(sp\.recWeek/.test(view), 'the unit money totals are gone from the unit widgets');
+  assert.ok(/var units = \[ePct, pPct, rPct\]/.test(view) && /PMO performance ' \+ pc\(perf\)/.test(view), 'the company widget carries the average of the three');
+  assert.ok(/money\(\(d\.recBoard\|\|\[\]\)\.length\) \+ ' officer\(s\)'/.test(view), 'and the officer counts stay');
+});
