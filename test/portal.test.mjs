@@ -10131,3 +10131,53 @@ test('abnormal payments: the tab opens on the latest day that has a payment, not
   assert.equal(d.date, TODAY);
   assert.equal(d.rows.length, 0);
 });
+
+/* PRIVACY ON THE COMMISSION SCREEN, WEEK AND MONTH -- "are you sure the orodha list on
+   commisions is pivoting teams so as to keep privacy per users? on monthly too". Proven by
+   running it: a code restricted to KONGOWE sees only KONGOWE's officers, and an officer who
+   holds BOTH teams shows only KONGOWE's amounts. The month is the same walk (commissionCompute_
+   with scope 'month'), checked the same way. */
+test('commission week and month: a team-restricted code sees only its own teams\' officers and amounts', async () => {
+  const t = tables();
+  // JUMA G recovers for BOTH teams; MBAGALA has its own early officer; one PMO code per team.
+  t.teams[1] = { ...t.teams[1], recovery: 'JUMA G', expected: 'MB EARLY' };
+  t.access_codes.push(
+    { code: 'P1', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] },
+    { code: 'P2', name: 'MB PMO', role: 'PMO COLLECTION', teams: ['MBAGALA'], tabs: [] });
+  // Expected books (today and initial) and a defaulter deck pair for each team, today.
+  t.repayment_snapshots.push(
+    E('K1', 'KONGOWE', 1000, 'PAID', 0), E('K2', 'KONGOWE', 1000, 'UNPAID', 0),
+    E('M1', 'MBAGALA', 5000, 'PAID', 0), E('M2', 'MBAGALA', 5000, 'UNPAID', 0),
+    E('K1', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'), E('K2', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial'),
+    E('M1', 'MBAGALA', 5000, 'PAID', 0, TODAY, 'initial'), E('M2', 'MBAGALA', 5000, 'UNPAID', 0, TODAY, 'initial'));
+  t.defaulter_snapshots.push(
+    D('K9', 'KONGOWE', 1000, 'initial'), D('K9', 'KONGOWE', 700, 'current'),
+    D('M9', 'MBAGALA', 9000, 'initial'), D('M9', 'MBAGALA', 1000, 'current'));
+  const KONGOWE_ONLY = { code: 'L', name: 'KONGOWE LEADER', role: 'LEADER', teams: ['KONGOWE'], tabs: ['commission'] };
+  for (const args of [{}, { scope: 'month' }]) {
+    const mine = await portalApi(dbWithRpc(t), KONGOWE_ONLY, 'commission', args, NOW);
+    const all = await portalApi(dbWithRpc(t), ADMIN, 'commission', args, NOW);
+    const label = args.scope || 'week';
+    assert.equal(mine.teamsScoped, true, label);
+    const names = rows => (rows || []).map(r => r.officer);
+    for (const list of ['day', 'week', 'recBoard', 'colBoard', 'pmo']) {
+      assert.ok(!names(mine[list]).includes('MB EARLY') && !names(mine[list]).includes('MB PMO'),
+        label + ': ' + list + ' must not name MBAGALA\'s officers');
+    }
+    assert.ok(names(all.colBoard).includes('MB EARLY') && names(all.pmo).includes('MB PMO'), label + ': the admin sees them');
+    // The officer on both teams is shown, with KONGOWE's amounts only.
+    const juma = mine.recBoard.find(r => r.officer === 'JUMA G'), jumaAll = all.recBoard.find(r => r.officer === 'JUMA G');
+    assert.ok(juma, label + ': JUMA G covers KONGOWE, so is seen');
+    /* EXACTLY KONGOWE'S FIGURES: what the admin sees for JUMA G when JUMA G holds KONGOWE
+       alone (MBAGALA given its own recovery officer) is what the KONGOWE code sees for JUMA G
+       while JUMA G holds both -- MBAGALA's book never reaches the restricted view. */
+    const t2 = JSON.parse(JSON.stringify(t));
+    t2.teams[1].recovery = 'MB REC';
+    const kongoweOnly = (await portalApi(dbWithRpc(t2), ADMIN, 'commission', args, NOW)).recBoard.find(r => r.officer === 'JUMA G');
+    assert.equal(juma.weekBase, kongoweOnly.weekBase, label + ': KONGOWE\'s uncollected only');
+    assert.equal(juma.weekRecovered, kongoweOnly.weekRecovered, label + ': KONGOWE\'s recovery only');
+    assert.ok(jumaAll.weekBase > juma.weekBase && jumaAll.weekRecovered > juma.weekRecovered,
+      label + ': the admin\'s JUMA G carries MBAGALA\'s book on top');
+    assert.equal(mine.totals.week < all.totals.week, true, label + ': the company total is the scope\'s, not the company\'s');
+  }
+});
