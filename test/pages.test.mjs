@@ -1239,3 +1239,37 @@ test('the abnormal payments tab asks for a day and carries a day strip', () => {
   assert.ok(/getAttribute\('data-abn-step'\)/.test(app) && /getAttribute\('data-abn-set'\)/.test(app), 'and the strip is wired');
   assert.ok(/abnDate\.onchange/.test(app), 'a typed day is wired too');
 });
+
+/* A GRAND PERCENTAGE IS A RATIO OF THE TOTALS, NEVER THE MEAN OF THE ROWS.
+     "I need each cell on grand total of recovery to be the percentage of recovered vs
+      uncollected not average of the above percentages ... Do the same to any other grand
+      total averages on col/rec that behaves so"
+   A column may name its own two parts (`from`) for the keys made up as a board is drawn; the
+   rows carry the parts; the bottom line divides their sums. Run for real, not just matched. */
+test('a percentage column with `from` totals as a ratio of the parts, and the boards declare them', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const src = app.slice(app.indexOf('var PCT_FROM = {'), app.indexOf('function autoTotals(rows, cols)'));
+  const fillPctTotals = new Function(src + '\nreturn fillPctTotals;')();
+  const rows = [
+    { officer: 'A', recW1: 100, baseW1: 100, pctW1: 100 },     // a tiny book at 100%
+    { officer: 'B', recW1: 1000, baseW1: 10000, pctW1: 10 },   // a big book at 10%
+  ];
+  const cols = [{ key: 'officer' }, { key: 'pctW1', kind: 'pct', from: ['recW1', 'baseW1'] }, { key: 'recW1', kind: 'money' }];
+  const t = {};
+  fillPctTotals(t, rows, cols);
+  assert.equal(t.pctW1, 10.9, '1,100 of 10,100 -- not the ~55% mean of 100% and 10%');
+  const t2 = {};
+  fillPctTotals(t2, rows, [{ key: 'pctW1', kind: 'pct' }]);
+  assert.equal(t2.pctW1, '~55%', 'without the parts named it can only average, and says so with ~');
+  // The boards that were averaging: every recovery and collection grand cell now names its parts.
+  const wk = app.slice(app.indexOf("board('cmRecWeek'"), app.indexOf("board('cmColWeek'"));
+  assert.ok(/from:\['rec'\+k, 'base'\+k\]/.test(wk), 'recovery week: each record over its base');
+  const mo = app.slice(app.indexOf("board('cmMRec'"), app.indexOf("S.rows = d.week || [];"));
+  assert.ok(/from:\['rec'\+w\.key, 'base'\+w\.key\]/.test(mo) && /from:\['weekRecovered', 'weekBase'\]/.test(mo), 'recovery month: each week and the month');
+  assert.ok((mo.match(/from:\['col'\+w\.key, 'exp'\+w\.key\]/g) || []).length === 2, 'early col and PMO months: each week collected over expected');
+  const dash = app.slice(app.indexOf("board('bRecT'"), app.indexOf("creditRecoveryBoard(creditRec"));
+  assert.ok((dash.match(/from:\['recovered','uncollected'\]/g) || []).length === 2, 'the dashboard\'s two recovery boards');
+  const pres = app.slice(app.indexOf("slides.push({ id:'recovery'"), app.indexOf("slides.push({ id:'early'"));
+  assert.ok(/from:\['recovered','uncollected'\]/.test(pres), 'and the recovery slide\'s week column');
+  assert.ok(/wCollected: w\.collected, wExpected: w\.expected/.test(app), 'the early slide carries the week\'s parts for PCT_FROM.wPct');
+});
