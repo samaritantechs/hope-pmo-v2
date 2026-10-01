@@ -2279,7 +2279,22 @@ async function abnormal(db, user, args, nowMs) {
   let filled = 0;
   for (const r of blanks) {
     const stage = stageOf[abnKey(r)];
-    if (!stage) continue;                      // in neither book -- say nothing rather than guess
+    if (!stage) {
+      /* IN NEITHER BOOK: THE TEAM'S RECOVERY OFFICER TAKES IT.
+           "For those that fall to no pmo after team lookups ... Grant them to the recovery
+            pmo assigned to that team"
+         A reference on neither deck is a customer nobody is currently chasing -- which is
+         exactly the recovery desk's business -- so the row goes to whoever the teams table
+         names for recovery on that team. Marked as a fallback (pmo_stage 'RECOVERY', pmo_fallback)
+         so the screen can still say the stage was not established. A team with no recovery
+         officer named leaves the cell blank, as before: a payment with nobody to ring is
+         still better said than guessed. */
+      const rec = String((teamBy[K(r.team)] || {}).recovery || '').trim();
+      if (!rec) continue;
+      r.pmo = rec; r.pmo_stage = 'RECOVERY'; r.pmo_fallback = true;
+      filled++;
+      continue;
+    }
     const spec = ABN_STAGE.find(x => x.stage === stage);
     const who = String((teamBy[K(r.team)] || {})[spec.col] || '').trim();
     // The person where the teams table names one, else the stage itself -- the role is still

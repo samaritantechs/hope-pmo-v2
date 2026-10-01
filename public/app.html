@@ -694,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-01-a';
+var BUILD = '2026-10-01-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6877,7 +6877,8 @@ VIEWS.abnormal = function(){
             + ' kutokana na hatua ya mteja (· = imejazwa na mfumo).'
             + ' / ' + money(d.pmoFilled) + ' rows had no PMO on the sheet; they are filled in from'
             + ' the customer’s stage — early collection, collection or recovery. A dot marks a'
-            + ' filled one. Anything the sheet named is untouched.</div>'
+            + ' filled one; two dots mark a customer on neither deck, given to the team’s recovery'
+            + ' officer. Anything the sheet named is untouched.</div>'
           : '');
     S.rows = d.rows;
     /* THE TWELVE COLUMNS THE SHEET CARRIES, IN THE ORDER IT CARRIES THEM.
@@ -6896,8 +6897,10 @@ VIEWS.abnormal = function(){
          sheet's own value is always kept; a BLANK is filled in from the customer's actual
          stage and marked, because a flagged payment with nobody named against it is the row
          that gets left. */
+      // One dot: filled from the customer's stage. Two: on neither deck, given to the team's
+      // recovery officer ("Grant them to the recovery pmo assigned to that team").
       {key:'pmo', label:'PMO', cls:function(r){ return r.pmo_stage ? 'mut' : ''; },
-       get:function(r){ return (r.pmo || '') + (r.pmo_stage ? ' ·' : ''); }},
+       get:function(r){ return (r.pmo || '') + (r.pmo_fallback ? ' ··' : r.pmo_stage ? ' ·' : ''); }},
       {key:'contact_no', label:'CUSTOMER NO', kind:'tel'},
       {key:'phone_number', label:'PAYMENT NO', kind:'tel'},
       col('ref_no','REF NO'), col('customer_name','CUSTOMER NAME'),
