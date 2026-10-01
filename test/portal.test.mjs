@@ -1275,8 +1275,9 @@ test('registers: complaints, restructures, notices, abnormal, received', async (
   assert.equal((await portalApi(db, ADMIN, 'demandNotices', {}, NOW)).count, 2);
 
   /* One uploaded row, plus one the system now works out for itself: the fixture's 900/= is not
-     a whole multiple of 500, so it is flagged where before nothing was. */
-  const ab = await portalApi(db, ADMIN, 'abnormal', {}, NOW);
+     a whole multiple of 500, so it is flagged where before nothing was. The whole window is
+     asked for: the tab itself now opens on ONE day (see "the tab opens on the latest day"). */
+  const ab = await portalApi(db, ADMIN, 'abnormal', { date: 'all' }, NOW);
   assert.equal(ab.uploaded, 1);
   assert.equal(ab.derived, 1);
   assert.equal(ab.count, 2);
@@ -10075,3 +10076,37 @@ test('a code that spells a team differently from the registry still opens its bo
   assert.deepEqual(db._dump('access_codes').find(c => c.code === 'C2').teams, ['Tunduru', 'MTWARA ']);
 });
 
+
+/* ONE DAY AT A TIME -- "Pmos make daily followup .. they can't be always finding huge list".
+   The tab opens on the latest day with a payment, takes a day, and 'all' is the old window. */
+test('abnormal payments: the tab opens on the latest day that has a payment, not the whole fortnight', async () => {
+  const t = tables();
+  t.received_payments = [
+    { id: 'r1', team: 'KONGOWE', amount_paid: 1001, paid_at: '2026-07-20', transaction_id: 'OLD' },
+    { id: 'r2', team: 'KONGOWE', amount_paid: 1002, paid_at: '2026-07-22', transaction_id: 'LATEST' },
+    { id: 'r3', team: 'KONGOWE', amount_paid: 1003, paid_at: '2026-07-22', transaction_id: 'LATEST2' },
+  ];
+  t.abnormal_payments = [
+    { id: 'A1', team: 'KONGOWE', ref_no: 'X', paid: 777, created_at: '2026-07-22T08:00:00Z', transaction_id: 'SHEET22' },
+    { id: 'A2', team: 'KONGOWE', ref_no: 'Y', paid: 778, created_at: '2026-07-20T08:00:00Z', transaction_id: 'SHEET20' },
+  ];
+  // No date asked: the latest day with a payment (the 22nd, not today the 24th), both sources.
+  let d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.mode, 'day');
+  assert.equal(d.date, '2026-07-22');
+  assert.equal(d.latest, '2026-07-22');
+  assert.deepEqual(d.rows.map(r => r.transaction_id).sort(), ['LATEST', 'LATEST2', 'SHEET22']);
+  // A day asked for: that day only, the uploaded sheet placed by its upload day.
+  d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', { date: '2026-07-20' }, NOW);
+  assert.equal(d.mode, 'day');
+  assert.deepEqual(d.rows.map(r => r.transaction_id).sort(), ['OLD', 'SHEET20']);
+  // 'all': the whole window, as before.
+  d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', { date: 'all' }, NOW);
+  assert.equal(d.mode, 'all');
+  assert.equal(d.rows.length, 5);
+  // Nothing in the book at all: today, so the strip still has a day to stand on.
+  const empty = tables(); empty.received_payments = []; empty.abnormal_payments = [];
+  d = await portalApi(dbWithRpc(empty), ADMIN, 'abnormal', {}, NOW);
+  assert.equal(d.date, TODAY);
+  assert.equal(d.rows.length, 0);
+});

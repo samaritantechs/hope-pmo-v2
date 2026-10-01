@@ -717,7 +717,9 @@ test('speed: an officer does not download forty teams of abnormal payments to re
       ref_no: 'R' + i, customer_name: 'C' + i, created_at: '2026-07-20T08:00:00Z' });
   }
   const c = counting(t);
-  const d = await portalApi(c.db, OFFICER, 'abnormal', {}, NOW);
+  // The whole window: the tab itself opens on one day (abnormalDay_), and the cost question
+  // here is the table's scoping, not the day.
+  const d = await portalApi(c.db, OFFICER, 'abnormal', { date: 'all' }, NOW);
   const { rows } = c.stat();
   assert.equal(d.count, 100, 'one team of the forty -- the same answer as before');
   assert.ok(rows <= 400,
@@ -732,9 +734,9 @@ test('scoping abnormal payments at the database keeps EXACTLY the rows it kept b
   const t = bigBook();
   t.abnormal_payments.push({ id: 'N1', team: null, paid: 500, ref_no: 'NOTEAM', created_at: '2026-07-20T08:00:00Z' });
   t.abnormal_payments.push({ id: 'T1', team: TEAMS[0], paid: 700, ref_no: 'MINE', created_at: '2026-07-20T08:00:00Z' });
-  const asOfficer = await portalApi(fakeDb(t), OFFICER, 'abnormal', {}, NOW);
+  const asOfficer = await portalApi(fakeDb(t), OFFICER, 'abnormal', { date: 'all' }, NOW);
   assert.deepEqual(asOfficer.rows.map(r => r.ref_no), ['MINE'], 'a team-less row is not theirs');
-  const asAdmin = await portalApi(fakeDb(t), ADMIN, 'abnormal', {}, NOW);
+  const asAdmin = await portalApi(fakeDb(t), ADMIN, 'abnormal', { date: 'all' }, NOW);
   assert.equal(asAdmin.rows.length, 2, 'but the admin still sees it -- nothing is lost from the table');
 });
 
