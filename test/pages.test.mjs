@@ -1289,3 +1289,21 @@ test('the commission month widgets read each unit\'s ratio, and the company widg
   assert.ok(/var units = \[ePct, pPct, rPct\]/.test(view) && /PMO performance ' \+ pc\(perf\)/.test(view), 'the company widget carries the average of the three');
   assert.ok(/money\(\(d\.recBoard\|\|\[\]\)\.length\) \+ ' officer\(s\)'/.test(view), 'and the officer counts stay');
 });
+
+/* THE EARLY COLLECTION SWITCH ON THE RATES CARD -- "i need a switch at viwango/rates where i
+   can change early collection commission mode to performance or back to counts". */
+test('the Rates card carries the early collection mode switch, its ladder and its bonus, all wired to Save', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const card = app.slice(app.indexOf('Viwango / Rates</div><div class="cmsrates">'), app.indexOf("board('cmRecWeek'"));
+  assert.ok(/id="cmEarlyMode"/.test(card) && /value="counts"/.test(card) && /value="performance"/.test(card), 'the switch, two positions');
+  assert.ok(/class="cmEarlyBand" data-floor="/.test(card), 'the plan\'s ladder, one box per band');
+  assert.ok(/id="cmEarlyBonus"/.test(card) && /id="cmEarlyBonusOn"/.test(card), 'the bonus amount and its switch');
+  assert.ok(/d\.earlyBands\|\|\[\]/.test(card), 'the bands are drawn from the server\'s ladder, never retyped here');
+  const save = app.slice(app.indexOf("srv('commissionSave', { paidTzs"), app.indexOf('var cmEarlyBandsReset'));
+  for (const k of ['earlyMode:', 'earlyBands:', 'earlyWeeklyBonus:', 'earlyBonusEnabled:']) {
+    assert.ok(save.includes(k), k + ' travels on Save');
+  }
+  assert.ok(/resetEarlyBands: true/.test(app) && /clearEarlyWeeklyBonus: true/.test(app), 'reset and delete are wired');
+  const week = app.slice(app.indexOf("board('cmColWeek'"), app.indexOf("PMO COLLECTION. Paid on the percentage"));
+  assert.ok(/d\.earlyMode === 'performance'/.test(week) && /col\('bonus','Bonus','money'\)/.test(week), 'the week board shows the bonus column in performance mode');
+});

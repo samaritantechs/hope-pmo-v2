@@ -39,18 +39,64 @@ export const PMO_BELOW = { floor: 0, tzs: 0, label: 'chini ya 85% / below 85%' }
    ladder (floor 0) can pay too. Floors and labels never move from a setting. */
 export const PMO_BAND_TZS_KEY = 'PMO_BAND_TZS';
 
-export function parsePmoBandTzs(text) {
+/* One parser for every ladder's amounts: the setting holds {floor: tzs}; only the ladder's own
+   floors are read, each a number of nought or more. Used by the PMO ladder and the early one. */
+export function parseLadderTzs(text, bands, below) {
   let o = null;
   try { o = JSON.parse(String(text || '')); } catch (e) { return {}; }
   if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
   const out = {};
-  for (const b of PMO_BANDS.concat([PMO_BELOW])) {
+  for (const b of bands.concat([below])) {
     const v = o[String(b.floor)];
     if (v == null || v === '') continue;
     const n = Number(v);
     if (Number.isFinite(n) && n >= 0) out[b.floor] = Math.round(n);
   }
   return out;
+}
+export function parsePmoBandTzs(text) { return parseLadderTzs(text, PMO_BANDS, PMO_BELOW); }
+
+/* =====================================================================================
+   THE EARLY COLLECTION PERFORMANCE PLAN -- the early officer paid on a band of each day's
+   initial col %, exactly as the PMO officer is, instead of per PAID/OVERPAID customer.
+
+     "i need a switch at viwango/rates where i can change early collection commission mode
+      to performance or back to counts ... a) 80% MPAKA 84% = 20,000 / DAY  b) 85% MPAKA 87%
+      = 25,000  c) 88% MPAKA 90% = 30,000  d) 91% MPAKA 93% = 40,000  e) 94% MPAKA 100% =
+      60,000 ... PERFORMANCE ITAMLIPA BILA KUJALISHA ANA TEAM NGAPI, WATEJA WANGAPI AU AMOUNT
+      KIASI GANI ... WITH WEEKLY BONUS CONDITION: KWA YULE ATAYEONGOZA AKIWA AMEZIPITA ASILIMIA
+      ALIZOPATA PREVIOUS WEEK"
+
+   Its own floors (the plan's, not the PMO ladder's), its own amounts setting, and the same
+   weekly bonus rule with its own amount and switch. Below 80% pays nothing. The mode is a
+   setting so the admin can switch back to counts; absent means counts, which is what every
+   book paid until this existed. */
+export const EARLY_BANDS = [
+  { floor: 94, tzs: 60000, label: '94–100% MAFANIKIO' },
+  { floor: 91, tzs: 40000, label: '91–93% LENGO' },
+  { floor: 88, tzs: 30000, label: '88–90%' },
+  { floor: 85, tzs: 25000, label: '85–87%' },
+  { floor: 80, tzs: 20000, label: '80–84% KUFELI' },
+];
+export const EARLY_BELOW = { floor: 0, tzs: 0, label: 'chini ya 80% / below 80%' };
+export const EARLY_BAND_TZS_KEY = 'EARLY_BAND_TZS';
+export const EARLY_MODE_KEY = 'EARLY_PAY_MODE';
+export const EARLY_BONUS_KEY = 'EARLY_WEEKLY_BONUS';
+export const EARLY_BONUS_ON_KEY = 'EARLY_WEEKLY_BONUS_ON';
+export function parseEarlyBandTzs(text) { return parseLadderTzs(text, EARLY_BANDS, EARLY_BELOW); }
+export function earlyLadder(overrides) {
+  const o = overrides || {};
+  return EARLY_BANDS.map(b => ({ ...b, defaultTzs: b.tzs,
+    tzs: Object.prototype.hasOwnProperty.call(o, b.floor) ? o[b.floor] : b.tzs }));
+}
+export function earlyBelowOf(overrides) {
+  const o = overrides || {};
+  return { ...EARLY_BELOW, defaultTzs: EARLY_BELOW.tzs,
+    tzs: Object.prototype.hasOwnProperty.call(o, 0) ? o[0] : EARLY_BELOW.tzs };
+}
+/** 'performance' or 'counts' -- anything else, blank included, is counts. */
+export function earlyModeOf(v) {
+  return String(v == null ? '' : v).trim().toLowerCase() === 'performance' ? 'performance' : 'counts';
 }
 export function pmoLadder(overrides) {
   const o = overrides || {};
