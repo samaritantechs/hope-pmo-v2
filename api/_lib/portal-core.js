@@ -3342,9 +3342,19 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
        got the previous week". Without last week's figures the condition cannot be checked at
        all, and a bonus awarded without checking it is just a bonus. */
     expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevFri, teams: user.teams }),
-    /* The Iliyonasia register over BOTH weeks this board reads -- see the note beside colRows.
-       One small read, in this wave, null where the table has not been built. */
-    adjReceived_(db, user, { from: prevMon, to: sun }),
+    /* The Iliyonasia register over EVERYTHING this board reads -- see the note beside colRows.
+       One small read, in this wave, null where the table has not been built.
+
+       FROM THE RANGE'S OWN START, NOT THE LIVE WEEK'S PREVIOUS MONDAY.
+         "Expected w1 135-30 = 105,000/= as week shows but monthly has 90,000 for week one."
+       prevMon is the Monday before the LIVE week -- the week before the one shown on the week
+       screen (right: that board reads two weeks), but on the month record the Monday before
+       the week holding today. Read from there, the month's earlier weeks had no corrections
+       at all: a day an Iliyonasia had lifted into a higher band on its own week page paid
+       the lower band on the month record, and the month no longer added up to its weeks. The
+       window now starts at whichever is earlier, the range's first day or that Monday, so
+       the bonus's previous-week read is still covered on the week screen. */
+    adjReceived_(db, user, { from: prevMon < mon ? prevMon : mon, to: sun }),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
