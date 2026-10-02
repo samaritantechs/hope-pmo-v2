@@ -10181,3 +10181,30 @@ test('commission week and month: a team-restricted code sees only its own teams\
     assert.equal(mine.totals.week < all.totals.week, true, label + ': the company total is the scope\'s, not the company\'s');
   }
 });
+
+/* THE MONTH RECORD READ THE ILIYONASIA REGISTER FOR THE LIVE WEEK AND THE ONE BEFORE IT ONLY.
+     "Expected w1 135-30 = 105,000/= as week shows but monthly has 90,000 for week one."
+   The register window was prevMon..sun -- right for the week screen, where prevMon is the
+   week before the one shown, and wrong for the month, where prevMon is the Monday before the
+   week holding TODAY: every earlier week of the month was corrected on its own week page and
+   uncorrected on the month record, so a day a correction had lifted into a higher band paid
+   less on the month than on the week. The month is its weeks added, so they must agree. */
+test('the month record applies Iliyonasia corrections to its early weeks, exactly as the week page does', async () => {
+  const t = tables();
+  t.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  // Thursday 2 July (the month's first, clipped week): one paid, one unpaid -- 50% on the deck.
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'PAID', 0, '2026-07-02'),
+    E('222', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-02'),
+  ];
+  // An Iliyonasia for the unpaid one, on that day: the day is really 100%, the top band.
+  t.pmo_adjustments = [{ id: 'x', adj_date: '2026-07-02', target: 'expected-current', team: 'KONGOWE', amount: 1000, ref: '222' }];
+  const wk = await portalApi(dbWithRpc(t), ADMIN, 'commission', { weekOf: '2026-06-29' }, NOW);
+  const cw = wk.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(cw.pctAL, 100, 'the week page: the correction counts');
+  assert.equal(cw.tzsAL, 60000, 'and the day pays the top band');
+  const m = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month', month: '2026-07' }, NOW);
+  const cm = m.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(cm.pctW1, 100, 'the month record: the same day in W1 carries the same correction');
+  assert.equal(cm.tzsW1, cw.tzsAL, 'and W1 pays what the week page paid for that day');
+});
