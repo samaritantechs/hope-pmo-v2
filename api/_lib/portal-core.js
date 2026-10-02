@@ -10,8 +10,10 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
-  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord,
-  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf, collectionOf } from './pmo.js';
+  PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord, pmoBand,
+  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf, collectionOf,
+  EARLY_BANDS, EARLY_BELOW, EARLY_BAND_TZS_KEY, EARLY_MODE_KEY, EARLY_BONUS_KEY, EARLY_BONUS_ON_KEY,
+  parseEarlyBandTzs, earlyLadder, earlyBelowOf, earlyModeOf } from './pmo.js';
 import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct, recoveryLadder, recoveryBelowOf,
   parseBandTzs, REC_BAND_TZS_KEY } from './recovery-pay.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
@@ -3191,6 +3193,12 @@ async function cmsCfg(db) {
     // And the PMO collection ladder in force, the same way (PMO_BAND_TZS, see pmo.js).
     pmoBands: pmoLadder(parsePmoBandTzs(get(PMO_BAND_TZS_KEY))),
     pmoBelow: pmoBelowOf(parsePmoBandTzs(get(PMO_BAND_TZS_KEY))),
+    /* THE EARLY COLLECTION SWITCH AND ITS LADDER -- "change early collection commission mode
+       to performance or back to counts". 'counts' pays per PAID/OVERPAID customer (the two
+       flat rates above); 'performance' pays each day a band on its initial col %. */
+    earlyMode: earlyModeOf(get(EARLY_MODE_KEY)),
+    earlyBands: earlyLadder(parseEarlyBandTzs(get(EARLY_BAND_TZS_KEY))),
+    earlyBelow: earlyBelowOf(parseEarlyBandTzs(get(EARLY_BAND_TZS_KEY))),
     // What an officer is told about WHEN and HOW the money reaches them. A commission figure
     // with no word about payday is the question every officer asks next, and they ask it of
     // somebody rather than of the screen.
@@ -3337,7 +3345,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
     expectedTotalsInRange(db, { type: 'initial', from: mon,
       to: colDays.length ? colDays[colDays.length - 1] : fri, teams: user.teams }),
     readCodesAll(db),
-    settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY, PMO_BONUS_ON_KEY]),
+    settingsMany(db, [PMO_ROLE_KEY, PMO_BONUS_KEY, PMO_BONUS_ON_KEY, EARLY_BONUS_KEY, EARLY_BONUS_ON_KEY]),
     /* LAST week, for the bonus condition -- "whoever leads, having beaten the percentage they
        got the previous week". Without last week's figures the condition cannot be checked at
        all, and a bonus awarded without checking it is just a bonus. */
@@ -3356,6 +3364,12 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
        the bonus's previous-week read is still covered on the week screen. */
     adjReceived_(db, user, { from: prevMon < mon ? prevMon : mon, to: sun }),
   ]);
+  /* LAST WEEK'S INITIAL SHEETS, for the early scheme's bonus -- "whoever leads, having beaten
+     the percentage they got the previous week" -- read only when the early scheme is paid on
+     performance, so the counts world costs exactly what it did. One week-sized totals read. */
+  const prevExpInit = cfg.earlyMode === 'performance'
+    ? await expectedTotalsInRange(db, { type: 'initial', from: prevMon, to: prevFri, teams: user.teams })
+    : [];
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const myDef = scoped(user, defWeek), myExp = scoped(user, expWeek);
@@ -3560,7 +3574,26 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const recPay = name => recPayOf.get(name)
     || { rows: [], tzs: 0, weekPct: null, weekRecovered: 0, todayRow: { recovered: 0, base: 0, pct: null, tzs: 0, band: null } };
 
+  /* THE ONE RULE FOR WHAT AN EARLY OFFICER'S DAY PAYS, in both modes -- used by the day
+     columns, the week, the month's weeks and the combined Orodha alike, so no two of them can
+     disagree. `b` is one officer's one day: expected, collected, paid, over.
+       counts       so many shillings per PAID customer, so many per OVERPAID (the flat rates);
+       performance  a band on the day's initial col % (collected over expected) -- the plan's
+                    ladder, EARLY_BANDS; a day with nothing expected has no percentage and pays
+                    nothing, exactly as the PMO scheme treats it. */
+  const pctOfDay = b => (b && b.expected > 0)
+    ? Math.round((b.collected / b.expected) * 1000) / 10 : null;
+  const colPay_ = b => {
+    if (!b) return 0;
+    if (cfg.earlyMode === 'performance') {
+      const band = pmoBand(pctOfDay(b), cfg.earlyBands, cfg.earlyBelow);
+      return band ? band.tzs : 0;
+    }
+    return Math.round(b.paid * cfg.paidTzs + b.over * cfg.overTzs);
+  };
   function colDay(dateKey, acc) {
+    // Per officer first, because a performance band is on the officer's whole day, not a team's.
+    const per = {};
     for (const r of colRows(dateKey)) {
       const paid = num(r.paid_n), over = num(r.over_n);
       /* An officer whose INITIAL book was expected on this day belongs on the combined
@@ -3568,9 +3601,15 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
          on orodha". A zero row is a person working, not noise; only a row with nothing
          expected AND nothing paid carries no one. */
       if (!paid && !over && !num(r.expected_amt)) continue;
-      const b = bucket(acc, officerOf(teamBy, r.team, 'expected'), blank);
-      b.paid += paid; b.over += over;
-      b.colComm += paid * cfg.paidTzs + over * cfg.overTzs;
+      const name = officerOf(teamBy, r.team, 'expected');
+      const p = per[name] || (per[name] = { expected: 0, collected: 0, paid: 0, over: 0 });
+      p.expected += num(r.expected_amt); p.collected += num(r.collected_amt);
+      p.paid += paid; p.over += over;
+    }
+    for (const name of Object.keys(per)) {
+      const b = bucket(acc, name, blank);
+      b.paid += per[name].paid; b.over += per[name].over;
+      b.colComm += colPay_(per[name]);
     }
   }
   const dayAcc = {}, weekAcc = {};
@@ -3644,8 +3683,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
        deck_totals equivalence guard caught. Same figures, different rows: the kind of
        difference somebody notices and cannot explain. */
     .sort((a, b) => b.total - a.total || String(a.officer).localeCompare(String(b.officer)));
-
-  const day = pack(dayAcc), week = pack(weekAcc);
+  // `day` and `week` are packed further down, once the early scheme's bonus has been added.
 
   /* =====================================================================================
      THE TWO INDEPENDENT BOARDS -- "early col and rec should also be independent tables".
@@ -3707,27 +3745,27 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       b.customers += num(r.customers);
     }
   }
-  const pctOfDay = b => (b && b.expected > 0)
-    ? Math.round((b.collected / b.expected) * 1000) / 10 : null;
   const colBoard = [...colOff.entries()].map(([name, per]) => {
     const days = colDays.map(d => {
       const b = per.get(d);
+      // Each day is paid by the one rule (colPay_): the flat rates, or the day's own band.
+      const band = (b && cfg.earlyMode === 'performance') ? pmoBand(pctOfDay(b), cfg.earlyBands, cfg.earlyBelow) : null;
       return { date: d, pct: pctOfDay(b), n: b ? b.paid + b.over : 0,
         // The parts, so a grand row works the day out again from the amounts. See below.
         collected: b ? b.collected : 0, expected: b ? b.expected : 0,
         paid: b ? b.paid : 0, over: b ? b.over : 0,
-        tzs: b ? Math.round(b.paid * cfg.paidTzs + b.over * cfg.overTzs) : 0 };
+        tzs: colPay_(b), band: band ? band.label : null };
     });
     /* THE WEEKS, from the days -- the month record's columns. A week's percentage is the
-       ratio of its sums and its pay is its counts at the flat rates, never a mean of days. */
+       ratio of its sums and its pay is its DAYS' pay added -- the counts at the flat rates, or
+       each day's own band -- never a mean of days and never the week scored once. */
     const byWeek = weeks.map(w => {
-      const t = { expected: 0, collected: 0, paid: 0, over: 0 };
+      const t = { expected: 0, collected: 0, paid: 0, over: 0, tzs: 0 };
       for (const x of days) if (x.date >= w.from && x.date <= w.to) {
-        t.expected += x.expected; t.collected += x.collected; t.paid += x.paid; t.over += x.over;
+        t.expected += x.expected; t.collected += x.collected; t.paid += x.paid; t.over += x.over; t.tzs += x.tzs;
       }
       return { key: w.key, from: w.from, to: w.to, pct: pctOfDay(t), n: t.paid + t.over,
-        collected: t.collected, expected: t.expected, paid: t.paid, over: t.over,
-        tzs: Math.round(t.paid * cfg.paidTzs + t.over * cfg.overTzs) };
+        collected: t.collected, expected: t.expected, paid: t.paid, over: t.over, tzs: t.tzs };
     });
     const tot = { expected: 0, collected: 0, paid: 0, over: 0, customers: 0 };
     for (const b of per.values()) {
@@ -3735,11 +3773,12 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       tot.paid += b.paid; tot.over += b.over; tot.customers += b.customers;
     }
     const tb = per.get(today);
+    const todayBand = (tb && cfg.earlyMode === 'performance') ? pmoBand(pctOfDay(tb), cfg.earlyBands, cfg.earlyBelow) : null;
     const row = {
       officer: name,
       pct: pctOfDay(tb), paid: tb ? tb.paid : 0, over: tb ? tb.over : 0,
       n: tb ? tb.paid + tb.over : 0,
-      commission: tb ? Math.round(tb.paid * cfg.paidTzs + tb.over * cfg.overTzs) : 0,
+      commission: colPay_(tb), band: todayBand ? todayBand.label : null,
       /* THE PARTS, ON THE ROW, FOR EVERY PERCENTAGE THIS BOARD PRINTS.
          "Collection and early collection averages perfomance of officers ... should be by
           collected amount vs expected amount of all the current list not average of the
@@ -3756,7 +3795,9 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
       weekN: tot.paid + tot.over,
       // Everyone expected over the range: the "b" of the widget's "a/b paid+overpaid of all expected".
       weekCustomers: tot.customers,
-      weekCommission: Math.round(tot.paid * cfg.paidTzs + tot.over * cfg.overTzs),
+      // The range's pay is its days' pay added -- identical to the flat-rate arithmetic in
+      // counts mode, and the only honest sum in performance mode.
+      weekCommission: days.reduce((s, x) => s + x.tzs, 0),
       days,
     };
     if (scope === 'week') for (const x of days) {
@@ -3777,6 +3818,50 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   }).sort((a, b) => b.weekCommission - a.weekCommission
     || (b.weekPct == null ? -1 : b.weekPct) - (a.weekPct == null ? -1 : a.weekPct)
     || String(a.officer).localeCompare(String(b.officer)));
+
+  /* ---- THE EARLY SCHEME'S WEEKLY BONUS, in performance mode -- the PMO rule on the early
+     board: "WITH WEEKLY BONUS CONDITION: KWA YULE ATAYEONGOZA AKIWA AMEZIPITA ASILIMIA
+     ALIZOPATA PREVIOUS WEEK". The leader is the highest initial col % of the week; they win
+     only if it beats their own previous week's, read off last week's initial sheets through
+     the same register. Its own amount and switch (EARLY_WEEKLY_BONUS / _ON), the week's rule
+     only -- the month record shows the days' pay without it. ---- */
+  const earlyBonusTzs = pmoCfg.num(EARLY_BONUS_KEY, 0);
+  const earlyBonusEnabled = bonusOn(pmoCfg.get(EARLY_BONUS_ON_KEY, ''));
+  const prevColPct = {};
+  if (cfg.earlyMode === 'performance') {
+    const prevInit = scoped(user, prevExpInit);
+    const per = new Map();
+    for (let i = 0; i < 5; i++) {
+      const d = addDaysKey(prevMon, i);
+      for (const r of withAdj_(onDate(prevInit, d), adj, 'expected-initial', d, colCount)) {
+        const name = officerOf(teamBy, r.team, 'expected');
+        const p = per.get(name) || per.set(name, { expected: 0, collected: 0 }).get(name);
+        p.expected += num(r.expected_amt); p.collected += num(r.collected_amt);
+      }
+    }
+    for (const [name, p] of per) prevColPct[K(name)] = pctOfDay(p);
+  }
+  const earlyRanked = cfg.earlyMode === 'performance' ? colBoard.filter(r => r.weekPct != null) : [];
+  const earlyLeader = earlyRanked.reduce((best, r) => (!best || r.weekPct > best.weekPct) ? r : best, null);
+  const earlyLeaderPrev = earlyLeader ? (prevColPct[K(earlyLeader.officer)] == null ? null : prevColPct[K(earlyLeader.officer)]) : null;
+  const earlyBonusWon = cfg.earlyMode === 'performance' && earlyBonusEnabled && scope === 'week'
+    && !!(earlyLeader && earlyLeaderPrev != null && earlyLeader.weekPct > earlyLeaderPrev);
+  for (const r of colBoard) {
+    r.prevWeekPct = prevColPct[K(r.officer)] == null ? null : prevColPct[K(r.officer)];
+    r.isLeader = !!(earlyLeader && K(r.officer) === K(earlyLeader.officer));
+    r.bonus = (earlyBonusWon && r.isLeader) ? earlyBonusTzs : 0;
+  }
+  // The bonus is early-collection pay, so the combined Orodha and the company total carry it.
+  if (earlyBonusWon && earlyLeader) bucket(weekAcc, earlyLeader.officer, blank).colComm += earlyBonusTzs;
+  const earlyBonus = { tzs: earlyBonusTzs, set: earlyBonusTzs > 0, enabled: earlyBonusEnabled, won: earlyBonusWon,
+    leader: earlyLeader ? earlyLeader.officer : null,
+    leaderPct: earlyLeader ? earlyLeader.weekPct : null, leaderPrevPct: earlyLeaderPrev,
+    why: cfg.earlyMode !== 'performance' ? 'hulipwa kwa idadi / paid on counts'
+      : !earlyBonusEnabled ? 'bonasi imezimwa na admin / the bonus is switched off'
+      : !earlyLeader ? 'hakuna takwimu za wiki hii / no figures for this week yet'
+      : earlyLeaderPrev == null ? 'hakuna wiki iliyopita ya kulinganisha / no previous week to compare against'
+      : earlyBonusWon ? null : 'kiongozi hajapita asilimia yake ya wiki iliyopita / the leader has not beaten their own previous week' };
+  const day = pack(dayAcc), week = pack(weekAcc);
 
   /* ---- PMO COLLECTION: paid on the percentage, and nothing else ---- */
   const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
@@ -3905,6 +3990,11 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
        than repeating them in HTML -- a pay table written twice is a pay table that disagrees
        with itself the first time one of them is edited. */
     recoveryBands: cfg.recBands, recoveryBelow: cfg.recBelow,
+    /* The early scheme's switch, its ladder and its bonus -- the screen draws all three from
+       here, never from HTML of its own. */
+    earlyMode: cfg.earlyMode, earlyBands: cfg.earlyBands, earlyBelow: cfg.earlyBelow,
+    earlyBandsCustom: cfg.earlyBands.concat([cfg.earlyBelow]).some(b => b.tzs !== b.defaultTzs),
+    earlyBonus,
     // Whether any band amount differs from the built-in ladder, so the panel can offer a reset.
     recBandsCustom: cfg.recBands.concat([cfg.recBelow]).some(b => b.tzs !== b.defaultTzs),
     pmo, pmoDiag, pmoBands: cfg.pmoBands, pmoBelow: cfg.pmoBelow, pmoRole: pmoRoleName,
@@ -4098,6 +4188,51 @@ async function commissionSave(db, user, p) {
     await set(PMO_BAND_TZS_KEY, JSON.stringify(bands));
     out.pmoBands = pmoLadder(bands);
     out.pmoBelow = pmoBelowOf(bands);
+  }
+  /* THE EARLY COLLECTION SWITCH -- "change early collection commission mode to performance or
+     back to counts" -- and the plan's own ladder and bonus, the same shape as the PMO ones. */
+  if (p.earlyMode != null) {
+    const m = String(p.earlyMode).trim().toLowerCase();
+    if (m !== 'counts' && m !== 'performance') throw badRequest('earlyMode must be counts or performance');
+    out.earlyMode = m;
+    await set(EARLY_MODE_KEY, m);
+  }
+  if (p.resetEarlyBands) {
+    const { error } = await db.from('settings').delete().eq('key', EARLY_BAND_TZS_KEY);
+    if (error) throw new Error(error.message);
+    noteSettingsWritten(db);
+    noteAnswersChanged(db);
+    out.earlyBands = earlyLadder({});
+    out.earlyBelow = earlyBelowOf({});
+    out.earlyBandsReset = true;
+  } else if (p.earlyBands != null) {
+    if (!p.earlyBands || typeof p.earlyBands !== 'object' || Array.isArray(p.earlyBands)) throw badRequest('earlyBands must be {floor: tzs}');
+    const bands = {};
+    for (const b of EARLY_BANDS.concat([EARLY_BELOW])) {
+      const v = p.earlyBands[String(b.floor)];
+      if (v == null || String(v).trim() === '') continue;
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw badRequest(`Kiasi cha kundi ${b.floor}%+ (Early) si sahihi / the amount for the Early ${b.floor}%+ band must be a number of 0 or more.`);
+      bands[b.floor] = Math.round(n);
+    }
+    await set(EARLY_BAND_TZS_KEY, JSON.stringify(bands));
+    out.earlyBands = earlyLadder(bands);
+    out.earlyBelow = earlyBelowOf(bands);
+  }
+  if (p.earlyBonusEnabled != null) {
+    out.earlyBonusEnabled = !!p.earlyBonusEnabled;
+    await set(EARLY_BONUS_ON_KEY, out.earlyBonusEnabled ? '1' : '0');
+  }
+  if (p.clearEarlyWeeklyBonus) {
+    const { error } = await db.from('settings').delete().eq('key', EARLY_BONUS_KEY);
+    if (error) throw new Error(error.message);
+    noteSettingsWritten(db);
+    noteAnswersChanged(db);
+    out.earlyWeeklyBonus = 0;
+    out.earlyWeeklyBonusCleared = true;
+  } else if (p.earlyWeeklyBonus != null) {
+    out.earlyWeeklyBonus = Math.max(0, num(p.earlyWeeklyBonus) || 0);
+    await set(EARLY_BONUS_KEY, out.earlyWeeklyBonus);
   }
   return out;
 }

@@ -10208,3 +10208,114 @@ test('the month record applies Iliyonasia corrections to its early weeks, exactl
   assert.equal(cm.pctW1, 100, 'the month record: the same day in W1 carries the same correction');
   assert.equal(cm.tzsW1, cw.tzsAL, 'and W1 pays what the week page paid for that day');
 });
+
+/* =====================================================================================
+   THE EARLY COLLECTION PERFORMANCE PLAN, BEHIND A SWITCH.
+     "i need a switch at viwango/rates where i can change early collection commission mode to
+      performance or back to counts ... a) 80-84 = 20,000 b) 85-87 = 25,000 c) 88-90 = 30,000
+      d) 91-93 = 40,000 e) 94-100 = 60,000 / DAY ... WITH WEEKLY BONUS CONDITION"
+   ===================================================================================== */
+test('early collection pays per customer by default, and per day\'s band once switched to performance', async () => {
+  const t = tables();
+  // Friday's INITIAL sheet for KONGOWE: seven customers of 1,000, six paid -- 85.7%, the 85-87 band.
+  t.repayment_snapshots = [1, 2, 3, 4, 5, 6].map(i => E('9' + i, 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'))
+    .concat([E('97', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial')]);
+  const db = dbWithRpc(t);
+  let d = await portalApi(db, ADMIN, 'commission', {}, NOW);
+  assert.equal(d.earlyMode, 'counts', 'absent means counts -- what every book paid until now');
+  let e = d.colBoard.find(r => r.officer === 'EARLY E');
+  assert.equal(e.pctIJ, 85.7);
+  assert.equal(e.commission, 6 * 1000, 'counts: six PAID at the flat rate');
+  assert.equal(e.weekCommission, 6000);
+  assert.equal(d.week.find(r => r.officer === 'EARLY E').colComm, 6000, 'the Orodha carries the same');
+
+  await assert.rejects(portalApi(db, ADMIN, 'commissionSave', { earlyMode: 'bands' }, NOW), /counts or performance/);
+  const saved = await portalApi(db, ADMIN, 'commissionSave', { earlyMode: 'performance' }, NOW);
+  assert.equal(saved.earlyMode, 'performance');
+  d = await portalApi(db, ADMIN, 'commission', {}, NOW + 61000);
+  assert.equal(d.earlyMode, 'performance');
+  e = d.colBoard.find(r => r.officer === 'EARLY E');
+  assert.equal(e.pctIJ, 85.7, 'the percentage is the same figure');
+  assert.equal(e.ctzsIJ, 25000, 'performance: 85.7% is the 85-87 band, 25,000 for the day');
+  assert.equal(e.commission, 25000);
+  assert.equal(e.band, '85–87%');
+  assert.equal(e.weekCommission, 25000, 'the week is its days added');
+  assert.equal(d.week.find(r => r.officer === 'EARLY E').colComm, 25000, 'the Orodha follows the same rule');
+  assert.equal(d.totals.split.colWeek, 25000);
+  assert.deepEqual(d.earlyBands.map(b => [b.floor, b.tzs]), [[94, 60000], [91, 40000], [88, 30000], [85, 25000], [80, 20000]], 'the plan\'s ladder, as written');
+  assert.equal(d.earlyBelow.tzs, 0, 'below 80 pays nothing');
+
+  // The amounts are the admin's: the 85-87 band at 27,000, then back to the defaults.
+  await portalApi(db, ADMIN, 'commissionSave', { earlyBands: { 85: 27000 } }, NOW);
+  d = await portalApi(db, ADMIN, 'commission', {}, NOW + 122000);
+  assert.equal(d.colBoard.find(r => r.officer === 'EARLY E').ctzsIJ, 27000);
+  assert.equal(d.earlyBandsCustom, true);
+  await portalApi(db, ADMIN, 'commissionSave', { resetEarlyBands: true }, NOW);
+  d = await portalApi(db, ADMIN, 'commission', {}, NOW + 183000);
+  assert.equal(d.colBoard.find(r => r.officer === 'EARLY E').ctzsIJ, 25000);
+  assert.equal(d.earlyBandsCustom, false);
+
+  // Below the ladder: one of seven paid is 14% -- nothing. Nothing expected -- no day at all.
+  const t2 = tables();
+  t2.repayment_snapshots = [E('91', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial')]
+    .concat([2, 3, 4, 5, 6, 7].map(i => E('9' + i, 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial')));
+  t2.settings.push({ key: 'EARLY_PAY_MODE', value: 'performance' });
+  const low = await portalApi(dbWithRpc(t2), ADMIN, 'commission', {}, NOW);
+  const el = low.colBoard.find(r => r.officer === 'EARLY E');
+  assert.equal(el.pctIJ, 14.3); assert.equal(el.ctzsIJ, 0); assert.equal(el.weekCommission, 0);
+
+  // Back to counts: the flat rates again, the ladder untouched for next time.
+  await portalApi(db, ADMIN, 'commissionSave', { earlyMode: 'counts' }, NOW);
+  d = await portalApi(db, ADMIN, 'commission', {}, NOW + 244000);
+  assert.equal(d.earlyMode, 'counts');
+  assert.equal(d.colBoard.find(r => r.officer === 'EARLY E').commission, 6000);
+});
+
+test('the early scheme\'s weekly bonus: to the initial col % leader who beat their own previous week, in performance mode only', async () => {
+  const t = tables();
+  t.settings.push({ key: 'EARLY_PAY_MODE', value: 'performance' }, { key: 'EARLY_WEEKLY_BONUS', value: '50000' });
+  // This week (Friday): 6 of 7 -- 85.7%. Last week (Friday the 17th): 3 of 6 -- 50%. Beaten.
+  t.repayment_snapshots = [1, 2, 3, 4, 5, 6].map(i => E('9' + i, 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'))
+    .concat([E('97', 'KONGOWE', 1000, 'UNPAID', 0, TODAY, 'initial')])
+    .concat([1, 2, 3].map(i => E('8' + i, 'KONGOWE', 1000, 'PAID', 0, '2026-07-17', 'initial')))
+    .concat([4, 5, 6].map(i => E('8' + i, 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17', 'initial')));
+  let d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  let e = d.colBoard.find(r => r.officer === 'EARLY E');
+  assert.equal(e.prevWeekPct, 50, 'last week\'s initial col %, off last week\'s initial sheets');
+  assert.equal(e.isLeader, true);
+  assert.equal(e.bonus, 50000, 'leads the week AND beat their own previous week');
+  assert.equal(d.earlyBonus.won, true);
+  assert.equal(d.earlyBonus.leader, 'EARLY E');
+  assert.equal(e.weekCommission, 25000, 'the days\' pay is the days\' pay');
+  assert.equal(d.week.find(r => r.officer === 'EARLY E').colComm, 75000, 'the Orodha carries the bonus on top');
+  assert.equal(d.totals.split.colWeek, 75000);
+  // The month record shows the days' pay without the weekly bonus.
+  const m = await portalApi(dbWithRpc(t), ADMIN, 'commission', { scope: 'month' }, NOW);
+  assert.equal(m.colBoard.find(r => r.officer === 'EARLY E').bonus, 0);
+  assert.equal(m.earlyBonus.won, false);
+
+  // Last week was better (6 of 6): the leader has not beaten it -- no bonus, and it says why.
+  const t2 = tables();
+  t2.settings.push({ key: 'EARLY_PAY_MODE', value: 'performance' }, { key: 'EARLY_WEEKLY_BONUS', value: '50000' });
+  t2.repayment_snapshots = t.repayment_snapshots.map(r => r.snapshot_date === '2026-07-17' ? { ...r, todays_status: 'PAID' } : r);
+  d = await portalApi(dbWithRpc(t2), ADMIN, 'commission', {}, NOW);
+  e = d.colBoard.find(r => r.officer === 'EARLY E');
+  assert.equal(e.prevWeekPct, 100);
+  assert.equal(e.bonus, 0);
+  assert.match(d.earlyBonus.why, /previous week/);
+
+  // Switched off keeps the amount and pays nothing; counts mode has no bonus at all.
+  const db = dbWithRpc(t);
+  await portalApi(db, ADMIN, 'commissionSave', { earlyBonusEnabled: false }, NOW);
+  d = await portalApi(db, ADMIN, 'commission', {}, NOW + 61000);
+  assert.equal(d.earlyBonus.enabled, false); assert.equal(d.earlyBonus.tzs, 50000); assert.equal(d.earlyBonus.won, false);
+  assert.match(d.earlyBonus.why, /switched off/);
+  await portalApi(db, ADMIN, 'commissionSave', { earlyBonusEnabled: true, earlyMode: 'counts' }, NOW);
+  d = await portalApi(db, ADMIN, 'commission', {}, NOW + 122000);
+  assert.equal(d.earlyBonus.won, false);
+  assert.match(d.earlyBonus.why, /counts/);
+  assert.equal(d.colBoard.find(r => r.officer === 'EARLY E').bonus, 0);
+  // Delete removes the rule.
+  await portalApi(db, ADMIN, 'commissionSave', { clearEarlyWeeklyBonus: true }, NOW);
+  assert.equal((db._dump('settings').find(r => r.key === 'EARLY_WEEKLY_BONUS') || {}).value, undefined);
+});

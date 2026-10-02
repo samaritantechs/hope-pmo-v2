@@ -694,7 +694,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-01-d';
+var BUILD = '2026-10-02-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2832,12 +2832,39 @@ function wireBar(){
       pmoBands = {};
       Array.prototype.forEach.call(pmoEls, function(el){ pmoBands[el.getAttribute('data-floor')] = el.value; });
     }
+    // The early scheme's own ladder, switch and bonus ride on the same Save.
+    var earlyEls = document.querySelectorAll('.cmEarlyBand');
+    var earlyBands = null;
+    if (earlyEls.length) {
+      earlyBands = {};
+      Array.prototype.forEach.call(earlyEls, function(el){ earlyBands[el.getAttribute('data-floor')] = el.value; });
+    }
     srv('commissionSave', { paidTzs: $('#cmPaid').value, overTzs: $('#cmOver').value,
       payText: ($('#cmPayText') ? $('#cmPayText').value : null),
       weeklyBonus: ($('#cmBonus') ? $('#cmBonus').value : null),
       bonusEnabled: ($('#cmBonusOn') ? !!$('#cmBonusOn').checked : null),
-      recBands: recBands, pmoBands: pmoBands })
+      recBands: recBands, pmoBands: pmoBands,
+      earlyMode: ($('#cmEarlyMode') ? $('#cmEarlyMode').value : null),
+      earlyBands: earlyBands,
+      earlyWeeklyBonus: ($('#cmEarlyBonus') ? $('#cmEarlyBonus').value : null),
+      earlyBonusEnabled: ($('#cmEarlyBonusOn') ? !!$('#cmEarlyBonusOn').checked : null) })
       .then(function(){ toast('Imehifadhiwa — inahesabu upya. / Saved, recalculating.'); render(); })
+      .catch(function(e){ toast(String(e.message || e), true); });
+  };
+  var cmEarlyBandsReset = document.getElementById('cmEarlyBandsReset');
+  if (cmEarlyBandsReset) cmEarlyBandsReset.onclick = function(){
+    if (!confirm('Rudisha viwango vya Early Collection (utendaji) kwenye chaguo-msingi (0 / 20,000 / 25,000 / 30,000 / 40,000 / 60,000)?\n\n'
+      + 'Reset the Early Collection performance band amounts to the built-in ladder?')) return;
+    srv('commissionSave', { resetEarlyBands: true })
+      .then(function(){ toast('Viwango vimerudishwa. / Amounts reset.'); render({ force:true }); })
+      .catch(function(e){ toast(String(e.message || e), true); });
+  };
+  var cmEarlyBonusDel = document.getElementById('cmEarlyBonusDel');
+  if (cmEarlyBonusDel) cmEarlyBonusDel.onclick = function(){
+    if (!confirm('Futa bonasi ya wiki ya Early Collection? Sheria itaondoka kabisa hadi utakapoweka nyingine.\n\n'
+      + 'Delete the Early Collection weekly bonus? The rule goes away entirely until you set a new one.')) return;
+    srv('commissionSave', { clearEarlyWeeklyBonus: true })
+      .then(function(){ toast('Bonasi imefutwa. / Bonus deleted.'); render({ force:true }); })
       .catch(function(e){ toast(String(e.message || e), true); });
   };
   var cmPmoBandsReset = document.getElementById('cmPmoBandsReset');
@@ -5472,7 +5499,46 @@ VIEWS.commission = function(){
                 ? ' <button class="btn sm ghost" id="cmPmoBandsReset" style="margin-left:6px">Rudisha chaguo-msingi / Reset to defaults</button>'
                 : '')
             + '</div></div>'
-          + '<div class="fld"><label>TZS per PAID client</label>'
+          /* THE EARLY COLLECTION SWITCH -- "i need a switch at viwango/rates where i can change
+             early collection commission mode to performance or back to counts". Counts is the
+             two flat rates below; performance is the plan's own ladder on each day's initial
+             col %, with the PMO-style weekly bonus. The ladder and the bonus are drawn whichever
+             mode is on, so the amounts can be set before the switch is thrown. */
+          + '<div class="fld" style="grid-column:1/-1;border-top:1px solid var(--line);padding-top:10px"><label>Early Collection — hulipwa kwa / paid by</label>'
+            + '<select id="cmEarlyMode" style="max-width:520px">'
+            + '<option value="counts"' + (d.earlyMode !== 'performance' ? ' selected' : '') + '>Idadi / Counts — TZS kwa kila mteja PAID / OVERPAID (viwango viwili hapa chini)</option>'
+            + '<option value="performance"' + (d.earlyMode === 'performance' ? ' selected' : '') + '>Utendaji / Performance — asilimia ya kila siku (initial col %) kwa kundi lake, kama PMO Collection</option>'
+            + '</select>'
+            + '<div class="fldnote">' + (d.earlyMode === 'performance'
+                ? 'Inatumika sasa: <b>utendaji</b>. Kila siku ya afisa inalipwa kundi la asilimia yake ya siku hiyo — timu ngapi, wateja wangapi au kiasi gani haijalishi; wiki ni siku zake zikijumlishwa. / In force: <b>performance</b>. Each officer’s day pays the band of that day’s %, whatever the teams, customers or amount; the week is its days added.'
+                : 'Inatumika sasa: <b>idadi</b>. Kila mteja aliyelipa (PAID) na aliyezidisha (OVERPAID) hulipa kiasi chake. / In force: <b>counts</b>. Every PAID and every OVERPAID customer pays its flat amount.')
+            + '</div></div>'
+          + '<div class="fld" style="grid-column:1/-1"><label>Early Collection — utendaji / performance — TZS kwa siku / per day'
+            + (d.earlyMode === 'performance' ? '' : ' <span class="chip mut">haitumiki sasa / not in force</span>') + '</label>'
+            + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin:6px 0">'
+            + (d.earlyBands||[]).concat(d.earlyBelow ? [d.earlyBelow] : []).map(function(b){
+                return '<div class="fld" style="margin:0"><label>' + esc(b.label) + '</label>'
+                  + '<input class="cmEarlyBand" data-floor="' + b.floor + '" type="number" min="0" step="1000" value="' + (b.tzs||0) + '">'
+                  + (b.defaultTzs != null && b.defaultTzs !== b.tzs
+                      ? '<div class="fldnote">chaguo-msingi / default ' + money(b.defaultTzs) + '</div>' : '')
+                  + '</div>'; }).join('')
+            + '</div>'
+            + '<div class="fldnote">80–84 = 20,000 · 85–87 = 25,000 · 88–90 = 30,000 · 91–93 = 40,000 · 94–100 = 60,000 kwa siku; chini ya 80 hailipi. Siku 5 kwa wiki, wiki ni siku zake zikijumlishwa.'
+            + ' / per day; below 80 pays nothing. Five days a week, the week is its days added.'
+            + (d.earlyBandsCustom
+                ? ' <button class="btn sm ghost" id="cmEarlyBandsReset" style="margin-left:6px">Rudisha chaguo-msingi / Reset to defaults</button>'
+                : '')
+            + '</div></div>'
+          + '<div class="fld"><label>Early Collection — bonasi ya wiki / weekly bonus (TZS)</label>'
+            + '<input id="cmEarlyBonus" type="number" min="0" step="1000" value="'+(d.earlyBonus && d.earlyBonus.tzs || 0)+'">'
+            + (d.earlyBonus && d.earlyBonus.set
+                ? '<button class="btn sm ghost danger" id="cmEarlyBonusDel" style="margin-top:6px">Futa bonasi / Delete bonus</button>' : '')
+            + '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-weight:600">'
+            + '<input type="checkbox" id="cmEarlyBonusOn" style="width:auto"'
+            + ((!d.earlyBonus || d.earlyBonus.enabled !== false) ? ' checked' : '') + '>'
+            + 'Bonasi inatumika / Bonus enabled</label>'
+            + '<div class="fldnote">Utendaji pekee: kwa kiongozi wa initial col % wa wiki aliyepita asilimia yake ya wiki iliyopita. / Performance mode only: to the week’s initial col % leader who beat their own previous week.</div></div>'
+          + '<div class="fld"><label>TZS per PAID client' + (d.earlyMode === 'performance' ? ' <span class="chip mut">haitumiki sasa / not in force</span>' : '') + '</label>'
             + '<input id="cmPaid" type="number" min="0" step="50" value="'+(d.paidTzs||0)+'"></div>'
           + '<div class="fld"><label>TZS per OVERPAID client</label>'
             + '<input id="cmOver" type="number" min="0" step="50" value="'+(d.overTzs||0)+'"></div>'
@@ -5570,8 +5636,14 @@ VIEWS.commission = function(){
           : '')
       + ((d.colBoard||[]).length
           ? board('cmColWeek','Early Collection — wiki hii / this week',
-              'asilimia dhidi ya kitabu cha initial expected na idadi ya PAID+OVERPAID kwa KILA siku'
-                + ' / the col % against the initial expected book and the PAID+OVERPAID count, day by day',
+              (d.earlyMode === 'performance'
+                ? 'UTENDAJI / PERFORMANCE: kila siku inalipwa kundi la asilimia yake ya initial col % (kama PMO Collection), wiki ni siku zake zikijumlishwa'
+                  + ' / each day pays the band of its own initial col %, the week is its days added'
+                  + (d.earlyBonus ? ' · ' + (d.earlyBonus.won
+                      ? 'bonasi ya wiki: ' + money(d.earlyBonus.tzs) + ' → ' + esc(d.earlyBonus.leader || '')
+                      : 'bonasi: ' + esc(d.earlyBonus.why || '')) : '')
+                : 'asilimia dhidi ya kitabu cha initial expected na idadi ya PAID+OVERPAID kwa KILA siku'
+                  + ' / the col % against the initial expected book and the PAID+OVERPAID count, day by day'),
               /* EACH DAY'S OWN TZS, beside its count -- "collection wiki is not showing what
                  they earned per day as recovery does". The count is what the day pays on and
                  the shillings are what it paid; a board that showed only the first left the
@@ -5579,10 +5651,13 @@ VIEWS.commission = function(){
               d.colBoard, [col('officer','Early col officer')]
                 .concat(['J3','J4','J5','AL','IJ'].reduce(function(a,k){
                   return a.concat([col('pct'+k, k, 'pct'), col('n'+k, k+' P+O', 'num'), col('ctzs'+k, k+' TZS', 'money')]); }, []))
-                .concat([{key:'weekPct', label:'Wiki %', kind:'pct', target:'ecol'}, col('weekN','Wiki P+O','num'),
-                  col('weekCommission','Wiki / Week TZS','money')]),
+                .concat([{key:'weekPct', label:'Wiki %', kind:'pct', target:'ecol'}, col('weekN','Wiki P+O','num')])
+                // In performance mode the bonus has a column, as on the PMO board, with last week's % beside it.
+                .concat(d.earlyMode === 'performance'
+                  ? [{key:'prevWeekPct', label:'Last week %', kind:'pct', target:'ecol'}, col('weekCommission','Wiki / Week TZS','money'), col('bonus','Bonus','money')]
+                  : [col('weekCommission','Wiki / Week TZS','money')]),
               sumRow(d.colBoard, ['J3','J4','J5','AL','IJ'].reduce(function(a,k){
-                  return a.concat(['n'+k, 'ctzs'+k]); }, ['weekN','weekCommission'])))
+                  return a.concat(['n'+k, 'ctzs'+k]); }, ['weekN','weekCommission'].concat(d.earlyMode === 'performance' ? ['bonus'] : []))))
           : '<div class="card"><div class="card-h">Early Collection — wiki hii / this week</div>'
             + '<div class="note" style="margin:10px 14px">Hakuna faili la <b>INITIAL expected</b> la wiki hii — '
             + 'bodi hii inasoma faili la INITIAL pekee, hakuna mbadala. Pakia la leo na hujaa yenyewe. '
@@ -5766,7 +5841,9 @@ VIEWS.cmmonth = function(){
           sumRow(d.recBoard||[], wks.reduce(function(a,w){ return a.concat(['rec'+w.key,'tzs'+w.key]); }, ['weekRecovered','weekCommission'])))
       /* EARLY COLLECTION: each week's initial col %, PAID+OVER count and TZS, then the month. */
       + board('cmMCol','Early Collection — mwezi / month',
-          'kila wiki: asilimia dhidi ya kitabu cha initial, idadi ya PAID+OVERPAID na TZS · Mwezi = jumla / each week: the initial col %, the PAID+OVERPAID count and its TZS · the month is the sum',
+          (d.earlyMode === 'performance'
+            ? 'UTENDAJI / PERFORMANCE: kila wiki: asilimia dhidi ya kitabu cha initial, idadi ya PAID+OVERPAID na TZS ya siku zake kwa makundi · Mwezi = jumla / each week: the initial col %, the PAID+OVERPAID count and its days’ bands added · the month is the sum'
+            : 'kila wiki: asilimia dhidi ya kitabu cha initial, idadi ya PAID+OVERPAID na TZS · Mwezi = jumla / each week: the initial col %, the PAID+OVERPAID count and its TZS · the month is the sum'),
           d.colBoard,
           [col('officer','Early col officer')]
             .concat(wkCols(function(w){ return [
