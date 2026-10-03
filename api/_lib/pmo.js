@@ -20,7 +20,7 @@
  * intended that. Below 85 pays nothing, which IS intended.
  */
 
-import { num } from './recovery.js';
+import { num, wholePct } from './recovery.js';
 
 /* Highest first, so the first band whose floor is reached is the answer. */
 export const PMO_BANDS = [
@@ -114,8 +114,9 @@ export function pmoBelowOf(overrides) {
     it pays nothing and says why rather than being scored as 0%. `bands` and `below` are the
     ladder in force (pmoLadder / pmoBelowOf); both default to the built-in ones. */
 export function pmoBand(pct, bands, below) {
-  if (pct == null) return null;
-  for (const b of (bands || PMO_BANDS)) if (pct >= b.floor) return b;
+  const p = wholePct(pct);     // 89.7 is read as the 90 it is shown as; see wholePct
+  if (p == null) return null;
+  for (const b of (bands || PMO_BANDS)) if (p >= b.floor) return b;
   return below || PMO_BELOW;
 }
 

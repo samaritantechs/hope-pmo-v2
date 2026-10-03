@@ -72,3 +72,27 @@ export function uncollectedOf(rows) {
 }
 
 export function num(v) { return typeof v === 'number' ? v : Number(v) || 0; }
+
+/* THE PERCENTAGE A COMMISSION BAND IS READ AT: THE WHOLE NUMBER THE SCREEN SHOWS.
+
+     "the %performance with decimals is eligible for them to hit targets and amounts to earn,
+      for example 89.7% displays 90% but gives commission of 89. It should give of 90 for all
+      approximations from 0.5 decimals are eligible"
+
+   Percentages are kept to one decimal (89.7) and every board DISPLAYS them rounded to a whole
+   number (90%). The ladders used to compare the one-decimal figure, so an officer looking at
+   "90%" on the board was paid the 85-89 band: the screen and the pay were two answers about the
+   same figure. Both ladders (PMO collection and early collection through pmoBand, recovery
+   through recoveryBand) now read the figure the way it is shown: half and above rounds UP.
+
+   The 1e-9 is for floating-point noise only -- 89.49999999999999 is 89.5 that was divided, and
+   must round up like 89.5 does. Nothing legitimate lives that close to a half.
+
+   One definition, because a board and a ladder that round differently disagree about which
+   band somebody is in, and that is somebody's pay. null stays null: a day with nothing
+   expected has no percentage, which is not 0%. */
+export function wholePct(pct) {
+  if (pct == null) return null;
+  const n = Number(pct);
+  return Number.isFinite(n) ? Math.round(n + 1e-9) : null;
+}

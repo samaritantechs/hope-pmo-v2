@@ -68,6 +68,8 @@
    the morning. That is the same rule the collection board follows, for the same reason.
    ===================================================================================== */
 
+import { wholePct } from './recovery.js';
+
 /* Highest first, so the first band whose floor is reached is the answer -- the same shape and
    the same reading order as PMO_BANDS, deliberately: two ladders that are read differently are
    two ladders somebody will read wrongly. */
@@ -139,8 +141,9 @@ export function recoveryBelowOf(overrides) {
     `bands` is the ladder in force -- recoveryLadder(...) with the admin's amounts -- and
     `below` the band under it (recoveryBelowOf); both default to the built-in ones. */
 export function recoveryBand(pct, bands, below) {
-  if (pct == null) return null;
-  for (const b of (bands || RECOVERY_BANDS)) if (pct >= b.floor) return b;
+  const p = wholePct(pct);     // 89.7 is read as the 90 it is shown as; see wholePct in recovery.js
+  if (p == null) return null;
+  for (const b of (bands || RECOVERY_BANDS)) if (p >= b.floor) return b;
   return below || RECOVERY_BELOW;
 }
 
