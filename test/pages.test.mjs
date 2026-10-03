@@ -1307,3 +1307,101 @@ test('the Rates card carries the early collection mode switch, its ladder and it
   const week = app.slice(app.indexOf("board('cmColWeek'"), app.indexOf("PMO COLLECTION. Paid on the percentage"));
   assert.ok(/d\.earlyMode === 'performance'/.test(week) && /col\('bonus','Bonus','money'\)/.test(week), 'the week board shows the bonus column in performance mode');
 });
+
+/* THE DAILY BONUS PLAN IS A PREVIEW: IT READS NOTHING, SAVES NOTHING, AND ITS MATHS IS REAL.
+     "GM needs an idea to breakdown - Bonuses by day ... create a new tab and fill your buildup
+      idea so that I get a picture"
+   Two promises are pinned. First, the tab never asks the server for anything (CLAUDE.md rule
+   one: nothing is added to the upload or call paths, and a preview must not add a read to
+   anything else either). Second, the functions that turn a month of percentages into shillings
+   are executed here, so the plan the GM is looking at is the plan that would be built. */
+test('the daily bonus plan tab is wired, admin-grantable, and makes no server call', async () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/\{ id:'bonusplan',\s+label:'Bonasi ya Kila Siku \/ Daily Bonus Plan'/.test(app), 'the nav entry');
+  assert.ok(/VIEWS\.bonusplan = function/.test(app), 'the screen exists');
+  assert.ok(/VC_SKIP = \{[^}]*bonusplan:1/.test(app), 'its boxes are never replayed from the view cache');
+  assert.ok(/wireForms\(\);\s*\n\s*bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint');
+  const code = app.slice(app.indexOf('BONASI YA KILA SIKU / DAILY BONUS PLAN'), app.indexOf('VIEWS.perf = function'));
+  assert.ok(code.length > 5000, 'the extractor found the preview');
+  assert.ok(!/\bsrv\(|\bfetch\(|XMLHttpRequest|localStorage|sessionStorage/.test(code),
+    'the preview reads nothing and saves nothing');
+  assert.ok(/RASIMU \/ DRAFT/.test(code) && /EXAMPLE FIGURES ONLY/.test(code), 'and it says plainly that the figures are examples');
+  // Grantable like `audit`: admins hold it, nobody else until it is ticked on their role.
+  process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
+  const { USER_TABS, ADMIN_TABS, EXTRA_TABS, ALL_TABS } = await import('../api/_lib/auth.js');
+  assert.ok(ADMIN_TABS.includes('bonusplan') && EXTRA_TABS.includes('bonusplan') && ALL_TABS.includes('bonusplan'));
+  assert.ok(!USER_TABS.includes('bonusplan'), 'not handed to every code');
+});
+
+test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const src = app.slice(app.indexOf('var BP = null;'), app.indexOf('function bpState_()'));
+  const m = new Function(src + '\nreturn { bpWhole_, bpDay_, bpMonth_, bpChecklist_, bpLeaderDay_, BP_PICK, BP_LEADERS };')();
+  const cfg = () => ({ pot: 100000, w: { col: 40, sales: 30, rec: 30 }, g: { col: 96, sales: 80, rec: 120 },
+    streak: false, sFrom: 3, sPct: 25, cap: 125, lw: 40, latePct: 50, lose: true, results: 3, lpot: 100000 });
+
+  // ONE ROUNDING RULE with the commission ladders: the page's reading equals the server's.
+  const { wholePct } = await import('../api/_lib/recovery.js');
+  for (const v of [89.5, 89.4, 95.6, 79.6, 119.5, 49.49999999999999, 0, 100, 137.4, null, '', 'x'])
+    assert.equal(m.bpWhole_(v), wholePct(v === '' || v === 'x' ? null : v), 'same answer for ' + v);
+  assert.equal(m.bpWhole_(''), null);
+
+  // A day's gates, read at the whole percentage the board shows.
+  const d1 = m.bpDay_([95.6, 79.6, 119.4], cfg());
+  assert.deepEqual([d1.col, d1.sales, d1.rec], [true, true, false], '95.6 reads as 96 and 79.6 as 80; 119.4 is 119');
+  assert.equal(d1.share, 0.7, 'collection 40 + sales 30 of 100');
+  assert.equal(m.bpDay_([96, 80, 120], cfg()).perfect, true);
+  assert.equal(m.bpDay_([0, 0, 0], cfg()).share, 0);
+
+  // A PERFECT MONTH PAYS EXACTLY THE POT -- rounding is done on the running total, so 22 slices of
+  // 4,545.45 do not come to 99,990.
+  const perfect = Array.from({ length: 22 }, () => [96, 80, 120]);
+  const pm = m.bpMonth_(perfect, 22, cfg());
+  assert.equal(pm.earned, 100000);
+  assert.equal(pm.perfectDays, 22);
+  assert.equal(pm.maxSoFar, 100000);
+  assert.equal(pm.days.reduce((s, d) => s + d.earn, 0), 100000, 'and the days add up to the running total');
+
+  // Days that have not happened earn nothing and are not misses.
+  const part = m.bpMonth_(perfect, 10, cfg());
+  assert.equal(part.days[10].ahead, true);
+  assert.equal(part.earned, Math.round(100000 * 10 / 22));
+  assert.equal(part.pace, 100000, 'ten perfect days of twenty-two paces to the whole pot');
+
+  // THE EXAMPLE MONTH: stricter than today's rule on the same averages -- the finding the page tells the GM.
+  const ex = m.bpMonth_(m.BP_PICK, 22, cfg());
+  assert.equal(ex.oldRule, 100000, "today's rule pays on the month's averages");
+  assert.ok(ex.earned < 100000 && ex.earned > 70000, 'the daily meter pays less to an inconsistent month: ' + ex.earned);
+
+  // STREAK BOOST: off by default; on, perfect days after the third in a row earn extra, never past the cap.
+  const on = Object.assign(cfg(), { streak: true });
+  const boosted = m.bpMonth_(perfect, 22, on);
+  assert.equal(boosted.earned, 122727, 'twenty boosted days add 20 x 25% of a slice: 100,000 + 22,727, under the 125% cap');
+  assert.equal(m.bpMonth_(perfect, 22, Object.assign(cfg(), { streak: true, cap: 110 })).earned, 110000, 'and a 110% cap holds it there');
+  assert.equal(m.bpMonth_(perfect, 3, on).days[2].boost, true, 'the third perfect day in a row is boosted');
+  assert.equal(m.bpMonth_(perfect, 2, on).days[1].boost, false, 'the second is not');
+  const broken = perfect.map(r => r.slice()); broken[2] = [80, 50, 50];
+  assert.equal(m.bpMonth_(broken, 5, on).days[3].boost, false, 'a miss resets the streak');
+
+  // THE LEADER'S CHECKLIST.
+  const AM = m.BP_LEADERS[0];
+  assert.equal(AM.items.length, 10);
+  assert.ok(AM.items.every(i => /^\d\d:\d\d$/.test(i.due) && ['photo', 'screen', 'auto', 'tick'].includes(i.ev)), 'every item has a time and a proof');
+  assert.ok(m.BP_LEADERS.every(L => L.items.some(i => i.must) && L.gates.length === 3), 'every role has mandatory items and three result gates');
+  const ids = m.BP_LEADERS.flatMap(L => L.items.map(i => i.id));
+  assert.equal(new Set(ids).size, ids.length, 'item ids are unique across roles, so one status map serves all');
+  const full = m.bpLeaderDay_(AM.items, {}, cfg(), 22);
+  assert.equal(full.c.score, 1);
+  assert.equal(full.earn, Math.round(100000 / 22), 'everything on time and 3 of 3 gates = the whole slice');
+  // Late is half points; missed is nothing.
+  const t = m.bpChecklist_([{ id: 'a', pts: 2 }, { id: 'b', pts: 2 }], { a: 'late', b: 'ok' }, cfg());
+  assert.equal(t.score, 0.75);
+  // A mandatory item missed loses the checklist; nothing filled loses the day.
+  const must = m.bpLeaderDay_(AM.items, { am2: 'miss' }, cfg(), 22);
+  assert.equal(must.c.mustMissed, true); assert.equal(must.c.score, 0);
+  assert.equal(must.share, 0.6, 'only the results share is left: (100 - 40)% of 3 gates out of 3');
+  const none = Object.fromEntries(AM.items.map(i => [i.id, 'miss']));
+  assert.equal(m.bpLeaderDay_(AM.items, none, cfg(), 22).earn, 0, 'an unfilled day is lost even with 3 of 3 gates');
+  assert.ok(m.bpLeaderDay_(AM.items, none, Object.assign(cfg(), { lose: false }), 22).earn > 0, 'unless that rule is switched off');
+});
