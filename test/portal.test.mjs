@@ -1102,7 +1102,8 @@ test('the recovery ladder pays the percentage, and the sixth record is the week'
   assert.equal(RECOVERY_BANDS[0].label, '90%+ MAFANIKIO');
 
   // Below the floor pays nothing, and a day with nothing to recover is not a failure.
-  assert.equal(recoveryBand(49.9).tzs, 0);
+  assert.equal(recoveryBand(49.4).tzs, 0);
+  assert.equal(recoveryBand(49.5).tzs, 20000, '49.5% is shown as 50%, so it is paid as 50%');
   assert.equal(recoveryBand(null), null, 'no arrears to work is not 0% -- it is no percentage');
 
   /* THE PLAN'S OWN WORKED EXAMPLE, verbatim:
@@ -4491,15 +4492,15 @@ test('the five bands pay what the plan says they pay', async () => {
   assert.equal(rate(93), 30000);   assert.equal(rate(94), 30000);
   assert.equal(rate(95), 40000);   assert.equal(rate(96), 40000);
   assert.equal(rate(97), 60000);   assert.equal(rate(100), 60000);
-  assert.equal(rate(84.9), 0, 'below 85 pays nothing, which is intended');
+  assert.equal(rate(84.4), 0, 'below 85 pays nothing, which is intended');
   assert.equal(rate(0), 0);
 
   /* The plan lists whole numbers with GAPS -- 89 to 90, 92 to 93 -- so 89.4 belongs to no band
      as written. It pays the band below rather than nothing, because nobody intended a
      percentage that pays zero while a lower one pays 20,000. */
   assert.equal(rate(89.4), 20000);
-  assert.equal(rate(92.7), 25000);
-  assert.equal(rate(96.5), 40000);
+  assert.equal(rate(92.4), 25000);
+  assert.equal(rate(96.4), 40000);
 
   // A day with nothing expected is not a 0% day. It is a day with no percentage at all.
   assert.equal(pmoBand(null), null);
@@ -10318,4 +10319,41 @@ test('the early scheme\'s weekly bonus: to the initial col % leader who beat the
   // Delete removes the rule.
   await portalApi(db, ADMIN, 'commissionSave', { clearEarlyWeeklyBonus: true }, NOW);
   assert.equal((db._dump('settings').find(r => r.key === 'EARLY_WEEKLY_BONUS') || {}).value, undefined);
+});
+
+test('a band is read at the whole percentage the screen shows: half and above rounds up', async () => {
+  /* "89.7% displays 90% but gives commission of 89. It should give of 90 for all
+      approximations from 0.5 decimals are eligible" */
+  const { pmoBand, PMO_BANDS, EARLY_BANDS } = await import('../api/_lib/pmo.js');
+  const { recoveryBand } = await import('../api/_lib/recovery-pay.js');
+  const { wholePct } = await import('../api/_lib/recovery.js');
+  const pmo = p => { const b = pmoBand(p); return b ? b.tzs : null; };
+  const rec = p => { const b = recoveryBand(p); return b ? b.tzs : null; };
+  const at = f => PMO_BANDS.find(b => b.floor === f).tzs;
+
+  // The figure from the complaint, on each ladder.
+  assert.equal(pmo(89.7), at(90), '89.7% shows as 90% and is paid as 90%');
+  assert.equal(rec(89.7), 60000, 'recovery too: 89.7% is the 90%+ band');
+
+  // Exactly half rounds UP; just under half does not.
+  assert.equal(pmo(89.5), at(90));
+  assert.equal(pmo(89.4), at(85));
+  assert.equal(pmo(84.5), at(85), '84.5% shows as 85%, the first paying band');
+  assert.equal(pmo(84.4), 0);
+  assert.equal(pmo(96.5), at(97), '96.5% shows as 97%, the top band');
+  assert.equal(pmo(96.4), at(95));
+  assert.equal(rec(79.5), 40000);  assert.equal(rec(79.4), 30000);
+  assert.equal(rec(49.5), 20000);  assert.equal(rec(49.4), 0);
+
+  // The early collection plan reads through the same function, so it follows.
+  const early = p => pmoBand(p, EARLY_BANDS.map(b => ({ ...b })), { floor: 0, tzs: 0 }).tzs;
+  assert.equal(early(79.5), EARLY_BANDS.find(b => b.floor === 80).tzs);
+  assert.equal(early(79.4), 0);
+
+  // Floating-point noise from a division must not flip a half the wrong way.
+  assert.equal(wholePct(89.49999999999999), 90);
+  assert.equal(wholePct(89.4), 89);
+  assert.equal(wholePct(null), null, 'nothing expected is still no percentage, not 0%');
+  assert.equal(pmoBand(null), null);
+  assert.equal(recoveryBand(null), null);
 });
