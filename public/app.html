@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-05-b';
+var BUILD = '2026-10-05-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -955,6 +955,9 @@ var NAV = [
   { id:'reports',     label:'Leader Reports', ic:'<path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/>' },
   { id:'weekly',      label:'Weekly Report', ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4M8 14l2.5 2.5L16 12"/>' },
   { id:'par',         label:'Portfolio at Risk', ic:'<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
+  /* THE AUDIT REPORT PANEL -- the internal audit questionnaire answered for a chosen month,
+     directly under the PAR it extends. Granted like `audit`: admins, then PMO Data when ticked. */
+  { id:'auditrep',    label:'Ripoti ya Ukaguzi / Audit report', ic:'<path d="M9 2h6a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2z"/><path d="M9 12l2 2 4-4"/>' },
   { id:'present',     label:'Presentation', ic:'<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>' },
   /* IMPREST -- three panes, three authorities, granted like every tab in this list is now:
        "implement request, approval and report and i'll grant the navs to those responsible"
@@ -5071,6 +5074,97 @@ VIEWS.par = function(){
   });
 };
 
+/* THE AUDIT REPORT PANEL. One month, the questionnaire's sections in its order, every figure
+   from the server's auditReport (see its note in portal-core.js). The customer list behind the
+   month's own cohort is the tab's Orodha, so Excel/CSV export it as any other list. */
+VIEWS.auditrep = function(){
+  var m = S.args.month || todayKeyClient().slice(0, 7);
+  return srv('auditReport', { month: m }).then(function(d){
+    var thisM = todayKeyClient().slice(0, 7);
+    var c0 = d.cohorts[0] || {}, c1 = d.cohorts[1] || {};
+    var pc = function(v){ return v == null ? '—' : pct(v); };
+    var mo = function(v){ return v == null ? '—' : money(v); };
+    var sales = d.sales || {}, colx = d.collection || {}, rec = d.recovery || {};
+    HEAD = bar('<label style="font-size:12px;color:var(--mut)">Mwezi wa ukaguzi / Audit month</label>'
+        + '<button class="btn sm ghost" data-arg="month" data-val="' + esc(addMonths(m, -1)) + '">&#9664;</button>'
+        + '<input type="month" data-arg="month" value="' + esc(m) + '">'
+        + '<button class="btn sm ghost" data-arg="month" data-val="' + esc(addMonths(m, 1)) + '">&#9654;</button>'
+        + '<span class="chip ' + (d.live ? 'warn' : 'mut') + '">' + (d.live ? 'Mwezi unaendelea / live month' : 'Mwezi umeisha / finished month')
+          + ' &middot; as at ' + esc(d.asAt) + ' &middot; deck ' + esc(d.deckDate || '—') + '</span>'
+        + (m === thisM ? '' : ' <button class="btn sm ghost" data-arg="month" data-val="' + esc(thisM) + '">Rudi mwezi huu / Back to this month</button>'))
+      + (d.monthReady ? '' : '<div class="note bad">Ripoti ya mwezi haikupatikana; mauzo, collection, recovery na bonasi hazipo. / The month report could not be read; sales, collection, recovery and bonus sections are missing. Jaribu tena.</div>')
+      + (d.monthReady && !d.ledgerReady ? '<div class="note">Leja ya mwezi bado inajengwa; collection na recovery zinaweza kukosekana kwa wiki za mwanzo. / The month ledger is still being built; collection and recovery may be missing for early weeks.</div>' : '')
+      // 1. SALES
+      + '<div class="kpis">'
+      + kpi('1. Mauzo / Sales target', mo(sales.target), 'principal, weekly x 4 x teams')
+      + kpi('Mauzo halisi / Actual disbursed', mo(sales.actual), (sales.loans != null ? money(sales.loans) + ' loans' : ''), (sales.pct != null && sales.pct >= 80) ? 'good' : 'bad')
+      + kpi('Tofauti / Variance', mo(sales.variance), 'target − actual')
+      + kpi('% Achieved', pc(sales.pct), '', (sales.pct != null && sales.pct >= 80) ? 'good' : 'bad')
+      + '</div>'
+      // 2. COLLECTION EFFICIENCY and RECOVERY
+      + '<div class="kpis">'
+      + kpi('2. Jumla ya kudaiwa / Total due', mo(colx.due), 'expected, the month’s days')
+      + kpi('Kilichokusanywa / Collected', mo(colx.collected))
+      + kpi('Collection efficiency', pc(colx.pct), 'collected over due', (colx.pct != null && colx.pct >= 92) ? 'good' : 'bad')
+      + kpi('3. Recovery: uncollected', mo(rec.uncollected), 'arrears at the start')
+      + kpi('Recovered', mo(rec.recovered), rec.target ? 'target ' + money(rec.target) + ' · variance ' + money(rec.variance) : 'no RECOVERY_TARGET_MONTHLY set', (rec.pct != null && rec.pct >= 120) ? 'good' : '')
+      + kpi('Recovery %', pc(rec.pct), '', (rec.pct != null && rec.pct >= 120) ? 'good' : 'bad')
+      + '</div>'
+      // 4. COHORTS
+      + '<div class="kpis">'
+      + kpi('4. Defaulters disbursed in ' + esc(m), money(c0.customers || 0), 'customers in arrears as at ' + esc(d.asAt), 'warnc')
+      + kpi('Their arrears', mo(c0.arrears))
+      + kpi('Their balance', mo(c0.balance))
+      + kpi('PAR (arrears / balance)', pc(c0.par), 'the PAR tab’s definition')
+      + kpi('PAR > 30 days', pc(c0.par30), c0.disbursedTotal != null ? '> 30 days: ' + money(c0.over30Balance) + ' over ' + money(c0.disbursedTotal) + ' disbursed (' + money(c0.disbursedLoans) + ' loans)' : 'no disbursements of ' + esc(m) + ' in the loans table', c0.par30 == null ? '' : (c0.par30 > 5 ? 'bad' : 'good'))
+      + '</div>';
+    var cohortRows = d.cohorts.map(function(c){ return { month: c.month, customers: c.customers, arrears: c.arrears, balance: c.balance,
+      over30Customers: c.over30Customers, over30Balance: c.over30Balance, par: c.par, disbursedLoans: c.disbursedLoans, disbursedTotal: c.disbursedTotal, par30: c.par30 }; });
+    HEAD += board('auCohort', 'PAR kwa mwezi wa mkopo / PAR by disbursement month', esc(m) + ' na mwezi uliopita · as at ' + esc(d.asAt), cohortRows,
+      [col('month','Disbursed in'), col('customers','Defaulters','num'), col('arrears','Arrears','money'), col('balance','Balance','money'),
+       col('over30Customers','> 30 days','num'), col('over30Balance','> 30 days balance','money'), {key:'par', label:'PAR', kind:'pct', from:['arrears','balance']},
+       col('disbursedLoans','Loans disbursed','num'), col('disbursedTotal','Disbursed (P+I)','money'), {key:'par30', label:'PAR > 30', kind:'pct', from:['over30Balance','disbursedTotal']}], false);
+    HEAD += board('auCohortTeam', 'Timu: waliokopa ' + esc(m) + ' walio na madeni / ' + esc(m) + ' cohort by team', 'balance kubwa kwanza', c0.byTeam || [],
+      [col('team','Team'), col('customers','Defaulters','num'), col('arrears','Arrears','money'), col('balance','Balance','money'), col('over30','> 30 days balance','money'), {key:'par', label:'PAR', kind:'pct', from:['arrears','balance']}]);
+    HEAD += board('auCohortStatus', 'Hali ya waliokopa ' + esc(m) + ' / ' + esc(m) + ' cohort by status', '', c0.byStatus || [],
+      [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money'), col('balance','Balance','money')]);
+    // 5. AGING
+    HEAD += '<div class="kpis">'
+      + kpi('5. Kitabu chote / Whole book as at ' + esc(d.asAt), money(d.book.customers), 'customers in arrears')
+      + kpi('Arrears', mo(d.book.arrears)) + kpi('Balance', mo(d.book.balance))
+      + kpi('PAR > 30 days, whole book', pc(d.book.par30), '> 30 days balance ' + money(d.book.over30Balance) + ' over the book’s balance')
+      + kpi('Chronic (> 90 days)', money(d.book.chronic), 'balance ' + money(d.book.chronicBalance), 'warnc')
+      + '</div>';
+    HEAD += board('auAging', 'Aging ya madeni / Aging of overdue loans', 'as at ' + esc(d.asAt) + ' · the auditor’s buckets', d.aging,
+      [col('bucket','Days overdue'), col('customers','# Clients','num'), col('arrears','Arrears','money'), col('balance','Outstanding balance','money')]);
+    // 6. TOP / BOTTOM
+    var tb = function(id, title, r, key, label){
+      var rows = (r.top || []).map(function(x){ return { ...x, end: 'Top' }; }).concat((r.bottom || []).map(function(x){ return { ...x, end: 'Bottom' }; }));
+      return board(id, title, (r.teams || 0) + ' teams measured · monthly average of the weeks', rows,
+        [{key:'end', label:'', kind:'chip', chip:function(x){ return x.end === 'Top' ? 'ok' : 'bad'; }}, col('team','Team'), col('branch','Branch'), {key:'avg', label: label, kind:'pct'}, col('on','Weeks','num')], false);
+    };
+    HEAD += tb('auTopSales', '6. Timu bora na dhaifu: Mauzo / Sales', d.ranking.sales, 'avg', 'Sales %')
+      + tb('auTopCol', 'Timu bora na dhaifu: Collection', d.ranking.collection, 'avg', 'Collection %')
+      + tb('auTopRec', 'Timu bora na dhaifu: Recovery', d.ranking.recovery, 'avg', 'Recovery %');
+    // 7. BONUS
+    var bw = [];
+    (d.bonusWeeks || []).forEach(function(w){ (w.teams || []).forEach(function(t){ bw.push({ week: w.week + ' (' + w.from + ' → ' + w.to + ')', team: t.team, sales: t.sales, collection: t.collection, recovery: t.recovery }); });
+      if (!(w.teams || []).length) bw.push({ week: w.week + ' (' + w.from + ' → ' + w.to + ')', team: '— hakuna / none', sales: null, collection: null, recovery: null }); });
+    HEAD += board('auBonusW', '7. Bonasi ya wiki / Weekly bonus: teams that cleared all three', 'sales ≥ ' + d.thresholds.sales + '% · collection ≥ ' + d.thresholds.col + '% · recovery ≥ ' + d.thresholds.rec + '%', bw,
+      [col('week','Week'), col('team','Team'), col('sales','Sales %','pct'), col('collection','Collection %','pct'), col('recovery','Recovery %','pct')], false);
+    HEAD += board('auBonusM', 'Bonasi ya mwezi / Monthly bonus: teams that cleared all three on the month', 'monthly averages', d.bonusMonth || [],
+      [col('team','Team'), col('sales','Sales %','pct'), col('collection','Collection %','pct'), col('recovery','Recovery %','pct')], false);
+    HEAD += board('auWeeks', 'Wiki za mwezi / The month’s weeks', 'company figures, the month report’s own', d.weeksRows || [],
+      [col('week','W','num'), col('from','From','date'), col('to','To','date'), col('sales','Sales','money'), col('salesPct','Sales %','pct'), col('expected','Due','money'), col('collected','Collected','money'), col('colPct','Col %','pct'), col('uncollected','Uncollected','money'), col('recovered','Recovered','money'), col('recPct','Rec %','pct')], false);
+    HEAD += '<div class="note" style="display:block">' + (d.notes || []).map(esc).join('<br>') + '</div>';
+    S.rows = d.list || [];
+    S.cols = [col('ref','REF#'), col('full_name','Fullname'), {key:'contact', label:'Contact#', kind:'tel'}, col('team','Team'), col('branch','Branch'), col('status','Status'),
+      col('disb_date','Disb date','date'), col('days','Days','num'), col('ds','D.S'), col('arrears','Arrears','money'), col('balance','Balance','money'), col('principal','Principal','money')];
+    S.foldMain = 'aulist'; S.foldLabel = 'Orodha / Defaulters disbursed in ' + m;
+    ONROW = openFollowup;
+    S.foot = 'Waliokopa ' + m + ' na wana madeni as at ' + d.asAt;
+  });
+};
 VIEWS.weekly = function(){
   var weekOf = S.args.weekOf || '';
   return srv('weekly', {weekOf:weekOf}).then(function(d){

@@ -10369,3 +10369,56 @@ test('a band is read at the whole percentage the screen shows: half and above ro
   assert.equal(pmoBand(null), null);
   assert.equal(recoveryBand(null), null);
 });
+
+/* THE AUDIT REPORT PANEL answers the internal audit questionnaire for a chosen month -- see
+   auditReportCompute_. Pinned here: the cohort of customers DISBURSED in the month who are in
+   arrears as at month end, with their arrears, balance, PAR and PAR > 30 against the loans
+   table's disbursements; the previous month beside it; the whole book in the auditor's own
+   aging buckets; the customer list behind the cohort; and that the month's own figures come
+   from the month report rather than a second derivation. */
+test('the audit report answers the questionnaire for a month: cohort, aging, PAR > 30, list', async () => {
+  const t = tables();
+  // Two July disbursements in the loans table: the cohort's denominator for PAR > 30.
+  t.loans = (t.loans || []).concat([
+    { team: 'KONGOWE', stage: 'disbursed', disb_date: '2026-07-10', principal_amt: 1000000, loan_amt: 1360000 },
+    { team: 'MBAGALA', stage: 'disbursed', disb_date: '2026-07-15', principal_amt: 500000, loan_amt: 680000 },
+    { team: 'KONGOWE', stage: 'disbursed', disb_date: '2026-06-20', principal_amt: 2000000, loan_amt: 2720000 },
+  ]);
+  const d = await run('auditReport', { month: '2026-07' }, ADMIN, dbWithRpc(t));
+  assert.equal(d.month, '2026-07'); assert.equal(d.monthEnd, '2026-07-31'); assert.equal(d.prevMonth, '2026-06');
+  assert.equal(d.asAt, TODAY, 'the live month is read to today, a finished one to its last day');
+  assert.equal(d.monthReady, true, 'the month report answered');
+  // The fixture's current deck: 111 (300, 45 days), 555 (600, 200 days), 999 (800, 45 days), all disbursed 2026-07-21.
+  const c = d.cohorts[0];
+  assert.equal(c.month, '2026-07');
+  assert.equal(c.customers, 3); assert.equal(c.arrears, 1700); assert.equal(c.balance, 1500000);
+  assert.equal(c.par, 0.1, 'PAR = arrears over balance, the PAR tab\'s definition');
+  assert.equal(c.over30Customers, 3); assert.equal(c.over30Balance, 1500000, 'all three are past 30 days');
+  assert.equal(c.disbursedLoans, 2); assert.equal(c.disbursedTotal, 2040000, 'July\'s two loans, principal + interest');
+  assert.equal(c.par30, 73.5, '1,500,000 over 2,040,000: the auditor\'s PAR > 30 for loans disbursed in the month');
+  assert.deepEqual(c.byTeam.map(x => [x.team, x.customers]), [['KONGOWE', 2], ['MBAGALA', 1]]);
+  const p = d.cohorts[1];
+  assert.equal(p.month, '2026-06'); assert.equal(p.customers, 0); assert.equal(p.disbursedLoans, 1);
+  assert.equal(p.par30, 0, 'June disbursed one loan and has nobody in arrears: 0%, not blank');
+  // The list behind the cohort, biggest balance first, with the days and the principal.
+  assert.equal(d.list.length, 3);
+  assert.ok(d.list.every(r => r.disb_date === '2026-07-21' && r.days > 0 && r.principal > 0));
+  // The whole book in the auditor's buckets: two at 45 days, one at 200.
+  const by = Object.fromEntries(d.aging.map(a => [a.bucket, a.customers]));
+  assert.deepEqual(by, { '1-7': 0, '8-30': 0, '31-60': 2, '61-90': 0, '>90': 1 });
+  assert.equal(d.book.customers, 3); assert.equal(d.book.chronic, 1, '> 90 days is chronic');
+  assert.equal(d.book.par30, 100, 'every row of this book is past 30 days');
+  // The month's own figures are the month report's.
+  assert.ok(d.sales && typeof d.sales.target === 'number');
+  assert.deepEqual(d.thresholds, { sales: 80, col: 92, rec: 120 });
+  assert.ok(Array.isArray(d.bonusWeeks) && Array.isArray(d.bonusMonth));
+  // A month with no deck and no loans answers zeros, not a crash.
+  const empty = await run('auditReport', { month: '2025-01' }, ADMIN, dbWithRpc(t));
+  assert.equal(empty.cohorts[0].customers, 0); assert.equal(empty.cohorts[0].par30, null, 'no disbursements: no denominator, said as null');
+  // A bad month argument falls back to the current month rather than failing.
+  const dflt = await run('auditReport', { month: 'nonsense' }, ADMIN, dbWithRpc(t));
+  assert.equal(dflt.month, TODAY.slice(0, 7));
+  // Granted like audit: a code without the tab is refused.
+  const nobody = { code: 'N', name: 'N', role: 'GMO', teams: null, tabs: ['dashboard'] };
+  await assert.rejects(() => run('auditReport', { month: '2026-07' }, nobody, dbWithRpc(t)), e => e.status === 403);
+});
