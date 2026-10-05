@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst, nearestToDayIsDayFirst } from './parse.js';
+import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, nameOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst, nearestToDayIsDayFirst } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -384,18 +384,18 @@ export function importTeams(csvRows) {
     put('region', textOrNull, 'REGION');
     put('zone', textOrNull, 'ZONE');
     put('branch', textOrNull, 'BRANCH');
-    put('opm', textOrNull, 'OPM');
+    put('opm', nameOrNull, 'OPM');
     put('opm_no', normPhone, 'OPM NO', 'OPM_NO');
-    put('recovery', textOrNull, 'RECOVERY');
+    put('recovery', nameOrNull, 'RECOVERY');
     put('recovery_no', normPhone, 'RECOVERY NO', 'RECOVERY_NO');
-    put('recovery_id', textOrNull, 'REC ID', 'RECOVERY ID');
-    put('gmo', textOrNull, 'GMO');
+    put('recovery_id', nameOrNull, 'REC ID', 'RECOVERY ID');
+    put('gmo', nameOrNull, 'GMO');
     put('gmo_no', normPhone, 'GMO NO', 'GMO_NO');
-    put('gmo_id', textOrNull, 'GMO ID');
-    put('manager', textOrNull, 'MANAGER');
+    put('gmo_id', nameOrNull, 'GMO ID');
+    put('manager', nameOrNull, 'MANAGER');
     put('manager_no', normPhone, 'MANAGER NO', 'MANAGER_NO');
-    put('manager_id', textOrNull, 'MANAGER ID');
-    put('credit', textOrNull, 'C. ANALYST', 'CREDIT');
+    put('manager_id', nameOrNull, 'MANAGER ID');
+    put('credit', nameOrNull, 'C. ANALYST', 'CREDIT');
     put('credit_no', normPhone, 'CREDIT NO', 'C. ANALYST NO');
     /* CREDIT ID IS BACK, as plain storage. It was dropped ("dont use IDs in the approved
        report ... not using it") because the sale-approvals board matched an analyst by this ID
@@ -404,22 +404,22 @@ export function importTeams(csvRows) {
        which carries an ID beside every role now, apparently a staff/payroll number rather than
        a report key. Storing it is what "the same shape the importer reads" requires; nothing
        downstream depends on it. */
-    put('credit_id', textOrNull, 'CREDIT ID');
+    put('credit_id', nameOrNull, 'CREDIT ID');
     /* EARLY COL, not EXPECTED -- "my final thought of the teams and staff table" renamed this
        role on the sheet. Both spellings land on the same column, so a file from before the
        rename still reads in exactly as it always did. */
-    put('expected', textOrNull, 'EARLY COL', 'EXPECTED');
+    put('expected', nameOrNull, 'EARLY COL', 'EXPECTED');
     put('expected_no', normPhone, 'EARLY COL NO', 'EXPECTED NO', 'EXPECTED_NO');
-    put('early_col_id', textOrNull, 'EARLY COL ID');
-    put('bike', textOrNull, 'BIKE');
+    put('early_col_id', nameOrNull, 'EARLY COL ID');
+    put('bike', nameOrNull, 'BIKE');
     put('bike_no', normPhone, 'BIKE NO', 'BIKE_NO');
-    put('bike_id', textOrNull, 'BIKE ID');
-    put('legal', textOrNull, 'LEGAL');
+    put('bike_id', nameOrNull, 'BIKE ID');
+    put('legal', nameOrNull, 'LEGAL');
     put('legal_no', normPhone, 'LEGAL NO', 'LEGAL_NO');
-    put('legal_id', textOrNull, 'LEGAL ID');
-    put('collection', textOrNull, 'COLLECTION');
+    put('legal_id', nameOrNull, 'LEGAL ID');
+    put('collection', nameOrNull, 'COLLECTION');
     put('collection_no', normPhone, 'COL NO', 'COLLECTION NO');
-    put('collection_id', textOrNull, 'COL ID', 'COLLECTION ID');
+    put('collection_id', nameOrNull, 'COL ID', 'COLLECTION ID');
     return out;
   }).filter(x => x.team);
 }

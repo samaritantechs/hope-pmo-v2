@@ -1376,3 +1376,34 @@ test('abnormal payments: a row is keyed on its own identity, so the same sheet t
     'R99|12345|755000222|MAMA A', 'then the customer ref, amount, phone and sender together');
   assert.notEqual(abnormalId({ ref_no: 'R99', paid: 12345 }), abnormalId({ ref_no: 'R99', paid: 12346 }));
 });
+
+/* A DASH IS NOT A PERSON.
+     "unassigned teams count text at collection slide counted only for pmo collection not for
+      early collection and recovery after uploading. so the dash was not respected"
+   The leaders sheet writes a dash where nobody holds a role, and the importer used to store
+   it as a name. One rule (parse.js nameOrNull) now turns every such placeholder into NULL at
+   import, so the boards never see it. A real name, and a blank that clears a leader, are
+   unchanged. */
+test('a dash in a leaders-sheet role column imports as nobody, not as a name', async () => {
+  const { importTeams } = await import('../api/_lib/importers.js');
+  const { nameOrNull } = await import('../api/_lib/parse.js');
+  const rows = [['TEAM', 'EARLY COL', 'RECOVERY', 'COLLECTION', 'BIKE', 'MANAGER', 'GMO', 'REC ID'],
+    ['MBAGALA', '—', '-', 'N/A', 'none', '', 'ASHA', '--'],
+    ['KONGOWE', 'EARLY E', 'JUMA G', ' - ', '0', 'BOB', 'hakuna', '77']];
+  const [mb, ko] = importTeams(rows);
+  assert.equal(mb.expected, null, 'an em dash is nobody');
+  assert.equal(mb.recovery, null, 'a hyphen is nobody');
+  assert.equal(mb.collection, null, 'N/A is nobody');
+  assert.equal(mb.bike, null, 'NONE is nobody');
+  assert.equal(mb.manager, null, 'a blank still clears');
+  assert.equal(mb.gmo, 'ASHA', 'a name is kept');
+  assert.equal(mb.recovery_id, null, 'an id cell of dashes is nobody too');
+  assert.equal(ko.expected, 'EARLY E'); assert.equal(ko.recovery, 'JUMA G');
+  assert.equal(ko.collection, null); assert.equal(ko.bike, null); assert.equal(ko.gmo, null);
+  assert.equal(ko.recovery_id, '77');
+  // The rule itself, on the spellings a sheet actually produces.
+  for (const v of ['—', '–', '-', '--', '_', '.', 'N/A', 'NA', 'none', 'NIL', 'null', 'Hakuna', '0', ' — ', '', null, undefined])
+    assert.equal(nameOrNull(v), null, JSON.stringify(v) + ' is nobody');
+  for (const v of ['ASHA', 'O. JUMA', '0712', 'A-B', 'NONE K'])
+    assert.equal(nameOrNull(v), String(v).trim(), JSON.stringify(v) + ' is a name');
+});
