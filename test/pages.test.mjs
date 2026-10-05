@@ -1413,15 +1413,19 @@ test('the daily bonus maths: a day is worth its gates, a perfect month is exactl
    so it is the one that ran off the bottom. presFit_ measures the drawn table against the
    space under the heading and shrinks the type to the ratio, floor 8px, after every draw and
    on resize. The clamp() width rule is untouched: a table that fits is left as it was. */
-test('the presentation fits a tall table slide to the screen after every draw and on resize', () => {
+test('the presentation fits every slide to the screen after every draw and on resize', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/presSetHtml_\(/.test(draw), 'presDraw hands its HTML to the setter that fits it');
   const fit = app.slice(app.indexOf('function presFit_'), app.indexOf('function presProgGroup_'));
   assert.ok(/classList\.remove\('pfit'\)/.test(fit) && /style\.fontSize = ''/.test(fit), 'every fit starts from the clamp() size, so a slide that fits is never shrunk');
-  assert.ok(/need <= avail\) return;/.test(fit), 'and only a table taller than the space is touched');
+  assert.ok(/need <= tAvail\) return;/.test(fit), 'and only a table taller than the space is touched');
   assert.ok(/Math\.max\(8,/.test(fit), 'with an 8px floor, below which the box scrolls as before');
   assert.ok(/window\.addEventListener\('resize'[^]*presFit_\(\)/.test(app), 'a projector plugged in mid-meeting re-fits the slide that is up');
+  // "all the slides": a body that is not a table is zoomed as a whole, floor 0.5, with a transform fallback.
+  assert.ok(/body\.style\.zoom = r;/.test(fit) && /Math\.max\(0\.5,/.test(fit), 'KPI, progress and note slides are zoomed to fit, floor 0.5');
+  assert.ok(/CSS\.supports\('zoom', '0\.5'\)/.test(fit) && /transform = 'scale\(' \+ r \+ '\)'/.test(fit), 'with a transform fallback where zoom is unsupported');
+  assert.ok(/if \(h <= avail\) return;/.test(fit), 'and a body that fits is never zoomed');
   assert.ok(/#pres \.ptable\.pfit td\{padding:\.3em \.5em\}/.test(app), 'a fitted table pads in em so the rows shrink with the type');
   // The HOPE Calls slide is still uncapped: the fix is to fit it, not to cut officers off it.
   const slides = app.slice(app.indexOf("slides.push({ id:'calls'"), app.indexOf("slides.push({ id:'credit'"));
