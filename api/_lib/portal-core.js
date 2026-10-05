@@ -1,5 +1,6 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
+import { nameOrNull } from './parse.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch, pickFirstBatch, latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
@@ -971,7 +972,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
         primary, secondary,
         primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
         phase: a.phase, role: a.role, cycle: a.label,
-        leader: team[ROLE_COLS[a.role]] || '(unassigned)' };
+        leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)' };
     });
   // Each customer counts on BOTH of their days, so the distribution sums to 2x the headcount.
   // Day 0 holds anyone whose loan carries no disbursement date: they cannot be placed on a
@@ -3025,7 +3026,7 @@ async function leaderSegments_(db, user, nowMs, teamBy) {
   const holdersOf = (teamKey, role) => {
     if (role === 'collection' && colByTeam[teamKey] && colByTeam[teamKey].length) return colByTeam[teamKey];
     const t = teamBy[teamKey];
-    const v = t && t[role] ? String(t[role]).trim() : '';
+    const v = t ? nameOrNull(t[role]) : null;
     return [v || '(unassigned)'];
   };
 
@@ -3653,7 +3654,7 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
   const officerTeamsOf_ = roleCol => {
     const m = new Map();
     for (const t of teamRows) {
-      const name = t[roleCol] ? String(t[roleCol]).trim() : '(unassigned)';
+      const name = nameOrNull(t[roleCol]) || '(unassigned)';
       if (!m.has(name)) m.set(name, new Set());
       m.get(name).add(K(t.team));
     }
@@ -4276,7 +4277,7 @@ async function assignments(db, user, _args, nowMs) {
     const f = byRef[String(r.ref)] || {};
     const a = assignFor(r, strat, nowMs);
     const team = teamBy[K(r.team)] || {};
-    const leader = team[ROLE_COLS[a.role]] || '';
+    const leader = nameOrNull(team[ROLE_COLS[a.role]]) || '';
     return { ref: r.ref, full_name: r.full_name, contact: r.contact, guarantor_contact: r.guarantor_contact,
       team: r.team, branch: team.branch || null, arrears: num(r.arrears), status: r.status, ds: r.ds, dc: r.dc,
       days_elapsed: r.days_elapsed, phase: a.phase, role: a.role, cycle: a.label,
@@ -4700,7 +4701,7 @@ async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
   const rawNumberFor = (team, role) => {
     const t = teamBy[K(team)] || {};
     const col = TEAM_PHONE_OF[role];
-    return col && t[col] ? String(t[col]).trim() : '';
+    return col ? (nameOrNull(t[col]) || '') : '';
   };
   /** The chain, tried in order; PMO_RECOVERY_NO only once every link in it is blank. */
   const resolveChain = (team, chain) => {
@@ -4725,7 +4726,7 @@ async function smsBuild_(db, user, { audience = 'defaulters' } = {}, nowMs) {
     const slot = {};
     for (const role of ['credit', 'recovery', 'expected', 'collection']) {
       const col = TEAM_PHONE_OF[role];
-      if (t[col]) slot[col] = String(t[col]).trim();
+      if (nameOrNull(t[col])) slot[col] = nameOrNull(t[col]);
     }
     teamPhonesOut[team] = slot;
   };
@@ -5016,7 +5017,7 @@ async function staffRoster(db, user) {
   for (const roleCol of STAFF_TEAM_ROLES) {
     const by = new Map();
     for (const t of mine) {
-      const who = String(t[roleCol] || '').trim();
+      const who = nameOrNull(t[roleCol]) || '';
       if (!who) continue;
       if (!by.has(K(who))) by.set(K(who), { name: who, teams: [], no: null });
       const v = by.get(K(who));
@@ -5648,7 +5649,7 @@ async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
   let renamedOn = 0, added = 0, cleared = 0;
   for (const t of teamRows) {
     if (!teamAllowed(user, t.team)) continue;
-    const holder = String(t[roleCol] || '').trim();
+    const holder = nameOrNull(t[roleCol]) || '';
     // Held by this person under EITHER spelling of their name -- the old one is exactly what a
     // rename is trying to catch up with.
     const held = holder && (K(holder) === K(now) || (renamed && K(holder) === K(before)));
@@ -10729,7 +10730,7 @@ async function pctTargets(db) {
 
 function officerOf(teamBy, team, roleCol) {
   const t = teamBy[K(team)];
-  return (t && t[roleCol]) ? String(t[roleCol]).trim() : '(unassigned)';
+  return (t && nameOrNull(t[roleCol])) || '(unassigned)';
 }
 function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
@@ -11397,7 +11398,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      makes); collection is the teams no PMO code holds (`loose`, above). Scoped like every row
      on these boards, so a team-restricted code never learns another team is unmanned. */
   const myTeamRows = teamRows.filter(t => teamAllowed(user, t.team));
-  const noOne = col => myTeamRows.filter(t => !String(t[col] || '').trim()).map(t => t.team).sort();
+  // nameOrNull, not a blank test: a dash on the sheet is nobody (see parse.js).
+  const noOne = col => myTeamRows.filter(t => !nameOrNull(t[col])).map(t => t.team).sort();
   const unassignedTeams = { early: noOne('expected'), col: loose.slice().sort(), rec: noOne('recovery') };
 
   return { weekday: wd, weekOf: mon, today, deckWarning, unassignedTeams,

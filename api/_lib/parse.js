@@ -287,6 +287,27 @@ export function textOrNull(v) {
   return s === '' ? null : s;
 }
 
+/* A DASH IS NOT A PERSON.
+
+     "unassigned teams count text at collection slide counted only for pmo collection not for
+      early collection and recovery after uploading. so the dash was not respected"
+
+   The leaders sheet writes a dash in a role nobody holds -- 162 of them in the file that
+   raised this -- and the importer stored each one as a name. Every screen that then asked "is
+   somebody named here" saw a non-empty cell and said yes, so eleven early-collection teams and
+   nine recovery teams with no officer at all were counted as staffed. Collection was immune
+   only because it counts PMO access codes, not the sheet.
+
+   This is the one definition of "nobody named": blank, any run of dashes or underscores, N/A,
+   NONE, NIL, HAKUNA, or a bare 0. The importer stores such a cell as NULL and every reader
+   asks this function rather than testing the cell for emptiness, so the sheet and the boards
+   cannot disagree about who is unassigned. */
+const NOBODY = /^(?:[-\u2010-\u2015_.\u00B7]+|n\/?a|none|nil|null|hakuna|0)$/i;
+export function nameOrNull(v) {
+  const s = textOrNull(v);
+  return s === null || NOBODY.test(s) ? null : s;
+}
+
 /** Team names are identifiers used for matching and foreign keys, not free text -- "Tunduru"
     and "TUNDURU" are the same team to a person but different strings to an exact-match database
     constraint. Normalizing every team value through this, everywhere a team gets read (Teams

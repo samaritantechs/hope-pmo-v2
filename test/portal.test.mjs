@@ -4079,6 +4079,18 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
      expected or recovery officer; CATHERINE's code holds KONGOWE only. */
   assert.deepEqual(b2.unassignedTeams, { early: ['MBAGALA'], col: ['MBAGALA'], rec: ['MBAGALA'] });
   assert.deepEqual(b.unassignedTeams.col, ['KONGOWE', 'MBAGALA'], 'no PMO code at all: every team is unheld');
+  /* AND A DASH ON THE SHEET IS NOBODY. A team whose expected and recovery cells hold the
+     dash the leaders sheet writes for an empty role must be counted as unassigned on the
+     early and recovery lines exactly as a blank is -- "the dash was not respected in counting
+     for the two". Collection never read the sheet, which is why only it was right. */
+  const tDash = tables();
+  tDash.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  for (const tm of tDash.teams) if (tm.team === 'MBAGALA') { tm.expected = '\u2014'; tm.recovery = '-'; }
+  const bDash = await run('officerBoards', {}, ADMIN, dbWithRpc(tDash));
+  assert.deepEqual(bDash.unassignedTeams, { early: ['MBAGALA'], col: ['MBAGALA'], rec: ['MBAGALA'] },
+    'a dash in the officer column counts as unassigned on all three lines');
+  assert.ok(bDash.recWeek.find(r => r.officer === '(unassigned)'), 'and the recovery board files the team under (unassigned), not under a dash');
+  assert.ok(!bDash.recWeek.find(r => r.officer === '-'), 'no officer called "-" appears on the board');
   // Every team held by somebody: no such row.
   const t3 = tables();
   t3.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });
