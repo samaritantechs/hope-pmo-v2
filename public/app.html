@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-05-a';
+var BUILD = '2026-10-05-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9844,28 +9844,56 @@ function presSetHtml_(html){
   document.getElementById('pres').innerHTML = html;
   presFit_();
 }
-/* THE TABLE FITS THE SCREEN TOP TO BOTTOM, OR SAYS WHY NOT.
-   Measured, not guessed: the space under the heading minus the caption, against the table as
-   drawn at its clamp() size. Only when the table is taller does the font shrink, to the
-   exact ratio, with an 8px floor. Called after every draw and on resize, so a projector
-   plugged in mid-meeting re-fits the slide that is up. */
+/* EVERY SLIDE FITS THE SCREEN TOP TO BOTTOM, OR SAYS WHY NOT.
+     "Hope calls slide height should autofit since we cant keep scrolling" ... "all the slides"
+   Measured, not guessed: the space under the heading against the slide body as drawn. Only
+   when the body is taller is it shrunk, to the exact ratio, and a slide that fits is left
+   exactly as drawn. Two ways to shrink, because two kinds of body:
+     a TABLE     its font size, with header and padding in em (.pfit), floor 8px -- the type
+                 stays crisp and the clamp() width rule keeps the columns on the screen;
+     anything    the KPI grid, the day-progress columns, a note: the body is zoomed as a
+     else        whole, floor 0.5, so every px measurement inside shrinks together. zoom is
+                 what every projector browser here runs (Chromium, Safari, Firefox 126+); the
+                 transform fallback is for anything older.
+   Below the floor the box scrolls as it always did: smaller than that is not readable from
+   the back of the room. Called after every draw and on resize, so a projector plugged in
+   mid-meeting re-fits the slide that is up. */
 function presFit_(){
-  var pres = document.getElementById('pres'), tbl = pres && pres.querySelector('.ptable');
-  if (!tbl) return;
-  tbl.classList.remove('pfit'); tbl.style.fontSize = '';
-  var body = pres.querySelector('.pbody'), cap = pres.querySelector('.pcap');
+  var pres = document.getElementById('pres'), body = pres && pres.querySelector('.pbody');
+  if (!body) return;
+  var tbl = pres.querySelector('.ptable');
+  body.style.zoom = ''; body.style.transform = ''; body.style.transformOrigin = ''; body.style.width = '';
+  if (tbl) { tbl.classList.remove('pfit'); tbl.style.fontSize = ''; }
   var top = body.getBoundingClientRect().top;
   var bottom = pres.clientHeight - parseFloat(getComputedStyle(pres).paddingBottom || 0);
-  var avail = bottom - top - (cap ? cap.getBoundingClientRect().height + 12 : 0) - 8;   // 8px of slack: the floor must not scroll
-  var need = tbl.getBoundingClientRect().height;
-  if (!(avail > 0) || need <= avail) return;
-  var base = parseFloat(getComputedStyle(tbl).fontSize) || 16;
-  tbl.classList.add('pfit');
-  tbl.style.fontSize = Math.max(8, Math.floor(base * avail / need * 10) / 10) + 'px';
-  // Header and padding are now in em, so the table is shorter than the plain ratio predicts;
-  // one more measured pass takes back what that freed.
-  var need2 = tbl.getBoundingClientRect().height;
-  if (need2 < avail) tbl.style.fontSize = Math.min(base, Math.max(8, parseFloat(tbl.style.fontSize) * avail / need2 * 0.97)) + 'px';
+  var avail = bottom - top - 8;   // 8px of slack: the floor must not scroll
+  if (!(avail > 0)) return;
+  if (tbl) {
+    var cap = pres.querySelector('.pcap');
+    var tAvail = avail - (cap ? cap.getBoundingClientRect().height + 12 : 0);
+    var need = tbl.getBoundingClientRect().height;
+    if (need <= tAvail) return;
+    var base = parseFloat(getComputedStyle(tbl).fontSize) || 16;
+    tbl.classList.add('pfit');
+    tbl.style.fontSize = Math.max(8, Math.floor(base * tAvail / need * 10) / 10) + 'px';
+    // Header and padding are now in em, so the table is shorter than the plain ratio predicts;
+    // one more measured pass takes back what that freed.
+    var need2 = tbl.getBoundingClientRect().height;
+    if (need2 < tAvail) tbl.style.fontSize = Math.min(base, Math.max(8, parseFloat(tbl.style.fontSize) * tAvail / need2 * 0.97)) + 'px';
+    return;
+  }
+  var h = body.getBoundingClientRect().height;
+  if (h <= avail) return;
+  var r = Math.max(0.5, Math.floor(avail / h * 100) / 100);
+  if (window.CSS && CSS.supports && CSS.supports('zoom', '0.5')) {
+    body.style.zoom = r;
+    // Zooming narrows the body, which can re-flow a grid into more columns and free height;
+    // one more measured pass takes it back, never past full size.
+    var h2 = body.getBoundingClientRect().height;
+    if (h2 < avail) body.style.zoom = Math.min(1, r * avail / h2 * 0.98);
+  } else {
+    body.style.transformOrigin = 'top left'; body.style.transform = 'scale(' + r + ')'; body.style.width = (100 / r) + '%';
+  }
 }
 window.addEventListener('resize', function(){ if (S.view === 'present' && S.slides && S.slides.length) presFit_(); });
 
