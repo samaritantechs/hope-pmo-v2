@@ -1405,3 +1405,25 @@ test('the daily bonus maths: a day is worth its gates, a perfect month is exactl
   assert.equal(m.bpLeaderDay_(AM.items, none, cfg(), 22).earn, 0, 'an unfilled day is lost even with 3 of 3 gates');
   assert.ok(m.bpLeaderDay_(AM.items, none, Object.assign(cfg(), { lose: false }), 22).earn > 0, 'unless that rule is switched off');
 });
+
+/* A TABLE SLIDE FITS THE SCREEN TOP TO BOTTOM.
+     "Hope calls slide height should autofit since we cant keep scrolling to see the last
+      pmo's data"
+   The HOPE Calls slide is the one table with no row cap -- every officer of the three units --
+   so it is the one that ran off the bottom. presFit_ measures the drawn table against the
+   space under the heading and shrinks the type to the ratio, floor 8px, after every draw and
+   on resize. The clamp() width rule is untouched: a table that fits is left as it was. */
+test('the presentation fits a tall table slide to the screen after every draw and on resize', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
+  assert.ok(/presSetHtml_\(/.test(draw), 'presDraw hands its HTML to the setter that fits it');
+  const fit = app.slice(app.indexOf('function presFit_'), app.indexOf('function presProgGroup_'));
+  assert.ok(/classList\.remove\('pfit'\)/.test(fit) && /style\.fontSize = ''/.test(fit), 'every fit starts from the clamp() size, so a slide that fits is never shrunk');
+  assert.ok(/need <= avail\) return;/.test(fit), 'and only a table taller than the space is touched');
+  assert.ok(/Math\.max\(8,/.test(fit), 'with an 8px floor, below which the box scrolls as before');
+  assert.ok(/window\.addEventListener\('resize'[^]*presFit_\(\)/.test(app), 'a projector plugged in mid-meeting re-fits the slide that is up');
+  assert.ok(/#pres \.ptable\.pfit td\{padding:\.3em \.5em\}/.test(app), 'a fitted table pads in em so the rows shrink with the type');
+  // The HOPE Calls slide is still uncapped: the fix is to fit it, not to cut officers off it.
+  const slides = app.slice(app.indexOf("slides.push({ id:'calls'"), app.indexOf("slides.push({ id:'credit'"));
+  assert.ok(/rows: callRows,/.test(slides) && !/callRows\.slice/.test(slides), 'every officer of the three units stays on the slide');
+});
