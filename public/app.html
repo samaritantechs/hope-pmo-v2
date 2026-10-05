@@ -276,6 +276,18 @@
   /* And a last resort: if a board is still wider than the screen, it scrolls INSIDE its own
      box rather than pushing the whole slide sideways and hiding the navigation arrows. */
   #pres .pscroll{overflow-x:auto;max-width:100%}
+  /* A SLIDE THAT DOES NOT FIT TOP TO BOTTOM IS THE SAME FAULT SIDEWAYS.
+       "Hope calls slide height should autofit since we cant keep scrolling to see the last
+        pmo's data"
+     The HOPE Calls slide lists every officer of the three units -- deliberately, so nobody sits
+     unseen in the middle -- which on a full roster is thirty-odd rows, and the room was
+     scrolling to reach the bottom of the ranking. presFit_ measures the drawn table against
+     the space under the heading and, when it is taller, sets the table's font size to the
+     ratio; everything below is in em so the rows shrink with the type. The floor is 8px:
+     past that a slide is not readable from the back of the room, and the box scrolls as it
+     always did. A table that fits is left exactly as the clamp() rule above sizes it. */
+  #pres .ptable.pfit th{font-size:.75em;padding:.3em .5em}
+  #pres .ptable.pfit td{padding:.3em .5em}
   /* The caption under a table slide: a heading word, then one line per unit. */
   #pres .pcap{margin-top:clamp(8px,1.4vh,18px);font-size:clamp(11px,1.05vw,17px);line-height:1.5;color:var(--pink)}
   #pres .pcap .pcaph{font-weight:800;color:#DC2626;text-transform:uppercase;letter-spacing:.04em;font-size:.9em}
@@ -716,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-03-a';
+var BUILD = '2026-10-05-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9807,7 +9819,7 @@ function presDraw(){
     // A slide's caption sits under its table, after the total -- see the PMO slide's own.
     if (s.caption) body += '<div class="pcap">' + s.caption + '</div>';
   }
-  document.getElementById('pres').innerHTML =
+  presSetHtml_(
     '<div class="phead"><span>'+esc(s.title)+'</span>'
     + '<span class="pnum">'+(S.presI+1)+' / '+S.slides.length
       + (S.presUpdated ? ' <span style="font-size:.6em;opacity:.7" title="Takwimu zilipatikana / figures fetched">· '
@@ -9826,8 +9838,36 @@ function presDraw(){
        fire cannot pull the black away and put the figures back in front of the room. */
     + (S.presBlank ? '<div class="pblank" onclick="presBlank(false)">'
         + '<div class="pbx">&#10005;</div>'
-        + '<div class="pbnote">Bofya popote kurudi / tap anywhere to come back</div></div>' : '');
+        + '<div class="pbnote">Bofya popote kurudi / tap anywhere to come back</div></div>' : ''));
 }
+function presSetHtml_(html){
+  document.getElementById('pres').innerHTML = html;
+  presFit_();
+}
+/* THE TABLE FITS THE SCREEN TOP TO BOTTOM, OR SAYS WHY NOT.
+   Measured, not guessed: the space under the heading minus the caption, against the table as
+   drawn at its clamp() size. Only when the table is taller does the font shrink, to the
+   exact ratio, with an 8px floor. Called after every draw and on resize, so a projector
+   plugged in mid-meeting re-fits the slide that is up. */
+function presFit_(){
+  var pres = document.getElementById('pres'), tbl = pres && pres.querySelector('.ptable');
+  if (!tbl) return;
+  tbl.classList.remove('pfit'); tbl.style.fontSize = '';
+  var body = pres.querySelector('.pbody'), cap = pres.querySelector('.pcap');
+  var top = body.getBoundingClientRect().top;
+  var bottom = pres.clientHeight - parseFloat(getComputedStyle(pres).paddingBottom || 0);
+  var avail = bottom - top - (cap ? cap.getBoundingClientRect().height + 12 : 0) - 8;   // 8px of slack: the floor must not scroll
+  var need = tbl.getBoundingClientRect().height;
+  if (!(avail > 0) || need <= avail) return;
+  var base = parseFloat(getComputedStyle(tbl).fontSize) || 16;
+  tbl.classList.add('pfit');
+  tbl.style.fontSize = Math.max(8, Math.floor(base * avail / need * 10) / 10) + 'px';
+  // Header and padding are now in em, so the table is shorter than the plain ratio predicts;
+  // one more measured pass takes back what that freed.
+  var need2 = tbl.getBoundingClientRect().height;
+  if (need2 < avail) tbl.style.fontSize = Math.min(base, Math.max(8, parseFloat(tbl.style.fontSize) * avail / need2 * 0.97)) + 'px';
+}
+window.addEventListener('resize', function(){ if (S.view === 'present' && S.slides && S.slides.length) presFit_(); });
 
 /** ONE UNIT'S COLUMN on the day-progress slide: rank, name, a bar from where the day started
     to where it stands, and the figures under it. The bar's faint part is the morning's figure,
