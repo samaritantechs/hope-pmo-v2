@@ -2403,6 +2403,187 @@ async function par(db, user, _args, nowMs) {
       avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance) } };
 }
 
+/* =====================================================================================
+   THE AUDIT REPORT PANEL -- the internal audit questionnaire, answered for a chosen month.
+   =====================================================================================
+     "I need a 'audit report pannel' where pmo data could always get asked data per given
+      month for example now he needs like total def of customers with disb date sept only,
+      their balance and their par - and other data info that we can provide"
+
+   The internal auditor sends the same questionnaire every month (May-July, August, September
+   2026 all read alike): sales target against actual, the five best and five worst teams,
+   PAR > 30 days for the loans disbursed in the month and the month before, the aging of
+   overdue loans as at month end, the collection efficiency rate, recovery target against
+   actual, and which teams earned a bonus. PMO Data answered each by hand from downloads.
+
+   NOTHING HERE IS WORKED OUT A SECOND WAY. The month's sales, collection and recovery, and
+   the per-team weekly percentages, are the month report's own cached answer (the same one
+   the dashboard's dot opens), so an auditor's figure and a director's figure cannot differ.
+   The cohort and aging sections read the defaulter deck as at the month's end exactly as the
+   Portfolio at Risk tab reads today's -- same reader, same per-customer resolution, same
+   principalOf and PAR_BANDS vocabulary. What this adds is the two questions nobody could ask
+   before: "the customers disbursed in THIS month who are now in arrears", and "the book as it
+   stood on the LAST day of the month".
+
+   TWO PAR FIGURES, SAID APART, because the auditor's and the system's are not the same ratio:
+     par        arrears over balance, for the rows in hand -- the PAR tab's own definition
+     par30      the balance of rows more than 30 days overdue, over the cohort's TOTAL
+                disbursed (principal + interest, from the loans table) -- the auditor's
+                "PAR > 30 days for loans disbursed in <month>". When the loans table has no
+                record of that month's disbursements the denominator is null and the screen
+                says so, rather than quietly dividing by the defaulters alone.
+   The whole-book aging uses the questionnaire's own buckets (1-7, 8-30, 31-60, 61-90, >90),
+   not PAR_BANDS, because the answer has to drop into the auditor's table as it stands.
+
+   ONE READ OF THE DECK (the columns the arithmetic touches), one read of two months' loans,
+   and the month report from its cache; the answer is cached per month and scope for the
+   usual minute. Not on the upload or call paths. Team-scoped at the database like every
+   other screen: a restricted code audits its own teams. */
+const AUDIT_AGING = [
+  { key: '1-7', lo: 1, hi: 7 }, { key: '8-30', lo: 8, hi: 30 }, { key: '31-60', lo: 31, hi: 60 },
+  { key: '61-90', lo: 61, hi: 90 }, { key: '>90', lo: 91, hi: Infinity },
+];
+const AUDIT_DECK_COLS = 'ref, full_name, contact, team, branch, status, disb_date, days_elapsed, dc, ds, arrears, balance, initial_inst, other_inst, snapshot_date, snapshot_type, weekday';
+function monthOfArg_(v, nowMs) {
+  const m = String(v || '').slice(0, 7);
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(m) ? m : todayKey(nowMs).slice(0, 7);
+}
+function monthEndOf_(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return todayKey(Date.UTC(y, m, 0, 12));
+}
+function prevMonthOf_(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  return todayKey(Date.UTC(y, m - 2, 1, 12)).slice(0, 7);
+}
+async function auditReport(db, user, args, nowMs) {
+  const month = monthOfArg_(args && args.month, nowMs);
+  return cachedAnswer(db, 'auditReport|' + month, user, nowMs, () => auditReportCompute_(db, user, month, nowMs));
+}
+async function auditReportCompute_(db, user, month, nowMs) {
+  const monthStart = month + '-01', monthEnd = monthEndOf_(month);
+  const today = todayKey(nowMs);
+  const asAt = monthEnd < today ? monthEnd : today;          // a finished month to its last day; the live month to today
+  const prevMonth = prevMonthOf_(month), prevStart = prevMonth + '-01';
+  /* The month report keyed exactly as monthReport keys it, so the cache is shared: the week
+     that holds the 7th always sits inside the month, whichever weekday the 1st fell on. */
+  const weekOf = weekMondayKey(Date.parse(month + '-07T12:00:00Z'));
+  const asOf = asOfWeek(nowMs, weekOf);
+  const [mr, deck, loansRaw, cfg] = await Promise.all([
+    cachedAnswer(db, 'monthReport|' + asOf.weekOf, user, nowMs, () => monthReportCompute_(db, user, asOf, nowMs))
+      .catch(() => null),
+    defaulterBook(db, user, { type: 'current', notAfter: asAt, columns: AUDIT_DECK_COLS }),
+    fetchAll(() => onTeams(db.from('loans').select('team, stage, disb_date, principal_amt, loan_amt, interest_amt')
+      .gte('disb_date', prevStart).lte('disb_date', monthEnd), user.teams)).catch(() => []),
+    settingsMany(db, ['BONUS_SALES_PCT', 'BONUS_COL_PCT', 'BONUS_REC_PCT', 'RECOVERY_TARGET_MONTHLY']),
+  ]);
+  const thr = { sales: cfg.num('BONUS_SALES_PCT', 80), col: cfg.num('BONUS_COL_PCT', 92), rec: cfg.num('BONUS_REC_PCT', 120) };
+  const recTarget = cfg.num('RECOVERY_TARGET_MONTHLY', 0) || null;
+
+  const rows = scoped(user, deck.rows || []);
+  const daysOf = r => num(r.days_elapsed) || num(r.dc);
+  const ymOf = r => String(r.disb_date || '').slice(0, 7);
+
+  /* ---- THE COHORTS: the month's disbursements and the previous month's, as the auditor asks. */
+  const disbursed = scoped(user, loansRaw).filter(l => l.stage === 'disbursed' || String(l.disb_status || '').toUpperCase() === 'DISBURSED' || l.disb_date);
+  const loanAmt = l => num(l.loan_amt) || (num(l.principal_amt) + num(l.interest_amt)) || num(l.principal_amt);
+  const cohort = ym => {
+    const mine = rows.filter(r => ymOf(r) === ym);
+    const over30 = mine.filter(r => daysOf(r) > 30);
+    const sum = (list, f) => list.reduce((s, r) => s + f(r), 0);
+    const dl = disbursed.filter(l => String(l.disb_date || '').slice(0, 7) === ym);
+    const disbTotal = dl.length ? sum(dl, loanAmt) : null;
+    const byTeam = {};
+    for (const r of mine) {
+      const b = bucket(byTeam, K(r.team), { team: r.team || '(no team)', customers: 0, arrears: 0, balance: 0, over30: 0 });
+      b.customers++; b.arrears += num(r.arrears); b.balance += num(r.balance);
+      if (daysOf(r) > 30) b.over30 += num(r.balance);
+    }
+    return {
+      month: ym,
+      customers: mine.length, arrears: sum(mine, r => num(r.arrears)), balance: sum(mine, r => num(r.balance)),
+      over30Customers: over30.length, over30Balance: sum(over30, r => num(r.balance)),
+      par: pctOf(sum(mine, r => num(r.arrears)), sum(mine, r => num(r.balance))),
+      disbursedLoans: dl.length, disbursedTotal: disbTotal,
+      par30: disbTotal ? pctOf(sum(over30, r => num(r.balance)), disbTotal) : null,
+      byStatus: Object.values(mine.reduce((m, r) => { const st = r.status || '(none)';
+        const b = bucket(m, K(st), { status: st, customers: 0, arrears: 0, balance: 0 });
+        b.customers++; b.arrears += num(r.arrears); b.balance += num(r.balance); return m; }, {}))
+        .map(({ key, ...b }) => b).sort((a, b) => b.balance - a.balance),
+      byTeam: Object.values(byTeam).map(({ key, ...b }) => ({ ...b, par: pctOf(b.arrears, b.balance) }))
+        .sort((a, b) => b.balance - a.balance),
+    };
+  };
+  const cohorts = [cohort(month), cohort(prevMonth)];
+  // The customer list behind the month's own cohort -- what PMO Data is actually asked for.
+  const list = rows.filter(r => ymOf(r) === month).map(r => ({
+    ref: r.ref, full_name: r.full_name, contact: r.contact, team: r.team, branch: r.branch || null,
+    status: r.status, disb_date: r.disb_date, days: daysOf(r), ds: r.ds,
+    arrears: num(r.arrears), balance: num(r.balance), principal: principalOf(r),
+  })).sort((a, b) => b.balance - a.balance);
+
+  /* ---- THE WHOLE BOOK AS AT MONTH END, in the questionnaire's own buckets. */
+  const aging = AUDIT_AGING.map(b => ({ bucket: b.key, customers: 0, arrears: 0, balance: 0 }));
+  let bookArrears = 0, bookBalance = 0, over30Book = 0, chronic = 0, chronicBalance = 0;
+  for (const r of rows) {
+    const d = daysOf(r), i = AUDIT_AGING.findIndex(b => d >= b.lo && d <= b.hi);
+    if (i >= 0) { aging[i].customers++; aging[i].arrears += num(r.arrears); aging[i].balance += num(r.balance); }
+    bookArrears += num(r.arrears); bookBalance += num(r.balance);
+    if (d > 30) over30Book += num(r.balance);
+    if (/CHRON/i.test(String(r.status || '')) || d > 90) { chronic++; chronicBalance += num(r.balance); }
+  }
+
+  /* ---- THE MONTH REPORT'S OWN FIGURES, lifted as they are. */
+  const t = mr && mr.totals ? mr.totals : null;
+  const trend = mr && mr.teamTrend ? mr.teamTrend : null;
+  const topBottom = which => {
+    const b = trend ? trend[which] : [];
+    const measured = b.filter(r => r.avg != null);
+    return { top: measured.slice(0, 5), bottom: measured.slice(-5).reverse(), teams: measured.length };
+  };
+  /* ---- BONUS: which teams cleared all three thresholds, per week and on the month. The
+     thresholds are the ones the questionnaire states (80 / 92 / 120) unless Settings says
+     otherwise; the percentages are the team trend's own. */
+  const weeks = trend ? trend.weeks.filter(w => w.started) : [];
+  const byTeamPct = {};
+  if (trend) for (const which of ['sales', 'collection', 'recovery']) for (const r of trend[which]) {
+    const b = bucket(byTeamPct, K(r.team), { team: r.team, sales: {}, collection: {}, recovery: {}, avg: {} });
+    for (const w of weeks) b[which][w.key] = r[w.key];
+    b.avg[which] = r.avg;
+  }
+  const clears = (s, c, r) => s != null && c != null && r != null && s >= thr.sales && c >= thr.col && r >= thr.rec;
+  const bonusWeeks = weeks.map(w => ({ week: w.key, from: w.from, to: w.to,
+    teams: Object.values(byTeamPct).filter(b => clears(b.sales[w.key], b.collection[w.key], b.recovery[w.key]))
+      .map(b => ({ team: b.team, sales: b.sales[w.key], collection: b.collection[w.key], recovery: b.recovery[w.key] }))
+      .sort((a, b) => a.team.localeCompare(b.team)) }));
+  const bonusMonth = Object.values(byTeamPct).filter(b => clears(b.avg.sales, b.avg.collection, b.avg.recovery))
+    .map(b => ({ team: b.team, sales: b.avg.sales, collection: b.avg.collection, recovery: b.avg.recovery }))
+    .sort((a, b) => a.team.localeCompare(b.team));
+
+  return {
+    month, monthStart, monthEnd, asAt, deckDate: deck.date || null, live: monthEnd >= today,
+    prevMonth, thresholds: thr,
+    sales: t ? { target: t.monthTarget, actual: t.sales, loans: t.loans, variance: t.monthTarget - t.sales, pct: t.salesPct } : null,
+    collection: t ? { due: t.expected, collected: t.collected, pct: t.colPct } : null,
+    recovery: t ? { uncollected: t.uncollected, recovered: t.recovered, pct: t.recPct, target: recTarget,
+      variance: recTarget != null && t.recovered != null ? t.recovered - recTarget : null } : null,
+    weeksRows: mr ? mr.rows : [],
+    monthReady: !!mr, ledgerReady: !!(mr && mr.ledgerReady),
+    cohorts, list,
+    aging, book: { customers: rows.length, arrears: bookArrears, balance: bookBalance, over30Balance: over30Book,
+      par: pctOf(bookArrears, bookBalance), par30: pctOf(over30Book, bookBalance),
+      chronic, chronicBalance },
+    ranking: { sales: topBottom('sales'), collection: topBottom('collection'), recovery: topBottom('recovery') },
+    bonusWeeks, bonusMonth,
+    notes: [
+      'PAR = arrears over balance for the rows in hand (as on the Portfolio at Risk tab). PAR > 30 = balance of rows more than 30 days overdue, over the total disbursed in that month from the loans table.',
+      'Aging and cohorts read the defaulter deck as at ' + (deck.date || 'no deck') + ', the latest upload on or before ' + asAt + '.',
+      'Recovery target comes from the setting RECOVERY_TARGET_MONTHLY; blank means none has been set.',
+      'Bonus thresholds: sales ≥ ' + thr.sales + '%, collection ≥ ' + thr.col + '%, recovery ≥ ' + thr.rec + '% (settings BONUS_SALES_PCT, BONUS_COL_PCT, BONUS_REC_PCT).',
+    ],
+  };
+}
+
 /** Weekly report: Mon-Fri collection per day plus the week's recovery and sales, all
     scoped -- the same numbers the dashboard shows, laid out by day. */
 /* WHAT A WEEK-WIDE READ ACTUALLY NEEDS.
@@ -7865,7 +8046,7 @@ const FN = {
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
-  par, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
+  par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, callAgents, saveCallAgent, settings: settingsList, settingSet,
@@ -8235,6 +8416,7 @@ const FN_TAB = {
   promises: ['promises'],
   followupReport: ['fureport'],
   par: ['par'],
+  auditReport: ['auditrep'],
   weekly: ['weekly'], teamProgress: ['weekly'], stampWeek: ['weekly'],
   leaderReports: ['reports'],
   commission: ['commission'], commissionSave: ['commission'],
