@@ -1419,7 +1419,7 @@ test('the presentation fits every slide to the screen after every draw and on re
   assert.ok(/presSetHtml_\(/.test(draw), 'presDraw hands its HTML to the setter that fits it');
   const fit = app.slice(app.indexOf('function presFit_'), app.indexOf('function presProgGroup_'));
   assert.ok(/classList\.remove\('pfit'\)/.test(fit) && /style\.fontSize = ''/.test(fit), 'every fit starts from the clamp() size, so a slide that fits is never shrunk');
-  assert.ok(/need <= avail\) return;/.test(fit), 'and only a table taller than the space is touched');
+  assert.ok(/need <= tAvail\) return;/.test(fit), 'and only a table taller than the space is touched');
   assert.ok(/Math\.max\(8,/.test(fit), 'with an 8px floor, below which the box scrolls as before');
   assert.ok(/window\.addEventListener\('resize'[^]*presFit_\(\)/.test(app), 'a projector plugged in mid-meeting re-fits the slide that is up');
   // "all the slides": a body that is not a table is zoomed as a whole, floor 0.5, with a transform fallback.
