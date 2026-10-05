@@ -10408,6 +10408,10 @@ test('the audit report answers the questionnaire for a month: cohort, aging, PAR
   assert.deepEqual(by, { '1-7': 0, '8-30': 0, '31-60': 2, '61-90': 0, '>90': 1 });
   assert.equal(d.book.customers, 3); assert.equal(d.book.chronic, 1, '> 90 days is chronic');
   assert.equal(d.book.par30, 100, 'every row of this book is past 30 days');
+  // PAR per team on the whole book, biggest arrears first: KONGOWE 900 of 1,000,000, MBAGALA 800 of 500,000.
+  assert.deepEqual(d.bookByTeam.map(t => [t.team, t.customers, t.arrears, t.balance, t.par, t.par30, t.chronic]),
+    [['KONGOWE', 2, 900, 1000000, 0.1, 100, 1], ['MBAGALA', 1, 800, 500000, 0.2, 100, 0]]);
+  assert.equal(d.bookByTeam[0].share, 52.9, 'and each team\'s share of the book\'s arrears');
   // The month's own figures are the month report's.
   assert.ok(d.sales && typeof d.sales.target === 'number');
   assert.deepEqual(d.thresholds, { sales: 80, col: 92, rec: 120 });

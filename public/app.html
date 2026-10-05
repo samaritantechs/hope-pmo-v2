@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-05-c';
+var BUILD = '2026-10-05-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -957,7 +957,7 @@ var NAV = [
   { id:'par',         label:'Portfolio at Risk', ic:'<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/>' },
   /* THE AUDIT REPORT PANEL -- the internal audit questionnaire answered for a chosen month,
      directly under the PAR it extends. Granted like `audit`: admins, then PMO Data when ticked. */
-  { id:'auditrep',    label:'Ripoti ya Ukaguzi / Audit report', ic:'<path d="M9 2h6a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2z"/><path d="M9 12l2 2 4-4"/>' },
+  { id:'auditrep',    label:'Audit report', ic:'<path d="M9 2h6a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2z"/><path d="M9 12l2 2 4-4"/>' },
   { id:'present',     label:'Presentation', ic:'<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>' },
   /* IMPREST -- three panes, three authorities, granted like every tab in this list is now:
        "implement request, approval and report and i'll grant the navs to those responsible"
@@ -5137,6 +5137,10 @@ VIEWS.auditrep = function(){
       + '</div>';
     HEAD += board('auAging', 'Aging ya madeni / Aging of overdue loans', 'as at ' + esc(d.asAt) + ' · the auditor’s buckets', d.aging,
       [col('bucket','Days overdue'), col('customers','# Clients','num'), col('arrears','Arrears','money'), col('balance','Outstanding balance','money')]);
+    HEAD += board('auParTeam', 'PAR kwa timu / PAR per team', 'kitabu chote as at ' + esc(d.asAt) + ' · arrears kubwa kwanza', d.bookByTeam || [],
+      [col('team','Team'), col('branch','Branch'), col('customers','Customers','num'), col('arrears','Arrears','money'), col('balance','Balance','money'),
+       {key:'par', label:'PAR', kind:'pct', from:['arrears','balance']}, col('over30','> 30 days balance','money'), {key:'par30', label:'PAR > 30', kind:'pct', from:['over30','balance']},
+       col('chronic','Chronic','num'), {key:'share', label:'% of arrears', kind:'pct', from:['arrears','arrears']}]);
     // 6. TOP / BOTTOM
     var tb = function(id, title, r, key, label){
       var rows = (r.top || []).map(function(x){ return { ...x, end: 'Top' }; }).concat((r.bottom || []).map(function(x){ return { ...x, end: 'Bottom' }; }));

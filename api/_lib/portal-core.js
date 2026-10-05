@@ -2525,13 +2525,26 @@ async function auditReportCompute_(db, user, month, nowMs) {
   /* ---- THE WHOLE BOOK AS AT MONTH END, in the questionnaire's own buckets. */
   const aging = AUDIT_AGING.map(b => ({ bucket: b.key, customers: 0, arrears: 0, balance: 0 }));
   let bookArrears = 0, bookBalance = 0, over30Book = 0, chronic = 0, chronicBalance = 0;
+  /* PAR PER TEAM, on the whole book as at month end -- "also add par per team on the audit
+     panel". The same two ratios as the cohort and the book: PAR (arrears over balance) and
+     PAR > 30 (balance past 30 days over the team's balance in arrears), plus the chronic count. */
+  const bookTeam = {};
   for (const r of rows) {
     const d = daysOf(r), i = AUDIT_AGING.findIndex(b => d >= b.lo && d <= b.hi);
     if (i >= 0) { aging[i].customers++; aging[i].arrears += num(r.arrears); aging[i].balance += num(r.balance); }
     bookArrears += num(r.arrears); bookBalance += num(r.balance);
+    const isChronic = /CHRON/i.test(String(r.status || '')) || d > 90;
     if (d > 30) over30Book += num(r.balance);
-    if (/CHRON/i.test(String(r.status || '')) || d > 90) { chronic++; chronicBalance += num(r.balance); }
+    if (isChronic) { chronic++; chronicBalance += num(r.balance); }
+    const b = bucket(bookTeam, K(r.team), { team: r.team || '(no team)', customers: 0, arrears: 0, balance: 0, over30: 0, chronic: 0 });
+    b.customers++; b.arrears += num(r.arrears); b.balance += num(r.balance);
+    if (d > 30) b.over30 += num(r.balance);
+    if (isChronic) b.chronic++;
   }
+  const teamBranch = await branchByTeam(db).catch(() => new Map());
+  const bookByTeam = Object.values(bookTeam).map(({ key, ...b }) => ({ ...b, branch: teamBranch.get(K(b.team)) || null,
+    par: pctOf(b.arrears, b.balance), par30: pctOf(b.over30, b.balance), share: pctOf(b.arrears, bookArrears) }))
+    .sort((a, b) => b.arrears - a.arrears);
 
   /* ---- THE MONTH REPORT'S OWN FIGURES, lifted as they are. */
   const t = mr && mr.totals ? mr.totals : null;
@@ -2573,6 +2586,7 @@ async function auditReportCompute_(db, user, month, nowMs) {
     aging, book: { customers: rows.length, arrears: bookArrears, balance: bookBalance, over30Balance: over30Book,
       par: pctOf(bookArrears, bookBalance), par30: pctOf(over30Book, bookBalance),
       chronic, chronicBalance },
+    bookByTeam,
     ranking: { sales: topBottom('sales'), collection: topBottom('collection'), recovery: topBottom('recovery') },
     bonusWeeks, bonusMonth,
     notes: [
