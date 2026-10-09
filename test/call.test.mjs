@@ -1875,6 +1875,82 @@ test('Ripoti on the handset: the leader\'s code decides the scope, the sheet doe
   assert.equal(all.totals.calls, 2);
 });
 
+/* "So i fear if thats just a case study and the error is wide." It was: a leader's handset
+   copied the code's teams at registration and never looked again. Every screen on the phone
+   now reads the code live -- boot, the lists, Ripoti -- so an edit in the portal reaches the
+   handset without anybody registering again. */
+test('a leader\'s handset follows the access code live: edit the code, the phone changes scope', async () => {
+  const t = makeTables();
+  t.followup_status = [
+    { ref: 'K1', team: 'KONGOWE', full_name: 'KON CUSTOMER', status: 'Defaulter', arrears: 5000 },
+    { ref: 'M1', team: 'MBAGALA', full_name: 'MBA CUSTOMER', status: 'Defaulter', arrears: 9000 },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA, KONGOWE
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d5', 'PILI S', 'MBAGALA', '', '0712888888', 'MBA456'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+  await callApi(db, 'api_callSync', ['d5', [{ ts: T1, dur: 60, dir: 'out', num: '0712000003' }]], NOW);
+  assert.deepEqual(db._dump('call_users').find(u => u.name === 'ASHA JUMA').leader_teams, ['KONGOWE'],
+    'registration stored what the code said that day');
+
+  // The admin moves her code to MBAGALA in the portal. Nobody re-registers.
+  db._dump('access_codes').find(c => c.code === 'LEAD1').teams = ['MBAGALA'];
+  const LATER = NOW + 2 * 60 * 1000;                        // past the one-minute memo
+  const boot = await callApi(db, 'api_callBoot', ['d2'], LATER);
+  assert.equal(boot.leaderTeams, 'MBAGALA', 'boot says the code\'s teams as they are now');
+  assert.deepEqual(boot.teams, ['MBAGALA']);
+  const list = await callApi(db, 'api_callList', ['d2', 'defaulters'], LATER);
+  assert.deepEqual(list.rows.map(r => r.ref), ['M1'], 'the lists follow the code, not the stored copy');
+  const rep = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], LATER);
+  assert.deepEqual(rep.debugScope, ['MBAGALA'], 'and so does Ripoti');
+  assert.equal(rep.totals.calls, 1);
+  assert.ok(rep.users.some(u => u.name === 'PILI S') && !rep.users.some(u => u.name === 'JUMA ISSA'));
+
+  /* Cleared to ALL on the code: everything, live. On its own database, because the codes memo
+     is stamped with the wall clock (a late read must still serve the next boot) and the test's
+     pinned July clock never reaches a minute past October. */
+  const t2 = makeTables();
+  const db2 = fakeDb(t2);
+  await callApi(db2, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  db2._dump('access_codes').find(c => c.code === 'LEAD1').teams = null;
+  assert.equal((await callApi(db2, 'api_callBoot', ['d2'], NOW)).leaderTeams, 'ALL');
+  assert.equal((await callApi(db2, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW)).debugScope, 'ALL');
+});
+
+test('a leader whose name two codes carry, or no code at all, keeps what registration stored', async () => {
+  const t = makeTables();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA, KONGOWE
+  // A second code with the same name: the handset cannot tell which is hers, so it guesses nothing.
+  db._dump('access_codes').push({ code: 'LEAD2', name: 'Asha Juma', role: 'GMO', teams: ['MBAGALA'], tabs: [] });
+  const LATER = NOW + 2 * 60 * 1000;
+  assert.equal((await callApi(db, 'api_callBoot', ['d2'], LATER)).leaderTeams, 'KONGOWE');
+  // Her code deleted outright: the stored copy still stands rather than the phone going blank or ALL.
+  const codes = db._dump('access_codes');
+  codes.splice(0, codes.length, ...codes.filter(c => String(c.name || '').trim().toUpperCase() !== 'ASHA JUMA'));
+  const LATER2 = LATER + 2 * 60 * 1000;
+  assert.equal((await callApi(db, 'api_callBoot', ['d2'], LATER2)).leaderTeams, 'KONGOWE');
+});
+
+test('the sheet widens a team-code officer\'s lists, never a leader\'s', async () => {
+  /* ANALYST A on a team code holds MBAGALA's credit column: widened, as before. ASHA on an
+     access code holds MBAGALA's credit column too: her code says KONGOWE, so KONGOWE it is. */
+  const t = makeTables();
+  t.teams[1].credit = 'ANALYST A';
+  t.teams[1].recovery = 'ASHA JUMA';
+  t.followup_status = [
+    { ref: 'K1', team: 'KONGOWE', full_name: 'KON CUSTOMER', status: 'Defaulter', arrears: 5000, ds: '2-4' },
+    { ref: 'M1', team: 'MBAGALA', full_name: 'MBA CUSTOMER', status: 'Defaulter', arrears: 9000, ds: '2-4' },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', 'ANALYST A', '', '', '0799000111', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  assert.deepEqual((await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW)).rows.map(r => r.ref).sort(), ['K1', 'M1']);
+  assert.deepEqual((await callApi(db, 'api_callList', ['d2', 'defaulters'], NOW)).rows.map(r => r.ref), ['K1'],
+    'the leader reads her code\'s team only');
+});
+
 test('Ripoti: a leader filter narrows and can never widen what you may see', async () => {
   const t = makeTables();
   t.teams[1].manager = 'BOB M';                       // BOB holds MBAGALA; ASHA does not

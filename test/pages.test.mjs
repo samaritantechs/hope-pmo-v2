@@ -513,6 +513,10 @@ test('only the PMO collection slide carries the unassigned-teams caption, drawn 
   assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
   const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
   assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
+  /* "between Teams and J3 columns on the PMO Collection (Todays collection) table at
+     presentation, add count 1 column too (always the count 1 left of the current day)" */
+  assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),
+    'Count 1 (leo) sits between Teams and J3 on the PMO collection slide');
   assert.ok(/b\.unassignedTeams/.test(view), 'fed by officerBoards');
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/<\/tbody><\/table><\/div>';\s*\n\s*\/\/[^\n]*\n\s*if \(s\.caption\) body \+= '<div class="pcap">'/.test(draw),
@@ -568,6 +572,31 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   assert.ok(!/callTop\.concat\(callLow\)/.test(view), 'the old twelve-row cut is gone');
   assert.ok(/i >= callPool\.length - 6 \|\| !\(Number\(x\.calls\) \|\| 0\)/.test(calls), 'least active = bottom six or nil calls');
   assert.ok(/r\.end==='Least active' \? 'bad'/.test(calls), 'and they are the ones in red');
+});
+
+/* A DECK LEFT PLAYING RELOADS ITSELF FOR A NEW VERSION AND COMES BACK ON THE SAME SLIDE.
+   "am not seeing the early col slide auto update column on current presentation": the build
+   check ran once, at sign-in, so a television on the deck since the morning never learnt a
+   column had shipped. */
+test('a playing presentation checks the build on every refetch and resumes after the reload', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const refetch = app.slice(app.indexOf('function presRefetch'), app.indexOf('function presSlides'));
+  assert.ok(/presCheckBuild_\(\);/.test(refetch), 'every refetch asks which version the server has');
+  const check = app.slice(app.indexOf('function presCheckBuild_'), app.indexOf('function presResumeTake_'));
+  assert.ok(/fetch\('\/api\/me\?code=' \+ encodeURIComponent\(S\.code\)\)/.test(check), 'off /api/me, the cheapest read there is');
+  assert.ok(/me\.build === BUILD\) return;/.test(check), 'nothing happens while the page is current');
+  assert.ok(/sessionStorage\.setItem\(PRES_RESUME_KEY, JSON\.stringify\(presResumeNote_\(\)\)\)/.test(check)
+    && /freshEnough_\(me\);/.test(check), 'behind: write down where the deck was, then reload past the cache by the one guarded path');
+  const note = app.slice(app.indexOf('function presResumeNote_'), app.indexOf('function presCheckBuild_'));
+  assert.ok(/i: S\.presI \|\| 0, secs: S\.presSecs \|\| 15, weekOf:/.test(note), 'the slide, the seconds and the week');
+  const start = app.slice(app.indexOf('function start(me)'), app.indexOf('/* ----------------------------------------------------------- table engine'));
+  assert.ok(/var resume = presResumeTake_\(\);\s*\n\s*if \(resume && allowed\('present'\)\)/.test(start), 'start() picks the note up');
+  assert.ok(/go\('present', resume\.weekOf \? \{ weekOf: resume\.weekOf \} : \{\}\);/.test(start), 'opens the present tab on the same week');
+  assert.ok(/presStart\(Math\.min\(Number\(resume\.i\) \|\| 0, S\.slides\.length - 1\)\);/.test(start), 'and presses Play on the same slide once the figures are in');
+  assert.ok(/\} else \{\s*\n\s*go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\);/.test(start), 'everybody else lands where they always did');
+  // The note is read ONCE: a reload that does not resume must not resume on the next sign-in.
+  const take = app.slice(app.indexOf('function presResumeTake_'), app.indexOf('function presRefetch'));
+  assert.ok(/sessionStorage\.removeItem\(PRES_RESUME_KEY\);/.test(take));
 });
 
 /* THE DAY-PROGRESS SLIDE: the three office units from the day's first upload to its latest,
