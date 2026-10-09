@@ -54,14 +54,17 @@ export const DEFAULTER_TOTALS_FN = 'defaulter_snapshot_totals';
 const EXP_FOLD_COLS = 'team, payment_expected, arrears, todays_status, due_summary, snapshot_date, snapshot_type';
 const DEF_FOLD_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
 
-/* "COUNT 1" -- a customer whose DUE SUMMARY reads 1/N: one instalment paid, the second the one
-   due. The early-collection slide carries how many of those are still to pay, beside the
+/* "COUNT 1" -- a customer whose DUE SUMMARY reads 1 of N: one instalment paid, the second the
+   one due. The early-collection slide carries how many of those are still to pay, beside the
    remaining count ("add Count1, to show the remaining count DS 1 among the all left ones").
-   It is the same reading of the D.S cell as paidCount() in portal-core.js, pinned to the one
-   number: digits, a slash, digits, nothing else. The SQL in db/RUN-ME-038 tests the same
-   pattern, and test/snapshot-totals-rpc.mjs transcribes it, so the three cannot disagree. */
+
+   THE SHEET WRITES IT WITH A DASH. The first cut read "1/N" only and every team came back at
+   nought; the live book's DUE SUMMARY shapes are 9-99, 99-99 and 9-9 (ninety thousand rows,
+   not one with a slash). So: a 1, a dash or a slash with spaces allowed, digits, nothing
+   else. The SQL in db/RUN-ME-038 tests the same pattern, and test/snapshot-totals-rpc.mjs
+   transcribes it, so the three cannot disagree. */
 export function dsOne(v) {
-  return /^1\s*\/\s*\d+$/.test(String(v == null ? '' : v).trim());
+  return /^1\s*[-\/]\s*\d+$/.test(String(v == null ? '' : v).trim());
 }
 
 /* ---------------------------------------------------------------- the fold (fallback path) */

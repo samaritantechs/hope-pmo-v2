@@ -9,9 +9,14 @@
 -- The early slide reads TEAM-DAY TOTALS, summed by the database (2026-08-05-snapshot-totals)
 -- and kept in deck_totals when a deck lands (RUN-ME-022). So the new figure is one more column
 -- of those totals: ds1_left_n -- rows whose status is not PAID and not OVERPAID and whose
--- DUE SUMMARY is exactly "1/<n>" (spaces around the slash allowed). The same reading of the
--- D.S cell as paidCount() in the web server, and the fallback fold in api/_lib/snapshot-totals.js
--- counts the identical rule, so a database with this file run and one without agree.
+-- DUE SUMMARY is exactly "1-<n>" or "1/<n>" (spaces around the separator allowed). THE SHEET
+-- WRITES IT WITH A DASH: the live book's shapes are 9-99, 99-99 and 9-9, ninety thousand rows
+-- and not one slash, which is why the first run of this file counted nought everywhere. The
+-- fallback fold in api/_lib/snapshot-totals.js (dsOne) counts the identical rule, so a
+-- database with this file run and one without agree.
+--
+-- RAN THE FIRST VERSION ALREADY? Run sections 1 to 4 again: section 1 replaces the function
+-- with the dash-aware rule, section 3 re-marks the days, section 4 rebuilds them.
 --
 -- UNTIL THIS IS RUN nothing breaks: the slide shows a dash in the column and a caption naming
 -- this file. The code already asks for the column and steps back when the table has not got it.
@@ -66,8 +71,8 @@ as $$
       coalesce(s.payment_expected, 0)               as e,
       upper(btrim(coalesce(s.todays_status, '')))   as st,
       coalesce(s.arrears, 0)                        as a,
-      -- "1/N", spaces around the slash allowed, nothing else: one instalment paid.
-      (btrim(coalesce(s.due_summary, '')) ~ '^1\s*/\s*\d+$') as ds1
+      -- "1-N" or "1/N", spaces around the separator allowed, nothing else: one instalment paid.
+      (btrim(coalesce(s.due_summary, '')) ~ '^1\s*[-/]\s*\d+$') as ds1
     from public.repayment_snapshots s
     where s.snapshot_date >= p_from
       and s.snapshot_date <= p_to

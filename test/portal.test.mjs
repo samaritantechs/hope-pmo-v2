@@ -4041,7 +4041,9 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
        their second instalment (D.S 1/6), one paid customer also at 1/6 who must NOT count, and
        882 above at the fixture's 2/6 who must not either. */
     { ...E('883', 'KONGOWE', 500, 'UNPAID', 0, TODAY, 'initial'), due_summary: '1 / 6' },
-    { ...E('884', 'KONGOWE', 500, 'PAID', 0, TODAY, 'initial'), due_summary: '1/6' });
+    { ...E('884', 'KONGOWE', 500, 'PAID', 0, TODAY, 'initial'), due_summary: '1-6' },
+    // The live sheet's own spelling, with a dash: "1-12".
+    { ...E('885', 'KONGOWE', 400, 'UNPAID', 0, TODAY, 'initial'), due_summary: '1-12' });
   const b = await run('officerBoards', {}, ADMIN, dbWithRpc(t));
   assert.equal(b.weekday, 'FRI');
   assert.equal(b.weekOf, MON);
@@ -4058,20 +4060,20 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
 
   // Early collection is judged per the team's Expected officer, on the INITIAL sheet.
   const early = b.earlyWeek.find(r => r.officer === 'EARLY E');
-  assert.equal(early.expected, 2600, 'the initial sheet: 1000 + 600 + 500 + 500 -- not the day sheets\' 1900');
+  assert.equal(early.expected, 3000, 'the initial sheet: 1000 + 600 + 500 + 500 + 400 -- not the day sheets\' 1900');
   assert.equal(early.collected, 1500);                        // the two PAID rows on the initial sheet
-  assert.equal(early.uncollected, 1100);
+  assert.equal(early.uncollected, 1500);
   assert.equal(early.paidOver, 2);
-  assert.equal(early.customers, 4);
-  assert.equal(early.remaining, 2, 'four on the list, two paid -- two still to pay');
-  assert.equal(early.count1, 1, 'of the two left, one is at D.S 1/N: the paid 1/6 and the unpaid 2/6 do not count');
-  assert.equal(early.pct, 57.7);
+  assert.equal(early.customers, 5);
+  assert.equal(early.remaining, 3, 'five on the list, two paid -- three still to pay');
+  assert.equal(early.count1, 2, 'of the three left, two are at D.S 1 of N (1 / 6 and 1-12): the paid 1-6 and the unpaid 2/6 do not count');
+  assert.equal(early.pct, 50);
   const earlyKesho = b.earlyToday.find(r => r.officer === 'EARLY E');
-  assert.equal(earlyKesho.count1, 1, 'the next-list board carries it too -- that is the slide\'s own column');
+  assert.equal(earlyKesho.count1, 2, 'the next-list board carries it too -- that is the slide\'s own column');
   /* THE SAME ANSWER WITHOUT THE MIGRATION: the fold counts the identical rule, so a database
      where db/RUN-ME-038 is not run yet reads the same Count 1 off the rows. */
   const bFold = await run('officerBoards', {}, ADMIN, fakeDb(t));
-  assert.equal(bFold.earlyWeek.find(r => r.officer === 'EARLY E').count1, 1);
+  assert.equal(bFold.earlyWeek.find(r => r.officer === 'EARLY E').count1, 2);
   /* AND FROM A CACHE BUILT BEFORE THE COLUMN EXISTED: deck_totals without ds1_left_n refuses
      the read for that column, the read is asked again without it, the figures are still served
      from the cache, and Count 1 is null -- said, not nought. */
@@ -4084,7 +4086,7 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
     { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC }, missingColumns: { deck_totals: ['ds1_left_n'] } });
   const bOld = await run('officerBoards', {}, ADMIN, dbOld);
   const oldEarly = bOld.earlyWeek.find(r => r.officer === 'EARLY E');
-  assert.equal(oldEarly.remaining, 2, 'the cache still answers the rest of the board');
+  assert.equal(oldEarly.remaining, 3, 'the cache still answers the rest of the board');
   assert.equal(oldEarly.count1, null, 'a cache built before RUN-ME-038 has no Count 1, and says so');
   // The recovery slide's team count comes off the roster: KONGOWE is JUMA G's; MBAGALA names
   // nobody, so it is the one team the "(unassigned)" row stands for.
