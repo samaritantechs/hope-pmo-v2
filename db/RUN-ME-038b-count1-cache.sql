@@ -76,10 +76,12 @@ begin
   end if;
 end $$;
 
--- 4. PROOF, off the function the slides read: per team, Count 1 beside the headcount, for the
---    next initial sheets. The figure must equal the UNDERPAID + UNPAID rows at NC 1 -- part C
---    lists those by status so it can be checked by eye.
-select team, customers, paid_n + over_n as paid_over, customers - paid_n - over_n as remaining,
+-- 4. PROOF, off the function the slides read: per team AND PER UPLOAD, Count 1 beside the
+--    headcount, for the next initial sheets. A day uploaded twice shows twice; the slide takes
+--    the newest upload (the later created_at). The figure must equal the UNDERPAID + UNPAID
+--    rows at NC 1 of that same upload -- part C lists those by status so it can be checked.
+select snapshot_date, team, created_at as uploaded, customers,
+       paid_n + over_n as paid_over, customers - paid_n - over_n as remaining,
        ds1_owing_n as count1
 from public.expected_snapshot_totals(current_date, current_date + 3, 'initial', null)
-order by team;
+order by snapshot_date, team, created_at;
