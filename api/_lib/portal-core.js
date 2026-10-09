@@ -2229,20 +2229,35 @@ async function notifSeen(db, user, _p, nowMs = Date.now()) {
   return notifSeenCore(db, notifKey_(user), nowMs);
 }
 
-/* PAYMENTS SINCE EACH NOTICE, ADDED UP BY THE DATABASE (notice_payments, db/RUN-ME-040): one
-   call for the whole register, one row back per notice, the payments book never downloaded.
-   Null when the function is not there yet -- the screen then says so and names the file. */
+/* PAYMENTS SINCE EACH NOTICE, ADDED UP BY THE DATABASE (notice_payments): one call for the
+   whole register, one row back per notice, the payments book never downloaded. Null when the
+   function is not there yet -- the screen then says so and names the file.
+
+   TWO GENERATIONS OF THE FUNCTION CAN ANSWER HERE, and the screen must know which did.
+   RUN-ME-040's reads the live book, by ref alone -- and the book is pruned to two weeks
+   (RUN-ME-028), so a payment it counted last month reads as nothing this month:
+
+     "remember received autodeletes so i dont know how we'll forever record notice recoverey
+      hardcoded"
+
+   RUN-ME-041's folds the book into notice_payment_ledger first -- matched by ref OR by the
+   customer's phone, because the check query showed the book's REF NO is not the deck's REF#
+   -- and answers from the ledger, which nothing prunes. It is told apart by the n_phone column
+   only it returns; `kept` says which generation answered (null when there was nothing to tell
+   it by), so the tab can say "read live, not kept yet" rather than let a vanished payment
+   read as a customer who never paid. */
 async function noticePayments_(db, notices) {
   const want = (notices || []).filter(n => n.ref && n.notice_date);
-  if (!want.length || !db || typeof db.rpc !== 'function') return new Map();
+  if (!want.length || !db || typeof db.rpc !== 'function') return { by: new Map(), kept: null };
   const { data, error } = await rpcAll(db, 'notice_payments', {
     p_refs: want.map(n => String(n.ref).trim()),
     p_dates: want.map(n => String(n.notice_date).slice(0, 10)),
   });
   if (error) return null;
-  const m = new Map();
-  for (const p of (data || [])) m.set(K(p.ref) + '|' + String(p.since).slice(0, 10), p);
-  return m;
+  const rows = data || [];
+  const by = new Map();
+  for (const p of rows) by.set(K(p.ref) + '|' + String(p.since).slice(0, 10), p);
+  return { by, kept: rows.length ? rows.every(p => p.n_phone !== undefined) : null };
 }
 
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
@@ -2265,7 +2280,8 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
      reads the received-payments book from its own date forward, and Recovered is the LARGER
      of the two readings -- what they paid since, or how far their arrears fell. Where the
      payments function is not there yet, Recovered is the arrears reading alone, said so. */
-  const paidBy = await noticePayments_(db, r.rows);
+  const pay = await noticePayments_(db, r.rows);
+  const paidBy = pay ? pay.by : null;
 
   // The stored letter stays off the list: it is for the reprint, not the register's rows.
   const rows = r.rows.map(({ letter, ...x }) => {
@@ -2286,6 +2302,9 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
       arrears_down: down,
       paid_since: paidSince,
       paid_n: paidBy ? (p ? num(p.n) : 0) : null,
+      // How many of those the book could only tie to this customer by their phone -- the
+      // ordinary case, since the book's REF NO is not the deck's (RUN-ME-041a).
+      paid_n_phone: p && p.n_phone !== undefined ? num(p.n_phone) : null,
       last_paid: p && p.last_paid ? String(p.last_paid).slice(0, 10) : null,
       recovered_since: recovered,
       // What a person working the notice needs to see at a glance.
@@ -2296,15 +2315,34 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
         : 'Hajalipa / No movement',
     };
   });
+  /* THE TILES ADD EACH CUSTOMER UP ONCE, NOT EACH NOTICE. A second notice to the same person
+     reads the same payments from a later date, so summing the rows would count their money
+     twice and call one person two clearances. Each customer counts at their earliest notice's
+     reading -- the largest, since it looks back furthest. The rows themselves stay per notice:
+     that is what the register is. */
+  const perCustomer = new Map();
+  for (const x of rows) {
+    const c = perCustomer.get(K(x.ref)) || { paid: 0, recovered: 0, cleared: false };
+    c.paid = Math.max(c.paid, num(x.paid_since));
+    c.recovered = Math.max(c.recovered, num(x.recovered_since));
+    c.cleared = c.cleared || x.notice_state.indexOf('Cleared') >= 0;
+    perCustomer.set(K(x.ref), c);
+  }
+  const customers = [...perCustomer.values()];
   return { ...r, rows,
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
     fines: rows.reduce((s, x) => s + num(x.fine), 0),
     atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
-    recoveredSince: rows.reduce((s, x) => s + num(x.recovered_since), 0),
-    paidSince: rows.reduce((s, x) => s + num(x.paid_since), 0),
-    cleared: rows.filter(x => x.notice_state.indexOf('Cleared') >= 0).length,
+    recoveredSince: customers.reduce((s, c) => s + c.recovered, 0),
+    paidSince: customers.reduce((s, c) => s + c.paid, 0),
+    cleared: customers.filter(c => c.cleared).length,
+    customers: customers.length,
     asOf: cur.date || null,
     paymentsOn: !!paidBy,
+    /* true: the ledger answered (RUN-ME-041, kept for good, matched by phone too). false:
+       RUN-ME-040's live reading answered, which forgets what the two-week prune takes. null:
+       no notice to tell by. */
+    paymentsKept: pay ? pay.kept : false,
     /* The letterhead's readiness, said on the screen: which images are set, who signs, and
        the number that prints when no officer's own is found -- so "are we perfectly done" can
        be read off the Legal tab rather than off a test print. */

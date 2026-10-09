@@ -1967,31 +1967,55 @@ test('demand notices show whether they worked', async () => {
   assert.equal(nd.cleared, 0);
   assert.match(nd.rows[0].notice_state, /No deck/);
   assert.equal(d.paymentsOn, false, 'without db/RUN-ME-040 the screen says payments are not read');
+  assert.equal(d.paymentsKept, false);
   assert.equal(d.rows[0].paid_since, null);
 
   /* PAYMENTS SINCE THE NOTICE ARE RECOVERIES -- "i had a weakness of not recording the
      collected recovered amount ... the payments within notice are all recoveries". With the
-     function in place (transcribed from db/RUN-ME-040 here), each notice reads the payments
-     book from its own date; Recovered is the larger of what was paid since and how far the
-     arrears fell. */
+     function in place (RUN-ME-041's, transcribed here: fold what the book holds into the
+     ledger -- matched by the deck REF# or, since the book's REF NO is not the deck's, by the
+     customer's phone -- then answer from the ledger), each notice reads the payments made from
+     its own date; Recovered is the larger of what was paid since and how far the arrears fell. */
+  const nine = v => { const s = String(v || '').replace(/\D/g, ''); return s.length >= 9 ? s.slice(-9) : null; };
+  const fold = store => {
+    const led = store.notice_payment_ledger || (store.notice_payment_ledger = { rows: [] });
+    for (const n of ((store.demand_notices && store.demand_notices.rows) || [])) {
+      const ph = nine(n.contact);
+      for (const p of ((store.received_payments && store.received_payments.rows) || [])) {
+        if (String(p.paid_at) < String(n.notice_date)) continue;
+        const how = String(p.ref_no || '').trim() === String(n.ref) ? 'ref'
+          : ph && (nine(p.customer_no) === ph || nine(p.payment_no) === ph) ? 'phone' : null;
+        if (!how || led.rows.some(l => l.ref === n.ref && l.since === n.notice_date && l.payment_id === p.id)) continue;
+        led.rows.push({ ref: n.ref, since: n.notice_date, payment_id: p.id, paid_at: p.paid_at,
+          amount: Number(p.amount_paid || 0), matched_by: how });
+      }
+    }
+    return led.rows;
+  };
   const notice_payments = (store, args) => {
-    const pays = (store.received_payments && store.received_payments.rows) || [];
+    const led = fold(store);
     return args.p_refs.map((ref, i) => {
       const since = args.p_dates[i];
-      const mine = pays.filter(p => String(p.ref_no) === ref && String(p.paid_at) >= since);
-      return { ref, since, paid: mine.reduce((s, p) => s + Number(p.amount_paid || 0), 0), n: mine.length,
-        last_paid: mine.map(p => p.paid_at).sort().pop() || null };
+      const mine = led.filter(l => l.ref === ref && l.since === since);
+      return { ref, since, paid: mine.reduce((s, l) => s + l.amount, 0), n: mine.length,
+        last_paid: mine.map(l => l.paid_at).sort().pop() || null,
+        n_phone: mine.filter(l => l.matched_by === 'phone').length };
     });
   };
+  t.demand_notices[0].contact = '0714000111';                       // 111's phone, as the deck carries it
   const paid = { ...t, received_payments: [
     { id: 'p1', ref_no: '111', amount_paid: 300, paid_at: TODAY },
     { id: 'p2', ref_no: '111', amount_paid: 50, paid_at: '2020-01-01' },     // before the notice: not counted
     { id: 'p3', ref_no: '555', amount_paid: 200, paid_at: TODAY },
+    // The book's REF NO is not the deck's REF#: this is 111's by their PHONE (CUSTOMER NO).
+    { id: 'p4', ref_no: '2205400111', customer_no: '255714000111', amount_paid: 120, paid_at: TODAY },
   ] };
   const dp = await portalApi(fakeDb(paid, { rpc: { notice_payments } }), ADMIN, 'demandNotices', {}, NOW);
   const pb = Object.fromEntries(dp.rows.map(r => [r.ref, r]));
   assert.equal(dp.paymentsOn, true);
-  assert.equal(pb['111'].paid_since, 300); assert.equal(pb['111'].paid_n, 1); assert.equal(pb['111'].last_paid, TODAY);
+  assert.equal(dp.paymentsKept, true, 'the ledger answered');
+  assert.equal(pb['111'].paid_since, 420); assert.equal(pb['111'].paid_n, 2); assert.equal(pb['111'].last_paid, TODAY);
+  assert.equal(pb['111'].paid_n_phone, 1, 'one of the two was tied to them by phone alone');
   assert.equal(pb['111'].arrears_down, 600);
   assert.equal(pb['111'].recovered_since, 600, 'the larger of the two readings');
   assert.match(pb['111'].notice_state, /Paying/);
@@ -2002,9 +2026,40 @@ test('demand notices show whether they worked', async () => {
   assert.equal(pb['222'].paid_since, 0);
   assert.equal(pb['222'].recovered_since, 500);
   assert.match(pb['222'].notice_state, /Cleared/);
-  assert.equal(dp.paidSince, 500);
+  assert.equal(dp.paidSince, 620);
   assert.equal(dp.recoveredSince, 1300);
+  assert.equal(dp.customers, 3);
   assert.equal('letter' in dp.rows[0], false, 'the stored letter stays off the register list');
+
+  /* THE BOOK IS PRUNED TO TWO WEEKS; THE LEDGER IS NOT -- "remember received autodeletes so i
+     dont know how we'll forever record notice recoverey hardcoded". Empty the book the way the
+     prune does (after a fold) and the register still shows every shilling. */
+  const dbp = fakeDb(paid, { rpc: { notice_payments } });
+  await portalApi(dbp, ADMIN, 'demandNotices', {}, NOW);                  // reads, and so folds
+  dbp._dump('received_payments').length = 0;                                // the prune takes the lot
+  const after = await portalApi(dbp, ADMIN, 'demandNotices', {}, NOW);
+  const ab = Object.fromEntries(after.rows.map(r => [r.ref, r]));
+  assert.equal(ab['111'].paid_since, 420, 'recorded for good: the prune took the book, not the recovery');
+  assert.equal(ab['555'].paid_since, 200);
+  assert.equal(after.paidSince, 620);
+
+  /* A SECOND NOTICE TO THE SAME PERSON is its own register row, but the tiles count the person
+     once: summing the rows would count 111's money twice. */
+  const twice = { ...paid, demand_notices: paid.demand_notices.concat([
+    { id: 'n4', ref: '111', team: 'KONGOWE', contact: '0714000111', notice_date: TODAY, arrears_at_notice: 400, total_demand: 500, fine: 100 }]) };
+  const dt = await portalApi(fakeDb(twice, { rpc: { notice_payments } }), ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(dt.rows.filter(r => r.ref === '111').length, 2);
+  assert.equal(dt.paidSince, 620, 'not 1,040: one person, counted once');
+  assert.equal(dt.recoveredSince, 1300);
+  assert.equal(dt.customers, 3);
+
+  /* RUN-ME-040's function still in place (no n_phone): payments are read live off the
+     two-week book, and the tab says they are not kept yet and names RUN-ME-041. */
+  const live040 = (store, args) => notice_payments(store, args).map(({ n_phone, ...p }) => p);
+  const d40 = await portalApi(fakeDb(paid, { rpc: { notice_payments: live040 } }), ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(d40.paymentsOn, true);
+  assert.equal(d40.paymentsKept, false);
+  assert.equal(d40.rows.find(r => r.ref === '111').paid_n_phone, null, 'a dash, not a zero, when the column is not there to read');
 });
 
 /* An officer on the phone with a customer, asking "where is this person right now?". Until

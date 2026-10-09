@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-i';
+var BUILD = '2026-10-09-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6265,11 +6265,20 @@ VIEWS.legal = function(){
             money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
             d.recoveredSince > 0 ? 'good' : '')
       + (d.paymentsOn ? kpi('Paid since notice', money(d.paidSince),
-            'malipo yaliyopokelewa baada ya notisi / received after the notice', d.paidSince > 0 ? 'good' : '') : '')
+            'malipo yaliyopokelewa baada ya notisi / received after the notice'
+            + (d.paymentsKept ? ' · yamehifadhiwa daima / kept for good' : ''), d.paidSince > 0 ? 'good' : '') : '')
       + '</div>'
-      + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040 kwenye SQL editor.'
-          + ' / Payments made after a notice are not read yet: run db/RUN-ME-040 in the SQL editor.'
+      + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040, kisha RUN-ME-041a na 041b, kwenye SQL editor.'
+          + ' / Payments made after a notice are not read yet: run db/RUN-ME-040, then RUN-ME-041a and 041b, in the SQL editor.'
           + ' Until then "Recovered" is how far the arrears fell.</div>')
+      /* RUN-ME-040's reading is live off a book that is pruned to two weeks -- "remember
+         received autodeletes so i dont know how we'll forever record notice recoverey" -- so a
+         payment it showed last month reads as nothing this month, and it matches by a REF NO
+         the book does not carry. RUN-ME-041 records each payment for good and matches by the
+         customer's phone; until it is run, the tab says so rather than show a smaller figure
+         as if it were the truth. */
+      + (d.paymentsOn && d.paymentsKept === false ? '<div class="note">⚠ Malipo yanasomwa moja kwa moja kutoka kitabu cha wiki mbili, hayahifadhiwi bado wala hayatafutwi kwa simu: endesha db/RUN-ME-041a kisha 041b.'
+          + ' / Payments are read live off the two-week book and are NOT kept yet, nor matched by phone: run db/RUN-ME-041a then 041b in the SQL editor.</div>' : '')
       + '<div class="note">Faini huanza wiki <b>2</b> baada ya rejesho la kwanza kukosekana · '
       + 'mikopo ya 2024 na kabla <b>2%</b>, baadaye <b>5%</b> kwa kila rejesho lililochelewa.'
       + ' / The fine starts two weeks after the first missed installment; 2% for loans disbursed'
@@ -6301,7 +6310,10 @@ VIEWS.legal = function(){
       /* The payments book from the notice date forward: how much, how many, the last one.
          A dash across the column means the function is not there yet (the note above). */
       {key:'paid_since', label:'Paid since', kind:'money', cls:function(r){ return r.paid_since > 0 ? 'good' : ''; }},
-      col('paid_n','Payments','num'), col('last_paid','Last paid','date'),
+      col('paid_n','Payments','num'),
+      // How many of them the book could only tie to this customer by PHONE (RUN-ME-041): the
+      // ordinary case, since the book's REF NO is not the deck's REF#. A dash until it is run.
+      col('paid_n_phone','By phone','num'), col('last_paid','Last paid','date'),
       {key:'recovered_since', label:'Recovered', kind:'money',
        cls:function(r){ return r.recovered_since > 0 ? 'good' : ''; }},
       {key:'notice_state', label:'Status', kind:'chip', chip:function(r){

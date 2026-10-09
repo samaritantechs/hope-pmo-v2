@@ -439,7 +439,23 @@ create table if not exists demand_notices (
   principal_remaining numeric(14,2), total_demand numeric(14,2),
   arrears_at_notice numeric(14,2), other_inst numeric(14,2),
   issued_by text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  letter jsonb                      -- everything the letter was printed from (RUN-ME-040)
+);
+
+-- Payments made after a notice, recorded for good (RUN-ME-041a). received_payments is pruned
+-- to two weeks, so each payment a notified customer makes from the notice date on is copied
+-- here -- matched by the deck REF# or, since the book's REF NO is not the deck's, by the
+-- customer's phone -- before it can vanish. One row per (notice, payment).
+create table if not exists notice_payment_ledger (
+  ref         text not null,
+  since       date not null,                 -- the notice date
+  payment_id  uuid not null,                 -- received_payments.id, which outlives that row
+  paid_at     date,
+  amount      numeric(14,2) not null default 0,
+  matched_by  text,                          -- 'ref' or 'phone'
+  recorded_at timestamptz not null default now(),
+  primary key (ref, since, payment_id)
 );
 
 -- =====================================================================================
