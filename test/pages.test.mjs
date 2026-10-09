@@ -565,8 +565,13 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-039/.test(early),
     'a slide with no Count 1 figure says which file to run, rather than printing nought');
   const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
-  assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('initial','Initial \(week\)','money'\), col\('current','Current \(week\)','money'\)/.test(rec),
-    'the team count sits between Officer and Initial on the recovery slide, and both decks are labelled as the week\'s');
+  /* "The two columns are misbehaving": the pair before the today group is today's own deck
+     pair, which Recovered today is the difference of -- never Monday's deck against today's
+     (the wrong way round after a week of new defaulters) and never a five-day sum (billions). */
+  assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('tInitial','Initial \(today\)','money'\), col\('tCurrent','Current \(today\)','money'\),\s*\n?\s*col\('tUncollected', recUncolLabel, 'money'\)/.test(rec),
+    'the team count sits between Officer and Initial on the recovery slide, and the two decks drawn are today\'s own');
+  // The pair is lifted off b.recToday onto the row (recRows, just above the slide).
+  assert.ok(/tInitial: t\.initial, tCurrent: t\.current/.test(view), 'fed from recToday, the day\'s own pair');
   const calls = view.slice(view.indexOf('var callRows'), view.indexOf("id:'credit'"));
   assert.ok(/rows: callRows,/.test(calls), 'the calls slide lists every officer of the pool, not six at each end');
   assert.ok(!/callTop\.concat\(callLow\)/.test(view), 'the old twelve-row cut is gone');

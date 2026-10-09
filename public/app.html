@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-g';
+var BUILD = '2026-10-09-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9736,17 +9736,24 @@ function presSlides(){
        reading b.recWeek exactly as recBoard ordered it, since neither asked to change. */
     var recRows = (b.recWeek || []).map(function(x){
       var t = recT[x.officer] || {};
-      return { ...x, tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; })
+      /* TODAY'S OWN DECK PAIR rides along for the two columns before the today group: the
+         initial deck and the current deck of the day, which Recovered today is the difference
+         of. The weekly board's own initial/current (Monday's deck against today's) are not
+         drawn here: a week of new defaulters puts them the wrong way round under a positive
+         recovery, and a five-day sum of them (#536) read as billions. */
+      return { ...x, tInitial: t.initial, tCurrent: t.current,
+        tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; })
       .sort(function(a, b2){ return (b2.pct == null ? -1 : b2.pct) - (a.pct == null ? -1 : a.pct)
         || String(a.officer).localeCompare(String(b2.officer)); });
     slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — best weekly Rec % first',
       rows: recRows.slice(0,12),
-      /* INITIAL AND CURRENT ARE THE WEEK'S, like the Recovered beside them: each day's own
-         deck added up (officerBoards, portal-core.js), so Initial minus Current is exactly
-         Recovered (week). They used to be Monday's deck and today's, which a week of new
-         defaulters put the wrong way round under a positive recovery. */
+      /* INITIAL AND CURRENT ARE TODAY'S OWN DECKS -- the pair Recovered today is the
+         difference of, drawn beside the today group they belong to. "The two columns are
+         misbehaving": Monday's deck against today's read the wrong way round under a positive
+         weekly recovery, and the week's five decks added up read as billions. The day's own
+         pair is a book-sized figure that always reconciles: Initial - Current = Recovered today. */
       cols:[col('officer','Officer'), col('teams','Teams','num'),
-        col('initial','Initial (week)','money'), col('current','Current (week)','money'),
+        col('tInitial','Initial (today)','money'), col('tCurrent','Current (today)','money'),
         col('tUncollected', recUncolLabel, 'money'),
         col('tRecovered','Recovered today','money'), {key:'tPct', label:'Rec % (today)', kind:'pct', target:'rec'},
         col('uncollected','Uncollected (week)','money'),
