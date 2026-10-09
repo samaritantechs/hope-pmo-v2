@@ -4055,6 +4055,12 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(juma.recovered, 300, 'initial arrears minus current, not a whole-book figure');
   const mbagala = b.recWeek.find(r => r.officer === '(unassigned)');
   assert.equal(mbagala.recovered, 100);                       // 900 - 800
+  /* THE WEEK'S THREE FIGURES RECONCILE ON THE WALL -- "recovery is showing but the numbers in
+     initial are lower than those of current". Initial and Current are the week's own days
+     added, the same sums Recovered is made of, so Initial minus Current is Recovered exactly. */
+  assert.equal(juma.initial - juma.current, juma.recovered, 'Initial (week) minus Current (week) is Recovered (week)');
+  assert.equal(mbagala.initial - mbagala.current, mbagala.recovered);
+  assert.equal(juma.initial, 1200); assert.equal(juma.current, 900);
   assert.equal(b.initialCount, 3);
   assert.equal(b.currentCount, 3);
   assert.equal(b.deckWarning, null, 'matched deck sizes raise no warning');

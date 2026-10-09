@@ -565,8 +565,8 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-039/.test(early),
     'a slide with no Count 1 figure says which file to run, rather than printing nought');
   const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
-  assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('initial','Initial','money'\)/.test(rec),
-    'the team count sits between Officer and Initial on the recovery slide');
+  assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('initial','Initial \(week\)','money'\), col\('current','Current \(week\)','money'\)/.test(rec),
+    'the team count sits between Officer and Initial on the recovery slide, and both decks are labelled as the week\'s');
   const calls = view.slice(view.indexOf('var callRows'), view.indexOf("id:'credit'"));
   assert.ok(/rows: callRows,/.test(calls), 'the calls slide lists every officer of the pool, not six at each end');
   assert.ok(!/callTop\.concat\(callLow\)/.test(view), 'the old twelve-row cut is gone');
