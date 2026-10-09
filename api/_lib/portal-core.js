@@ -11403,7 +11403,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     for (const r of rows) {
       const b = bucket(m, officerOf(teamBy, r.team, 'expected'),
         { uncollected: 0, paidOver: 0, expected: 0, collected: 0, customers: 0, teamSet: {},
-          count1: 0, count1Known: true });
+          count1: 0, count1Known: true, count1Missing: {} });
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
       b.uncollected += num(r.uncollected_amt);
       if (r.team) b.teamSet[K(r.team)] = 1;
@@ -11415,14 +11415,22 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
          upload from before N.C was imported, a cache built before the column, a hand-typed
          summary -- makes the officer's count unknown rather than short, and the slide says so
          instead of printing a smaller number. */
-      if (r.nc1_owing_n == null) b.count1Known = false; else b.count1 += num(r.nc1_owing_n);
+      if (r.nc1_owing_n != null) b.count1 += num(r.nc1_owing_n);
+      /* A hand-typed Iliyonasia summary for a team-day with no sheet row (withAdj_) carries
+         money only: nobody is on that list, so it is nought to count, not unknown. Anything
+         else without the figure is a sheet to upload again, and its team is NAMED so the slide
+         can say which -- "count 1 of early col at slide aint reading anything". */
+      else if (!(r.upload_batch == null && r.adjusted_amt != null)) {
+        b.count1Known = false;
+        if (r.team) b.count1Missing[K(r.team)] = r.team;
+      }
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
       teams: Object.keys(b.teamSet).length, customers: b.customers,
       /* WHO IS STILL TO PAY -- unpaid and underpaid, as a count: "put nos of remaining ... so
          that we always know progress of each like 300 where ... paid+overpaid 600 of 900". */
       remaining: Math.max(0, b.customers - b.paidOver),
-      count1: b.count1Known ? b.count1 : null,
+      count1: b.count1Known ? b.count1 : null, count1Missing: Object.values(b.count1Missing).sort(),
       expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
       .sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct))
       // Numbered after sorting, so S/N is the ranking rather than an accident of map order.
@@ -11982,6 +11990,12 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   return { weekday: wd, weekOf: mon, today, deckWarning, unassignedTeams,
     initialCount: iniCustomers, currentCount: curCustomers,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
+    /* WHICH TEAMS' SHEET ROWS CARRY NO N.C, per board -- so each slide can name the sheet to
+       upload again ("count 1 of early col at slide aint reading anything") instead of a column
+       of dashes under a caption that named the wrong sheet. The early slide reads the INITIAL
+       (next list) sheet; the PMO slide reads today's day sheet. */
+    earlyCount1Missing: [...new Set(earlyToday.flatMap(r => r.count1Missing || []))].sort(),
+    pmoCount1Missing: [...new Set(pmoRows.flatMap(r => r.count1Missing || []))].sort(),
     callToday, callWeek, callWeekWorst, csToday, csWeek, csExcluded,
     /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission
        belongs on the commission panel where the person it concerns can see their own figure;

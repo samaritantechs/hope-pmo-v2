@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-l';
+var BUILD = '2026-10-09-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9877,6 +9877,20 @@ function presSlides(){
        here -- so "today" on this board is tomorrow's performance: what the officer has already
        brought in against a day that has not arrived. The two periods share one slide, joined
        on the officer. */
+    /* THE CAPTION UNDER A SLIDE WHOSE COUNT 1 HAS GAPS: which teams' rows of WHICH sheet carry
+       no N.C -- an upload made before db/RUN-ME-039 was run, or a file without the column -- so
+       the person at the upload page knows exactly which file to send again. Empty when every
+       officer has a figure. `none` is "every row is blank", `missing` the teams the server
+       named, `sheet` the sheet as the upload page calls it. */
+    var count1Note_ = function(none, missing, sheet){
+      var teams = (missing || []).slice();
+      if (!none && !teams.length) return '';
+      var who = teams.length ? teams.join(', ') : 'timu zote / every team';
+      return 'Count 1 haipo kwa: ' + esc(who) + ' — safu za karatasi ya ' + esc(sheet) + ' hazina N.C'
+        + ' (ilipakiwa kabla ya db/RUN-ME-039 kuendeshwa, au faili halina safu hiyo). Pakia tena karatasi hiyo hiyo ya timu hizo.'
+        + ' / Count 1 missing for: ' + esc(who) + ' — the ' + esc(sheet) + ' sheet rows carry no N.C'
+        + ' (uploaded before db/RUN-ME-039 was run, or the file has no such column). Upload that same sheet again for those teams.';
+    };
     var earlyW = {};
     (b.earlyWeek || []).forEach(function(x){ earlyW[x.officer] = x; });
     var earlyRows = (b.earlyToday || []).map(function(x){
@@ -9903,8 +9917,13 @@ function presSlides(){
         col('remaining','Wamebaki / Left','num'), col('count1','Count 1 (NC 1)','num'), col('customers','Wateja / Customers','num'),
         col('uncollected','Uncollected (kesho)','money'), {key:'pct', label:'Coll % (kesho)', kind:'pct', target:'ecol'},
         col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}],
-      caption: (earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; }))
-        ? 'Count 1 haipo: endesha db/RUN-ME-039 kisha pakia tena karatasi ya Expected ya leo / Count 1 is not available: run db/RUN-ME-039 in the SQL editor, then upload today\'s Expected sheet again (Count 1 is its N.C column).' : '' });
+      /* WHICH SHEET, BY NAME. This slide reads the INITIAL (kesho / next list) sheet, not the
+         day sheet, and the old caption sent people to re-upload "today's Expected sheet" --
+         which they did, and the column stayed blank: "count 1 of early col at slide aint
+         reading anything". The server names the teams whose rows carry no N.C (db/RUN-ME-039),
+         and the caption names the sheet and its date. */
+      caption: count1Note_(!!(earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; })),
+        b.earlyCount1Missing, 'Expected — Initial / kesho (next list' + (b.earlyDate ? ', ' + b.earlyDate : '') + ')') });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
        "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
@@ -9936,7 +9955,12 @@ function presSlides(){
     var uaLine = function(label, list){
       return '<div><b>' + label + ' (' + list.length + '):</b> ' + (list.length ? esc(list.join(', ')) : '—') + '</div>'; };
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
-      caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec),
+      caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec)
+        // Count 1 here is today's DAY sheet; its gaps, by team, said the same way as the early slide's.
+        + (function(){
+            var n = count1Note_(!!((b.pmo || []).length && (b.pmo || []).every(function(x){ return x.count1 == null; })),
+              b.pmoCount1Missing, 'Expected ya leo / today\'s day sheet' + (b.today ? ' (' + b.today + ')' : ''));
+            return n ? '<div>' + n + '</div>' : ''; })(),
       rows:(b.pmo||[]).slice(0,12),
       /* COUNT 1 BETWEEN TEAMS AND J3 -- "add count 1 column too", then "sum of nc 1 of
          underpaid and unpaid per pmo": today's sheet, the officer's teams, the customers whose

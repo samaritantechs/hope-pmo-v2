@@ -242,8 +242,17 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
        N.C was imported, a cache built before the column, a hand-typed summary -- makes the
        officer's count unknown (null) rather than short, the same rule as the early slide. */
     let count1 = 0, count1Known = true;
+    const count1Missing = new Set();
     for (const r of pick(today)) {
-      if (r.nc1_owing_n == null) count1Known = false; else count1 += Number(r.nc1_owing_n) || 0;
+      if (r.nc1_owing_n != null) count1 += Number(r.nc1_owing_n) || 0;
+      /* A hand-typed Iliyonasia summary for a team-day with no sheet row (withAdj_) carries
+         money only: nobody is on that list, so it is nought to count, not unknown. Anything
+         else without the figure is a sheet to upload again, and its team is NAMED so the slide
+         can say which -- "count 1 of early col at slide aint reading anything". */
+      else if (!(r.upload_batch == null && r.adjusted_amt != null)) {
+        count1Known = false;
+        if (r.team) count1Missing.add(String(r.team));
+      }
     }
     /* The week is every collection day added together, NOT the average of five percentages.
        Averaging percentages would let a quiet Monday with four customers count as much as a
@@ -271,7 +280,7 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
       teams: (p.teams || []).length,
       teamList: (p.teams || []).slice().sort(),
       customers: day.customers,
-      count1: count1Known ? count1 : null,
+      count1: count1Known ? count1 : null, count1Missing: [...count1Missing].sort(),
       // Today
       expected: day.expected, collected: day.collected, uncollected: day.uncollected, pct: day.pct,
       band: todayBand ? todayBand.label : null,

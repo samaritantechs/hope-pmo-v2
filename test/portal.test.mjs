@@ -4325,6 +4325,8 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(early.pct, 50);
   const earlyKesho = b.earlyToday.find(r => r.officer === 'EARLY E');
   assert.equal(earlyKesho.count1, 2, 'the next-list board carries it too -- that is the slide\'s own column');
+  assert.deepEqual(b.earlyCount1Missing, [], 'every team on the list carries N.C: nothing to name');
+  assert.deepEqual(earlyKesho.count1Missing, []);
   /* THE SAME ANSWER WITHOUT THE MIGRATION: the fold counts the identical rule, so a database
      where the totals function is not there yet reads the same Count 1 off the rows. */
   const bFold = await run('officerBoards', {}, ADMIN, fakeDb(t));
@@ -4335,6 +4337,9 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   const bNoNc = await run('officerBoards', {}, ADMIN, dbNoNc);
   assert.equal(bNoNc.earlyWeek.find(r => r.officer === 'EARLY E').remaining, 3, 'the fold still answers the rest of the board');
   assert.equal(bNoNc.earlyWeek.find(r => r.officer === 'EARLY E').count1, null, 'a database without N.C has no Count 1, and says so');
+  /* "count 1 of early col at slide aint reading anything": the TEAMS whose sheet rows carry no
+     N.C are named, so the slide can say which sheet to upload again rather than show dashes. */
+  assert.ok(bNoNc.earlyCount1Missing.includes('KONGOWE'), 'names the team whose next-list rows carry no N.C');
   /* AND FROM A CACHE BUILT BEFORE THE COLUMN EXISTED: deck_totals without nc1_owing_n refuses
      the read for that column, the read is asked again without it, the figures are still served
      from the cache, and Count 1 is null -- said, not nought. */
@@ -4349,6 +4354,7 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   const oldEarly = bOld.earlyWeek.find(r => r.officer === 'EARLY E');
   assert.equal(oldEarly.remaining, 3, 'the cache still answers the rest of the board');
   assert.equal(oldEarly.count1, null, 'a cache built before RUN-ME-039b has no Count 1, and says so');
+  assert.ok(bOld.earlyCount1Missing.includes('KONGOWE'), 'and names the team, the same as a sheet without N.C');
   // The recovery slide's team count comes off the roster: KONGOWE is JUMA G's; MBAGALA names
   // nobody, so it is the one team the "(unassigned)" row stands for.
   assert.equal(juma.teams, 1);
@@ -4764,6 +4770,7 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   assert.equal(c.pct, 50);
   assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
   assert.equal(c.count1, 0, 'her customers are all at N.C 0: nought, not unknown');
+  assert.deepEqual(b.pmoCount1Missing, [], 'every row of today\'s sheet carries N.C: no team to name');
 
   /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
      future slide cannot include it by reaching for a field that happened to be there.
