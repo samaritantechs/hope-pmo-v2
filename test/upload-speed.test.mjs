@@ -159,6 +159,39 @@ test('a small Expected-Tomorrow upload, sent whole, keeps a sane trip budget', a
 });
 
 /* =====================================================================================
+   UPLOADING NEVER GOES DOWN FOR A COLUMN THE DATABASE HAS NOT GOT YET.
+   =====================================================================================
+   N.C (db/RUN-ME-039a) is read off every Expected sheet now. Migrations here are run by hand,
+   so between the deploy and that paste the table has no such column -- and PostgREST refuses
+   the WHOLE insert for one unknown column. The write must shed the column and go again, and
+   the upload must SAY it did: a column thrown away in silence is the worst kind of success. */
+test('an Expected sheet carrying N.C stores it, and a database without the column is told rather than failed', async () => {
+  const header = ['REF#', 'FULLNAME', 'TEAM', 'N.C', 'TODAYS STATUS'];
+  const rows = [header, ['R1', 'C1', 'TEAM1', 1, 'UNPAID'], ['R2', 'C2', 'TEAM1', 0, 'PAID'], ['R3', 'C3', 'TEAM1', '', 'UNPAID']];
+  const body = { code: 'A', type: 'expected-today', meta: { date: '2026-09-01' }, rows };
+
+  // With the column: stored as the sheet writes it, blank as null.
+  const c1 = countingDb(baseTables());
+  const r1 = await callUpload(c1.db, body);
+  assert.equal(r1.body.ok, true, r1.body.error);
+  assert.deepEqual(c1.dump('repayment_snapshots').map(r => [r.ref, r.nc]).sort(), [['R1', 1], ['R2', 0], ['R3', null]]);
+  assert.equal(/N\.C/.test(String(r1.body.message || '')), false, 'nothing to warn about on a migrated database');
+  const okTrips = c1.stat().trips;
+
+  // Without it: the write is refused once, sent again without N.C, every row lands, and the
+  // upload names what it could not keep and the file to run. One extra trip, no failure.
+  const c2 = countingDb(baseTables(), { missingColumns: { repayment_snapshots: ['nc'] } });
+  const r2 = await callUpload(c2.db, body);
+  assert.equal(r2.body.ok, true, r2.body.error);
+  const stored = c2.dump('repayment_snapshots');
+  assert.equal(stored.length, 3, 'every row went in');
+  assert.ok(stored.every(r => r.nc === undefined), 'without the column the database has not got');
+  assert.match(String(r2.body.message), /N\.C/);
+  assert.match(String(r2.body.message), /RUN-ME-039/);
+  assert.ok(c2.stat().trips <= okTrips + 1, `shedding the column cost ${c2.stat().trips - okTrips} extra trips, not one`);
+});
+
+/* =====================================================================================
    2. FINDING 1, THE WASTE: sameAsToday MUST RUN ONCE PER UPLOAD, NOT ONCE PER SLICE.
    =====================================================================================
    `.limit(2000)` on `repayment_snapshots` is a fingerprint nothing else in this codebase

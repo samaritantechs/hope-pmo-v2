@@ -507,7 +507,7 @@ test('only the PMO collection slide carries the unassigned-teams caption, drawn 
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   /* Two captions on the deck: the unassigned-teams one here, and the early slide's own note
-     that Count 1 is not available until db/RUN-ME-038 is run (a step not done is said on the
+     that Count 1 is not available until db/RUN-ME-039 is run (a step not done is said on the
      screen that expected it). The UNASSIGNED caption is still the collection slide's alone. */
   assert.equal((view.match(/caption:/g) || []).length, 2, 'two slides with a caption');
   assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
@@ -562,7 +562,7 @@ test('the early, recovery and calls slides carry the remaining count, the team c
      slide add Count1 (to show the remaining count DS 1 among the all left ones)". */
   assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('count1','Count 1 \(NC 1\)','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
     'remaining, Count 1 and customers sit between Teams and Uncollected on the early slide');
-  assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-038/.test(early),
+  assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-039/.test(early),
     'a slide with no Count 1 figure says which file to run, rather than printing nought');
   const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
   assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('initial','Initial','money'\)/.test(rec),

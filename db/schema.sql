@@ -147,6 +147,7 @@ create table if not exists repayment_snapshots (
   last_schedule_date date,
   last_trans_date date,
   due_summary text,                 -- "4/6" paid/target -- TEXT on purpose, never let this become a date
+  nc integer,                       -- the sheet's own N.C column (db/RUN-ME-039a); "Count 1" on the slides is nc = 1 and still owing. NOT the first number of due_summary.
   initial_inst numeric(14,2),
   other_inst numeric(14,2),
   payment_expected numeric(14,2),

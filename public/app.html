@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-e';
+var BUILD = '2026-10-09-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9772,16 +9772,17 @@ function presSlides(){
          ... paid+overpaid 600 of 900 total customers". Two plain numbers rather than "300 / 900"
          in one cell, so the JUMLA row can add each of them up. */
       /* COUNT 1 BETWEEN THEM -- "add Count1", then "sum of nc 1 of underpaid and unpaid per
-         pmo": over the officer's teams, the customers on the list at NC 1 (DUE SUMMARY 1-N)
-         marked UNDERPAID or UNPAID. A count, so the JUMLA row adds it like the other two. Null
-         until db/RUN-ME-038 (its current version) is run, and the caption below says so rather
-         than the column reading nought. */
+         pmo": over the officer's teams, the customers on the list whose N.C (the sheet's own
+         column, NOT the first number of DUE SUMMARY) is 1 and who are UNDERPAID or UNPAID. A
+         count, so the JUMLA row adds it like the other two. Null until db/RUN-ME-039 is run
+         and the sheet uploaded again, and the caption below says so rather than the column
+         reading nought. */
       cols:[col('officer','Officer'), col('teams','Teams','num'),
         col('remaining','Wamebaki / Left','num'), col('count1','Count 1 (NC 1)','num'), col('customers','Wateja / Customers','num'),
         col('uncollected','Uncollected (kesho)','money'), {key:'pct', label:'Coll % (kesho)', kind:'pct', target:'ecol'},
         col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}],
       caption: (earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; }))
-        ? 'Count 1 haipo bado: endesha db/RUN-ME-038 / Count 1 is not available yet: run db/RUN-ME-038 in the SQL editor.' : '' });
+        ? 'Count 1 haipo: endesha db/RUN-ME-039 kisha pakia tena karatasi ya Expected ya leo / Count 1 is not available: run db/RUN-ME-039 in the SQL editor, then upload today\'s Expected sheet again (Count 1 is its N.C column).' : '' });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
        "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
@@ -9816,9 +9817,9 @@ function presSlides(){
       caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec),
       rows:(b.pmo||[]).slice(0,12),
       /* COUNT 1 BETWEEN TEAMS AND J3 -- "add count 1 column too", then "sum of nc 1 of
-         underpaid and unpaid per pmo": today's sheet, the officer's teams, the customers at
-         NC 1 marked UNDERPAID or UNPAID, added up. Null until db/RUN-ME-038 (its current
-         version) is run; the early slide's caption says so. */
+         underpaid and unpaid per pmo": today's sheet, the officer's teams, the customers whose
+         N.C column is 1 and who are UNDERPAID or UNPAID, added up. Null until db/RUN-ME-039 is
+         run and the sheet uploaded again; the early slide's caption says so. */
       cols:[col('officer','PMO'), col('teams','Teams','num'), col('count1','Count 1 (NC 1 leo)','num'),
         {key:'pctJ3', label:'J3', kind:'pct', target:'col'}, {key:'pctJ4', label:'J4', kind:'pct', target:'col'},
         {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},

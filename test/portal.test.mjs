@@ -39,7 +39,8 @@ const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: 
 
 const E = (ref, team, exp, status, arrears, date = TODAY, type = 'today') => ({
   ref, full_name: 'C' + ref, contact: '07120000' + ref, team, payment_expected: exp, arrears,
-  todays_status: status, due_summary: '2/6', snapshot_type: type, snapshot_date: date,
+  // nc is the sheet's own N.C column: 0 here, so Count 1 reads nought rather than unknown.
+  todays_status: status, due_summary: '2/6', nc: 0, snapshot_type: type, snapshot_date: date,
   upload_batch: 'b' + date, created_at: date + 'T04:00:00Z',
 });
 const D = (ref, team, arrears, type, days = 45, date = TODAY, wd = 'FRI') => ({
@@ -4037,13 +4038,13 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   t.repayment_snapshots.push(
     E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
     E('882', 'KONGOWE', 600, 'UNPAID', 0, TODAY, 'initial'),
-    /* COUNT 1 -- "sum of nc 1 of underpaid and unpaid per pmo": one unpaid customer on their
-       second instalment (D.S 1/6), one paid customer also at 1/6 who must NOT count, and 882
-       above at the fixture's 2/6 who must not either. */
-    { ...E('883', 'KONGOWE', 500, 'UNPAID', 0, TODAY, 'initial'), due_summary: '1 / 6' },
-    { ...E('884', 'KONGOWE', 500, 'PAID', 0, TODAY, 'initial'), due_summary: '1-6' },
-    // The live sheet's own spelling, with a dash: "1-12".
-    { ...E('885', 'KONGOWE', 400, 'UNPAID', 0, TODAY, 'initial'), due_summary: '1-12' });
+    /* COUNT 1 -- "sum of nc 1 of underpaid and unpaid per pmo": the sheet's N.C column at 1.
+       Two unpaid customers at N.C 1, one paid customer at N.C 1 who must NOT count, and 882
+       above at N.C 0 who must not either. DUE SUMMARY is deliberately "1-N" on the ones that
+       do not count: it played no part in the rule the moment the sheet's N.C was read. */
+    { ...E('883', 'KONGOWE', 500, 'UNPAID', 0, TODAY, 'initial'), nc: 1, due_summary: '4-5' },
+    { ...E('884', 'KONGOWE', 500, 'PAID', 0, TODAY, 'initial'), nc: 1, due_summary: '1-6' },
+    { ...E('885', 'KONGOWE', 400, 'UNPAID', 0, TODAY, 'initial'), nc: 1, due_summary: '11-12' });
   const b = await run('officerBoards', {}, ADMIN, dbWithRpc(t));
   assert.equal(b.weekday, 'FRI');
   assert.equal(b.weekOf, MON);
@@ -4066,30 +4067,36 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(early.paidOver, 2);
   assert.equal(early.customers, 5);
   assert.equal(early.remaining, 3, 'five on the list, two paid -- three still to pay');
-  /* "sum of nc 1 of underpaid and unpaid per pmo": 1 / 6 unpaid and 1-12 unpaid make two; the
-     paid 1-6 does not count, and neither does the 2/6. */
-  assert.equal(early.count1, 2, 'two at NC 1 still owing; the paid one is not counted');
+  /* "sum of nc 1 of underpaid and unpaid per pmo": the two unpaid at N.C 1 make two; the paid
+     one at N.C 1 does not count, and neither does the unpaid one at N.C 0. */
+  assert.equal(early.count1, 2, 'two at N.C 1 still owing; the paid one is not counted');
   assert.equal(early.pct, 50);
   const earlyKesho = b.earlyToday.find(r => r.officer === 'EARLY E');
   assert.equal(earlyKesho.count1, 2, 'the next-list board carries it too -- that is the slide\'s own column');
   /* THE SAME ANSWER WITHOUT THE MIGRATION: the fold counts the identical rule, so a database
-     where db/RUN-ME-038 is not run yet reads the same Count 1 off the rows. */
+     where the totals function is not there yet reads the same Count 1 off the rows. */
   const bFold = await run('officerBoards', {}, ADMIN, fakeDb(t));
   assert.equal(bFold.earlyWeek.find(r => r.officer === 'EARLY E').count1, 2);
-  /* AND FROM A CACHE BUILT BEFORE THE COLUMN EXISTED: deck_totals without ds1_owing_n refuses
+  /* AND ON A DATABASE WITHOUT THE nc COLUMN AT ALL (db/RUN-ME-039a not run): the fold's read is
+     refused for it, asked again without it, the board still answers, and Count 1 is null. */
+  const dbNoNc = fakeDb(t, { missingColumns: { repayment_snapshots: ['nc'] } });
+  const bNoNc = await run('officerBoards', {}, ADMIN, dbNoNc);
+  assert.equal(bNoNc.earlyWeek.find(r => r.officer === 'EARLY E').remaining, 3, 'the fold still answers the rest of the board');
+  assert.equal(bNoNc.earlyWeek.find(r => r.officer === 'EARLY E').count1, null, 'a database without N.C has no Count 1, and says so');
+  /* AND FROM A CACHE BUILT BEFORE THE COLUMN EXISTED: deck_totals without nc1_owing_n refuses
      the read for that column, the read is asked again without it, the figures are still served
      from the cache, and Count 1 is null -- said, not nought. */
   const old = SNAPSHOT_TOTALS_RPC.expected_snapshot_totals({ repayment_snapshots: { rows: t.repayment_snapshots } },
     { p_from: '2026-07-01', p_to: '2026-07-31', p_type: null, p_teams: null })
-    .map(({ ds1_owing_n, ...r }) => ({ kind: 'expected', ...r }));
+    .map(({ nc1_owing_n, ...r }) => ({ kind: 'expected', ...r }));
   const days = [];
   for (let d = '2026-07-01'; d <= '2026-07-31'; d = addDaysKeyT(d, 1)) days.push({ kind: 'expected', snapshot_date: d });
   const dbOld = fakeDb({ ...t, deck_totals: old, deck_totals_days: days },
-    { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC }, missingColumns: { deck_totals: ['ds1_owing_n'] } });
+    { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC }, missingColumns: { deck_totals: ['nc1_owing_n'] } });
   const bOld = await run('officerBoards', {}, ADMIN, dbOld);
   const oldEarly = bOld.earlyWeek.find(r => r.officer === 'EARLY E');
   assert.equal(oldEarly.remaining, 3, 'the cache still answers the rest of the board');
-  assert.equal(oldEarly.count1, null, 'a cache built before RUN-ME-038 has no Count 1, and says so');
+  assert.equal(oldEarly.count1, null, 'a cache built before RUN-ME-039b has no Count 1, and says so');
   // The recovery slide's team count comes off the roster: KONGOWE is JUMA G's; MBAGALA names
   // nobody, so it is the one team the "(unassigned)" row stands for.
   assert.equal(juma.teams, 1);
@@ -4467,7 +4474,7 @@ const PMO_B = { code: 'P2', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['
     came in. Two rows a day per team keeps the percentages easy to check by hand. */
 const X = (team, date, status, exp = 1000, arrears = 0) => ({
   ref: team + date + status + Math.random(), team, payment_expected: exp, arrears,
-  todays_status: status, snapshot_type: 'today', snapshot_date: date,
+  todays_status: status, nc: 0, snapshot_type: 'today', snapshot_date: date,
   upload_batch: 'x' + date, created_at: date + 'T04:00:00Z',
 });
 
@@ -4483,9 +4490,9 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
      The plan's whole point is that the small book does not flatter anybody. */
   const rows = [];
   for (let i = 0; i < 8; i++) rows.push(X('KONGOWE', TODAY, 'PAID'));
-  // KAMARIA: one PAID customer at NC 1 and one UNPAID at NC 1 -- Count 1 (NC 1 leo) = 1.
-  rows.push({ ...X('KONGOWE', TODAY, 'PAID'), due_summary: '1-12' });
-  rows.push({ ...X('KONGOWE', TODAY, 'UNPAID'), due_summary: '1-6' });
+  // KAMARIA: one PAID customer at N.C 1 and one UNPAID at N.C 1 -- Count 1 (NC 1 leo) = 1.
+  rows.push({ ...X('KONGOWE', TODAY, 'PAID'), nc: 1 });
+  rows.push({ ...X('KONGOWE', TODAY, 'UNPAID'), nc: 1, due_summary: '11-12' });
   rows.push(X('MBAGALA', TODAY, 'PAID'));
   rows.push(X('MBAGALA', TODAY, 'UNPAID'));
 
@@ -4499,12 +4506,12 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   assert.equal(k.uncollected, 1000);
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table ... add
      count 1 column too", then "sum of nc 1 of underpaid and unpaid per pmo" */
-  assert.equal(k.count1, 1, 'the UNPAID NC 1 customer on today\'s list; the PAID one at NC 1 is not counted');
+  assert.equal(k.count1, 1, 'the UNPAID N.C 1 customer on today\'s list; the PAID one at N.C 1 is not counted');
 
   const c = b.pmo.find(r => r.officer === 'CATHERINE');
   assert.equal(c.pct, 50);
   assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
-  assert.equal(c.count1, 0, 'her customers carry no D.S: nought, not unknown');
+  assert.equal(c.count1, 0, 'her customers are all at N.C 0: nought, not unknown');
 
   /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
      future slide cannot include it by reaching for a field that happened to be there.

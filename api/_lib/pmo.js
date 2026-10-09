@@ -236,14 +236,14 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
     const day = collectionOf(pick(today));
     /* COUNT 1 TODAY -- "between Teams and J3 columns on the PMO Collection (Todays collection)
        table at presentation, add count 1 column too", then "sum of nc 1 of underpaid and
-       unpaid per pmo". Of today's sheet, across the officer's teams, the customers at NC 1
-       (DUE SUMMARY 1-N) whose status is UNDERPAID or UNPAID, added up (ds1_owing_n,
-       db/RUN-ME-038). A totals row without the figure -- built before that file's current
-       version was run, or a hand-typed summary -- makes the officer's count unknown (null)
-       rather than short, the same rule as the early slide. */
+       unpaid per pmo". Of today's sheet, across the officer's teams, the customers whose N.C
+       (the sheet's own column) is 1 and whose status is UNDERPAID or UNPAID, added up
+       (nc1_owing_n, db/RUN-ME-039). A totals row without the figure -- an upload from before
+       N.C was imported, a cache built before the column, a hand-typed summary -- makes the
+       officer's count unknown (null) rather than short, the same rule as the early slide. */
     let count1 = 0, count1Known = true;
     for (const r of pick(today)) {
-      if (r.ds1_owing_n == null) count1Known = false; else count1 += Number(r.ds1_owing_n) || 0;
+      if (r.nc1_owing_n == null) count1Known = false; else count1 += Number(r.nc1_owing_n) || 0;
     }
     /* The week is every collection day added together, NOT the average of five percentages.
        Averaging percentages would let a quiet Monday with four customers count as much as a
@@ -312,7 +312,7 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
  *  reaching for a field that happens to be sitting there. */
 export function pmoPublicRow(r, i) {
   return { sn: i + 1, officer: r.officer, teams: r.teams,
-    // Today's NC 1 customers still owing (UNDERPAID or UNPAID), over the officer's teams: a
+    // Today's N.C 1 customers still owing (UNDERPAID or UNPAID), over the officer's teams: a
     // headcount, not money.
     count1: r.count1 == null ? null : r.count1,
     uncollected: r.uncollected, pct: r.pct,

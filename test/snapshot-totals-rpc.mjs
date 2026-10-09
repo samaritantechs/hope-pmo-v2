@@ -129,8 +129,6 @@ export const SNAPSHOT_TOTALS_RPC = {
       const e = n0(s.payment_expected);
       const arr = n0(s.arrears);
       const st = String(s.todays_status == null ? '' : s.todays_status).trim().toUpperCase();
-      // btrim(coalesce(due_summary, '')) ~ '^1\s*[-/]\s*\d+$' -- db/RUN-ME-038, clause for clause.
-      const ds1 = /^1\s*[-\/]\s*\d+$/.test(String(s.due_summary == null ? '' : s.due_summary).trim());
       /* The CASE in the migration: PAID / OVERPAID counts the expected amount only and never
          the overpayment; UNDERPAID is expected minus arrears clamped into [0, expected];
          anything else collected nothing. */
@@ -148,7 +146,7 @@ export const SNAPSHOT_TOTALS_RPC = {
           upload_batch: s.upload_batch == null ? null : s.upload_batch,
           created_at: null,
           customers: 0, expected_amt: 0, collected_amt: 0, uncollected_amt: 0, paid_n: 0, over_n: 0,
-          ds1_owing_n: 0,
+          nc1_owing_n: null,
         };
         out.set(k, g);
       }
@@ -160,8 +158,11 @@ export const SNAPSHOT_TOTALS_RPC = {
       g.uncollected_amt += Math.max(e - col, 0);
       if (st === 'PAID') g.paid_n += 1;
       if (st === 'OVERPAID') g.over_n += 1;
-      // count(*) filter (where c.ds1 and c.st in ('UNDERPAID', 'UNPAID'))
-      if (ds1 && (st === 'UNDERPAID' || st === 'UNPAID')) g.ds1_owing_n += 1;
+      // case when bool_or(c.nc is not null) then count(*) filter (where c.nc = 1 and c.st in
+      // ('UNDERPAID', 'UNPAID')) else null end -- db/RUN-ME-039a, clause for clause.
+      if (s.nc != null) {
+        g.nc1_owing_n = (g.nc1_owing_n || 0) + ((Number(s.nc) === 1 && (st === 'UNDERPAID' || st === 'UNPAID')) ? 1 : 0);
+      }
       // max(created_at) -- what the batch rule compares to decide which upload won.
       if (String(s.created_at || '') > String(g.created_at || '')) {
         g.created_at = s.created_at == null ? null : s.created_at;
