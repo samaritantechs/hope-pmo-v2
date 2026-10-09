@@ -506,7 +506,11 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
 test('only the PMO collection slide carries the unassigned-teams caption, drawn under its total', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
-  assert.equal((view.match(/caption:/g) || []).length, 1, 'one slide with a caption');
+  /* Two captions on the deck: the unassigned-teams one here, and the early slide's own note
+     that Count 1 is not available until db/RUN-ME-038 is run (a step not done is said on the
+     screen that expected it). The UNASSIGNED caption is still the collection slide's alone. */
+  assert.equal((view.match(/caption:/g) || []).length, 2, 'two slides with a caption');
+  assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
   const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
   assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
   assert.ok(/b\.unassignedTeams/.test(view), 'fed by officerBoards');
@@ -550,8 +554,12 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
-  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
-    'remaining and customers sit between Teams and Uncollected on the early slide');
+  /* And Count 1 between the two -- "Btn remaining and customers columns in early collection pmo
+     slide add Count1 (to show the remaining count DS 1 among the all left ones)". */
+  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('count1','Count 1 \(DS 1\)','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
+    'remaining, Count 1 and customers sit between Teams and Uncollected on the early slide');
+  assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-038/.test(early),
+    'a slide with no Count 1 figure says which file to run, rather than printing nought');
   const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
   assert.ok(/col\('officer','Officer'\), col\('teams','Teams','num'\),\s*\n?\s*col\('initial','Initial','money'\)/.test(rec),
     'the team count sits between Officer and Initial on the recovery slide');

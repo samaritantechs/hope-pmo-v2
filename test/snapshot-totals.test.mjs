@@ -429,6 +429,20 @@ test('folding a snapshot preserves collected, uncollected and the headcount exac
   assert.equal(agg.reduce((s, r) => s + r.paid_n + r.over_n, 0),
     rows.filter(r => ['PAID', 'OVERPAID'].includes(String(r.todays_status || '').trim().toUpperCase())).length,
     'the early-collection headcount counts the same rows, whatever the spacing and case');
+  /* COUNT 1 (db/RUN-ME-038): still to pay AND on the second instalment. The regex here is the
+     SQL's, written out a third time on purpose, so the fold is checked against the rule rather
+     than against itself. */
+  const dsOneRows = rows.filter(r => !['PAID', 'OVERPAID'].includes(String(r.todays_status || '').trim().toUpperCase())
+    && /^1\s*\/\s*\d+$/.test(String(r.due_summary == null ? '' : r.due_summary).trim()));
+  assert.equal(agg.reduce((s, r) => s + r.ds1_left_n, 0), dsOneRows.length, 'Count 1 is the unpaid rows at D.S 1/N');
+  assert.equal(foldExpected([
+    { team: 'A', todays_status: 'UNPAID', due_summary: '1/12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNDERPAID', due_summary: ' 1 / 6 ', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'PAID', due_summary: '1/6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', due_summary: '11/12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', due_summary: '0/12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', due_summary: null, snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+  ])[0].ds1_left_n, 2, 'unpaid and underpaid at 1/N count; paid, 11/N, 0/N and blank do not');
 
   // And the same sums per (day, batch, team) -- not merely in total, which a compensating pair
   // of errors could satisfy.

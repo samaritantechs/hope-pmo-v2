@@ -51,8 +51,18 @@ export const DEFAULTER_TOTALS_FN = 'defaulter_snapshot_totals';
    the phone's customer lists too, which need names and numbers. Anything the fold starts
    reading has to be added here, and the tests' fake database returns only what is asked for,
    so an omission fails a test rather than quietly reporting zero. */
-const EXP_FOLD_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
+const EXP_FOLD_COLS = 'team, payment_expected, arrears, todays_status, due_summary, snapshot_date, snapshot_type';
 const DEF_FOLD_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
+
+/* "COUNT 1" -- a customer whose DUE SUMMARY reads 1/N: one instalment paid, the second the one
+   due. The early-collection slide carries how many of those are still to pay, beside the
+   remaining count ("add Count1, to show the remaining count DS 1 among the all left ones").
+   It is the same reading of the D.S cell as paidCount() in portal-core.js, pinned to the one
+   number: digits, a slash, digits, nothing else. The SQL in db/RUN-ME-038 tests the same
+   pattern, and test/snapshot-totals-rpc.mjs transcribes it, so the three cannot disagree. */
+export function dsOne(v) {
+  return /^1\s*\/\s*\d+$/.test(String(v == null ? '' : v).trim());
+}
 
 /* ---------------------------------------------------------------- the fold (fallback path) */
 
@@ -79,7 +89,8 @@ export function foldExpected(rows) {
         team: r.team == null ? null : r.team,
         upload_batch: r.upload_batch == null ? null : r.upload_batch,
         created_at: null,
-        customers: 0, expected_amt: 0, collected_amt: 0, uncollected_amt: 0, paid_n: 0, over_n: 0 };
+        customers: 0, expected_amt: 0, collected_amt: 0, uncollected_amt: 0, paid_n: 0, over_n: 0,
+        ds1_left_n: 0 };
       out.set(k, b);
     }
     const e = num(r.payment_expected), c = collectedOf(r);
@@ -90,6 +101,8 @@ export function foldExpected(rows) {
     const st = String(r.todays_status == null ? '' : r.todays_status).trim().toUpperCase();
     if (st === 'PAID') b.paid_n += 1;
     else if (st === 'OVERPAID') b.over_n += 1;
+    // Still to pay (not PAID, not OVERPAID) and on their second instalment -- see dsOne.
+    else if (dsOne(r.due_summary)) b.ds1_left_n += 1;
     // The newest moment inside the group -- what pickLatestBatch compares to decide which
     // upload won. max(created_at) is what the SQL returns for the same group.
     if (String(r.created_at || '') > String(b.created_at || '')) b.created_at = r.created_at;
@@ -198,6 +211,27 @@ const DECK_COLS = {
   defaulter: 'snapshot_date, snapshot_type, weekday, team, upload_batch, created_at, '
     + 'customers, arrears_amt',
 };
+/* COLUMNS A MIGRATION ADDED LATER, read when the table has them and left out when it has not.
+   `ds1_left_n` arrived with db/RUN-ME-038. PostgREST refuses the WHOLE read for one unknown
+   column, and a refused cache read sends every screen to the live aggregate -- the slow path
+   this cache exists to avoid -- for as long as the SQL is not run. So a read that is refused
+   for one of these is asked again without it, and the omission is remembered for a few
+   minutes per database rather than paid for on every read. The figure built on it (Count 1
+   on the early slide) then reads null, which the slide says, instead of the screens reading
+   slow. */
+const DECK_OPTIONAL_COLS = { expected: ['ds1_left_n'], defaulter: [] };
+const deckColsMissing = new WeakMap();                       // db -> { at, cols: Set }
+function deckColsFor(db, kind) {
+  const hit = deckColsMissing.get(db);
+  const gone = hit && (Date.now() - hit.at) < MISSING_TTL_MS ? hit.cols : null;
+  const extra = DECK_OPTIONAL_COLS[kind].filter(c => !(gone && gone.has(c)));
+  return DECK_COLS[kind] + extra.map(c => ', ' + c).join('');
+}
+/** The column PostgREST named in a "does not exist" refusal, if it is one of the optional ones. */
+function optionalColRefused(e, kind) {
+  const msg = String((e && e.message) || e || '');
+  return DECK_OPTIONAL_COLS[kind].find(c => new RegExp('column\\s+\\S*\\b' + c + '\\b.*does not exist', 'i').test(msg)) || null;
+}
 
 /* WHICH DAYS ARE BUILT -- ASKED ONCE A MINUTE FOR THE WHOLE PROCESS, NOT ONCE PER READ.
    A dashboard asks several totals questions at once and the phone's strip asks four, so a probe
@@ -380,8 +414,8 @@ async function deckTotalsRead(db, fn, args) {
   if (!anyBuilt || missing.length > DECK_MAX_GAPS) return null;
 
   try {
-    const rows = await fetchAll(() => {
-      let q = db.from(DECK_TOTALS_TABLE).select(DECK_COLS[kind])
+    const read = cols => fetchAll(() => {
+      let q = db.from(DECK_TOTALS_TABLE).select(cols)
         .eq('kind', kind).gte('snapshot_date', from).lte('snapshot_date', to);
       if (args.p_type) q = q.eq('snapshot_type', args.p_type);
       if (args.p_weekday) q = q.eq('weekday', args.p_weekday);
@@ -390,6 +424,19 @@ async function deckTotalsRead(db, fn, args) {
       if (Array.isArray(args.p_teams) && args.p_teams.length) q = q.in('team', args.p_teams);
       return q;
     });
+    let rows;
+    try {
+      rows = await read(deckColsFor(db, kind));
+    } catch (e) {
+      // Refused for a column the migration has not added yet: note it, ask again without it.
+      const col = optionalColRefused(e, kind);
+      if (!col) throw e;
+      const hit = deckColsMissing.get(db);
+      const cols = hit && (Date.now() - hit.at) < MISSING_TTL_MS ? hit.cols : new Set();
+      cols.add(col);
+      deckColsMissing.set(db, { at: Date.now(), cols });
+      rows = await read(deckColsFor(db, kind));
+    }
     /* THE STALE ROWS OF AN UNBUILT DAY ARE DROPPED, and this is the line the whole split turns
        on. unmarkDeckTotals deletes the day from deck_totals_days ONLY -- the rows in
        deck_totals stay until the rebuild replaces them, which is what makes an interrupted
