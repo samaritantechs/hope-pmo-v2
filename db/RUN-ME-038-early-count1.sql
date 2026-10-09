@@ -1,22 +1,25 @@
 -- =====================================================================================
--- RUN-ME-038  "COUNT 1" ON THE EARLY-COLLECTION SLIDE: of the customers still to pay, how
---             many are on their second instalment (DUE SUMMARY reads 1/N).
+-- RUN-ME-038  "COUNT 1" (NC = 1) ON THE EARLY-COLLECTION AND PMO COLLECTION SLIDES: per
+--             officer, the sum over their teams of customers at NC 1 -- DUE SUMMARY reads 1-N --
+--             whose status on the sheet is UNDERPAID or UNPAID.
 --
---   "Btn remaining and customers columns in early collection pmo slide add Count1 (to show
---    the remaining count DS 1 among the all left ones) - auto add that column into the
---    ongoing presentation"
+--   "Btn remaining and customers columns in early collection pmo slide add Count1"
+--   "sum of nc 1 of underpaid and unpaid per pmo"
 --
--- The early slide reads TEAM-DAY TOTALS, summed by the database (2026-08-05-snapshot-totals)
--- and kept in deck_totals when a deck lands (RUN-ME-022). So the new figure is one more column
--- of those totals: ds1_left_n -- rows whose status is not PAID and not OVERPAID and whose
--- DUE SUMMARY is exactly "1-<n>" or "1/<n>" (spaces around the separator allowed). THE SHEET
--- WRITES IT WITH A DASH: the live book's shapes are 9-99, 99-99 and 9-9, ninety thousand rows
--- and not one slash, which is why the first run of this file counted nought everywhere. The
--- fallback fold in api/_lib/snapshot-totals.js (dsOne) counts the identical rule, so a
--- database with this file run and one without agree.
+-- The slides read TEAM-DAY TOTALS, summed by the database (2026-08-05-snapshot-totals) and kept
+-- in deck_totals when a deck lands (RUN-ME-022). So the figure is one more column of those
+-- totals, ds1_owing_n: rows whose DUE SUMMARY is exactly "1-<n>" or "1/<n>" (spaces allowed)
+-- AND whose TODAYS STATUS is UNDERPAID or UNPAID. PAID and OVERPAID do not count, and neither
+-- does a row with a blank or any other status -- "underpaid and unpaid" is the rule, said in
+-- full. The slide adds the column over the officer's teams, which is the "per pmo".
+-- THE SHEET WRITES IT WITH A DASH: the live book's shapes are 9-99, 99-99 and 9-9, ninety
+-- thousand rows and not one slash. The fallback fold in api/_lib/snapshot-totals.js (dsOne)
+-- counts the identical rule, so a database with this file run and one without agree.
 --
--- RAN THE FIRST VERSION ALREADY? Run sections 1 to 4 again: section 1 replaces the function
--- with the dash-aware rule, section 3 re-marks the days, section 4 rebuilds them.
+-- RAN AN EARLIER VERSION ALREADY? Run sections 1 to 4 again: section 1 replaces the function
+-- with the one column, section 2 swaps the cache's column for it, section 3 re-marks the days,
+-- section 4 rebuilds them. The earlier columns (ds1_left_n, ds1_n) are dropped: nothing reads
+-- them any more, and a column with a definition nobody uses is a figure waiting to be misread.
 --
 -- UNTIL THIS IS RUN nothing breaks: the slide shows a dash in the column and a caption naming
 -- this file. The code already asks for the column and steps back when the table has not got it.
@@ -55,7 +58,7 @@ create function public.expected_snapshot_totals(
   uncollected_amt numeric,
   paid_n bigint,
   over_n bigint,
-  ds1_left_n bigint
+  ds1_owing_n bigint
 )
 language sql
 stable
@@ -102,7 +105,8 @@ as $$
     sum(greatest(c.e - c.col, 0))                         as uncollected_amt,
     count(*) filter (where c.st = 'PAID')::bigint         as paid_n,
     count(*) filter (where c.st = 'OVERPAID')::bigint     as over_n,
-    count(*) filter (where c.st not in ('PAID', 'OVERPAID') and c.ds1)::bigint as ds1_left_n
+    -- COUNT 1: NC 1 and still owing -- UNDERPAID or UNPAID, those two statuses and no other.
+    count(*) filter (where c.ds1 and c.st in ('UNDERPAID', 'UNPAID'))::bigint as ds1_owing_n
   from collected_ c
   group by c.snapshot_date, c.snapshot_type, c.team, c.upload_batch
 $$;
@@ -111,12 +115,16 @@ grant execute on function public.expected_snapshot_totals(date, date, text, text
   to anon, authenticated, service_role;
 
 
--- 2. THE CACHE (RUN-ME-022), IF IT IS THERE: one more column, and a build that fills it.
---    Guarded, so a database that never ran RUN-ME-022 is left exactly as it is.
+-- 2. THE CACHE (RUN-ME-022), IF IT IS THERE: the new column in, the earlier two out, and a
+--    build that fills it. Guarded, so a database that never ran RUN-ME-022 is left as it is.
+--    Dropping the old columns is safe at any moment: the code that read them asks again
+--    without a column the table refuses, and the slide shows a dash until the next deploy.
 do $$
 begin
   if to_regclass('public.deck_totals') is not null then
-    execute 'alter table public.deck_totals add column if not exists ds1_left_n bigint';
+    execute 'alter table public.deck_totals add column if not exists ds1_owing_n bigint';
+    execute 'alter table public.deck_totals drop column if exists ds1_left_n';
+    execute 'alter table public.deck_totals drop column if exists ds1_n';
   end if;
 end $$;
 
@@ -134,10 +142,10 @@ begin
   if p_kind = 'expected' then
     insert into public.deck_totals (kind, snapshot_date, snapshot_type, weekday, team, upload_batch,
                                     created_at, customers, expected_amt, collected_amt, uncollected_amt, paid_n, over_n,
-                                    ds1_left_n)
+                                    ds1_owing_n)
     select 'expected', t.snapshot_date, t.snapshot_type, null, t.team, t.upload_batch,
            t.created_at, t.customers, t.expected_amt, t.collected_amt, t.uncollected_amt, t.paid_n, t.over_n,
-           t.ds1_left_n
+           t.ds1_owing_n
       from public.expected_snapshot_totals(p_from, p_to, null, null) t;
   elsif p_kind = 'defaulter' then
     insert into public.deck_totals (kind, snapshot_date, snapshot_type, weekday, team, upload_batch,
@@ -180,7 +188,19 @@ end $$;
 select * from public.build_deck_totals_recent();
 
 
--- 5. PROOF. Tomorrow's early list, per team, with Count 1 beside the headcount.
-select team, customers, paid_n + over_n as paid_over, customers - paid_n - over_n as remaining, ds1_left_n as count1
+-- 5. PROOF, TWO WAYS.
+--    (a) Per team off the function the slides read: Count 1 beside the headcount.
+select team, customers, paid_n + over_n as paid_over, customers - paid_n - over_n as remaining,
+       ds1_owing_n as count1
 from public.expected_snapshot_totals(current_date, current_date + 3, 'initial', null)
 order by team;
+
+--    (b) The same sheets, NC 1 rows only, by status -- so the figure can be checked against the
+--        rule by eye: count1 must equal underpaid + unpaid, and nothing else.
+select s.snapshot_date, upper(btrim(coalesce(s.todays_status, ''))) as status, count(*) as nc1_rows
+from public.repayment_snapshots s
+where s.snapshot_type = 'initial'
+  and s.snapshot_date between current_date and current_date + 3
+  and btrim(coalesce(s.due_summary, '')) ~ '^1\s*[-/]\s*\d+$'
+group by 1, 2
+order by 1, 2;

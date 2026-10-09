@@ -11052,11 +11052,13 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       if (r.team) b.teamSet[K(r.team)] = 1;
       b.paidOver += num(r.paid_n) + num(r.over_n);
       b.customers += num(r.customers);
-      /* COUNT 1 AMONG THOSE LEFT -- "add Count1 (to show the remaining count DS 1 among the
-         all left ones)". A totals row built before db/RUN-ME-038, or a hand-typed summary,
-         has no such figure; one of those in an officer's teams makes the officer's count
-         unknown rather than short, and the slide says so instead of printing a smaller number. */
-      if (r.ds1_left_n == null) b.count1Known = false; else b.count1 += num(r.ds1_left_n);
+      /* COUNT 1 -- "sum of nc 1 of underpaid and unpaid per pmo": across the officer's teams,
+         the customers at NC 1 (DUE SUMMARY 1-N) whose status is UNDERPAID or UNPAID, added up
+         (ds1_owing_n, db/RUN-ME-038). A totals row built before that file's current version,
+         or a hand-typed summary, has no such figure; one of those in an officer's teams makes
+         the officer's count unknown rather than short, and the slide says so instead of
+         printing a smaller number. */
+      if (r.ds1_owing_n == null) b.count1Known = false; else b.count1 += num(r.ds1_owing_n);
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
       teams: Object.keys(b.teamSet).length, customers: b.customers,

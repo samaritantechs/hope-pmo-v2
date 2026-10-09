@@ -4037,9 +4037,9 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   t.repayment_snapshots.push(
     E('881', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
     E('882', 'KONGOWE', 600, 'UNPAID', 0, TODAY, 'initial'),
-    /* COUNT 1 -- "the remaining count DS 1 among the all left ones": one unpaid customer on
-       their second instalment (D.S 1/6), one paid customer also at 1/6 who must NOT count, and
-       882 above at the fixture's 2/6 who must not either. */
+    /* COUNT 1 -- "sum of nc 1 of underpaid and unpaid per pmo": one unpaid customer on their
+       second instalment (D.S 1/6), one paid customer also at 1/6 who must NOT count, and 882
+       above at the fixture's 2/6 who must not either. */
     { ...E('883', 'KONGOWE', 500, 'UNPAID', 0, TODAY, 'initial'), due_summary: '1 / 6' },
     { ...E('884', 'KONGOWE', 500, 'PAID', 0, TODAY, 'initial'), due_summary: '1-6' },
     // The live sheet's own spelling, with a dash: "1-12".
@@ -4066,7 +4066,9 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(early.paidOver, 2);
   assert.equal(early.customers, 5);
   assert.equal(early.remaining, 3, 'five on the list, two paid -- three still to pay');
-  assert.equal(early.count1, 2, 'of the three left, two are at D.S 1 of N (1 / 6 and 1-12): the paid 1-6 and the unpaid 2/6 do not count');
+  /* "sum of nc 1 of underpaid and unpaid per pmo": 1 / 6 unpaid and 1-12 unpaid make two; the
+     paid 1-6 does not count, and neither does the 2/6. */
+  assert.equal(early.count1, 2, 'two at NC 1 still owing; the paid one is not counted');
   assert.equal(early.pct, 50);
   const earlyKesho = b.earlyToday.find(r => r.officer === 'EARLY E');
   assert.equal(earlyKesho.count1, 2, 'the next-list board carries it too -- that is the slide\'s own column');
@@ -4074,16 +4076,16 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
      where db/RUN-ME-038 is not run yet reads the same Count 1 off the rows. */
   const bFold = await run('officerBoards', {}, ADMIN, fakeDb(t));
   assert.equal(bFold.earlyWeek.find(r => r.officer === 'EARLY E').count1, 2);
-  /* AND FROM A CACHE BUILT BEFORE THE COLUMN EXISTED: deck_totals without ds1_left_n refuses
+  /* AND FROM A CACHE BUILT BEFORE THE COLUMN EXISTED: deck_totals without ds1_owing_n refuses
      the read for that column, the read is asked again without it, the figures are still served
      from the cache, and Count 1 is null -- said, not nought. */
   const old = SNAPSHOT_TOTALS_RPC.expected_snapshot_totals({ repayment_snapshots: { rows: t.repayment_snapshots } },
     { p_from: '2026-07-01', p_to: '2026-07-31', p_type: null, p_teams: null })
-    .map(({ ds1_left_n, ...r }) => ({ kind: 'expected', ...r }));
+    .map(({ ds1_owing_n, ...r }) => ({ kind: 'expected', ...r }));
   const days = [];
   for (let d = '2026-07-01'; d <= '2026-07-31'; d = addDaysKeyT(d, 1)) days.push({ kind: 'expected', snapshot_date: d });
   const dbOld = fakeDb({ ...t, deck_totals: old, deck_totals_days: days },
-    { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC }, missingColumns: { deck_totals: ['ds1_left_n'] } });
+    { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC }, missingColumns: { deck_totals: ['ds1_owing_n'] } });
   const bOld = await run('officerBoards', {}, ADMIN, dbOld);
   const oldEarly = bOld.earlyWeek.find(r => r.officer === 'EARLY E');
   assert.equal(oldEarly.remaining, 3, 'the cache still answers the rest of the board');
@@ -4480,8 +4482,9 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   /* KAMARIA: 9 of 10 paid = 90%.  CATHERINE: 1 of 2 paid = 50%, on a fifth of the customers.
      The plan's whole point is that the small book does not flatter anybody. */
   const rows = [];
-  for (let i = 0; i < 9; i++) rows.push(X('KONGOWE', TODAY, 'PAID'));
-  // KAMARIA's one unpaid customer is on their second instalment: Count 1 (leo) = 1.
+  for (let i = 0; i < 8; i++) rows.push(X('KONGOWE', TODAY, 'PAID'));
+  // KAMARIA: one PAID customer at NC 1 and one UNPAID at NC 1 -- Count 1 (NC 1 leo) = 1.
+  rows.push({ ...X('KONGOWE', TODAY, 'PAID'), due_summary: '1-12' });
   rows.push({ ...X('KONGOWE', TODAY, 'UNPAID'), due_summary: '1-6' });
   rows.push(X('MBAGALA', TODAY, 'PAID'));
   rows.push(X('MBAGALA', TODAY, 'UNPAID'));
@@ -4495,13 +4498,13 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   assert.equal(k.pct, 90);
   assert.equal(k.uncollected, 1000);
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table ... add
-     count 1 column too (always the count 1 left of the current day)" */
-  assert.equal(k.count1, 1, 'today\'s one unpaid customer at D.S 1-6');
+     count 1 column too", then "sum of nc 1 of underpaid and unpaid per pmo" */
+  assert.equal(k.count1, 1, 'the UNPAID NC 1 customer on today\'s list; the PAID one at NC 1 is not counted');
 
   const c = b.pmo.find(r => r.officer === 'CATHERINE');
   assert.equal(c.pct, 50);
   assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
-  assert.equal(c.count1, 0, 'her unpaid customer carries no D.S: nought, not unknown');
+  assert.equal(c.count1, 0, 'her customers carry no D.S: nought, not unknown');
 
   /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
      future slide cannot include it by reaching for a field that happened to be there.

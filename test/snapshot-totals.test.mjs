@@ -429,16 +429,17 @@ test('folding a snapshot preserves collected, uncollected and the headcount exac
   assert.equal(agg.reduce((s, r) => s + r.paid_n + r.over_n, 0),
     rows.filter(r => ['PAID', 'OVERPAID'].includes(String(r.todays_status || '').trim().toUpperCase())).length,
     'the early-collection headcount counts the same rows, whatever the spacing and case');
-  /* COUNT 1 (db/RUN-ME-038): still to pay AND on the second instalment. The regex here is the
-     SQL's, written out a third time on purpose, so the fold is checked against the rule rather
-     than against itself. */
-  const dsOneRows = rows.filter(r => !['PAID', 'OVERPAID'].includes(String(r.todays_status || '').trim().toUpperCase())
+  /* COUNT 1 (db/RUN-ME-038): UNDERPAID or UNPAID, and on the second instalment -- "sum of nc 1
+     of underpaid and unpaid per pmo". The regex here is the SQL's, written out a third time on
+     purpose, so the fold is checked against the rule rather than against itself. */
+  const dsOneRows = rows.filter(r => ['UNDERPAID', 'UNPAID'].includes(String(r.todays_status || '').trim().toUpperCase())
     && /^1\s*[-\/]\s*\d+$/.test(String(r.due_summary == null ? '' : r.due_summary).trim()));
-  assert.equal(agg.reduce((s, r) => s + r.ds1_left_n, 0), dsOneRows.length, 'Count 1 is the unpaid rows at D.S 1 of N');
+  assert.equal(agg.reduce((s, r) => s + r.ds1_owing_n, 0), dsOneRows.length,
+    'Count 1 is the UNDERPAID and UNPAID rows at D.S 1 of N');
   /* THE LIVE SHEET WRITES "1-12", with a dash -- the shapes on the book are 9-99, 99-99 and
      9-9 -- so the dash form is the one that matters; the slash form is kept for a sheet that
      writes it the other way. */
-  assert.equal(foldExpected([
+  const both = foldExpected([
     { team: 'A', todays_status: 'UNPAID', due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
     { team: 'A', todays_status: 'UNPAID', due_summary: '1/12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
     { team: 'A', todays_status: 'UNDERPAID', due_summary: ' 1 - 6 ', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
@@ -449,7 +450,12 @@ test('folding a snapshot preserves collected, uncollected and the headcount exac
     { team: 'A', todays_status: 'UNPAID', due_summary: '0-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
     { team: 'A', todays_status: 'UNPAID', due_summary: '2-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
     { team: 'A', todays_status: 'UNPAID', due_summary: null, snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-  ])[0].ds1_left_n, 3, 'unpaid and underpaid at 1-N or 1/N count; paid, overpaid, 11-N, 10-N, 0-N, 2-N and blank do not');
+    // A row at NC 1 with NO status written: not underpaid, not unpaid, so not counted either.
+    { team: 'A', todays_status: '', due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: null, due_summary: '1-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+  ])[0];
+  assert.equal(both.ds1_owing_n, 3,
+    'unpaid and underpaid at 1-N or 1/N count; paid, overpaid, blank-status, 11-N, 10-N, 0-N, 2-N and no D.S do not');
 
   // And the same sums per (day, batch, team) -- not merely in total, which a compensating pair
   // of errors could satisfy.
