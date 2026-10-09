@@ -1241,7 +1241,8 @@ test('a sync carries the data version, so a phone knows when an upload has happe
   await db.from('settings').upsert({ key: 'DATA_VERSION', value: '1700000000000' }, { onConflict: 'key' });
 
   const after = await callApi(db, 'api_callSync', ['d1', []], NOW);
-  assert.equal(after.dataVersion, '1700000000000', 'the next sync reports the new version');
+  // The scope rides on the stamp (handsetVersion_): the upload, then the officer's team.
+  assert.equal(after.dataVersion, '1700000000000|KONGOWE', 'the next sync reports the new version');
   assert.notEqual(after.dataVersion, before.dataVersion, 'and it differs, which is the whole signal');
 });
 
@@ -1296,7 +1297,7 @@ test('the daily summary says which upload it was computed from', async () => {
   await db.from('settings').upsert({ key: 'DATA_VERSION', value: '1700000000001' }, { onConflict: 'key' });
   const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
   assert.equal(d.ok, true);
-  assert.equal(d.dataVersion, '1700000000001',
+  assert.equal(d.dataVersion, '1700000000001|KONGOWE',
     'the figures carry their own version, so the phone cannot store them against the wrong one');
 });
 
@@ -1918,6 +1919,40 @@ test('a leader\'s handset follows the access code live: edit the code, the phone
   assert.equal((await callApi(db2, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW)).debugScope, 'ALL');
 });
 
+/* "I expect both the catherine type issue and presentation slides all autofix at interfaces
+   with no need to refresh nor logout." The phone drops its hour-long list cache when the
+   version a sync brings back differs from the one it holds; the version now carries the scope,
+   so a code edited in the portal empties the phone's lists at the next sync by itself. */
+test('the version a handset compares carries its scope, the same on boot, sync and the strip', async () => {
+  const t = makeTables();
+  t.settings.push({ key: 'DATA_VERSION', value: '1000' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA, KONGOWE
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);  // ALL
+  const boot2 = await callApi(db, 'api_callBoot', ['d2'], NOW);
+  const sync2 = await callApi(db, 'api_callSync', ['d2', []], NOW);
+  const strip2 = await callApi(db, 'api_callDailySummary', ['d2'], NOW);
+  assert.equal(boot2.dataVersion, '1000|KONGOWE', 'the upload stamp, then the scope');
+  assert.equal(sync2.dataVersion, boot2.dataVersion, 'sync says the same string, or the strip would reload on every sync');
+  assert.equal(strip2.dataVersion, boot2.dataVersion);
+  assert.equal((await callApi(db, 'api_callBoot', ['d3'], NOW)).dataVersion, '1000|ALL');
+  assert.equal((await callApi(db, 'api_callSync', ['d1', []], NOW)).dataVersion, '1000|KONGOWE', 'an officer carries their team');
+  // The code is edited: a fresh database stands in for the memo's minute. The stamp moves, so
+  // the handset's next sync drops its lists and asks again -- no logout, no re-registration.
+  const t2 = makeTables();
+  t2.settings.push({ key: 'DATA_VERSION', value: '1000' });
+  t2.access_codes.find(c => c.code === 'LEAD1').teams = ['MBAGALA', 'KONGOWE'];
+  const db2 = fakeDb(t2);
+  await callApi(db2, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  assert.equal((await callApi(db2, 'api_callSync', ['d2', []], NOW)).dataVersion, '1000|KONGOWE,MBAGALA', 'sorted, in capitals');
+  // Nothing uploaded yet stays empty: an older server reads the same.
+  const t3 = makeTables();
+  const db3 = fakeDb(t3);
+  await callApi(db3, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  assert.equal((await callApi(db3, 'api_callSync', ['d2', []], NOW)).dataVersion, '');
+});
+
 test('a leader whose name two codes carry, or no code at all, keeps what registration stored', async () => {
   const t = makeTables();
   const db = fakeDb(t);
@@ -2073,7 +2108,7 @@ test('boot tells the handset which upload its answer belongs to', async () => {
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
   assert.equal(d.ok, true);
-  assert.equal(d.dataVersion, '1754900000000');
+  assert.equal(d.dataVersion, '1754900000000|KONGOWE', 'the upload stamp, then this handset\'s scope');
 });
 
 test('a deployment with nothing uploaded yet reports an empty version, not a wrong one', async () => {

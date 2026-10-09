@@ -331,7 +331,8 @@ async function boot(db, [dev], nowMs) {
        for the phone index. Handing it to the phone costs nothing -- it comes from the same
        settings query as the brand and the sync interval -- and lets the device throw its cache
        away the instant the book behind it changes, rather than an hour later. */
-    dataVersion: setting('DATA_VERSION') || '',
+    dataVersion: handsetVersion_(setting('DATA_VERSION'),
+      cu.is_leader ? lt : (String(cu.team == null ? '' : cu.team).trim() ? [cu.team] : null)),
     /* CRISIS PREPAREDNESS -- the admin's switch for the offline pack. "national challenges of
        oct 29th 2025 when internet was shut down". OFF by default; when the setting says YES
        the handset shows its own download switch, and when the admin turns it off again every
@@ -841,6 +842,24 @@ async function adminTabsSource_(db, nowMs) {
    RULE 1: an officer's boot, lists, sync and strip make no new read. A leader's boot already
    paid this read for the admin test and now shares it; a leader's list or report pays the
    same one small memoised read a minute at most. */
+/* THE VERSION A HANDSET COMPARES CARRIES THE SCOPE IT WAS ANSWERED FOR.
+     "I expect both the catherine type issue and presentation slides all autofix at interfaces
+      with no need to refresh nor logout"
+   The phone keeps its lists for an hour and drops them the moment the version it holds differs
+   from the one a sync or boot brings back (dropCacheIfStale_ in call.html). That version was
+   the upload stamp alone, so a scope that changed in the portal reached the phone only when the
+   next upload happened to land. The scope rides on the stamp now -- the teams, in capitals,
+   sorted, or ALL -- so the first sync after the code is edited (a few minutes at most) throws
+   the old list away and asks again, and nobody logs out or re-registers. Boot, sync and the
+   strip answer the SAME stamped string, or the strip would reload itself on every sync. Empty
+   stays empty: an older server, or nothing uploaded yet, is still read as "no version". */
+function handsetVersion_(base, teams) {
+  const b = String(base == null ? '' : base);
+  if (!b) return '';
+  const scope = teams && teams.length ? teams.map(K).filter(Boolean).sort().join(',') : 'ALL';
+  return b + '|' + scope;
+}
+
 async function leaderTeamsLive_(db, cu, nowMs) {
   if (!cu || !cu.is_leader) return cu ? (cu.leader_teams || null) : null;
   const src = await adminTabsSource_(db, nowMs);
@@ -1374,7 +1393,7 @@ async function summaryCompute(db, user, nowMs) {
        it has to know what it is holding: it stores this beside the numbers and asks again only
        when a sync reports a different one. Sent by the figures themselves rather than assumed
        by the caller, so the two can never drift apart. */
-    dataVersion: (await settingGet(db, 'DATA_VERSION')) || '',
+    dataVersion: handsetVersion_(await settingGet(db, 'DATA_VERSION'), user.teams),
   };
 }
 
@@ -1555,9 +1574,11 @@ async function sync(db, [dev, calls], nowMs) {
      number moves it, and it is part of the phone index's cache key below, so the index is
      never stale for the call the officer makes the minute after recording the number. */
   const vs = await settingsMany(db, ['DATA_VERSION', 'NEW_NUMBER_VERSION']);
-  const dataVersion = vs('DATA_VERSION') || '';
+  const rawVersion = vs('DATA_VERSION') || '';
+  // What the handset compares carries its scope (handsetVersion_); the index key stays the raw stamp.
+  const dataVersion = handsetVersion_(rawVersion, user.teams);
   if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
-  const byNum = await phoneIndex(db, nowMs, dataVersion + '|' + (vs('NEW_NUMBER_VERSION') || ''));
+  const byNum = await phoneIndex(db, nowMs, rawVersion + '|' + (vs('NEW_NUMBER_VERSION') || ''));
   const records = [];
   const seenBatch = {};
   let pf = 0, npf = 0, batchDup = 0;

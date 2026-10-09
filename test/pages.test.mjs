@@ -593,10 +593,32 @@ test('a playing presentation checks the build on every refetch and resumes after
   assert.ok(/var resume = presResumeTake_\(\);\s*\n\s*if \(resume && allowed\('present'\)\)/.test(start), 'start() picks the note up');
   assert.ok(/go\('present', resume\.weekOf \? \{ weekOf: resume\.weekOf \} : \{\}\);/.test(start), 'opens the present tab on the same week');
   assert.ok(/presStart\(Math\.min\(Number\(resume\.i\) \|\| 0, S\.slides\.length - 1\)\);/.test(start), 'and presses Play on the same slide once the figures are in');
-  assert.ok(/\} else \{\s*\n\s*go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\);/.test(start), 'everybody else lands where they always did');
+  assert.ok(/else go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\);/.test(start), 'everybody else lands where they always did');
   // The note is read ONCE: a reload that does not resume must not resume on the next sign-in.
   const take = app.slice(app.indexOf('function presResumeTake_'), app.indexOf('function presRefetch'));
   assert.ok(/sessionStorage\.removeItem\(PRES_RESUME_KEY\);/.test(take));
+});
+
+/* AND THE PORTAL ITSELF -- "all autofix at interfaces with no need to refresh nor logout". */
+test('an open portal tab checks the build on a timer and when it comes back into view, and reloads itself onto the same tab', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const watch = app.slice(app.indexOf('function buildWatch_'), app.indexOf('function viewResumeTake_'));
+  assert.ok(/if \(!S\.code \|\| !S\.me \|\| document\.hidden\) return;/.test(watch), 'signed in and in view, or nothing is asked');
+  assert.ok(/fetch\('\/api\/me\?code=' \+ encodeURIComponent\(S\.code\)\)/.test(watch));
+  assert.ok(/if \(pageBusy_\(\)\) return;/.test(watch), 'never under somebody\'s fingers');
+  assert.ok(/sessionStorage\.setItem\(VIEW_RESUME_KEY, JSON\.stringify\(\{ view: S\.view, args: S\.args \|\| \{\} \}\)\)/.test(watch)
+    && /freshEnough_\(me\);/.test(watch), 'notes the tab, reloads by the one guarded path');
+  const busy = app.slice(app.indexOf('function pageBusy_'), app.indexOf('function buildWatch_'));
+  assert.ok(/\/\^\(INPUT\|TEXTAREA\|SELECT\)\$\/\.test\(a\.tagName\)/.test(busy), 'a field in focus');
+  assert.ok(/bg\.style\.display === 'flex'/.test(busy), 'a drawer open');
+  assert.ok(/pres\.style\.display === 'block'/.test(busy), 'the deck playing -- it has its own check');
+  assert.ok(/el\.value \|\| ''\) !== \(el\.defaultValue \|\| ''\)/.test(busy), 'a form changed from how it was drawn');
+  const start = app.slice(app.indexOf('function start(me)'), app.indexOf('/* ----------------------------------------------------------- table engine'));
+  assert.ok(/setInterval\(buildWatch_, BUILD_WATCH_MS\);/.test(start), 'on a timer');
+  assert.ok(/if \(!document\.hidden\)\{ annCheck\(\); bellRefresh\(\); buildWatch_\(\); \}/.test(start), 'and when the tab comes back');
+  assert.ok(/var vres = viewResumeTake_\(\);\s*\n\s*if \(!impTab && vres && allowed\(vres\.view\)\) go\(vres\.view, vres\.args \|\| \{\}\);/.test(start),
+    'start() opens the tab the reload was taken from');
+  assert.ok(/var BUILD_WATCH_MS = 5 \* 60 \* 1000;/.test(app), 'every five minutes: one tiny read per open tab');
 });
 
 /* THE DAY-PROGRESS SLIDE: the three office units from the day's first upload to its latest,
