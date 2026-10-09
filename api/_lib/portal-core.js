@@ -11209,10 +11209,31 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       dailyRec[who] = (dailyRec[who] || 0) + t.recovered;
     }
   }
-  const iniMon = stand ? standingRows_(rangeStand_(stand, mon, obEnd), 'initial') : defDay_(mon, 'initial', 'MON');
+  /* THE WEEK'S INITIAL AND CURRENT ARE THE WEEK'S OWN DAYS ADDED, exactly as its Recovered is.
+       "at presentation recovery is showing but the numbers in initial are lower than those of
+        current in the two columns btn teams and uncollected"
+     This board put MONDAY's initial deck beside TODAY's current deck -- the single boundary
+     pair sumRangeStand_'s own note rejects -- while Recovered (week) beside them was, rightly,
+     each day's own (initial - current) added up. The three could not reconcile: in a week where
+     new defaulters joined the current deck, Current read above Initial with money recovered
+     beside it, and nothing on the wall said why. Now Initial and Current are the same per-day
+     sums the recovered is made of, so Initial minus Current IS Recovered (week), to the
+     shilling. The fallback (RUN-ME-032 not run) adds the same per-day pairs recoveryByTeam
+     measures, which is what dailyRec below is already made of. */
+  const weekStand = stand ? sumRangeStand_(stand, mon, obEnd) : null;
+  const iniWeek = [], curWeek = [];
+  if (stand) {
+    iniWeek.push(...standingRows_(weekStand, 'initial'));
+    curWeek.push(...standingRows_(weekStand, 'current'));
+  } else for (let i = 0; i < 7; i++) {
+    for (const t of recoveryByTeam(myDef, addDaysKey(mon, i), WD7[i], adj).values()) {
+      iniWeek.push({ team: t.team, arrears_amt: t.initial });
+      curWeek.push({ team: t.team, arrears_amt: t.current });
+    }
+  }
   /* The weekly board always divides by the WEEK's uncollected, whatever day it is read on --
      that is what makes it the weekly board rather than a second copy of the daily one. */
-  const recWeek = recBoard(iniMon, curToday, dailyRec, uncolWeekBy);
+  const recWeek = recBoard(iniWeek, curWeek, dailyRec, uncolWeekBy);
 
   /* Recovery is initial MINUS current, so if one of the two decks is short the difference is
      reported as money recovered. Uploading the same file as both should read as zero
