@@ -10289,10 +10289,16 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const mSalesPct = salesPct;
     const mEColPct = m ? pctOf_(m.ic, m.ie) : null;
     const mColPct = m ? pctOf_(m.c, m.e) : null;
-    // A month with no deck paired on any day has not measured recovery -- null, never 0%.
-    // Under the one rule the month's recovered IS the standing today, over the month's uncollected.
-    const stT = standToday ? standToday.get(K(s.team)) : null;
-    const mRecPct = stand ? (stT && m ? pctOf_(stT.recovered, m.u) : null) : ((m && m.pairedDays > 0) ? pctOf_(m.rec, m.u) : null);
+    /* A month with no deck paired on any day has not measured recovery -- null, never 0%.
+       THE MONTH'S RECOVERED IS THE MONTH'S, NOT TODAY'S.
+         "Monthly rec% at grand total of orodha is okay but that in by team seems not okay --
+          too many 0%"
+       This cell divided TODAY's standing by the month's uncollected, so a team that recovered
+       nothing today read 0% for the whole month, while the JUMLA row under it worked the month
+       out from mRec/mUncol below -- the ledger's own days added up, the same sum-of-days rule
+       the week and the month report use. One figure, one source: the team cell now reads the
+       parts its own grand row is made of. */
+    const mRecPct = (m && m.pairedDays > 0) ? pctOf_(m.rec, m.u) : null;
     return {
       ...s, recovered, salesPct,
       collPctToday: pctOf_(s.colToday, s.expToday),

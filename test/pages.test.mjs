@@ -621,6 +621,29 @@ test('an open portal tab checks the build on a timer and when it comes back into
   assert.ok(/var BUILD_WATCH_MS = 5 \* 60 \* 1000;/.test(app), 'every five minutes: one tiny read per open tab');
 });
 
+/* CLICKING A SECOND HEADER KEEPS THE FIRST SORT AS "THEN BY", LIKE EXCEL.
+   "When i sort table headers at dashboard orodha like by collection then by OPM, I expect that
+    to behave as excel: every opm will have descending collection ... its zigzag collection at
+    each opm". The header click threw the first sort away. */
+test('a header click demotes the sort you had to the second level instead of discarding it', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const wire = app.slice(app.indexOf('function wireTable'), app.indexOf('function wireTable') + 2500);
+  assert.ok(/if \(S\.sort===k\) S\.asc = !S\.asc;\s*\n\s*else \{ if \(S\.sort\) \{ S\.sort2 = S\.sort; S\.asc2 = S\.asc; \} S\.sort=k; S\.asc=false; \}/.test(wire),
+    'same header: turn it round; another header: the old sort and its direction become "then by"');
+  // The arithmetic, as the browser runs it: sorted by collection descending, then OPM clicked.
+  const S = { sort: 'collPct', asc: false, sort2: null, asc2: false,
+    cols: [{ key: 'opm', label: 'OPM', kind: 'text' }, { key: 'collPct', label: 'Col', kind: 'pct' }] };
+  const click = new Function('S', 'k', "if (S.sort===k) S.asc = !S.asc; else { if (S.sort) { S.sort2 = S.sort; S.asc2 = S.asc; } S.sort=k; S.asc=false; }");
+  click(S, 'opm');
+  assert.deepEqual([S.sort, S.asc, S.sort2, S.asc2], ['opm', false, 'collPct', false]);
+  const rows = [{ opm: 'A', collPct: 50 }, { opm: 'B', collPct: 90 }, { opm: 'A', collPct: 80 }, { opm: 'B', collPct: 60 }];
+  const cmp = (c, a, b, asc) => c.kind === 'pct' ? (asc ? a[c.key] - b[c.key] : b[c.key] - a[c.key])
+    : (asc ? (a[c.key] < b[c.key] ? -1 : a[c.key] > b[c.key] ? 1 : 0) : (a[c.key] > b[c.key] ? -1 : a[c.key] < b[c.key] ? 1 : 0));
+  const c1 = S.cols.find(c => c.key === S.sort), c2 = S.cols.find(c => c.key === S.sort2);
+  rows.sort((a, b) => cmp(c1, a, b, S.asc) || cmp(c2, a, b, S.asc2));
+  assert.deepEqual(rows.map(r => r.opm + r.collPct), ['B90', 'B60', 'A80', 'A50'], 'inside each OPM, collection still descends');
+});
+
 /* THE DAY-PROGRESS SLIDE: the three office units from the day's first upload to its latest,
    on ONE slide, ranked on points gained -- "who pushed more percentages and who is the most
    stuck guy behind". Its own kind, because a table cannot fit sixteen officers with a bar each. */

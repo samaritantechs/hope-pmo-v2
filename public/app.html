@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-c';
+var BUILD = '2026-10-09-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2029,7 +2029,15 @@ function wireTable(rows, onRow){
   Array.prototype.forEach.call(document.querySelectorAll('th[data-sort]'), function(th){
     th.onclick = function(){
       var k = th.getAttribute('data-sort');
-      if (S.sort===k) S.asc = !S.asc; else { S.sort=k; S.asc=false; }
+      /* LIKE EXCEL: THE SORT YOU HAD BECOMES "THEN BY".
+           "When i sort table headers at dashboard orodha like by collection then by OPM, I
+            expect that to behave as excel: every opm will have descending collection"
+         Clicking a second header threw the first sort away, and the rows inside each OPM fell
+         back to the order they arrived in -- a zigzag. The column you were sorted on, and its
+         direction, now move down to the second level, so the groups keep the order you gave
+         them. Clicking the same header again still just turns it round. */
+      if (S.sort===k) S.asc = !S.asc;
+      else { if (S.sort) { S.sort2 = S.sort; S.asc2 = S.asc; } S.sort=k; S.asc=false; }
       paint(true);                                   // in place: the page must not move
     };
   });
