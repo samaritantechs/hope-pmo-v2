@@ -7328,6 +7328,40 @@ test('naming a leader scopes the call report to the teams they hold', async () =
   assert.equal(d.leaders.find(l => l.name === 'JUMA G').teams, 2);
 });
 
+/* "CATHERINE GODLOVE / RECOVERY / MBALIZI, MPANDA B, KARATU, MULEBA, MASASI, BABATI, TARIME,
+    SHINYANGA, BUZWAGI A, SUMBAWANGA / CATHERINE27 is seeing other teams not assigned to
+    CATHERINE27". The report took the teams the leaders sheet filed under her name instead of
+    the code's list. The code decides; the sheet never widens it. */
+test('the call report is scoped by the access code, not by the teams the sheet names the person on', async () => {
+  const book = tables();
+  book.teams = [
+    { team: 'KONGOWE', recovery: 'CATHERINE GODLOVE' },
+    { team: 'MBAGALA', recovery: 'CATHERINE GODLOVE' },      // on the sheet, NOT on her code
+    { team: 'SINZA', recovery: 'OTHER P' },
+  ];
+  book.call_logs = [
+    { id: 'c1', user_id: 'u1', officer: 'JUMA ISSA', team: 'KONGOWE', duration: 60, portfolio: true, ref: '111', phone: '0712000001', outcome: 'CONNECTED', call_date: TODAY, category: 'EXPECTED' },
+    { id: 'c2', user_id: 'u2', officer: 'PILI S', team: 'MBAGALA', duration: 60, portfolio: true, ref: '333', phone: '0712000003', outcome: 'CONNECTED', call_date: TODAY, category: 'EXPECTED' },
+  ];
+  book.call_users = [
+    { user_id: 'u1', name: 'JUMA ISSA', team: 'KONGOWE', role: 'OFFICER', active: true },
+    { user_id: 'u2', name: 'PILI S', team: 'MBAGALA', role: 'OFFICER', active: true },
+  ];
+  const db = fakeDb(book);
+  const catherine = { code: 'CATHERINE27', name: 'CATHERINE GODLOVE', role: 'RECOVERY', teams: ['KONGOWE'], tabs: USER_TABS.slice() };
+  const d = await portalApi(db, catherine, 'callReport', { from: TODAY, to: TODAY }, NOW);
+  assert.deepEqual(d.scope, ['KONGOWE'], 'her code\'s team, not the sheet\'s two');
+  assert.deepEqual(d.users.map(u => u.name), ['JUMA ISSA'], 'and only that team\'s calls');
+  assert.ok(!d.teams.some(t => t.team === 'MBAGALA'));
+  // Naming herself as the leader still cannot reach past the code: the overlap only.
+  const self = await portalApi(db, catherine, 'callReport', { from: TODAY, to: TODAY, leader: 'CATHERINE GODLOVE' }, NOW);
+  assert.deepEqual(self.scope, ['KONGOWE']);
+  // A code with no teams is still everything, sheet or no sheet.
+  const all = await portalApi(db, ADMIN, 'callReport', { from: TODAY, to: TODAY }, NOW);
+  assert.equal(all.scope, 'ALL');
+  assert.equal(all.users.length, 2);
+});
+
 test('a leader filter narrows what you may see, never widens it', async () => {
   /* Choosing a leader whose teams overlap yours shows the overlap; choosing one whose teams you
      hold none of shows nothing. A leader filter must not become a way round team scoping. */

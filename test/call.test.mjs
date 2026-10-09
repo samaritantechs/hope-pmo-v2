@@ -1851,6 +1851,30 @@ test('Ripoti: naming a leader reports their teams, and everybody working on them
   assert.ok(asha.users.some(u => u.name === 'JUMA ISSA'), 'and the officer working under her');
 });
 
+test('Ripoti on the handset: the leader\'s code decides the scope, the sheet does not widen it', async () => {
+  /* The same fault as the portal's report ("CATHERINE27 is seeing other teams not assigned to
+     CATHERINE27"): the sheet's teams were read FIRST and the code's only when the sheet named
+     nobody. ASHA's code LEAD1 carries KONGOWE; the sheet files MBAGALA under her name too. */
+  const t = makeTables();
+  t.teams[1].recovery = 'ASHA JUMA';
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA
+  await callApi(db, 'api_callRegister', ['d5', 'PILI S', 'MBAGALA', '', '0712888888', 'MBA456'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+  await callApi(db, 'api_callSync', ['d5', [{ ts: T1, dur: 60, dir: 'out', num: '0712000003' }]], NOW);
+  const d = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW);
+  assert.deepEqual(d.debugScope, ['KONGOWE'], 'the code\'s team, not the sheet\'s two');
+  assert.deepEqual(d.teamChoices, ['KONGOWE']);
+  assert.equal(d.totals.calls, 1);
+  assert.ok(!d.users.some(u => u.name === 'PILI S'), 'MBAGALA\'s calls stay out');
+  // An ALL code still reads everything.
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);
+  const all = await callApi(db, 'api_callReport', ['d3', '2026-07-24', '2026-07-24'], NOW);
+  assert.equal(all.debugScope, 'ALL');
+  assert.equal(all.totals.calls, 2);
+});
+
 test('Ripoti: a leader filter narrows and can never widen what you may see', async () => {
   const t = makeTables();
   t.teams[1].manager = 'BOB M';                       // BOB holds MBAGALA; ASHA does not

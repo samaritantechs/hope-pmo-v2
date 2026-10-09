@@ -1869,7 +1869,14 @@ async function report(db, [dev, from, to, team, leader], nowMs) {
   const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(cu.name)] || {});
   const lt = cu.leader_teams;
-  const full = live.length ? live : ((!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null : lt);
+  /* THE ACCESS CODE'S TEAMS FIRST, the sheet's only for a leader whose code names none.
+     leader_teams came off the access code the leader typed at registration, and the owner's
+     rule is that those are the ones that count ("the teams i set in access codes are the
+     ones correct"). This read the sheet FIRST and the code only when the sheet named nobody,
+     which is the same fault the portal's report had -- see reportCoreForPortal. A code that
+     says ALL, or a leader registered without one, still reads the sheet's teams as before. */
+  const explicit = lt && lt.length && !lt.some(t => K(t) === 'ALL') ? lt : null;
+  const full = explicit || (live.length ? live : null);
 
   // The list that fills the Team dropdown on the phone: every team this leader is allowed to
   // look at. A leader who sees ALL gets every team on the books; anyone else gets only theirs.
@@ -1946,8 +1953,17 @@ async function report(db, [dev, from, to, team, leader], nowMs) {
 export async function reportCoreForPortal(db, user, { from, to, team, leader, user: user_ } = {}, nowMs = Date.now()) {
   const teamRows = await readTeamsAll(db);
   const { teamsOf, posOf } = buildLeaderMaps(teamRows);
-  const live = Object.keys(teamsOf[K(user.name)] || {});
-  let scope = live.length ? live : user.teams;                 // null stays null = ALL
+  /* THE CODE'S TEAMS ARE THE SCOPE. NOT THE SHEET'S.
+       "CATHERINE GODLOVE / RECOVERY / MBALIZI, MPANDA B, KARATU, ... / CATHERINE27 is seeing
+        other teams not assigned to CATHERINE27"
+     This took the teams the leaders sheet names the person on and used those INSTEAD of the
+     access code's list whenever the sheet named them anywhere -- so a recovery officer whose
+     code carries ten teams read the calls of every team the sheet had ever filed under her
+     name. The owner's rule, written down once already for the handset strip ("the teams i set
+     in access codes are the ones correct", test/speed.test.mjs), holds here too: the code
+     decides, the sheet never widens it. A code with no teams is ALL, as everywhere. The sheet
+     still answers the leader filter below, narrowed to what the caller may see. */
+  let scope = user.teams;                                      // null stays null = ALL
 
   /* SORTING BY A LEADER, NOT ONLY BY A TEAM.
      "at Ripoti not only sorting teams we should also be able to sort by any leaders and their
