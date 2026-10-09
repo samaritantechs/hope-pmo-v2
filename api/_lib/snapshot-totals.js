@@ -51,21 +51,45 @@ export const DEFAULTER_TOTALS_FN = 'defaulter_snapshot_totals';
    the phone's customer lists too, which need names and numbers. Anything the fold starts
    reading has to be added here, and the tests' fake database returns only what is asked for,
    so an omission fails a test rather than quietly reporting zero. */
-const EXP_FOLD_COLS = 'team, payment_expected, arrears, todays_status, due_summary, snapshot_date, snapshot_type';
+const EXP_FOLD_COLS = 'team, payment_expected, arrears, todays_status, snapshot_date, snapshot_type';
 const DEF_FOLD_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
 
-/* "COUNT 1" -- NC 1: a customer whose DUE SUMMARY reads 1 of N. The early-collection and PMO
-   collection slides carry, per officer, how many of those on their teams' lists are marked
-   UNDERPAID or UNPAID -- "sum of nc 1 of underpaid and unpaid per pmo" (ds1_owing_n). Those
-   two statuses and no other: PAID and OVERPAID do not count, and neither does a blank.
+/* "COUNT 1" -- THE SHEET'S OWN N.C COLUMN, AT 1. The early-collection and PMO collection slides
+   carry, per officer, how many customers on their teams' lists are at N.C 1 and still owing --
+   "sum of nc 1 of underpaid and unpaid per pmo" (nc1_owing_n): UNDERPAID or UNPAID, those two
+   statuses and no other.
 
-   THE SHEET WRITES IT WITH A DASH. The first cut read "1/N" only and every team came back at
-   nought; the live book's DUE SUMMARY shapes are 9-99, 99-99 and 9-9 (ninety thousand rows,
-   not one with a slash). So: a 1, a dash or a slash with spaces allowed, digits, nothing
-   else. The SQL in db/RUN-ME-038 tests the same pattern, and test/snapshot-totals-rpc.mjs
-   transcribes it, so the three cannot disagree. */
-export function dsOne(v) {
-  return /^1\s*[-\/]\s*\d+$/.test(String(v == null ? '' : v).trim());
+   IT IS NOT THE FIRST NUMBER OF DUE SUMMARY. The first cut read it there -- "1-12" -- and the
+   slide said 14 on a sheet whose N.C column had 171 at 1: those 171 read 4-5, 11-12, 7-8
+   under DUE SUMMARY. N.C is imported as its own column (api/_lib/importers.js, db/RUN-ME-039a).
+   An upload made before that column existed has no N.C on any row, and its Count 1 is NULL --
+   unknown, said on the slide -- never nought. The SQL in db/RUN-ME-039a counts the identical
+   rule, and test/snapshot-totals-rpc.mjs transcribes it, so the three cannot disagree. */
+const EXP_FOLD_NC = 'nc';
+
+/* THE FOLD'S READ, WITH N.C WHEN THE TABLE HAS IT. `nc` arrived with db/RUN-ME-039a, and
+   migrations here are run by hand: PostgREST refuses the WHOLE read for one unknown column, so
+   a fallback that simply asked for it would stop answering on a database where the SQL was not
+   pasted yet -- the slow path breaking on the very deployment that needs it. So the column is
+   asked for, and when the table refuses it the read is made again without it and the refusal
+   remembered for a few minutes per database (MISSING_TTL_MS), the same way the cache read
+   remembers its optional columns. Count 1 then reads null, which the slide says. */
+const foldNcMissing = new WeakMap();                        // db -> when `nc` was refused
+async function expFoldRead(db, read) {
+  const at = foldNcMissing.get(db);
+  if (at && (Date.now() - at) < MISSING_TTL_MS) return read(EXP_FOLD_COLS);
+  try { return await read(EXP_FOLD_COLS + ', ' + EXP_FOLD_NC); }
+  catch (e) {
+    if (!colRefused_(e, EXP_FOLD_NC)) throw e;
+    foldNcMissing.set(db, Date.now());
+    return read(EXP_FOLD_COLS);
+  }
+}
+/** Did PostgREST refuse this read for the column named? Either wording it uses. */
+function colRefused_(e, col) {
+  const msg = String((e && e.message) || e || '');
+  return new RegExp('column\\s+\\S*\\b' + col + '\\b.*does not exist', 'i').test(msg)
+    || new RegExp("Could not find the '" + col + "' column", 'i').test(msg);
 }
 
 /* ---------------------------------------------------------------- the fold (fallback path) */
@@ -94,7 +118,7 @@ export function foldExpected(rows) {
         upload_batch: r.upload_batch == null ? null : r.upload_batch,
         created_at: null,
         customers: 0, expected_amt: 0, collected_amt: 0, uncollected_amt: 0, paid_n: 0, over_n: 0,
-        ds1_owing_n: 0 };
+        nc1_owing_n: null };
       out.set(k, b);
     }
     const e = num(r.payment_expected), c = collectedOf(r);
@@ -105,8 +129,13 @@ export function foldExpected(rows) {
     const st = String(r.todays_status == null ? '' : r.todays_status).trim().toUpperCase();
     if (st === 'PAID') b.paid_n += 1;
     else if (st === 'OVERPAID') b.over_n += 1;
-    // COUNT 1: NC 1 (see dsOne) and still owing -- UNDERPAID or UNPAID, those two and no other.
-    else if ((st === 'UNDERPAID' || st === 'UNPAID') && dsOne(r.due_summary)) b.ds1_owing_n += 1;
+    /* COUNT 1: N.C = 1 and still owing (UNDERPAID or UNPAID). Null until a row of the group
+       carries N.C at all -- the SQL's bool_or(nc is not null) -- so an upload from before the
+       column reads "unknown", not "nobody". */
+    if (r.nc != null) {
+      b.nc1_owing_n = (b.nc1_owing_n || 0)
+        + ((Number(r.nc) === 1 && (st === 'UNDERPAID' || st === 'UNPAID')) ? 1 : 0);
+    }
     // The newest moment inside the group -- what pickLatestBatch compares to decide which
     // upload won. max(created_at) is what the SQL returns for the same group.
     if (String(r.created_at || '') > String(b.created_at || '')) b.created_at = r.created_at;
@@ -216,14 +245,14 @@ const DECK_COLS = {
     + 'customers, arrears_amt',
 };
 /* COLUMNS A MIGRATION ADDED LATER, read when the table has them and left out when it has not.
-   `ds1_owing_n` arrived with db/RUN-ME-038. PostgREST refuses the WHOLE read for one unknown
+   `nc1_owing_n` arrived with db/RUN-ME-039b. PostgREST refuses the WHOLE read for one unknown
    column, and a refused cache read sends every screen to the live aggregate -- the slow path
    this cache exists to avoid -- for as long as the SQL is not run. So a read that is refused
    for one of these is asked again without it, and the omission is remembered for a few
    minutes per database rather than paid for on every read. The figure built on it (Count 1
    on the early slide) then reads null, which the slide says, instead of the screens reading
    slow. */
-const DECK_OPTIONAL_COLS = { expected: ['ds1_owing_n'], defaulter: [] };
+const DECK_OPTIONAL_COLS = { expected: ['nc1_owing_n'], defaulter: [] };
 const deckColsMissing = new WeakMap();                       // db -> { at, cols: Set }
 function deckColsFor(db, kind) {
   const hit = deckColsMissing.get(db);
@@ -646,8 +675,8 @@ export async function expectedTotalsInRange(db, { type = null, from, to, teams =
       const agg = await callTotals(db, EXPECTED_TOTALS_FN,
         { p_from: from, p_to: to, p_type: type, p_teams: teamsArg(teams) });
       if (agg) return agg;
-      const raw = await snapshotsInRange(db, 'repayment_snapshots',
-        type ? { snapshot_type: type } : {}, from, to, teams, EXP_FOLD_COLS);
+      const raw = await expFoldRead(db, cols => snapshotsInRange(db, 'repayment_snapshots',
+        type ? { snapshot_type: type } : {}, from, to, teams, cols));
       return foldExpected(raw);
     })(),
     summaryRows(db, 'expected', { from, to, type, teams }),
@@ -721,15 +750,15 @@ export async function expectedTotalsLatest(db, { type = null, teams = null, onDa
   const sums = summ.rows.filter(r => String(r.snapshot_date) === String(date));
 
   if (knownMissing(db, EXPECTED_TOTALS_FN)) {
-    const snap = await latestSnapshot(db, 'repayment_snapshots', filters,
-      { onDate: date, teams, columns: EXP_FOLD_COLS });
+    const snap = await expFoldRead(db, cols => latestSnapshot(db, 'repayment_snapshots', filters,
+      { onDate: date, teams, columns: cols }));
     return resolved(foldExpected(snap.rows).concat(sums), date);
   }
   const agg = await callTotals(db, EXPECTED_TOTALS_FN,
     { p_from: date, p_to: date, p_type: type, p_teams: teamsArg(teams) });
   if (!agg) {
-    const snap = await latestSnapshot(db, 'repayment_snapshots', filters,
-      { onDate: date, teams, columns: EXP_FOLD_COLS });
+    const snap = await expFoldRead(db, cols => latestSnapshot(db, 'repayment_snapshots', filters,
+      { onDate: date, teams, columns: cols }));
     return resolved(foldExpected(snap.rows).concat(sums), date);
   }
   return resolved(agg.concat(sums), date);

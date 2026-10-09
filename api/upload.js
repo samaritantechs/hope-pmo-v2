@@ -81,6 +81,9 @@ import {
 const WRITE_CHUNK_MAX = 1000;
 const WRITE_CHUNK_MIN = 100;
 
+/** A database column's name as the sheet writes it, for a message a person reads. */
+const sheetColName_ = c => (c === 'nc' ? 'N.C' : String(c).toUpperCase().replace(/_/g, ' '));
+
 /** Does this error mean "that one statement took too long", as opposed to anything else?
     Only this failure is worth answering with a smaller chunk; a bad column or a constraint
     would fail identically at every size, and halving four times over would just be slower. */
@@ -95,12 +98,33 @@ function isStatementTimeout(err) {
     over (ON CONFLICT DO NOTHING), and the database says back which rows it actually took --
     so the count returned is rows NEW to the table, not rows sent. Same number of trips: the
     rows come back on the write itself. This is how received payments are stored once. */
-async function writeInChunks(db, table, records, onConflict, ignoreDuplicates) {
+/** The column PostgREST refused a WRITE for, in either of the two wordings it uses -- its own
+    schema-cache message (PGRST204, "Could not find the 'nc' column of ...") or Postgres's
+    ("column repayment_snapshots.nc does not exist"). Null for any other error. */
+function colRefusedOnWrite(err) {
+  const msg = String((err && err.message) || err || '');
+  const m = msg.match(/Could not find the '([^']+)' column/i)
+    || msg.match(/column\s+(?:"?\w+"?\.)?"?(\w+)"?\s+does not exist/i);
+  return m ? m[1] : null;
+}
+
+/* `dropped`, when the caller passes an array: A COLUMN THE DATABASE HAS NOT GOT YET IS TAKEN
+   OUT AND THE WRITE SENT AGAIN, rather than failing the file. Migrations here are run by hand,
+   and PostgREST refuses a whole insert for one unknown column -- so a deck carrying a column
+   added by the newest migration (N.C, db/RUN-ME-039a) would otherwise fail every upload on a
+   database where that SQL had not been pasted yet, with an error naming a column nobody asked
+   about. Uploading NEVER goes down for that. The name of what was left out is pushed onto
+   `dropped` and said out loud in the upload's own message, because a column thrown away in
+   silence is the worst kind of success. Costs nothing on a migrated database: the first write
+   simply succeeds. The teams and received-payments uploads guard the same thing by probing
+   first; this guards it by trying, which is one trip cheaper on the path that matters. */
+async function writeInChunks(db, table, records, onConflict, ignoreDuplicates, dropped = null) {
+  let rows = records;
   let size = WRITE_CHUNK_MAX;
   let written = 0;
   let i = 0;
-  while (i < records.length) {
-    const slice = records.slice(i, i + size);
+  while (i < rows.length) {
+    const slice = rows.slice(i, i + size);
     // tries: 2 -- one immediate retry for a blip. Anything more belongs to the halving below,
     // which is a better answer than the same too-large statement a third time.
     const { data, error } = await runQuery(() => (onConflict
@@ -113,11 +137,17 @@ async function writeInChunks(db, table, records, onConflict, ignoreDuplicates) {
         size = Math.max(WRITE_CHUNK_MIN, Math.floor(size / 2));
         continue;                                    // same rows, smaller bite
       }
+      const col = colRefusedOnWrite(error);
+      if (col && dropped && !dropped.includes(col) && slice.some(r => r && r[col] !== undefined)) {
+        dropped.push(col);
+        rows = rows.map(r => { if (!r || r[col] === undefined) return r; const o = { ...r }; delete o[col]; return o; });
+        continue;                                    // same rows, one column fewer
+      }
       throw new Error(error.message
         + (isStatementTimeout(error)
           ? ` -- the database could not write even ${WRITE_CHUNK_MIN} rows in the time it allows, which means it is badly overloaded rather than that this file is wrong`
           : '')
-        + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${records.length.toLocaleString('en-US')} were already written before this stopped -- uploading the file again is safe and will finish the job)` : ''));
+        + (written ? ` (${written.toLocaleString('en-US')} row(s) of ${rows.length.toLocaleString('en-US')} were already written before this stopped -- uploading the file again is safe and will finish the job)` : ''));
     }
     i += slice.length;
     written += ignoreDuplicates ? (Array.isArray(data) ? data.length : 0) : slice.length;
@@ -1049,7 +1079,9 @@ export default withApi(async (req, res) => {
      is left alone and counted as a duplicate, never stored twice. Everything else keeps its
      behaviour: upsert corrects in place, insert appends. */
   const keepFirst = table === 'received_payments' || table === 'abnormal_payments';
-  const written = await writeInChunks(supabase, table, records, upsertTables[table] || null, keepFirst);
+  // Columns this database has not got yet, left out of the write and named in the message.
+  const droppedCols = [];
+  const written = await writeInChunks(supabase, table, records, upsertTables[table] || null, keepFirst, droppedCols);
   const duplicates = keepFirst ? Math.max(0, records.length - written) : undefined;
 
   /* THE DAY'S CACHED TOTALS ARE NOW OUT OF DATE, AND THIS IS THE FIRST MOMENT ANYTHING KNOWS IT.
@@ -1527,6 +1559,9 @@ export default withApi(async (req, res) => {
          the database has no such column yet, and without this line the upload says "done" while
          the very field the admin uploaded the sheet to change is left exactly as it was. */
       teamsDroppedCols && teamsDroppedCols.length ? `⚠️ Your file also carried ${teamsDroppedCols.join(', ')} — this database has no such column yet, so ${teamsDroppedCols.length === 1 ? 'it was' : 'they were'} NOT saved and the rest of the file went in as normal. Run the outstanding migration in db/migrations (region, zone and the per-role phone numbers come from 2026-08-09-team-contacts.sql), then upload this same sheet again.` : '',
+      /* The same sentence for the decks: writeInChunks took the column out rather than failing
+         the file, and this is where that is said. N.C is the one that exists today. */
+      droppedCols.length ? `⚠️ Your file also carried ${droppedCols.map(sheetColName_).join(', ')} — this database has no such column yet, so ${droppedCols.length === 1 ? 'it was' : 'they were'} NOT saved and the rest of the file went in as normal.${droppedCols.includes('nc') ? ' Count 1 on the presentation is the sheet\'s N.C, so it stays blank until db/RUN-ME-039a is run in the SQL editor and this same sheet is uploaded again.' : ''}` : '',
       stubbed ? `${stubbed} of these customers were not on the follow-up list, so a placeholder record was created for each so their history has somewhere to live. They are NOT counted as defaulters anywhere -- a placeholder has no status and no arrears.` : '',
       collapsed ? `${collapsed} row(s) in the file were the same record twice and were written once. ${table === 'followup_comments' ? 'For comments that means the same sentence about the same customer at the same minute -- one comment, exported twice.' : `Matched on ${keyWords[table] || upsertTables[table]}.`} Nothing was lost: the file's last version of each is what was kept.` : '',
       commentsOrder && commentsOrder.unreadable ? `${commentsOrder.unreadable} row(s) had a TIMESTAMP that could not be read; those are stamped with the time of this upload instead.` : '',

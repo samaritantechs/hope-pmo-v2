@@ -9,8 +9,28 @@ import assert from 'node:assert/strict';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder }
+const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder, importExpected }
   = await import('../api/_lib/importers.js');
+
+/* THE SHEET'S N.C COLUMN IS READ AS ITS OWN FIELD -- "expecting the dc single count are 171,
+   but its 14 on presentation". Count 1 was first worked out from DUE SUMMARY, which is a
+   different number: the 171 at N.C 1 read 4-5, 11-12 and 7-8 under it. A blank stays null
+   (unknown), never nought, and a sheet without the column leaves every row null. */
+test('importExpected reads N.C as a whole number, blank as null, and tolerates the spellings', () => {
+  const header = ['REF#', 'FULLNAME', 'TEAM', 'DUE SUMMARY', 'N.C', 'TODAYS STATUS'];
+  const out = importExpected([header,
+    ['R1', 'A', 'KONGOWE', '4-5', 1, 'underpaid'],
+    ['R2', 'B', 'KONGOWE', '1-12', 0, 'paid'],
+    ['R3', 'C', 'KONGOWE', '11-12', '', 'unpaid'],
+    ['R4', 'D', 'KONGOWE', '7-8', '2.0', 'unpaid'],
+  ], { snapshotType: 'today', snapshotDate: '2026-10-09' });
+  assert.deepEqual(out.map(r => [r.ref, r.nc, r.due_summary]),
+    [['R1', 1, '4-5'], ['R2', 0, '1-12'], ['R3', null, '11-12'], ['R4', 2, '7-8']]);
+  const spelled = importExpected([['REF#', 'NC'], ['R1', 1]], { snapshotType: 'today', snapshotDate: '2026-10-09' });
+  assert.equal(spelled[0].nc, 1, 'NC without the dot is the same column');
+  const absent = importExpected([['REF#', 'DUE SUMMARY'], ['R1', '1-12']], { snapshotType: 'today', snapshotDate: '2026-10-09' });
+  assert.equal(absent[0].nc, null, 'a sheet without the column: unknown, not nought -- and DUE SUMMARY is not a stand-in');
+});
 const { stampOrNull, inferDayFirst, dateOrNull } = await import('../api/_lib/parse.js');
 
 test('importAccessCodes: ALL -> null teams, comma lists -> arrays, incomplete rows skipped', () => {

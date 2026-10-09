@@ -61,6 +61,13 @@ export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate 
   })).filter(x => x.ref);
 }
 
+/** A count column: a whole number or null. Rounded, because an integer column refuses "1.0"
+    written as 1.5 by a formula, and one bad cell would fail the whole file. */
+function wholeOrNull(v) {
+  const n = num(v);
+  return n == null ? null : Math.round(n);
+}
+
 export function importExpected(csvRows, { snapshotType, snapshotDate }) {
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, ...REF_HEADERS)),
@@ -75,6 +82,12 @@ export function importExpected(csvRows, { snapshotType, snapshotDate }) {
     last_schedule_date: dateOrNull(col(r, h, 'LAST SCHEDULE DATE')),
     last_trans_date: dateOrNull(col(r, h, 'LAST TRANS DATE')),
     due_summary: dsText(col(r, h, 'DUE SUMMARY')),
+    /* N.C -- THE SHEET'S OWN COLUMN, and not the first number of DUE SUMMARY, which is what
+       "Count 1" was first built on: "expecting the dc single count are 171, but its 14 on
+       presentation". The 171 at N.C 1 read 4-5, 11-12, 7-8 under DUE SUMMARY. A whole number,
+       stored as the sheet writes it (db/RUN-ME-039a); blank stays null, never nought, so a sheet
+       without the column reads as "unknown" rather than "nobody". */
+    nc: wholeOrNull(col(r, h, 'N.C', 'NC', 'N.C.', 'N C', 'N. C')),
     initial_inst: num(col(r, h, 'INITIAL INST')),
     other_inst: num(col(r, h, 'OTHER INST')),
     payment_expected: num(col(r, h, 'PAYMENT EXPECTED')),

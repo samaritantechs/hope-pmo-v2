@@ -1,24 +1,24 @@
 -- =====================================================================================
--- RUN-ME-038b  "COUNT 1" -- PART B OF THREE: the cache (RUN-ME-022) learns the column.
+-- RUN-ME-039b  "COUNT 1" ON N.C -- PART B OF THREE: the cache (RUN-ME-022) learns the column.
 --              Run A first. Whole file: new query, paste, Ctrl+A, Run. Under 100 lines on purpose.
 --
--- The slides read deck_totals, filled when a deck lands. B adds ds1_owing_n to it, drops the
--- two earlier Count 1 columns (ds1_left_n, ds1_n -- nothing reads them any more), re-creates
--- the build so it fills the new column, and marks the last two weeks "not built" so they are
--- rebuilt with it (part C). Until C runs, those days are read live: correct, slower, and every
--- upload rebuilds a few of them on its own anyway. Guarded: a database that never ran
--- RUN-ME-022 is left exactly as it is. Nothing is deleted from any deck. SAFE TO RE-RUN.
--- UNTIL THIS IS RUN nothing breaks: the slide shows a dash in the column and names RUN-ME-038.
+-- The slides read deck_totals, filled when a deck lands. B adds nc1_owing_n to it, drops the
+-- three earlier Count 1 columns (ds1_left_n, ds1_n, ds1_owing_n -- nothing reads them any
+-- more), re-creates the build so it fills the new column, and marks the last two weeks "not
+-- built" so they are rebuilt with it (part C). Until C runs, those days are read live: correct,
+-- slower, and every upload rebuilds a few of them on its own anyway. Guarded: a database that
+-- never ran RUN-ME-022 is left exactly as it is. Nothing is deleted from any deck. SAFE TO RE-RUN.
 -- =====================================================================================
 set lock_timeout = '5s';
 set statement_timeout = '2min';
 
--- 1. THE COLUMN. Dropping the old two is safe at any moment: the code that read them asks again
---    without a column the table refuses, and the slide shows a dash until the next deploy.
+-- 1. THE COLUMN. Dropping the old ones is safe at any moment: the code that read them asks
+--    again without a column the table refuses, and the slide shows a dash until the next deploy.
 do $$
 begin
   if to_regclass('public.deck_totals') is not null then
-    execute 'alter table public.deck_totals add column if not exists ds1_owing_n bigint';
+    execute 'alter table public.deck_totals add column if not exists nc1_owing_n bigint';
+    execute 'alter table public.deck_totals drop column if exists ds1_owing_n';
     execute 'alter table public.deck_totals drop column if exists ds1_left_n';
     execute 'alter table public.deck_totals drop column if exists ds1_n';
   end if;
@@ -39,10 +39,10 @@ begin
   if p_kind = 'expected' then
     insert into public.deck_totals (kind, snapshot_date, snapshot_type, weekday, team, upload_batch,
                                     created_at, customers, expected_amt, collected_amt, uncollected_amt, paid_n, over_n,
-                                    ds1_owing_n)
+                                    nc1_owing_n)
     select 'expected', t.snapshot_date, t.snapshot_type, null, t.team, t.upload_batch,
            t.created_at, t.customers, t.expected_amt, t.collected_amt, t.uncollected_amt, t.paid_n, t.over_n,
-           t.ds1_owing_n
+           t.nc1_owing_n
       from public.expected_snapshot_totals(p_from, p_to, null, null) t;
   elsif p_kind = 'defaulter' then
     insert into public.deck_totals (kind, snapshot_date, snapshot_type, weekday, team, upload_batch,
@@ -76,12 +76,12 @@ begin
   end if;
 end $$;
 
--- 4. PROOF, off the function the slides read: per team AND PER UPLOAD, Count 1 beside the
---    headcount, for the next initial sheets. A day uploaded twice shows twice; the slide takes
---    the newest upload (the later created_at). The figure must equal the UNDERPAID + UNPAID
---    rows at NC 1 of that same upload -- part C lists those by status so it can be checked.
+-- 4. PROOF, off the function the slides read: today's sheet, per team and PER UPLOAD, Count 1
+--    beside the headcount. A day uploaded twice shows twice; the slide takes the newest. An
+--    upload made before part A was run shows count1 NULL -- it carried no N.C -- so upload
+--    today's Expected sheet once more and run this section again.
 select snapshot_date, team, created_at as uploaded, customers,
        paid_n + over_n as paid_over, customers - paid_n - over_n as remaining,
-       ds1_owing_n as count1
-from public.expected_snapshot_totals(current_date, current_date + 3, 'initial', null)
+       nc1_owing_n as count1
+from public.expected_snapshot_totals(current_date, current_date, 'today', null)
 order by snapshot_date, team, created_at;

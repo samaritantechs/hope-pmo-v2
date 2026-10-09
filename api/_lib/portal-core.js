@@ -11053,12 +11053,12 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       b.paidOver += num(r.paid_n) + num(r.over_n);
       b.customers += num(r.customers);
       /* COUNT 1 -- "sum of nc 1 of underpaid and unpaid per pmo": across the officer's teams,
-         the customers at NC 1 (DUE SUMMARY 1-N) whose status is UNDERPAID or UNPAID, added up
-         (ds1_owing_n, db/RUN-ME-038). A totals row built before that file's current version,
-         or a hand-typed summary, has no such figure; one of those in an officer's teams makes
-         the officer's count unknown rather than short, and the slide says so instead of
-         printing a smaller number. */
-      if (r.ds1_owing_n == null) b.count1Known = false; else b.count1 += num(r.ds1_owing_n);
+         the customers whose N.C (the sheet's own column) is 1 and whose status is UNDERPAID or
+         UNPAID, added up (nc1_owing_n, db/RUN-ME-039). A totals row without the figure -- an
+         upload from before N.C was imported, a cache built before the column, a hand-typed
+         summary -- makes the officer's count unknown rather than short, and the slide says so
+         instead of printing a smaller number. */
+      if (r.nc1_owing_n == null) b.count1Known = false; else b.count1 += num(r.nc1_owing_n);
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
       teams: Object.keys(b.teamSet).length, customers: b.customers,

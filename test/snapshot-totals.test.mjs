@@ -88,6 +88,9 @@ function book() {
         // arrears exceed the instalment must clamp to zero collected, never go negative.
         arrears: (i % 5 === 0) ? 20000 : (i % 3) * 900,
         todays_status: st, snapshot_type: 'today', snapshot_date: date,
+        // The sheet's N.C column, 0/1/2 regardless of status, so the status filter on Count 1
+        // is exercised rather than implied. One day's rows carry none at all (see below).
+        nc: i % 3,
         upload_batch: batch, created_at: stamp,
       });
     }
@@ -101,6 +104,8 @@ function book() {
   // The early-collection list: Initial, which is what this operation actually uploads.
   push('2026-07-24', 'ini-fri', '2026-07-24T05:00:00.000Z', i => TEAMS[i % TEAMS.length], 30, 2);
   for (const r of t.repayment_snapshots) if (r.upload_batch === 'ini-fri') r.snapshot_type = 'initial';
+  // An upload from before N.C was imported: no row carries it, so its Count 1 must read null.
+  for (const r of t.repayment_snapshots) if (r.upload_batch === 'exp-0') r.nc = null;
 
   DAYS.forEach((d, di) => {
     for (const type of ['initial', 'current']) {
@@ -429,33 +434,37 @@ test('folding a snapshot preserves collected, uncollected and the headcount exac
   assert.equal(agg.reduce((s, r) => s + r.paid_n + r.over_n, 0),
     rows.filter(r => ['PAID', 'OVERPAID'].includes(String(r.todays_status || '').trim().toUpperCase())).length,
     'the early-collection headcount counts the same rows, whatever the spacing and case');
-  /* COUNT 1 (db/RUN-ME-038): UNDERPAID or UNPAID, and on the second instalment -- "sum of nc 1
-     of underpaid and unpaid per pmo". The regex here is the SQL's, written out a third time on
-     purpose, so the fold is checked against the rule rather than against itself. */
-  const dsOneRows = rows.filter(r => ['UNDERPAID', 'UNPAID'].includes(String(r.todays_status || '').trim().toUpperCase())
-    && /^1\s*[-\/]\s*\d+$/.test(String(r.due_summary == null ? '' : r.due_summary).trim()));
-  assert.equal(agg.reduce((s, r) => s + r.ds1_owing_n, 0), dsOneRows.length,
-    'Count 1 is the UNDERPAID and UNPAID rows at D.S 1 of N');
-  /* THE LIVE SHEET WRITES "1-12", with a dash -- the shapes on the book are 9-99, 99-99 and
-     9-9 -- so the dash form is the one that matters; the slash form is kept for a sheet that
-     writes it the other way. */
+  /* COUNT 1 (db/RUN-ME-039a): the sheet's N.C at 1, and UNDERPAID or UNPAID -- "sum of nc 1 of
+     underpaid and unpaid per pmo". Written out a third time on purpose, so the fold is checked
+     against the rule rather than against itself. A group whose rows carry no N.C at all (the
+     fixture's first upload) reads null, and the sum below skips it as the slide does. */
+  const nc1Rows = rows.filter(r => r.nc != null && Number(r.nc) === 1
+    && ['UNDERPAID', 'UNPAID'].includes(String(r.todays_status || '').trim().toUpperCase()));
+  assert.equal(agg.reduce((s, r) => s + (r.nc1_owing_n || 0), 0), nc1Rows.length,
+    'Count 1 is the UNDERPAID and UNPAID rows at N.C 1');
+  assert.ok(agg.some(r => r.nc1_owing_n === null), 'an upload with no N.C on any row reads null, not nought');
+  assert.ok(agg.every(r => r.upload_batch !== 'exp-0' || r.nc1_owing_n === null), 'and it is that upload');
+  /* THE RULE, ROW BY ROW: N.C 1 and UNPAID or UNDERPAID count; N.C 1 PAID, OVERPAID or with no
+     status do not; N.C 0, 2 or blank do not whatever the status. DUE SUMMARY plays no part --
+     the 171 at N.C 1 on the live sheet read 4-5, 11-12 and 7-8 under it. */
   const both = foldExpected([
-    { team: 'A', todays_status: 'UNPAID', due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNPAID', due_summary: '1/12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNDERPAID', due_summary: ' 1 - 6 ', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'PAID', due_summary: '1-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'OVERPAID', due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNPAID', due_summary: '11-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNPAID', due_summary: '10-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNPAID', due_summary: '0-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNPAID', due_summary: '2-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: 'UNPAID', due_summary: null, snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    // A row at NC 1 with NO status written: not underpaid, not unpaid, so not counted either.
-    { team: 'A', todays_status: '', due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
-    { team: 'A', todays_status: null, due_summary: '1-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', nc: 1, due_summary: '4-5', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNDERPAID', nc: 1, due_summary: '11-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: ' underpaid ', nc: '1', due_summary: '7-8', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'PAID', nc: 1, due_summary: '1-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'OVERPAID', nc: 1, due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: '', nc: 1, due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', nc: 0, due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', nc: 2, due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', nc: null, due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
   ])[0];
-  assert.equal(both.ds1_owing_n, 3,
-    'unpaid and underpaid at 1-N or 1/N count; paid, overpaid, blank-status, 11-N, 10-N, 0-N, 2-N and no D.S do not');
+  assert.equal(both.nc1_owing_n, 3,
+    'N.C 1 unpaid and underpaid count; N.C 1 paid, overpaid or blank-status do not; N.C 0, 2 or blank do not');
+  const none = foldExpected([
+    { team: 'A', todays_status: 'UNPAID', due_summary: '1-12', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+    { team: 'A', todays_status: 'UNPAID', nc: null, due_summary: '1-6', snapshot_date: '2026-07-20', snapshot_type: 'initial', upload_batch: 'b' },
+  ])[0];
+  assert.equal(none.nc1_owing_n, null, 'a group with no N.C on any row is unknown, not nought');
 
   // And the same sums per (day, batch, team) -- not merely in total, which a compensating pair
   // of errors could satisfy.
