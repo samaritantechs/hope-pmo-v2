@@ -11039,18 +11039,25 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     const m = {};
     for (const r of rows) {
       const b = bucket(m, officerOf(teamBy, r.team, 'expected'),
-        { uncollected: 0, paidOver: 0, expected: 0, collected: 0, customers: 0, teamSet: {} });
+        { uncollected: 0, paidOver: 0, expected: 0, collected: 0, customers: 0, teamSet: {},
+          count1: 0, count1Known: true });
       b.expected += num(r.expected_amt); b.collected += num(r.collected_amt);
       b.uncollected += num(r.uncollected_amt);
       if (r.team) b.teamSet[K(r.team)] = 1;
       b.paidOver += num(r.paid_n) + num(r.over_n);
       b.customers += num(r.customers);
+      /* COUNT 1 AMONG THOSE LEFT -- "add Count1 (to show the remaining count DS 1 among the
+         all left ones)". A totals row built before db/RUN-ME-038, or a hand-typed summary,
+         has no such figure; one of those in an officer's teams makes the officer's count
+         unknown rather than short, and the slide says so instead of printing a smaller number. */
+      if (r.ds1_left_n == null) b.count1Known = false; else b.count1 += num(r.ds1_left_n);
     }
     return Object.values(m).map(b => ({ officer: b.key, uncollected: b.uncollected, paidOver: b.paidOver,
       teams: Object.keys(b.teamSet).length, customers: b.customers,
       /* WHO IS STILL TO PAY -- unpaid and underpaid, as a count: "put nos of remaining ... so
          that we always know progress of each like 300 where ... paid+overpaid 600 of 900". */
       remaining: Math.max(0, b.customers - b.paidOver),
+      count1: b.count1Known ? b.count1 : null,
       expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
       .sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct))
       // Numbered after sorting, so S/N is the ranking rather than an accident of map order.
