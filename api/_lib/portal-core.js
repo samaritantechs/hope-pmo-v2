@@ -1785,13 +1785,17 @@ function dmy_(v) {
 }
 
 /* THE NUMBER ON THE LETTER -- "each notice goes with legal own number". The issuing officer's
-   own, by the role they hold on the customer's team (the teams sheet's phone columns); else
-   the team's legal officer's (LEGAL NO); else LEGAL_PHONE from Settings; else the head office
-   line. Never blank: "Kwa maelezo zaidi piga simu:" followed by nothing is a letter nobody can
-   answer. The sheet system took it from the officer's Config row, which the teams sheet now
-   carries per role. */
+   own, FIRST from the call app's staff table -- "Phone nos are from staff table from callapp
+   reg": the handset they registered HOPE Calls with -- then by the role they hold on the
+   customer's team (the teams sheet's phone columns); else the team's legal officer's (LEGAL
+   NO); else LEGAL_PHONE from Settings; else the head office line. Never blank: "Kwa maelezo
+   zaidi piga simu:" followed by nothing is a letter nobody can answer. The legal officer's
+   first complaint was exactly this ("haina namba za simu za wanasheria"): none of the lawyers
+   sits on a teams-sheet role column, so every letter fell through to the head office line. */
 const LEGAL_PHONE_DEFAULT = '+255 659 077 770';
-function legalContact_(user, teamRow, fallback) {
+function legalContact_(user, teamRow, fallback, staffPhone) {
+  const own = letterPhone_(staffPhone);
+  if (own) return own;
   const t = teamRow || {};
   const me = K(user && user.name);
   for (const role of Object.keys(TEAM_PHONE_OF)) {
@@ -1799,6 +1803,26 @@ function legalContact_(user, teamRow, fallback) {
   }
   if (t.legal_no) return String(t.legal_no).trim();
   return String(fallback || '').trim() || LEGAL_PHONE_DEFAULT;
+}
+
+/* call_users.phone is kept as nine digits (pnorm: no leading zero, no country code); on a
+   letter it reads 0XXX XXX XXX, the way a number is written down here. Anything that is not
+   nine digits prints nothing, and the chain above moves on to the next source. */
+function letterPhone_(v) {
+  const d = pnorm(v);
+  return d.length === 9 ? `0${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}` : '';
+}
+
+/* The issuing officer's row in the call app's staff table, by the name on their access code.
+   Case-insensitive on purpose: .eq() is exact-case and the two names are typed by different
+   people. One small read, on the Legal screen only -- never on an upload or a call. */
+async function staffPhone_(db, user) {
+  const name = String((user && user.name) || '').trim();
+  if (!name) return '';
+  const rows = await fetchAll(() => db.from('call_users').select('name, phone, active')
+    .ilike('name', name.replace(/[%_\\]/g, m => '\\' + m)).limit(5));
+  const me = (rows || []).find(r => K(r.name) === K(name) && r.phone && r.active !== false);
+  return me ? String(me.phone) : '';
 }
 
 /* WHAT THE LETTERHEAD CARRIES, from Settings: the logo, the stamp -- printed TWICE, as the
@@ -1879,12 +1903,53 @@ async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
   const f = legalFine(d, noticeMs);
   const fine = roundUp500(f.fine);
   const a = legalAmounts(d, fine);
+  const noticeKey = new Date(noticeMs).toISOString().slice(0, 10);
+  /* ALREADY SERVED? The register showed one customer served six times on one day -- the
+     officer pressed Issue again each time the print did not appear. What is already there is
+     said here, so the drawer can offer the reprint FIRST and a second letter is a decision,
+     not an accident. One small read, by reference. */
+  const served = (await fetchAll(() => db.from('demand_notices').select('id, notice_id, notice_date, issued_by')
+    .eq('ref', String(d.ref).trim()).order('notice_date', { ascending: false }).limit(10)))
+    .map(n => ({ id: n.id, noticeId: n.notice_id || '', date: String(n.notice_date || '').slice(0, 10), by: n.issued_by || '' }))
+    .sort((x, y) => y.date.localeCompare(x.date) || String(y.noticeId).localeCompare(String(x.noticeId)));
   return { found: true, ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
     guarantor: d.guarantor_name, guarantor_contact: d.guarantor_contact,
     arrears: num(d.arrears), paidCount: f.paidCount, weeks: f.weeks, rate: f.rate,
     ratePct: Math.round(f.rate * 1000) / 10, fine,
     disb_date: d.disb_date, expire_date: d.expire_date, landmark: d.nearest_landmark,
-    ...a, noticeDate: new Date(noticeMs).toISOString().slice(0, 10) };
+    ...a, noticeDate: noticeKey,
+    served, servedToday: served.filter(s => s.date === noticeKey) };
+}
+
+/* "search by ref, phone no and names etc" -- the New-notice drawer finds the customer on the
+   defaulter deck by any of the three, AT THE DATABASE, scoped to the officer's teams, capped.
+   The old drawer took a REF# and nothing else ("ina search by ref peke yake"), so an officer
+   holding a name or a handset number had to go and find the reference somewhere else first.
+   Current rows inside the deck window only; the newest row per customer wins, and legalPreview
+   still decides whether that customer is on today's book. The phone is searched by its last
+   nine digits, the part that is the same however it was written (see findCustomer). */
+const LEGAL_FIND_LIMIT = 40;
+async function legalFind(db, user, args, nowMs) {
+  const q = String((args && args.q) == null ? '' : args.q).trim();
+  if (q.length < 3) throw badRequest('Andika angalau herufi 3. / Type at least 3 characters — a REF#, a name, or a phone number.');
+  const like = '%' + q.replace(/[%_\\]/g, m => '\\' + m) + '%';
+  const digits = q.replace(/\D/g, '');
+  const clauses = ['ref.ilike.' + like, 'full_name.ilike.' + like];
+  if (digits.length >= 7) clauses.push('contact.ilike.%' + digits.slice(-9) + '%');
+  const since = addDaysKey(todayKey(nowMs), -DECK_LOOKBACK_DAYS);
+  const rows = await fetchAll(() => onTeams(db.from('defaulter_snapshots')
+    .select('ref, full_name, contact, team, arrears, status, ds, snapshot_date, weekday')
+    .eq('snapshot_type', 'current').gte('snapshot_date', since)
+    .or(clauses.join(',')).order('snapshot_date', { ascending: false }).limit(LEGAL_FIND_LIMIT * 3), user.teams));
+  const seen = new Map();
+  for (const r of scoped(user, rows).sort((x, y) => String(y.snapshot_date).localeCompare(String(x.snapshot_date)))) {
+    const k = K(r.ref);
+    if (!k || seen.has(k)) continue;
+    seen.set(k, { ref: r.ref, name: r.full_name || '', team: r.team || '', contact: r.contact || '',
+      arrears: num(r.arrears), status: r.status || '', ds: r.ds || '', date: String(r.snapshot_date || '').slice(0, 10),
+      weekday: r.weekday || '' });
+  }
+  return { q, rows: [...seen.values()].slice(0, LEGAL_FIND_LIMIT), capped: seen.size > LEGAL_FIND_LIMIT };
 }
 
 /** HMCL/<initials>/<dd>/<mm>/<yyyy>, with -2, -3 ... when the same person is served again on
@@ -1918,12 +1983,12 @@ async function addDemandNotice(db, user, p, nowMs) {
   const fine = roundUp500(f.fine);
   const a = legalAmounts(d, fine);
   const ratePct = Math.round(f.rate * 1000) / 10;
-  const [noticeId, teamRows, brand] = await Promise.all([
-    nextNoticeId(db, d.full_name, noticeKey), readTeamsAll(db, nowMs), legalBrand_(db),
+  const [noticeId, teamRows, brand, staff] = await Promise.all([
+    nextNoticeId(db, d.full_name, noticeKey), readTeamsAll(db, nowMs), legalBrand_(db), staffPhone_(db, user),
   ]);
   const teamRow = teamRows.find(t => K(t.team) === K(d.team)) || null;
   const letter = demandLetter_(d, user, p, noticeId, noticeKey, days,
-    { fine, ratePct, paidCount: f.paidCount, ...a }, teamRow, legalContact_(user, teamRow, brand.phone));
+    { fine, ratePct, paidCount: f.paidCount, ...a }, teamRow, legalContact_(user, teamRow, brand.phone, staff));
   await insertShedding_(db, 'demand_notices', {
     notice_id: noticeId, ref: d.ref, team: d.team, full_name: d.full_name, contact: d.contact,
     notice_date: noticeKey, notice_days: days, paid_count: f.paidCount, fine,
@@ -1962,15 +2027,17 @@ async function demandNoticePrint(db, user, { id, noticeId } = {}, nowMs = Date.n
     const f = legalFine(d, Date.parse(noticeKey + 'T00:00:00Z'));
     const fine = n.fine == null ? roundUp500(f.fine) : num(n.fine);
     const a = legalAmounts(d, fine);
-    const teamRows = await readTeamsAll(db, nowMs);
+    // The number is the ISSUING officer's, as on the original, not whoever is reprinting.
+    const issuer = { name: n.issued_by || user.name };
+    const [teamRows, staff] = await Promise.all([readTeamsAll(db, nowMs), staffPhone_(db, issuer)]);
     const teamRow = teamRows.find(t => K(t.team) === K(n.team || d.team)) || null;
-    letter = demandLetter_(d, { name: n.issued_by || user.name }, {}, n.notice_id, noticeKey,
+    letter = demandLetter_(d, issuer, {}, n.notice_id, noticeKey,
       Math.max(1, Math.floor(num(n.notice_days) || 7)),
       { fine, ratePct: Math.round(f.rate * 1000) / 10,
         paidCount: n.paid_count == null ? f.paidCount : num(n.paid_count), ...a,
         principalRemaining: n.principal_remaining == null ? a.principalRemaining : num(n.principal_remaining),
         totalDemand: n.total_demand == null ? a.totalDemand : num(n.total_demand) },
-      teamRow, legalContact_(user, teamRow, brand.phone));
+      teamRow, legalContact_(issuer, teamRow, brand.phone, staff));
     rebuilt = true;
   }
   return { noticeId: n.notice_id, ref: n.ref, rebuilt, html: demandNoticeHtml(letter, brand) };
@@ -8330,7 +8397,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
-  demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
+  demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, abnormal, received, findCustomer, rebuildFollowup,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -8710,7 +8777,7 @@ const FN_TAB = {
   complaintLog: ['complaints'], resolveComplaint: ['complaints'], deleteComplaint: ['complaints'],
   restructures: ['restructure'], addRestructure: ['restructure'], decideRestructure: ['restructure'],
   restructureEligible: ['restructure'], restructureContract: ['restructure'],
-  demandNotices: ['legal'], addDemandNotice: ['legal'], demandNoticePrint: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'],
+  demandNotices: ['legal'], addDemandNotice: ['legal'], demandNoticePrint: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'], legalFind: ['legal'],
   adjustments: ['adjust'], adjustmentRecord: ['adjust'], adjustmentAmend: ['adjust'],
   adjustmentDelete: ['adjust'],
   abnormal: ['abnormal'], received: ['abnormal'],

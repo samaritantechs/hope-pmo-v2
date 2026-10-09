@@ -2638,6 +2638,49 @@ test('the officer\'s own number prints when the teams sheet holds one; the store
   assert.equal(re.html, o.html, 'rebuilt from the same deck row, so the same letter');
 });
 
+/* The legal officer's comments on the first letters: no lawyers' numbers on them, a search box
+   that took a REF# and nothing else, and (the register showed it) the same customer served six
+   times on one day. */
+test('the lawyer\'s number is the handset they registered the call app with; the drawer finds a customer by name or phone; a notice already served today is said', async () => {
+  /* "haina namba za simu za wanasheria" -- "Phone nos are from staff table from callapp reg". */
+  const t = notice_fixture_(tables());
+  t.call_users.push({ user_id: 'U7', name: 'The Admin', phone: '659123456', team: 'KONGOWE', role: 'LEGAL' });
+  const db = fakeDb(t);
+  const a = await portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
+  assert.match(a.html, /Kwa maelezo zaidi piga simu: 0659 123 456/, 'nine stored digits, written as a number is written; the name matched whatever its case');
+  const row = db._dump('demand_notices').find(r => r.notice_id === a.noticeId);
+  assert.equal(row.letter.phone, '0659 123 456');
+  // A reprint by somebody else still carries the ISSUER's number, as the original did.
+  const re = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id }, NOW);
+  assert.match(re.html, /0659 123 456/);
+  // No handset registered: the chain falls through exactly as before.
+  const g = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
+  assert.match(g.html, /Kwa maelezo zaidi piga simu: \+255 659 077 770/);
+
+  /* "ina search by ref peke yake" -> "search by ref, phone no and names etc" */
+  const byName = await portalApi(db, ADMIN, 'legalFind', { q: 'asha juma' }, NOW);
+  assert.deepEqual(byName.rows.map(r => r.ref), ['555']);
+  assert.equal(byName.rows[0].name, 'ASHA JUMA MOSHI');
+  assert.equal(byName.rows[0].contact, '0714000555');
+  const byPhone = await portalApi(db, ADMIN, 'legalFind', { q: '0714 000 555' }, NOW);
+  assert.deepEqual(byPhone.rows.map(r => r.ref), ['555'], 'the last nine digits, however the number was typed');
+  const byRef = await portalApi(db, ADMIN, 'legalFind', { q: '555' }, NOW);
+  assert.ok(byRef.rows.some(r => r.ref === '555'));
+  assert.equal(byRef.rows.filter(r => r.ref === '555').length, 1, 'one line per customer, not one per deck row');
+  // Scoped at the database: KONGOWE's officer cannot find MBAGALA's customer.
+  const other = await portalApi(db, GMO, 'legalFind', { q: '999' }, NOW);
+  assert.deepEqual(other.rows, []);
+  await assert.rejects(() => portalApi(db, ADMIN, 'legalFind', { q: 'as' }, NOW), e => e.status === 400);
+
+  /* Served already: said on the preview, so the drawer offers the reprint first. */
+  const p = await portalApi(db, ADMIN, 'legalPreview', { ref: '555', noticeDate: '2026-03-16' }, NOW);
+  assert.deepEqual(p.servedToday.map(s => s.noticeId), [a.noticeId]);
+  assert.equal(p.servedToday[0].id, row.id, 'with the row to reprint');
+  const p2 = await portalApi(db, ADMIN, 'legalPreview', { ref: '555', noticeDate: '2026-03-18' }, NOW);
+  assert.deepEqual(p2.servedToday, []);
+  assert.deepEqual(p2.served.map(s => s.date), ['2026-03-17', '2026-03-16'], 'the earlier ones are still listed, newest first');
+});
+
 test('upload status says what is still missing for today', async () => {
   const db = fakeDb(tables());
   const d = await portalApi(db, ADMIN, 'uploadStatus', {}, NOW);

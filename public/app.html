@@ -708,7 +708,7 @@ var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  demandNotices:1, abnormal:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
+  legalFind:1, demandNoticePrint:1, demandNotices:1, abnormal:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-j';
+var BUILD = '2026-10-09-k';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6294,8 +6294,14 @@ VIEWS.legal = function(){
           + ' ·' + lk('lgSign', 'sahihi / signature') + ' ·' + lk('lgWho', 'anayesaini / signatory', br.signatory)
           + ' ·' + lk('lgTitle', 'cheo / title', br.title) + ' ·' + lk('lgPhone', 'simu / phone', br.phone) : '')
       + '</div>'
+      /* "haina muhuri wa kampuni": the letter prints whatever Settings hold, and a missing
+         stamp is a ✗ in the line above that nobody reads. Said in its own line, by name. */
+      + (br.logo && br.stamp && br.sign ? '' : '<div class="note">⚠ Barua itatoka BILA '
+          + [br.logo ? '' : 'nembo / logo', br.stamp ? '' : 'muhuri wa kampuni / company stamp', br.sign ? '' : 'sahihi / signature'].filter(Boolean).join(', ')
+          + '. Admin: weka kupitia viungo hapo juu. / The letter prints WITHOUT it until an admin sets it through the links above.</div>')
       + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>'
-        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena barua ile ile. / Tap a row to reprint the same letter.</span>');
+        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena barua ile ile. / Tap a row to reprint the same letter.'
+        + ' · PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).</span>');
     S.rows = d.rows;
     S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
       col('ref','REF#'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'),
@@ -6326,12 +6332,7 @@ VIEWS.legal = function(){
       col('issued_by','Issued by')];
     /* "demand retrival": a row is the letter it was printed from -- the same one again, off
        the register (db/RUN-ME-040), with the company's current images. */
-    ONROW = function(r){
-      srv('demandNoticePrint', { id: r.id }).then(function(p){
-        if (p.rebuilt) toast('Notisi ya zamani: barua imejengwa upya kutoka deki ya sasa. / Issued before letters were kept: rebuilt from today\'s deck.');
-        printHtml(p.html);
-      }).catch(function(err){ toast(String(err.message||err), true); });
-    };
+    ONROW = function(r){ lgPrint(r.id); };
     S.foot = 'Demanded: TZS '+money(d.demanded)+' · of which fines: TZS '+money(d.fines)
       + (d.paymentsOn ? ' · paid since notice: TZS '+money(d.paidSince) : '');
   });
@@ -6339,21 +6340,34 @@ VIEWS.legal = function(){
 /* Issuing a notice is a two-step: preview the arithmetic against the customer's own row, then
    commit it. The letter that prints is built from the SAME figures that get stored, so the
    register and the document in the customer's hands can never disagree. */
+/* THE SEARCH BOX TAKES A REF#, A NAME OR A PHONE NUMBER -- "ina search by ref peke yake" ->
+   "search by ref, phone no and names etc". The server (legalFind) looks the customer up on the
+   defaulter deck by any of the three; one match goes straight to the preview, several are
+   listed to pick from, and a bare reference that is not on the deck window is still tried
+   directly, as the old box did. */
 function lgIssue(){
   drawer('<h3>Notisi mpya / New demand notice</h3>'
-    + '<div class="sub">Anza na REF# ya mteja. / Start with the customer’s REF#.</div>'
-    + '<div class="fld"><label>Customer REF#</label><input id="lgRef"></div>'
+    + '<div class="sub">Tafuta mteja kwa REF#, jina au namba ya simu. / Find the customer by REF#, name or phone number.</div>'
+    + '<div class="fld"><label>REF#, jina au simu / REF#, name or phone</label><input id="lgQ" placeholder="mf. 2205489976 · ASHA JUMA · 0714..."></div>'
     + '<div class="fld"><label>Tarehe ya notisi / Notice date</label><input id="lgDate" type="date" value="'+today()+'"></div>'
-    + '<button class="btn w" id="lgLoad">Tafuta / Load</button>'
+    + '<button class="btn w" id="lgLoad">Tafuta / Search</button>'
+    + '<div id="lgHits"></div>'
     + '<div id="lgPrev"></div>');
-  var load = function(){
-    var ref = $('#lgRef').value.trim();
-    if (!ref){ toast('Weka REF#. / Enter a REF#.', true); return; }
+  var preview = function(ref){
     srv('legalPreview', { ref:ref, noticeDate:$('#lgDate').value }).then(function(e){
       if (!e.found){ toast('Hakuna mdaiwa mwenye REF# hiyo. / No defaulter with that REF#.', true); return; }
+      /* ALREADY SERVED TODAY. The register showed one customer served six times on one day:
+         the officer pressed Issue again each time the print did not appear. The reprint is
+         offered first; a second letter is still possible, but it is now a decision. */
+      var dup = e.servedToday || [], old = (e.served || []).filter(function(s){ return dup.indexOf(s) < 0; });
       $('#lgPrev').innerHTML =
-        '<div class="facts"><div class="frow"><span>Customer</span><b>'+esc(e.full_name||'')+'</b></div>'
+        (dup.length ? '<div class="note">⚠ Ameshapewa notisi leo: <b>'+esc(dup.map(function(s){ return s.noticeId; }).join(', '))+'</b>.'
+            + ' Chapisha tena ile ile badala ya kutoa nyingine. / Already served today — reprint that one rather than issue another.'
+            + ' <a href="#" id="lgReprint">Chapisha tena / Reprint</a></div>' : '')
+        + (old.length ? '<div class="sub">Notisi za awali / Earlier notices: '+esc(old.map(function(s){ return s.noticeId+' ('+s.date+')'; }).join(', '))+'</div>' : '')
+        + '<div class="facts"><div class="frow"><span>Customer</span><b>'+esc(e.full_name||'')+'</b></div>'
         + '<div class="frow"><span>Team</span><span>'+esc(e.team||'')+'</span></div>'
+        + '<div class="frow"><span>Simu / Phone</span><span>'+esc(e.contact||'—')+'</span></div>'
         + '<div class="frow"><span>Disbursed → expiry</span><span>'
           + esc(String(e.disb_date||'—').slice(0,10))+' → '+esc(String(e.expire_date||'—').slice(0,10))+'</span></div></div>'
         + '<div class="kpis sm">'
@@ -6366,12 +6380,18 @@ function lgIssue(){
         + '<div class="fld"><label>Siku za notisi / Notice days</label><input id="lgDays" type="number" min="1" value="7"></div>'
         + '<div class="fld"><label>Mdhamini / Guarantor</label><input id="lgG" value="'+esc(e.guarantor||'')+'"></div>'
         + '<div class="fld"><label>Simu ya mdhamini / Guarantor phone</label><input id="lgGC" value="'+esc(e.guarantor_contact||'')+'"></div>'
-        + '<button class="btn w" id="lgGo">Toa notisi &amp; chapisha / Issue &amp; print</button>';
+        + '<button class="btn w" id="lgGo">Toa notisi &amp; chapisha / Issue &amp; print</button>'
+        /* "haina option ya kudownload inaprint direct" -- the PDF is the print dialog's own
+           "Save as PDF", which a phone does not show and a computer does. Said where the
+           button is, not left for the officer to discover. */
+        + '<div class="sub">Kupata PDF: kwenye dirisha la kuchapisha chagua “Save as PDF” (kompyuta); faili huitwa jina la mteja.'
+        + ' / For a PDF: in the print dialog choose “Save as PDF” (on a computer); the file is named after the customer.</div>';
+      if (dup.length) $('#lgReprint').onclick = function(ev){ ev.preventDefault(); lgPrint(dup[0].id); };
       $('#lgGo').onclick = function(){
         srv('addDemandNotice', { ref:e.ref, noticeDate:$('#lgDate').value, noticeDays:$('#lgDays').value,
           guarantorName:$('#lgG').value.trim(), guarantorContact:$('#lgGC').value.trim() })
           .then(function(r){
-            toast('Notisi '+r.noticeId+' imetolewa. / Issued.');
+            toast('Notisi '+r.noticeId+' imetolewa. PDF: “Save as PDF” kwenye dirisha la kuchapisha. / Issued. PDF: “Save as PDF” in the print dialog.');
             printHtml(r.html);
             closeDrawer(); render();
           })
@@ -6379,8 +6399,40 @@ function lgIssue(){
       };
     }).catch(function(err){ toast(String(err.message||err), true); });
   };
-  $('#lgLoad').onclick = load;
-  $('#lgRef').onkeydown = function(ev){ if (ev.key === 'Enter') load(); };
+  var search = function(){
+    var q = $('#lgQ').value.trim();
+    if (q.length < 3){ toast('Andika angalau herufi 3. / Type at least 3 characters.', true); return; }
+    $('#lgPrev').innerHTML = ''; $('#lgHits').innerHTML = '';
+    srv('legalFind', { q:q }).then(function(f){
+      if (!f.rows.length){
+        if (/^\d{6,}$/.test(q)) return preview(q);
+        $('#lgHits').innerHTML = '<div class="note">Hakuna mdaiwa anayelingana. / No defaulter matches that — check the spelling, or whether their deck has been uploaded.</div>';
+        return;
+      }
+      if (f.rows.length === 1) return preview(f.rows[0].ref);
+      $('#lgHits').innerHTML = '<div class="sub">Chagua mteja / Pick the customer'
+        + (f.capped ? ' (orodha imekatwa — andika zaidi / list cut short — type more)' : '') + '</div><div class="facts">'
+        + f.rows.map(function(r, i){
+          return '<div class="frow lgHit" data-i="'+i+'" style="cursor:pointer"><span><b>'+esc(r.name)+'</b><br>'
+            + '<small>'+esc(r.ref)+' · '+esc(r.contact||'—')+' · '+esc(r.team)+'</small></span><span>'+money(r.arrears)+'</span></div>';
+        }).join('') + '</div>';
+      Array.prototype.forEach.call(document.querySelectorAll('.lgHit'), function(el){
+        el.onclick = function(){ $('#lgHits').innerHTML = ''; preview(f.rows[+el.getAttribute('data-i')].ref); };
+      });
+    }).catch(function(err){ toast(String(err.message||err), true); });
+  };
+  $('#lgLoad').onclick = search;
+  $('#lgQ').onkeydown = function(ev){ if (ev.key === 'Enter') search(); };
+}
+/* "demand retrival": the SAME letter again, off the register row (db/RUN-ME-040), with the
+   company's current images. The print dialog is also where the PDF comes from, so the toast
+   says so before it opens -- on a phone the dialog has no such option, and that is said too. */
+function lgPrint(id){
+  srv('demandNoticePrint', { id: id }).then(function(p){
+    if (p.rebuilt) toast('Notisi ya zamani: barua imejengwa upya kutoka deki ya sasa. / Issued before letters were kept: rebuilt from today\'s deck.');
+    else toast('PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).');
+    printHtml(p.html);
+  }).catch(function(err){ toast(String(err.message||err), true); });
 }
 /* Opened as a document rather than downloaded: the officer prints it or saves it as PDF from
    the browser's own print dialog, which is what produced the letter in v1 too. */
