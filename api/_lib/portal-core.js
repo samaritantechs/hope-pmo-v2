@@ -2040,7 +2040,13 @@ async function demandNoticePrint(db, user, { id, noticeId } = {}, nowMs = Date.n
       teamRow, legalContact_(issuer, teamRow, brand.phone, staff));
     rebuilt = true;
   }
-  return { noticeId: n.notice_id, ref: n.ref, rebuilt, html: demandNoticeHtml(letter, brand) };
+  /* "phone number of current login user who prints": the letter in the customer's hands must
+     be answerable by whoever handed it over, so a reprint carries the PRINTING officer's own
+     number when the staff table has one, and the stored (issuer's) number otherwise. The
+     figures are untouched: it is still the same letter. */
+  const mine = letterPhone_(await staffPhone_(db, user));
+  if (mine && mine !== letter.phone) letter = { ...letter, phone: mine };
+  return { noticeId: n.notice_id, ref: n.ref, rebuilt, phone: letter.phone, html: demandNoticeHtml(letter, brand) };
 }
 
 const esc_ = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -2058,7 +2064,13 @@ const fmtM = n => Math.round(num(n)).toLocaleString('en-US');
    figures are the ones stored on the register row, and the images come from Settings.
    The <title> is what the browser's "Save as PDF" names the file, and it is the CUSTOMER'S
    NAME -- "the notice pdf name should be customer's name" -- so a folder of notices reads as
-   a list of people, not of reference numbers. */
+   a list of people, not of reference numbers.
+
+   ONE RULE OF THE SHEET'S STYLESHEET IS NOT CARRIED OVER: page-break-inside:avoid on the
+   block that wraps the whole first page. Google's PDF renderer ignored it; Chrome honours it,
+   and a block taller than a page that may not break inside is pushed WHOLE onto the next
+   page -- which printed as a blank first page ("Prints 1st page blank"). The costs table
+   keeps its own avoid: it is small, and it is the thing that must not be cut in two. */
 function demandNoticeHtml(t, brand) {
   const b = brand || {};
   const daysWord = String(t.days) === '7' ? 'SABA' : String(t.days);
@@ -2077,7 +2089,7 @@ body{font-family:Verdana,sans-serif;font-size:9.5pt;color:#000;line-height:1.35;
 .header img{float:left;margin-top:-10px;}
 .address-block p{margin:0 0 2px 0;line-height:1.4;}
 .subject{font-weight:bold;text-decoration:underline;margin:12px 0 8px 0;text-align:center;}
-.first-page{position:relative;page-break-inside:avoid;}
+.first-page{position:relative;}
 .table-wrapper{position:relative;}
 table{width:100%;border-collapse:collapse;margin:16px 0;page-break-inside:avoid;}
 th,td{border:1px solid black;padding:5px 7px;vertical-align:top;font-size:9.5pt;}
@@ -2328,11 +2340,13 @@ async function noticePayments_(db, notices) {
 }
 
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
-  const [r, cur, teamBranch, brand] = await Promise.all([
+  const [r, cur, teamBranch, brand, mine] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
     branchByTeam(db, nowMs),
     legalBrand_(db),
+    // The signed-in officer's own number, so the tab can say what their letters will carry.
+    staffPhone_(db, user),
   ]);
   const nowBy = {};
   for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
@@ -2414,7 +2428,12 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
        the number that prints when no officer's own is found -- so "are we perfectly done" can
        be read off the Legal tab rather than off a test print. */
     brand: { logo: !!brand.logo, stamp: !!brand.stamp, sign: !!brand.sign,
-      signatory: brand.signatory, title: brand.title, phone: brand.phone || LEGAL_PHONE_DEFAULT } };
+      signatory: brand.signatory, title: brand.title, phone: brand.phone || LEGAL_PHONE_DEFAULT,
+      /* "Legal phone is not from what i set but their login phone": the number a letter
+         carries is the printing officer's own, from their HOPE Calls registration (made with
+         their access code, so it is under the code's name). Said per person, so somebody whose
+         registration is under another name, or missing, finds out here and not on a letter. */
+      mine: letterPhone_(mine) || null, me: (user && user.name) || '' } };
 }
 
 /* =====================================================================================

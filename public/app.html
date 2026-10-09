@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-k';
+var BUILD = '2026-10-09-l';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6283,6 +6283,15 @@ VIEWS.legal = function(){
       + 'mikopo ya 2024 na kabla <b>2%</b>, baadaye <b>5%</b> kwa kila rejesho lililochelewa.'
       + ' / The fine starts two weeks after the first missed installment; 2% for loans disbursed'
       + ' in 2024 or earlier, 5% after that.</div>'
+      /* THE NUMBER ON YOUR LETTERS -- "Legal phone is not from what i set but their login
+         phone". It is the printing officer's own, from their HOPE Calls registration. Said per
+         person: a lawyer registered under another name, or not at all, finds out here. */
+      + (br.mine
+          ? '<div class="note">Simu yako kwenye barua / Your number on letters: <b>' + esc(br.mine) + '</b> (HOPE Calls, ' + esc(br.me || '') + ').</div>'
+          : '<div class="note">⚠ Hakuna namba yako: HOPE Calls haina usajili kwa jina <b>' + esc(br.me || '') + '</b>.'
+            + ' Jisajili HOPE Calls kwa msimbo wako wa kuingia ili namba ya simu yako iwe kwenye barua zako; hadi hapo zitaonyesha ' + esc(br.phone || '') + '.'
+            + ' / No number of yours on file: HOPE Calls has no registration under the name <b>' + esc(br.me || '') + '</b>.'
+            + ' Register HOPE Calls with your access code so your own number prints on your letters; until then they show ' + esc(br.phone || '') + '.</div>')
       /* THE LETTERHEAD, SAID ON THE SCREEN. The letter prints the logo, the stamp twice and
          the signature from Settings, and one printed without its stamp is printed again in
          front of a customer. Everyone sees which are in place; an admin sets each from here. */
