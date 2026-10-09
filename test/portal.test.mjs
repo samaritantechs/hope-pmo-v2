@@ -2588,6 +2588,12 @@ test('issuing a notice stores what it prints, under a citable reference', async 
   assert.match(h, /JINA: ZAWADI HAMISI<\/p>\s*<p class="guarantor-line">SIMU: 0784607061<\/p>/);
   assert.match(h, /NAKALA KWA SERIKALI YA MTAA:<\/strong>/);
   assert.match(h, /class="page-break-before"/, 'the payment instructions start page two, as the sheet printed it');
+  /* "Prints 1st page blank": Chrome pushes a may-not-break-inside block that is taller than a
+     page onto the NEXT page, whole. The first-page wrapper must not carry that rule; the small
+     costs table keeps it. */
+  assert.match(h, /\.first-page\{position:relative;\}/);
+  assert.doesNotMatch(h, /\.first-page\{[^}]*page-break-inside/);
+  assert.match(h, /^table\{[^}]*page-break-inside:avoid/m);
   assert.doesNotMatch(h, /THE ADMIN/, 'the issuing code is on the register, not on the letter');
 
   /* "demand retrival" -- tap a row: the SAME letter again, off the stored letter. */
@@ -2650,12 +2656,28 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   assert.match(a.html, /Kwa maelezo zaidi piga simu: 0659 123 456/, 'nine stored digits, written as a number is written; the name matched whatever its case');
   const row = db._dump('demand_notices').find(r => r.notice_id === a.noticeId);
   assert.equal(row.letter.phone, '0659 123 456');
-  // A reprint by somebody else still carries the ISSUER's number, as the original did.
+  // A reprint by somebody with no handset on file carries the issuer's number, as the original.
   const re = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id }, NOW);
   assert.match(re.html, /0659 123 456/);
   // No handset registered: the chain falls through exactly as before.
   const g = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
   assert.match(g.html, /Kwa maelezo zaidi piga simu: \+255 659 077 770/);
+  /* "phone number of current login user who prints" -- "Legal phone is not from what i set but
+     their login phone": once JUMA G has registered HOPE Calls, a reprint by him carries HIS
+     number, the rest of the letter untouched. */
+  db._dump('call_users').push({ user_id: 'U8', name: 'Juma G', phone: '712000111', team: 'KONGOWE', role: 'OFFICER' });
+  const re2 = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id }, NOW);
+  assert.equal(re2.phone, '0712 000 111');
+  assert.match(re2.html, /Kwa maelezo zaidi piga simu: 0712 000 111/);
+  assert.match(re2.html, /Kumb\.Na\. HMCL\/AJM\/16\/03\/2026<\/strong>/, 'the same letter otherwise');
+  assert.doesNotMatch(re2.html, /0659 123 456/);
+  // And the tab tells each person which number their letters will carry, or that none is on file.
+  const tab = await portalApi(db, ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(tab.brand.mine, '0659 123 456');
+  assert.equal(tab.brand.me, 'THE ADMIN');
+  const tabN = await portalApi(db, { ...GMO, name: 'NOBODY N' }, 'demandNotices', {}, NOW);
+  assert.equal(tabN.brand.mine, null, 'said as missing, with the number that prints instead');
+  assert.equal(tabN.brand.phone, '+255 659 077 770');
 
   /* "ina search by ref peke yake" -> "search by ref, phone no and names etc" */
   const byName = await portalApi(db, ADMIN, 'legalFind', { q: 'asha juma' }, NOW);

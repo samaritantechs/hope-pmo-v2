@@ -316,7 +316,9 @@ const BUDGETS = [
      to answer) and the letterhead's readiness (one settings read, so the tab can say whether
      the stamp is set rather than a test print finding out). Rows unchanged: one row back per
      notice, never the payments book. */
-  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  8,   800,  8,  800],
+  /* 8 -> 9: one small staff-table read for the signed-in officer's own number, so the tab can
+     say which number their letters will carry and why ("their login phone"). */
+  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  9,   800,  9,  800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
