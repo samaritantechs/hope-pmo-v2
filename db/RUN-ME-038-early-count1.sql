@@ -16,10 +16,10 @@
 -- thousand rows and not one slash. The fallback fold in api/_lib/snapshot-totals.js (dsOne)
 -- counts the identical rule, so a database with this file run and one without agree.
 --
--- RAN AN EARLIER VERSION ALREADY? Run sections 1 to 4 again: section 1 replaces the function
--- with the one column, section 2 swaps the cache's column for it, section 3 re-marks the days,
--- section 4 rebuilds them. The earlier columns (ds1_left_n, ds1_n) are dropped: nothing reads
--- them any more, and a column with a definition nobody uses is a figure waiting to be misread.
+-- RAN AN EARLIER VERSION ALREADY? Run this whole file again: section 1 replaces the function
+-- with the one column, section 2 swaps the cache's column for it, section 3 re-marks the days.
+-- The earlier columns (ds1_left_n, ds1_n) are dropped: nothing reads them any more, and a
+-- column with a definition nobody uses is a figure waiting to be misread.
 --
 -- UNTIL THIS IS RUN nothing breaks: the slide shows a dash in the column and a caption naming
 -- this file. The code already asks for the column and steps back when the table has not got it.
@@ -27,9 +27,19 @@
 -- SAFE TO RE-RUN. Nothing is deleted from any deck; section 3 only re-marks days as "not
 -- built" so the cache rebuilds them with the new column, and an unbuilt day is read live.
 --
--- RUN SECTIONS 1 TO 3 TOGETHER (instant), THEN SECTION 4 ON ITS OWN, until days_left is 0.
--- Section 4 is the slow part. The SQL editor sends a script as ONE statement, so a timeout in
--- it would roll back the function too -- keep it on its own line, as RUN-ME-022 says.
+-- HOW TO RUN IT -- THE WHOLE FILE, THEN ONE LINE:
+--   1. In a NEW query: paste this entire file, press Ctrl+A so nothing is half-selected, Run.
+--      Instant. (The SQL editor runs only the highlighted text when some is highlighted -- a
+--      selection that ends part-way through the function is what "unterminated dollar-quoted
+--      string" means, and nothing at all ran.)
+--   2. In the same query, replace everything with this one line and Run it, again and again,
+--      until days_left reads 0 (about twenty seconds a go):
+--        select * from public.build_deck_totals_recent();
+--      It is NOT in the body of this file on purpose: the editor sends a script as ONE
+--      statement, so a slow rebuild timing out would roll the function back with it. Until it
+--      is run, the re-marked days are read live -- correct, slower -- and every upload rebuilds
+--      a few of them on its own anyway. If RUN-ME-022 was never run the function does not
+--      exist: skip it.
 -- =====================================================================================
 set lock_timeout = '5s';
 set statement_timeout = '2min';
@@ -174,6 +184,7 @@ $$;
 -- 3. THE DAYS ALREADY BUILT HAVE NO COUNT 1 IN THEM. Mark the last two weeks of expected
 --    sheets "not built" so they are rebuilt with the new column; until the rebuild, those days
 --    are read live (correct, slower), and the next upload tops the window up on its own.
+--    The rebuild itself is the ONE LINE in the header, run on its own after this file.
 do $$
 begin
   if to_regclass('public.deck_totals_days') is not null then
@@ -183,12 +194,7 @@ begin
 end $$;
 
 
--- 4. RUN THIS ON ITS OWN, THEN AGAIN, UNTIL days_left IS 0. About twenty seconds a go.
---    Select the line by itself. If RUN-ME-022 was never run it does not exist -- skip it.
-select * from public.build_deck_totals_recent();
-
-
--- 5. PROOF, TWO WAYS.
+-- 4. PROOF, TWO WAYS.
 --    (a) Per team off the function the slides read: Count 1 beside the headcount.
 select team, customers, paid_n + over_n as paid_over, customers - paid_n - over_n as remaining,
        ds1_owing_n as count1
