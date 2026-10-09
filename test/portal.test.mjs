@@ -1966,6 +1966,45 @@ test('demand notices show whether they worked', async () => {
   assert.equal(nd.recoveredSince, 0);
   assert.equal(nd.cleared, 0);
   assert.match(nd.rows[0].notice_state, /No deck/);
+  assert.equal(d.paymentsOn, false, 'without db/RUN-ME-040 the screen says payments are not read');
+  assert.equal(d.rows[0].paid_since, null);
+
+  /* PAYMENTS SINCE THE NOTICE ARE RECOVERIES -- "i had a weakness of not recording the
+     collected recovered amount ... the payments within notice are all recoveries". With the
+     function in place (transcribed from db/RUN-ME-040 here), each notice reads the payments
+     book from its own date; Recovered is the larger of what was paid since and how far the
+     arrears fell. */
+  const notice_payments = (store, args) => {
+    const pays = (store.received_payments && store.received_payments.rows) || [];
+    return args.p_refs.map((ref, i) => {
+      const since = args.p_dates[i];
+      const mine = pays.filter(p => String(p.ref_no) === ref && String(p.paid_at) >= since);
+      return { ref, since, paid: mine.reduce((s, p) => s + Number(p.amount_paid || 0), 0), n: mine.length,
+        last_paid: mine.map(p => p.paid_at).sort().pop() || null };
+    });
+  };
+  const paid = { ...t, received_payments: [
+    { id: 'p1', ref_no: '111', amount_paid: 300, paid_at: TODAY },
+    { id: 'p2', ref_no: '111', amount_paid: 50, paid_at: '2020-01-01' },     // before the notice: not counted
+    { id: 'p3', ref_no: '555', amount_paid: 200, paid_at: TODAY },
+  ] };
+  const dp = await portalApi(fakeDb(paid, { rpc: { notice_payments } }), ADMIN, 'demandNotices', {}, NOW);
+  const pb = Object.fromEntries(dp.rows.map(r => [r.ref, r]));
+  assert.equal(dp.paymentsOn, true);
+  assert.equal(pb['111'].paid_since, 300); assert.equal(pb['111'].paid_n, 1); assert.equal(pb['111'].last_paid, TODAY);
+  assert.equal(pb['111'].arrears_down, 600);
+  assert.equal(pb['111'].recovered_since, 600, 'the larger of the two readings');
+  assert.match(pb['111'].notice_state, /Paying/);
+  assert.equal(pb['555'].paid_since, 200);
+  assert.equal(pb['555'].arrears_down, 0, 'arrears did not move -- new instalments fell due');
+  assert.equal(pb['555'].recovered_since, 200, 'yet the money came in, and that is a recovery');
+  assert.match(pb['555'].notice_state, /Paying/);
+  assert.equal(pb['222'].paid_since, 0);
+  assert.equal(pb['222'].recovered_since, 500);
+  assert.match(pb['222'].notice_state, /Cleared/);
+  assert.equal(dp.paidSince, 500);
+  assert.equal(dp.recoveredSince, 1300);
+  assert.equal('letter' in dp.rows[0], false, 'the stored letter stays off the register list');
 });
 
 /* An officer on the phone with a customer, asking "where is this person right now?". Until
@@ -2394,8 +2433,11 @@ test('demand notice: the fine only starts after the grace period, and scales wit
       if (r.ref === '555' && r.snapshot_type === 'current') Object.assign(r, patch);
     }
   };
-  // Disbursed 2026-01-05, weekly installment 40,000, 3 of 12 paid.
-  // First missed due = disb + 7 x 4 days = 2026-02-02; grace ends two weeks later, 2026-02-16.
+  /* Disbursed 2026-01-05, first instalment 100,000, weekly instalment 40,000, 220,000 paid.
+     PAID INSTALMENTS ARE COUNTED OFF THE MONEY, as the Google Sheets letter always did
+     (Code.gs: 1 + floor((paid - initial) / other)): 1 + floor(120,000 / 40,000) = 4 -- the D.S
+     column ("3/12") is NOT what the letter reads. First missed due = disb + 7 x 5 days =
+     2026-02-09; grace ends two weeks later, 2026-02-23. */
   setDef({ disb_date: '2026-01-05', expire_date: '2026-03-30', other_inst: 40000,
     initial_inst: 100000, t_payment: 220000, ds: '3/12' });
 
@@ -2403,17 +2445,18 @@ test('demand notice: the fine only starts after the grace period, and scales wit
   const early = await portalApi(db, ADMIN, 'legalPreview',
     { ref: '555', noticeDate: '2026-02-10' }, NOW);
   assert.equal(early.weeks, 0); assert.equal(early.fine, 0);
+  assert.equal(early.paidCount, 4, 'four instalments by the money rule, whatever D.S says');
 
-  // Four weeks past the grace end, at 5% (disbursed after 2024).
+  // Three weeks past the grace end (21 days, 2026-02-23 to 2026-03-16), at 5% (disbursed after 2024).
   const late = await portalApi(db, ADMIN, 'legalPreview',
     { ref: '555', noticeDate: '2026-03-16' }, NOW);
   assert.equal(late.ratePct, 5);
-  assert.equal(late.weeks, 4);
-  assert.equal(late.fine, 8000);                        // 4 x 0.05 x 40,000
+  assert.equal(late.weeks, 3);
+  assert.equal(late.fine, 6000);                        // 3 x 0.05 x 40,000
   // total loan = 100,000 + 11 x 40,000 = 540,000; paid 220,000 -> 320,000 remaining.
   assert.equal(late.totalLoan, 540000);
   assert.equal(late.principalRemaining, 320000);
-  assert.equal(late.totalDemand, 328000);               // remaining + fine, rounded up to 500
+  assert.equal(late.totalDemand, 326000);               // remaining + fine, rounded up to 500
 
   // The same loan written in 2024 carries the older 2% rate.
   setDef({ disb_date: '2024-01-05', expire_date: '2024-03-30' });
@@ -2421,41 +2464,123 @@ test('demand notice: the fine only starts after the grace period, and scales wit
   assert.equal(old.ratePct, 2);
 });
 
-test('issuing a notice stores what it prints, under a citable reference', async () => {
-  const db = fakeDb(tables());
-  for (const r of db._dump('defaulter_snapshots')) {
+/* THE LETTER IS THE GOOGLE SHEETS LETTER -- "Demand notice from hope pmo portal should
+   perfectly match the one from Google sheets by observing the code and pdf". The wording,
+   the costs table and its JUMLA, the dates written dd/MM/yyyy, the stamp twice, the lawyer's
+   name under the signature, the copy to the guarantor and the local government, and the file
+   name the browser saves it under: each pinned here against Code.gs and the sample letter. */
+const notice_fixture_ = (t, patch) => {
+  t.settings = (t.settings || []).concat([
+    { key: 'BRAND_LOGO', value: 'data:image/png;base64,LOGO' },
+    { key: 'BRAND_STAMP', value: 'data:image/png;base64,STAMP' },
+    { key: 'BRAND_SIGN', value: 'data:image/png;base64,SIGN' },
+  ]);
+  for (const r of t.defaulter_snapshots) {
     if (r.ref === '555' && r.snapshot_type === 'current') {
       Object.assign(r, { disb_date: '2026-01-05', expire_date: '2026-03-30', other_inst: 40000,
-        initial_inst: 100000, t_payment: 220000, ds: '3/12', full_name: 'ASHA JUMA MOSHI' });
+        initial_inst: 100000, t_payment: 220000, ds: '3/12', full_name: 'ASHA JUMA MOSHI',
+        contact: '0714000555', zone: 'KONGOWE CENTRE', guarantor_name: 'ZAWADI HAMISI', guarantor_contact: '0784607061' }, patch || {});
     }
   }
+  return t;
+};
+
+test('issuing a notice stores what it prints, under a citable reference', async () => {
+  const db = fakeDb(notice_fixture_(tables()));
   const a = await portalApi(db, ADMIN, 'addDemandNotice',
     { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
   assert.equal(a.noticeId, 'HMCL/AJM/16/03/2026');
-  assert.equal(a.totalDemand, 328000);
+  assert.equal(a.totalDemand, 326000);
 
-  // The register row carries the same figures the letter states.
+  // The register row carries the same figures the letter states -- and the letter itself.
   const row = db._dump('demand_notices').find(r => r.notice_id === a.noticeId);
-  assert.equal(row.total_demand, 328000);
-  assert.equal(row.fine, 8000);
-  assert.equal(row.paid_count, 3);
+  assert.equal(row.total_demand, 326000);
+  assert.equal(row.fine, 6000);
+  assert.equal(row.paid_count, 4);
   assert.equal(row.issued_by, 'THE ADMIN');
+  assert.equal(row.letter.noticeId, a.noticeId);
+  assert.equal(row.letter.totalDemand, 326000);
+  assert.equal(row.letter.region, '', 'the fixture team names no region; the line prints empty rather than invented');
 
-  // And the letter itself states them, in words the customer reads.
-  assert.match(a.html, /Kumb\.Na\. HMCL\/AJM\/16\/03\/2026/);
-  assert.match(a.html, /SHILINGI 328,000\/= NDANI YA SIKU SABA/);
-  assert.match(a.html, /marejesho 3 kati ya 12/);
+  // And the letter itself states them, in the sheet system's own words.
+  const h = a.html;
+  assert.match(h, /<title>ASHA JUMA MOSHI<\/title>/, 'the file name the browser saves it under is the customer\'s name -- "the notice pdf name should be customer\'s name"');
+  assert.match(h, /Kumb\.Na\. HMCL\/AJM\/16\/03\/2026<\/strong>/);
+  assert.match(h, /<strong>16\/03\/2026<\/strong>/, 'the notice date, dd/MM/yyyy');
+  assert.match(h, /<p><strong>ASHA JUMA MOSHI,<\/strong><\/p>\s*<p>0714000555,<\/p>\s*<p>KONGOWE CENTRE - KONGOWE,<\/p>/, 'name, phone, zone - team, as the sample letter reads');
+  assert.match(h, /YAH: NOTISI YA KUKUTAKA ULIPE DENI LA MKOPO, SHILINGI 326,000\/= NDANI YA SIKU SABA TU\./);
+  assert.match(h, /Kwamba mnamo tarehe 05\/01\/2026 kwa makubaliano baina yako na Kampuni yetu ulipatiwa mkopo wa kiasi cha shilingi Tsh\. 397,500\/= Uliopaswa kurejesha kila wiki Tsh 40,000\/= na kumalizika ndani ya wiki 12 \(miezi 3\) tarehe 30\/03\/2026\./,
+    'principal = total loan / 1.36 rounded up to 500, the weekly instalment, both dates dd/MM/yyyy');
+  assert.match(h, /Kwamba jumla ya Mkopo na riba yake ilikuwa ni kiasi Tsh 540,000\/=/);
+  assert.match(h, /kiasi ulichorejesha ni TSh 220,000\/= sawa na marejesho 4 Kati ya 12/);
+  assert.match(h, /bado una daiwa kiasi cha Tsh\. 320,000\/= deni la msingi, pamoja na faini ya 5% kwa kila rejesho/);
+  assert.match(h, /jumla ya faini ni Tsh\. 6,000\/= na Jumla kuu ya deni la mkopo 326,000\/=\./);
+  // The costs table: the demand, 50,000 to reach the customer, 10% commission, the fine, and
+  // JUMLA = demand + 50,000 + commission (the fine is inside the demand already) -- Code.gs.
+  assert.match(h, /<td>iii\.<\/td><td>Utalimpla dalali Asilimia 10% ya deni lako lote[^<]*<\/td><td>32,600\/=<\/td>/);
+  assert.match(h, /<th colspan="2">JUMLA<\/th><th>408,600\/=<\/th>/);
+  // The stamp twice: faint across the table, and beside the signature. The logo and signature.
+  assert.match(h, /<img class="overlay-stamp" src="data:image\/png;base64,STAMP"/);
+  assert.match(h, /<img class="stamp-right" src="data:image\/png;base64,STAMP"/);
+  assert.match(h, /<img src="data:image\/png;base64,LOGO" style="max-width:180px;float:left;margin-top:-10px"/);
+  assert.match(h, /<img src="data:image\/png;base64,SIGN" style="max-width:150px"/);
+  // The lawyer signs, whoever issued it; the company line when the officer has no number of
+  // their own; the payment instructions; the copies.
+  assert.match(h, /<strong>RHOBI MSIRA<\/strong><\/p>\s*<p class="compact">MWANASHERIA<\/p>/);
+  assert.match(h, /Kwa maelezo zaidi piga simu: \+255 659 077 770/);
+  assert.match(h, /Ingiza Kumbukumbu No 555<br>/);
+  assert.match(h, /Hakikisha majina yako <strong>ASHA JUMA MOSHI<\/strong>/);
+  assert.match(h, /JINA: ZAWADI HAMISI<\/p>\s*<p class="guarantor-line">SIMU: 0784607061<\/p>/);
+  assert.match(h, /NAKALA KWA SERIKALI YA MTAA:<\/strong>/);
+  assert.match(h, /class="page-break-before"/, 'the payment instructions start page two, as the sheet printed it');
+  assert.doesNotMatch(h, /THE ADMIN/, 'the issuing code is on the register, not on the letter');
+
+  /* "demand retrival" -- tap a row: the SAME letter again, off the stored letter. */
+  const again = await portalApi(db, ADMIN, 'demandNoticePrint', { id: row.id }, NOW);
+  assert.equal(again.rebuilt, false);
+  assert.equal(again.html, h, 'a reprint is byte for byte the letter that was issued');
+  const byRef = await portalApi(db, ADMIN, 'demandNoticePrint', { noticeId: a.noticeId }, NOW);
+  assert.equal(byRef.html, h);
+  await assert.rejects(() => portalApi(db, GMO, 'demandNoticePrint', { id: 'nope' }, NOW), e => e.status === 400);
 
   // Serving the same person again the same day gets its own reference, never a duplicate.
   const b = await portalApi(db, ADMIN, 'addDemandNotice',
     { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
   assert.equal(b.noticeId, 'HMCL/AJM/16/03/2026-2');
+  assert.match(b.html, /Kumb\.Na\. HMCL\/AJM\/16\/03\/2026-2<\/strong>/);
+  assert.match(b.html, /<title>ASHA JUMA MOSHI<\/title>/, 'still the customer\'s name: the reference is on the letter, not in the file name');
 
   // Team scoping holds: MBAGALA's 999 is not GMO's to serve.
   await assert.rejects(() => portalApi(db, GMO, 'legalPreview', { ref: '999' }, NOW),
     e => e.status === 403);
   await assert.rejects(() => portalApi(db, ADMIN, 'addDemandNotice', { ref: 'NOPE' }, NOW),
     e => e.status === 400);
+});
+
+test('the officer\'s own number prints when the teams sheet holds one; the stored letter survives a database without the column', async () => {
+  /* "each notice goes with legal own number": the issuing officer's, by the role they hold on
+     the customer's team; else the team's legal officer's. */
+  const t = notice_fixture_(tables());
+  t.teams[0].legal = 'THE ADMIN'; t.teams[0].legal_no = '0677111910'; t.teams[0].region = 'DAR ES SALAAM';
+  const db = fakeDb(t);
+  const a = await portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-16', noticeDays: 14 }, NOW);
+  assert.match(a.html, /Kwa maelezo zaidi piga simu: 0677111910/);
+  assert.match(a.html, /<p>DAR ES SALAAM\.<\/p>/, 'the team\'s region closes the address, as the sample letter');
+  assert.match(a.html, /NDANI YA SIKU 14 TU\./, 'a notice of other than seven days prints its number');
+  const other = { ...GMO, name: 'JUMA G' };          // KONGOWE's recovery officer, with no number of his own
+  const g = await portalApi(db, other, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
+  assert.match(g.html, /Kwa maelezo zaidi piga simu: 0677111910/, 'falls to the team\'s legal officer');
+  assert.match(g.html, /<strong>RHOBI MSIRA<\/strong>/, 'and the lawyer still signs');
+
+  /* db/RUN-ME-040 NOT RUN: the insert carrying `letter` is refused, sent again without it, and
+     the notice still issues. Its reprint is then rebuilt from the deck, and says so. */
+  const dbOld = fakeDb(notice_fixture_(tables()), { missingColumns: { demand_notices: ['letter'] } });
+  const o = await portalApi(dbOld, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
+  const row = dbOld._dump('demand_notices').find(r => r.notice_id === o.noticeId);
+  assert.equal(row.letter, undefined, 'issued without the column the database has not got');
+  const re = await portalApi(dbOld, ADMIN, 'demandNoticePrint', { id: row.id }, NOW);
+  assert.equal(re.rebuilt, true);
+  assert.equal(re.html, o.html, 'rebuilt from the same deck row, so the same letter');
 });
 
 test('upload status says what is still missing for today', async () => {

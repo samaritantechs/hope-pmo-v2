@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-h';
+var BUILD = '2026-10-09-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6248,42 +6248,80 @@ VIEWS.restructure = function(){
 
 VIEWS.legal = function(){
   return srv('demandNotices').then(function(d){
+    var br = d.brand || {};
+    var tick = function(ok){ return ok ? '✓' : '✗'; };
+    var lk = function(id, label, val){
+      return ' <a href="#" id="'+id+'" data-val="'+esc(val||'')+'">'+label+'</a>';
+    };
     HEAD = '<div class="kpis">' + kpi('Notices issued', money(d.count))
       + kpi('Total demanded', money(d.demanded), null, 'bad')
       + kpi('Fines charged', money(d.fines), 'late-payment penalties', 'warnc')
-      // The question the register exists to answer: does serving a notice bring money back?
+      /* THE QUESTION THE REGISTER EXISTS TO ANSWER: does serving a notice bring money back?
+         Read two ways, because arrears alone understate it -- "there have been payments made
+         rergadless the arreas difference and the payments within notice are all recoveries":
+         what the customer PAID since the notice (the received-payments book, db/RUN-ME-040)
+         and how far their arrears fell. Recovered is the larger of the two, per notice. */
       + kpi('Recovered since notice', money(d.recoveredSince),
             money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
             d.recoveredSince > 0 ? 'good' : '')
+      + (d.paymentsOn ? kpi('Paid since notice', money(d.paidSince),
+            'malipo yaliyopokelewa baada ya notisi / received after the notice', d.paidSince > 0 ? 'good' : '') : '')
       + '</div>'
+      + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040 kwenye SQL editor.'
+          + ' / Payments made after a notice are not read yet: run db/RUN-ME-040 in the SQL editor.'
+          + ' Until then "Recovered" is how far the arrears fell.</div>')
       + '<div class="note">Faini huanza wiki <b>2</b> baada ya rejesho la kwanza kukosekana · '
       + 'mikopo ya 2024 na kabla <b>2%</b>, baadaye <b>5%</b> kwa kila rejesho lililochelewa.'
       + ' / The fine starts two weeks after the first missed installment; 2% for loans disbursed'
       + ' in 2024 or earlier, 5% after that.</div>'
+      /* THE LETTERHEAD, SAID ON THE SCREEN. The letter prints the logo, the stamp twice and
+         the signature from Settings, and one printed without its stamp is printed again in
+         front of a customer. Everyone sees which are in place; an admin sets each from here. */
+      + '<div class="note">Barua / Letter: nembo / logo ' + tick(br.logo) + ' · muhuri / stamp ' + tick(br.stamp)
+      + ' · sahihi / signature ' + tick(br.sign)
+      + ' · anayesaini / signs <b>' + esc(br.signatory || '') + '</b>, ' + esc(br.title || '')
+      + ' · simu ikiwa afisa hana yake / phone when the officer has none: ' + esc(br.phone || '')
+      + (S.me.role === 'ADMIN' ? ' —' + lk('lgLogo', 'weka nembo / set logo') + ' ·' + lk('lgStamp', 'muhuri / stamp')
+          + ' ·' + lk('lgSign', 'sahihi / signature') + ' ·' + lk('lgWho', 'anayesaini / signatory', br.signatory)
+          + ' ·' + lk('lgTitle', 'cheo / title', br.title) + ' ·' + lk('lgPhone', 'simu / phone', br.phone) : '')
+      + '</div>'
       + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>'
-        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena. / Tap a row to reprint.</span>');
+        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena barua ile ile. / Tap a row to reprint the same letter.</span>');
     S.rows = d.rows;
     S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
       col('ref','REF#'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'),
       {key:'contact', label:'Contact', kind:'tel'}, col('notice_days','Days','num'),
       col('paid_count','Paid','num'),
-      // "At notice" rather than "Arrears": the point of the next two columns is that this one
-      // is a figure from the PAST, and a heading that does not say so invites somebody to read
-      // it as what the customer owes today.
+      // "At notice" rather than "Arrears": the point of the next columns is that this one is a
+      // figure from the PAST, and a heading that does not say so invites somebody to read it
+      // as what the customer owes today.
       col('arrears_at_notice','At notice','money'),
       col('arrears_now','Current','money'),
+      col('arrears_down','Arrears down','money'),
+      /* The payments book from the notice date forward: how much, how many, the last one.
+         A dash across the column means the function is not there yet (the note above). */
+      {key:'paid_since', label:'Paid since', kind:'money', cls:function(r){ return r.paid_since > 0 ? 'good' : ''; }},
+      col('paid_n','Payments','num'), col('last_paid','Last paid','date'),
       {key:'recovered_since', label:'Recovered', kind:'money',
        cls:function(r){ return r.recovered_since > 0 ? 'good' : ''; }},
       {key:'notice_state', label:'Status', kind:'chip', chip:function(r){
         var k = String(r.notice_state||'');
-        return k.indexOf('Cleared')>=0 ? 'ok' : k.indexOf('Reducing')>=0 ? 'warn'
+        return k.indexOf('Cleared')>=0 ? 'ok' : k.indexOf('Paying')>=0 ? 'ok' : k.indexOf('Reducing')>=0 ? 'warn'
              : k.indexOf('No movement')>=0 ? 'bad' : 'mut'; }},
       {key:'fine', label:'Fine', kind:'money', cls:function(){ return 'bad'; }},
       col('principal_remaining','Principal left','money'),
       {key:'total_demand', label:'Total demand', kind:'money', cls:function(){ return 'bad'; }},
       col('issued_by','Issued by')];
-    ONROW = null;
-    S.foot = 'Demanded: TZS '+money(d.demanded)+' · of which fines: TZS '+money(d.fines);
+    /* "demand retrival": a row is the letter it was printed from -- the same one again, off
+       the register (db/RUN-ME-040), with the company's current images. */
+    ONROW = function(r){
+      srv('demandNoticePrint', { id: r.id }).then(function(p){
+        if (p.rebuilt) toast('Notisi ya zamani: barua imejengwa upya kutoka deki ya sasa. / Issued before letters were kept: rebuilt from today\'s deck.');
+        printHtml(p.html);
+      }).catch(function(err){ toast(String(err.message||err), true); });
+    };
+    S.foot = 'Demanded: TZS '+money(d.demanded)+' · of which fines: TZS '+money(d.fines)
+      + (d.paymentsOn ? ' · paid since notice: TZS '+money(d.paidSince) : '');
   });
 };
 /* Issuing a notice is a two-step: preview the arithmetic against the customer's own row, then
@@ -12627,6 +12665,13 @@ function wireForms(){
   // for the wrong amount with the company's stamp on it. They are computed now.
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){ lgIssue(); };
+  /* The letterhead's pieces, settable from the Legal tab itself (admin): the same settingForm
+     the Settings tab uses, keyed to the image or value the letter prints. */
+  [['lgLogo','BRAND_LOGO'], ['lgStamp','BRAND_STAMP'], ['lgSign','BRAND_SIGN'],
+   ['lgWho','LEGAL_SIGNATORY'], ['lgTitle','LEGAL_SIGNATORY_TITLE'], ['lgPhone','LEGAL_PHONE']].forEach(function(p){
+    var el = document.getElementById(p[0]);
+    if (el) el.onclick = function(ev){ ev.preventDefault(); settingForm(p[1], el.getAttribute('data-val') || ''); };
+  });
   /* Closing the system turns two hundred people away from a screen they were using a minute
      ago, so it asks first. Opening it does not -- letting people back in is not the move
      anybody regrets. */

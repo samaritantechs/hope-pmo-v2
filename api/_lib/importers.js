@@ -640,23 +640,51 @@ export function importRestructures(csvRows) {
   })).filter(x => x.ref);
 }
 
+/* THE GOOGLE SHEETS REGISTER COMES IN AS IT IS -- "Its time for the legal unit to shift". The
+   DemandNotices tab of the sheet system writes
+     NoticeID | Timestamp | AccessCode | LegalOfficer | REF# | CustName | Contact | NoticeDate |
+     NoticeDays | FineAmount | TotalDemand | ArrearsAtNotice | CurrentArrears | Difference |
+     Status | Team | OtherInst
+   and every one of those spellings is accepted beside the portal's own, so the years of
+   notices already served land under the same references the customers hold. CurrentArrears,
+   Difference and Status are NOT imported: they were sheet formulas against a deck that has
+   moved on, and the Legal screen works them out live against today's.
+
+   ONE ROW PER NOTICE, HOWEVER OFTEN THE REGISTER IS UPLOADED: the row's id is its notice
+   reference (HMCL/HEN/24/09/2026-4), so an upload of the same register twice is the same rows
+   twice -- upserted, never doubled. A row with no reference is keyed on its own facts. */
+export function noticeRowId(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  const key = t(o.notice_id) || [t(o.ref), t(o.notice_date).slice(0, 10), String(Number(o.total_demand) || 0), t(o.issued_by)].join('|');
+  const hex = createHash('md5').update('notice|' + key).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 export function importDemandNotices(csvRows) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
-    ref: textOrNull(col(r, h, ...REF_HEADERS)),
-    team: normTeam(col(r, h, 'TEAM')),
-    full_name: textOrNull(col(r, h, 'FULLNAME')),
-    contact: normPhone(col(r, h, 'CONTACT#')),
-    notice_date: dateOrNull(col(r, h, 'NOTICE DATE')),
-    notice_days: num(col(r, h, 'NOTICE DAYS')),
-    paid_count: num(col(r, h, 'PAID COUNT')),
-    fine: num(col(r, h, 'FINE')),
-    principal_remaining: num(col(r, h, 'PRINCIPAL REMAINING')),
-    total_demand: num(col(r, h, 'TOTAL DEMAND')),
-    arrears_at_notice: num(col(r, h, 'ARREARS AT NOTICE')),
-    other_inst: num(col(r, h, 'OTHER INST')),
-    issued_by: textOrNull(col(r, h, 'BY')),
-    created_at: dateOrNull(col(r, h, 'TIMESTAMP')) || new Date().toISOString(),
-  })).filter(x => x.ref);
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = inferDayFirst(objs.map(({ raw: r, h }) => col(r, h, 'NOTICE DATE', 'NOTICEDATE')));
+  return objs.map(({ raw: r, h }) => {
+    const row = {
+      notice_id: textOrNull(col(r, h, 'NOTICE ID', 'NOTICEID', 'KUMB.NA.', 'KUMB NA', 'REFERENCE NO')),
+      ref: textOrNull(col(r, h, ...REF_HEADERS)),
+      team: normTeam(col(r, h, 'TEAM')),
+      full_name: textOrNull(col(r, h, 'FULLNAME', 'FULL NAME', 'CUSTNAME', 'CUSTOMER NAME', 'CUSTOMER')),
+      contact: normPhone(col(r, h, 'CONTACT#', 'CONTACT', 'CONTACT #', 'PHONE')),
+      notice_date: dateOrNull(col(r, h, 'NOTICE DATE', 'NOTICEDATE'), dayFirst),
+      notice_days: num(col(r, h, 'NOTICE DAYS', 'NOTICEDAYS')),
+      paid_count: num(col(r, h, 'PAID COUNT', 'PAIDCOUNT')),
+      fine: num(col(r, h, 'FINE', 'FINEAMOUNT', 'FINE AMOUNT')),
+      principal_remaining: num(col(r, h, 'PRINCIPAL REMAINING', 'PRINCIPALREMAINING')),
+      total_demand: num(col(r, h, 'TOTAL DEMAND', 'TOTALDEMAND')),
+      arrears_at_notice: num(col(r, h, 'ARREARS AT NOTICE', 'ARREARSATNOTICE')),
+      other_inst: num(col(r, h, 'OTHER INST', 'OTHERINST')),
+      issued_by: textOrNull(col(r, h, 'BY', 'ISSUED BY', 'LEGALOFFICER', 'LEGAL OFFICER')),
+      // The sheet's Timestamp carries a clock ("24/09/2026 10:15"); a bare date is kept too.
+      created_at: stampOrNull(col(r, h, 'TIMESTAMP'), dayFirst) || dateOrNull(col(r, h, 'TIMESTAMP'), dayFirst) || new Date().toISOString(),
+    };
+    row.id = noticeRowId(row);
+    return row;
+  }).filter(x => x.ref);
 }
 
 /** Call app registrations. LEADER is YES/NO text in the sheet and a boolean here; LEADER

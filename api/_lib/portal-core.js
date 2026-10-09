@@ -1749,11 +1749,24 @@ function legalFine(d, noticeMs) {
   const graceEnd = firstMissedDue + LEGAL_GRACE_DAYS * 86400000;
   if (noticeMs < graceEnd) return none;
   const weeks = Math.ceil(Math.floor((noticeMs - graceEnd) / 86400000) / 7);
-  return { fine: weeks * rate * other, weeks, paidCount, rate };
+  /* To the cent, not to the floating point: 3 x 0.05 x 40,000 is 6,000.000000000001 in
+     JavaScript, which roundUp500 would carry to 6,500 -- a fine 500 shillings too high, in
+     writing, with the stamp on it. (The sheet's Code.gs has this slip; the letter should not.) */
+  return { fine: Math.round(weeks * rate * other * 100) / 100, weeks, paidCount, rate };
 }
-/** paidCount reads D.S first; this is the same rule, kept separate so legal never silently
-    inherits a change made for the credit-analyst book. */
-function paidCount0(d) { return paidCount(d); }
+/* HOW MANY INSTALMENTS ARE PAID, FOR THE LETTER: the rule the Google Sheets system has always
+   printed (Code.gs calculateFine / getCustomerDetails), read off the MONEY and not off D.S --
+   the first instalment counts once the initial amount is in, then one more per OTHER INST on
+   top, capped at twelve. "Demand notice from hope pmo portal should perfectly match the one
+   from Google sheets": a customer holding the sheet's letter and the portal's must read the
+   same "marejesho N Kati ya 12" and the same fine on both. The credit-analyst book reads D.S
+   first (paidCount); this is kept apart from it on purpose. */
+function paidCount0(d) {
+  const initial = num(d.initial_inst), other = num(d.other_inst), paid = num(d.t_payment);
+  let pc = 0;
+  if (other > 0 && paid >= initial && (paid > 0 || initial > 0)) pc = 1 + Math.floor((paid - initial) / other);
+  return Math.min(12, Math.max(0, pc));
+}
 
 function legalAmounts(d, fine) {
   const initial = num(d.initial_inst), other = num(d.other_inst), paid = num(d.t_payment);
@@ -1762,6 +1775,86 @@ function legalAmounts(d, fine) {
   return { totalLoan, principal: roundUp500(totalLoan / 1.36), principalRemaining,
     totalPaid: paid, weeklyInst: roundUp500(other),
     totalDemand: roundUp500(principalRemaining + fine) };
+}
+
+/** dd/MM/yyyy, as the letter has always written its dates (Code.gs formatDate 'dd/MM/yyyy'). */
+function dmy_(v) {
+  const s = String(v == null ? '' : v).slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+
+/* THE NUMBER ON THE LETTER -- "each notice goes with legal own number". The issuing officer's
+   own, by the role they hold on the customer's team (the teams sheet's phone columns); else
+   the team's legal officer's (LEGAL NO); else LEGAL_PHONE from Settings; else the head office
+   line. Never blank: "Kwa maelezo zaidi piga simu:" followed by nothing is a letter nobody can
+   answer. The sheet system took it from the officer's Config row, which the teams sheet now
+   carries per role. */
+const LEGAL_PHONE_DEFAULT = '+255 659 077 770';
+function legalContact_(user, teamRow, fallback) {
+  const t = teamRow || {};
+  const me = K(user && user.name);
+  for (const role of Object.keys(TEAM_PHONE_OF)) {
+    if (me && K(t[role]) === me && t[TEAM_PHONE_OF[role]]) return String(t[TEAM_PHONE_OF[role]]).trim();
+  }
+  if (t.legal_no) return String(t.legal_no).trim();
+  return String(fallback || '').trim() || LEGAL_PHONE_DEFAULT;
+}
+
+/* WHAT THE LETTERHEAD CARRIES, from Settings: the logo, the stamp -- printed TWICE, as the
+   sheet's letter always was: faint across the costs table and beside the signature -- the
+   signature, and who signs as what. The signatory is the company's lawyer whatever code issued
+   the letter ("same hr signature"): RHOBI MSIRA, MWANASHERIA, unless Settings say otherwise. */
+const LEGAL_SIGNATORY_KEY = 'LEGAL_SIGNATORY';
+const LEGAL_TITLE_KEY = 'LEGAL_SIGNATORY_TITLE';
+const LEGAL_PHONE_KEY = 'LEGAL_PHONE';
+async function legalBrand_(db) {
+  const rows = await fetchAll(() => db.from('settings').select('*'));
+  const get = k => { const r = rows.find(x => x.key === k); return (r && r.value) || ''; };
+  return { logo: get('BRAND_LOGO'), stamp: get('BRAND_STAMP'), sign: get('BRAND_SIGN'),
+    signatory: get(LEGAL_SIGNATORY_KEY) || 'RHOBI MSIRA', title: get(LEGAL_TITLE_KEY) || 'MWANASHERIA',
+    phone: get(LEGAL_PHONE_KEY) };
+}
+
+/* EVERYTHING THE LETTER IS PRINTED FROM, in one object, stored on the register row (`letter`,
+   db/RUN-ME-040) so a reprint is the SAME letter -- never recomputed against a deck that has
+   moved on. The images are not in it: they are the company's, read from Settings at print
+   time, so a new stamp is on every reprint and a letter row stays a few hundred bytes. */
+function demandLetter_(d, user, p, noticeId, noticeKey, days, figures, teamRow, phone) {
+  return {
+    noticeId, noticeDate: noticeKey, days,
+    name: d.full_name || '', contact: d.contact || '', team: d.team || '', ref: d.ref,
+    // The sheet printed ZONE on the address line ("CHANIKA - CHANIKA") and the team's region
+    // under it ("DAR ES SALAAM"), the way the sample letter reads.
+    location: d.zone || d.nearest_landmark || 'Dar es Salaam',
+    region: (teamRow && teamRow.region) || '',
+    disb: d.disb_date ? String(d.disb_date).slice(0, 10) : '',
+    expiry: d.expire_date ? String(d.expire_date).slice(0, 10) : '',
+    guarantorName: String((p && p.guarantorName) || '').trim() || d.guarantor_name || '',
+    guarantorContact: String((p && p.guarantorContact) || '').trim() || d.guarantor_contact || '',
+    phone, issuedBy: (user && user.name) || '',
+    fine: figures.fine, ratePct: figures.ratePct, paidCount: figures.paidCount,
+    totalLoan: figures.totalLoan, principal: figures.principal, principalRemaining: figures.principalRemaining,
+    totalPaid: figures.totalPaid, weeklyInst: figures.weeklyInst, totalDemand: figures.totalDemand,
+  };
+}
+
+/* AN INSERT THAT DROPS A COLUMN THE DATABASE HAS NOT GOT YET and goes again. `letter` arrived
+   with db/RUN-ME-040 and migrations here are run by hand: a notice must never fail to issue
+   because the SQL was not pasted -- it issues without its stored letter, and a reprint of it
+   reads the deck instead. Costs nothing once the column is there. */
+async function insertShedding_(db, table, row, optional) {
+  const r = { ...row };
+  for (let i = 0; ; i++) {
+    const { error } = await db.from(table).insert(r);
+    if (!error) return;
+    const msg = String(error.message || error || '');
+    const col = optional.find(c => r[c] !== undefined
+      && (new RegExp("Could not find the '" + c + "' column", 'i').test(msg)
+        || new RegExp('column\\s+\\S*\\b' + c + '\\b.*does not exist', 'i').test(msg)));
+    if (!col || i >= optional.length) throw new Error(error.message || String(error));
+    delete r[col];
+  }
 }
 
 /* DELIBERATELY UNSCOPED, and the line below is why. This looks a customer up by reference and
@@ -1824,73 +1917,167 @@ async function addDemandNotice(db, user, p, nowMs) {
   const f = legalFine(d, Date.parse(noticeKey + 'T00:00:00Z'));
   const fine = roundUp500(f.fine);
   const a = legalAmounts(d, fine);
-  const noticeId = await nextNoticeId(db, d.full_name, noticeKey);
-  const { error } = await db.from('demand_notices').insert({
+  const ratePct = Math.round(f.rate * 1000) / 10;
+  const [noticeId, teamRows, brand] = await Promise.all([
+    nextNoticeId(db, d.full_name, noticeKey), readTeamsAll(db, nowMs), legalBrand_(db),
+  ]);
+  const teamRow = teamRows.find(t => K(t.team) === K(d.team)) || null;
+  const letter = demandLetter_(d, user, p, noticeId, noticeKey, days,
+    { fine, ratePct, paidCount: f.paidCount, ...a }, teamRow, legalContact_(user, teamRow, brand.phone));
+  await insertShedding_(db, 'demand_notices', {
     notice_id: noticeId, ref: d.ref, team: d.team, full_name: d.full_name, contact: d.contact,
     notice_date: noticeKey, notice_days: days, paid_count: f.paidCount, fine,
     principal_remaining: a.principalRemaining, total_demand: a.totalDemand,
     arrears_at_notice: num(d.arrears), other_inst: num(d.other_inst),
     issued_by: user.name, created_at: new Date(nowMs).toISOString(),
+    letter,
+  }, ['letter']);
+  return { noticeId, ref: d.ref, fine, ...a, paidCount: f.paidCount, ratePct, phone: letter.phone,
+    html: demandNoticeHtml(letter, brand) };
+}
+
+/* "TAP A ROW TO REPRINT" -- the SAME letter, off the register row's stored `letter`
+   (db/RUN-ME-040), with the company's current images. A notice issued before letters were
+   kept is rebuilt from the customer's current deck row and the figures the register holds,
+   and the answer says it was rebuilt; if that customer is no longer on the deck there is
+   nothing to rebuild it from, and that is said rather than a different letter printed. */
+async function demandNoticePrint(db, user, { id, noticeId } = {}, nowMs = Date.now()) {
+  const want = String(noticeId || '').trim();
+  if (!id && !want) throw badRequest('Which notice? Pass its id or its Kumb.Na.');
+  const rows = await fetchAll(() => {
+    const q = db.from('demand_notices').select('*');
+    return id ? q.eq('id', id) : q.eq('notice_id', want);
   });
-  if (error) throw new Error(error.message);
-  const brand = await fetchAll(() => db.from('settings').select('*'));
-  const get = k => { const r = brand.find(x => x.key === k); return (r && r.value) || ''; };
-  return { noticeId, ref: d.ref, fine, ...a, paidCount: f.paidCount, ratePct: Math.round(f.rate * 1000) / 10,
-    html: demandNoticeHtml({
-      noticeId, noticeDate: noticeKey, days,
-      name: d.full_name, contact: d.contact, team: d.team,
-      location: d.nearest_landmark || 'Dar es Salaam',
-      disb: d.disb_date, expiry: d.expire_date,
-      guarantorName: String(p.guarantorName || '').trim() || d.guarantor_name || '',
-      guarantorContact: String(p.guarantorContact || '').trim() || d.guarantor_contact || '',
-      officer: user.name, fine, ratePct: Math.round(f.rate * 1000) / 10, paidCount: f.paidCount, ...a,
-      logo: get('BRAND_LOGO'), stamp: get('BRAND_STAMP'), sign: get('BRAND_SIGN'),
-    }) };
+  const n = rows[0];
+  if (!n) throw badRequest('That notice is not in the register.');
+  if (!teamAllowed(user, n.team)) throw forbidden(`You do not have access to team ${n.team}.`);
+  const brand = await legalBrand_(db);
+  let letter = n.letter && typeof n.letter === 'object' ? n.letter : null;
+  if (!letter && typeof n.letter === 'string') { try { letter = JSON.parse(n.letter); } catch (e) { letter = null; } }
+  let rebuilt = false;
+  if (!letter) {
+    const d = await findDefaulter(db, user, n.ref, nowMs);
+    if (!d) throw badRequest(`Notice ${n.notice_id || ''} was issued before letters were kept with the register, and ${n.ref} is no longer on the defaulter deck, so it cannot be reprinted.`);
+    const noticeKey = String(n.notice_date || todayKey(nowMs)).slice(0, 10);
+    const f = legalFine(d, Date.parse(noticeKey + 'T00:00:00Z'));
+    const fine = n.fine == null ? roundUp500(f.fine) : num(n.fine);
+    const a = legalAmounts(d, fine);
+    const teamRows = await readTeamsAll(db, nowMs);
+    const teamRow = teamRows.find(t => K(t.team) === K(n.team || d.team)) || null;
+    letter = demandLetter_(d, { name: n.issued_by || user.name }, {}, n.notice_id, noticeKey,
+      Math.max(1, Math.floor(num(n.notice_days) || 7)),
+      { fine, ratePct: Math.round(f.rate * 1000) / 10,
+        paidCount: n.paid_count == null ? f.paidCount : num(n.paid_count), ...a,
+        principalRemaining: n.principal_remaining == null ? a.principalRemaining : num(n.principal_remaining),
+        totalDemand: n.total_demand == null ? a.totalDemand : num(n.total_demand) },
+      teamRow, legalContact_(user, teamRow, brand.phone));
+    rebuilt = true;
+  }
+  return { noticeId: n.notice_id, ref: n.ref, rebuilt, html: demandNoticeHtml(letter, brand) };
 }
 
 const esc_ = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmtM = n => Math.round(num(n)).toLocaleString('en-US');
-/** The letter itself, in Swahili, laid out for A4. Kept as one template so what is stored and
-    what is printed come from a single set of numbers. */
-function demandNoticeHtml(t) {
+/* THE LETTER ITSELF -- THE GOOGLE SHEETS LETTER, WORD FOR WORD AND RULE FOR RULE.
+
+     "Demand notice from hope pmo portal should perfectly match the one from Google sheets by
+      observing the code and pdf so that we shift from Google sheets on that one too."
+
+   This is Code.gs's getDemandTemplate() carried over whole: the same stylesheet (Verdana
+   9.5pt, the blue rule top and bottom, the logo floated left of the letterhead), the same
+   six numbered paragraphs, the same costs table with the stamp faint behind it, the page break
+   before the payment instructions, the signature block with the stamp beside it, the copy to
+   the guarantor and the local government. Only the data changes: dates print dd/MM/yyyy, the
+   figures are the ones stored on the register row, and the images come from Settings.
+   The <title> is what the browser's "Save as PDF" names the file, and it is the CUSTOMER'S
+   NAME -- "the notice pdf name should be customer's name" -- so a folder of notices reads as
+   a list of people, not of reference numbers. */
+function demandNoticeHtml(t, brand) {
+  const b = brand || {};
   const daysWord = String(t.days) === '7' ? 'SABA' : String(t.days);
-  const commission = Math.round(t.totalDemand * 0.1);
-  const grand = t.totalDemand + 50000 + commission;
-  const img = (src, style, alt) => src ? `<img src="${esc_(src)}" style="${style}" alt="${alt}">` : '';
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc_(t.noticeId)}</title><style>
-@page{margin:14mm 16mm}body{font-family:Verdana,Arial,sans-serif;font-size:9.3pt;color:#000;line-height:1.35;text-align:justify}
-.blue{border-top:3px solid #0B3BA7;margin-bottom:12px}.bbot{border-bottom:3px solid #0B3BA7;margin-top:16px}
-.head{text-align:right;margin-bottom:14px}
-.subj{font-weight:bold;text-decoration:underline;text-align:center;margin:10px 0}
-table{width:100%;border-collapse:collapse;margin:12px 0}td,th{border:1px solid #000;padding:5px 7px;font-size:9.3pt;vertical-align:top}th{background:#f0f0f0}
-ol{padding-left:18px}.sig{margin-top:22px}
-</style></head><body><div class="blue"></div>
-<div class="head">${img(t.logo, 'height:52px;float:left', 'logo')}<b>HOPE MICROCREDIT COMPANY LIMITED</b><br>+255 659 077 770<br>info@hopemicrocredit.co.tz<br>www.hopemicrocredit.co.tz<br>P.O.Box 31623, Kijitonyama<br>Kinondoni, Dar es Salaam<br><br><b>${esc_(t.noticeDate)}</b></div>
-<p><b>Kumb.Na. ${esc_(t.noticeId)}</b></p><br>
-<p><b>${esc_(t.name)},</b><br>${esc_(t.contact)},<br>${esc_(t.location)} - ${esc_(t.team)}.</p>
-<p class="subj">YAH: NOTISI YA KUKUTAKA ULIPE DENI LA MKOPO, SHILINGI ${fmtM(t.totalDemand)}/= NDANI YA SIKU ${daysWord} TU.</p>
-<p>Tafadhali, rejea kichwa cha habari tajwa hapo juu. Kampuni ya Hope Microcredit inakuandikia notisi hii ya kukutaka ulipe deni lako ndani ya Siku ${esc_(t.days)} tangu ulipopewa notisi hii.</p>
+  const commission = Math.round(num(t.totalDemand) * 0.1);
+  const grand = num(t.totalDemand) + 50000 + commission;
+  const img = (src, cls, style, alt) => src
+    ? `<img${cls ? ` class="${cls}"` : ''} src="${esc_(src)}"${style ? ` style="${style}"` : ''} alt="${alt}">` : '';
+  const title = String(t.name || '').trim() || String(t.noticeId || 'notisi').replace(/\//g, '_');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc_(title)}</title><style>
+@page{margin:15mm 18mm 18mm 18mm;}
+body{font-family:Verdana,sans-serif;font-size:9.5pt;color:#000;line-height:1.35;text-align:justify;}
+.header,table,.address-block,.compact,.guarantor-line,.signature-block,.blue-line-top,.blue-line-bottom{text-align:left;}
+.blue-line-top{border-top:3px solid #1a56db;padding-top:6px;margin-bottom:15px;}
+.blue-line-bottom{border-bottom:3px solid #1a56db;padding-bottom:6px;margin-top:20px;}
+.header{text-align:right;margin-bottom:20px;}
+.header img{float:left;margin-top:-10px;}
+.address-block p{margin:0 0 2px 0;line-height:1.4;}
+.subject{font-weight:bold;text-decoration:underline;margin:12px 0 8px 0;text-align:center;}
+.first-page{position:relative;page-break-inside:avoid;}
+.table-wrapper{position:relative;}
+table{width:100%;border-collapse:collapse;margin:16px 0;page-break-inside:avoid;}
+th,td{border:1px solid black;padding:5px 7px;vertical-align:top;font-size:9.5pt;}
+th{background-color:#f0f0f0;}
+.overlay-stamp{position:absolute;top:40%;left:60%;transform:translate(-50%,-50%) rotate(-25deg);opacity:0.15;max-width:180px;pointer-events:none;z-index:-1;}
+.signature-block{margin-top:25px;overflow:hidden;}
+.signature-text{float:left;}
+.stamp-right{float:right;max-width:180px;margin-top:10px;margin-right:120px;}
+.compact{margin:3px 0;}
+.guarantor-line{margin:0;}
+.page-break-before{page-break-before:always;}
+.kumb-table{width:100%;text-align:left;margin:0 0 8px 0;border:none;}
+.kumb-table td{text-align:left!important;border:none;padding:0;}
+</style></head><body>
+<div class="blue-line-top"></div>
+<div class="first-page">
+<div class="header">${img(b.logo, '', 'max-width:180px;float:left;margin-top:-10px', 'Logo')}<strong>HOPE MICROCREDIT COMPANY LIMITED</strong><br>+255 659 077 770<br>info@hopemicrocredit.co.tz<br>www.hopemicrocredit.co.tz<br>P.O.Box 31623, Kijitonyama<br>Kinondoni, Dar es Salaam<br><br><strong>${esc_(dmy_(t.noticeDate))}</strong></div>
+<table class="kumb-table"><tr><td><strong>Kumb.Na. ${esc_(t.noticeId)}</strong></td></tr></table><br>
+<div class="address-block">
+<p><strong>${esc_(t.name)},</strong></p>
+<p>${esc_(t.contact)},</p>
+<p>${esc_(t.location)} - ${esc_(t.team)},</p>
+<p>${esc_(t.region)}.</p></div>
+<p class="subject">YAH: NOTISI YA KUKUTAKA ULIPE DENI LA MKOPO, SHILINGI ${fmtM(t.totalDemand)}/= NDANI YA SIKU ${esc_(daysWord)} TU.</p>
+<p>Tafadhali, rejea kichwa cha habari tajwa hapo juu.</p>
+<p>Kampuni ya Hope Microcredit, inakuandikia notisi hii ya kukutaka ulipe deni lako haraka iwezekanavyo ndani ya Siku ${esc_(t.days)} tangu ulipopewa notisi hii.</p>
 <ol>
-<li>Kwamba tarehe ${esc_(t.disb)} ulipatiwa mkopo wa Tsh. ${fmtM(t.principal)}/= uliopaswa kurejesha kila wiki Tsh ${fmtM(t.weeklyInst)}/= kwa wiki 12 (miezi 3), kumalizika tarehe ${esc_(t.expiry)}.</li>
-<li>Kwamba jumla ya mkopo na riba ilikuwa Tsh ${fmtM(t.totalLoan)}/=.</li>
-<li>Kwamba mpaka sasa umerejesha Tsh ${fmtM(t.totalPaid)}/= sawa na marejesho ${t.paidCount} kati ya 12.</li>
-<li>Hivyo unadaiwa Tsh. ${fmtM(t.principalRemaining)}/= deni la msingi, pamoja na faini ya ${t.ratePct}% kwa kila rejesho lililochelewa; jumla ya faini ni Tsh. ${fmtM(t.fine)}/=, na jumla kuu ya deni ni Tsh. ${fmtM(t.totalDemand)}/=.</li>
-<li>Notisi hii ni kukutaka ufanye malipo ya deni hilo lote ndani ya SIKU ${esc_(t.days)} TU.</li>
-<li>Kushindwa kulipa kunaweza kupelekea kufikishwa mahakamani au kukabidhi deni kwa kampuni ya udalali na ufilisi, na utalipa gharama zote zifuatazo:</li>
+<li>Kwamba mnamo tarehe ${esc_(dmy_(t.disb))} kwa makubaliano baina yako na Kampuni yetu ulipatiwa mkopo wa kiasi cha shilingi Tsh. ${fmtM(t.principal)}/= Uliopaswa kurejesha kila wiki Tsh ${fmtM(t.weeklyInst)}/= na kumalizika ndani ya wiki 12 (miezi 3) tarehe ${esc_(dmy_(t.expiry))}.</li>
+<li>Kwamba jumla ya Mkopo na riba yake ilikuwa ni kiasi Tsh ${fmtM(t.totalLoan)}/=</li>
+<li>Kwamba mpaka sasa kiasi ulichorejesha ni TSh ${fmtM(t.totalPaid)}/= sawa na marejesho ${esc_(t.paidCount)} Kati ya 12</li>
+<li>Hivyo mpaka sasa bado una daiwa kiasi cha Tsh. ${fmtM(t.principalRemaining)}/= deni la msingi, pamoja na faini ya ${esc_(t.ratePct)}% kwa kila rejesho ambalo umelaza mpaka kukamilisha malipo yote, na jumla ya faini ni Tsh. ${fmtM(t.fine)}/= na Jumla kuu ya deni la mkopo ${fmtM(t.totalDemand)}/=.</li>
+<li>Aidha IFAHAMIKE KWAMBA, Notisi hii ni kukutaka ufanye malipo ya deni hilo lote ndani ya SIKU ${esc_(t.days)} TU na si vinginevyo.</li>
+<li>Kushindwa kulipa deni hilo kamili ndani ya SIKU ${esc_(t.days)}, kutapelekea Kampuni ya Hope kukufikisha mahakamani kwa kuvunja mkataba au kukabidhi deni lako kwa Kampuni ya Udalali, Ukusanyaji Madeni na Ufilisi wanaotambulika kisheria, na utalipa gharama zote za kufanikisha zoezi hilo na gharama zingine kama ifuatavyo;</li>
 </ol>
-<table><tr><th>SN</th><th>MAELEZO</th><th>KIASI</th></tr>
+<div class="table-wrapper">${img(b.stamp, 'overlay-stamp', '', 'Stamp')}
+<table>
+<tr><th>SN</th><th>MAELEZO</th><th>KIASI</th></tr>
 <tr><td>i.</td><td>Deni lote la mkopo wako</td><td>Tsh. ${fmtM(t.totalDemand)}/=</td></tr>
-<tr><td>ii.</td><td>Gharama ya dalali kukufikia</td><td>50,000/=</td></tr>
-<tr><td>iii.</td><td>Kamisheni ya dalali 10% ya deni</td><td>${fmtM(commission)}/=</td></tr>
-<tr><td>iv.</td><td>Faini ya kuchelewesha (${t.ratePct}%)</td><td>${fmtM(t.fine)}/=</td></tr>
-<tr><th colspan="2">JUMLA</th><th>${fmtM(grand)}/=</th></tr></table>
-<p><b>NB:</b> Malipo yafanyike kupitia MIXX BY YAS piga *150*01# &gt; 4 (Lipa Bili) &gt; 3 (Namba ya Kampuni 373337) &gt; Ingiza Kumbukumbu No <b>${esc_(t.ref || t.noticeRef || '')}</b> &gt; hakikisha jina <b>${esc_(t.name)}</b> kabla ya kuthibitisha.</p>
-<p>Baada ya SIKU ${esc_(t.days)} hakutakuwa na notisi nyingine. Kupokea notisi hii hakumzuii mdai kuendelea kufuatilia deni kwa njia nyingine ikiwemo simu au kutembelewa na maafisa.</p>
-<p><b>Kwa maelezo zaidi piga simu: +255 659 077 770</b></p>
-<div class="sig"><p><b>Wako Katika Ujenzi wa Taifa</b><br>${img(t.sign, 'height:42px;display:block;margin:2px 0', 'sahihi')}<b>${esc_(t.officer)}</b><br>MWANASHERIA<br>HOPE MICROCREDIT COMPANY LIMITED</p>${img(t.stamp, 'height:88px;margin-top:2px', 'muhuri')}</div>
-<p><b>NAKALA KWA MDHAMINI WA MKOPAJI</b><br>JINA: ${esc_(t.guarantorName)}<br>SIMU: ${esc_(t.guarantorContact)}</p>
-<p><b>NAKALA KWA SERIKALI YA MTAA</b></p>
-<div class="bbot"></div></body></html>`;
+<tr><td>ii.</td><td>Utamlipa dalali kiasi cha Shilingi ikiwa ni gharama ya kukufikia ulipo.</td><td>50,000/=</td></tr>
+<tr><td>iii.</td><td>Utalimpla dalali Asilimia 10% ya deni lako lote kama kamisheni (Commission) ya kumshirikisha dalali katika zoezi la ukamataji na ufilisi.</td><td>${fmtM(commission)}/=</td></tr>
+<tr><td>iv.</td><td>Utalipa FAINI YA Kuchelewesha marejesho ya asilimia ${esc_(t.ratePct)}% ya rejesho lako kwa kila siku kwa siku zote ulizochelewa kulipa Marejesho yako tangu kupatiwa mkopo Rejea Kipengele cha 7 (ii) (a)" cha Mkataba wako wa Mkopo.</td><td>${fmtM(t.fine)}/=</td></tr>
+<tr><th colspan="2">JUMLA</th><th>${fmtM(grand)}/=</th></tr>
+</table></div></div>
+<div class="page-break-before"></div>
+<p>Pia Utalipa gharama za usafiri wa kubeba vitu au mali zako zitakazochukuliwa kwa ajili ya ufilisi wa kulipa madeni yako, pamoja na gharama zingine zote zitakazojitokeza katika kukamilisha zoezi hilo la kukamata na kufilisi. Rejea Kipengele cha 7 (ii) (a) na (b) cha Mkataba wako wa Mkopo.</p>
+<p class="compact"><strong>NB:</strong> Malipo yafanyike kupitia MIX BY YAS piga *150*01#<br>
+Chagua Namba 4 "lipa bill"<br>Chagua namba 3 "ingiza namba ya kampuni" -<br>
+Ingiza Namba ya Kampuni 373337 jina Hope Microcredit Company Limited.<br>
+- Ingiza Kumbukumbu No ${esc_(t.ref)}<br>
+- Hakikisha majina yako <strong>${esc_(t.name)}</strong> kabla ya kuweka namba ya siri na kuthibithisha.</p>
+<p class="compact">HIVYO BASI, unapewa Notisi ya SIKU ${esc_(t.days)} kukamilisha malipo ya deni lako la mkopo kuepusha usumbufu unaoweza kujitokeza ambapo tutakabidhi zoezi hili la urudishwaji wa pesa yetu kwa MADALALI wanaotambulika Kisheria watakaokamata na kuuza dhamana zako iwapo utashindwa kufanya marejesho kamili ndani ya wakati.</p>
+<p class="compact">NI MUHIMU UKAFAHAMU KWAMBA BAADA YA NOTISI HII YA SIKU ${esc_(t.days)} HAKUTAKUWA NA NOTISI NYINGINE, Madalali watakuja kwako kufanya utekelezaji wa zoezi la ukamataji na ufilisi.</p>
+<p class="compact"><strong>NB:</strong> Kupokea notisi hii hakumzuii mdai kuendelea kufuatilia deni kwa njia nyingine ikiwemo kupiga simu au kutembelewa na maafisa.</p>
+<p class="compact"><strong>Kwa maelezo zaidi piga simu: ${esc_(t.phone || LEGAL_PHONE_DEFAULT)}</strong></p>
+<div class="signature-block"><div class="signature-text">
+<p class="compact"><strong>Wako Katika Ujenzi wa Taifa</strong></p>
+<p class="compact"><strong>${esc_(b.signatory || 'RHOBI MSIRA')}</strong></p>
+<p class="compact">${esc_(b.title || 'MWANASHERIA')}</p>
+<p class="compact">HOPE MICROCREDIT COMPANY LIMITED</p>
+${img(b.sign, '', 'max-width:150px', 'Signature')}
+</div>${img(b.stamp, 'stamp-right', '', 'Stamp')}</div>
+<p class="guarantor-line"><strong>NAKALA KWA MDHAMINI WA MKOPAJI</strong></p>
+<p class="guarantor-line">JINA: ${esc_(t.guarantorName)}</p>
+<p class="guarantor-line">SIMU: ${esc_(t.guarantorContact)}</p>
+<p class="compact"><strong>NAKALA KWA SERIKALI YA MTAA:</strong></p><br>
+<div class="blue-line-bottom"></div>
+</body></html>`;
 }
 
 /* DID THE NOTICE WORK?
@@ -2042,31 +2229,70 @@ async function notifSeen(db, user, _p, nowMs = Date.now()) {
   return notifSeenCore(db, notifKey_(user), nowMs);
 }
 
+/* PAYMENTS SINCE EACH NOTICE, ADDED UP BY THE DATABASE (notice_payments, db/RUN-ME-040): one
+   call for the whole register, one row back per notice, the payments book never downloaded.
+   Null when the function is not there yet -- the screen then says so and names the file. */
+async function noticePayments_(db, notices) {
+  const want = (notices || []).filter(n => n.ref && n.notice_date);
+  if (!want.length || !db || typeof db.rpc !== 'function') return new Map();
+  const { data, error } = await rpcAll(db, 'notice_payments', {
+    p_refs: want.map(n => String(n.ref).trim()),
+    p_dates: want.map(n => String(n.notice_date).slice(0, 10)),
+  });
+  if (error) return null;
+  const m = new Map();
+  for (const p of (data || [])) m.set(K(p.ref) + '|' + String(p.since).slice(0, 10), p);
+  return m;
+}
+
 async function demandNotices(db, user, _args, nowMs = Date.now()) {
-  const [r, cur, teamBranch] = await Promise.all([
+  const [r, cur, teamBranch, brand] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
     branchByTeam(db, nowMs),
+    legalBrand_(db),
   ]);
   const nowBy = {};
   for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
   const seen = cur.rows.length > 0;
+  /* WHAT A NOTICE BROUGHT IN, READ TWO WAYS.
+       "i had a weakness of not recording the collected recovered amount in the previous demand
+        notice production., cover it, since not only the current arreas vs arreas at notice but
+        there have been payments made rergadless the arreas difference and the payments within
+        notice are all recoveries"
+     Arrears alone understate it: a customer who pays every week after the letter can show the
+     same arrears a month later because new instalments fell due meanwhile. So each notice also
+     reads the received-payments book from its own date forward, and Recovered is the LARGER
+     of the two readings -- what they paid since, or how far their arrears fell. Where the
+     payments function is not there yet, Recovered is the arrears reading alone, said so. */
+  const paidBy = await noticePayments_(db, r.rows);
 
-  const rows = r.rows.map(x => {
+  // The stored letter stays off the list: it is for the reprint, not the register's rows.
+  const rows = r.rows.map(({ letter, ...x }) => {
     const at = num(x.arrears_at_notice);
     const key = K(x.ref);
     const known = Object.prototype.hasOwnProperty.call(nowBy, key);
     // Off the deck = cleared. But only if there IS a deck today: with nothing uploaded, every
     // customer would look cleared and the tab would report a triumph that never happened.
     const current = known ? nowBy[key] : (seen ? 0 : null);
+    const down = current == null ? null : Math.max(0, at - current);
+    const p = paidBy ? paidBy.get(key + '|' + String(x.notice_date || '').slice(0, 10)) : null;
+    const paidSince = paidBy ? (p ? num(p.paid) : 0) : null;
+    const recovered = paidSince == null ? down : Math.max(paidSince, down || 0);
     return { ...x,
       branch: teamBranch.get(K(x.team)) || null,
+      letter_kept: !!letter,
       arrears_now: current,
-      recovered_since: current == null ? null : Math.max(0, at - current),
+      arrears_down: down,
+      paid_since: paidSince,
+      paid_n: paidBy ? (p ? num(p.n) : 0) : null,
+      last_paid: p && p.last_paid ? String(p.last_paid).slice(0, 10) : null,
+      recovered_since: recovered,
       // What a person working the notice needs to see at a glance.
-      notice_state: current == null ? 'Hakuna deki / No deck'
-        : current <= 0 ? 'Amemaliza / Cleared'
-        : current < at ? 'Amepunguza / Reducing'
+      notice_state: (current != null && current <= 0) ? 'Amemaliza / Cleared'
+        : paidSince > 0 ? 'Analipa / Paying'
+        : (current != null && current < at) ? 'Amepunguza / Reducing'
+        : current == null ? 'Hakuna deki / No deck'
         : 'Hajalipa / No movement',
     };
   });
@@ -2075,8 +2301,15 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
     fines: rows.reduce((s, x) => s + num(x.fine), 0),
     atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
     recoveredSince: rows.reduce((s, x) => s + num(x.recovered_since), 0),
+    paidSince: rows.reduce((s, x) => s + num(x.paid_since), 0),
     cleared: rows.filter(x => x.notice_state.indexOf('Cleared') >= 0).length,
-    asOf: cur.date || null };
+    asOf: cur.date || null,
+    paymentsOn: !!paidBy,
+    /* The letterhead's readiness, said on the screen: which images are set, who signs, and
+       the number that prints when no officer's own is found -- so "are we perfectly done" can
+       be read off the Legal tab rather than off a test print. */
+    brand: { logo: !!brand.logo, stamp: !!brand.stamp, sign: !!brand.sign,
+      signatory: brand.signatory, title: brand.title, phone: brand.phone || LEGAL_PHONE_DEFAULT } };
 }
 
 /* =====================================================================================
@@ -8059,7 +8292,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
-  demandNotices, addDemandNotice, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
+  demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, abnormal, received, findCustomer, rebuildFollowup,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -8439,7 +8672,7 @@ const FN_TAB = {
   complaintLog: ['complaints'], resolveComplaint: ['complaints'], deleteComplaint: ['complaints'],
   restructures: ['restructure'], addRestructure: ['restructure'], decideRestructure: ['restructure'],
   restructureEligible: ['restructure'], restructureContract: ['restructure'],
-  demandNotices: ['legal'], addDemandNotice: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'],
+  demandNotices: ['legal'], addDemandNotice: ['legal'], demandNoticePrint: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'],
   adjustments: ['adjust'], adjustmentRecord: ['adjust'], adjustmentAmend: ['adjust'],
   adjustmentDelete: ['adjust'],
   abnormal: ['abnormal'], received: ['abnormal'],
