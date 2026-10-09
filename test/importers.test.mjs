@@ -9,8 +9,44 @@ import assert from 'node:assert/strict';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder, importExpected }
+const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder, importExpected, importDemandNotices }
   = await import('../api/_lib/importers.js');
+
+/* THE GOOGLE SHEETS DEMAND-NOTICE REGISTER, AS IT IS EXPORTED -- "Its time for the legal unit to
+   shift". Its own column spellings land in the portal's register under the same references,
+   and the same file uploaded twice is the same rows twice. */
+test('the Google Sheets DemandNotices register imports as it is, once', () => {
+  const header = ['NoticeID', 'Timestamp', 'AccessCode', 'LegalOfficer', 'REF#', 'CustName', 'Contact',
+    'NoticeDate', 'NoticeDays', 'FineAmount', 'TotalDemand', 'ArrearsAtNotice', 'CurrentArrears',
+    'Difference', 'Status', 'Team', 'OtherInst'];
+  const rows = [header, ['HMCL/HEN/24/09/2026-4', '24/09/2026 10:15', 'L1', 'JOHN LEGAL', '2206464347',
+    'HUMPHREY EZEKIEL NDONE', '774711656', '24/09/2026', 7, 2493500, 12323500, 9830000, 9000000, -830000,
+    'Reduced', 'CHANIKA', 1133334]];
+  const out = importDemandNotices(rows);
+  assert.equal(out.length, 1);
+  const n = out[0];
+  assert.equal(n.notice_id, 'HMCL/HEN/24/09/2026-4');
+  assert.equal(n.ref, '2206464347');
+  assert.equal(n.full_name, 'HUMPHREY EZEKIEL NDONE');
+  assert.equal(n.contact, '774711656');
+  assert.equal(n.notice_date, '2026-09-24', 'the sheet writes day first');
+  assert.equal(n.notice_days, 7);
+  assert.equal(n.fine, 2493500);
+  assert.equal(n.total_demand, 12323500);
+  assert.equal(n.arrears_at_notice, 9830000);
+  assert.equal(n.other_inst, 1133334);
+  assert.equal(n.issued_by, 'JOHN LEGAL');
+  assert.equal(n.team, 'CHANIKA');
+  assert.ok(String(n.created_at).startsWith('2026-09-24'), 'the sheet\'s timestamp, clock included');
+  assert.equal('current_arrears' in n, false, 'sheet formulas against a deck that has moved on are not imported');
+  assert.match(n.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(importDemandNotices(rows)[0].id, n.id, 'the same notice is the same row');
+  // The portal's own export still reads.
+  const own = importDemandNotices([['REF#', 'TEAM', 'FULLNAME', 'NOTICE DATE', 'TOTAL DEMAND', 'BY'],
+    ['555', 'KONGOWE', 'ASHA', '2026-03-16', 326000, 'THE ADMIN']]);
+  assert.equal(own[0].notice_date, '2026-03-16'); assert.equal(own[0].issued_by, 'THE ADMIN');
+  assert.notEqual(own[0].id, n.id);
+});
 
 /* THE SHEET'S N.C COLUMN IS READ AS ITS OWN FIELD -- "expecting the dc single count are 171,
    but its 14 on presentation". Count 1 was first worked out from DUE SUMMARY, which is a

@@ -1049,12 +1049,17 @@ export default withApi(async (req, res) => {
     received_payments: 'id',
     // "The abnormal table too.. and it contains duplicates too" -- importers.js abnormalId.
     abnormal_payments: 'id',
+    /* Keyed on the notice's own reference (importers.js noticeRowId), so the Google Sheets
+       register -- years of notices -- can be uploaded again after a correction without a
+       customer being served twice on paper they only received once. */
+    demand_notices: 'id',
   };
   /* What the key MEANS, for the sentence below -- "matched on id" tells a person nothing. */
   const keyWords = {
     received_payments: 'the transaction id (or the date, customer ref, amount, paying phone and sender together, where the sheet has no transaction id)',
     abnormal_payments: 'the transaction id (or the ref id, or the customer ref, amount, paying phone and sender together, where the sheet has neither)',
     loans: 'the loan\'s own identity', followup_comments: 'the comment\'s own identity',
+    demand_notices: 'the notice reference (Kumb.Na.)',
   };
 
   // Hints are the one sheet that is REPLACED wholesale. A tab has MANY tips -- the reader

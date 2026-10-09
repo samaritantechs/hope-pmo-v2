@@ -311,7 +311,12 @@ const BUDGETS = [
   ['Portfolio at Risk',       'par',                 {}, ADMIN,  5,   800,  5,  800],
   ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
   ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],
-  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  6,   800,  6,  800],
+  /* 6 -> 8: two reads added with the letter rebuilt on the Google Sheets one -- the payments
+     made since each notice (one RPC for the whole register, the question the register exists
+     to answer) and the letterhead's readiness (one settings read, so the tab can say whether
+     the stamp is set rather than a test print finding out). Rows unchanged: one row back per
+     notice, never the payments book. */
+  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  8,   800,  8,  800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
