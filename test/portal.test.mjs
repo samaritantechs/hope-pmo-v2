@@ -2594,6 +2594,12 @@ test('issuing a notice stores what it prints, under a citable reference', async 
   assert.match(h, /\.first-page\{position:relative;\}/);
   assert.doesNotMatch(h, /\.first-page\{[^}]*page-break-inside/);
   assert.match(h, /^table\{[^}]*page-break-inside:avoid/m);
+  /* "the maelezo table must fit into 1st page regardless of content amount so that the pages
+     are two only fixed": the first page measures itself against the sheet and shrinks only when
+     it would spill, and the body is laid out at the print width on screen so the measure holds. */
+  assert.match(h, /body\{margin:0 auto;width:174mm/);
+  assert.match(h, /fp\.style\.zoom/);
+  assert.match(h, /addEventListener\('beforeprint', fit\)/);
   assert.doesNotMatch(h, /THE ADMIN/, 'the issuing code is on the register, not on the letter');
 
   /* "demand retrival" -- tap a row: the SAME letter again, off the stored letter. */

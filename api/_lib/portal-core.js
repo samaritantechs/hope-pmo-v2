@@ -2081,7 +2081,7 @@ function demandNoticeHtml(t, brand) {
   const title = String(t.name || '').trim() || String(t.noticeId || 'notisi').replace(/\//g, '_');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc_(title)}</title><style>
 @page{margin:15mm 18mm 18mm 18mm;}
-body{font-family:Verdana,sans-serif;font-size:9.5pt;color:#000;line-height:1.35;text-align:justify;}
+body{margin:0 auto;width:174mm;font-family:Verdana,sans-serif;font-size:9.5pt;color:#000;line-height:1.35;text-align:justify;}
 .header,table,.address-block,.compact,.guarantor-line,.signature-block,.blue-line-top,.blue-line-bottom{text-align:left;}
 .blue-line-top{border-top:3px solid #1a56db;padding-top:6px;margin-bottom:15px;}
 .blue-line-bottom{border-bottom:3px solid #1a56db;padding-bottom:6px;margin-top:20px;}
@@ -2156,6 +2156,25 @@ ${img(b.sign, '', 'max-width:150px', 'Signature')}
 <p class="guarantor-line">SIMU: ${esc_(t.guarantorContact)}</p>
 <p class="compact"><strong>NAKALA KWA SERIKALI YA MTAA:</strong></p><br>
 <div class="blue-line-bottom"></div>
+<script>
+/* TWO PAGES, ALWAYS -- "the maelezo table must fit into 1st page regardless of content amount
+   so that the pages are two only fixed". The first page is measured against the A4 printable
+   height (297 - 15 - 18 = 264mm inside @page's margins) and shrunk, only when it would spill,
+   just enough to fit: the costs table never slides onto page two, so the payment instructions
+   never slide onto a third. The body is laid out at the print width on screen too (174mm),
+   so what is measured is what prints. Measured again at beforeprint, once the images are in. */
+(function(){
+  function fit(){
+    var fp = document.querySelector('.first-page'); if (!fp) return;
+    fp.style.zoom = '';
+    var px = 96 / 25.4, r = fp.getBoundingClientRect();
+    var limit = 264 * px - (r.top + (window.scrollY || 0)) - 4;
+    if (r.height > limit) fp.style.zoom = String(Math.max(0.55, Math.floor((limit / r.height) * 1000) / 1000));
+  }
+  if (document.readyState === 'complete') fit(); else window.addEventListener('load', fit);
+  window.addEventListener('beforeprint', fit);
+})();
+</script>
 </body></html>`;
 }
 
