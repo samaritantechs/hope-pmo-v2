@@ -129,8 +129,8 @@ export const SNAPSHOT_TOTALS_RPC = {
       const e = n0(s.payment_expected);
       const arr = n0(s.arrears);
       const st = String(s.todays_status == null ? '' : s.todays_status).trim().toUpperCase();
-      // btrim(coalesce(due_summary, '')) ~ '^1\s*/\s*\d+$' -- db/RUN-ME-038, clause for clause.
-      const ds1 = /^1\s*\/\s*\d+$/.test(String(s.due_summary == null ? '' : s.due_summary).trim());
+      // btrim(coalesce(due_summary, '')) ~ '^1\s*[-/]\s*\d+$' -- db/RUN-ME-038, clause for clause.
+      const ds1 = /^1\s*[-\/]\s*\d+$/.test(String(s.due_summary == null ? '' : s.due_summary).trim());
       /* The CASE in the migration: PAID / OVERPAID counts the expected amount only and never
          the overpayment; UNDERPAID is expected minus arrears clamped into [0, expected];
          anything else collected nothing. */
