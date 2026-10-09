@@ -515,8 +515,8 @@ test('only the PMO collection slide carries the unassigned-teams caption, drawn 
   assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table at
      presentation, add count 1 column too (always the count 1 left of the current day)" */
-  assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),
-    'Count 1 (leo) sits between Teams and J3 on the PMO collection slide');
+  assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(NC 1 leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),
+    'Count 1 (NC 1 leo) sits between Teams and J3 on the PMO collection slide');
   assert.ok(/b\.unassignedTeams/.test(view), 'fed by officerBoards');
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/<\/tbody><\/table><\/div>';\s*\n\s*\/\/[^\n]*\n\s*if \(s\.caption\) body \+= '<div class="pcap">'/.test(draw),
@@ -560,7 +560,7 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
   /* And Count 1 between the two -- "Btn remaining and customers columns in early collection pmo
      slide add Count1 (to show the remaining count DS 1 among the all left ones)". */
-  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('count1','Count 1 \(DS 1\)','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
+  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('count1','Count 1 \(NC 1\)','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
     'remaining, Count 1 and customers sit between Teams and Uncollected on the early slide');
   assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-038/.test(early),
     'a slide with no Count 1 figure says which file to run, rather than printing nought');

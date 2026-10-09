@@ -54,9 +54,10 @@ export const DEFAULTER_TOTALS_FN = 'defaulter_snapshot_totals';
 const EXP_FOLD_COLS = 'team, payment_expected, arrears, todays_status, due_summary, snapshot_date, snapshot_type';
 const DEF_FOLD_COLS = 'team, arrears, snapshot_date, snapshot_type, weekday';
 
-/* "COUNT 1" -- a customer whose DUE SUMMARY reads 1 of N: one instalment paid, the second the
-   one due. The early-collection slide carries how many of those are still to pay, beside the
-   remaining count ("add Count1, to show the remaining count DS 1 among the all left ones").
+/* "COUNT 1" -- NC 1: a customer whose DUE SUMMARY reads 1 of N. The early-collection and PMO
+   collection slides carry, per officer, how many of those on their teams' lists are marked
+   UNDERPAID or UNPAID -- "sum of nc 1 of underpaid and unpaid per pmo" (ds1_owing_n). Those
+   two statuses and no other: PAID and OVERPAID do not count, and neither does a blank.
 
    THE SHEET WRITES IT WITH A DASH. The first cut read "1/N" only and every team came back at
    nought; the live book's DUE SUMMARY shapes are 9-99, 99-99 and 9-9 (ninety thousand rows,
@@ -93,7 +94,7 @@ export function foldExpected(rows) {
         upload_batch: r.upload_batch == null ? null : r.upload_batch,
         created_at: null,
         customers: 0, expected_amt: 0, collected_amt: 0, uncollected_amt: 0, paid_n: 0, over_n: 0,
-        ds1_left_n: 0 };
+        ds1_owing_n: 0 };
       out.set(k, b);
     }
     const e = num(r.payment_expected), c = collectedOf(r);
@@ -104,8 +105,8 @@ export function foldExpected(rows) {
     const st = String(r.todays_status == null ? '' : r.todays_status).trim().toUpperCase();
     if (st === 'PAID') b.paid_n += 1;
     else if (st === 'OVERPAID') b.over_n += 1;
-    // Still to pay (not PAID, not OVERPAID) and on their second instalment -- see dsOne.
-    else if (dsOne(r.due_summary)) b.ds1_left_n += 1;
+    // COUNT 1: NC 1 (see dsOne) and still owing -- UNDERPAID or UNPAID, those two and no other.
+    else if ((st === 'UNDERPAID' || st === 'UNPAID') && dsOne(r.due_summary)) b.ds1_owing_n += 1;
     // The newest moment inside the group -- what pickLatestBatch compares to decide which
     // upload won. max(created_at) is what the SQL returns for the same group.
     if (String(r.created_at || '') > String(b.created_at || '')) b.created_at = r.created_at;
@@ -215,14 +216,14 @@ const DECK_COLS = {
     + 'customers, arrears_amt',
 };
 /* COLUMNS A MIGRATION ADDED LATER, read when the table has them and left out when it has not.
-   `ds1_left_n` arrived with db/RUN-ME-038. PostgREST refuses the WHOLE read for one unknown
+   `ds1_owing_n` arrived with db/RUN-ME-038. PostgREST refuses the WHOLE read for one unknown
    column, and a refused cache read sends every screen to the live aggregate -- the slow path
    this cache exists to avoid -- for as long as the SQL is not run. So a read that is refused
    for one of these is asked again without it, and the omission is remembered for a few
    minutes per database rather than paid for on every read. The figure built on it (Count 1
    on the early slide) then reads null, which the slide says, instead of the screens reading
    slow. */
-const DECK_OPTIONAL_COLS = { expected: ['ds1_left_n'], defaulter: [] };
+const DECK_OPTIONAL_COLS = { expected: ['ds1_owing_n'], defaulter: [] };
 const deckColsMissing = new WeakMap();                       // db -> { at, cols: Set }
 function deckColsFor(db, kind) {
   const hit = deckColsMissing.get(db);
@@ -428,17 +429,21 @@ async function deckTotalsRead(db, fn, args) {
       return q;
     });
     let rows;
-    try {
-      rows = await read(deckColsFor(db, kind));
-    } catch (e) {
-      // Refused for a column the migration has not added yet: note it, ask again without it.
-      const col = optionalColRefused(e, kind);
-      if (!col) throw e;
-      const hit = deckColsMissing.get(db);
-      const cols = hit && (Date.now() - hit.at) < MISSING_TTL_MS ? hit.cols : new Set();
-      cols.add(col);
-      deckColsMissing.set(db, { at: Date.now(), cols });
-      rows = await read(deckColsFor(db, kind));
+    /* Refused for a column the migration has not added yet: note it, ask again without it --
+       once per optional column at most, so a table that lacks both of them is asked three
+       times and not for ever. */
+    for (let tries = 0; ; tries++) {
+      try {
+        rows = await read(deckColsFor(db, kind));
+        break;
+      } catch (e) {
+        const col = optionalColRefused(e, kind);
+        if (!col || tries >= DECK_OPTIONAL_COLS[kind].length) throw e;
+        const hit = deckColsMissing.get(db);
+        const cols = hit && (Date.now() - hit.at) < MISSING_TTL_MS ? hit.cols : new Set();
+        cols.add(col);
+        deckColsMissing.set(db, { at: Date.now(), cols });
+      }
     }
     /* THE STALE ROWS OF AN UNBUILT DAY ARE DROPPED, and this is the line the whole split turns
        on. unmarkDeckTotals deletes the day from deck_totals_days ONLY -- the rows in

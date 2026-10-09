@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-d';
+var BUILD = '2026-10-09-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -9771,12 +9771,13 @@ function presSlides(){
          remaining (unpaid+underpaid) ... so that we always know progress of each like 300 where
          ... paid+overpaid 600 of 900 total customers". Two plain numbers rather than "300 / 900"
          in one cell, so the JUMLA row can add each of them up. */
-      /* COUNT 1 BETWEEN THEM -- "add Count1 (to show the remaining count DS 1 among the all
-         left ones)": of those still to pay, how many are on their second instalment (D.S
-         1/N). A count, so the JUMLA row adds it like the other two. Null until db/RUN-ME-038
-         is run, and the caption below says so rather than the column reading nought. */
+      /* COUNT 1 BETWEEN THEM -- "add Count1", then "sum of nc 1 of underpaid and unpaid per
+         pmo": over the officer's teams, the customers on the list at NC 1 (DUE SUMMARY 1-N)
+         marked UNDERPAID or UNPAID. A count, so the JUMLA row adds it like the other two. Null
+         until db/RUN-ME-038 (its current version) is run, and the caption below says so rather
+         than the column reading nought. */
       cols:[col('officer','Officer'), col('teams','Teams','num'),
-        col('remaining','Wamebaki / Left','num'), col('count1','Count 1 (DS 1)','num'), col('customers','Wateja / Customers','num'),
+        col('remaining','Wamebaki / Left','num'), col('count1','Count 1 (NC 1)','num'), col('customers','Wateja / Customers','num'),
         col('uncollected','Uncollected (kesho)','money'), {key:'pct', label:'Coll % (kesho)', kind:'pct', target:'ecol'},
         col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}],
       caption: (earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; }))
@@ -9814,10 +9815,11 @@ function presSlides(){
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
       caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec),
       rows:(b.pmo||[]).slice(0,12),
-      /* COUNT 1 BETWEEN TEAMS AND J3 -- "add count 1 column too (always the count 1 left of
-         the current day)": today's sheet, the officer's teams, customers still to pay on their
-         second instalment. Null until db/RUN-ME-038 is run; the early slide's caption says so. */
-      cols:[col('officer','PMO'), col('teams','Teams','num'), col('count1','Count 1 (leo)','num'),
+      /* COUNT 1 BETWEEN TEAMS AND J3 -- "add count 1 column too", then "sum of nc 1 of
+         underpaid and unpaid per pmo": today's sheet, the officer's teams, the customers at
+         NC 1 marked UNDERPAID or UNPAID, added up. Null until db/RUN-ME-038 (its current
+         version) is run; the early slide's caption says so. */
+      cols:[col('officer','PMO'), col('teams','Teams','num'), col('count1','Count 1 (NC 1 leo)','num'),
         {key:'pctJ3', label:'J3', kind:'pct', target:'col'}, {key:'pctJ4', label:'J4', kind:'pct', target:'col'},
         {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},
         {key:'pctIJ', label:'IJ', kind:'pct', target:'col'},
