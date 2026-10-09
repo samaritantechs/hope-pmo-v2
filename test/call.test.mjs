@@ -1241,7 +1241,8 @@ test('a sync carries the data version, so a phone knows when an upload has happe
   await db.from('settings').upsert({ key: 'DATA_VERSION', value: '1700000000000' }, { onConflict: 'key' });
 
   const after = await callApi(db, 'api_callSync', ['d1', []], NOW);
-  assert.equal(after.dataVersion, '1700000000000', 'the next sync reports the new version');
+  // The scope rides on the stamp (handsetVersion_): the upload, then the officer's team.
+  assert.equal(after.dataVersion, '1700000000000|KONGOWE', 'the next sync reports the new version');
   assert.notEqual(after.dataVersion, before.dataVersion, 'and it differs, which is the whole signal');
 });
 
@@ -1296,7 +1297,7 @@ test('the daily summary says which upload it was computed from', async () => {
   await db.from('settings').upsert({ key: 'DATA_VERSION', value: '1700000000001' }, { onConflict: 'key' });
   const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
   assert.equal(d.ok, true);
-  assert.equal(d.dataVersion, '1700000000001',
+  assert.equal(d.dataVersion, '1700000000001|KONGOWE',
     'the figures carry their own version, so the phone cannot store them against the wrong one');
 });
 
@@ -1875,6 +1876,116 @@ test('Ripoti on the handset: the leader\'s code decides the scope, the sheet doe
   assert.equal(all.totals.calls, 2);
 });
 
+/* "So i fear if thats just a case study and the error is wide." It was: a leader's handset
+   copied the code's teams at registration and never looked again. Every screen on the phone
+   now reads the code live -- boot, the lists, Ripoti -- so an edit in the portal reaches the
+   handset without anybody registering again. */
+test('a leader\'s handset follows the access code live: edit the code, the phone changes scope', async () => {
+  const t = makeTables();
+  t.followup_status = [
+    { ref: 'K1', team: 'KONGOWE', full_name: 'KON CUSTOMER', status: 'Defaulter', arrears: 5000 },
+    { ref: 'M1', team: 'MBAGALA', full_name: 'MBA CUSTOMER', status: 'Defaulter', arrears: 9000 },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA, KONGOWE
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d5', 'PILI S', 'MBAGALA', '', '0712888888', 'MBA456'], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 60, dir: 'out', num: '0712000001' }]], NOW);
+  await callApi(db, 'api_callSync', ['d5', [{ ts: T1, dur: 60, dir: 'out', num: '0712000003' }]], NOW);
+  assert.deepEqual(db._dump('call_users').find(u => u.name === 'ASHA JUMA').leader_teams, ['KONGOWE'],
+    'registration stored what the code said that day');
+
+  // The admin moves her code to MBAGALA in the portal. Nobody re-registers.
+  db._dump('access_codes').find(c => c.code === 'LEAD1').teams = ['MBAGALA'];
+  const LATER = NOW + 2 * 60 * 1000;                        // past the one-minute memo
+  const boot = await callApi(db, 'api_callBoot', ['d2'], LATER);
+  assert.equal(boot.leaderTeams, 'MBAGALA', 'boot says the code\'s teams as they are now');
+  assert.deepEqual(boot.teams, ['MBAGALA']);
+  const list = await callApi(db, 'api_callList', ['d2', 'defaulters'], LATER);
+  assert.deepEqual(list.rows.map(r => r.ref), ['M1'], 'the lists follow the code, not the stored copy');
+  const rep = await callApi(db, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], LATER);
+  assert.deepEqual(rep.debugScope, ['MBAGALA'], 'and so does Ripoti');
+  assert.equal(rep.totals.calls, 1);
+  assert.ok(rep.users.some(u => u.name === 'PILI S') && !rep.users.some(u => u.name === 'JUMA ISSA'));
+
+  /* Cleared to ALL on the code: everything, live. On its own database, because the codes memo
+     is stamped with the wall clock (a late read must still serve the next boot) and the test's
+     pinned July clock never reaches a minute past October. */
+  const t2 = makeTables();
+  const db2 = fakeDb(t2);
+  await callApi(db2, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  db2._dump('access_codes').find(c => c.code === 'LEAD1').teams = null;
+  assert.equal((await callApi(db2, 'api_callBoot', ['d2'], NOW)).leaderTeams, 'ALL');
+  assert.equal((await callApi(db2, 'api_callReport', ['d2', '2026-07-24', '2026-07-24'], NOW)).debugScope, 'ALL');
+});
+
+/* "I expect both the catherine type issue and presentation slides all autofix at interfaces
+   with no need to refresh nor logout." The phone drops its hour-long list cache when the
+   version a sync brings back differs from the one it holds; the version now carries the scope,
+   so a code edited in the portal empties the phone's lists at the next sync by itself. */
+test('the version a handset compares carries its scope, the same on boot, sync and the strip', async () => {
+  const t = makeTables();
+  t.settings.push({ key: 'DATA_VERSION', value: '1000' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', 'KONGOWE', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA, KONGOWE
+  await callApi(db, 'api_callRegister', ['d3', '', '', 'ADMIN1', '0788333444'], NOW);  // ALL
+  const boot2 = await callApi(db, 'api_callBoot', ['d2'], NOW);
+  const sync2 = await callApi(db, 'api_callSync', ['d2', []], NOW);
+  const strip2 = await callApi(db, 'api_callDailySummary', ['d2'], NOW);
+  assert.equal(boot2.dataVersion, '1000|KONGOWE', 'the upload stamp, then the scope');
+  assert.equal(sync2.dataVersion, boot2.dataVersion, 'sync says the same string, or the strip would reload on every sync');
+  assert.equal(strip2.dataVersion, boot2.dataVersion);
+  assert.equal((await callApi(db, 'api_callBoot', ['d3'], NOW)).dataVersion, '1000|ALL');
+  assert.equal((await callApi(db, 'api_callSync', ['d1', []], NOW)).dataVersion, '1000|KONGOWE', 'an officer carries their team');
+  // The code is edited: a fresh database stands in for the memo's minute. The stamp moves, so
+  // the handset's next sync drops its lists and asks again -- no logout, no re-registration.
+  const t2 = makeTables();
+  t2.settings.push({ key: 'DATA_VERSION', value: '1000' });
+  t2.access_codes.find(c => c.code === 'LEAD1').teams = ['MBAGALA', 'KONGOWE'];
+  const db2 = fakeDb(t2);
+  await callApi(db2, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  assert.equal((await callApi(db2, 'api_callSync', ['d2', []], NOW)).dataVersion, '1000|KONGOWE,MBAGALA', 'sorted, in capitals');
+  // Nothing uploaded yet stays empty: an older server reads the same.
+  const t3 = makeTables();
+  const db3 = fakeDb(t3);
+  await callApi(db3, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  assert.equal((await callApi(db3, 'api_callSync', ['d2', []], NOW)).dataVersion, '');
+});
+
+test('a leader whose name two codes carry, or no code at all, keeps what registration stored', async () => {
+  const t = makeTables();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);   // ASHA JUMA, KONGOWE
+  // A second code with the same name: the handset cannot tell which is hers, so it guesses nothing.
+  db._dump('access_codes').push({ code: 'LEAD2', name: 'Asha Juma', role: 'GMO', teams: ['MBAGALA'], tabs: [] });
+  const LATER = NOW + 2 * 60 * 1000;
+  assert.equal((await callApi(db, 'api_callBoot', ['d2'], LATER)).leaderTeams, 'KONGOWE');
+  // Her code deleted outright: the stored copy still stands rather than the phone going blank or ALL.
+  const codes = db._dump('access_codes');
+  codes.splice(0, codes.length, ...codes.filter(c => String(c.name || '').trim().toUpperCase() !== 'ASHA JUMA'));
+  const LATER2 = LATER + 2 * 60 * 1000;
+  assert.equal((await callApi(db, 'api_callBoot', ['d2'], LATER2)).leaderTeams, 'KONGOWE');
+});
+
+test('the sheet widens a team-code officer\'s lists, never a leader\'s', async () => {
+  /* ANALYST A on a team code holds MBAGALA's credit column: widened, as before. ASHA on an
+     access code holds MBAGALA's credit column too: her code says KONGOWE, so KONGOWE it is. */
+  const t = makeTables();
+  t.teams[1].credit = 'ANALYST A';
+  t.teams[1].recovery = 'ASHA JUMA';
+  t.followup_status = [
+    { ref: 'K1', team: 'KONGOWE', full_name: 'KON CUSTOMER', status: 'Defaulter', arrears: 5000, ds: '2-4' },
+    { ref: 'M1', team: 'MBAGALA', full_name: 'MBA CUSTOMER', status: 'Defaulter', arrears: 9000, ds: '2-4' },
+  ];
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d9', 'ANALYST A', '', '', '0799000111', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  assert.deepEqual((await callApi(db, 'api_callList', ['d9', 'defaulters'], NOW)).rows.map(r => r.ref).sort(), ['K1', 'M1']);
+  assert.deepEqual((await callApi(db, 'api_callList', ['d2', 'defaulters'], NOW)).rows.map(r => r.ref), ['K1'],
+    'the leader reads her code\'s team only');
+});
+
 test('Ripoti: a leader filter narrows and can never widen what you may see', async () => {
   const t = makeTables();
   t.teams[1].manager = 'BOB M';                       // BOB holds MBAGALA; ASHA does not
@@ -1997,7 +2108,7 @@ test('boot tells the handset which upload its answer belongs to', async () => {
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
   assert.equal(d.ok, true);
-  assert.equal(d.dataVersion, '1754900000000');
+  assert.equal(d.dataVersion, '1754900000000|KONGOWE', 'the upload stamp, then this handset\'s scope');
 });
 
 test('a deployment with nothing uploaded yet reports an empty version, not a wrong one', async () => {

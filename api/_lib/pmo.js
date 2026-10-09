@@ -234,6 +234,16 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
     const pick = d => (byDay.get(d) || []).filter(r => mine.has(norm(r.team)));
 
     const day = collectionOf(pick(today));
+    /* COUNT 1 LEFT TODAY -- "between Teams and J3 columns on the PMO Collection (Todays
+       collection) table at presentation, add count 1 column too (always the count 1 left of
+       the current day)". Of today's sheet, across the officer's teams, how many customers
+       still to pay are on their second instalment (ds1_left_n, db/RUN-ME-038). A totals row
+       without the figure -- built before that file was run, or a hand-typed summary -- makes
+       the officer's count unknown (null) rather than short, the same rule as the early slide. */
+    let count1 = 0, count1Known = true;
+    for (const r of pick(today)) {
+      if (r.ds1_left_n == null) count1Known = false; else count1 += Number(r.ds1_left_n) || 0;
+    }
     /* The week is every collection day added together, NOT the average of five percentages.
        Averaging percentages would let a quiet Monday with four customers count as much as a
        heavy Friday with four hundred. */
@@ -260,6 +270,7 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
       teams: (p.teams || []).length,
       teamList: (p.teams || []).slice().sort(),
       customers: day.customers,
+      count1: count1Known ? count1 : null,
       // Today
       expected: day.expected, collected: day.collected, uncollected: day.uncollected, pct: day.pct,
       band: todayBand ? todayBand.label : null,
@@ -300,6 +311,8 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
  *  reaching for a field that happens to be sitting there. */
 export function pmoPublicRow(r, i) {
   return { sn: i + 1, officer: r.officer, teams: r.teams,
+    // Today's count-1 customers still to pay: a headcount, not money -- see pmoBoard.
+    count1: r.count1 == null ? null : r.count1,
     uncollected: r.uncollected, pct: r.pct,
     /* THE FIVE DAYS, because the daily percentage is what the pay is worked out from.
        Pay follows EACH DAY'S OWN band, added up -- a good Ijumaa is worth something after a

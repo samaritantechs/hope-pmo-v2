@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-a';
+var BUILD = '2026-10-09-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1336,6 +1336,55 @@ function freshEnough_(me){
   return false;
 }
 
+/* THE PORTAL ITSELF KEEPS UP, NOT ONLY THE DECK.
+     "I expect both the catherine type issue and presentation slides all autofix at interfaces
+      with no need to refresh nor logout"
+   freshEnough_ ran once, at sign-in. A tab left open since the morning kept the morning's
+   code all day. Every few minutes, and whenever the tab comes back into view, the page asks
+   /api/me which version the server has; when it is behind, and nobody is in the middle of
+   typing or has a drawer open, it writes down the tab it is on and reloads past the cache by
+   the one guarded path, and start() opens the same tab again. Signed in throughout: the code
+   is in local storage. A playing deck has its own check (presCheckBuild_) and is left to it. */
+var BUILD_WATCH_MS = 5 * 60 * 1000;
+var VIEW_RESUME_KEY = 'hopeViewResume';
+/** Something on the screen that a reload would lose: a field being typed in, a drawer, a form
+    with a value changed from what it was drawn with, or the deck playing. */
+function pageBusy_(){
+  var a = document.activeElement;
+  if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+  var bg = document.getElementById('drawerBg');
+  if (bg && bg.style.display === 'flex') return true;
+  var pres = document.getElementById('pres');
+  if (pres && pres.style.display === 'block') return true;
+  var els = document.querySelectorAll('input, textarea');
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (el.type === 'checkbox' || el.type === 'radio') { if (el.checked !== el.defaultChecked) return true; continue; }
+    if (el.type === 'hidden' || el.type === 'button' || el.type === 'submit') continue;
+    if ((el.value || '') !== (el.defaultValue || '')) return true;
+  }
+  return false;
+}
+function buildWatch_(){
+  if (!S.code || !S.me || document.hidden) return;
+  fetch('/api/me?code=' + encodeURIComponent(S.code)).then(readJson_).then(function(x){
+    var me = x && x.body;
+    if (!me || !me.build || me.build === BUILD) return;
+    if (pageBusy_()) return;                       // tried again on the next tick
+    try { sessionStorage.setItem(VIEW_RESUME_KEY, JSON.stringify({ view: S.view, args: S.args || {} })); } catch (e) {}
+    freshEnough_(me);
+  }).catch(function(){ /* a missed check is tried again on the next tick */ });
+}
+function viewResumeTake_(){
+  try {
+    var raw = sessionStorage.getItem(VIEW_RESUME_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(VIEW_RESUME_KEY);
+    var n = JSON.parse(raw);
+    return n && typeof n === 'object' && n.view ? n : null;
+  } catch (e) { return null; }
+}
+
 function start(me){
   if (!freshEnough_(me)) return;
   S.me = me;
@@ -1383,7 +1432,27 @@ function start(me){
   var impId = (function(){ try { return new URLSearchParams(location.search).get('imp') || ''; } catch (e) { return ''; } })();
   var impTab = impId && (allowed('impappr') ? 'impappr' : allowed('imprep') ? 'imprep' : allowed('impreq') ? 'impreq' : null);
   IMPREST_DEEPLINK_ID = impTab ? impId : null;
-  go(impTab || firstAllowed_() || 'noaccess');
+  /* A DECK THAT RELOADED ITSELF FOR A NEW VERSION COMES BACK PLAYING -- see presCheckBuild_.
+     The note names the slide, the seconds and the week; the present tab loads its figures as
+     it always does and Play is pressed for the room the moment the dashboard half is in. */
+  var resume = presResumeTake_();
+  if (resume && allowed('present')) {
+    S.presSecs = Math.max(5, Math.min(300, Number(resume.secs) || 15));
+    go('present', resume.weekOf ? { weekOf: resume.weekOf } : {});
+    var tries = 0, wait = setInterval(function(){
+      if (S.view !== 'present') { clearInterval(wait); return; }
+      if (S.presData && S.presData.d && S.slides && S.slides.length) {
+        clearInterval(wait);
+        presStart(Math.min(Number(resume.i) || 0, S.slides.length - 1));
+      } else if (++tries > 120) clearInterval(wait);        // a minute, then the tab stands as it is
+    }, 500);
+  } else {
+    // A tab that reloaded itself for a new version comes back on the tab it was on -- see buildWatch_.
+    var vres = viewResumeTake_();
+    if (!impTab && vres && allowed(vres.view)) go(vres.view, vres.args || {});
+    else go(impTab || firstAllowed_() || 'noaccess');
+  }
+  setInterval(buildWatch_, BUILD_WATCH_MS);
   annCheck();
   bellRefresh();
   $('#bellBtn').onclick = bellOpen;
@@ -1395,7 +1464,7 @@ function start(me){
   // Checked again when somebody comes back to the tab, so a notice posted mid-morning reaches
   // a screen that has been sitting open since eight.
   document.addEventListener('visibilitychange', function(){
-    if (!document.hidden){ annCheck(); bellRefresh(); }
+    if (!document.hidden){ annCheck(); bellRefresh(); buildWatch_(); }
   });
 }
 
@@ -1960,7 +2029,15 @@ function wireTable(rows, onRow){
   Array.prototype.forEach.call(document.querySelectorAll('th[data-sort]'), function(th){
     th.onclick = function(){
       var k = th.getAttribute('data-sort');
-      if (S.sort===k) S.asc = !S.asc; else { S.sort=k; S.asc=false; }
+      /* LIKE EXCEL: THE SORT YOU HAD BECOMES "THEN BY".
+           "When i sort table headers at dashboard orodha like by collection then by OPM, I
+            expect that to behave as excel: every opm will have descending collection"
+         Clicking a second header threw the first sort away, and the rows inside each OPM fell
+         back to the order they arrived in -- a zigzag. The column you were sorted on, and its
+         direction, now move down to the second level, so the groups keep the order you gave
+         them. Clicking the same header again still just turns it round. */
+      if (S.sort===k) S.asc = !S.asc;
+      else { if (S.sort) { S.sort2 = S.sort; S.asc2 = S.asc; } S.sort=k; S.asc=false; }
       paint(true);                                   // in place: the page must not move
     };
   });
@@ -9532,8 +9609,45 @@ function presRedraw_(){
    on the slide it was on. The header says when the figures were last fetched, so a room can
    tell a live deck from a frozen one. Stopped when the deck stops. */
 var PRES_REFRESH_MS = 3 * 60 * 1000;
+/* A DECK LEFT PLAYING NEVER LEARNT THERE WAS A NEW VERSION.
+     "am not seeing the early col slide auto update column on current presentation"
+   The build check (freshEnough_) runs once, at sign-in. A television that has been on the
+   deck since the morning refetches its FIGURES every three minutes and keeps drawing them with
+   the morning's code -- so a column shipped at noon reaches every tab that opens, and never
+   the one screen it was shipped for. Now each refetch also asks /api/me which version the
+   server has (the cheapest read there is) and, when it is behind, writes down where the deck
+   was and reloads past the cache; start() picks the note up and presses Play again on the
+   same slide, same seconds, same week. The guard against a reload loop is freshEnough_'s own.
+   The one thing a page cannot do for itself is go full screen without a hand on the keyboard,
+   so a browser that was not already in kiosk mode comes back as a window: the deck still
+   fills it. */
+var PRES_RESUME_KEY = 'hopePresResume';
+function presResumeNote_(){
+  return { i: S.presI || 0, secs: S.presSecs || 15, weekOf: (S.presWk && S.presWk.weekOf) || '' };
+}
+function presCheckBuild_(){
+  if (!S.code) return;
+  fetch('/api/me?code=' + encodeURIComponent(S.code)).then(readJson_).then(function(x){
+    var me = x && x.body;
+    if (!me || !me.build || me.build === BUILD) return;
+    if (document.getElementById('pres').style.display !== 'block') return;
+    try { sessionStorage.setItem(PRES_RESUME_KEY, JSON.stringify(presResumeNote_())); } catch (e) {}
+    freshEnough_(me);
+  }).catch(function(){ /* a missed check is tried again on the next refetch */ });
+}
+/** The note a reload left behind, if this page is the one it was left for. Read once. */
+function presResumeTake_(){
+  try {
+    var raw = sessionStorage.getItem(PRES_RESUME_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(PRES_RESUME_KEY);
+    var n = JSON.parse(raw);
+    return n && typeof n === 'object' ? n : null;
+  } catch (e) { return null; }
+}
 function presRefetch(){
   if (document.getElementById('pres').style.display !== 'block') return;
+  presCheckBuild_();
   var wk = S.presWk || { weekOf: S.args.weekOf || '' };
   var mine = S.presData;
   // The same order as the tab's first load: the dashboard, THEN the boards, never side by side.
@@ -9700,7 +9814,10 @@ function presSlides(){
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
       caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec),
       rows:(b.pmo||[]).slice(0,12),
-      cols:[col('officer','PMO'), col('teams','Teams','num'),
+      /* COUNT 1 BETWEEN TEAMS AND J3 -- "add count 1 column too (always the count 1 left of
+         the current day)": today's sheet, the officer's teams, customers still to pay on their
+         second instalment. Null until db/RUN-ME-038 is run; the early slide's caption says so. */
+      cols:[col('officer','PMO'), col('teams','Teams','num'), col('count1','Count 1 (leo)','num'),
         {key:'pctJ3', label:'J3', kind:'pct', target:'col'}, {key:'pctJ4', label:'J4', kind:'pct', target:'col'},
         {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},
         {key:'pctIJ', label:'IJ', kind:'pct', target:'col'},

@@ -513,6 +513,10 @@ test('only the PMO collection slide carries the unassigned-teams caption, drawn 
   assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
   const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
   assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
+  /* "between Teams and J3 columns on the PMO Collection (Todays collection) table at
+     presentation, add count 1 column too (always the count 1 left of the current day)" */
+  assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),
+    'Count 1 (leo) sits between Teams and J3 on the PMO collection slide');
   assert.ok(/b\.unassignedTeams/.test(view), 'fed by officerBoards');
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/<\/tbody><\/table><\/div>';\s*\n\s*\/\/[^\n]*\n\s*if \(s\.caption\) body \+= '<div class="pcap">'/.test(draw),
@@ -568,6 +572,76 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   assert.ok(!/callTop\.concat\(callLow\)/.test(view), 'the old twelve-row cut is gone');
   assert.ok(/i >= callPool\.length - 6 \|\| !\(Number\(x\.calls\) \|\| 0\)/.test(calls), 'least active = bottom six or nil calls');
   assert.ok(/r\.end==='Least active' \? 'bad'/.test(calls), 'and they are the ones in red');
+});
+
+/* A DECK LEFT PLAYING RELOADS ITSELF FOR A NEW VERSION AND COMES BACK ON THE SAME SLIDE.
+   "am not seeing the early col slide auto update column on current presentation": the build
+   check ran once, at sign-in, so a television on the deck since the morning never learnt a
+   column had shipped. */
+test('a playing presentation checks the build on every refetch and resumes after the reload', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const refetch = app.slice(app.indexOf('function presRefetch'), app.indexOf('function presSlides'));
+  assert.ok(/presCheckBuild_\(\);/.test(refetch), 'every refetch asks which version the server has');
+  const check = app.slice(app.indexOf('function presCheckBuild_'), app.indexOf('function presResumeTake_'));
+  assert.ok(/fetch\('\/api\/me\?code=' \+ encodeURIComponent\(S\.code\)\)/.test(check), 'off /api/me, the cheapest read there is');
+  assert.ok(/me\.build === BUILD\) return;/.test(check), 'nothing happens while the page is current');
+  assert.ok(/sessionStorage\.setItem\(PRES_RESUME_KEY, JSON\.stringify\(presResumeNote_\(\)\)\)/.test(check)
+    && /freshEnough_\(me\);/.test(check), 'behind: write down where the deck was, then reload past the cache by the one guarded path');
+  const note = app.slice(app.indexOf('function presResumeNote_'), app.indexOf('function presCheckBuild_'));
+  assert.ok(/i: S\.presI \|\| 0, secs: S\.presSecs \|\| 15, weekOf:/.test(note), 'the slide, the seconds and the week');
+  const start = app.slice(app.indexOf('function start(me)'), app.indexOf('/* ----------------------------------------------------------- table engine'));
+  assert.ok(/var resume = presResumeTake_\(\);\s*\n\s*if \(resume && allowed\('present'\)\)/.test(start), 'start() picks the note up');
+  assert.ok(/go\('present', resume\.weekOf \? \{ weekOf: resume\.weekOf \} : \{\}\);/.test(start), 'opens the present tab on the same week');
+  assert.ok(/presStart\(Math\.min\(Number\(resume\.i\) \|\| 0, S\.slides\.length - 1\)\);/.test(start), 'and presses Play on the same slide once the figures are in');
+  assert.ok(/else go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\);/.test(start), 'everybody else lands where they always did');
+  // The note is read ONCE: a reload that does not resume must not resume on the next sign-in.
+  const take = app.slice(app.indexOf('function presResumeTake_'), app.indexOf('function presRefetch'));
+  assert.ok(/sessionStorage\.removeItem\(PRES_RESUME_KEY\);/.test(take));
+});
+
+/* AND THE PORTAL ITSELF -- "all autofix at interfaces with no need to refresh nor logout". */
+test('an open portal tab checks the build on a timer and when it comes back into view, and reloads itself onto the same tab', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const watch = app.slice(app.indexOf('function buildWatch_'), app.indexOf('function viewResumeTake_'));
+  assert.ok(/if \(!S\.code \|\| !S\.me \|\| document\.hidden\) return;/.test(watch), 'signed in and in view, or nothing is asked');
+  assert.ok(/fetch\('\/api\/me\?code=' \+ encodeURIComponent\(S\.code\)\)/.test(watch));
+  assert.ok(/if \(pageBusy_\(\)\) return;/.test(watch), 'never under somebody\'s fingers');
+  assert.ok(/sessionStorage\.setItem\(VIEW_RESUME_KEY, JSON\.stringify\(\{ view: S\.view, args: S\.args \|\| \{\} \}\)\)/.test(watch)
+    && /freshEnough_\(me\);/.test(watch), 'notes the tab, reloads by the one guarded path');
+  const busy = app.slice(app.indexOf('function pageBusy_'), app.indexOf('function buildWatch_'));
+  assert.ok(/\/\^\(INPUT\|TEXTAREA\|SELECT\)\$\/\.test\(a\.tagName\)/.test(busy), 'a field in focus');
+  assert.ok(/bg\.style\.display === 'flex'/.test(busy), 'a drawer open');
+  assert.ok(/pres\.style\.display === 'block'/.test(busy), 'the deck playing -- it has its own check');
+  assert.ok(/el\.value \|\| ''\) !== \(el\.defaultValue \|\| ''\)/.test(busy), 'a form changed from how it was drawn');
+  const start = app.slice(app.indexOf('function start(me)'), app.indexOf('/* ----------------------------------------------------------- table engine'));
+  assert.ok(/setInterval\(buildWatch_, BUILD_WATCH_MS\);/.test(start), 'on a timer');
+  assert.ok(/if \(!document\.hidden\)\{ annCheck\(\); bellRefresh\(\); buildWatch_\(\); \}/.test(start), 'and when the tab comes back');
+  assert.ok(/var vres = viewResumeTake_\(\);\s*\n\s*if \(!impTab && vres && allowed\(vres\.view\)\) go\(vres\.view, vres\.args \|\| \{\}\);/.test(start),
+    'start() opens the tab the reload was taken from');
+  assert.ok(/var BUILD_WATCH_MS = 5 \* 60 \* 1000;/.test(app), 'every five minutes: one tiny read per open tab');
+});
+
+/* CLICKING A SECOND HEADER KEEPS THE FIRST SORT AS "THEN BY", LIKE EXCEL.
+   "When i sort table headers at dashboard orodha like by collection then by OPM, I expect that
+    to behave as excel: every opm will have descending collection ... its zigzag collection at
+    each opm". The header click threw the first sort away. */
+test('a header click demotes the sort you had to the second level instead of discarding it', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const wire = app.slice(app.indexOf('function wireTable'), app.indexOf('function wireTable') + 2500);
+  assert.ok(/if \(S\.sort===k\) S\.asc = !S\.asc;\s*\n\s*else \{ if \(S\.sort\) \{ S\.sort2 = S\.sort; S\.asc2 = S\.asc; \} S\.sort=k; S\.asc=false; \}/.test(wire),
+    'same header: turn it round; another header: the old sort and its direction become "then by"');
+  // The arithmetic, as the browser runs it: sorted by collection descending, then OPM clicked.
+  const S = { sort: 'collPct', asc: false, sort2: null, asc2: false,
+    cols: [{ key: 'opm', label: 'OPM', kind: 'text' }, { key: 'collPct', label: 'Col', kind: 'pct' }] };
+  const click = new Function('S', 'k', "if (S.sort===k) S.asc = !S.asc; else { if (S.sort) { S.sort2 = S.sort; S.asc2 = S.asc; } S.sort=k; S.asc=false; }");
+  click(S, 'opm');
+  assert.deepEqual([S.sort, S.asc, S.sort2, S.asc2], ['opm', false, 'collPct', false]);
+  const rows = [{ opm: 'A', collPct: 50 }, { opm: 'B', collPct: 90 }, { opm: 'A', collPct: 80 }, { opm: 'B', collPct: 60 }];
+  const cmp = (c, a, b, asc) => c.kind === 'pct' ? (asc ? a[c.key] - b[c.key] : b[c.key] - a[c.key])
+    : (asc ? (a[c.key] < b[c.key] ? -1 : a[c.key] > b[c.key] ? 1 : 0) : (a[c.key] > b[c.key] ? -1 : a[c.key] < b[c.key] ? 1 : 0));
+  const c1 = S.cols.find(c => c.key === S.sort), c2 = S.cols.find(c => c.key === S.sort2);
+  rows.sort((a, b) => cmp(c1, a, b, S.asc) || cmp(c2, a, b, S.asc2));
+  assert.deepEqual(rows.map(r => r.opm + r.collPct), ['B90', 'B60', 'A80', 'A50'], 'inside each OPM, collection still descends');
 });
 
 /* THE DAY-PROGRESS SLIDE: the three office units from the day's first upload to its latest,

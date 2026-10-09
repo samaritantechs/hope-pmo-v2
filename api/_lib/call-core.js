@@ -186,18 +186,27 @@ export function pseudoUser(cu) {
   const teams = !cu.is_leader ? (T(cu.team) ? [T(cu.team)] : null)
     : (!lt || !lt.length || lt.some(t => K(t) === 'ALL')) ? null
     : lt.map(T).filter(Boolean);
-  return { name: cu.name, role: cu.role, teams };
+  // `leader` rides along so scopeFor can tell a code's scope from a team-code officer's.
+  return { name: cu.name, role: cu.role, teams, leader: !!cu.is_leader };
 }
 /** pseudoUser, with the scope resolved against the registry -- "its the only case sensitive
     team Tunduru so we treat all team names sensitive to letter cases and spaces". A leader's
     leader_teams came off an access code a person typed, so TUNDURU on the code must reach the
     database as the Tunduru it is filed under. Off the role-column read the lists already make
     (one a minute per instance, shared by every handset), so a list pays nothing for it; the
-    strip, sync and the bell pay one small read a minute, written down in test/speed.test.mjs. */
+    strip, sync and the bell pay one small read a minute, written down in test/speed.test.mjs.
+    A LEADER'S TEAMS ARE THE CODE'S, LIVE -- see leaderTeamsLive_ -- not the copy registration
+    stored. */
 async function scopedUser(db, cu, nowMs) {
-  const u = pseudoUser(cu);
+  if (!cu || !cu.is_leader) {
+    const u = pseudoUser(cu);
+    if (!u.teams) return u;
+    const rows = await readTeamsAll(db, nowMs);
+    return { ...u, teams: registrySpellings(u.teams, rows) };
+  }
+  const [lt, rows] = await Promise.all([leaderTeamsLive_(db, cu, nowMs), readTeamsAll(db, nowMs)]);
+  const u = pseudoUser({ ...cu, leader_teams: lt });
   if (!u.teams) return u;
-  const rows = await readTeamsAll(db, nowMs);
   return { ...u, teams: registrySpellings(u.teams, rows) };
 }
 /** The rotation names people by the teams table's role columns, so holding one of those
@@ -259,8 +268,9 @@ async function boot(db, [dev], nowMs) {
   // The rotation check, off the teams read above rather than a second one of the same table.
   const me = K(cu.name);
   const expdfOwner = !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me);
-  // Asked the portal's way -- see callSystemAdmin_. Free for an ordinary officer.
-  const systemAdmin = await callSystemAdmin_(db, cu, nowMs);
+  // Asked the portal's way -- see callSystemAdmin_. Free for an ordinary officer. The leader's
+  // live scope comes off the same read, in the same breath (leaderTeamsLive_).
+  const [systemAdmin, lt] = await Promise.all([callSystemAdmin_(db, cu, nowMs), leaderTeamsLive_(db, cu, nowMs)]);
   return {
     ok: true,
     systemOpen,
@@ -289,7 +299,7 @@ async function boot(db, [dev], nowMs) {
     // whether this person ALSO has a list of their own to switch to.
     expdfLeader: true,
     expdfOwner,
-    leaderTeams: cu.is_leader ? (!cu.leader_teams || !cu.leader_teams.length ? 'ALL' : cu.leader_teams.join(',')) : '',
+    leaderTeams: cu.is_leader ? (!lt || !lt.length ? 'ALL' : lt.join(',')) : '',
     /* THE TEAM LIST, NARROWED TO WHAT THIS HANDSET MAY SEE.
        The unauthenticated branch above stopped publishing every team name years ago, and says
        why: "half of what made self-registration work: pick a team off the list, get its book."
@@ -299,10 +309,10 @@ async function boot(db, [dev], nowMs) {
        paid for on every boot, in exchange for nothing.
        A leader over named teams gets those; an all-teams leader legitimately gets all; an
        ordinary officer gets their own and no other. */
-    teams: (cu.is_leader && (!cu.leader_teams || !cu.leader_teams.length))
+    teams: (cu.is_leader && (!lt || !lt.length))
       ? teams
       : (cu.is_leader
-          ? teams.filter(t => (cu.leader_teams || []).some(x => K(x) === K(t)))
+          ? teams.filter(t => (lt || []).some(x => K(x) === K(t)))
           : teams.filter(t => K(t) === K(cu.team))),
     watermark: num(cu.last_ts),
     // From the same settings query as everything else above, not a sixth journey.
@@ -321,7 +331,8 @@ async function boot(db, [dev], nowMs) {
        for the phone index. Handing it to the phone costs nothing -- it comes from the same
        settings query as the brand and the sync interval -- and lets the device throw its cache
        away the instant the book behind it changes, rather than an hour later. */
-    dataVersion: setting('DATA_VERSION') || '',
+    dataVersion: handsetVersion_(setting('DATA_VERSION'),
+      cu.is_leader ? lt : (String(cu.team == null ? '' : cu.team).trim() ? [cu.team] : null)),
     /* CRISIS PREPAREDNESS -- the admin's switch for the offline pack. "national challenges of
        oct 29th 2025 when internet was shut down". OFF by default; when the setting says YES
        the handset shows its own download switch, and when the admin turns it off again every
@@ -777,22 +788,85 @@ function adminWithin_(p, ms, fallback) {
 async function adminTabsSource_(db, nowMs) {
   const at = nowMs || Date.now();
   const hit = adminLookupCache.get(db);
-  if (hit && (at - hit.at) < ADMIN_LOOKUP_TTL_MS) return hit.v;
-  const read = (async () => {
-    const [codes, roles] = await Promise.all([
-      fetchAll(() => db.from('access_codes').select('name, role, tabs')),
-      fetchAll(() => db.from('roles').select('role, tabs')),
-    ]);
-    const v = { codes: codes || [], roles: roles || [] };
-    // Stored on the way past, so a read that arrived LATE still serves the next boot rather
-    // than being thrown away for having missed this one.
-    adminLookupCache.set(db, { at: Date.now(), v });
-    return v;
-  })().catch(() => null);
+  if (hit && hit.v && (at - hit.at) < ADMIN_LOOKUP_TTL_MS) return hit.v;
+  /* IN FLIGHT ALREADY? SHARE IT. Boot asks this twice in the same breath -- the admin test and
+     the leader's live scope (leaderTeamsLive_) -- and two reads of the same two config tables
+     is one too many. Same shape as readTeamsAll. */
+  let read = hit && hit.pending;
+  if (!read) {
+    read = (async () => {
+      try {
+        const [codes, roles] = await Promise.all([
+          // `teams` rides along: it is what a leader's handset scope is read from, live.
+          fetchAll(() => db.from('access_codes').select('name, role, tabs, teams')),
+          fetchAll(() => db.from('roles').select('role, tabs')),
+        ]);
+        const v = { codes: codes || [], roles: roles || [] };
+        // Stored on the way past, so a read that arrived LATE still serves the next boot rather
+        // than being thrown away for having missed this one.
+        adminLookupCache.set(db, { at: Date.now(), v });
+        return v;
+      } catch (e) {
+        const h = adminLookupCache.get(db);
+        if (h && !h.v) adminLookupCache.delete(db);   // a failed read is not an answer to keep
+        return null;
+      }
+    })();
+    adminLookupCache.set(db, { at, pending: read });
+  }
   const v = await adminWithin_(read, ADMIN_LOOKUP_BUDGET_MS, null);
   // Only a real answer is memoised here; a timeout must not pin "not an admin" for a minute.
   if (v) return v;
   return { codes: [], roles: [] };
+}
+
+/* A LEADER'S SCOPE IS THE ACCESS CODE'S TEAMS -- AS THEY ARE NOW, NOT AS THEY WERE.
+   =====================================================================================
+     "CATHERINE27 is seeing other teams not assigned to CATHERINE27" ... "So i fear if thats
+      just a case study and the error is wide"
+
+   It was wide. A handset that registered with an access code copied the code's teams into
+   call_users.leader_teams ONCE, at registration, and every screen on the phone read that copy
+   for ever. Change the code in the portal and nothing reached the handset until the person
+   registered again -- which nobody is told to do. Every leader whose code has been edited since
+   they registered was on the wrong teams, and the one who noticed was the case study.
+
+   So the code is read live. The handset carries the leader's NAME (registration copies it off
+   the code), and the access codes are already read on the phone for the admin test -- one
+   config-sized table, remembered per database client for a minute and shared by every leader
+   on the instance (adminTabsSource_). Exactly one code carrying this name decides the scope,
+   null = ALL as everywhere. No code, or two codes with one name, keeps what registration
+   stored rather than guessing. An ordinary officer never reads it: they registered on a team
+   code and are not a leader.
+
+   RULE 1: an officer's boot, lists, sync and strip make no new read. A leader's boot already
+   paid this read for the admin test and now shares it; a leader's list or report pays the
+   same one small memoised read a minute at most. */
+/* THE VERSION A HANDSET COMPARES CARRIES THE SCOPE IT WAS ANSWERED FOR.
+     "I expect both the catherine type issue and presentation slides all autofix at interfaces
+      with no need to refresh nor logout"
+   The phone keeps its lists for an hour and drops them the moment the version it holds differs
+   from the one a sync or boot brings back (dropCacheIfStale_ in call.html). That version was
+   the upload stamp alone, so a scope that changed in the portal reached the phone only when the
+   next upload happened to land. The scope rides on the stamp now -- the teams, in capitals,
+   sorted, or ALL -- so the first sync after the code is edited (a few minutes at most) throws
+   the old list away and asks again, and nobody logs out or re-registers. Boot, sync and the
+   strip answer the SAME stamped string, or the strip would reload itself on every sync. Empty
+   stays empty: an older server, or nothing uploaded yet, is still read as "no version". */
+function handsetVersion_(base, teams) {
+  const b = String(base == null ? '' : base);
+  if (!b) return '';
+  const scope = teams && teams.length ? teams.map(K).filter(Boolean).sort().join(',') : 'ALL';
+  return b + '|' + scope;
+}
+
+async function leaderTeamsLive_(db, cu, nowMs) {
+  if (!cu || !cu.is_leader) return cu ? (cu.leader_teams || null) : null;
+  const src = await adminTabsSource_(db, nowMs);
+  const mine = (src.codes || []).filter(c => K(c.name) === K(cu.name));
+  if (mine.length !== 1) return cu.leader_teams || null;
+  const t = mine[0].teams;
+  return (Array.isArray(t) && t.length) ? t.slice() : null;
 }
 
 /** The portal's own admin test, run against what the handset knows. Exported for the test that
@@ -883,6 +957,12 @@ async function heldTeams(db, name, nowMs) {
     column on. null stays null -- that is "everything", and widening everything is meaningless. */
 export async function scopeFor(db, user) {
   if (!user.teams) return null;
+  /* NOT A LEADER. A handset that registered with an ACCESS code has its scope on that code, and
+     the owner's rule is that the code's teams are the ones that count -- the sheet must not
+     widen them ("CATHERINE27 is seeing other teams not assigned to CATHERINE27"). The widening
+     is for the handset that registered on a TEAM code: one home team, and the sheet the only
+     place its credit analyst's or recovery officer's real book is written down. */
+  if (user.leader) return user.teams;
   const held = await heldTeams(db, user.name);
   if (!held.length) return user.teams;
   const seen = new Set(user.teams.map(K));
@@ -1313,7 +1393,7 @@ async function summaryCompute(db, user, nowMs) {
        it has to know what it is holding: it stores this beside the numbers and asks again only
        when a sync reports a different one. Sent by the figures themselves rather than assumed
        by the caller, so the two can never drift apart. */
-    dataVersion: (await settingGet(db, 'DATA_VERSION')) || '',
+    dataVersion: handsetVersion_(await settingGet(db, 'DATA_VERSION'), user.teams),
   };
 }
 
@@ -1494,9 +1574,11 @@ async function sync(db, [dev, calls], nowMs) {
      number moves it, and it is part of the phone index's cache key below, so the index is
      never stale for the call the officer makes the minute after recording the number. */
   const vs = await settingsMany(db, ['DATA_VERSION', 'NEW_NUMBER_VERSION']);
-  const dataVersion = vs('DATA_VERSION') || '';
+  const rawVersion = vs('DATA_VERSION') || '';
+  // What the handset compares carries its scope (handsetVersion_); the index key stays the raw stamp.
+  const dataVersion = handsetVersion_(rawVersion, user.teams);
   if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
-  const byNum = await phoneIndex(db, nowMs, dataVersion + '|' + (vs('NEW_NUMBER_VERSION') || ''));
+  const byNum = await phoneIndex(db, nowMs, rawVersion + '|' + (vs('NEW_NUMBER_VERSION') || ''));
   const records = [];
   const seenBatch = {};
   let pf = 0, npf = 0, batchDup = 0;
@@ -1868,15 +1950,20 @@ async function report(db, [dev, from, to, team, leader], nowMs) {
   const teamRows = await readTeamsAll(db);
   const { teamsOf, posOf } = buildLeaderMaps(teamRows);
   const live = Object.keys(teamsOf[K(cu.name)] || {});
-  const lt = cu.leader_teams;
-  /* THE ACCESS CODE'S TEAMS FIRST, the sheet's only for a leader whose code names none.
-     leader_teams came off the access code the leader typed at registration, and the owner's
-     rule is that those are the ones that count ("the teams i set in access codes are the
-     ones correct"). This read the sheet FIRST and the code only when the sheet named nobody,
-     which is the same fault the portal's report had -- see reportCoreForPortal. A code that
-     says ALL, or a leader registered without one, still reads the sheet's teams as before. */
-  const explicit = lt && lt.length && !lt.some(t => K(t) === 'ALL') ? lt : null;
-  const full = explicit || (live.length ? live : null);
+  /* THE ACCESS CODE'S TEAMS FIRST -- as the code reads NOW (leaderTeamsLive_), not the copy
+     registration stored -- and the sheet's only for a leader whose code names none. The
+     owner's rule is that the code's teams are the ones that count ("the teams i set in access
+     codes are the ones correct"). This read the sheet FIRST and the code only when the sheet
+     named nobody, which is the same fault the portal's report had -- see reportCoreForPortal.
+     A code that says ALL, or a leader registered without one, still reads the sheet's teams as
+     before. Registry spellings, so the Team dropdown says Tunduru the way the book does. */
+  const lt = await leaderTeamsLive_(db, cu, nowMs);
+  const explicit = lt && lt.length && !lt.some(t => K(t) === 'ALL') ? registrySpellings(lt, teamRows) : null;
+  /* AN ALL CODE IS ALL, here as on the lists. The sheet used to NARROW an all-teams leader's
+     report to the teams it named them on, so the same handset showed the whole book on its
+     lists and a slice of it on Ripoti. The code decides on every screen; the sheet's teams
+     are no longer a scope on this one. */
+  const full = explicit;
 
   // The list that fills the Team dropdown on the phone: every team this leader is allowed to
   // look at. A leader who sees ALL gets every team on the books; anyone else gets only theirs.

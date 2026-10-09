@@ -4481,7 +4481,8 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
      The plan's whole point is that the small book does not flatter anybody. */
   const rows = [];
   for (let i = 0; i < 9; i++) rows.push(X('KONGOWE', TODAY, 'PAID'));
-  rows.push(X('KONGOWE', TODAY, 'UNPAID'));
+  // KAMARIA's one unpaid customer is on their second instalment: Count 1 (leo) = 1.
+  rows.push({ ...X('KONGOWE', TODAY, 'UNPAID'), due_summary: '1-6' });
   rows.push(X('MBAGALA', TODAY, 'PAID'));
   rows.push(X('MBAGALA', TODAY, 'UNPAID'));
 
@@ -4493,10 +4494,14 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   assert.equal(k.teams, 1);
   assert.equal(k.pct, 90);
   assert.equal(k.uncollected, 1000);
+  /* "between Teams and J3 columns on the PMO Collection (Todays collection) table ... add
+     count 1 column too (always the count 1 left of the current day)" */
+  assert.equal(k.count1, 1, 'today\'s one unpaid customer at D.S 1-6');
 
   const c = b.pmo.find(r => r.officer === 'CATHERINE');
   assert.equal(c.pct, 50);
   assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
+  assert.equal(c.count1, 0, 'her unpaid customer carries no D.S: nought, not unknown');
 
   /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
      future slide cannot include it by reaching for a field that happened to be there.
@@ -4516,7 +4521,7 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
      the slide's JUMLA cell under a day is collected over expected across the officers, never
      the mean of their percentages ("not average of the above percentages"). */
   assert.deepEqual(Object.keys(k).sort(),
-    ['officer', 'pct', 'sn', 'teams', 'uncollected', 'weekPct', 'weekUncollected',
+    ['officer', 'pct', 'sn', 'teams', 'count1', 'uncollected', 'weekPct', 'weekUncollected',
      'weekCollected', 'weekExpected',
      'pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ',
      'colJ3', 'colJ4', 'colJ5', 'colAL', 'colIJ',
