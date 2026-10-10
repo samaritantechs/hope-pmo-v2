@@ -1518,3 +1518,20 @@ test('the presentation fits every slide to the screen after every draw and on re
   const slides = app.slice(app.indexOf("slides.push({ id:'calls'"), app.indexOf("slides.push({ id:'credit'"));
   assert.ok(/rows: callRows,/.test(slides) && !/callRows\.slice/.test(slides), 'every officer of the three units stays on the slide');
 });
+
+/* THE DEMAND NOTICE'S NUMBER AND ITS PAGE COUNT, FROM THE PORTAL'S SIDE.
+   "the legal phone number should be the one used at current login": the three Legal calls
+   carry the HOPE Calls device id found beside the page (the app's bridge, or the call app's
+   hcDev in the same browser), and nothing else does. "Some demands still put the maelezo
+   table on second page": the print frame fits the letter right before the dialog opens. */
+test('the Legal calls send the handset id, and the print frame fits the letter before printing', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(/function hcDevice_\(\)\{[\s\S]*?localStorage\.getItem\('hcDev'\)/.test(app), 'the call app\'s own key, same origin');
+  assert.ok(/srv\('demandNotices', \{ device: hcDevice_\(\) \}\)/.test(app));
+  assert.ok(/srv\('demandNoticePrint', \{ id: id, device: hcDevice_\(\) \}\)/.test(app));
+  assert.ok(/srv\('addDemandNotice', \{[^}]*device: hcDevice_\(\) \}\)/.test(app));
+  assert.equal((app.match(/hcDevice_\(\)/g) || []).length, 4, 'its definition and the three Legal calls only -- never as authority anywhere else');
+  const print = app.slice(app.indexOf('function printHtml'), app.indexOf('/* ILIYONASIA -- the manual'));
+  assert.ok(/if \(f\.contentWindow\.hopeFit\) f\.contentWindow\.hopeFit\(\);/.test(print), 'fitted with every image in, right before print()');
+  assert.ok(print.indexOf('hopeFit') < print.indexOf('f.contentWindow.print()'), 'and before, not after');
+});
