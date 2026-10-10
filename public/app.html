@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-09-m';
+var BUILD = '2026-10-10-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6309,7 +6309,7 @@ VIEWS.legal = function(){
           + [br.logo ? '' : 'nembo / logo', br.stamp ? '' : 'muhuri wa kampuni / company stamp', br.sign ? '' : 'sahihi / signature'].filter(Boolean).join(', ')
           + '. Admin: weka kupitia viungo hapo juu. / The letter prints WITHOUT it until an admin sets it through the links above.</div>')
       + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>'
-        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuchapisha tena barua ile ile. / Tap a row to reprint the same letter.'
+        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuona maelezo ya notisi na kuchapisha. / Tap a row for the notice\'s details and to print it.'
         + ' · PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).</span>');
     S.rows = d.rows;
     S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
@@ -6341,7 +6341,11 @@ VIEWS.legal = function(){
       col('issued_by','Issued by')];
     /* "demand retrival": a row is the letter it was printed from -- the same one again, off
        the register (db/RUN-ME-040), with the company's current images. */
-    ONROW = function(r){ lgPrint(r.id); };
+    /* A ROW IS A NOTICE, AND A TAP OPENS IT -- "When demand row clicked, shouldnt open the doc
+       but put show details pane and print as an option". Everything the register knows about
+       the notice first; the print is a button on the pane, so a touch on a phone no longer
+       fires the print dialog before anybody has read what they tapped. */
+    ONROW = function(r){ lgDetails(r); };
     S.foot = 'Demanded: TZS '+money(d.demanded)+' · of which fines: TZS '+money(d.fines)
       + (d.paymentsOn ? ' · paid since notice: TZS '+money(d.paidSince) : '');
   });
@@ -6442,6 +6446,44 @@ function lgPrint(id){
     else toast('PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).');
     printHtml(p.html);
   }).catch(function(err){ toast(String(err.message||err), true); });
+}
+/* THE DETAILS PANE -- "When demand row clicked, shouldnt open the doc but put show details pane
+   and print as an option". Everything the register row carries, read in two columns: the
+   notice as served (reference, dates, days, the demand and its parts) and what has happened
+   since (arrears now, paid since, payments and how they were matched, recovered, status).
+   Print is a button at the bottom, with the Save-as-PDF note beside it. */
+function lgDetails(r){
+  var row = function(k, v, strong){
+    return '<div class="frow"><span>'+k+'</span>'+(strong ? '<b>'+v+'</b>' : '<span>'+v+'</span>')+'</div>'; };
+  var d = function(v){ return v ? esc(String(v).slice(0,10)) : '—'; };
+  var m = function(v){ return v == null ? '—' : money(v); };
+  var paidLine = r.paid_since == null ? '— (RUN-ME-041)'
+    : money(r.paid_since)
+      + (r.paid_n != null ? ' · malipo / payments ' + r.paid_n : '')
+      + (r.paid_n_phone != null ? ' (kwa simu / by phone ' + r.paid_n_phone + ')' : '')
+      + (r.last_paid ? ' · mwisho / last ' + d(r.last_paid) : '');
+  drawer('<h3>'+esc(r.notice_id||'')+'</h3>'
+    + '<div class="sub">'+esc(r.full_name||'')+' · REF# '+esc(r.ref||'')+' · '+esc(r.team||'')+(r.branch ? ' ('+esc(r.branch)+')' : '')+'</div>'
+    + '<div class="facts">'
+    + row('Simu / Contact', esc(r.contact||'—'))
+    + row('Tarehe ya notisi / Notice date', d(r.notice_date) + ' · siku / days ' + esc(r.notice_days == null ? '—' : r.notice_days))
+    + row('Marejesho / Paid (of 12)', esc(r.paid_count == null ? '—' : r.paid_count))
+    + row('Faini / Fine', m(r.fine))
+    + row('Deni la msingi / Principal left', m(r.principal_remaining))
+    + row('Jumla ya madai / Total demand', m(r.total_demand), true)
+    + row('Deni wakati wa notisi / At notice', m(r.arrears_at_notice))
+    + row('Deni sasa / Current', m(r.arrears_now))
+    + row('Limepungua / Arrears down', m(r.arrears_down))
+    + row('Kimelipwa tangu notisi / Paid since', paidLine)
+    + row('Kimerejeshwa / Recovered', m(r.recovered_since), true)
+    + row('Hali / Status', esc(r.notice_state||'—'))
+    + row('Imetolewa na / Issued by', esc(r.issued_by||'—') + (r.created_at ? ' · ' + d(r.created_at) : ''))
+    + row('Barua / Letter', r.letter_kept ? 'imehifadhiwa na rejista / kept with the register' : 'ya zamani — itajengwa upya kutoka deki ya sasa / old — rebuilt from today\'s deck')
+    + '</div>'
+    + '<button class="btn w" id="lgDoPrint">Chapisha / Print</button>'
+    + '<div class="sub">PDF: kwenye dirisha la kuchapisha chagua “Save as PDF” (kompyuta); faili huitwa jina la mteja.'
+    + ' / PDF: in the print dialog choose “Save as PDF” (computer); the file is named after the customer.</div>');
+  $('#lgDoPrint').onclick = function(){ lgPrint(r.id); };
 }
 /* Opened as a document rather than downloaded: the officer prints it or saves it as PDF from
    the browser's own print dialog, which is what produced the letter in v1 too. */
