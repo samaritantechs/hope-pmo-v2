@@ -42,7 +42,7 @@ const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchLis
 import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } from './recovery.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport } from './expdf.js';
 
@@ -11764,35 +11764,39 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const unitOf = name => unitBy[K(name)] || null;
 
   function callBoard(from, to) {
+    /* THE SAME RULE AS RIPOTI AND THE CALLS TAB -- callRollupRows in call-core.js, the one
+       definition of what a call is: a number rung is one call per day however many times it
+       was dialled, talk time is portfolio talk time, and the dials ride beside the figures
+       unscored. Keyed by the officer's NAME, which is what this board is drawn by. */
+    const nameOf = c => String(c.officer || '(unknown)').trim() || '(unknown)';
+    const inRange = myCalls.filter(c => { const d = String(c.call_date || '').slice(0, 10); return d && d >= from && d <= to; });
+    const rollBy = {};
+    for (const r of callRollupRows(inRange, nameOf)) (rollBy[r.user_id] || (rollBy[r.user_id] = [])).push(r);
     const m = {};
-    for (const c of myCalls) {
-      const d = String(c.call_date || '').slice(0, 10);
-      if (!d || d < from || d > to) continue;
-      const b = bucket(m, String(c.officer || '(unknown)').trim() || '(unknown)',
-        { calls: 0, duration: 0, portfolio: 0, connected: 0, customers: {}, team: c.team || '' });
-      b.calls++; b.duration += num(c.duration);
-      if (c.portfolio) { b.portfolio++; b.customers[String(c.ref || c.phone)] = 1; }
-      if (K(c.outcome) === 'CONNECTED' || !c.outcome) b.connected++;
+    for (const c of inRange) {
+      const b = bucket(m, nameOf(c), { team: c.team || '' });
+      if (!b.team) b.team = c.team || '';
     }
     for (const u of myPhoneUsers) {
       if (u.active === false) continue;
       const name = String(u.name || '').trim();
       if (!name) continue;
-      const b = bucket(m, name, { calls: 0, duration: 0, portfolio: 0, connected: 0, customers: {}, team: u.team || '' });
+      const b = bucket(m, name, { team: u.team || '' });
       if (!b.team) b.team = u.team || '';
     }
-    return Object.values(m).map(b => ({ agent: b.key, team: b.team, calls: b.calls, duration: b.duration,
-      portfolio: b.portfolio, customers: Object.keys(b.customers).length,
-      /* WHICH OF THE THREE PMO UNITS THIS PERSON BELONGS TO, or null for everybody else.
-         "For the presentation slides am interested in the 3 PMO department's Units (expected,
-         collection and recovery officers - show only those for busiest and least active ones)"
+    return Object.values(m).map(b => {
+      const t = callTotals(rollBy[b.key] || []);
+      return { agent: b.key, team: b.team, ...t,
+        /* WHICH OF THE THREE PMO UNITS THIS PERSON BELONGS TO, or null for everybody else.
+           "For the presentation slides am interested in the 3 PMO department's Units (expected,
+           collection and recovery officers - show only those for busiest and least active ones)"
 
-         Attached here rather than worked out at the screen: the slide would otherwise have to
-         re-derive it from the teams table it does not hold, and a second derivation of "who is
-         a recovery officer" is a second answer that can disagree with the boards above. */
-      unit: unitOf(b.key),
-      connectPct: pctOf(b.connected, b.calls), portfolioPct: pctOf(b.portfolio, b.calls) }))
-      .sort((a, b) => b.calls - a.calls);
+           Attached here rather than worked out at the screen: the slide would otherwise have to
+           re-derive it from the teams table it does not hold, and a second derivation of "who is
+           a recovery officer" is a second answer that can disagree with the boards above. */
+        unit: unitOf(b.key),
+        connectPct: pctOf(t.connected, t.calls), portfolioPct: pctOf(t.portfolio, t.calls) };
+    }).sort((a, b) => b.calls - a.calls);
   }
   const callToday = callBoard(today, today);
   const callWeek = callBoard(mon, sun);

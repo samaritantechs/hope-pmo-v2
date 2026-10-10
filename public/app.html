@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-10-a';
+var BUILD = '2026-10-10-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6093,12 +6093,21 @@ VIEWS.calls = function(){
   return srv('callReport', {from:from, to:to, leader:S.args.leader||'', team:S.args.team||'',
                             user:S.args.user||''}).then(function(d){
     var t=d.totals;
+    /* THE CALL COUNTING RULE (call-core.js, callRollupRows): a call is a NUMBER rung, once per
+       day however many times it was dialled, and talk time is PORTFOLIO talk time. The dials
+       and the other talk are shown beside the figures, in grey, so the pattern the rule
+       exists for -- redial one unreachable number all morning, then chat for an hour on a
+       number off the book -- is there to see and scores nothing. */
     HEAD = '<div class="kpis">'
-      + kpi('Calls', money(t.calls), d.from+' → '+d.to)
-      + kpi('Talk time', fmtDur(t.duration))
+      + kpi('Calls', money(t.calls), 'numbers rung · ' + money(t.dials) + ' dials · ' + d.from+' → '+d.to)
+      + kpi('Talk time', fmtDur(t.duration), 'portfolio only · other talk ' + fmtDur(t.otherDuration))
       + kpi('Portfolio', money(t.portfolio), Math.round(100*(t.ratio||0))+'% of calls', 'good')
       + kpi('Non-portfolio', money(t.nonPortfolio))
+      + kpi('Reached', money(t.connected), t.calls ? Math.round(100*t.connected/t.calls)+'% of numbers' : '')
       + '</div>'
+      + (d.rule ? '<div class="note">' + esc(d.rule) + '</div>' : '')
+      + (d.ruleNote ? '<div class="note bad">' + esc(d.ruleNote) + '</div>' : '')
+      + (d.prunedNote ? '<div class="note bad">' + esc(d.prunedNote) + '</div>' : '')
       /* SORT BY A LEADER, NOT ONLY BY A TEAM. A leader holds several teams, and "how is this
          person's book doing" meant picking their teams out of a forty-line list one at a time
          and adding the answers up by hand. Naming them scopes the whole report to exactly the
@@ -6135,21 +6144,23 @@ VIEWS.calls = function(){
       // Category and outcome answer different questions and carry different columns, so they
       // are two boards side by side rather than one shared shape.
       + '<div class="pair">'
-      + board('clCat','Kwa aina / By category', 'what the calls were about', d.byCategory||[],
-          [col('category','Category'), col('calls','Calls','num'), col('duration','Talk time','dur'),
-           col('connected','Connected','num'),
-           {key:'connectRatio', label:'Connected %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }}],
-          sumRow(d.byCategory||[], ['calls','duration','connected']))
-      + board('clOut','Kwa matokeo / By outcome', 'what happened on the call', d.byOutcome||[],
-          [col('outcome','Outcome'), col('calls','Calls','num'), col('duration','Talk time','dur')],
-          sumRow(d.byOutcome||[], ['calls','duration']))
+      + board('clCat','Kwa aina / By category', 'numbers rung, what they were about, how many were reached', d.byCategory||[],
+          [col('category','Category'), col('calls','Calls','num'), col('dials','Dials','num'), col('duration','Talk time','dur'),
+           col('connected','Reached','num'),
+           {key:'connectRatio', label:'Reached %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }}],
+          sumRow(d.byCategory||[], ['calls','dials','duration','connected']))
+      /* Outcomes belong to DIALS, not calls: the same number can be missed four times and
+         reached once, so this board counts attempts and says so in its heading. */
+      + board('clOut','Kwa matokeo / By outcome', 'what happened on each dial', d.byOutcome||[],
+          [col('outcome','Outcome'), col('dials','Dials','num'), col('duration','Talk time','dur')],
+          sumRow(d.byOutcome||[], ['dials','duration']))
       + '</div>'
       + board('clTeam','Kwa timu / By team', 'portfolio vs non-portfolio per team', d.teams||[],
-          [col('branch','Branch'), col('team','Team'), col('calls','Calls','num'), col('duration','Talk time','dur'),
+          [col('branch','Branch'), col('team','Team'), col('calls','Calls','num'), col('dials','Dials','num'), col('duration','Talk time','dur'),
            {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
            col('nonPortfolio','Non-portfolio','num'),
            {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }}],
-          sumRow(d.teams||[], ['calls','duration','portfolio','nonPortfolio']))
+          sumRow(d.teams||[], ['calls','dials','duration','portfolio','nonPortfolio']))
       /* THE DAY-BY-OFFICER BOARD AND THE FULL OFFICER LIST ARE GONE FROM HERE.
 
            "having the whole list on font end is tooo long"
@@ -6170,15 +6181,16 @@ VIEWS.calls = function(){
        Before that the page is the summaries and the search, and nothing else. */
     S.rows = d.user ? d.users : [];
     S.cols = [col('name','Officer'), col('branch','Branch'), col('team','Team'), col('position','Position'), col('calls','Calls','num'),
-      col('duration','Talk time','dur'),
+      col('dials','Dials','num'), col('duration','Talk time','dur'), col('otherDuration','Other talk','dur'),
       {key:'portfolio', label:'Portfolio', kind:'num', cls:function(){ return 'good'; }},
       col('nonPortfolio','Non-portfolio','num'),
       {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }},
       col('expected','Expected','num'), col('defaulter','Defaulter','num'),
-      {key:'connectRatio', label:'Connected %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }},
+      col('connected','Reached','num'),
+      {key:'connectRatio', label:'Reached %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }},
       col('uniqCustomers','Customers','num'), col('days','Days','num')];
     ONROW = null;
-    S.foot = money(t.calls)+' calls · '+fmtDur(t.duration)+' talk time · '
+    S.foot = money(t.calls)+' calls ('+money(t.dials)+' dials) · '+fmtDur(t.duration)+' portfolio talk time · '
       + money(t.portfolio)+' portfolio ('+Math.round(100*(t.ratio||0))+'%)';
   });
 };
@@ -10094,13 +10106,15 @@ function presSlides(){
        people (picked from the worst end); .reverse() only prints them high-to-low, so the
        whole 12-row slide descends continuously from busiest to quietest and the S/N reads as
        one ranking. The 'Least active' label in the left column is what marks the second half. */
+    /* Under the call counting rule (call-core.js): Calls are numbers rung, once per day; the
+       dials sit beside them so a redialler is visible; talk time is portfolio talk time. */
     slides.push({ id:'calls', kind:'table',
-      title:'HOPE Calls — busiest first'
+      title:'HOPE Calls — busiest first (namba, si majaribio / numbers rung, not dials)'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),
       rows: callRows,
       cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest' ? 'good' : r.end==='Least active' ? 'bad' : ''; } },
-        col('agent','Officer'), col('unit','Unit'), col('team','Team'), col('calls','Calls','num'),
-        col('duration','Talk time','dur'), col('portfolio','Portfolio','num'), col('connectPct','Connected %','pct')] });
+        col('agent','Officer'), col('unit','Unit'), col('team','Team'), col('calls','Calls','num'), col('dials','Dials','num'),
+        col('duration','Portfolio talk','dur'), col('portfolio','Portfolio','num'), col('connectPct','Reached %','pct')] });
     slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
       cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
         col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });

@@ -2257,13 +2257,14 @@ function drawReports(){
   if (role && !roleCount[role]) role = '';               // a role that vanished with a new range resets quietly
   var users = role ? usersAll.filter(function(u){ return K_(String(u.position || 'Officer')) === role; }) : usersAll;
   // Totals follow the group: server totals for everybody, recomputed in hand for one role.
-  var t = d.totals || {calls:0,duration:0,portfolio:0,nonPortfolio:0,ratio:0};
+  var t = d.totals || {dials:0,calls:0,duration:0,otherDuration:0,portfolio:0,nonPortfolio:0,connected:0,ratio:0};
   if (role) {
     t = users.reduce(function(a, u){
-      a.calls += u.calls || 0; a.duration += u.duration || 0;
-      a.portfolio += u.portfolio || 0; a.nonPortfolio += u.nonPortfolio || 0;
+      a.dials += u.dials || 0; a.calls += u.calls || 0;
+      a.duration += u.duration || 0; a.otherDuration += u.otherDuration || 0;
+      a.portfolio += u.portfolio || 0; a.nonPortfolio += u.nonPortfolio || 0; a.connected += u.connected || 0;
       return a;
-    }, { calls: 0, duration: 0, portfolio: 0, nonPortfolio: 0 });
+    }, { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0 });
     t.ratio = t.calls ? t.portfolio / t.calls : 0;
   }
   // The category chips are the SCOPE's aggregates; shown only for the whole scope, where they
@@ -2271,6 +2272,13 @@ function drawReports(){
   var cats = role ? [] : (d.byCategory || []).filter(function(c){ return c.category === 'EXPECTED' || c.category === 'DEFAULTER'; });
   body.innerHTML =
     '<div class="hint" style="color:var(--soft);font-size:11px;margin-bottom:8px">Wigo / Scope: ' + esc(scopeTxt) + ' \u00B7 Timu yako / Your team: ' + esc(d.debugHomeTeam||'\u2014') + '</div>'
+    /* THE CALL COUNTING RULE, said where the figures are: a number rung is one call per day
+       however many times it was dialled (the dials are shown beside it), and talk time is
+       portfolio talk time. The server states the rule (d.rule) and says when the database is
+       still counting dials (d.ruleNote), so nobody reads one figure as the other. */
+    + (d.rule ? '<div class="hint" style="color:var(--soft);font-size:11px;margin-bottom:8px">' + esc(d.rule) + '</div>' : '')
+    + (d.ruleNote ? '<div class="hint" style="color:var(--bad);font-size:11px;margin-bottom:8px">' + esc(d.ruleNote) + '</div>' : '')
+    + (d.prunedNote ? '<div class="hint" style="color:var(--bad);font-size:11px;margin-bottom:8px">' + esc(d.prunedNote) + '</div>' : '')
     + '<div class="rangebar"><input type="date" id="repFrom" value="' + S.repFrom + '"><input type="date" id="repTo" value="' + S.repTo + '">'
     + '<select id="repTeam"><option value="">Timu zote</option>'
     + (d.teamChoices || []).map(function(tm){
@@ -2282,11 +2290,14 @@ function drawReports(){
           + esc(roleLabel[k]) + ' (' + money(roleCount[k]) + ')</option>';
       }).join('') + '</select></div>'
     + '<div class="kpis">'
-    + '<div class="kpi"><div class="k-l">Simu / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
-    + '<div class="kpi"><div class="k-l">Muda / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Simu (namba) / Calls</div><div class="k-v">' + money(t.calls) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Majaribio / Dials</div><div class="k-v" style="color:var(--soft)">' + money(t.dials) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Muda wa portfolio / Talk time</div><div class="k-v">' + fmtDur(t.duration) + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Muda mwingine / Other talk</div><div class="k-v" style="color:var(--soft)">' + fmtDur(t.otherDuration) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Portfolio</div><div class="k-v" style="color:var(--ok)">' + money(t.portfolio) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Nje ya portfolio</div><div class="k-v">' + money(t.nonPortfolio) + '</div></div>'
     + '<div class="kpi"><div class="k-l">% ya portfolio</div><div class="k-v">' + (t.calls ? pct(t.ratio) : '—') + '</div></div>'
+    + '<div class="kpi"><div class="k-l">Walipatikana / Reached</div><div class="k-v">' + money(t.connected) + (t.calls ? ' <span style="color:var(--soft);font-size:12px">' + pct(t.connected / t.calls) + '</span>' : '') + '</div></div>'
     + '</div>'
     + (cats.length ? '<div style="display:flex;gap:8px;margin:2px 0 12px;flex-wrap:wrap">' + cats.map(function(c){
         return '<span class="chip" style="font-size:11.5px">' + esc(CALL_CAT_LABEL_[c.category] || c.category) + ': ' + money(c.calls) + ' \u00B7 ' + pct(c.connectRatio) + ' walipatikana</span>';
@@ -2312,7 +2323,11 @@ function drawReports(){
     + sortReportRows_(users).map(function(u){
         var oHref = telHref(u.phone);
         return '<tr><td>' + esc(u.name) + '<div style="color:var(--soft);font-size:10.5px">' + esc(u.team) + (u.position ? ' - ' + esc(u.position) : '') + '</div></td>'
-          + '<td class="r">' + money(u.calls) + '</td><td class="r">' + fmtDur(u.duration) + '</td>'
+          /* Calls are numbers rung; the dials sit under them in grey so a column of 12 calls
+             from 60 dials reads as what it is. Talk time is portfolio talk time; the other
+             talk sits under it the same way. */
+          + '<td class="r">' + money(u.calls) + '<div style="color:var(--soft);font-size:10px">' + money(u.dials) + ' maj.</div></td>'
+          + '<td class="r">' + fmtDur(u.duration) + (u.otherDuration ? '<div style="color:var(--soft);font-size:10px">+' + fmtDur(u.otherDuration) + '</div>' : '') + '</td>'
           + '<td class="r" style="color:var(--ok)">' + money(u.expected) + '</td><td class="r">' + money(u.defaulter) + '</td>'
           + '<td class="r" style="color:var(--soft)">' + money(u.nonPortfolio) + '</td>'
           + '<td class="r"' + (u.calls && u.ratio < 0.5 ? ' style="color:var(--bad)"' : '') + '>' + (u.calls ? pct(u.ratio) : '—') + '</td>'

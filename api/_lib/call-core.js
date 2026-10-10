@@ -262,7 +262,11 @@ async function boot(db, [dev], nowMs) {
   if (!cu) return { ok: false, error: accountOff ? 'ACCOUNT_OFF' : 'DEVICE_NOT_REGISTERED',
     teams: [], brand, motto: APP.MOTTO, logo, systemOpen };
   const today = todayKey(nowMs);
-  const logs = await fetchAll(() => db.from('call_logs').select('duration, portfolio').eq('user_id', cu.user_id).eq('call_date', today));
+  /* THE PHONE'S OWN DAY, under the same rule as every board (callRollupRows): numbers rung,
+     not dials; portfolio talk time. Two columns more on a read the boot already makes -- the
+     number, so a redial can be told from a call, and the outcome, so the day says how many
+     were reached. NO new read: one officer's day is a handful of rows. */
+  const logs = await fetchAll(() => db.from('call_logs').select('phone, duration, portfolio, outcome').eq('user_id', cu.user_id).eq('call_date', today));
   const syncSec = parseInt(setting('CALL_SYNC_SECONDS'), 10);
   const logoutSetting = K(setting('CALL_LOGOUT_ENABLED'));
   // The rotation check, off the teams read above rather than a second one of the same table.
@@ -341,11 +345,7 @@ async function boot(db, [dev], nowMs) {
     offlinePack: ['YES', 'TRUE', '1', 'ON'].includes(K(setting('OFFLINE_PACK'))),
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
-    today: {
-      calls: logs.length,
-      duration: logs.reduce((s, r) => s + num(r.duration), 0),
-      portfolio: logs.filter(r => !!r.portfolio).length,
-    },
+    today: callTotals(callRollupRows(logs, () => cu.user_id)),
   };
 }
 
@@ -1767,6 +1767,101 @@ export function positionOf(posOf, name, role) {
 const categoryOf = r => (!r.portfolio ? 'OTHER' : (K(r.category) === 'EXPECTED' || K(r.category) === 'DEFAULTER') ? K(r.category) : 'UNCATEGORIZED');
 const outcomeOf = r => { const o = K(r.outcome); return (o === 'MISSED' || o === 'REJECTED' || o === 'BLOCKED') ? o : 'CONNECTED'; };
 
+/* =====================================================================================
+   THE CALL COUNTING RULE -- one definition; every figure in the system is read off it.
+   =====================================================================================
+   "there is a spreading rumor that's real, it has happened in pmo, and I believe it's in
+    teams too.. when a staff finds an unreachable contact they redial that contact too much
+    then find their one portfolio or non portfolio call to talk for so long to balance the
+    counts and duration ... counting duration of portfolio calls only since we emphasize
+    portfolio calls ... our objective is to reach more customers and guarantors."
+
+   Two figures were being gamed, so both change:
+
+     A CALL IS A NUMBER, NOT A DIAL. Per officer, per day, a number counts once however many
+     times it was rung: five redials of one unreachable customer are one call. The raw
+     attempts stay beside the figures as DIALS, so the pattern is there to see, but nothing
+     is scored on them.
+
+     TALK TIME IS PORTFOLIO TALK TIME. Minutes spent on a number that is not a customer or a
+     guarantor on the officer's book are shown apart as other talk and never added in.
+
+   The grain is (day, officer, team-as-filed, category): a number is distinct within that.
+   call_report_rollup (db/RUN-ME-042) counts it in the database as 'd' rows; callRollupRows
+   below is the same counting in JavaScript, for the row fallback, the deck's call boards and
+   the handset's own day -- so the phone, Ripoti, the Calls tab and the presentation cannot
+   disagree about what a call is. The agreement test (test/call.test.mjs) holds the fake
+   database's transcription of the SQL to this function, row for row. */
+export const CALL_RULE_TXT = 'Simu = namba moja kwa siku, hata ikipigwa mara nyingi (majaribio yanaonyeshwa pembeni). '
+  + 'Muda = simu za portfolio pekee. / A call is one number per day however many times it was dialled '
+  + '(dials are shown beside it). Talk time counts portfolio calls only.';
+/** The three kinds of row call_report_rollup returns, built from call rows. `keyOf` names the
+    officer a row belongs to (user_id by default; the deck's boards key by name). */
+export function callRollupRows(logs, keyOf = r => r.user_id) {
+  const g = new Map(), d = new Map(), u = new Map();
+  for (const r of logs || []) {
+    const k0 = keyOf(r), key = k0 == null ? null : String(k0);
+    const day = String(r.call_date == null ? '' : r.call_date).slice(0, 10);
+    const team = r.team == null ? null : String(r.team);
+    const pf = !!r.portfolio, cat = categoryOf(r), outc = outcomeOf(r);
+    const dur = num(r.duration), phone = String(r.phone == null ? '' : r.phone);
+    const gk = [day, key, team, cat, outc].join('\u0001');
+    let gr = g.get(gk);
+    if (!gr) g.set(gk, gr = { kind: 'g', day, user_id: key, team, category: cat, outcome: outc, portfolio: pf, calls: 0, dur: 0, uniq: null });
+    gr.calls += 1; gr.dur += dur;
+    const dk = [day, key, team, cat].join('\u0001');
+    let dr = d.get(dk);
+    if (!dr) d.set(dk, dr = { row: { kind: 'd', day, user_id: key, team, category: cat, outcome: null, portfolio: pf, calls: 0, dur: 0, uniq: 0 }, nums: new Set(), reached: new Set() });
+    dr.row.dur += dur; dr.nums.add(phone);
+    if (outc === 'CONNECTED') dr.reached.add(phone);
+    if (pf) {
+      let s = u.get(key);
+      if (!s) u.set(key, s = new Set());
+      s.add(String((r.ref != null && String(r.ref) !== '') ? r.ref : phone));
+    }
+  }
+  return [...g.values()]
+    .concat([...d.values()].map(x => ({ ...x.row, calls: x.nums.size, uniq: x.reached.size })))
+    .concat([...u.entries()].map(([uid, s]) =>
+      ({ kind: 'u', day: null, user_id: uid, team: null, category: null, outcome: null, portfolio: null, calls: 0, dur: 0, uniq: s.size })));
+}
+/** Rollup rows added up into one set of figures under the rule: dials beside calls, portfolio
+    talk time apart from other talk, numbers reached, distinct customers. */
+export function callTotals(roll) {
+  const t = { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0, customers: 0 };
+  for (const r of roll || []) {
+    const n = num(r.calls), dur = num(r.dur);
+    if (r.kind === 'g') t.dials += n;
+    else if (r.kind === 'd') {
+      t.calls += n; t.connected += num(r.uniq);
+      if (r.portfolio) { t.portfolio += n; t.duration += dur; } else { t.nonPortfolio += n; t.otherDuration += dur; }
+    } else if (r.kind === 'u') t.customers += num(r.uniq);
+  }
+  return t;
+}
+/* A rollup from before RUN-ME-042 has 'g' rows and no 'd' rows. Rather than fall back to
+   reading every call row -- the 45-second tab the rollup exists to prevent -- the dials
+   stand in for the numbers, which is the figure the report showed before, and the report
+   SAYS so (ruleNote), so nobody reads a dial count as the new rule. Talk time is still split
+   right, because the dials carry their category. A quiet window (no rows) is not legacy. */
+const RULE_NOTE = 'Sheria ya kuhesabu simu (namba moja = simu moja kwa siku) inahitaji db/RUN-ME-042 '
+  + 'iendeshwe; hadi hapo "simu" hapa ni majaribio yote. / The call counting rule (one number is one '
+  + 'call per day) needs db/RUN-ME-042-call-counting-rule.sql run in the Supabase SQL editor; until '
+  + 'then "calls" here are dials, every redial counted.';
+function legacyRollup_(roll) {
+  if (!roll.length || roll.some(r => r.kind === 'd') || !roll.some(r => r.kind === 'g')) return { roll, legacy: false };
+  const d = new Map();
+  for (const g of roll) {
+    if (g.kind !== 'g') continue;
+    const k = [g.day, g.user_id, g.team, g.category].join('\u0001');
+    let r = d.get(k);
+    if (!r) d.set(k, r = { kind: 'd', day: g.day, user_id: g.user_id, team: g.team, category: g.category, outcome: null, portfolio: g.portfolio, calls: 0, dur: 0, uniq: 0 });
+    r.calls += num(g.calls); r.dur += num(g.dur);
+    if (g.outcome === 'CONNECTED') r.uniq += num(g.calls);
+  }
+  return { roll: roll.concat([...d.values()]), legacy: true };
+}
+
 async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   const fromKey = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) ? from : addDaysKey(todayKey(nowMs), -7);
   const toKey = /^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? to : todayKey(nowMs);
@@ -1817,69 +1912,59 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   const { posOf } = buildLeaderMaps(teamRows);
   const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
 
-  const rows = [];
-  for (const r of logs) {
-    const uid = String(r.user_id);
-    const team = Object.prototype.hasOwnProperty.call(curTeam, uid) ? curTeam[uid] : r.team;
-    // A leader's OWN calls always count in their OWN report even if their home team isn't in scope.
-    if (scope && !scope[K(team)] && uid !== alwaysUid) continue;
-    rows.push({ ...r, team, officer: curName[uid] || r.officer, uid });
-  }
+  /* ONE WALK, WHICHEVER ROAD THE ROWS CAME BY. The database's rollup and callRollupRows --
+     the same counting in JavaScript, over the row read -- hand back the same three kinds of
+     row, so the report is built ONCE from either and the two roads cannot drift. (They used
+     to be two loops that had to be kept identical by hand; the agreement test now holds the
+     fake database's transcription of RUN-ME-042 to callRollupRows instead.)
+       'g' rows: every dial, grouped -- shown as dials, scored nowhere.
+       'd' rows: distinct numbers per officer-day and category, their talk time, and how
+                 many of those numbers were reached -- THE CALL COUNTING RULE, see above.
+       'u' rows: each officer's distinct portfolio customers over the window.
+     Each row is reported under the officer's CURRENT team and name, not the snapshot taken
+     when the call synced -- a reassignment must not strand old calls under a team nobody is
+     scoped to see anymore -- and a leader's OWN calls always count in their OWN report even
+     if their home team isn't in scope. */
+  const { roll, legacy } = legacyRollup_(rollup || callRollupRows(logs));
   const byDayUser = {}, users = {}, teams = {}, byCategory = {}, byOutcome = {};
-  for (const r of rows) {
-    const day = String(r.call_date), officer = String(r.officer), team = String(r.team), uid = r.uid;
-    const dk = day + '|' + uid, isPf = !!r.portfolio;
-    const cat = categoryOf(r), outc = outcomeOf(r), dur = num(r.duration);
-    if (!byDayUser[dk]) byDayUser[dk] = { day, officer, team, calls: 0, dur: 0, pf: 0, npf: 0 };
-    byDayUser[dk].calls++; byDayUser[dk].dur += dur; isPf ? byDayUser[dk].pf++ : byDayUser[dk].npf++;
-    if (!users[uid]) users[uid] = { name: officer, team, role: curRole[uid] || '', phone: curPhone[uid] || '', calls: 0, dur: 0, pf: 0, npf: 0, days: {}, uniq: {}, expected: 0, defaulter: 0, connected: 0 };
-    const u = users[uid];
-    u.calls++; u.dur += dur; u.days[day] = 1;
-    if (isPf) { u.pf++; u.uniq[String(r.ref || r.phone)] = 1; } else u.npf++;
-    if (cat === 'EXPECTED') u.expected++; else if (cat === 'DEFAULTER') u.defaulter++;
-    if (outc === 'CONNECTED') u.connected++;
-    if (!teams[team]) teams[team] = { team, calls: 0, dur: 0, pf: 0, npf: 0 };
-    teams[team].calls++; teams[team].dur += dur; isPf ? teams[team].pf++ : teams[team].npf++;
-    if (!byCategory[cat]) byCategory[cat] = { category: cat, calls: 0, dur: 0, connected: 0 };
-    byCategory[cat].calls++; byCategory[cat].dur += dur; if (outc === 'CONNECTED') byCategory[cat].connected++;
-    if (!byOutcome[outc]) byOutcome[outc] = { outcome: outc, calls: 0, dur: 0 };
-    byOutcome[outc].calls++; byOutcome[outc].dur += dur;
-  }
-  /* THE SAME AGGREGATION FROM GROUPED ROWS. Each 'g' row is (day, officer, category, outcome,
-     portfolio) with its count and talk time already added up by the database; this walks them
-     with the same current-team remap and the same scope rule the per-call loop above applies,
-     so the two roads land on identical figures -- the agreement test holds them to it. The
-     'u' rows carry each officer's distinct portfolio customers, which no grouped count can
-     reproduce (the same customer rung twice must count once). */
-  const rollTot = { calls: 0, duration: 0, portfolio: 0, nonPortfolio: 0 };
-  if (rollup) for (const g of rollup) {
-    if (g.kind !== 'g') continue;
+  const totals = { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0 };
+  const newUser = (uid, name, team) => ({ name, team, role: curRole[uid] || '', phone: curPhone[uid] || '',
+    dials: 0, calls: 0, dur: 0, odur: 0, pf: 0, npf: 0, days: {}, uniqN: 0, expected: 0, defaulter: 0, connected: 0 });
+  for (const g of roll) {
+    if (g.kind !== 'g' && g.kind !== 'd') continue;
     const uid = String(g.user_id);
     const team = Object.prototype.hasOwnProperty.call(curTeam, uid) ? curTeam[uid] : (g.team || '');
     if (scope && !scope[K(team)] && uid !== alwaysUid) continue;
-    const day = String(g.day).slice(0, 10);
-    const officer = curName[uid] || '';
-    const n = num(g.calls), dur = num(g.dur), isPf = !!g.portfolio;
-    const cat = g.category, outc = g.outcome;
-    rollTot.calls += n; rollTot.duration += dur; isPf ? rollTot.portfolio += n : rollTot.nonPortfolio += n;
+    const day = String(g.day).slice(0, 10), officer = curName[uid] || '';
+    const n = num(g.calls), dur = num(g.dur), isPf = !!g.portfolio, cat = g.category;
     const dk = day + '|' + uid;
-    if (!byDayUser[dk]) byDayUser[dk] = { day, officer, team, calls: 0, dur: 0, pf: 0, npf: 0 };
-    const bd = byDayUser[dk];
-    bd.calls += n; bd.dur += dur; isPf ? bd.pf += n : bd.npf += n;
-    if (!users[uid]) users[uid] = { name: officer, team, role: curRole[uid] || '', phone: curPhone[uid] || '', calls: 0, dur: 0, pf: 0, npf: 0, days: {}, uniq: {}, uniqN: 0, expected: 0, defaulter: 0, connected: 0 };
-    const u = users[uid];
-    u.calls += n; u.dur += dur; u.days[day] = 1;
-    isPf ? u.pf += n : u.npf += n;
-    if (cat === 'EXPECTED') u.expected += n; else if (cat === 'DEFAULTER') u.defaulter += n;
-    if (outc === 'CONNECTED') u.connected += n;
-    if (!teams[team]) teams[team] = { team, calls: 0, dur: 0, pf: 0, npf: 0 };
-    teams[team].calls += n; teams[team].dur += dur; isPf ? teams[team].pf += n : teams[team].npf += n;
-    if (!byCategory[cat]) byCategory[cat] = { category: cat, calls: 0, dur: 0, connected: 0 };
-    byCategory[cat].calls += n; byCategory[cat].dur += dur; if (outc === 'CONNECTED') byCategory[cat].connected += n;
-    if (!byOutcome[outc]) byOutcome[outc] = { outcome: outc, calls: 0, dur: 0 };
-    byOutcome[outc].calls += n; byOutcome[outc].dur += dur;
+    if (!byDayUser[dk]) byDayUser[dk] = { day, officer, team, dials: 0, calls: 0, dur: 0, odur: 0, pf: 0, npf: 0 };
+    if (!users[uid]) users[uid] = newUser(uid, officer, team);
+    if (!teams[team]) teams[team] = { team, dials: 0, calls: 0, dur: 0, odur: 0, pf: 0, npf: 0 };
+    if (!byCategory[cat]) byCategory[cat] = { category: cat, dials: 0, calls: 0, dur: 0, connected: 0 };
+    const bd = byDayUser[dk], u = users[uid], tm = teams[team], bc = byCategory[cat];
+    u.days[day] = 1;
+    if (g.kind === 'g') {
+      totals.dials += n; bd.dials += n; u.dials += n; tm.dials += n; bc.dials += n;
+      const outc = g.outcome;
+      if (!byOutcome[outc]) byOutcome[outc] = { outcome: outc, dials: 0, dur: 0 };
+      byOutcome[outc].dials += n; byOutcome[outc].dur += dur;
+      continue;
+    }
+    // A number rung that day, counted once; its talk time lands on the side the number is on.
+    const reached = num(g.uniq);
+    totals.calls += n; bd.calls += n; u.calls += n; tm.calls += n; bc.calls += n;
+    bc.dur += dur; bc.connected += reached; u.connected += reached; totals.connected += reached;
+    if (isPf) {
+      totals.portfolio += n; totals.duration += dur;
+      bd.pf += n; bd.dur += dur; u.pf += n; u.dur += dur; tm.pf += n; tm.dur += dur;
+      if (cat === 'EXPECTED') u.expected += n; else if (cat === 'DEFAULTER') u.defaulter += n;
+    } else {
+      totals.nonPortfolio += n; totals.otherDuration += dur;
+      bd.npf += n; bd.odur += dur; u.npf += n; u.odur += dur; tm.npf += n; tm.odur += dur;
+    }
   }
-  if (rollup) for (const g of rollup) {
+  for (const g of roll) {
     if (g.kind !== 'u') continue;
     const uid = String(g.user_id);
     if (users[uid]) users[uid].uniqN = num(g.uniq);
@@ -1900,15 +1985,13 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     const team = u.team || '';
     if (scope && !scope[K(team)] && uid !== alwaysUid) continue;
     if (!String(u.name || '').trim()) continue;
-    users[uid] = { name: u.name, team, role: u.role || '', phone: u.phone || '', calls: 0, dur: 0, pf: 0, npf: 0,
-      days: {}, uniq: {}, expected: 0, defaulter: 0, connected: 0 };
+    users[uid] = newUser(uid, u.name, team);
   }
 
   const CAT_ORDER = { EXPECTED: 1, DEFAULTER: 2, UNCATEGORIZED: 3, OTHER: 4 };
   const OUT_ORDER = { CONNECTED: 1, MISSED: 2, REJECTED: 3, BLOCKED: 4 };
-  const totals = rollup ? rollTot : { calls: rows.length, duration: 0, portfolio: 0, nonPortfolio: 0 };
-  if (!rollup) rows.forEach(r => { totals.duration += num(r.duration); r.portfolio ? totals.portfolio++ : totals.nonPortfolio++; });
-  totals.ratio = totals.calls ? totals.portfolio / totals.calls : 0;
+  const ratioOf = (a, b) => (b ? a / b : 0);
+  totals.ratio = ratioOf(totals.portfolio, totals.calls);
   /* SAY IT WHEN THE RANGE REACHES BEFORE WHAT IS KEPT.
        "please always autodelete call logs by keeping only last week and current [2]"
      The retention is the owner's choice and it is the right one -- call_logs was 977,000 rows
@@ -1927,19 +2010,24 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     from: fromKey, to: toKey,
     keepFrom,
     ...(prunedNote ? { prunedNote } : {}),
+    // The rule, said on the screen; and said to be MISSING where the database is behind it.
+    rule: CALL_RULE_TXT,
+    ...(legacy ? { ruleNote: RULE_NOTE } : {}),
     byDay: Object.keys(byDayUser).sort().map(k => byDayUser[k]),
     users: Object.keys(users).sort((a, b) => users[a].name < users[b].name ? -1 : users[a].name > users[b].name ? 1 : 0).map(k => {
       const u = users[k];
       /* The phone each officer REGISTERED with rides along, so the board that shows a name
          at zero can also ring that name -- the whole reason a supervisor is looking at it. */
-      return { name: u.name, team: u.team, branch: teamBranch.get(K(u.team)) || null, position: positionOf(posOf, u.name, u.role), phone: u.phone || '', calls: u.calls, duration: u.dur,
-        portfolio: u.pf, nonPortfolio: u.npf, ratio: u.calls ? u.pf / u.calls : 0,
-        uniqCustomers: u.uniqN != null ? u.uniqN : Object.keys(u.uniq).length, days: Object.keys(u.days).length,
-        expected: u.expected, defaulter: u.defaulter, connected: u.connected, connectRatio: u.calls ? u.connected / u.calls : 0 };
+      return { name: u.name, team: u.team, branch: teamBranch.get(K(u.team)) || null, position: positionOf(posOf, u.name, u.role), phone: u.phone || '',
+        dials: u.dials, calls: u.calls, duration: u.dur, otherDuration: u.odur,
+        portfolio: u.pf, nonPortfolio: u.npf, ratio: ratioOf(u.pf, u.calls),
+        uniqCustomers: u.uniqN, days: Object.keys(u.days).length,
+        expected: u.expected, defaulter: u.defaulter, connected: u.connected, connectRatio: ratioOf(u.connected, u.calls) };
     }),
-    teams: Object.keys(teams).sort().map(k => { const t = teams[k]; return { team: t.team, branch: teamBranch.get(K(t.team)) || null, calls: t.calls, duration: t.dur, portfolio: t.pf, nonPortfolio: t.npf, ratio: t.calls ? t.pf / t.calls : 0 }; }),
-    byCategory: Object.keys(byCategory).sort((a, b) => (CAT_ORDER[a] || 9) - (CAT_ORDER[b] || 9)).map(k => { const c = byCategory[k]; return { category: c.category, calls: c.calls, duration: c.dur, connected: c.connected, connectRatio: c.calls ? c.connected / c.calls : 0 }; }),
-    byOutcome: Object.keys(byOutcome).sort((a, b) => (OUT_ORDER[a] || 9) - (OUT_ORDER[b] || 9)).map(k => { const o = byOutcome[k]; return { outcome: o.outcome, calls: o.calls, duration: o.dur }; }),
+    teams: Object.keys(teams).sort().map(k => { const t = teams[k]; return { team: t.team, branch: teamBranch.get(K(t.team)) || null, dials: t.dials, calls: t.calls, duration: t.dur, otherDuration: t.odur, portfolio: t.pf, nonPortfolio: t.npf, ratio: ratioOf(t.pf, t.calls) }; }),
+    byCategory: Object.keys(byCategory).sort((a, b) => (CAT_ORDER[a] || 9) - (CAT_ORDER[b] || 9)).map(k => { const c = byCategory[k]; return { category: c.category, dials: c.dials, calls: c.calls, duration: c.dur, connected: c.connected, connectRatio: ratioOf(c.connected, c.calls) }; }),
+    // Outcomes belong to dials: the same number can be missed four times and reached once.
+    byOutcome: Object.keys(byOutcome).sort((a, b) => (OUT_ORDER[a] || 9) - (OUT_ORDER[b] || 9)).map(k => { const o = byOutcome[k]; return { outcome: o.outcome, dials: o.dials, duration: o.dur }; }),
     totals,
   };
 }
@@ -2130,12 +2218,10 @@ export async function reportCoreForPortal(db, user, { from, to, team, leader, us
       out.users = (out.users || []).filter(mate);
       out.byDay = (out.byDay || []).filter(mate);
       out.teams = (out.teams || []).filter(mate);
-      out.totals = {
-        calls: out.users.reduce((s, u) => s + (u.calls || 0), 0),
-        duration: out.users.reduce((s, u) => s + (u.duration || 0), 0),
-        portfolio: out.users.reduce((s, u) => s + (u.portfolio || 0), 0),
-        nonPortfolio: out.users.reduce((s, u) => s + (u.nonPortfolio || 0), 0),
-      };
+      out.totals = {};
+      for (const f of ['dials', 'calls', 'duration', 'otherDuration', 'portfolio', 'nonPortfolio', 'connected']) {
+        out.totals[f] = out.users.reduce((s, u) => s + (u[f] || 0), 0);
+      }
       out.totals.ratio = out.totals.calls ? out.totals.portfolio / out.totals.calls : 0;
     }
     out.userTeams = [...theirTeams];

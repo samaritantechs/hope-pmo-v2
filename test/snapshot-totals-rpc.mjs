@@ -269,11 +269,14 @@ export const UPLOAD_STATUS_RPC = {
 };
 
 /** call_report_rollup(p_from, p_to, p_teams) -- the Call Reports counting, transcribed from
-    db/RUN-ME-014-call-report-rollup.sql clause for clause. 'g' rows are per (day, officer,
-    category, outcome, portfolio) counts with talk time; 'u' rows are each officer's DISTINCT
-    portfolio customers, which no grouped count can reproduce. The category and outcome rules
-    are the same ones categoryOf/outcomeOf apply in call-core.js -- that is the thing the
-    agreement test exists to hold together. */
+    db/RUN-ME-042-call-counting-rule.sql clause for clause (which replaced RUN-ME-014's body
+    under the same signature). 'g' rows are per (day, officer, category, outcome, portfolio)
+    DIAL counts with talk time; 'd' rows are per (day, officer, team, category) DISTINCT
+    NUMBERS rung, their talk time, and the distinct numbers that connected at least once --
+    the call counting rule; 'u' rows are each officer's distinct portfolio customers over the
+    window. The category and outcome rules are the same ones categoryOf/outcomeOf apply in
+    call-core.js. Deliberately NOT written by calling callRollupRows: this is the SQL's
+    transcription, and the agreement test exists to hold the two to the same rows. */
 const KU = v => String(v == null ? '' : v).trim().toUpperCase();
 export const CALL_REPORT_RPC = {
   call_report_rollup(store, a = {}) {
@@ -285,25 +288,36 @@ export const CALL_REPORT_RPC = {
       if (!d || d < from || d > to) return false;
       return !want || want.includes(KU(r.team));
     };
-    const g = new Map(), u = new Map();
+    const g = new Map(), d = new Map(), u = new Map();
     for (const r of tbl(store.call_logs)) {
       if (!inScope(r)) continue;
       const pf = !!r.portfolio;
       const cat = !pf ? 'OTHER' : (['EXPECTED', 'DEFAULTER'].includes(KU(r.category)) ? KU(r.category) : 'UNCATEGORIZED');
       const out = ['MISSED', 'REJECTED', 'BLOCKED'].includes(KU(r.outcome)) ? KU(r.outcome) : 'CONNECTED';
       const uid = r.user_id == null ? null : String(r.user_id);
-      const k = [day10(r.call_date), uid, r.team, cat, out, pf].join(' ');
+      const team = r.team == null ? null : String(r.team);
+      const phone = r.phone == null ? '' : String(r.phone);           // coalesce(phone, '')
+      const day = day10(r.call_date), dur = Number(r.duration) || 0;
+      const k = [day, uid, team, cat, out, pf].join('|');
       let row = g.get(k);
-      if (!row) g.set(k, row = { kind: 'g', day: day10(r.call_date), user_id: uid, team: r.team == null ? null : String(r.team), category: cat, outcome: out, portfolio: pf, calls: 0, dur: 0, uniq: null });
-      row.calls += 1; row.dur += Number(r.duration) || 0;
+      if (!row) g.set(k, row = { kind: 'g', day, user_id: uid, team, category: cat, outcome: out, portfolio: pf, calls: 0, dur: 0, uniq: null });
+      row.calls += 1; row.dur += dur;
+      const dk = [day, uid, team, cat, pf].join('|');
+      let dd = d.get(dk);
+      if (!dd) d.set(dk, dd = { day, uid, team, cat, pf, dur: 0, nums: new Set(), reached: new Set() });
+      dd.dur += dur; dd.nums.add(phone);
+      if (out === 'CONNECTED') dd.reached.add(phone);
       if (pf) {
         let set = u.get(uid);
         if (!set) u.set(uid, set = new Set());
-        set.add(String((r.ref != null && String(r.ref) !== '') ? r.ref : (r.phone == null ? '' : r.phone)));
+        set.add(String((r.ref != null && String(r.ref) !== '') ? r.ref : phone));
       }
     }
-    return [...g.values()].concat([...u.entries()].map(([uid, set]) =>
-      ({ kind: 'u', day: null, user_id: uid, team: null, category: null, outcome: null, portfolio: null, calls: 0, dur: 0, uniq: set.size })));
+    return [...g.values()]
+      .concat([...d.values()].map(x => ({ kind: 'd', day: x.day, user_id: x.uid, team: x.team, category: x.cat, outcome: null,
+        portfolio: x.pf, calls: x.nums.size, dur: x.dur, uniq: x.reached.size })))
+      .concat([...u.entries()].map(([uid, set]) =>
+        ({ kind: 'u', day: null, user_id: uid, team: null, category: null, outcome: null, portfolio: null, calls: 0, dur: 0, uniq: set.size })));
   },
 };
 

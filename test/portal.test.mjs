@@ -4409,10 +4409,13 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
   assert.equal(analyst.apps, 2);                              // l1 approved Tue, l3 Mon
   assert.equal(analyst.amount, 400000);
 
-  // Call agents.
+  // Call agents, under the call counting rule: talk time is PORTFOLIO talk time (60 of the
+  // 70 seconds), the other ten are shown apart.
   const agent = b.callWeek.find(r => r.agent === 'JUMA G');
   assert.equal(agent.calls, 2);
-  assert.equal(agent.duration, 70);
+  assert.equal(agent.dials, 2);
+  assert.equal(agent.duration, 60);
+  assert.equal(agent.otherDuration, 10);
   assert.equal(agent.portfolio, 1);
 
   // Follow-up status across the book. The FK stub (no name, no arrears) is not a defaulter and
@@ -4649,8 +4652,30 @@ test('the call app board counts everybody who should be calling, including the o
 
   const juma = b.callWeek.find(r => r.agent === 'JUMA G');
   assert.equal(juma.calls, 2);
-  assert.equal(juma.duration, 70);
+  assert.equal(juma.duration, 60, 'portfolio talk time only');
   assert.equal(juma.team, 'KONGOWE');
+
+  /* THE CALL COUNTING RULE ON THE DECK -- the same definition Ripoti and the Calls tab read
+     (callRollupRows): "when a staff finds an unreachable contact they redial that contact too
+     much then find their one ... call to talk for so long to balance the counts and
+     duration". JUMA rings the missed number four more times and chats twenty minutes on the
+     non-portfolio one: still two calls, seven dials, a minute of talk time. */
+  const dbRedial = fakeDb((function(){
+    const t = tables();
+    for (let i = 0; i < 4; i++) t.call_logs.push({ id: 'g1r' + i, user_id: 'U1', officer: 'JUMA G', team: 'KONGOWE',
+      phone: '712000111', call_date: TODAY, duration: 0, portfolio: true, category: 'EXPECTED', outcome: 'MISSED' });
+    t.call_logs.push({ id: 'g2long', user_id: 'U1', officer: 'JUMA G', team: 'KONGOWE', phone: '799999999',
+      call_date: TODAY, duration: 1200, portfolio: false, outcome: 'CONNECTED' });
+    return t;
+  })());
+  const jr = (await run('officerBoards', {}, ADMIN, dbRedial)).callWeek.find(r => r.agent === 'JUMA G');
+  assert.equal(jr.calls, 2, 'two numbers, two calls');
+  assert.equal(jr.dials, 7, 'the redials are visible as dials');
+  assert.equal(jr.duration, 60, 'the twenty-minute chat on a non-portfolio number scores nothing');
+  assert.equal(jr.otherDuration, 1210);
+  assert.equal(jr.connected, 2, 'both numbers were reached at least once');
+  assert.equal(jr.connectPct, 100);
+  assert.equal(jr.customers, 1);
 
   /* The whole reason this board is worth showing. An officer built only from the call log who
      never opened the app all week does not appear -- and that is the one name a meeting about
