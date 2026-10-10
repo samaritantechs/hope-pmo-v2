@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-10-b';
+var BUILD = '2026-10-10-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2093,6 +2093,17 @@ function exportCsv(){
  * about this changes.
  */
 function androidBridge_(){ return (window.HopeCalls && window.HopeCalls.getDeviceId) ? window.HopeCalls : null; }
+/* THE HANDSET THIS PORTAL IS OPEN ON -- "the legal phone number should be the one used at
+   current login". HOPE Calls keeps its device id beside this page: the app's bridge inside the
+   APK, or the same-origin localStorage key (hcDev) in a browser where the call app has been
+   opened. Sent with the Legal calls only, and only ever used to look up the number a letter
+   carries -- never as authority: the access code decides everything else. A computer that has
+   never opened HOPE Calls sends nothing, and the letter falls back to the code's name. */
+function hcDevice_(){
+  var nb = androidBridge_();
+  if (nb) { try { var id = nb.getDeviceId(); if (id) return String(id); } catch(e){} }
+  try { return localStorage.getItem('hcDev') || ''; } catch(e){ return ''; }
+}
 function download(blob, name){
   var nb = androidBridge_();
   if (nb) {
@@ -6259,7 +6270,7 @@ VIEWS.restructure = function(){
 };
 
 VIEWS.legal = function(){
-  return srv('demandNotices').then(function(d){
+  return srv('demandNotices', { device: hcDevice_() }).then(function(d){
     var br = d.brand || {};
     var tick = function(ok){ return ok ? '✓' : '✗'; };
     var lk = function(id, label, val){
@@ -6296,14 +6307,18 @@ VIEWS.legal = function(){
       + ' / The fine starts two weeks after the first missed installment; 2% for loans disbursed'
       + ' in 2024 or earlier, 5% after that.</div>'
       /* THE NUMBER ON YOUR LETTERS -- "Legal phone is not from what i set but their login
-         phone". It is the printing officer's own, from their HOPE Calls registration. Said per
-         person: a lawyer registered under another name, or not at all, finds out here. */
+         phone" / "the one used at current login". It is the printing officer's own: the HOPE
+         Calls registration on the handset this is open on first, else the one under their
+         code's name. Said per person WITH ITS SOURCE, so a lawyer printing from a computer that
+         has never opened HOPE Calls, or registered under another name, finds out here. */
       + (br.mine
-          ? '<div class="note">Simu yako kwenye barua / Your number on letters: <b>' + esc(br.mine) + '</b> (HOPE Calls, ' + esc(br.me || '') + ').</div>'
-          : '<div class="note">⚠ Hakuna namba yako: HOPE Calls haina usajili kwa jina <b>' + esc(br.me || '') + '</b>.'
-            + ' Jisajili HOPE Calls kwa msimbo wako wa kuingia ili namba ya simu yako iwe kwenye barua zako; hadi hapo zitaonyesha ' + esc(br.phone || '') + '.'
-            + ' / No number of yours on file: HOPE Calls has no registration under the name <b>' + esc(br.me || '') + '</b>.'
-            + ' Register HOPE Calls with your access code so your own number prints on your letters; until then they show ' + esc(br.phone || '') + '.</div>')
+          ? '<div class="note">Simu yako kwenye barua / Your number on letters: <b>' + esc(br.mine) + '</b> ('
+            + (br.mineFrom === 'device' ? 'HOPE Calls kwenye simu hii / on this handset' : 'HOPE Calls, kwa jina / by name')
+            + (br.mineName ? ': ' + esc(br.mineName) : '') + ').</div>'
+          : '<div class="note">⚠ Hakuna namba yako: simu hii haina usajili wa HOPE Calls, na hakuna usajili kwa jina <b>' + esc(br.me || '') + '</b>.'
+            + ' Fungua mfumo kutoka simu uliyosajili HOPE Calls, au jisajili HOPE Calls kwa msimbo wako; hadi hapo barua zitaonyesha ' + esc(br.phone || '') + '.'
+            + ' / No number of yours on file: this device has no HOPE Calls registration, and none is under the name <b>' + esc(br.me || '') + '</b>.'
+            + ' Open the system from the phone you registered HOPE Calls on, or register HOPE Calls with your access code; until then letters show ' + esc(br.phone || '') + '.</div>')
       /* THE LETTERHEAD, SAID ON THE SCREEN. The letter prints the logo, the stamp twice and
          the signature from Settings, and one printed without its stamp is printed again in
          front of a customer. Everyone sees which are in place; an admin sets each from here. */
@@ -6414,7 +6429,7 @@ function lgIssue(){
       if (dup.length) $('#lgReprint').onclick = function(ev){ ev.preventDefault(); lgPrint(dup[0].id); };
       $('#lgGo').onclick = function(){
         srv('addDemandNotice', { ref:e.ref, noticeDate:$('#lgDate').value, noticeDays:$('#lgDays').value,
-          guarantorName:$('#lgG').value.trim(), guarantorContact:$('#lgGC').value.trim() })
+          guarantorName:$('#lgG').value.trim(), guarantorContact:$('#lgGC').value.trim(), device: hcDevice_() })
           .then(function(r){
             toast('Notisi '+r.noticeId+' imetolewa. PDF: “Save as PDF” kwenye dirisha la kuchapisha. / Issued. PDF: “Save as PDF” in the print dialog.');
             printHtml(r.html);
@@ -6453,7 +6468,7 @@ function lgIssue(){
    company's current images. The print dialog is also where the PDF comes from, so the toast
    says so before it opens -- on a phone the dialog has no such option, and that is said too. */
 function lgPrint(id){
-  srv('demandNoticePrint', { id: id }).then(function(p){
+  srv('demandNoticePrint', { id: id, device: hcDevice_() }).then(function(p){
     if (p.rebuilt) toast('Notisi ya zamani: barua imejengwa upya kutoka deki ya sasa. / Issued before letters were kept: rebuilt from today\'s deck.');
     else toast('PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).');
     printHtml(p.html);
@@ -6545,6 +6560,10 @@ function printHtml(html){
   // Give the images -- logo, stamp, signature -- a moment to load. A contract printed without
   // its stamp has to be printed again, and nobody notices until it is in front of a customer.
   var go = function(){
+    /* A document that fits itself to the sheet (the demand notice's hopeFit) is fitted HERE,
+       with every image in, right before the dialog opens -- not every browser fires
+       beforeprint for a frame, and a letter measured before its logo arrived measures short. */
+    try { if (f.contentWindow.hopeFit) f.contentWindow.hopeFit(); } catch(e){}
     try { f.contentWindow.focus(); f.contentWindow.print(); }
     catch(e){ toast('Imeshindikana kuchapisha. / Could not open the print dialog.', true); }
   };

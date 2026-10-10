@@ -2600,6 +2600,13 @@ test('issuing a notice stores what it prints, under a citable reference', async 
   assert.match(h, /body\{margin:0 auto;width:174mm/);
   assert.match(h, /fp\.style\.zoom/);
   assert.match(h, /addEventListener\('beforeprint', fit\)/);
+  /* "Some demands still put the maelezo table on second page making the pages to be 3": a
+     first page that fit A4 and not Letter, on a machine printing Letter. A4 is asked for, the
+     fit targets the SHORTER sheet so both fit, and the print frame can fit it right before
+     printing with every image in. */
+  assert.match(h, /@page\{size:A4;/, 'A4 asked for, so Save-as-PDF does not fall back to Letter');
+  assert.match(h, /LIMIT_MM = 243/, 'fitted to Letter\'s printable height, which fits A4 too');
+  assert.match(h, /window\.hopeFit = fit/, 'and the print frame can fit it right before printing');
   assert.doesNotMatch(h, /THE ADMIN/, 'the issuing code is on the register, not on the letter');
 
   /* "demand retrival" -- tap a row: the SAME letter again, off the stored letter. */
@@ -2684,6 +2691,49 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   const tabN = await portalApi(db, { ...GMO, name: 'NOBODY N' }, 'demandNotices', {}, NOW);
   assert.equal(tabN.brand.mine, null, 'said as missing, with the number that prints instead');
   assert.equal(tabN.brand.phone, '+255 659 077 770');
+  assert.equal(tab.brand.mineFrom, 'name');
+
+  /* "the legal phone number should be the one used at current login": the HANDSET the portal
+     is open on comes first, whatever name its HOPE Calls registration was typed under -- the
+     portal sends the device id it finds beside it (the app's bridge, or the call app's own
+     hcDev in the same browser). */
+  db._dump('call_users').push({ user_id: 'U9', name: 'Rhobi M', phone: '655000999', team: 'KONGOWE', role: 'LEGAL', device_id: 'DEV-RHOBI' });
+  const onDev = await portalApi(db, { ...GMO, name: 'NOBODY N' }, 'demandNoticePrint', { id: row.id, device: 'DEV-RHOBI' }, NOW);
+  assert.equal(onDev.phone, '0655 000 999', 'no registration under the code\'s name, but the handset has one');
+  assert.equal(onDev.phoneFrom, 'device');
+  assert.match(onDev.html, /Kwa maelezo zaidi piga simu: 0655 000 999/);
+  const tabD = await portalApi(db, { ...GMO, name: 'NOBODY N' }, 'demandNotices', { device: 'DEV-RHOBI' }, NOW);
+  assert.equal(tabD.brand.mine, '0655 000 999');
+  assert.equal(tabD.brand.mineFrom, 'device');
+  assert.equal(tabD.brand.mineName, 'Rhobi M', 'the tab says whose registration this is');
+  // The handset in hand wins over the name: the login is the phone being held.
+  const jOnDev = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id, device: 'DEV-RHOBI' }, NOW);
+  assert.equal(jOnDev.phone, '0655 000 999');
+  // A device nobody registered changes nothing: the name answers as before.
+  const jUnknown = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id, device: 'DEV-NOPE' }, NOW);
+  assert.equal(jUnknown.phone, '0712 000 111');
+  assert.equal(jUnknown.phoneFrom, 'name');
+  const issued = await portalApi(db, { ...GMO, name: 'NOBODY N' }, 'addDemandNotice',
+    { ref: '555', noticeDate: '2026-03-10', noticeDays: 7, device: 'DEV-RHOBI' }, NOW);
+  assert.equal(issued.phone, '0655 000 999', 'a new notice issued from that handset carries its number too');
+  // Taken off the register again: the served-today checks further down count notices by date.
+  db._dump('demand_notices').splice(db._dump('demand_notices').findIndex(r => r.notice_id === issued.noticeId), 1);
+  /* BY NAME, A LONGER REGISTRATION STILL MATCHES WHEN IT IS THE ONLY ONE -- "ADV. RHOBI MSIRA"
+     for the code RHOBI MSIRA -- and never when two could be meant: a wrong number on a legal
+     letter is worse than none. */
+  db._dump('call_users').push({ user_id: 'U10', name: 'ADV. RHOBI MSIRA', phone: '677000111', team: 'KONGOWE', role: 'LEGAL' });
+  const tabR = await portalApi(db, { ...GMO, name: 'RHOBI MSIRA' }, 'demandNotices', {}, NOW);
+  assert.equal(tabR.brand.mine, '0677 000 111');
+  assert.equal(tabR.brand.mineFrom, 'name');
+  assert.equal(tabR.brand.mineName, 'ADV. RHOBI MSIRA');
+  db._dump('call_users').push({ user_id: 'U11', name: 'RHOBI MSIRA JR', phone: '677000222', team: 'KONGOWE', role: 'LEGAL' });
+  const tabR2 = await portalApi(db, { ...GMO, name: 'RHOBI MSIRA' }, 'demandNotices', {}, NOW);
+  assert.equal(tabR2.brand.mine, null, 'two registrations carry the name: no guess');
+  // An exact registration beats both, and a switched-off one never answers.
+  db._dump('call_users').push({ user_id: 'U12', name: 'rhobi msira', phone: '677000333', team: 'KONGOWE', role: 'LEGAL' });
+  assert.equal((await portalApi(db, { ...GMO, name: 'RHOBI MSIRA' }, 'demandNotices', {}, NOW)).brand.mine, '0677 000 333');
+  db._dump('call_users').find(r => r.user_id === 'U12').active = false;
+  assert.equal((await portalApi(db, { ...GMO, name: 'RHOBI MSIRA' }, 'demandNotices', {}, NOW)).brand.mine, null);
 
   /* "ina search by ref peke yake" -> "search by ref, phone no and names etc" */
   const byName = await portalApi(db, ADMIN, 'legalFind', { q: 'asha juma' }, NOW);

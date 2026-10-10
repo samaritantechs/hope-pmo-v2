@@ -1813,16 +1813,43 @@ function letterPhone_(v) {
   return d.length === 9 ? `0${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}` : '';
 }
 
-/* The issuing officer's row in the call app's staff table, by the name on their access code.
-   Case-insensitive on purpose: .eq() is exact-case and the two names are typed by different
-   people. One small read, on the Legal screen only -- never on an upload or a call. */
-async function staffPhone_(db, user) {
-  const name = String((user && user.name) || '').trim();
-  if (!name) return '';
-  const rows = await fetchAll(() => db.from('call_users').select('name, phone, active')
-    .ilike('name', name.replace(/[%_\\]/g, m => '\\' + m)).limit(5));
-  const me = (rows || []).find(r => K(r.name) === K(name) && r.phone && r.active !== false);
-  return me ? String(me.phone) : '';
+/* THE NUMBER OF THE PERSON PRINTING -- "the legal phone number should be the one used at
+   current login". In order:
+
+     1. THE HANDSET IN HAND. The portal sends the HOPE Calls device id it finds beside it (the
+        app's bridge, or the same-origin hcDev the call app keeps), and the registration on
+        that device is the login the officer is sitting at. Exact, whatever name the
+        registration was typed under.
+     2. THE CODE'S NAME in the staff table -- exact, case and spacing aside; else the ONE
+        active registration whose name contains it ("ADV. RHOBI MSIRA" for RHOBI MSIRA), or
+        the one that starts with its first word. Never a guess between two.
+
+   One read either way, on the Legal screen only -- never on an upload or a call. Returns
+   {phone, from, name}: `from` says which of the two answered, so the tab can say so. */
+async function staffPhone_(db, user, device) {
+  const name = String((user && user.name) || '').trim().replace(/[%_\\,()]/g, ' ').replace(/\s+/g, ' ').trim();
+  const dev = String(device == null ? '' : device).trim().replace(/[,()\s]/g, '');
+  const none = { phone: '', from: '', name: '' };
+  if (!name && !dev) return none;
+  const first = name.split(' ')[0];
+  const clauses = [];
+  if (dev) clauses.push(`device_id.eq.${dev}`);
+  if (name) clauses.push(`name.ilike.%${name}%`);
+  if (name && first && first !== name) clauses.push(`name.ilike.${first}%`);
+  const rows = await fetchAll(() => db.from('call_users').select('name, phone, active, device_id')
+    .or(clauses.join(',')).limit(12));
+  const live = (rows || []).filter(r => r.phone && r.active !== false);
+  const hit = (r, from) => ({ phone: String(r.phone), from, name: String(r.name || '') });
+  const onDevice = dev && live.find(r => String(r.device_id || '') === dev);
+  if (onDevice) return hit(onDevice, 'device');
+  if (!name) return none;
+  const exact = live.find(r => K(r.name) === K(name));
+  if (exact) return hit(exact, 'name');
+  const within = live.filter(r => K(r.name).indexOf(K(name)) >= 0);
+  if (within.length === 1) return hit(within[0], 'name');
+  const starts = live.filter(r => K(r.name).indexOf(K(first)) === 0);
+  if (first !== name && starts.length === 1) return hit(starts[0], 'name');
+  return none;
 }
 
 /* WHAT THE LETTERHEAD CARRIES, from Settings: the logo, the stamp -- printed TWICE, as the
@@ -1984,11 +2011,11 @@ async function addDemandNotice(db, user, p, nowMs) {
   const a = legalAmounts(d, fine);
   const ratePct = Math.round(f.rate * 1000) / 10;
   const [noticeId, teamRows, brand, staff] = await Promise.all([
-    nextNoticeId(db, d.full_name, noticeKey), readTeamsAll(db, nowMs), legalBrand_(db), staffPhone_(db, user),
+    nextNoticeId(db, d.full_name, noticeKey), readTeamsAll(db, nowMs), legalBrand_(db), staffPhone_(db, user, p.device),
   ]);
   const teamRow = teamRows.find(t => K(t.team) === K(d.team)) || null;
   const letter = demandLetter_(d, user, p, noticeId, noticeKey, days,
-    { fine, ratePct, paidCount: f.paidCount, ...a }, teamRow, legalContact_(user, teamRow, brand.phone, staff));
+    { fine, ratePct, paidCount: f.paidCount, ...a }, teamRow, legalContact_(user, teamRow, brand.phone, staff.phone));
   await insertShedding_(db, 'demand_notices', {
     notice_id: noticeId, ref: d.ref, team: d.team, full_name: d.full_name, contact: d.contact,
     notice_date: noticeKey, notice_days: days, paid_count: f.paidCount, fine,
@@ -2006,7 +2033,7 @@ async function addDemandNotice(db, user, p, nowMs) {
    kept is rebuilt from the customer's current deck row and the figures the register holds,
    and the answer says it was rebuilt; if that customer is no longer on the deck there is
    nothing to rebuild it from, and that is said rather than a different letter printed. */
-async function demandNoticePrint(db, user, { id, noticeId } = {}, nowMs = Date.now()) {
+async function demandNoticePrint(db, user, { id, noticeId, device } = {}, nowMs = Date.now()) {
   const want = String(noticeId || '').trim();
   if (!id && !want) throw badRequest('Which notice? Pass its id or its Kumb.Na.');
   const rows = await fetchAll(() => {
@@ -2037,16 +2064,19 @@ async function demandNoticePrint(db, user, { id, noticeId } = {}, nowMs = Date.n
         paidCount: n.paid_count == null ? f.paidCount : num(n.paid_count), ...a,
         principalRemaining: n.principal_remaining == null ? a.principalRemaining : num(n.principal_remaining),
         totalDemand: n.total_demand == null ? a.totalDemand : num(n.total_demand) },
-      teamRow, legalContact_(issuer, teamRow, brand.phone, staff));
+      teamRow, legalContact_(issuer, teamRow, brand.phone, staff.phone));
     rebuilt = true;
   }
-  /* "phone number of current login user who prints": the letter in the customer's hands must
-     be answerable by whoever handed it over, so a reprint carries the PRINTING officer's own
-     number when the staff table has one, and the stored (issuer's) number otherwise. The
-     figures are untouched: it is still the same letter. */
-  const mine = letterPhone_(await staffPhone_(db, user));
+  /* "phone number of current login user who prints" -- "the one used at current login": the
+     letter in the customer's hands must be answerable by whoever handed it over, so a reprint
+     carries the PRINTING officer's own number -- the handset they are on first, their
+     registration by name otherwise -- and the stored (issuer's) number when neither is found.
+     The figures are untouched: it is still the same letter. */
+  const me = await staffPhone_(db, user, device);
+  const mine = letterPhone_(me.phone);
   if (mine && mine !== letter.phone) letter = { ...letter, phone: mine };
-  return { noticeId: n.notice_id, ref: n.ref, rebuilt, phone: letter.phone, html: demandNoticeHtml(letter, brand) };
+  return { noticeId: n.notice_id, ref: n.ref, rebuilt, phone: letter.phone, phoneFrom: mine ? me.from : '',
+    html: demandNoticeHtml(letter, brand) };
 }
 
 const esc_ = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -2080,18 +2110,19 @@ function demandNoticeHtml(t, brand) {
     ? `<img${cls ? ` class="${cls}"` : ''} src="${esc_(src)}"${style ? ` style="${style}"` : ''} alt="${alt}">` : '';
   const title = String(t.name || '').trim() || String(t.noticeId || 'notisi').replace(/\//g, '_');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc_(title)}</title><style>
-@page{margin:15mm 18mm 18mm 18mm;}
+@page{size:A4;margin:15mm 18mm 18mm 18mm;}
 body{margin:0 auto;width:174mm;font-family:Verdana,sans-serif;font-size:9.5pt;color:#000;line-height:1.35;text-align:justify;}
 .header,table,.address-block,.compact,.guarantor-line,.signature-block,.blue-line-top,.blue-line-bottom{text-align:left;}
-.blue-line-top{border-top:3px solid #1a56db;padding-top:6px;margin-bottom:15px;}
+.blue-line-top{border-top:3px solid #1a56db;padding-top:6px;margin-bottom:10px;}
 .blue-line-bottom{border-bottom:3px solid #1a56db;padding-bottom:6px;margin-top:20px;}
-.header{text-align:right;margin-bottom:20px;}
+.header{text-align:right;margin-bottom:12px;}
 .header img{float:left;margin-top:-10px;}
 .address-block p{margin:0 0 2px 0;line-height:1.4;}
 .subject{font-weight:bold;text-decoration:underline;margin:12px 0 8px 0;text-align:center;}
 .first-page{position:relative;}
+.first-page ol{margin:6px 0;}
 .table-wrapper{position:relative;}
-table{width:100%;border-collapse:collapse;margin:16px 0;page-break-inside:avoid;}
+table{width:100%;border-collapse:collapse;margin:10px 0;page-break-inside:avoid;}
 th,td{border:1px solid black;padding:5px 7px;vertical-align:top;font-size:9.5pt;}
 th{background-color:#f0f0f0;}
 .overlay-stamp{position:absolute;top:40%;left:60%;transform:translate(-50%,-50%) rotate(-25deg);opacity:0.15;max-width:180px;pointer-events:none;z-index:-1;}
@@ -2158,19 +2189,34 @@ ${img(b.sign, '', 'max-width:150px', 'Signature')}
 <div class="blue-line-bottom"></div>
 <script>
 /* TWO PAGES, ALWAYS -- "the maelezo table must fit into 1st page regardless of content amount
-   so that the pages are two only fixed". The first page is measured against the A4 printable
-   height (297 - 15 - 18 = 264mm inside @page's margins) and shrunk, only when it would spill,
-   just enough to fit: the costs table never slides onto page two, so the payment instructions
-   never slide onto a third. The body is laid out at the print width on screen too (174mm),
-   so what is measured is what prints. Measured again at beforeprint, once the images are in. */
+   so that the pages are two only fixed". The first page is measured and, when it would spill,
+   shrunk just enough to fit: the costs table never slides onto page two, so the payment
+   instructions never slide onto a third. The body is laid out at the print width on screen
+   too (174mm), so what is measured is what prints.
+
+   FITTED TO THE SHORTER SHEET. @page asks for A4 and Chrome's Save-as-PDF obeys; a printer or
+   a phone set to Letter does not, and Letter is 18mm shorter. A first page that fit A4 and not
+   Letter printed as THREE pages on exactly those machines ("Some demands still put the maelezo
+   table on second page making the pages to be 3"), because this only shrank past A4's 264mm.
+   The target is now Letter's printable height (279 - 15 - 18 = 246mm, less a margin), which
+   fits both sheets. Measured at load, at beforeprint, and by the portal's print frame right
+   before it prints (hopeFit) -- whichever the browser fires, with every image in. zoom where
+   the browser has it; otherwise a transform with the box shortened to match, so the page
+   break moves with the picture. */
 (function(){
+  var LIMIT_MM = 243;
   function fit(){
     var fp = document.querySelector('.first-page'); if (!fp) return;
-    fp.style.zoom = '';
+    fp.style.zoom = ''; fp.style.transform = ''; fp.style.height = '';
     var px = 96 / 25.4, r = fp.getBoundingClientRect();
-    var limit = 264 * px - (r.top + (window.scrollY || 0)) - 4;
-    if (r.height > limit) fp.style.zoom = String(Math.max(0.55, Math.floor((limit / r.height) * 1000) / 1000));
+    var limit = LIMIT_MM * px - (r.top + (window.scrollY || 0));
+    if (!(r.height > limit)) return;
+    var s = Math.max(0.5, Math.floor((limit / r.height) * 1000) / 1000);
+    if ('zoom' in fp.style) { fp.style.zoom = String(s); return; }
+    fp.style.transformOrigin = 'top left'; fp.style.transform = 'scale(' + s + ')';
+    fp.style.height = Math.floor(r.height * s) + 'px';
   }
+  window.hopeFit = fit;
   if (document.readyState === 'complete') fit(); else window.addEventListener('load', fit);
   window.addEventListener('beforeprint', fit);
 })();
@@ -2358,14 +2404,15 @@ async function noticePayments_(db, notices) {
   return { by, kept: rows.length ? rows.every(p => p.n_phone !== undefined) : null };
 }
 
-async function demandNotices(db, user, _args, nowMs = Date.now()) {
+async function demandNotices(db, user, args, nowMs = Date.now()) {
   const [r, cur, teamBranch, brand, mine] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
     branchByTeam(db, nowMs),
     legalBrand_(db),
-    // The signed-in officer's own number, so the tab can say what their letters will carry.
-    staffPhone_(db, user),
+    // The signed-in officer's own number -- the handset they are on, else their registration
+    // by name -- so the tab can say what their letters will carry, and from where.
+    staffPhone_(db, user, args && args.device),
   ]);
   const nowBy = {};
   for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
@@ -2448,11 +2495,13 @@ async function demandNotices(db, user, _args, nowMs = Date.now()) {
        be read off the Legal tab rather than off a test print. */
     brand: { logo: !!brand.logo, stamp: !!brand.stamp, sign: !!brand.sign,
       signatory: brand.signatory, title: brand.title, phone: brand.phone || LEGAL_PHONE_DEFAULT,
-      /* "Legal phone is not from what i set but their login phone": the number a letter
-         carries is the printing officer's own, from their HOPE Calls registration (made with
-         their access code, so it is under the code's name). Said per person, so somebody whose
-         registration is under another name, or missing, finds out here and not on a letter. */
-      mine: letterPhone_(mine) || null, me: (user && user.name) || '' } };
+      /* "Legal phone is not from what i set but their login phone" -- "the one used at current
+         login": the number a letter carries is the printing officer's own, from the HOPE Calls
+         registration on the handset they are on, else the one under their code's name. Said
+         per person, with its source, so somebody whose registration is under another name,
+         or missing, finds out here and not on a letter. */
+      mine: letterPhone_(mine.phone) || null, mineFrom: letterPhone_(mine.phone) ? mine.from : null,
+      mineName: letterPhone_(mine.phone) ? mine.name : null, me: (user && user.name) || '' } };
 }
 
 /* =====================================================================================
