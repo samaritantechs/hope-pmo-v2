@@ -134,7 +134,9 @@ test('officer registration: boot resolves the device to the user', async () => {
   assert.equal(d.team, 'KONGOWE');
   assert.equal(d.leader, false);
   assert.equal(d.watermark, 0);
-  assert.deepEqual(d.today, { calls: 0, duration: 0, portfolio: 0 });
+  // The handset's own day comes under the call counting rule (dials beside calls, portfolio
+  // talk time apart from other talk) -- the same shape callTotals gives every board.
+  assert.deepEqual(d.today, { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0, customers: 0 });
 });
 
 test('an officer cannot register without their team code', async () => {
@@ -2431,6 +2433,13 @@ test('Ripoti: the database rollup and the row read produce the same report, fiel
     L('c5', 'u2', 'MBAGALA', '2026-07-21', 90, true,  null,        'BLOCKED',   '',   '0700000003'), // portfolio, no category: UNCATEGORIZED
     L('c6', 'u2', 'MBAGALA', '2026-07-23', 20, false, null,        null,        '',   '0700000004'), // no outcome: CONNECTED
     L('c7', 'u3', 'KONGOWE', '2026-07-21', 75, true,  'DEFAULTER', 'CONNECTED', 'R7', '0700000005'), // synced under her OLD team
+    /* THE RUMOUR, IN THE FIXTURE. "when a staff finds an unreachable contact they redial that
+       contact too much then find their one portfolio or non portfolio call to talk for so long
+       to balance the counts and duration". ASHA rings R2 twice more the same morning; BEN
+       spends fifteen minutes on the non-portfolio number he already rang that day. */
+    L('c8', 'u1', 'KONGOWE', '2026-07-20', 0,  true,  'DEFAULTER', 'MISSED',    'R2', '0700000002'), // redial of c2
+    L('c9', 'u1', 'KONGOWE', '2026-07-20', 5,  true,  'DEFAULTER', 'MISSED',    'R2', '0700000002'), // and again
+    L('c10','u2', 'MBAGALA', '2026-07-23', 900, false, null,       null,        '',   '0700000004'), // the long chat, same number as c6
   ];
   const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'] };
   const GMO = { code: 'G', name: 'G', role: 'GMO', teams: ['KONGOWE'], tabs: [] };
@@ -2438,8 +2447,30 @@ test('Ripoti: the database rollup and the row read produce the same report, fiel
   const slow = await reportCoreForPortal(fakeDb(t), ADMIN, {}, NOW);
   const fast = await reportCoreForPortal(fakeDb(t, { rpc: CALL_REPORT_RPC }), ADMIN, {}, NOW);
   assert.deepEqual(fast, slow, 'admin over every team: every field identical');
+  assert.equal(fast.ruleNote, undefined, 'the database counts under the rule: nothing to say');
+  /* THE CALL COUNTING RULE. Ten dials, seven numbers: the three rings of R2 on Monday are one
+     call, and BEN's second ring of 0700000004 on Thursday is not a second call either. */
+  assert.equal(fast.totals.dials, 10);
   assert.equal(fast.totals.calls, 7);
-  assert.equal(fast.users.find(u => u.name === 'ASHA K').uniqCustomers, 2, 'the same customer twice counts once');
+  const asha = fast.users.find(u => u.name === 'ASHA K');
+  assert.equal(asha.dials, 6); assert.equal(asha.calls, 4);
+  assert.equal(asha.duration, 140, 'portfolio talk time: 60+30+45+0+5');
+  assert.equal(asha.otherDuration, 10, 'the non-portfolio ten seconds are shown apart, never added in');
+  assert.equal(asha.connected, 2, 'numbers reached: 0700000001 on Monday and again on Wednesday; R2 never');
+  assert.equal(asha.connectRatio, 0.5);
+  assert.equal(asha.expected, 2, 'EXPECTED numbers (0700000001 on two days), not EXPECTED dials');
+  assert.equal(asha.defaulter, 1, 'R2 three times on Monday is one DEFAULTER call');
+  const ben = fast.users.find(u => u.name === 'BEN M');
+  assert.equal(ben.calls, 2); assert.equal(ben.dials, 3);
+  assert.equal(ben.duration, 90, 'his portfolio talk time is the one portfolio call');
+  assert.equal(ben.otherDuration, 920, 'the fifteen-minute chat lands on the other side of the line');
+  assert.equal(fast.totals.duration, 140 + 90 + 75);
+  assert.equal(fast.totals.otherDuration, 10 + 920);
+  assert.equal(fast.byOutcome.find(o => o.outcome === 'MISSED').dials, 3, 'outcomes stay per dial: a number can be missed three times');
+  const dfl = fast.byCategory.find(c => c.category === 'DEFAULTER');
+  assert.equal(dfl.calls, 2, 'ASHA\'s R2 and CECI\'s R7'); assert.equal(dfl.dials, 4); assert.equal(dfl.connected, 1, 'only R7 was reached');
+  assert.equal(fast.teams.find(x => x.team === 'MBAGALA').duration, 90 + 75, 'CECI\'s call counts on her CURRENT team');
+  assert.equal(asha.uniqCustomers, 2, 'the same customer twice counts once');
   assert.equal(fast.users.find(u => u.name === 'CECI T').team, 'MBAGALA', 'reported under her CURRENT team');
   assert.equal(fast.users.find(u => u.name === 'DENIS P').calls, 0, 'the zero-call officer is on the board');
 
@@ -2447,4 +2478,21 @@ test('Ripoti: the database rollup and the row read produce the same report, fiel
   const slowG = await reportCoreForPortal(fakeDb(t), GMO, {}, NOW);
   const fastG = await reportCoreForPortal(fakeDb(t, { rpc: CALL_REPORT_RPC }), GMO, {}, NOW);
   assert.deepEqual(fastG, slowG, 'team scoping agrees on both roads');
+
+  /* A DATABASE STILL ON RUN-ME-014 returns 'g' and 'u' rows and no 'd' rows. The report must
+     not fall back to reading every call row (the 45-second tab), and must not pass dials off
+     as calls either: the dials stand in, and the report SAYS so. Talk time is still split
+     right, because the dials carry their category. */
+  const OLD_RPC = { call_report_rollup: (s, a) => CALL_REPORT_RPC.call_report_rollup(s, a).filter(r => r.kind !== 'd') };
+  const old = await reportCoreForPortal(fakeDb(t, { rpc: OLD_RPC }), ADMIN, {}, NOW);
+  assert.match(old.ruleNote, /RUN-ME-042/, 'names the paste that is missing');
+  assert.equal(old.totals.calls, 10, 'until then, calls are dials');
+  assert.equal(old.totals.dials, 10);
+  assert.equal(old.totals.duration, 140 + 90 + 75, 'portfolio talk time is right even so');
+  assert.equal(old.totals.otherDuration, 930);
+  // A quiet window is not a legacy database.
+  const QUIET_RPC = { call_report_rollup: () => [] };
+  const quiet = await reportCoreForPortal(fakeDb(t, { rpc: QUIET_RPC }), ADMIN, {}, NOW);
+  assert.equal(quiet.ruleNote, undefined);
+  assert.equal(quiet.totals.calls, 0);
 });
