@@ -250,7 +250,13 @@ const BUDGETS = [
      screen already read; the rows they cost are one per team per date asked. */
   ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  34,  5500],
   ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  33,   900],
-  ['Officer boards',          'officerBoards', {}, ADMIN,   50,  60000,  30,  5000],
+  /* +4 TRIPS (2026-10-12): the legal recovery slide -- "add legal recovery slide at presentation,
+     todays and weekly recovery columns as pmo recovery does". The roles table (which codes hold
+     the legal tab by role), the notice register scoped like every other read here, the ledger
+     fold, and the week's ledger rows. Could the database do it instead? The fold IS the
+     database doing it; what comes back is a few hundred register rows and the week's payments
+     against them, never the two-week payments book. Rows unchanged: both are small. */
+  ['Officer boards',          'officerBoards', {}, ADMIN,   54,  60000,  34,  5000],
   /* THE CUSTOMERS BEHIND A RECOVERY TILE -- the one per-customer read on the dashboard, and
      only when a tile is pressed: one day's initial and current decks for the scope, raw, plus
      the register. 500 customers x 2 decks in this fixture. Same read in both worlds. */

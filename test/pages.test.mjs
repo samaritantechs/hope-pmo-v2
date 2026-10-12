@@ -506,10 +506,11 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
 test('only the PMO collection slide carries the unassigned-teams caption, drawn under its total', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
-  /* Two captions on the deck: the unassigned-teams one here, and the early slide's own note
+  /* Three captions on the deck: the unassigned-teams one here, the early slide's own note
      that Count 1 is not available until db/RUN-ME-039 is run (a step not done is said on the
-     screen that expected it). The UNASSIGNED caption is still the collection slide's alone. */
-  assert.equal((view.match(/caption:/g) || []).length, 2, 'two slides with a caption');
+     screen that expected it), and the legal recovery slide's source line. The UNASSIGNED
+     caption is still the collection slide's alone. */
+  assert.equal((view.match(/caption:/g) || []).length, 3, 'three slides with a caption');
   assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
   const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
   assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
@@ -1542,4 +1543,22 @@ test('the Legal calls send the handset id, and the print frame fits the letter b
   assert.ok(print.indexOf('document.title = docTitle') < print.indexOf('f.contentWindow.print()'));
   assert.ok(/addEventListener\('afterprint', restore\)/.test(print) && /setTimeout\(restore, 120000\)/.test(print), 'and given back on afterprint, or after two minutes');
   assert.ok(/document\.title = ownTitle/.test(print), 'back to the portal\'s own title');
+});
+
+/* THE LEGAL RECOVERY SLIDE -- "add legal recovery slide at presentation, todays and weekly
+   recovery columns as pmo recovery does": after PMO Collection, per legal officer, today and
+   the week side by side, the JUMLA percentages worked out from the totals, and the caption
+   saying where the money comes from and when RUN-ME-041 is missing. */
+test('the presentation carries a legal recovery slide with today and the week per legal officer', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  assert.ok(app.indexOf("slides.push({ id:'pmo'") < app.indexOf("slides.push({ id:'legal'"), 'after PMO Collection');
+  const legal = app.slice(app.indexOf("slides.push({ id:'legal'"), app.indexOf("slides.push({ id:'dayprog'"));
+  assert.ok(/rows:\(b\.legal\|\|\[\]\)\.slice\(0,12\)/.test(legal), 'fed by officerBoards\' legal rows');
+  assert.ok(/col\('tRecovered','Recovered today','money'\)/.test(legal) && /col\('recovered','Recovered \(week\)','money'\)/.test(legal), 'today, then the week');
+  assert.ok(/key:'tPct'[^}]*from:\['tRecovered','owed'\]/.test(legal) && /key:'pct'[^}]*from:\['recovered','owed'\]/.test(legal),
+    'the JUMLA percentages are the totals\' ratio, from the columns named on the slide');
+  assert.ok(/col\('owed','Owed at notice','money'\)/.test(legal), 'against what the letters demanded');
+  const cap = app.slice(app.indexOf('var lgCap ='), app.indexOf("slides.push({ id:'legal'"));
+  assert.ok(/b\.legalOn === false && b\.legalNote/.test(cap), 'a database without the ledger is said, not shown as a quiet week');
+  assert.ok(/b\.legalAll/.test(cap) && /b\.legalUnheld/.test(cap), 'the lawyers holding every team, and the teams nobody holds, are named');
 });

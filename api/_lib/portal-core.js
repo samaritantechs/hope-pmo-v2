@@ -9148,7 +9148,8 @@ const codesCache = new WeakMap();
 export function noteCodesWritten(db) { codesCache.delete(db); teamsCache.delete(db); teamsRawCache.delete(db); }
 async function readCodesAll(db, nowMs) {
   const at = nowMs || Date.now();
-  return memoRead_(codesCache, db, at, () => fetchAll(() => db.from('access_codes').select('name, code, role, teams')));
+  // `tabs` rides along for the legal roster (legalBoard_): the same memoised read, one more column.
+  return memoRead_(codesCache, db, at, () => fetchAll(() => db.from('access_codes').select('name, code, role, teams, tabs')));
 }
 
 const SETTINGS_TTL_MS = 20000;
@@ -11359,6 +11360,103 @@ function officerOf(teamBy, team, roleCol) {
   const t = teamBy[K(team)];
   return (t && nameOrNull(t[roleCol])) || '(unassigned)';
 }
+
+/* =======================================================================================
+   LEGAL RECOVERY -- "add legal recovery slide at presentation, todays and weekly recovery
+   columns as pmo recovery does".
+   =======================================================================================
+   WHAT IS RECOVERED. The money a noticed customer actually PAID: the payments the book
+   records from each notice's date on, kept for good in notice_payment_ledger (RUN-ME-041a)
+   and matched by REF# or the customer's phone -- the same reading the Legal tab's "Paid since
+   notice" makes. Today is paid_at = today; the week is Monday to Sunday. A customer served
+   twice has the same payment recorded under both notices, so a payment counts once per
+   customer. (The Legal tab's all-time "Recovered" also credits an arrears drop; a day's or a
+   week's drop needs every customer's deck for every day, which these boards no longer read.)
+
+   WHO IS CREDITED. The legal officers are ACCESS CODES holding the legal tab -- on the code
+   itself or through its role -- each with the teams their code carries: "any legal assigned
+   to that team gets his previous demands automatic". A notice counts for the officer whose
+   teams include the team it is filed under (the customer's current team, as the register
+   upload places it). A lawyer whose code holds every team is not ranked, the same rule as
+   the PMO board (every percentage would be the company's); they are named instead. Notices
+   on a team no legal code holds make one "(unassigned)" row, as the other boards do.
+
+   OWED is each customer's arrears at their latest notice, the figure the letter demanded
+   against, so Rec % reads: of what the lawyers' letters chased, how much has come in. */
+async function legalLedgerWeek_(db, from, to) {
+  /* The fold first -- the book is pruned to two weeks, so the week's payments are copied
+     against their notices before being read, exactly as the Legal tab does. Never fatal: a
+     database without RUN-ME-041 answers null, and the board says so. */
+  try { await db.rpc('fold_notice_payments', { p_before: null }); } catch (e) { /* said below */ }
+  try {
+    const rows = await fetchAll(() => db.from('notice_payment_ledger')
+      .select('ref, since, payment_id, paid_at, amount').gte('paid_at', from).lte('paid_at', to));
+    return rows || [];
+  } catch (e) { return null; }
+}
+const LEGAL_NOTE = 'Malipo baada ya notisi hayajasomwa: endesha db/RUN-ME-041a na 041b kwenye SQL editor. '
+  + '/ Payments after notices are not recorded yet: run db/RUN-ME-041a and 041b in the SQL editor.';
+function legalBoard_(codeRows, roleRows, notices, ledger, user, today, mon, sun) {
+  const on = Array.isArray(ledger);
+  const roleTabs = {};
+  for (const r of roleRows || []) roleTabs[K(r.role)] = r.tabs || [];
+  const holdsLegal = c => (c.tabs || []).includes('legal') || (roleTabs[K(c.role)] || []).includes('legal');
+  const lawyers = (codeRows || []).filter(holdsLegal);
+  const roster = lawyers
+    .filter(c => c.teams && c.teams.length)
+    .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
+    .map(c => ({ name: c.name, teams: c.teams }));
+  const allTeams = lawyers.filter(c => !c.teams || !c.teams.length).map(c => c.name).sort();
+
+  // Each customer once, at their latest notice; every (ref, since) they were served under.
+  const latest = new Map(), served = new Set();
+  for (const n of notices || []) {
+    const ref = K(n.ref); if (!ref) continue;
+    served.add(ref + '|' + String(n.notice_date || '').slice(0, 10));
+    const cur = latest.get(ref);
+    if (!cur || String(n.notice_date || '') > String(cur.date || '')) latest.set(ref, { ref, team: n.team || '', date: String(n.notice_date || '').slice(0, 10), owed: num(n.arrears_at_notice) });
+  }
+  // A payment once per customer, and only under a notice this scope holds.
+  const paid = new Map();                         // ref -> Map(payment_id -> {amount, day})
+  for (const l of ledger || []) {
+    const ref = K(l.ref), day = String(l.paid_at || '').slice(0, 10);
+    if (!served.has(ref + '|' + String(l.since || '').slice(0, 10))) continue;
+    if (!paid.has(ref)) paid.set(ref, new Map());
+    paid.get(ref).set(String(l.payment_id), { amount: num(l.amount), day });
+  }
+  const sums = ref => {
+    let t = 0, w = 0;
+    for (const p of (paid.get(ref) || new Map()).values()) {
+      if (p.day === today) t += p.amount;
+      if (p.day >= mon && p.day <= sun) w += p.amount;
+    }
+    return { t, w };
+  };
+  const held = new Set();
+  const rows = roster.map(p => {
+    const mine = new Set(p.teams.map(K));
+    let customers = 0, owed = 0, tRecovered = 0, recovered = 0;
+    for (const c of latest.values()) {
+      if (!mine.has(K(c.team))) continue;
+      held.add(c.ref);
+      const s = sums(c.ref);
+      customers++; owed += c.owed; tRecovered += s.t; recovered += s.w;
+    }
+    return { officer: p.name, teams: p.teams.length, customers, owed, tRecovered, tPct: pctOf(tRecovered, owed),
+      recovered, pct: pctOf(recovered, owed) };
+  });
+  const unheld = [...latest.values()].filter(c => !held.has(c.ref));
+  if (unheld.length) {
+    let owed = 0, tRecovered = 0, recovered = 0;
+    for (const c of unheld) { const s = sums(c.ref); owed += c.owed; tRecovered += s.t; recovered += s.w; }
+    rows.push({ officer: '(unassigned)', teams: new Set(unheld.map(c => K(c.team))).size, customers: unheld.length, owed,
+      tRecovered, tPct: pctOf(tRecovered, owed), recovered, pct: pctOf(recovered, owed) });
+  }
+  // Best weekly share first; an officer with no figure sorts last, never as a beaten zero.
+  rows.sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct) || String(a.officer).localeCompare(String(b.officer)));
+  return { rows, on, note: on ? null : LEGAL_NOTE, allTeams, customers: latest.size,
+    unheld: [...new Set(unheld.map(c => c.team || '').filter(Boolean))].sort() };
+}
 function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
 
@@ -11390,7 +11488,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
-         codeRows, cfgS, adj, expInitWeek] = await Promise.all([
+         codeRows, cfgS, adj, expInitWeek, roleRows, notices, ledger] = await Promise.all([
     readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     earlyList(db, { today, teams: user.teams }),
@@ -11437,6 +11535,14 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        dates out by exact match, so the extra days never leak into it. */
     expectedTotalsInRange(db, { type: 'initial', from: mon,
       to: addDaysKey(today, 3) > fri ? addDaysKey(today, 3) : fri, teams: user.teams }),
+    /* THE LEGAL RECOVERY BOARD'S THREE -- "add legal recovery slide at presentation, todays
+       and weekly recovery columns as pmo recovery does". The roles table (which codes hold
+       the legal tab by role), the notice register scoped like every other read here, and the
+       week's payments recorded against notices. Four trips, one of them the fold; see
+       legalLedgerWeek_. */
+    fetchAll(() => db.from('roles').select('role, tabs')),
+    fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, notice_date, arrears_at_notice'), user.teams)),
+    legalLedgerWeek_(db, mon, sun),
   ]);
   const pmoRoleName = cfgS.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const teamBy = {};
@@ -11446,6 +11552,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
   const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
   const myPhoneUsers = scoped(user, phoneUsers);
+  const legal = legalBoard_(codeRows, roleRows, scoped(user, notices), ledger, user, today, mon, sun);
   /* Resolve a deck the SAME way the dashboard card does: by date, type AND WEEKDAY.
      Ignoring weekday here was the bug behind "initial right, current bigger, recovery
      negative". A day can carry decks stamped with more than one weekday -- Monday's baseline
@@ -12069,6 +12176,11 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     earlyCount1Missing: [...new Set(earlyToday.flatMap(r => r.count1Missing || []))].sort(),
     pmoCount1Missing: [...new Set(pmoRows.flatMap(r => r.count1Missing || []))].sort(),
     callToday, callWeek, callWeekWorst, csToday, csWeek, csExcluded,
+    /* Legal recovery: payments from noticed customers today and this week, per legal officer
+       (legalBoard_). `legalOn` false means the ledger is not there (RUN-ME-041a), said in
+       `legalNote`; `legalAll` names the lawyers who hold every team and are not ranked. */
+    legal: legal.rows, legalOn: legal.on, legalNote: legal.note, legalAll: legal.allTeams,
+    legalCustomers: legal.customers, legalUnheld: legal.unheld,
     /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission
        belongs on the commission panel where the person it concerns can see their own figure;
        a projector in a meeting room is the wrong place for anybody's pay. Building the row
