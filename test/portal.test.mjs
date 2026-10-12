@@ -1941,32 +1941,32 @@ test('demand notices show whether they worked', async () => {
   const by = Object.fromEntries(d.rows.map(r => [r.ref, r]));
 
   assert.equal(by['111'].arrears_now, 400);
-  assert.equal(by['111'].recovered_since, 600);
+  assert.equal(by['111'].rec_pct, 60, 'recovery: 600 of the 1,000 at notice');
   assert.match(by['111'].notice_state, /Reducing/);
 
   assert.equal(by['555'].arrears_now, 800);
-  assert.equal(by['555'].recovered_since, 0);
+  assert.equal(by['555'].rec_pct, 0);
   assert.match(by['555'].notice_state, /No movement/);
 
   // Gone from the deck is the STRONGEST outcome a notice can have, not missing data.
   assert.equal(by['222'].arrears_now, 0);
-  assert.equal(by['222'].recovered_since, 500);
+  assert.equal(by['222'].rec_pct, 100);
   assert.match(by['222'].notice_state, /Cleared/);
 
-  assert.equal(d.recoveredSince, 1100);
+  assert.equal(d.recovery, 1100, 'the arrears drop: 600 + 0 + 500');
   assert.equal(d.cleared, 1);
   assert.equal(d.atNotice, 2300);
   // "add % figure infront of amount in the same card": 1,100 back of the 2,300 the letters chased.
   assert.equal(d.owed, 2300);
-  assert.equal(d.recoveredPct, 47.8);
+  assert.equal(d.recoveryPct, 47.8);
 
   // WITH NO DECK UPLOADED, every customer would look cleared and the tab would report a
   // triumph that never happened. It must say it does not know instead.
   const noDeck = { ...t, defaulter_snapshots: [] };
   const nd = await portalApi(fakeDb(noDeck), ADMIN, 'demandNotices', {}, NOW);
   assert.equal(nd.rows[0].arrears_now, null);
-  assert.equal(nd.rows[0].recovered_since, null);
-  assert.equal(nd.recoveredSince, 0);
+  assert.equal(nd.rows[0].rec_pct, null);
+  assert.equal(nd.recovery, 0);
   assert.equal(nd.cleared, 0);
   assert.match(nd.rows[0].notice_state, /No deck/);
   assert.equal(d.paymentsOn, false, 'without db/RUN-ME-040 the screen says payments are not read');
@@ -2020,17 +2020,17 @@ test('demand notices show whether they worked', async () => {
   assert.equal(pb['111'].paid_since, 420); assert.equal(pb['111'].paid_n, 2); assert.equal(pb['111'].last_paid, TODAY);
   assert.equal(pb['111'].paid_n_phone, 1, 'one of the two was tied to them by phone alone');
   assert.equal(pb['111'].arrears_down, 600);
-  assert.equal(pb['111'].recovered_since, 600, 'the larger of the two readings');
+  assert.equal(pb['111'].rec_pct, 60, 'recovery is the arrears reading alone, whatever was paid');
   assert.match(pb['111'].notice_state, /Paying/);
   assert.equal(pb['555'].paid_since, 200);
   assert.equal(pb['555'].arrears_down, 0, 'arrears did not move -- new instalments fell due');
-  assert.equal(pb['555'].recovered_since, 200, 'yet the money came in, and that is a recovery');
+  assert.equal(pb['555'].rec_pct, 0, 'the arrears did not move: the 200 is recovered since notice, not recovery');
   assert.match(pb['555'].notice_state, /Paying/);
   assert.equal(pb['222'].paid_since, 0);
-  assert.equal(pb['222'].recovered_since, 500);
+  assert.equal(pb['222'].rec_pct, 100);
   assert.match(pb['222'].notice_state, /Cleared/);
   assert.equal(dp.paidSince, 620);
-  assert.equal(dp.recoveredSince, 1300);
+  assert.equal(dp.recovery, 1100, 'recovery stays the arrears reading: 600 + 0 + 500');
   assert.equal(dp.customers, 3);
   assert.equal('letter' in dp.rows[0], false, 'the stored letter stays off the register list');
 
@@ -2053,13 +2053,13 @@ test('demand notices show whether they worked', async () => {
   const dt = await portalApi(fakeDb(twice, { rpc: { notice_payments } }), ADMIN, 'demandNotices', {}, NOW);
   assert.equal(dt.rows.filter(r => r.ref === '111').length, 2);
   assert.equal(dt.paidSince, 620, 'not 1,040: one person, counted once');
-  assert.equal(dt.recoveredSince, 1300);
+  assert.equal(dt.recovery, 1100);
   assert.equal(dt.customers, 3);
   // The % divides like for like: 111 is read at their first letter (600 of 1,000), so the
-  // second letter's 400 is not added to what is owed. 1,300 of 2,300, not of 2,700.
+  // second letter's 400 is not added to what is owed. 1,100 of 2,300, not of 2,700.
   assert.equal(dt.owed, 2300);
-  assert.equal(dt.recoveredPct, 56.5);
-  assert.equal(dp.recoveredPct, 56.5);
+  assert.equal(dt.recoveryPct, 47.8);
+  assert.equal(dp.recoveryPct, 47.8);
 
   /* RUN-ME-040's function still in place (no n_phone): payments are read live off the
      two-week book, and the tab says they are not kept yet and names RUN-ME-041. */

@@ -2477,11 +2477,15 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
         notice production., cover it, since not only the current arreas vs arreas at notice but
         there have been payments made rergadless the arreas difference and the payments within
         notice are all recoveries"
-     Arrears alone understate it: a customer who pays every week after the letter can show the
-     same arrears a month later because new instalments fell due meanwhile. So each notice also
-     reads the received-payments book from its own date forward, and Recovered is the LARGER
-     of the two readings -- what they paid since, or how far their arrears fell. Where the
-     payments function is not there yet, Recovered is the arrears reading alone, said so. */
+     TWO READINGS, KEPT APART -- "all i needed is 1. recovery to have difference of arrears at
+     notice and current and rec% and 2. recovered amount since notices":
+       RECOVERY  = arrears at notice − arrears now (how far the letter brought the debt down),
+                   with Rec % over the arrears at notice;
+       RECOVERED = what the customer PAID since the notice (the ledger, db/RUN-ME-041), the
+                   reading the dashboard card, the legal slide and the boards already use.
+     They were once blended (the larger of the two per customer, called Recovered), which made
+     the two cards impossible to tell apart. Where the payments function is not there yet,
+     Recovered is not read and the screen says so. */
   const pay = await noticePayments_(db, r.rows);
   const paidBy = pay ? pay.by : null;
 
@@ -2496,7 +2500,6 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
     const down = current == null ? null : Math.max(0, at - current);
     const p = paidBy ? paidBy.get(key + '|' + String(x.notice_date || '').slice(0, 10)) : null;
     const paidSince = paidBy ? (p ? num(p.paid) : 0) : null;
-    const recovered = paidSince == null ? down : Math.max(paidSince, down || 0);
     return { ...x,
       branch: teamBranch.get(K(x.team)) || null,
       letter_kept: !!letter,
@@ -2508,7 +2511,8 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
       // ordinary case, since the book's REF NO is not the deck's (RUN-ME-041a).
       paid_n_phone: p && p.n_phone !== undefined ? num(p.n_phone) : null,
       last_paid: p && p.last_paid ? String(p.last_paid).slice(0, 10) : null,
-      recovered_since: recovered,
+      // Rec % per row: the arrears drop over what the letter demanded against.
+      rec_pct: down == null ? null : pctOf(down, at),
       // What a person working the notice needs to see at a glance.
       notice_state: (current != null && current <= 0) ? 'Amemaliza / Cleared'
         : paidSince > 0 ? 'Analipa / Paying'
@@ -2524,18 +2528,18 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
      that is what the register is. */
   const perCustomer = new Map();
   for (const x of rows) {
-    const c = perCustomer.get(K(x.ref)) || { paid: 0, recovered: 0, owed: null, cleared: false };
+    const c = perCustomer.get(K(x.ref)) || { paid: 0, down: 0, owed: null, cleared: false };
     c.paid = Math.max(c.paid, num(x.paid_since));
-    /* OWED goes with the reading: the arrears at the notice whose Recovered figure the
-       customer is counted at, so the percentage under it divides like for like. A second
-       letter to the same person does not add their arrears up twice. */
-    if (c.owed == null || num(x.recovered_since) > c.recovered) c.owed = num(x.arrears_at_notice);
-    c.recovered = Math.max(c.recovered, num(x.recovered_since));
+    /* OWED goes with the reading: the arrears at the notice whose drop the customer is
+       counted at (the earliest letter looks back furthest), so Rec % divides like for like.
+       A second letter to the same person does not add their arrears up twice. */
+    if (c.owed == null || num(x.arrears_down) > c.down) c.owed = num(x.arrears_at_notice);
+    c.down = Math.max(c.down, num(x.arrears_down));
     c.cleared = c.cleared || x.notice_state.indexOf('Cleared') >= 0;
     perCustomer.set(K(x.ref), c);
   }
   const customers = [...perCustomer.values()];
-  const recoveredSince = customers.reduce((s, c) => s + c.recovered, 0);
+  const recovery = customers.reduce((s, c) => s + c.down, 0);
   const owed = customers.reduce((s, c) => s + num(c.owed), 0);
   /* RECOVERED LEO AND THIS WEEK, ON THE TAB -- "add recovered leo and recovered weekly cards at
      demand notice pannel". The dashboard card's own reading (legalTotals_: the week's ledger
@@ -2550,13 +2554,11 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
     fines: rows.reduce((s, x) => s + num(x.fine), 0),
     atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
-    recoveredSince,
-    /* REC % IN FRONT OF THE AMOUNT -- "Recovered since notice card, in demands - add % figure
-       infront of amount in the same card": of what the letters chased (each customer's
-       arrears at the notice they are read at, once per person), how much has come back. The
-       same basis as the dashboard's legal card and the legal slide; null with nothing owed. */
-    owed,
-    recoveredPct: pctOf(recoveredSince, owed),
+    /* RECOVERY, WITH ITS REC % IN FRONT -- "add % figure infront of amount in the same card":
+       the arrears drop over what the letters chased (each customer's arrears at the notice
+       they are read at, once per person); null with nothing owed. */
+    recovery, owed, recoveryPct: pctOf(recovery, owed),
+    // RECOVERED SINCE NOTICE: what was paid after the letters, once per customer.
     paidSince: customers.reduce((s, c) => s + c.paid, 0),
     cleared: customers.filter(c => c.cleared).length,
     customers: customers.length,

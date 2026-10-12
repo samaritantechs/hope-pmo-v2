@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-h';
+var BUILD = '2026-10-12-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6318,20 +6318,19 @@ VIEWS.legal = function(){
       + kpi('Total demanded', money(d.demanded), null, 'bad')
       + kpi('Fines charged', money(d.fines), 'late-payment penalties', 'warnc')
       /* THE QUESTION THE REGISTER EXISTS TO ANSWER: does serving a notice bring money back?
-         Read two ways, because arrears alone understate it -- "there have been payments made
-         rergadless the arreas difference and the payments within notice are all recoveries":
-         what the customer PAID since the notice (the received-payments book, db/RUN-ME-040)
-         and how far their arrears fell. Recovered is the larger of the two, per notice. */
-      /* THE PERCENTAGE IN FRONT OF THE AMOUNT -- "add % figure infront of amount in the same
-         card": of what the letters chased (each customer's arrears at notice, once per person),
-         how much came back. The same Rec % the dashboard's legal card and the slide carry. */
-      + kpi('Recovered since notice',
-            (d.recoveredPct != null ? pct(d.recoveredPct) + ' · ' : '') + money(d.recoveredSince),
-            (d.owed > 0 ? 'ya / of TZS ' + money(d.owed) + ' zilizodaiwa / owed at notice · ' : '')
-              + money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
-            d.recoveredSince > 0 ? 'good' : '')
-      + (d.paymentsOn ? kpi('Paid since notice', money(d.paidSince),
-            'malipo yaliyopokelewa baada ya notisi / received after the notice'
+         TWO READINGS, TWO CARDS, KEPT APART -- "all i needed is 1. recovery to have difference
+         of arrears at notice and current and rec% and 2. recovered amount since notices":
+         RECOVERY is the arrears drop (at notice − current) with its Rec % in front, over what
+         the letters chased; RECOVERED is what the customers PAID since the letters (the
+         ledger, db/RUN-ME-041), the reading the dashboard card and the slide carry. */
+      + kpi('Urejeshaji / Recovery',
+            (d.recoveryPct != null ? pct(d.recoveryPct) + ' · ' : '') + money(d.recovery),
+            'madeni wakati wa notisi − sasa / arrears at notice − current'
+              + (d.owed > 0 ? ' · ya / of TZS ' + money(d.owed) : '')
+              + ' · ' + money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
+            d.recovery > 0 ? 'good' : '')
+      + (d.paymentsOn ? kpi('Imerejeshwa tangu notisi / Recovered since notice', money(d.paidSince),
+            'malipo yaliyopokelewa baada ya notisi / payments received after the notice'
             + (d.paymentsKept ? ' · yamehifadhiwa daima / kept for good' : ''), d.paidSince > 0 ? 'good' : '') : '')
       /* RECOVERED LEO AND THIS WEEK -- "add recovered leo and recovered weekly cards at demand
          notice pannel, clickable to show list of the recoveries as the dashboard recovries are
@@ -6348,7 +6347,7 @@ VIEWS.legal = function(){
       + '</div>'
       + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040, kisha RUN-ME-041a na 041b, kwenye SQL editor.'
           + ' / Payments made after a notice are not read yet: run db/RUN-ME-040, then RUN-ME-041a and 041b, in the SQL editor.'
-          + ' Until then "Recovered" is how far the arrears fell.</div>')
+          + ' Until then only Recovery (how far the arrears fell) shows.</div>')
       /* RUN-ME-040's reading is live off a book that is pruned to two weeks -- "remember
          received autodeletes so i dont know how we'll forever record notice recoverey" -- so a
          payment it showed last month reads as nothing this month, and it matches by a REF NO
@@ -6403,16 +6402,17 @@ VIEWS.legal = function(){
       // as what the customer owes today.
       col('arrears_at_notice','At notice','money'),
       col('arrears_now','Current','money'),
-      col('arrears_down','Arrears down','money'),
-      /* The payments book from the notice date forward: how much, how many, the last one.
-         A dash across the column means the function is not there yet (the note above). */
-      {key:'paid_since', label:'Paid since', kind:'money', cls:function(r){ return r.paid_since > 0 ? 'good' : ''; }},
+      // RECOVERY: at notice − current, and its Rec % -- the arrears reading, nothing blended in.
+      {key:'arrears_down', label:'Recovery (at notice − current)', kind:'money', cls:function(r){ return r.arrears_down > 0 ? 'good' : ''; }},
+      {key:'rec_pct', label:'Rec %', kind:'pct', from:['arrears_down','arrears_at_notice']},
+      /* RECOVERED SINCE NOTICE: the payments book from the notice date forward -- how much, how
+         many, the last one. A dash across the column means the function is not there yet
+         (the note above). */
+      {key:'paid_since', label:'Recovered since notice', kind:'money', cls:function(r){ return r.paid_since > 0 ? 'good' : ''; }},
       col('paid_n','Payments','num'),
       // How many of them the book could only tie to this customer by PHONE (RUN-ME-041): the
       // ordinary case, since the book's REF NO is not the deck's REF#. A dash until it is run.
       col('paid_n_phone','By phone','num'), col('last_paid','Last paid','date'),
-      {key:'recovered_since', label:'Recovered', kind:'money',
-       cls:function(r){ return r.recovered_since > 0 ? 'good' : ''; }},
       {key:'notice_state', label:'Status', kind:'chip', chip:function(r){
         var k = String(r.notice_state||'');
         return k.indexOf('Cleared')>=0 ? 'ok' : k.indexOf('Paying')>=0 ? 'ok' : k.indexOf('Reducing')>=0 ? 'warn'
@@ -6621,7 +6621,7 @@ function lgDetails(r){
     + row('Deni sasa / Current', m(r.arrears_now))
     + row('Limepungua / Arrears down', m(r.arrears_down))
     + row('Kimelipwa tangu notisi / Paid since', paidLine)
-    + row('Kimerejeshwa / Recovered', m(r.recovered_since), true)
+    + row('Urejeshaji / Recovery (at notice − current)', m(r.arrears_down) + (r.rec_pct != null ? ' · ' + pct(r.rec_pct) : ''), true)
     + row('Hali / Status', esc(r.notice_state||'—'))
     + row('Imetolewa na / Issued by', esc(r.issued_by||'—') + (r.created_at ? ' · ' + d(r.created_at) : ''))
     + row('Barua / Letter', r.letter_kept ? 'imehifadhiwa na rejista / kept with the register' : 'ya zamani — itajengwa upya kutoka deki ya sasa / old — rebuilt from today\'s deck')
