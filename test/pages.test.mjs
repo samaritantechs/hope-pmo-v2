@@ -500,20 +500,27 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
-/* THE COLLECTION SLIDE'S CAPTION -- "add a caption below of unassigned teams, ill need to
-   always notice them from there. so the only slide with unassigned teams caption is of
-   collection". */
-test('only the PMO collection slide carries the unassigned-teams caption, drawn under its total', () => {
+/* THE UNASSIGNED-TEAMS CAPTION, EACH UNIT'S LINE UNDER ITS OWN SLIDE -- "add a caption below
+   of unassigned teams, ill need to always notice them from there" put all three lines under
+   the collection slide; "take the unassigned lists text beneath to their respective 3 slides
+   not all in collection, col in col, rec in rec and early col in early col" moves each line
+   under the slide it is about. */
+test('each unit slide carries its own unassigned-teams line, drawn under its total', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
-  /* Three captions on the deck: the unassigned-teams one here, the early slide's own note
-     that Count 1 is not available until db/RUN-ME-039 is run (a step not done is said on the
-     screen that expected it), and the legal recovery slide's source line. The UNASSIGNED
-     caption is still the collection slide's alone. */
-  assert.equal((view.match(/caption:/g) || []).length, 3, 'three slides with a caption');
-  assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
+  /* Four captions on the deck: the three unit slides' (the early and collection ones also
+     carrying their Count 1 note -- a step not done is said on the screen that expected it) and
+     the legal recovery slide's source line. One "Unassigned:" heading, in uaCap, used thrice. */
+  assert.equal((view.match(/caption:/g) || []).length, 4, 'four slides with a caption');
+  assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'one heading, in uaCap');
+  assert.equal((view.match(/caption: uaCap\(/g) || []).length, 3, 'under three slides');
+  const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
+  const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
   const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
-  assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
+  assert.ok(/caption: uaCap\('Rec', ua\.rec\)/.test(rec), 'rec in rec');
+  assert.ok(/caption: uaCap\('Early col', ua\.early\)\s*\n\s*\+ \(function\(\)\{\s*\n\s*var n = count1Note_\(/.test(early), 'early col in early col, its Count 1 note beneath');
+  assert.ok(/caption: uaCap\('Col', ua\.col\)\s*\n/.test(pmo) && /count1Note_\(/.test(pmo), 'col in col, its Count 1 note beneath');
+  assert.ok(!/ua\.early|ua\.rec/.test(pmo) && !/ua\.col|ua\.rec/.test(early) && !/ua\.early|ua\.col/.test(rec), 'no slide carries another unit\'s line');
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table at
      presentation, add count 1 column too (always the count 1 left of the current day)" */
   assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(NC 1 leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),
@@ -1584,15 +1591,21 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
 });
 
 /* "i need expected defaulters report to have the weekly forward and backward buttons there
-   too": the Exp.Def Report carries the same weekBar as the dashboard, asks the server for the
-   chosen week, and keeps its daily/weekly pills and the email button on that bar. */
-test('the Exp.Def Report carries the week arrows and asks for the chosen week', () => {
+   too" / "expected def - remove Leo / Daily and Wiki / Weekly; add weekly recovered 3 cards
+   (GMO, Manager, Bike) so that weeks shift shows weekly recovery total on the cards": the
+   Exp.Def Report carries the same weekBar as the dashboard, asks the server for the chosen week
+   only (no daily/weekly pills), keeps the email button on the bar, and shows the week's
+   recovered total per recycling category. */
+test('the Exp.Def Report carries the week arrows, no day/week pills, and the three weekly recovered cards', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
-  assert.ok(/srv\('expdfReport', \{ weekly: weekly, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server');
+  assert.ok(/srv\('expdfReport', \{ weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server, nothing else');
   assert.ok(/HEAD = weekBar\(d, /.test(view), 'the same week bar as the dashboard');
-  assert.ok(/data-arg="scope" data-val="day"/.test(view) && /data-arg="scope" data-val="week"/.test(view) && /id="mailWeekly"/.test(view), 'the pills and the email button ride on it');
-  assert.ok(/wiki ya \/ week of '\+d\.weekOf\+' → '\+\(d\.weekEnd\|\|''\)/.test(view), 'the weekly card names the week');
+  assert.ok(!/data-arg="scope"/.test(view) && !/Leo \/ Daily|Wiki \/ Weekly/.test(view), 'the daily/weekly pills are gone');
+  assert.ok(/id="mailWeekly"/.test(view), 'the email button stays on the bar');
+  assert.ok(/wiki ya \/ week of '\+d\.weekOf\+' → '\+\(d\.weekEnd\|\|''\)/.test(view), 'the customers card names the week');
+  assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /Weekly recovered · ' \+ role/.test(view)
+    && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one weekly recovered card per recycling category, the week\'s total');
 });
 
 /* PMO DEDUCTION -- "i also want to build the pmo deduction pannel shift from google sheets into

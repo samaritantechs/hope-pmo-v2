@@ -4426,7 +4426,11 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
   assert.equal(d.totals.initial, 6000);
   assert.equal(d.totals.recovered, 900);
   assert.equal(d.totals.pct, 15);
-  assert.equal(d.weekly, false);
+  // THE WEEK'S REPORT, ALWAYS -- "expected def - remove Leo / Daily and Wiki / Weekly": the
+  // portal's call is weekly whatever it asks; the three role cards read sections[].totals.
+  assert.equal(d.weekly, true);
+  assert.equal(d.sections.find(s => s.role === 'BIKE').totals.recovered, 400);
+  assert.equal(d.sections.find(s => s.role === 'GMO').totals.recovered, 0);
   // Weekly measures against MONDAY's deck; there is none here, so it falls back to the day's
   // own initial rather than inventing a baseline.
   const w = await portalApi(db, ADMIN, 'expdfReport', { weekly: true }, NOW);
