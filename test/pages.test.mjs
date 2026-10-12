@@ -1567,6 +1567,22 @@ test('the presentation carries a legal recovery slide with today and the week pe
    the single card on top too": a card on the headline row fed by dashboardFull's own fold, and
    two boards (today, the week) per legal officer fed by officerBoards' legal rows, after the
    recovery boards, with the JUMLA percentages worked out from the totals. */
+/* "add recovered leo and recovered weekly cards at demand notice pannel, clickable to show list
+   of the recoveries as the dashboard recovries are clickable to show list." Two cards on the
+   Legal tab, fed by demandNotices' legal reading, each opening legalRecoveriesDrawer_. */
+test('the Legal tab carries tappable recovered-today and recovered-this-week cards', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 9000);
+  assert.ok(/kpi\('Imerejeshwa leo \/ Recovered today',[^;]*'lgRecT'\)/.test(view), 'today\'s card, with its id');
+  assert.ok(/kpi\('Imerejeshwa wiki hii \/ Recovered this week',[^;]*'lgRecW'\)/.test(view), 'the week\'s card, with its id');
+  assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by demandNotices\' legal reading');
+  assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on the cards');
+  assert.ok(/function legalRecoveriesDrawer_\(period\)/.test(app) && /srv\('legalRecoveries', \{ period: week \? 'week' : 'today' \}\)/.test(app), 'the drawer asks the server for the list');
+  assert.ok(/sumRow\(rows, \['owed', 'paid', 'payments'\]\)/.test(app), 'with a grand total');
+  assert.ok(/\[\['lgRecT', 'today'\], \['lgRecW', 'week'\]\]\.forEach/.test(app) && /legalRecoveriesDrawer_\(p\[1\]\)/.test(app), 'the whole card is the button');
+  assert.ok(/legalRecoveries:1/.test(app), 'cached like the other reads');
+});
+
 /* "a demand notice cant be generated for an expected/defaulter not from 2 DC and above". The
    New-notice drawer says the DC, and draws the Issue button only when the server's preview
    says the customer is at the rule; the pick list carries the DC on every line. */

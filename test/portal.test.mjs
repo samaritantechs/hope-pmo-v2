@@ -2767,6 +2767,66 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   assert.deepEqual(p2.served.map(s => s.date), ['2026-03-17', '2026-03-16'], 'the earlier ones are still listed, newest first');
 });
 
+/* "add recovered leo and recovered weekly cards at demand notice pannel, clickable to show list
+   of the recoveries as the dashboard recovries are clickable to show list". The Legal tab
+   carries the dashboard legal card's own reading, and the list behind either card is the same
+   fold: who paid in the period, how much, under which notice. */
+test('the Legal tab carries recovered-today and recovered-this-week, and lists the customers behind each', async () => {
+  const t = tables();
+  // The base fixture's own notice to 555 (today, no figures) would be their LATEST; this test
+  // reads the register it writes.
+  t.demand_notices = [];
+  t.demand_notices.push(
+    { id: 'n2', ref: '555', team: 'KONGOWE', full_name: 'C555', contact: '0714000555', notice_id: 'HMCL/C/01/07/2026', notice_date: '2026-07-01', arrears_at_notice: 1000, created_at: '2026-07-01T05:00:00Z' },
+    { id: 'n3', ref: '555', team: 'KONGOWE', full_name: 'C555', contact: '0714000555', notice_id: 'HMCL/C/10/07/2026', notice_date: '2026-07-10', arrears_at_notice: 800, created_at: '2026-07-10T05:00:00Z' },
+    { id: 'n4', ref: '999', team: 'MBAGALA', full_name: 'C999', notice_id: 'HMCL/C9/24/07/2026', notice_date: TODAY, arrears_at_notice: 0, created_at: TODAY + 'T05:00:00Z' });
+  t.notice_payment_ledger = [
+    { ref: '555', since: '2026-07-01', payment_id: 'p1', paid_at: TODAY, amount: 300 },
+    { ref: '555', since: '2026-07-10', payment_id: 'p1', paid_at: TODAY, amount: 300 },        // the same payment under the second notice: once
+    { ref: '555', since: '2026-07-10', payment_id: 'p2', paid_at: MON, amount: 100 },          // this week, not today
+    { ref: '555', since: '2026-07-10', payment_id: 'p3', paid_at: '2026-07-13', amount: 999 }, // last week
+    { ref: '555', since: '2026-01-01', payment_id: 'p6', paid_at: TODAY, amount: 1000 },       // under no notice this register holds
+    { ref: '999', since: TODAY, payment_id: 'p4', paid_at: TODAY, amount: 50 },
+  ];
+  // RUN-ME-041's notice_payments answers (and folds) -- the tab reads the ledger after it.
+  const notice_payments = (store, args) => args.p_refs.map((ref, i) => ({ ref, since: args.p_dates[i], paid: 0, n: 0, last_paid: null, n_phone: 0 }));
+  const tab = await portalApi(fakeDb(t, { rpc: { notice_payments } }), ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(tab.legal.on, true);
+  assert.equal(tab.legal.tRecovered, 350, '555\'s 300 once and 999\'s 50; p6 is under no notice');
+  assert.equal(tab.legal.recovered, 450, 'plus Monday\'s 100; last week stays out');
+  assert.equal(tab.legal.owed, 800, 'at the latest notice: 800 + 0');
+  assert.equal(tab.legal.tPct, 43.8); assert.equal(tab.legal.pct, 56.3);
+  assert.equal(tab.legal.today, TODAY); assert.equal(tab.legal.mon, MON);
+  // The list behind the TODAY card: the same fold, so its total is the card's figure.
+  const today = await portalApi(fakeDb(t, { rpc: { notice_payments } }), ADMIN, 'legalRecoveries', { period: 'today' }, NOW);
+  assert.equal(today.period, 'today'); assert.equal(today.from, TODAY); assert.equal(today.to, TODAY);
+  assert.deepEqual(today.rows.map(r => [r.ref, r.paid, r.payments, r.owed, r.notice_id]),
+    [['555', 300, 1, 800, 'HMCL/C/10/07/2026'], ['999', 50, 1, 0, 'HMCL/C9/24/07/2026']], 'largest first, under the latest notice');
+  assert.equal(today.rows[0].full_name, 'C555'); assert.equal(today.rows[0].contact, '0714000555');
+  assert.equal(today.rows[0].pct, 37.5); assert.equal(today.rows[1].pct, null);
+  assert.equal(today.totals.paid, tab.legal.tRecovered, 'the list adds up to the card');
+  assert.equal(today.totals.customers, 2); assert.equal(today.totals.noticed, 2);
+  // The WEEK card's list carries Monday's payment too, day by day.
+  const week = await portalApi(fakeDb(t, { rpc: { notice_payments } }), ADMIN, 'legalRecoveries', { period: 'week' }, NOW);
+  assert.equal(week.from, MON);
+  const w555 = week.rows.find(r => r.ref === '555');
+  assert.equal(w555.paid, 400); assert.equal(w555.payments, 2);
+  assert.equal(w555.first_paid, MON); assert.equal(w555.last_paid, TODAY);
+  assert.equal(w555.days, MON + ' 100 · ' + TODAY + ' 300');
+  assert.equal(week.totals.paid, tab.legal.recovered);
+  // Scoped at the database: KONGOWE's officer lists KONGOWE's customer only.
+  const g = await portalApi(fakeDb(t, { rpc: { notice_payments } }), GMO, 'legalRecoveries', { period: 'today' }, NOW);
+  assert.deepEqual(g.rows.map(r => r.ref), ['555']);
+  // Without RUN-ME-041 the cards and the list say so rather than show nothing as nought.
+  const db = fakeDb(t, { rpc: { notice_payments } });
+  const from = db.from.bind(db);
+  db.from = n => { if (n === 'notice_payment_ledger') throw new Error('relation "notice_payment_ledger" does not exist'); return from(n); };
+  const off = await portalApi(db, ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(off.legal.on, false); assert.match(off.legal.note, /RUN-ME-041a/);
+  const offList = await portalApi(db, ADMIN, 'legalRecoveries', { period: 'week' }, NOW);
+  assert.equal(offList.on, false); assert.deepEqual(offList.rows, []);
+});
+
 /* "a demand notice cant be generated for an expected/defaulter not from 2 DC and above ... we
    only apply these measures when a customer defaults 2 DC+ at demand creation". The deck's D.C
    decides, at creation: the preview says so, and issuing is refused outright below it. */

@@ -708,7 +708,7 @@ var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  legalFind:1, demandNoticePrint:1, demandNotices:1, abnormal:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
+  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-g';
+var BUILD = '2026-10-12-h';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6333,6 +6333,18 @@ VIEWS.legal = function(){
       + (d.paymentsOn ? kpi('Paid since notice', money(d.paidSince),
             'malipo yaliyopokelewa baada ya notisi / received after the notice'
             + (d.paymentsKept ? ' · yamehifadhiwa daima / kept for good' : ''), d.paidSince > 0 ? 'good' : '') : '')
+      /* RECOVERED LEO AND THIS WEEK -- "add recovered leo and recovered weekly cards at demand
+         notice pannel, clickable to show list of the recoveries as the dashboard recovries are
+         clickable". The dashboard legal card's own reading (payments recorded against notices,
+         once per customer), with its Rec % in front; a tap opens the customers and payments
+         behind the figure (legalRecoveriesDrawer_, wired below with the tab). */
+      + (function(){ var lg = d.legal || {};
+          var sub = function(n){ return lg.on === false ? (lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
+            : n + ' · bofya kuona orodha / tap for the list'; };
+          return kpi('Imerejeshwa leo / Recovered today', (lg.tPct != null ? pct(lg.tPct) + ' · ' : '') + money(lg.tRecovered || 0),
+              sub('leo ' + esc(lg.today || '') + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed'), (lg.tRecovered || 0) > 0 ? 'good' : '', 'lgRecT')
+            + kpi('Imerejeshwa wiki hii / Recovered this week', (lg.pct != null ? pct(lg.pct) + ' · ' : '') + money(lg.recovered || 0),
+              sub(esc(lg.mon || '') + ' → ' + esc(lg.sun || '') + ' · owed TZS ' + money(lg.owed || 0)), (lg.recovered || 0) > 0 ? 'good' : '', 'lgRecW'); })()
       + '</div>'
       + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040, kisha RUN-ME-041a na 041b, kwenye SQL editor.'
           + ' / Payments made after a notice are not read yet: run db/RUN-ME-040, then RUN-ME-041a and 041b, in the SQL editor.'
@@ -6428,6 +6440,59 @@ VIEWS.legal = function(){
    defaulter deck by any of the three; one match goes straight to the preview, several are
    listed to pick from, and a bare reference that is not on the deck window is still tried
    directly, as the old box did. */
+/* THE CUSTOMERS BEHIND A LEGAL RECOVERY CARD -- the dashboard's recoveryCustomersDrawer_ for
+   the Legal tab: who paid in the period, how much, on which days, under which notice and
+   against what it demanded, with the grand total, which is the card's own figure (same fold
+   on the server). Exports wired here because the drawer is drawn after the screen's wiring. */
+function legalRecoveriesDrawer_(period){
+  var week = period === 'week';
+  var title = week ? 'Imerejeshwa wiki hii / Recovered this week' : 'Imerejeshwa leo / Recovered today';
+  drawer('<h3>' + title + '</h3><div class="sub">Inapakia... / Loading...</div>', { wide: true });
+  srv('legalRecoveries', { period: week ? 'week' : 'today' }).then(function(d){
+    var when = week ? (d.from + ' → ' + d.to) : (wdLabel(weekdayOf_(d.today)) + ' ' + d.today);
+    var all = d.rows || [];
+    var cols = [col('full_name', 'Mteja / Customer'), col('ref', 'REF#'), col('team', 'Timu / Team'),
+      {key:'contact', label:'Simu / Phone', kind:'tel'},
+      col('notice_id', 'Notisi / Notice'), col('notice_date', 'Tarehe ya notisi / Notice date', 'date'),
+      // "At notice", the figure the letter demanded against -- the percentage's base.
+      {key:'owed', label:'At notice', kind:'money'},
+      {key:'paid', label:'Imerejeshwa / Recovered', kind:'money', cls:function(){ return 'good'; }},
+      {key:'pct', label:'Rec %', kind:'pct', from:['paid', 'owed']},
+      col('payments', 'Malipo / Payments', 'num'), col('days', 'Siku na kiasi / Days and amounts')];
+    var sub = function(rows){
+      return money(d.totals.customers) + ' waliolipa / paid · ' + money(d.totals.noticed) + ' wenye notisi / noticed'
+        + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
+    };
+    drawer('<h3>' + title + ' · ' + esc(when) + '</h3>'
+      + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>'
+        : all.length
+          ? '<div class="bar"><input id="lgRecQ" placeholder="Tafuta jina / ref / timu — search"></div><div id="lgRecBoard"></div>'
+          : '<div class="note">Hakuna malipo kutoka kwa wateja wenye notisi katika kipindi hiki. / No payments from noticed customers in this period.</div>'), { wide: true });
+    if (d.on === false || !all.length) return;
+    var host = document.getElementById('lgRecBoard');
+    function paint_(){
+      var q = ($('#lgRecQ').value || '').trim().toUpperCase();
+      var rows = all.filter(function(r){
+        if (!q) return true;
+        return [r.full_name, r.ref, r.team, r.contact, r.notice_id].some(function(v){ return String(v || '').toUpperCase().indexOf(q) >= 0; });
+      });
+      host.innerHTML = board('lgRec', 'Malipo yaliyorekodiwa dhidi ya notisi / Payments recorded against notices', sub(rows), rows, cols,
+        sumRow(rows, ['owed', 'paid', 'payments']));
+      var root = document.getElementById('drawer');
+      Array.prototype.forEach.call(root.querySelectorAll('[data-jpg]'), function(el){
+        el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
+      });
+      Array.prototype.forEach.call(root.querySelectorAll('[data-xls]'), function(el){
+        el.onclick = function(e){ e.stopPropagation(); exportBoard(el.getAttribute('data-xls'), 'xls'); };
+      });
+      Array.prototype.forEach.call(root.querySelectorAll('[data-csv]'), function(el){
+        el.onclick = function(e){ e.stopPropagation(); exportBoard(el.getAttribute('data-csv'), 'csv'); };
+      });
+    }
+    $('#lgRecQ').oninput = paint_;
+    paint_();
+  }).catch(function(e){ drawer('<h3>' + title + '</h3><div class="note bad">' + esc(String((e && e.message) || e)) + '</div>', { wide: true }); });
+}
 function lgIssue(){
   drawer('<h3>Notisi mpya / New demand notice</h3>'
     + '<div class="sub">Tafuta mteja kwa REF#, jina au namba ya simu. / Find the customer by REF#, name or phone number.</div>'
@@ -12926,6 +12991,16 @@ function wireForms(){
   // for the wrong amount with the company's stamp on it. They are computed now.
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){ lgIssue(); };
+  // The two recovery cards open the customers and payments behind them -- the whole card,
+  // as the dashboard's recovery tiles do, not just the figure.
+  [['lgRecT', 'today'], ['lgRecW', 'week']].forEach(function(p){
+    var v = document.getElementById(p[0]), card = v && v.closest ? v.closest('.kpi') : null;
+    if (!card) return;
+    card.style.cursor = 'pointer'; card.setAttribute('role', 'button'); card.setAttribute('tabindex', '0');
+    card.title = 'Bofya kuona orodha / Tap for the list';
+    card.onclick = function(e){ e.stopPropagation(); legalRecoveriesDrawer_(p[1]); };
+    card.onkeydown = function(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); legalRecoveriesDrawer_(p[1]); } };
+  });
   /* The letterhead's pieces, settable from the Legal tab itself (admin): the same settingForm
      the Settings tab uses, keyed to the image or value the letter prints. */
   [['lgLogo','BRAND_LOGO'], ['lgStamp','BRAND_STAMP'], ['lgSign','BRAND_SIGN'],

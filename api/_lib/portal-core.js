@@ -2049,6 +2049,40 @@ async function addDemandNotice(db, user, p, nowMs) {
     html: demandNoticeHtml(letter, brand) };
 }
 
+/* THE CUSTOMERS BEHIND THE TWO CARDS -- "clickable to show list of the recoveries as the
+   dashboard recovries are clickable to show list". Every noticed customer in scope who paid in
+   the period (today, or Monday to Sunday), with the payments themselves, their latest notice
+   and what it demanded, from the SAME fold the cards were summed from (legalFold_), so the
+   list's total is the card's figure by construction. Three trips: the register, the fold and
+   the week's ledger, as the boards do. */
+async function legalRecoveries(db, user, { period } = {}, nowMs = Date.now()) {
+  const week = String(period || '').toLowerCase() === 'week';
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
+  const [notices, ledger] = await Promise.all([
+    fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, full_name, contact, notice_id, notice_date, arrears_at_notice'), user.teams)),
+    legalLedgerWeek_(db, mon, sun),
+  ]);
+  const { latest, paid } = legalFold_(scoped(user, notices), ledger, today, mon, sun);
+  const from = week ? mon : today, to = week ? sun : today;
+  const rows = [];
+  for (const c of latest.values()) {
+    const pays = [...(paid.get(c.ref) || new Map()).values()].filter(p => p.day >= from && p.day <= to)
+      .sort((a, b) => a.day.localeCompare(b.day));
+    if (!pays.length) continue;
+    const amount = pays.reduce((s, p) => s + p.amount, 0);
+    rows.push({ ref: c.ref, full_name: c.name, team: c.team, contact: c.contact, notice_id: c.noticeId, notice_date: c.date,
+      owed: c.owed, paid: amount, payments: pays.length, first_paid: pays[0].day, last_paid: pays[pays.length - 1].day,
+      pct: pctOf(amount, c.owed),
+      // The payments one by one, for the eye: "2026-10-12 30,000 · 2026-10-14 20,000".
+      days: pays.map(p => p.day + ' ' + Math.round(p.amount).toLocaleString('en-US')).join(' · ') });
+  }
+  rows.sort((a, b) => b.paid - a.paid || String(a.full_name).localeCompare(String(b.full_name)));
+  const on = Array.isArray(ledger);
+  return { period: week ? 'week' : 'today', from, to, today, on, note: on ? null : LEGAL_NOTE, rows,
+    totals: { customers: rows.length, paid: rows.reduce((s, r) => s + r.paid, 0),
+      owed: rows.reduce((s, r) => s + r.owed, 0), noticed: latest.size } };
+}
+
 /* "TAP A ROW TO REPRINT" -- the SAME letter, off the register row's stored `letter`
    (db/RUN-ME-040), with the company's current images. A notice issued before letters were
    kept is rebuilt from the customer's current deck row and the figures the register holds,
@@ -2503,7 +2537,16 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
   const customers = [...perCustomer.values()];
   const recoveredSince = customers.reduce((s, c) => s + c.recovered, 0);
   const owed = customers.reduce((s, c) => s + num(c.owed), 0);
+  /* RECOVERED LEO AND THIS WEEK, ON THE TAB -- "add recovered leo and recovered weekly cards at
+     demand notice pannel". The dashboard card's own reading (legalTotals_: the week's ledger
+     rows, a payment once per customer, only under a notice this register holds), so the two
+     screens say one figure. ONE more read (the ledger for the week; the fold already ran
+     inside notice_payments above), null when RUN-ME-041 is not there, and the cards say so. */
+  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
+  const ledgerWeek = paidBy ? await legalLedgerWeek_(db, mon, sun, { fold: false }) : null;
+  const legal = legalTotals_(r.rows, ledgerWeek, today, mon, sun);
   return { ...r, rows,
+    legal: { ...legal, today, mon, sun },
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
     fines: rows.reduce((s, x) => s + num(x.fine), 0),
     atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
@@ -8517,7 +8560,7 @@ const FN = {
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
-  demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, abnormal, received, findCustomer, rebuildFollowup,
+  demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -8897,7 +8940,7 @@ const FN_TAB = {
   complaintLog: ['complaints'], resolveComplaint: ['complaints'], deleteComplaint: ['complaints'],
   restructures: ['restructure'], addRestructure: ['restructure'], decideRestructure: ['restructure'],
   restructureEligible: ['restructure'], restructureContract: ['restructure'],
-  demandNotices: ['legal'], addDemandNotice: ['legal'], demandNoticePrint: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'], legalFind: ['legal'],
+  demandNotices: ['legal'], addDemandNotice: ['legal'], demandNoticePrint: ['legal'], demandMessage: ['legal'], legalPreview: ['legal'], legalFind: ['legal'], legalRecoveries: ['legal'],
   adjustments: ['adjust'], adjustmentRecord: ['adjust'], adjustmentAmend: ['adjust'],
   adjustmentDelete: ['adjust'],
   abnormal: ['abnormal'], received: ['abnormal'],
@@ -11430,11 +11473,13 @@ function officerOf(teamBy, team, roleCol) {
 
    OWED is each customer's arrears at their latest notice, the figure the letter demanded
    against, so Rec % reads: of what the lawyers' letters chased, how much has come in. */
-async function legalLedgerWeek_(db, from, to) {
+async function legalLedgerWeek_(db, from, to, { fold = true } = {}) {
   /* The fold first -- the book is pruned to two weeks, so the week's payments are copied
      against their notices before being read, exactly as the Legal tab does. Never fatal: a
-     database without RUN-ME-041 answers null, and the board says so. */
-  try { await db.rpc('fold_notice_payments', { p_before: null }); } catch (e) { /* said below */ }
+     database without RUN-ME-041 answers null, and the board says so.
+     `fold: false` where the caller has JUST folded through notice_payments (the Legal tab,
+     noticePayments_): the same rows, one round trip fewer. */
+  if (fold) { try { await db.rpc('fold_notice_payments', { p_before: null }); } catch (e) { /* said below */ } }
   try {
     const rows = await fetchAll(() => db.from('notice_payment_ledger')
       .select('ref, since, payment_id, paid_at, amount').gte('paid_at', from).lte('paid_at', to));
@@ -11453,7 +11498,9 @@ function legalFold_(notices, ledger, today, mon, sun) {
     const ref = K(n.ref); if (!ref) continue;
     served.add(ref + '|' + String(n.notice_date || '').slice(0, 10));
     const cur = latest.get(ref);
-    if (!cur || String(n.notice_date || '') > String(cur.date || '')) latest.set(ref, { ref, team: n.team || '', date: String(n.notice_date || '').slice(0, 10), owed: num(n.arrears_at_notice) });
+    if (!cur || String(n.notice_date || '') > String(cur.date || '')) latest.set(ref, { ref, team: n.team || '', date: String(n.notice_date || '').slice(0, 10), owed: num(n.arrears_at_notice),
+      // Carried for the list behind the cards (legalRecoveries); the sums never read them.
+      name: n.full_name || '', contact: n.contact || '', noticeId: n.notice_id || '' });
   }
   const paid = new Map();                         // ref -> Map(payment_id -> {amount, day})
   for (const l of ledger || []) {
@@ -11470,7 +11517,7 @@ function legalFold_(notices, ledger, today, mon, sun) {
     }
     return { t, w };
   };
-  return { latest, sums };
+  return { latest, sums, paid };
 }
 /** The dashboard's headline card: every noticed customer in scope, added up. */
 function legalTotals_(notices, ledger, today, mon, sun) {
