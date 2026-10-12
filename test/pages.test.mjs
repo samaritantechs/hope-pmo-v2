@@ -500,20 +500,27 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
     'the sort must land before the slide is pushed, so the cut to 12 happens on the sorted list');
 });
 
-/* THE COLLECTION SLIDE'S CAPTION -- "add a caption below of unassigned teams, ill need to
-   always notice them from there. so the only slide with unassigned teams caption is of
-   collection". */
-test('only the PMO collection slide carries the unassigned-teams caption, drawn under its total', () => {
+/* THE UNASSIGNED-TEAMS CAPTION, EACH UNIT'S LINE UNDER ITS OWN SLIDE -- "add a caption below
+   of unassigned teams, ill need to always notice them from there" put all three lines under
+   the collection slide; "take the unassigned lists text beneath to their respective 3 slides
+   not all in collection, col in col, rec in rec and early col in early col" moves each line
+   under the slide it is about. */
+test('each unit slide carries its own unassigned-teams line, drawn under its total', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
-  /* Three captions on the deck: the unassigned-teams one here, the early slide's own note
-     that Count 1 is not available until db/RUN-ME-039 is run (a step not done is said on the
-     screen that expected it), and the legal recovery slide's source line. The UNASSIGNED
-     caption is still the collection slide's alone. */
-  assert.equal((view.match(/caption:/g) || []).length, 3, 'three slides with a caption');
-  assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'the unassigned-teams caption is on one slide only');
+  /* Four captions on the deck: the three unit slides' (the early and collection ones also
+     carrying their Count 1 note -- a step not done is said on the screen that expected it) and
+     the legal recovery slide's source line. One "Unassigned:" heading, in uaCap, used thrice. */
+  assert.equal((view.match(/caption:/g) || []).length, 4, 'four slides with a caption');
+  assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'one heading, in uaCap');
+  assert.equal((view.match(/caption: uaCap\(/g) || []).length, 3, 'under three slides');
+  const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
+  const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
   const pmo = view.slice(view.indexOf("id:'pmo'"), view.indexOf("id:'dayprog'"));
-  assert.ok(/caption: '<div class="pcaph">Unassigned:<\/div>' \+ uaLine\('Early col', ua\.early\) \+ uaLine\('Col', ua\.col\) \+ uaLine\('Rec', ua\.rec\)/.test(pmo));
+  assert.ok(/caption: uaCap\('Rec', ua\.rec\)/.test(rec), 'rec in rec');
+  assert.ok(/caption: uaCap\('Early col', ua\.early\)\s*\n\s*\+ \(function\(\)\{\s*\n\s*var n = count1Note_\(/.test(early), 'early col in early col, its Count 1 note beneath');
+  assert.ok(/caption: uaCap\('Col', ua\.col\)\s*\n/.test(pmo) && /count1Note_\(/.test(pmo), 'col in col, its Count 1 note beneath');
+  assert.ok(!/ua\.early|ua\.rec/.test(pmo) && !/ua\.col|ua\.rec/.test(early) && !/ua\.early|ua\.col/.test(rec), 'no slide carries another unit\'s line');
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table at
      presentation, add count 1 column too (always the count 1 left of the current day)" */
   assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(NC 1 leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),

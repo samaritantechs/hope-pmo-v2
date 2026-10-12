@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-m';
+var BUILD = '2026-10-12-n';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -10246,8 +10246,19 @@ function presSlides(){
         tUncollected: t.uncollected, tRecovered: t.recovered, tPct: t.pct }; })
       .sort(function(a, b2){ return (b2.pct == null ? -1 : b2.pct) - (a.pct == null ? -1 : a.pct)
         || String(a.officer).localeCompare(String(b2.officer)); });
+    /* THE UNASSIGNED TEAMS, EACH UNIT'S LINE UNDER ITS OWN SLIDE -- "take the unassigned lists
+       text beneath to their respective 3 slides not all in collection, col in col, rec in rec
+       and early col in early col". One heading, one line, a count and the names, the way a
+       figure caption sits under a table in a document; fed by officerBoards' unassignedTeams.
+       It began as three lines under the collection slide alone ("todays collection is so
+       essential so i always need to see the alert from there"); that slide keeps its own. */
+    var ua = b.unassignedTeams || { early: [], col: [], rec: [] };
+    var uaLine = function(label, list){
+      return '<div><b>' + label + ' (' + list.length + '):</b> ' + (list.length ? esc(list.join(', ')) : '—') + '</div>'; };
+    var uaCap = function(label, list){ return '<div class="pcaph">Unassigned:</div>' + uaLine(label, list); };
     slides.push({ id:'recovery', kind:'table', title:'Recovery by officer — best weekly Rec % first',
       rows: recRows.slice(0,12),
+      caption: uaCap('Rec', ua.rec),
       /* INITIAL AND CURRENT ARE TODAY'S OWN DECKS -- the pair Recovered today is the
          difference of, drawn beside the today group they belong to. "The two columns are
          misbehaving": Monday's deck against today's read the wrong way round under a positive
@@ -10312,8 +10323,11 @@ function presSlides(){
          which they did, and the column stayed blank: "count 1 of early col at slide aint
          reading anything". The server names the teams whose rows carry no N.C (db/RUN-ME-039),
          and the caption names the sheet and its date. */
-      caption: count1Note_(!!(earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; })),
-        b.earlyCount1Missing, 'Expected — Initial / kesho (next list' + (b.earlyDate ? ', ' + b.earlyDate : '') + ')') });
+      caption: uaCap('Early col', ua.early)
+        + (function(){
+            var n = count1Note_(!!(earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; })),
+              b.earlyCount1Missing, 'Expected — Initial / kesho (next list' + (b.earlyDate ? ', ' + b.earlyDate : '') + ')');
+            return n ? '<div>' + n + '</div>' : ''; })() });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
        "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
@@ -10336,16 +10350,12 @@ function presSlides(){
        from -- each day banded on its own and added up -- and the week's figure alone is the one
        number the officers are NOT paid on. Today is one of these five columns, so it is no
        longer shown twice. */
-    /* THE CAPTION UNDER THE COLLECTION SLIDE -- the unassigned teams of all three units, by
-       name, the way a figure caption sits under a table in a document:
+    /* THE CAPTION UNDER THE COLLECTION SLIDE -- its own unassigned teams, by name (uaCap, above):
          "todays collection is so essential so i always need to see the alert from there ...
           add a caption below of unassigned teams, ill need to always notice them from there"
-       Only this slide carries it. Three lines, a count each, the names, nothing else. */
-    var ua = b.unassignedTeams || { early: [], col: [], rec: [] };
-    var uaLine = function(label, list){
-      return '<div><b>' + label + ' (' + list.length + '):</b> ' + (list.length ? esc(list.join(', ')) : '—') + '</div>'; };
+       The early and recovery lines sit under their own slides now. */
     slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
-      caption: '<div class="pcaph">Unassigned:</div>' + uaLine('Early col', ua.early) + uaLine('Col', ua.col) + uaLine('Rec', ua.rec)
+      caption: uaCap('Col', ua.col)
         // Count 1 here is today's DAY sheet; its gaps, by team, said the same way as the early slide's.
         + (function(){
             var n = count1Note_(!!((b.pmo || []).length && (b.pmo || []).every(function(x){ return x.count1 == null; })),
