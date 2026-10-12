@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-10-c';
+var BUILD = '2026-10-12-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6557,6 +6557,16 @@ function printHtml(html){
   }
   var doc = f.contentWindow.document;
   doc.open(); doc.write(html); doc.close();
+  /* THE FILE IS NAMED AFTER THE CUSTOMER -- "Saving demand notice pdf name should generate
+     with Customer Names.PDF". "Save as PDF" names the file after the TOP page's title, never
+     the frame's, so a letter printed from this frame was offered as the portal's own title
+     however carefully the letter's <title> carried the customer's name. That title is LENT to
+     this page for exactly as long as the dialog is open -- set before print(), given back on
+     afterprint (either window), or after two minutes if neither fires. */
+  var tm = /<title>([^<]*)<\/title>/i.exec(html);
+  var docTitle = tm ? tm[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim() : '';
+  var ownTitle = document.title, lent = false;
+  var restore = function(){ if (lent){ lent = false; document.title = ownTitle; } };
   // Give the images -- logo, stamp, signature -- a moment to load. A contract printed without
   // its stamp has to be printed again, and nobody notices until it is in front of a customer.
   var go = function(){
@@ -6564,8 +6574,14 @@ function printHtml(html){
        with every image in, right before the dialog opens -- not every browser fires
        beforeprint for a frame, and a letter measured before its logo arrived measures short. */
     try { if (f.contentWindow.hopeFit) f.contentWindow.hopeFit(); } catch(e){}
+    if (docTitle){
+      lent = true; document.title = docTitle;
+      try { f.contentWindow.addEventListener('afterprint', restore); } catch(e){}
+      window.addEventListener('afterprint', restore);
+      setTimeout(restore, 120000);
+    }
     try { f.contentWindow.focus(); f.contentWindow.print(); }
-    catch(e){ toast('Imeshindikana kuchapisha. / Could not open the print dialog.', true); }
+    catch(e){ restore(); toast('Imeshindikana kuchapisha. / Could not open the print dialog.', true); }
   };
   var imgs = doc.images ? doc.images.length : 0;
   if (!imgs) { setTimeout(go, 120); return; }

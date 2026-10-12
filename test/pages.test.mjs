@@ -1534,4 +1534,12 @@ test('the Legal calls send the handset id, and the print frame fits the letter b
   const print = app.slice(app.indexOf('function printHtml'), app.indexOf('/* ILIYONASIA -- the manual'));
   assert.ok(/if \(f\.contentWindow\.hopeFit\) f\.contentWindow\.hopeFit\(\);/.test(print), 'fitted with every image in, right before print()');
   assert.ok(print.indexOf('hopeFit') < print.indexOf('f.contentWindow.print()'), 'and before, not after');
+  /* "Saving demand notice pdf name should generate with Customer Names.PDF": Save-as-PDF names
+     the file after the TOP page's title, so the printed document's <title> (the customer's
+     name on a notice) is lent to this page while the dialog is open, and given back after. */
+  assert.ok(/\/<title>\(\[\^<\]\*\)<\\\/title>\/i\.exec\(html\)/.test(print), 'the name comes from the document being printed');
+  assert.ok(/lent = true; document\.title = docTitle;/.test(print), 'lent to the page before print()');
+  assert.ok(print.indexOf('document.title = docTitle') < print.indexOf('f.contentWindow.print()'));
+  assert.ok(/addEventListener\('afterprint', restore\)/.test(print) && /setTimeout\(restore, 120000\)/.test(print), 'and given back on afterprint, or after two minutes');
+  assert.ok(/document\.title = ownTitle/.test(print), 'back to the portal\'s own title');
 });
