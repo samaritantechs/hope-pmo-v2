@@ -329,8 +329,13 @@ const BUDGETS = [
      the stamp is set rather than a test print finding out). Rows unchanged: one row back per
      notice, never the payments book. */
   /* 8 -> 9: one small staff-table read for the signed-in officer's own number, so the tab can
-     say which number their letters will carry and why ("their login phone"). */
-  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN,  9,   800,  9,  800],
+     say which number their letters will carry and why ("their login phone").
+     9 -> 10: the week's ledger rows for the Recovered leo / this week cards -- "add recovered
+     leo and recovered weekly cards at demand notice pannel" -- the dashboard card's own
+     reading, so the two screens say one figure. No fold trip: notice_payments just folded. */
+  ['Demand notices (legal)',  'demandNotices',       {}, ADMIN, 10,   800, 10,  800],
+  /* The list behind either card: the register, the fold and the week's ledger. */
+  ['Legal recoveries list',   'legalRecoveries',     { period: 'week' }, ADMIN, 3, 800, 3, 800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
