@@ -1567,6 +1567,19 @@ test('the presentation carries a legal recovery slide with today and the week pe
    the single card on top too": a card on the headline row fed by dashboardFull's own fold, and
    two boards (today, the week) per legal officer fed by officerBoards' legal rows, after the
    recovery boards, with the JUMLA percentages worked out from the totals. */
+/* "a demand notice cant be generated for an expected/defaulter not from 2 DC and above". The
+   New-notice drawer says the DC, and draws the Issue button only when the server's preview
+   says the customer is at the rule; the pick list carries the DC on every line. */
+test('the New-notice drawer withholds Issue below the DC rule and says why', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const fn = app.slice(app.indexOf('function lgIssue()'), app.indexOf('function lgPrint('));
+  assert.ok(/e\.eligible \? '<button class="btn w" id="lgGo">/.test(fn), 'the button only when eligible');
+  assert.ok(/if \(e\.eligible\) \$\('#lgGo'\)\.onclick/.test(fn), 'and its handler likewise');
+  assert.ok(/e\.eligible \? '' : '<div class="note bad">/.test(fn) && /e\.minDc/.test(fn), 'the rule and the figure, said on the screen');
+  assert.ok(/DC \(marejesho yaliyokosekana \/ missed\)/.test(fn), 'the DC as a fact row');
+  assert.ok(/r\.dc < f\.minDc/.test(fn), 'the pick list marks who is below it');
+});
+
 /* "Recovered since notice card, in demands - add % figure infront of amount in the same
    card." The Legal tab's card reads "48% · 1,100", the percentage from the server (of what the
    letters chased), and names the owed figure underneath. */
