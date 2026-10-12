@@ -2469,18 +2469,30 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
      that is what the register is. */
   const perCustomer = new Map();
   for (const x of rows) {
-    const c = perCustomer.get(K(x.ref)) || { paid: 0, recovered: 0, cleared: false };
+    const c = perCustomer.get(K(x.ref)) || { paid: 0, recovered: 0, owed: null, cleared: false };
     c.paid = Math.max(c.paid, num(x.paid_since));
+    /* OWED goes with the reading: the arrears at the notice whose Recovered figure the
+       customer is counted at, so the percentage under it divides like for like. A second
+       letter to the same person does not add their arrears up twice. */
+    if (c.owed == null || num(x.recovered_since) > c.recovered) c.owed = num(x.arrears_at_notice);
     c.recovered = Math.max(c.recovered, num(x.recovered_since));
     c.cleared = c.cleared || x.notice_state.indexOf('Cleared') >= 0;
     perCustomer.set(K(x.ref), c);
   }
   const customers = [...perCustomer.values()];
+  const recoveredSince = customers.reduce((s, c) => s + c.recovered, 0);
+  const owed = customers.reduce((s, c) => s + num(c.owed), 0);
   return { ...r, rows,
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
     fines: rows.reduce((s, x) => s + num(x.fine), 0),
     atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
-    recoveredSince: customers.reduce((s, c) => s + c.recovered, 0),
+    recoveredSince,
+    /* REC % IN FRONT OF THE AMOUNT -- "Recovered since notice card, in demands - add % figure
+       infront of amount in the same card": of what the letters chased (each customer's
+       arrears at the notice they are read at, once per person), how much has come back. The
+       same basis as the dashboard's legal card and the legal slide; null with nothing owed. */
+    owed,
+    recoveredPct: pctOf(recoveredSince, owed),
     paidSince: customers.reduce((s, c) => s + c.paid, 0),
     cleared: customers.filter(c => c.cleared).length,
     customers: customers.length,

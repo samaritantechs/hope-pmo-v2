@@ -1956,6 +1956,9 @@ test('demand notices show whether they worked', async () => {
   assert.equal(d.recoveredSince, 1100);
   assert.equal(d.cleared, 1);
   assert.equal(d.atNotice, 2300);
+  // "add % figure infront of amount in the same card": 1,100 back of the 2,300 the letters chased.
+  assert.equal(d.owed, 2300);
+  assert.equal(d.recoveredPct, 47.8);
 
   // WITH NO DECK UPLOADED, every customer would look cleared and the tab would report a
   // triumph that never happened. It must say it does not know instead.
@@ -2052,6 +2055,11 @@ test('demand notices show whether they worked', async () => {
   assert.equal(dt.paidSince, 620, 'not 1,040: one person, counted once');
   assert.equal(dt.recoveredSince, 1300);
   assert.equal(dt.customers, 3);
+  // The % divides like for like: 111 is read at their first letter (600 of 1,000), so the
+  // second letter's 400 is not added to what is owed. 1,300 of 2,300, not of 2,700.
+  assert.equal(dt.owed, 2300);
+  assert.equal(dt.recoveredPct, 56.5);
+  assert.equal(dp.recoveredPct, 56.5);
 
   /* RUN-ME-040's function still in place (no n_phone): payments are read live off the
      two-week book, and the tab says they are not kept yet and names RUN-ME-041. */
