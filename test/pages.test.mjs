@@ -1584,15 +1584,21 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
 });
 
 /* "i need expected defaulters report to have the weekly forward and backward buttons there
-   too": the Exp.Def Report carries the same weekBar as the dashboard, asks the server for the
-   chosen week, and keeps its daily/weekly pills and the email button on that bar. */
-test('the Exp.Def Report carries the week arrows and asks for the chosen week', () => {
+   too" / "expected def - remove Leo / Daily and Wiki / Weekly; add weekly recovered 3 cards
+   (GMO, Manager, Bike) so that weeks shift shows weekly recovery total on the cards": the
+   Exp.Def Report carries the same weekBar as the dashboard, asks the server for the chosen week
+   only (no daily/weekly pills), keeps the email button on the bar, and shows the week's
+   recovered total per recycling category. */
+test('the Exp.Def Report carries the week arrows, no day/week pills, and the three weekly recovered cards', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
-  assert.ok(/srv\('expdfReport', \{ weekly: weekly, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server');
+  assert.ok(/srv\('expdfReport', \{ weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server, nothing else');
   assert.ok(/HEAD = weekBar\(d, /.test(view), 'the same week bar as the dashboard');
-  assert.ok(/data-arg="scope" data-val="day"/.test(view) && /data-arg="scope" data-val="week"/.test(view) && /id="mailWeekly"/.test(view), 'the pills and the email button ride on it');
-  assert.ok(/wiki ya \/ week of '\+d\.weekOf\+' → '\+\(d\.weekEnd\|\|''\)/.test(view), 'the weekly card names the week');
+  assert.ok(!/data-arg="scope"/.test(view) && !/Leo \/ Daily|Wiki \/ Weekly/.test(view), 'the daily/weekly pills are gone');
+  assert.ok(/id="mailWeekly"/.test(view), 'the email button stays on the bar');
+  assert.ok(/wiki ya \/ week of '\+d\.weekOf\+' → '\+\(d\.weekEnd\|\|''\)/.test(view), 'the customers card names the week');
+  assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /Weekly recovered · ' \+ role/.test(view)
+    && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one weekly recovered card per recycling category, the week\'s total');
 });
 
 /* PMO DEDUCTION -- "i also want to build the pmo deduction pannel shift from google sheets into

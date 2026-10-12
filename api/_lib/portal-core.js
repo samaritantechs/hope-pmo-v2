@@ -9477,14 +9477,15 @@ async function settingNum(db, key, dflt) {
    and `future` still come back with the answer so the week bar can label an upcoming week as
    what it is, without pretending the choice was overruled. */
 /* THE EXP.DEF REPORT ON A CHOSEN WEEK -- "i need expected defaulters report to have the
-   weekly forward and backward buttons there too". The same week bar the dashboard and the
-   weekly screens carry, read the same way: the clock is shifted to the chosen week
-   (asOfWeek -- a past or upcoming week is read as it stood on its Friday), and the report's
-   own reads follow that clock, so daily shows that Friday and weekly measures against that
-   week's Monday deck. The weekly email keeps calling expdfReport directly, on this week. */
+   weekly forward and backward buttons there too" -- and THE WEEK'S REPORT ONLY: "expected def -
+   remove Leo / Daily and Wiki / Weekly". The same week bar the dashboard and the weekly screens
+   carry, read the same way: the clock is shifted to the chosen week (asOfWeek -- a past or
+   upcoming week is read as it stood on its Friday), and the report measures that week's Monday
+   deck against its latest current deck, so the three role cards and the boards move with the
+   arrows. The weekly email keeps calling expdfReport directly, on this week. */
 async function expdfReportWeek(db, user, args, nowMs = Date.now()) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
-  const d = await expdfReport(db, user, args || {}, asOf.ms);
+  const d = await expdfReport(db, user, { ...(args || {}), weekly: true }, asOf.ms);
   return { ...d, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6), asOfDate: todayKey(asOf.ms),
     pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future };
 }

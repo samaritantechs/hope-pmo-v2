@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-l';
+var BUILD = '2026-10-12-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4477,23 +4477,38 @@ function chipFor(s){
    on the weekday their loan was disbursed (Day 1) and three days later (Day 2), with Sunday
    rolled onto Monday. Hence the Mon–Sat day tabs — a customer appears under two of the six. */
 /* The three recycling categories, each leader with their own book and their own recovery.
-   Daily is what gets asked at the morning meeting; weekly is what gets emailed. */
+   THE WEEK'S REPORT, ALWAYS -- "expected def - remove Leo / Daily and Wiki / Weekly; add weekly
+   recovered 3 cards (GMO, Manager, Bike) so that weeks shift shows weekly recovery total on the
+   cards". The daily/weekly pills are gone: the morning meeting's daily list is the Exp.Def
+   screen itself, and this report is what gets emailed. Monday's initial deck against the chosen
+   week's latest current deck -- the server reads a past or upcoming week as it stood on its
+   Friday (asOfWeek) -- so the week arrows move every card here, the three role cards included. */
 VIEWS.expdfrep = function(){
-  var weekly = S.args.scope === 'week';
   /* THE WEEK ARROWS, "there too" -- "i need expected defaulters report to have the weekly
      forward and backward buttons there too". The same weekBar the dashboard and the weekly
-     screens carry; the server reads the chosen week as it stood on its Friday. */
-  return srv('expdfReport', { weekly: weekly, weekOf: S.args.weekOf || '' }).then(function(d){
+     screens carry. */
+  return srv('expdfReport', { weekOf: S.args.weekOf || '' }).then(function(d){
     var t = d.totals;
-    HEAD = weekBar(d, '<button class="pill'+(weekly?'':' on')+'" data-arg="scope" data-val="day" style="margin-left:8px">Leo / Daily</button>'
-        + '<button class="pill'+(weekly?' on':'')+'" data-arg="scope" data-val="week">Wiki / Weekly</button>'
-        + '<button class="btn sm" id="mailWeekly" style="margin-left:auto">✉ Tuma wiki kwa admin / Email weekly report</button>')
+    var byRole = {};
+    (d.sections || []).forEach(function(sec){ byRole[sec.role] = sec.totals || {}; });
+    HEAD = weekBar(d, '<button class="btn sm" id="mailWeekly" style="margin-left:auto">✉ Tuma wiki kwa admin / Email weekly report</button>')
       + '<div class="kpis">'
-      + kpi('Wateja / Customers', money(t.customers), weekly ? ('wiki ya / week of '+d.weekOf+' → '+(d.weekEnd||'')) : (d.dayName+' · '+(d.date||'')))
-      + kpi('Deni la awali / Initial', money(t.initial))
+      + kpi('Wateja / Customers', money(t.customers), 'wiki ya / week of '+d.weekOf+' → '+(d.weekEnd||''))
+      + kpi('Deni la awali / Initial', money(t.initial), 'orodha ya Jumatatu / Monday’s deck')
       + kpi('Deni sasa / Arrears now', money(t.arrears), null, 'bad')
-      + kpi('Marejesho / Recovered', money(t.recovered), null, 'good')
+      + kpi('Marejesho ya wiki / Recovered this week', money(t.recovered), null, 'good')
       + kpi('Rec %', pct(t.pct), 'recovered ÷ initial')
+      + '</div>'
+      /* THE THREE WEEKLY RECOVERED CARDS -- one per recycling category, the week's recovered
+         total over that category's leaders, with its Rec % and how many customers it holds.
+         A week back or forward reads straight off these three. */
+      + '<div class="kpis">'
+      + ['GMO','MANAGER','BIKE'].map(function(role){
+          var s = byRole[role] || {};
+          return kpi('Marejesho ya wiki / Weekly recovered · ' + role, money(s.recovered || 0),
+            pct(s.pct) + ' · ' + money(s.customers || 0) + ' wateja / customers',
+            (s.recovered || 0) > 0 ? 'good' : '', 'xdRec_' + role);
+        }).join('')
       + '</div>'
       + (d.hasBaseline ? '' : '<div class="note bad">Orodha ya awali haijapakiwa — marejesho yanaonyesha 0.'
           + ' / The baseline deck is not uploaded, so recovery reads 0.</div>')
