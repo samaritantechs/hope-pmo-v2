@@ -1562,3 +1562,21 @@ test('the presentation carries a legal recovery slide with today and the week pe
   assert.ok(/b\.legalOn === false && b\.legalNote/.test(cap), 'a database without the ledger is said, not shown as a quiet week');
   assert.ok(/b\.legalAll/.test(cap) && /b\.legalUnheld/.test(cap), 'the lawyers holding every team, and the teams nobody holds, are named');
 });
+
+/* LEGAL RECOVERY ON THE DASHBOARD -- "Add legal recovery to dashboard boards by officer too and
+   the single card on top too": a card on the headline row fed by dashboardFull's own fold, and
+   two boards (today, the week) per legal officer fed by officerBoards' legal rows, after the
+   recovery boards, with the JUMLA percentages worked out from the totals. */
+test('the dashboard carries a legal recovery card on top and today/week boards by legal officer', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('DASH_LOAD_BOARDS_ = function'));
+  assert.ok(/kpi\('Legal recovery', money\(lg\.tRecovered \|\| 0\)/.test(view), 'the card, today\'s figure first');
+  assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by dashboardFull, not by the boards wave');
+  assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on the card');
+  assert.ok(view.indexOf("kpi('Abnormal payments'") < view.indexOf("kpi('Legal recovery'"), 'on the headline row, after the abnormal payments card');
+  const boards = app.slice(app.indexOf('DASH_LOAD_BOARDS_ = function'), app.indexOf('creditRecoveryBoard(creditRec'));
+  assert.ok(/board\('bLegalT','Legal recovery — today'/.test(boards) && /board\('bLegalW','Legal recovery — this week'/.test(boards), 'two boards, today and the week');
+  assert.ok(boards.indexOf("board('bRecW'") < boards.indexOf("board('bLegalT'"), 'after the recovery boards');
+  assert.ok(/key:'tPct'[^}]*from:\['tRecovered','owed'\]/.test(boards) && /key:'pct'[^}]*from:\['recovered','owed'\]/.test(boards), 'JUMLA percentages from the totals');
+  assert.ok(/b\.legalOn === false && b\.legalNote/.test(boards), 'and the missing ledger is said above them');
+});

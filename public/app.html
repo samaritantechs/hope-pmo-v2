@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-b';
+var BUILD = '2026-10-12-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3630,6 +3630,17 @@ VIEWS.dashboard = function(){
          request: "the directors hate exposing data so keep monthly in the chip". The month
          lives behind the 📅 chip on the week bar and nowhere else on this screen. */
       + kpi('Abnormal payments', money(c.abnormal), 'TZS ' + money(c.abnormalAmount) + ' flagged', 'bad')
+      /* LEGAL RECOVERY, THE SINGLE CARD ON TOP -- "Add legal recovery to dashboard ... the
+         single card on top too". What the customers served demand notices paid TODAY, with
+         the week and the count of noticed customers under it, against what the letters
+         demanded (Rec %). The payments recorded against notices by REF# or phone, once per
+         customer -- the same reading as the legal slide and the boards below. */
+      + (function(){ var lg = d.legal || {};
+          return kpi('Legal recovery', money(lg.tRecovered || 0),
+            lg.on === false ? (lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
+              : 'wiki / week TZS ' + money(lg.recovered || 0) + (lg.pct != null ? ' (' + pct(lg.pct / 100) + ')' : '')
+                + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed · owed TZS ' + money(lg.owed || 0),
+            lg.on === false ? '' : ((lg.tRecovered || 0) > 0 ? 'good' : '')); })()
       + '</div>'
       /* THE PERFORMANCE STRIP -- "show average of sales%, col% and recovery% performance
          where in each one and the average have the rising constant or dropping arrow symbol
@@ -3785,6 +3796,23 @@ VIEWS.dashboard = function(){
                        {key:'debtCrisis', label:'Debt crisis', kind:'money', cls:function(r){ return r.debtCrisis<0?'bad':''; }},
                        {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
                        {key:'pct', label:'Rec %', kind:'pct', target:'rec', from:['recovered','uncollected']}], sumRow(b.recWeek, ['initial','current','debtCrisis','recovered']))
+          /* LEGAL RECOVERY BY OFFICER -- "Add legal recovery to dashboard boards by officer
+             too". The same rows the deck's legal slide reads (officerBoards' legal): per legal
+             officer, the customers served notices on the teams their code carries, what the
+             letters demanded against, and what those customers PAID -- today on one board,
+             the week on the other. A payment is counted once per customer, recorded against
+             the notice by REF# or phone. The % cells of the JUMLA row are the totals' ratio. */
+          + (b.legalOn === false && b.legalNote ? '<div class="note">⚠ ' + esc(b.legalNote) + '</div>' : '')
+          + board('bLegalT','Legal recovery — today','wateja wenye notisi / noticed customers · owed at notice · paid today · Rec % ÷ owed', b.legal || [],
+                      [col('officer','Legal officer'), col('teams','Teams','num'), col('customers','Customers','num'),
+                       col('owed','Owed at notice','money'),
+                       {key:'tRecovered', label:'Recovered', kind:'money', cls:function(r){ return r.tRecovered>0?'good':''; }},
+                       {key:'tPct', label:'Rec %', kind:'pct', target:'rec', from:['tRecovered','owed']}], sumRow(b.legal || [], ['teams','customers','owed','tRecovered']))
+          + board('bLegalW','Legal recovery — this week','Mon–Sun · paid since Monday by the noticed customers · Rec % ÷ owed', b.legal || [],
+                      [col('officer','Legal officer'), col('teams','Teams','num'), col('customers','Customers','num'),
+                       col('owed','Owed at notice','money'),
+                       {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
+                       {key:'pct', label:'Rec %', kind:'pct', target:'rec', from:['recovered','owed']}], sumRow(b.legal || [], ['teams','customers','owed','recovered']))
           + creditRecoveryBoard(creditRec && creditRec.metrics)
           + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
                       'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,

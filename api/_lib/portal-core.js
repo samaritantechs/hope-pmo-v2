@@ -10198,7 +10198,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
      to say which way it is MOVING, and movement needs the week before. */
-  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj] = await Promise.all([
+  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     /* LAST WEEK IS FOR THE ARROWS, AND THE ARROWS ARE NOT WORTH THE SCREEN.
@@ -10270,6 +10270,13 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        for the Orodha's M. columns, last Monday for the strip's arrows), and where the table
        does not exist it answers null and every figure below is exactly what it is today. */
     adjReceived_(db, user, { from: monthStart0 < prevMon ? monthStart0 : prevMon, to: sun }),
+    /* LEGAL RECOVERY, THE CARD ON TOP -- "the single card on top too". The scoped notice
+       register and the week's payments recorded against notices (after the fold), the same
+       reading the deck's legal slide and the officer boards make (legalFold_). Three trips on
+       this screen, none on an upload or a call; the rows are the register and a week of
+       payments against it, never the two-week payments book. */
+    fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, notice_date, arrears_at_notice'), user.teams)),
+    legalLedgerWeek_(db, mon, sun),
   ]);
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   /* The month ledger, for the Orodha's M. columns -- AFTER the wave above, never inside it,
@@ -10819,6 +10826,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       abnormalAmount: myAbn.reduce((s, a) => s + num(a.paid), 0),
       uncollectedToday: tUncollected(todayExp),
     },
+    /* Legal recovery: what the noticed customers in scope paid today and this week against
+       what their letters demanded, with `on` false and a note when the ledger is not there. */
+    legal: legalTotals_(scoped(user, notices), legalLedger, today, mon, sun),
     appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
@@ -11396,19 +11406,11 @@ async function legalLedgerWeek_(db, from, to) {
 }
 const LEGAL_NOTE = 'Malipo baada ya notisi hayajasomwa: endesha db/RUN-ME-041a na 041b kwenye SQL editor. '
   + '/ Payments after notices are not recorded yet: run db/RUN-ME-041a and 041b in the SQL editor.';
-function legalBoard_(codeRows, roleRows, notices, ledger, user, today, mon, sun) {
-  const on = Array.isArray(ledger);
-  const roleTabs = {};
-  for (const r of roleRows || []) roleTabs[K(r.role)] = r.tabs || [];
-  const holdsLegal = c => (c.tabs || []).includes('legal') || (roleTabs[K(c.role)] || []).includes('legal');
-  const lawyers = (codeRows || []).filter(holdsLegal);
-  const roster = lawyers
-    .filter(c => c.teams && c.teams.length)
-    .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
-    .map(c => ({ name: c.name, teams: c.teams }));
-  const allTeams = lawyers.filter(c => !c.teams || !c.teams.length).map(c => c.name).sort();
-
-  // Each customer once, at their latest notice; every (ref, since) they were served under.
+/* THE PER-CUSTOMER READING BEHIND BOTH THE BOARD AND THE DASHBOARD CARD -- one fold, so the
+   card on top and the rows by officer cannot disagree. Each customer once, at their latest
+   notice (team, owed); a payment once per customer, and only under a notice this scope
+   holds; today's and the week's sums per customer. */
+function legalFold_(notices, ledger, today, mon, sun) {
   const latest = new Map(), served = new Set();
   for (const n of notices || []) {
     const ref = K(n.ref); if (!ref) continue;
@@ -11416,7 +11418,6 @@ function legalBoard_(codeRows, roleRows, notices, ledger, user, today, mon, sun)
     const cur = latest.get(ref);
     if (!cur || String(n.notice_date || '') > String(cur.date || '')) latest.set(ref, { ref, team: n.team || '', date: String(n.notice_date || '').slice(0, 10), owed: num(n.arrears_at_notice) });
   }
-  // A payment once per customer, and only under a notice this scope holds.
   const paid = new Map();                         // ref -> Map(payment_id -> {amount, day})
   for (const l of ledger || []) {
     const ref = K(l.ref), day = String(l.paid_at || '').slice(0, 10);
@@ -11432,6 +11433,28 @@ function legalBoard_(codeRows, roleRows, notices, ledger, user, today, mon, sun)
     }
     return { t, w };
   };
+  return { latest, sums };
+}
+/** The dashboard's headline card: every noticed customer in scope, added up. */
+function legalTotals_(notices, ledger, today, mon, sun) {
+  const { latest, sums } = legalFold_(notices, ledger, today, mon, sun);
+  let owed = 0, tRecovered = 0, recovered = 0;
+  for (const c of latest.values()) { const s = sums(c.ref); owed += c.owed; tRecovered += s.t; recovered += s.w; }
+  return { on: Array.isArray(ledger), note: Array.isArray(ledger) ? null : LEGAL_NOTE, customers: latest.size, owed,
+    tRecovered, tPct: pctOf(tRecovered, owed), recovered, pct: pctOf(recovered, owed) };
+}
+function legalBoard_(codeRows, roleRows, notices, ledger, user, today, mon, sun) {
+  const on = Array.isArray(ledger);
+  const roleTabs = {};
+  for (const r of roleRows || []) roleTabs[K(r.role)] = r.tabs || [];
+  const holdsLegal = c => (c.tabs || []).includes('legal') || (roleTabs[K(c.role)] || []).includes('legal');
+  const lawyers = (codeRows || []).filter(holdsLegal);
+  const roster = lawyers
+    .filter(c => c.teams && c.teams.length)
+    .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
+    .map(c => ({ name: c.name, teams: c.teams }));
+  const allTeams = lawyers.filter(c => !c.teams || !c.teams.length).map(c => c.name).sort();
+  const { latest, sums } = legalFold_(notices, ledger, today, mon, sun);
   const held = new Set();
   const rows = roster.map(p => {
     const mine = new Set(p.teams.map(K));
