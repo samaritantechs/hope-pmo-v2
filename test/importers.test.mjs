@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder, importExpected, importDemandNotices }
+const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder, importExpected, importDemandNotices,
+  importDeductions, deductionCaseId }
   = await import('../api/_lib/importers.js');
 
 /* THE GOOGLE SHEETS DEMAND-NOTICE REGISTER, AS IT IS EXPORTED -- "Its time for the legal unit to
@@ -46,6 +47,43 @@ test('the Google Sheets DemandNotices register imports as it is, once', () => {
     ['555', 'KONGOWE', 'ASHA', '2026-03-16', 326000, 'THE ADMIN']]);
   assert.equal(own[0].notice_date, '2026-03-16'); assert.equal(own[0].issued_by, 'THE ADMIN');
   assert.notEqual(own[0].id, n.id);
+});
+
+/* THE PMO DEDUCTION REGISTER (the Google Sheets Portfolio Monitoring workbook's Sheet1) --
+   "i also want to build the pmo deduction pannel shift from google sheets into the pmo portal".
+   Its own sixteen column spellings land as they are; the rows of one submission share a
+   timestamp and so one case; the same file twice is the same rows. */
+test('the Portfolio Monitoring register imports as the sheet exports it, one case per submission', () => {
+  const header = ['TIMESTAMP', 'PMO DEPT', 'PMO NAME', 'TEAM', 'JINA LA MTEJA', 'REF NO YA MTEJA',
+    'JINA LA STAFF MTUHUMIWA', 'KIASI ALICHOKULA', 'TAREHE ALIYOPOKEA', 'TAREHE YA UGUNDUZI / KIKAO',
+    'MAAUMUZI (MAELEZO)', 'MAKATO (KIASI)', 'CHA KULIPIWA MTEJA', 'HR NOTES', 'DEDUCTED AMOUNT (HR)', 'REMAINING AMOUNT'];
+  const rows = [header,
+    ['2026-04-28 18:10:36', 'RECOVERY', 'BARAKA HAGAI', 'TARIME', 'SCHOLASTICA MATIKO KIBACHO', 6233834731,
+      'EDWIN MAGESA PHARES', 50000, '2026-03-12 00:00:00', '2026-03-28 00:00:00', 'Alitoa 50,000 kwa Edwin cash', 150000, 0, '', '', ''],
+    ['2026-04-28 18:10:36', 'RECOVERY', 'BARAKA HAGAI', 'TARIME', 'SCHOLASTICA MATIKO KIBACHO', 6233834731,
+      'CHRISTOPHER', 0, '2026-03-12 00:00:00', '2026-03-28 00:00:00', 'Alitoa 50,000 kwa Edwin cash', 150000, 0, 'Kata Mei', 100000, -100000],
+    ['2026-04-28 18:19:15', 'RECOVERY', 'RAPHAEL MGIMWA', 'TEMEKE', 'LUCY LUCIUS GISUNTE', 2201476287,
+      'RAMADHANI D. MOHAMED ', 38500, '2026-03-13 00:00:00', '2026-04-01 00:00:00', 'Team walitumiwa laki 4', 38500, 0, '', '', ''],
+    ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  ];
+  const out = importDeductions(rows);
+  assert.equal(out.length, 3, 'the blank line is dropped');
+  const a = out[0];
+  assert.ok(String(a.submitted_at).startsWith('2026-04-28T15:10'), 'the sheet\'s timestamp, clock included (18:10 EAT, stored as UTC)');
+  assert.equal(a.dept, 'RECOVERY'); assert.equal(a.reporter, 'BARAKA HAGAI'); assert.equal(a.team, 'TARIME');
+  assert.equal(a.customer, 'SCHOLASTICA MATIKO KIBACHO'); assert.equal(a.ref, '6233834731');
+  assert.equal(a.staff, 'EDWIN MAGESA PHARES'); assert.equal(a.amount_taken, 50000);
+  assert.equal(a.received_date, '2026-03-12'); assert.equal(a.discovery_date, '2026-03-28', 'the clock on a date cell is dropped');
+  assert.equal(a.decision, 'Alitoa 50,000 kwa Edwin cash'); assert.equal(a.deduction, 150000); assert.equal(a.to_pay, 0);
+  assert.equal(a.hr_notes, null); assert.equal(a.deducted, null); assert.equal(a.remaining, null, 'HR\'s empty columns stay empty');
+  assert.equal(out[1].hr_notes, 'Kata Mei'); assert.equal(out[1].deducted, 100000); assert.equal(out[1].remaining, -100000);
+  assert.equal(a.case_id, out[1].case_id, 'two staff of one submission are one case');
+  assert.notEqual(a.case_id, out[2].case_id);
+  assert.equal(a.case_id, deductionCaseId(a));
+  assert.notEqual(a.id, out[1].id, 'but their own rows');
+  assert.match(a.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  assert.equal(importDeductions(rows)[0].id, a.id, 'the same file is the same rows');
+  assert.equal(out[2].staff, 'RAMADHANI D. MOHAMED', 'trailing space trimmed');
 });
 
 /* THE REGISTER AS IT ACTUALLY ARRIVES -- "i want to upload the existing demand notices":

@@ -83,7 +83,11 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    way `audit` is: admins hold it from the start, and the PMO-Data person gets it when the
    tab is ticked on their role or code. It writes numbers that reports will one day lean on,
    which is exactly the kind of tab that must never be assumed. */
-export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep']);
+/* `deduct` (PMO Deduction -- the Portfolio Monitoring form and its register, moved in from
+   Google Sheets) is granted the same way `audit` is: admins hold it from the start, and the
+   recovery officers who report cases, and HR who records the deductions, get it when the tab
+   is ticked on their role or code. */
+export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct']);
 /* `bonusplan` (the daily bonus plan preview) follows `audit`: admins hold it from the start and it
    is opened to a role by ticking it. It reads nothing from the server -- it is a page of example
    figures and boxes -- so there is no function behind it to gate, only the tab. */
@@ -92,7 +96,7 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
    screen every code should carry.
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
-export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep'];
+export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set

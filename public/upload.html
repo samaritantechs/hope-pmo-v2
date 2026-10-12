@@ -106,6 +106,9 @@
            a sheet that the system now derives or collects for itself. -->
       <optgroup label="Registers">
         <option value="demand-notices">Demand Notices</option>
+        <!-- The Google Sheets Portfolio Monitoring register (its Sheet1), once, to bring the
+             history in; from then on cases are typed on the PMO Deduction tab. -->
+        <option value="pmo-deductions">PMO Deductions (Portfolio Monitoring register)</option>
       </optgroup>
       <optgroup label="Admin (settings permission required)">
         <option value="access-codes">Access Codes</option>
@@ -352,7 +355,7 @@ var TYPE_META = {
   'loans': ['stageWrap'],
   'followup': [], 'comments': [], 'teams': [], 'received': [],
   'access-codes': [], 'user-roles': [],
-  'abnormal': [], 'complaints': [], 'restructures': [], 'demand-notices': [],
+  'abnormal': [], 'complaints': [], 'restructures': [], 'demand-notices': [], 'pmo-deductions': [],
   'call-users': [], 'call-logs': [], 'settings': [], 'hints': [],
   // The logo is the one upload that is not a spreadsheet. It goes to the CALL_LOGO_URL
   // setting rather than a table, and from there to every screen in the system at once.
@@ -363,7 +366,7 @@ function isLogo_(){ return $('type').value === 'logo'; }
     one chosen date. Snapshots are absent on purpose: their snapshot date already supersedes,
     so offering a choice there would be a second way to say the same thing. */
 var STAMPED = { 'loans':1, 'received':1, 'abnormal':1, 'complaints':1, 'restructures':1,
-                'demand-notices':1, 'comments':1 };
+                'demand-notices':1, 'comments':1, 'pmo-deductions':1 };
 function isStamped_(){ return !!STAMPED[$('type').value]; }
 /* Two reports carry their own dates, and for those the dates in the FILE decide everything --
    including what "Replace all" clears. Re-pull the approvals report for 27 July, upload it as a
@@ -443,6 +446,9 @@ var TYPE_BEHAVIOUR = {
   'comments': 'commentsUpdate',
   'received': 'append', 'abnormal': 'append',
   'complaints': 'append', 'restructures': 'append', 'demand-notices': 'append',
+  // Keyed on each row's own facts (the submission time, customer, reference and staff), so
+  // the Google Sheets register can be sent again after a correction without doubling.
+  'pmo-deductions': 'append',
   'hints': 'replaceAll', 'logo': 'logo',
 };
 function syncFields(){
@@ -1173,6 +1179,9 @@ function suggestSheet(names){
   if (type === 'restructures')       return find(/restructur/);
   // The Google Sheets register's own tab is "DemandNotices", one word.
   if (type === 'demand-notices')     return find(/^demand ?notices/, /demand/);
+  // The Portfolio Monitoring workbook's register is its "Sheet1"; TeamList, Admins and the
+  // hand-kept side sheets ("Before April", "OUT OF PMO") are not the register.
+  if (type === 'pmo-deductions')     return find(/deduct/, /portfolio/, /^sheet1$/);
   if (type === 'call-users')         return find(/^call app users/, /^call users/);
   // "Call Logs" first, never a dated archive tab like "Call Logs 2026-07-20".
   if (type === 'call-logs')          return find(/^call logs$/, /^call logs/);

@@ -95,6 +95,11 @@ class FakeQuery {
   is(k, v) { this.filters.push(r => (v === null ? r[k] == null : r[k] === v)); return this; }
   gte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) >= String(v)); return this; }
   lte(k, v) { this.filters.push(r => r[k] != null && String(r[k]) <= String(v)); return this; }
+  /* Strict bounds, as PostgREST compares them: numbers as numbers (a remaining of 20000 is
+     above 0, where the strings "20000" and "5" would sort the other way), dates and text as
+     strings. A null never passes either bound. */
+  lt(k, v) { this.filters.push(r => r[k] != null && cmpBound_(r[k], v) < 0); return this; }
+  gt(k, v) { this.filters.push(r => r[k] != null && cmpBound_(r[k], v) > 0); return this; }
   in(k, arr) { this.filters.push(r => arr.map(String).includes(String(r[k]))); return this; }
   // Case-insensitive LIKE, with % meaning "anything". What a search box compiles to.
   ilike(k, pat) { this.filters.push(r => likeMatch(r[k], pat)); return this; }
@@ -362,4 +367,13 @@ export function fakeDb(tables, opts = {}) {
     _dump(name) { return store[name] ? store[name].rows : []; },
     _storageDump(bucket) { return storageFiles.buckets[bucket] || {}; },
   };
+}
+
+/** The comparison behind lt/gt above: both sides numeric -> as numbers; otherwise as strings. */
+function cmpBound_(a, b) {
+  const asNum = x => (typeof x === 'number' || (typeof x === 'string' && x.trim() !== '' && !isNaN(Number(x)))) ? Number(x) : null;
+  const na = asNum(a), nb = asNum(b);
+  if (na != null && nb != null) return na < nb ? -1 : na > nb ? 1 : 0;
+  const sa = String(a), sb = String(b);
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
 }

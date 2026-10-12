@@ -1458,6 +1458,165 @@ async function resolveComplaint(db, user, p, nowMs) {
 }
 const addComplaint = saveComplaint;
 
+/* =====================================================================================
+   PMO DEDUCTIONS -- the Portfolio Monitoring form and its register, moved in from Google
+   Sheets: "i also want to build the pmo deduction pannel shift from google sheets into the
+   pmo portal".
+
+   WHAT THE SHEET DID, KEPT: one submission is ONE CASE (team, customer, reference, the dates,
+   the decision, what is to be paid to the customer) with ONE ROW PER ACCUSED STAFF (name,
+   what they took, the deduction proposed). HR later writes notes and the amount actually
+   deducted on each staff row, and REMAINING = CHA KULIPIWA MTEJA − DEDUCTED is set the moment
+   they do (the sheet's onEdit), by this code, never by hand. The monthly report is the same
+   three sections the sheet emailed -- the cases by team, the reporters' earnings (TZS 5,000
+   per unique case, a setting), and the balances still outstanding from before the window --
+   drawn on the tab for the chosen dates instead of mailed.
+
+   ONE DIFFERENCE, ON PURPOSE: "to pay" is counted ONCE PER CASE on the cards and in the team
+   summary. The sheet added it on every staff line, so a case with three accused staff showed
+   three times the money owed to one customer.
+
+   Scoped at the database like every register here; the HR write is open to admins and to the
+   roles named in DEDUCTION_HR_ROLES (Settings), HR by default. */
+const DED_REPORTER_TZS_KEY = 'DEDUCTION_REPORTER_TZS', DED_REPORTER_TZS_DEFAULT = 5000;
+const DED_HR_ROLES_KEY = 'DEDUCTION_HR_ROLES', DED_HR_ROLES_DEFAULT = 'HR, HUMAN RESOURCE, HUMAN RESOURCES';
+const DED_NOTE = 'Jedwali la makato halipo bado: endesha db/RUN-ME-043-pmo-deductions.sql kwenye SQL editor. '
+  + '/ The deductions table is not there yet: run db/RUN-ME-043-pmo-deductions.sql in the SQL editor.';
+const dedWord_ = v => String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+function dedCanHr_(user, cfg) {
+  if ((user.tabs || []).includes('settings') || K(user.role) === 'ADMIN') return true;
+  const r = dedWord_(user.role);
+  if (!r) return false;
+  return String(cfg.get(DED_HR_ROLES_KEY, DED_HR_ROLES_DEFAULT)).split(',').map(dedWord_).filter(Boolean)
+    .some(w => r === w || (' ' + r + ' ').includes(' ' + w + ' '));
+}
+const dedDate_ = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+const dedMoney_ = v => (v == null || v === '' ? null : Math.max(0, Math.round(num(v) * 100) / 100));
+/** The table read, null when RUN-ME-043 has not been run -- the tab says so, nothing fails. */
+async function dedRead_(q) {
+  try { return await fetchAll(q); } catch (e) {
+    if (/pmo_deductions|does not exist|schema cache/i.test(String(e && e.message || e))) return null;
+    throw e;
+  }
+}
+async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
+  const today = todayKey(nowMs);
+  // The window defaults to THIS MONTH: the sheet's report was monthly, by submission date.
+  const fromKey = dedDate_(from) || today.slice(0, 8) + '01';
+  const toKey = dedDate_(to) || today;
+  const [rows0, prev0, teamRows, cfg] = await Promise.all([
+    dedRead_(() => onTeams(db.from('pmo_deductions').select('*')
+      .gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
+      .order('submitted_at', { ascending: false }), user.teams)),
+    // Still outstanding from BEFORE the window: the sheet's "previous month remaining balances".
+    dedRead_(() => onTeams(db.from('pmo_deductions').select('staff, team, remaining, submitted_at')
+      .lt('submitted_at', fromKey).gt('remaining', 0), user.teams)),
+    readTeamsAll(db, nowMs),
+    settingsMany(db, [DED_REPORTER_TZS_KEY, DED_HR_ROLES_KEY]),
+  ]);
+  const on = Array.isArray(rows0);
+  const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
+  const rows = scoped(user, rows0 || []).filter(r => { const d = dayOf(r.submitted_at); return d >= fromKey && d <= toKey; })
+    .map(r => ({ ...r, branch: teamBranch.get(K(r.team)) || null }));
+  const rate = cfg.num(DED_REPORTER_TZS_KEY, DED_REPORTER_TZS_DEFAULT);
+  // The cases: to_pay once per case; everything else is per staff line.
+  const cases = new Map();
+  for (const r of rows) {
+    const k = r.case_id || r.id;
+    if (!cases.has(k)) cases.set(k, { team: r.team || '', reporter: r.reporter || '', toPay: num(r.to_pay) });
+  }
+  const byTeam = new Map();
+  for (const r of rows) {
+    const t = r.team || '—';
+    const s = byTeam.get(t) || { team: t, cases: new Set(), entries: 0, amountTaken: 0, deduction: 0, toPay: 0, deducted: 0, remaining: 0 };
+    s.cases.add(r.case_id || r.id); s.entries++;
+    s.amountTaken += num(r.amount_taken); s.deduction += num(r.deduction);
+    s.deducted += num(r.deducted); s.remaining += num(r.remaining);
+    byTeam.set(t, s);
+  }
+  for (const [k, c] of cases) { const s = byTeam.get(c.team || '—'); if (s) s.toPay += c.toPay; void k; }
+  const summary = [...byTeam.values()].map(s => ({ ...s, cases: s.cases.size })).sort((a, b) => a.team.localeCompare(b.team));
+  const byReporter = new Map();
+  for (const [k, c] of cases) {
+    const name = c.reporter || '—';
+    const s = byReporter.get(name) || { reporter: name, cases: new Set() };
+    s.cases.add(k); byReporter.set(name, s);
+  }
+  const reporters = [...byReporter.values()].map(s => ({ reporter: s.reporter, cases: s.cases.size, earnings: s.cases.size * rate }))
+    .sort((a, b) => b.cases - a.cases || a.reporter.localeCompare(b.reporter));
+  const byStaff = new Map();
+  for (const r of scoped(user, prev0 || [])) {
+    const name = r.staff || '—';
+    byStaff.set(name, (byStaff.get(name) || 0) + num(r.remaining));
+  }
+  const prevBalances = [...byStaff.entries()].map(([staff, remaining]) => ({ staff, remaining }))
+    .sort((a, b) => b.remaining - a.remaining || a.staff.localeCompare(b.staff));
+  const sum = k => rows.reduce((s, r) => s + num(r[k]), 0);
+  return { rows, count: rows.length, from: fromKey, to: toKey, on, note: on ? null : DED_NOTE,
+    cases: cases.size, entries: rows.length,
+    toPay: [...cases.values()].reduce((s, c) => s + c.toPay, 0),
+    amountTaken: sum('amount_taken'), deduction: sum('deduction'), deducted: sum('deducted'), remaining: sum('remaining'),
+    summary, reporters, prevBalances, rate,
+    canHr: dedCanHr_(user, cfg), hrRoles: cfg.get(DED_HR_ROLES_KEY, DED_HR_ROLES_DEFAULT),
+    staffList: [...new Set(rows.map(r => r.staff).filter(Boolean))].sort(),
+    teams: teamRows.map(t => t.team).filter(t => teamAllowed(user, t)).sort() };
+}
+/** The form: one case, many staff. The reporter is the signed-in person -- the sheet asked
+    for a name typed by hand, and a typed name is a name that can be anybody's. */
+async function addDeduction(db, user, p, nowMs = Date.now()) {
+  if (!p) throw badRequest('Nothing to save.');
+  const team = String(p.team || '').trim();
+  if (!team) throw badRequest('Chagua timu. / Pick the team.');
+  if (!teamAllowed(user, team)) throw forbidden(`You do not have access to team ${team}.`);
+  const customer = String(p.customer || '').trim(), ref = String(p.ref || '').trim();
+  if (!customer) throw badRequest('Jina la mteja linahitajika. / The customer\'s name is required.');
+  if (!ref) throw badRequest('REF NO ya mteja inahitajika. / The customer\'s REF NO is required.');
+  const decision = String(p.decision || '').trim();
+  if (!decision) throw badRequest('Andika maamuzi / maelezo. / Write the decision (details).');
+  const staff = (Array.isArray(p.staff) ? p.staff : []).map(s => ({
+    name: String((s && s.name) || '').trim(), amountTaken: dedMoney_(s && s.amountTaken), deduction: dedMoney_(s && s.deduction),
+  })).filter(s => s.name);
+  if (!staff.length) throw badRequest('Ongeza angalau staff mmoja mtuhumiwa. / Add at least one accused staff.');
+  const at = new Date(nowMs).toISOString();
+  const caseId = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
+    : at + '|' + ref + '|' + Math.random().toString(36).slice(2);
+  const toPay = dedMoney_(p.toPay) || 0;
+  const rows = staff.map(s => ({
+    case_id: caseId, submitted_at: at, dept: String(p.dept || user.role || '').trim() || null, reporter: user.name,
+    team, customer, ref, staff: s.name, amount_taken: s.amountTaken || 0,
+    received_date: dedDate_(p.receivedDate), discovery_date: dedDate_(p.discoveryDate),
+    decision, deduction: s.deduction || 0, to_pay: toPay,
+    created_by: user.name, created_at: at,
+  }));
+  const { error } = await db.from('pmo_deductions').insert(rows);
+  if (error) {
+    if (/pmo_deductions|does not exist|schema cache/i.test(String(error.message || ''))) throw badRequest(DED_NOTE);
+    throw new Error(error.message);
+  }
+  return { caseId, rows: rows.length, team, ref };
+}
+/** HR's column: notes and the amount actually deducted on one staff line; remaining follows. */
+async function hrDeduction(db, user, p, nowMs = Date.now()) {
+  if (!p || !p.id) throw badRequest('id is required');
+  const cfg = await settingsMany(db, [DED_HR_ROLES_KEY]);
+  if (!dedCanHr_(user, cfg)) {
+    throw forbidden('Makato huandikwa na HR au admin tu (DEDUCTION_HR_ROLES kwenye Settings). '
+      + '/ Only HR or an admin records a deduction (DEDUCTION_HR_ROLES in Settings).');
+  }
+  const { data: prev, error: rErr } = await db.from('pmo_deductions').select('*').eq('id', p.id).maybeSingle();
+  if (rErr) throw new Error(rErr.message);
+  if (!prev) throw badRequest('That entry no longer exists.');
+  if (!teamAllowed(user, prev.team)) throw forbidden(`You do not have access to team ${prev.team}.`);
+  const deducted = dedMoney_(p.deducted);
+  // The sheet's onEdit, kept: REMAINING = CHA KULIPIWA MTEJA − DEDUCTED, on the staff line.
+  const remaining = deducted == null ? null : Math.round((num(prev.to_pay) - deducted) * 100) / 100;
+  const fields = { hr_notes: String(p.hrNotes || '').trim() || null, deducted, remaining,
+    hr_by: user.name, hr_at: new Date(nowMs).toISOString() };
+  const { error } = await db.from('pmo_deductions').update(fields).eq('id', p.id);
+  if (error) throw new Error(error.message);
+  return { id: p.id, ...fields };
+}
+
 /** Loan restructuring. A restructure is a written offer: the customer pays something now, and
     whatever is left -- optionally with fresh interest -- is rescheduled into N weekly
     installments. Every number is derived, so NONE of it is taken from the client:
@@ -8563,6 +8722,7 @@ const FN = {
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
+  deductions, addDeduction, hrDeduction,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -8946,6 +9106,9 @@ const FN_TAB = {
   adjustments: ['adjust'], adjustmentRecord: ['adjust'], adjustmentAmend: ['adjust'],
   adjustmentDelete: ['adjust'],
   abnormal: ['abnormal'], received: ['abnormal'],
+  // PMO Deduction: the form, the register and HR's column, one tab. Who may record a
+  // deduction is narrowed further inside hrDeduction (DEDUCTION_HR_ROLES).
+  deductions: ['deduct'], addDeduction: ['deduct'], hrDeduction: ['deduct'],
   /* The credit info report and its stats pane ride on the Credit Analysts tab rather than
      asking the admin to tick a new permission for a second view onto a book somebody already
      holds. The download page and the pane both come through here. */
