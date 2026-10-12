@@ -264,6 +264,9 @@ export const PAGE_KEY = {
   // devices most of all, since byToken() reads it on every handset's heartbeat.
   devices: 'imei',
   imprest_roles: 'role',
+  // The notice payment ledger (RUN-ME-041a) keys on (notice, payment): the same payment sits
+  // under every notice a customer was served, so no single column is unique.
+  notice_payment_ledger: ['ref', 'since', 'payment_id'],
   // hints is NOT here on purpose. Its table once read `tab text primary key` (still schema.sql's
   // own text, which is stale for this one) -- but db/migrations/2026-07-27-hints-many-per-tab.sql
   // dropped that and gave it `id` instead, because tab was never really unique: many tips

@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-a';
+var BUILD = '2026-10-12-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -10060,6 +10060,24 @@ function presSlides(){
         {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},
         {key:'pctIJ', label:'IJ', kind:'pct', target:'col'},
         col('weekUncollected','Uncollected (week)','money'), {key:'weekPct', label:'Coll % (week)', kind:'pct', target:'col'}] });
+    /* LEGAL RECOVERY -- "add legal recovery slide at presentation, todays and weekly recovery
+       columns as pmo recovery does". Per legal officer (the access codes holding the Legal
+       tab, with the teams their code carries): the noticed customers on those teams, what the
+       letters demanded against (arrears at the latest notice), and what those customers PAID
+       today and this week -- the payments the book records against notices (RUN-ME-041), a
+       payment once per customer. Ranked on the week's share, like the recovery slide. The
+       JUMLA percentages are the totals' ratio (from:), never an average of the rows. */
+    var lgCap = (b.legalOn === false && b.legalNote ? '<div>⚠ ' + esc(b.legalNote) + '</div>' : '')
+      + '<div>Wateja wenye notisi / noticed customers: ' + money(b.legalCustomers || 0)
+      + ' · malipo yaliyorekodiwa dhidi ya notisi (REF# au simu), mara moja kwa mteja / payments recorded against notices (REF# or phone), once per customer</div>'
+      + ((b.legalAll || []).length ? '<div>Wanasheria wa timu zote, hawapangwi / holding every team, not ranked: ' + esc(b.legalAll.join(', ')) + '</div>' : '')
+      + ((b.legalUnheld || []).length ? '<div>Timu zisizo na mwanasheria / teams no legal code holds: ' + esc(b.legalUnheld.join(', ')) + '</div>' : '');
+    slides.push({ id:'legal', kind:'table', title:'Legal recovery — notisi za madai / demand notices · leo / today, then the week',
+      caption: lgCap, rows:(b.legal||[]).slice(0,12),
+      cols:[col('officer','Legal officer'), col('teams','Teams','num'), col('customers','Customers','num'),
+        col('owed','Owed at notice','money'),
+        col('tRecovered','Recovered today','money'), {key:'tPct', label:'Rec % (today)', kind:'pct', target:'rec', from:['tRecovered','owed']},
+        col('recovered','Recovered (week)','money'), {key:'pct', label:'Rec % (week)', kind:'pct', target:'rec', from:['recovered','owed']}] });
     /* DAY PROGRESS -- the three office units from the day's FIRST upload to its latest.
          "we'll need to see who pushed more percentages and who is the most stuck guy behind"
        One slide, three columns, each ranked on the percentage points gained since the day's

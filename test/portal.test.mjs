@@ -2804,6 +2804,68 @@ test('an uploaded register is filed under each customer\'s current team, the reg
   assert.equal(none.records.length, 1); assert.equal(none.placed, 0);
 });
 
+/* LEGAL RECOVERY ON THE DECK -- "add legal recovery slide at presentation, todays and weekly
+   recovery columns as pmo recovery does". Per legal officer: the noticed customers on the teams
+   their code carries, what the letters demanded against, and what those customers PAID today
+   and this week off the ledger -- a payment once per customer however many notices it sits
+   under, and only under a notice this scope holds. */
+test('the legal recovery board credits each lawyer with the payments of the noticed customers on their teams, today and this week', async () => {
+  const t = tables();
+  t.access_codes.push(
+    { code: 'L1', name: 'JOAKIMU ISSA', role: 'LEGAL', teams: ['KONGOWE'], tabs: ['legal'] },
+    // Holds the tab through the ROLE, not the code.
+    { code: 'L2', name: 'EMMANUEL NASSARI', role: 'LEGAL OFFICER', teams: ['MBAGALA'], tabs: [] },
+    // Every team: named, not ranked -- every percentage would be the company's.
+    { code: 'L3', name: 'RHOBI MSIRA', role: 'LEGAL', teams: null, tabs: ['legal'] });
+  t.roles.push({ role: 'Legal Officer', tabs: ['legal'] });
+  t.demand_notices.push(
+    { id: 'n2', ref: '555', team: 'KONGOWE', notice_date: '2026-07-01', arrears_at_notice: 1000, created_at: '2026-07-01T05:00:00Z' },
+    { id: 'n3', ref: '555', team: 'KONGOWE', notice_date: '2026-07-10', arrears_at_notice: 800, created_at: '2026-07-10T05:00:00Z' },   // served twice: owed at the LATEST
+    { id: 'n4', ref: '777', team: 'NOWHERE', notice_date: '2026-07-01', arrears_at_notice: 500, created_at: '2026-07-01T05:00:00Z' });  // a team no legal code holds
+  t.notice_payment_ledger = [
+    { ref: '555', since: '2026-07-01', payment_id: 'p1', paid_at: TODAY, amount: 300 },
+    { ref: '555', since: '2026-07-10', payment_id: 'p1', paid_at: TODAY, amount: 300 },        // the same payment under the second notice: once
+    { ref: '555', since: '2026-07-10', payment_id: 'p2', paid_at: MON, amount: 100 },          // this week, not today
+    { ref: '555', since: '2026-07-10', payment_id: 'p3', paid_at: '2026-07-13', amount: 999 }, // last week: outside the window
+    { ref: '555', since: '2026-01-01', payment_id: 'p6', paid_at: TODAY, amount: 1000 },       // under no notice this register holds
+    { ref: '999', since: TODAY, payment_id: 'p4', paid_at: TODAY, amount: 50 },
+    { ref: '777', since: '2026-07-01', payment_id: 'p5', paid_at: TODAY, amount: 20 },
+  ];
+  const b = await portalApi(fakeDb(t), ADMIN, 'officerBoards', {}, NOW);
+  assert.equal(b.legalOn, true);
+  assert.equal(b.legalNote, null);
+  const by = Object.fromEntries(b.legal.map(r => [r.officer, r]));
+  assert.deepEqual(Object.keys(by).sort(), ['(unassigned)', 'EMMANUEL NASSARI', 'JOAKIMU ISSA']);
+  const j = by['JOAKIMU ISSA'];
+  assert.equal(j.teams, 1); assert.equal(j.customers, 1, '555 once, however many notices');
+  assert.equal(j.owed, 800, 'arrears at the latest notice');
+  assert.equal(j.tRecovered, 300, 'p1 once, p6 under no notice, p2 not today');
+  assert.equal(j.recovered, 400, 'p1 and p2; p3 is last week');
+  assert.equal(j.tPct, 37.5); assert.equal(j.pct, 50);
+  const e = by['EMMANUEL NASSARI'];
+  assert.equal(e.customers, 1); assert.equal(e.tRecovered, 50); assert.equal(e.recovered, 50);
+  assert.equal(e.pct, null, 'nothing was owed at that notice: no percentage, never a beaten zero');
+  const u = by['(unassigned)'];
+  assert.equal(u.customers, 1); assert.equal(u.owed, 500); assert.equal(u.recovered, 20); assert.equal(u.pct, 4);
+  assert.deepEqual(b.legal.map(r => r.officer), ['JOAKIMU ISSA', '(unassigned)', 'EMMANUEL NASSARI'], 'best weekly share first, no figure last');
+  assert.deepEqual(b.legalAll, ['RHOBI MSIRA']);
+  assert.equal(b.legalCustomers, 3);
+  assert.deepEqual(b.legalUnheld, ['NOWHERE']);
+  // Scoped: KONGOWE's leader sees KONGOWE's lawyer and customers, nobody else's.
+  const g = await portalApi(fakeDb(t), GMO, 'officerBoards', {}, NOW);
+  assert.deepEqual(g.legal.map(r => r.officer), ['JOAKIMU ISSA']);
+  assert.equal(g.legalCustomers, 1);
+  // Without RUN-ME-041 the board says so instead of showing a week of nothing.
+  const db = fakeDb(t);
+  const from = db.from.bind(db);
+  db.from = n => { if (n === 'notice_payment_ledger') throw new Error('relation "notice_payment_ledger" does not exist'); return from(n); };
+  const off = await portalApi(db, ADMIN, 'officerBoards', {}, NOW);
+  assert.equal(off.legalOn, false);
+  assert.match(off.legalNote, /RUN-ME-041a/);
+  assert.equal(off.legal.find(r => r.officer === 'JOAKIMU ISSA').recovered, 0);
+  assert.equal(off.legal.find(r => r.officer === 'JOAKIMU ISSA').owed, 800, 'the register still reads');
+});
+
 test('upload status says what is still missing for today', async () => {
   const db = fakeDb(tables());
   const d = await portalApi(db, ADMIN, 'uploadStatus', {}, NOW);
