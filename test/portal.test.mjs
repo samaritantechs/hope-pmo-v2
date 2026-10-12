@@ -2813,11 +2813,15 @@ test('the legal recovery board credits each lawyer with the payments of the noti
   const t = tables();
   t.access_codes.push(
     { code: 'L1', name: 'JOAKIMU ISSA', role: 'LEGAL', teams: ['KONGOWE'], tabs: ['legal'] },
-    // Holds the tab through the ROLE, not the code.
-    { code: 'L2', name: 'EMMANUEL NASSARI', role: 'LEGAL OFFICER', teams: ['MBAGALA'], tabs: [] },
+    // The role WORD decides, however the role is spelled out.
+    { code: 'L2', name: 'EMMANUEL NASSARI', role: 'Legal Officer', teams: ['MBAGALA'], tabs: [] },
     // Every team: named, not ranked -- every percentage would be the company's.
-    { code: 'L3', name: 'RHOBI MSIRA', role: 'LEGAL', teams: null, tabs: ['legal'] });
-  t.roles.push({ role: 'Legal Officer', tabs: ['legal'] });
+    { code: 'L3', name: 'RHOBI MSIRA', role: 'LEGAL', teams: null, tabs: ['legal'] },
+    /* "its mixed with recovery and credit right now": a recovery or credit code given the
+       Legal tab to READ the register is not a lawyer and must not be ranked as one. */
+    { code: 'R1', name: 'ASHA RECOVERY', role: 'PMO RECOVERY', teams: ['KONGOWE'], tabs: ['legal'] },
+    { code: 'C1', name: 'CREDIT ANALYST', role: 'CREDIT', teams: ['MBAGALA'], tabs: ['legal'] });
+  t.roles.push({ role: 'CREDIT', tabs: ['legal', 'loans'] });
   t.demand_notices.push(
     { id: 'n2', ref: '555', team: 'KONGOWE', notice_date: '2026-07-01', arrears_at_notice: 1000, created_at: '2026-07-01T05:00:00Z' },
     { id: 'n3', ref: '555', team: 'KONGOWE', notice_date: '2026-07-10', arrears_at_notice: 800, created_at: '2026-07-10T05:00:00Z' },   // served twice: owed at the LATEST
@@ -2835,7 +2839,8 @@ test('the legal recovery board credits each lawyer with the payments of the noti
   assert.equal(b.legalOn, true);
   assert.equal(b.legalNote, null);
   const by = Object.fromEntries(b.legal.map(r => [r.officer, r]));
-  assert.deepEqual(Object.keys(by).sort(), ['(unassigned)', 'EMMANUEL NASSARI', 'JOAKIMU ISSA']);
+  assert.deepEqual(Object.keys(by).sort(), ['(unassigned)', 'EMMANUEL NASSARI', 'JOAKIMU ISSA'],
+    'the two LEGAL roles and the unheld team: the recovery and credit codes with the tab are not lawyers');
   const j = by['JOAKIMU ISSA'];
   assert.equal(j.teams, 1); assert.equal(j.customers, 1, '555 once, however many notices');
   assert.equal(j.owed, 800, 'arrears at the latest notice');

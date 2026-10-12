@@ -11383,13 +11383,17 @@ function officerOf(teamBy, team, roleCol) {
    customer. (The Legal tab's all-time "Recovered" also credits an arrears drop; a day's or a
    week's drop needs every customer's deck for every day, which these boards no longer read.)
 
-   WHO IS CREDITED. The legal officers are ACCESS CODES holding the legal tab -- on the code
-   itself or through its role -- each with the teams their code carries: "any legal assigned
-   to that team gets his previous demands automatic". A notice counts for the officer whose
-   teams include the team it is filed under (the customer's current team, as the register
-   upload places it). A lawyer whose code holds every team is not ranked, the same rule as
-   the PMO board (every percentage would be the company's); they are named instead. Notices
-   on a team no legal code holds make one "(unassigned)" row, as the other boards do.
+   WHO IS CREDITED. The legal officers are the ACCESS CODES WHOSE ROLE IS LEGAL -- "the legal
+   recovery on presentation slides must take system users with role legal only, its mixed
+   with recovery and credit right now": holding the Legal tab is not being a lawyer, since a
+   recovery or credit role can be given the tab to read the register. The role word decides
+   (LEGAL, LEGAL OFFICER ...), the same way the PMO board reads its role. Each lawyer carries
+   the teams their code carries: "any legal assigned to that team gets his previous demands
+   automatic". A notice counts for the officer whose teams include the team it is filed under
+   (the customer's current team, as the register upload places it). A lawyer whose code
+   holds every team is not ranked, the same rule as the PMO board (every percentage would be
+   the company's); they are named instead. Notices on a team no legal code holds make one
+   "(unassigned)" row, as the other boards do.
 
    OWED is each customer's arrears at their latest notice, the figure the letter demanded
    against, so Rec % reads: of what the lawyers' letters chased, how much has come in. */
@@ -11443,12 +11447,13 @@ function legalTotals_(notices, ledger, today, mon, sun) {
   return { on: Array.isArray(ledger), note: Array.isArray(ledger) ? null : LEGAL_NOTE, customers: latest.size, owed,
     tRecovered, tPct: pctOf(tRecovered, owed), recovered, pct: pctOf(recovered, owed) };
 }
-function legalBoard_(codeRows, roleRows, notices, ledger, user, today, mon, sun) {
+/** The lawyers: the access codes whose ROLE is legal -- the same isLegalRole the staff roster
+    and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or
+    credit code that merely holds the legal tab is NOT a lawyer here, which is what "its mixed
+    with recovery and credit right now" was. */
+function legalBoard_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName) {
   const on = Array.isArray(ledger);
-  const roleTabs = {};
-  for (const r of roleRows || []) roleTabs[K(r.role)] = r.tabs || [];
-  const holdsLegal = c => (c.tabs || []).includes('legal') || (roleTabs[K(c.role)] || []).includes('legal');
-  const lawyers = (codeRows || []).filter(holdsLegal);
+  const lawyers = (codeRows || []).filter(c => isLegalRole(c.role, legalRoleName));
   const roster = lawyers
     .filter(c => c.teams && c.teams.length)
     .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
@@ -11511,7 +11516,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
-         codeRows, cfgS, adj, expInitWeek, roleRows, notices, ledger] = await Promise.all([
+         codeRows, cfgS, adj, expInitWeek, notices, ledger] = await Promise.all([
     readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     earlyList(db, { today, teams: user.teams }),
@@ -11545,7 +11550,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        repeated in thirty-odd rows. */
     readCodesAll(db),
     // Every setting this screen needs, in ONE journey rather than three.
-    settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY, PMO_BAND_TZS_KEY]),
+    settingsMany(db, ['SALES_TARGET_WEEKLY', 'SALES_TARGET', PMO_ROLE_KEY, PMO_BAND_TZS_KEY, LEGAL_ROLE_KEY]),
     /* ILIYONASIA over the week these boards are read on -- "everywhere the amount should add
        as stated during manual input". One small read of a hand-typed register, in this wave so
        it costs no wall time, null on a deployment that has not built the table. */
@@ -11558,12 +11563,11 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        dates out by exact match, so the extra days never leak into it. */
     expectedTotalsInRange(db, { type: 'initial', from: mon,
       to: addDaysKey(today, 3) > fri ? addDaysKey(today, 3) : fri, teams: user.teams }),
-    /* THE LEGAL RECOVERY BOARD'S THREE -- "add legal recovery slide at presentation, todays
-       and weekly recovery columns as pmo recovery does". The roles table (which codes hold
-       the legal tab by role), the notice register scoped like every other read here, and the
-       week's payments recorded against notices. Four trips, one of them the fold; see
-       legalLedgerWeek_. */
-    fetchAll(() => db.from('roles').select('role, tabs')),
+    /* THE LEGAL RECOVERY BOARD'S TWO -- "add legal recovery slide at presentation, todays and
+       weekly recovery columns as pmo recovery does". The notice register scoped like every
+       other read here, and the week's payments recorded against notices. Three trips, one of
+       them the fold; see legalLedgerWeek_. The lawyers come off the codes read above, by
+       ROLE -- no roles-table read, since the tab is not what makes a lawyer. */
     fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, notice_date, arrears_at_notice'), user.teams)),
     legalLedgerWeek_(db, mon, sun),
   ]);
@@ -11575,7 +11579,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
   const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
   const myPhoneUsers = scoped(user, phoneUsers);
-  const legal = legalBoard_(codeRows, roleRows, scoped(user, notices), ledger, user, today, mon, sun);
+  const legal = legalBoard_(codeRows, scoped(user, notices), ledger, user, today, mon, sun,
+    cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT));
   /* Resolve a deck the SAME way the dashboard card does: by date, type AND WEEKDAY.
      Ignoring weekday here was the bug behind "initial right, current bigger, recovery
      negative". A day can carry decks stamped with more than one weekday -- Monday's baseline
