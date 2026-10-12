@@ -660,9 +660,20 @@ export function noticeRowId(o) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+/* THE DATE PART OF A CELL THAT CARRIES A CLOCK. The sheet's NoticeDate is a datetime
+   ("5/13/2026 3:00:00" in a CSV, "2026-05-13 03:00" off the XLSX path), and dateOrNull wants a
+   bare date: the whole column was coming back null, and every notice with it. The clock is
+   dropped BEFORE the date is read -- never converted through UTC, where 00:30 in the office
+   is the evening before. */
+const dateCell_ = v => (v instanceof Date ? v : String(v == null ? '' : v).trim().split(/\s+/)[0]);
+
 export function importDemandNotices(csvRows) {
   const objs = rowsToObjects(csvRows);
-  const dayFirst = inferDayFirst(objs.map(({ raw: r, h }) => col(r, h, 'NOTICE DATE', 'NOTICEDATE')));
+  /* Which way round the sheet writes its slash dates, from EVERY dated column it has: the
+     notice dates alone can be a week of 5/13s that say nothing, while the timestamps beside
+     them carry a 5/14 or a 5/23 that settles it for both. */
+  const dayFirst = inferDayFirst(objs.flatMap(({ raw: r, h }) =>
+    [col(r, h, 'NOTICE DATE', 'NOTICEDATE'), col(r, h, 'TIMESTAMP')]));
   return objs.map(({ raw: r, h }) => {
     const row = {
       notice_id: textOrNull(col(r, h, 'NOTICE ID', 'NOTICEID', 'KUMB.NA.', 'KUMB NA', 'REFERENCE NO')),
@@ -670,7 +681,7 @@ export function importDemandNotices(csvRows) {
       team: normTeam(col(r, h, 'TEAM')),
       full_name: textOrNull(col(r, h, 'FULLNAME', 'FULL NAME', 'CUSTNAME', 'CUSTOMER NAME', 'CUSTOMER')),
       contact: normPhone(col(r, h, 'CONTACT#', 'CONTACT', 'CONTACT #', 'PHONE')),
-      notice_date: dateOrNull(col(r, h, 'NOTICE DATE', 'NOTICEDATE'), dayFirst),
+      notice_date: dateOrNull(dateCell_(col(r, h, 'NOTICE DATE', 'NOTICEDATE')), dayFirst),
       notice_days: num(col(r, h, 'NOTICE DAYS', 'NOTICEDAYS')),
       paid_count: num(col(r, h, 'PAID COUNT', 'PAIDCOUNT')),
       fine: num(col(r, h, 'FINE', 'FINEAMOUNT', 'FINE AMOUNT')),

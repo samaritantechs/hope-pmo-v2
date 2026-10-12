@@ -7,6 +7,7 @@ import { gatedUser, can, withApi } from './_lib/auth.js';
    nobody can account for. */
 import { portalApi, isAbnormalAmount } from './_lib/portal-core.js';
 import { deckKindOfTable, unmarkDeckTotals, buildDeckTotals, topUpDeckTotals } from './_lib/snapshot-totals.js';
+import { latestSnapshot } from './_lib/snapshots.js';
 /* AN UPLOAD ON THIS SERVER CLEARS THIS SERVER'S ANSWERS AT ONCE.
    answer-cache.js keeps a screen's answer for a minute and says why: an upload landing on
    ANOTHER instance cannot reach in, so a minute is the floor for everybody. But an upload
@@ -372,6 +373,56 @@ export const MAX_REPLACE_DATES = 62;
    POSTGRES: three chunked keyed reads per slice (400 keys a request), only over the values
    this file actually carries, plus one delete only when twins exist. Upload-time cost only --
    no read path changes. */
+/* =====================================================================================
+   A NOTICE BELONGS TO THE CUSTOMER'S TEAM AS IT IS TODAY, NOT AS THE SHEET REMEMBERS IT.
+   =====================================================================================
+   "i want to upload the existing demand notices so they go to their current teams and any
+    legal assigned to that team gets his previous demands automatic"
+
+   The Google Sheets register carries the team a customer was on the day the letter went out,
+   and customers move. The Legal tab is scoped by team, so a notice filed under a team the
+   customer has since left is a notice the lawyer who now holds them never sees. So each row
+   is placed on the team TODAY'S current defaulter deck gives that REF#; a customer no longer
+   on the deck keeps the sheet's team, filed under the registry's own spelling of it so the
+   exact-case team filters find it; and a team the registry has never heard of is kept as
+   written and NAMED in the upload's answer, because nobody is scoped to see it.
+
+   Three reads, on this one rare upload only (the registry, the deck's date, the deck's two
+   columns) -- the daily decks and the call app are untouched. Exported for the tests. */
+export async function placeNoticesOnCurrentTeams(db, records) {
+  const K = v => String(v == null ? '' : v).trim().toUpperCase();
+  // "TENGERU- USARIVER" on the sheet is the registry's "TENGERU-USARIVER": spacing and
+  // punctuation are typing, not identity, so the registry is matched on letters and digits.
+  const T = v => K(v).replace(/[^A-Z0-9]/g, '');
+  const refs = new Set(records.map(r => K(r.ref)).filter(Boolean));
+  const out = { records, placed: 0, kept: 0, moved: 0, unknown: [], deckDate: null };
+  if (!refs.size) return out;
+  const [registry, deck] = await Promise.all([
+    fetchAll(() => db.from('teams').select('team')),
+    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current' }, { columns: 'ref, team' }),
+  ]);
+  const spelling = new Map(registry.map(t => [T(t.team), t.team]));
+  const teamOf = new Map();
+  for (const d of deck.rows) if (refs.has(K(d.ref)) && d.team && !teamOf.has(K(d.ref))) teamOf.set(K(d.ref), d.team);
+  const unknown = new Set();
+  out.deckDate = deck.date;
+  out.records = records.map(r => {
+    const cur = teamOf.get(K(r.ref));
+    if (cur) {
+      out.placed++;
+      if (T(cur) !== T(r.team)) out.moved++;
+      return { ...r, team: cur };
+    }
+    out.kept++;
+    const reg = spelling.get(T(r.team));
+    if (reg) return reg === r.team ? r : { ...r, team: reg };
+    if (r.team) unknown.add(r.team);
+    return r;
+  });
+  out.unknown = [...unknown].sort();
+  return out;
+}
+
 export async function reconcileLoanIds(db, records) {
   if (!records.length) return { records, relinked: 0, merged: 0 };
   const T = v => String(v == null ? '' : v).trim().toUpperCase();
@@ -649,7 +700,7 @@ export default withApi(async (req, res) => {
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
   let table, records, commentsOrder = null, loansOrder, teamsDroppedCols = null;
-  let loansRelinked = 0, loansMerged = 0, receivedAbnormal = 0, receivedStep = 0;
+  let loansRelinked = 0, loansMerged = 0, receivedAbnormal = 0, receivedStep = 0, noticePlace = null;
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -830,6 +881,9 @@ export default withApi(async (req, res) => {
     case 'demand-notices':
       table = 'demand_notices';
       records = importDemandNotices(rows);
+      // Each notice onto the customer's CURRENT team -- see placeNoticesOnCurrentTeams.
+      noticePlace = await placeNoticesOnCurrentTeams(supabase, records);
+      records = noticePlace.records;
       break;
     case 'call-users': {
       // team is a FK -- pass the real list so an unknown one is nulled instead of failing.
@@ -1542,7 +1596,14 @@ export default withApi(async (req, res) => {
     dateOrder: commentsOrder ? (commentsOrder.dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
       : commentsOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
+    noticePlace: noticePlace ? { placed: noticePlace.placed, moved: noticePlace.moved, kept: noticePlace.kept,
+      unknown: noticePlace.unknown, deckDate: noticePlace.deckDate } : undefined,
     message: [
+      /* WHERE EACH NOTICE WENT. A lawyer reads the Legal tab by team, so "it is in" is not
+         enough: the answer says how many landed on the customer's team as of today's deck,
+         how many of those moved from the sheet's team, how many kept the sheet's team because
+         the customer is no longer on the deck, and which teams nobody is scoped to see. */
+      noticePlace ? `${noticePlace.placed} notice(s) were filed under the customer's CURRENT team${noticePlace.deckDate ? ` (today's defaulter deck of ${noticePlace.deckDate})` : ''}${noticePlace.moved ? `, ${noticePlace.moved} of them moved from the team the sheet had` : ''}. ${noticePlace.kept ? `${noticePlace.kept} customer(s) are no longer on the deck and kept the sheet's team. ` : ''}${noticePlace.unknown.length ? `⚠️ ${noticePlace.unknown.length} team name(s) are not in the Teams registry, so no legal officer is scoped to see those notices until the team is fixed: ${noticePlace.unknown.join(', ')}. ` : ''}Each notice's recovery reads live from here on: arrears at notice against today's deck, and every payment the book records from the notice date, by REF# or the customer's phone.` : '',
       /* NAMED, not counted. This is the line that would have ended a week of searching. */
       skipped ? `\u26a0\ufe0f ${skipped} row(s) of the ${dataRows} in this file were NOT uploaded, because their reference column could not be read. They are not in the system and no screen can show them. Check the header spelling of the reference column against the rest of the file. Skipped: ${skippedNames.join('; ')}${skipped > skippedNames.length ? `; and ${skipped - skippedNames.length} more` : ''}.` : '',
       loansOrder !== undefined ? `Dates in this file were read as ${loansOrder === null ? 'DAY/MONTH (nothing in the file said which way round it writes them)' : loansOrder ? 'DAY/MONTH' : 'MONTH/DAY'}. Check one row against the report if a figure looks like it landed in the wrong month.` : '',
