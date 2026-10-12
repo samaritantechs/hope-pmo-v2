@@ -1583,6 +1583,18 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
   assert.ok(/legalRecoveries:1/.test(app), 'cached like the other reads');
 });
 
+/* "i need expected defaulters report to have the weekly forward and backward buttons there
+   too": the Exp.Def Report carries the same weekBar as the dashboard, asks the server for the
+   chosen week, and keeps its daily/weekly pills and the email button on that bar. */
+test('the Exp.Def Report carries the week arrows and asks for the chosen week', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
+  assert.ok(/srv\('expdfReport', \{ weekly: weekly, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server');
+  assert.ok(/HEAD = weekBar\(d, /.test(view), 'the same week bar as the dashboard');
+  assert.ok(/data-arg="scope" data-val="day"/.test(view) && /data-arg="scope" data-val="week"/.test(view) && /id="mailWeekly"/.test(view), 'the pills and the email button ride on it');
+  assert.ok(/wiki ya \/ week of '\+d\.weekOf\+' → '\+\(d\.weekEnd\|\|''\)/.test(view), 'the weekly card names the week');
+});
+
 /* PMO DEDUCTION -- "i also want to build the pmo deduction pannel shift from google sheets into
    the pmo portal" / "Am not yet seeing 'pmo deduction' nav under abnormal in the left pannel".
    The nav item sits directly under Abnormal Payments; the tab carries the form, HR's column and

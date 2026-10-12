@@ -8737,7 +8737,7 @@ const FN = {
   adjustments, adjustmentRecord, adjustmentAmend, adjustmentDelete,
   auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
   announceSave, notifications, notifSeen, customerSearch,
-  expdfMine, expdfReport, emailWeeklyExpdf,
+  expdfMine, expdfReport: expdfReportWeek, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
   callOfficers, recoveryByCredit,
@@ -9476,6 +9476,19 @@ async function settingNum(db, key, dflt) {
    simply shows zeros where nothing has landed yet rather than refusing to look. `requested`
    and `future` still come back with the answer so the week bar can label an upcoming week as
    what it is, without pretending the choice was overruled. */
+/* THE EXP.DEF REPORT ON A CHOSEN WEEK -- "i need expected defaulters report to have the
+   weekly forward and backward buttons there too". The same week bar the dashboard and the
+   weekly screens carry, read the same way: the clock is shifted to the chosen week
+   (asOfWeek -- a past or upcoming week is read as it stood on its Friday), and the report's
+   own reads follow that clock, so daily shows that Friday and weekly measures against that
+   week's Monday deck. The weekly email keeps calling expdfReport directly, on this week. */
+async function expdfReportWeek(db, user, args, nowMs = Date.now()) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  const d = await expdfReport(db, user, args || {}, asOf.ms);
+  return { ...d, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6), asOfDate: todayKey(asOf.ms),
+    pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future };
+}
+
 export function asOfWeek(nowMs, weekOf) {
   const thisMon = weekMondayKey(nowMs);
   const blank = { ms: nowMs, weekOf: thisMon, past: false, requested: null, future: false };

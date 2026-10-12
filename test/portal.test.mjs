@@ -4399,6 +4399,19 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
   const w = await portalApi(db, ADMIN, 'expdfReport', { weekly: true }, NOW);
   assert.equal(w.weekly, true);
   assert.equal(w.totals.recovered, 900);
+  /* THE WEEK ARROWS -- "i need expected defaulters report to have the weekly forward and
+     backward buttons there too". This week carries the week bar's fields; a past week is read
+     as it stood on its Friday, like the dashboard; a stray date snaps to its Monday. */
+  assert.equal(w.weekOf, MON); assert.equal(w.weekEnd, '2026-07-26');
+  assert.equal(w.pastWeek, false); assert.equal(w.weekFuture, false); assert.equal(w.asOfDate, TODAY);
+  const past = await portalApi(db, ADMIN, 'expdfReport', { weekly: true, weekOf: '2026-07-15' }, NOW);
+  assert.equal(past.weekOf, '2026-07-13', 'the Wednesday asked for resolves to its Monday');
+  assert.equal(past.weekRequested, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19');
+  assert.equal(past.pastWeek, true); assert.equal(past.asOfDate, '2026-07-17', 'read as it stood on that Friday');
+  assert.equal(past.date, null, 'date is the deck\'s own date, and no deck was uploaded that week'); assert.equal(past.weekday, 'FRI');
+  assert.equal(past.totals.customers, 0, 'no deck that week in this fixture: nothing invented');
+  const next = await portalApi(db, ADMIN, 'expdfReport', { weekOf: '2026-07-27' }, NOW);
+  assert.equal(next.weekFuture, true); assert.equal(next.pastWeek, false); assert.equal(next.weekOf, '2026-07-27');
 });
 
 test('the weekly email refuses clearly when it is not configured, and never sends daily', async () => {
