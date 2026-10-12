@@ -1599,12 +1599,17 @@ test('the New-notice drawer withholds Issue below the DC rule and says why', () 
 /* "Recovered since notice card, in demands - add % figure infront of amount in the same
    card." The Legal tab's card reads "48% · 1,100", the percentage from the server (of what the
    letters chased), and names the owed figure underneath. */
-test('the Legal tab\'s Recovered since notice card carries the Rec % in front of the amount', () => {
+test('the Legal tab\'s Recovery card carries the Rec % in front of the arrears drop, apart from Recovered since notice', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 6000);
-  assert.ok(/kpi\('Recovered since notice',\s*\(d\.recoveredPct != null \? pct\(d\.recoveredPct\) \+ ' · ' : ''\) \+ money\(d\.recoveredSince\)/.test(view),
-    'the percentage first, then the amount, in the one card');
-  assert.ok(/d\.owed > 0 \? 'ya \/ of TZS ' \+ money\(d\.owed\)/.test(view), 'and what it is a percentage of, underneath');
+  const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('function legalRecoveriesDrawer_('));
+  /* "all i needed is 1. recovery to have difference of arrears at notice and current and rec%
+     and 2. recovered amount since notices": two cards, two readings, never blended. */
+  assert.ok(/kpi\('Urejeshaji \/ Recovery',\s*\(d\.recoveryPct != null \? pct\(d\.recoveryPct\) \+ ' · ' : ''\) \+ money\(d\.recovery\)/.test(view),
+    'Recovery: the percentage first, then the arrears drop, in the one card');
+  assert.ok(/arrears at notice − current/.test(view) && /d\.owed > 0 \? ' · ya \/ of TZS ' \+ money\(d\.owed\)/.test(view), 'said as at notice − current, over what was owed');
+  assert.ok(/kpi\('Imerejeshwa tangu notisi \/ Recovered since notice', money\(d\.paidSince\)/.test(view), 'Recovered since notice is the payments reading');
+  assert.ok(!/recoveredSince|recovered_since/.test(view), 'the blended figure is gone from the tab');
+  assert.ok(/key:'rec_pct', label:'Rec %', kind:'pct', from:\['arrears_down','arrears_at_notice'\]/.test(view), 'and each row carries its own Rec %');
 });
 
 test('the dashboard carries a legal recovery card on top and today/week boards by legal officer', () => {
