@@ -2767,6 +2767,34 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   assert.deepEqual(p2.served.map(s => s.date), ['2026-03-17', '2026-03-16'], 'the earlier ones are still listed, newest first');
 });
 
+/* "a demand notice cant be generated for an expected/defaulter not from 2 DC and above ... we
+   only apply these measures when a customer defaults 2 DC+ at demand creation". The deck's D.C
+   decides, at creation: the preview says so, and issuing is refused outright below it. */
+test('a demand notice is issued only to a customer at 2 DC and above', async () => {
+  const t = tables();
+  for (const r of t.defaulter_snapshots) if (r.ref === '555' && r.snapshot_type === 'current') r.dc = 1;
+  const db = fakeDb(t);
+  const p = await portalApi(db, ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW);
+  assert.equal(p.dc, 1); assert.equal(p.minDc, 2); assert.equal(p.eligible, false, 'said on the preview');
+  await assert.rejects(() => portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: TODAY, noticeDays: 7 }, NOW),
+    e => e.status === 400 && /2 DC/.test(e.message) && /DC 1/.test(e.message), 'and refused, naming the rule and the figure');
+  assert.equal((await portalApi(db, ADMIN, 'demandNotices', {}, NOW)).count, 1, 'nothing was filed');
+  // The pick list says it before a tap.
+  const f = await portalApi(db, ADMIN, 'legalFind', { q: '555' }, NOW);
+  assert.equal(f.minDc, 2); assert.equal(f.rows.find(r => r.ref === '555').dc, 1);
+  // At the rule, the letter goes out; 111 sits at the fixture's 3.
+  const ok = await portalApi(db, ADMIN, 'legalPreview', { ref: '111', noticeDate: TODAY }, NOW);
+  assert.equal(ok.dc, 3); assert.equal(ok.eligible, true);
+  for (const r of t.defaulter_snapshots) if (r.ref === '555' && r.snapshot_type === 'current') r.dc = 2;
+  const db2 = fakeDb(t);
+  assert.equal((await portalApi(db2, ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW)).eligible, true, 'two is enough');
+  const a = await portalApi(db2, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: TODAY, noticeDays: 7 }, NOW);
+  assert.ok(a.noticeId);
+  // A deck row with no D.C at all is below the rule, never waved through as unknown.
+  for (const r of t.defaulter_snapshots) if (r.ref === '555' && r.snapshot_type === 'current') delete r.dc;
+  assert.equal((await portalApi(fakeDb(t), ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW)).eligible, false);
+});
+
 /* THE REGISTER LANDS ON THE CUSTOMER'S TEAM AS IT IS TODAY -- "i want to upload the existing
    demand notices so they go to their current teams and any legal assigned to that team gets
    his previous demands automatic". The Legal tab is scoped by team, so a notice filed under a

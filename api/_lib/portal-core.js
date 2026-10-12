@@ -1636,6 +1636,12 @@ async function restructures(db, user, _args, nowMs) {
     rejected: rows.filter(x => K(x.status) === 'REJECTED').length };
 }
 
+/** A CUSTOMER'S DC -- the deck's own D.C column, the count of instalments they have defaulted
+    on. ONE reading for every measure that is gated on it: the restructuring offer (its
+    RESTRUCTURE_MIN_DC setting) and the demand notice (LEGAL_MIN_DC), so the two can never
+    disagree about how far behind somebody is. */
+const missedDc_ = d => num(d && d.dc);
+
 /** Look a customer up by REF and say whether they can be restructured at all. */
 async function restructureEligible(db, user, { ref }, nowMs) {
   if (!ref) throw badRequest('A customer REF# is required.');
@@ -1644,7 +1650,7 @@ async function restructureEligible(db, user, { ref }, nowMs) {
   if (!found) return { found: false };
   if (!teamAllowed(user, found.team)) throw forbidden(`You do not have access to team ${found.team}.`);
   const strat = await restructureStrategy(db);
-  const dc = num(found.dc) || paidCount(found);
+  const dc = missedDc_(found) || paidCount(found);
   return { found: true, ref: found.ref, full_name: found.full_name, team: found.team,
     contact: found.contact, guarantor: found.guarantor_name, guarantor_contact: found.guarantor_contact,
     arrears: num(found.arrears), dc, minDc: strat.minDc, eligible: dc >= strat.minDc, strategy: strat };
@@ -1921,10 +1927,20 @@ async function findDefaulter(db, user, ref, nowMs) {
   return found;
 }
 
+/* WHO MAY BE SERVED -- "a demand notice cant be generated for an expected/defaulter not from 2
+   DC and above ... we only apply these measures when a customer defaults 2 DC+ at demand
+   creation". The deck's D.C (missedDc_, the same reading the restructuring offer is gated on)
+   decides, at creation: the preview says the DC and whether a letter may be issued, the drawer
+   withholds the button, and addDemandNotice refuses anyway, so a stale screen cannot slip one
+   through. Reprints of letters already served are not gated: those were issued. */
+const LEGAL_MIN_DC = 2;
+const legalDcMsg_ = dc => `Notisi hutolewa kwa mdaiwa wa DC ${LEGAL_MIN_DC} na zaidi tu; huyu ana DC ${dc}. / A demand notice is issued only to a customer at ${LEGAL_MIN_DC} DC and above — this one is at ${dc}.`;
+
 async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
   if (!ref) throw badRequest('A customer REF# is required.');
   const d = await findDefaulter(db, user, ref, nowMs);
   if (!d) return { found: false };
+  const dc = missedDc_(d);
   const noticeMs = /^\d{4}-\d{2}-\d{2}$/.test(String(noticeDate))
     ? Date.parse(noticeDate + 'T00:00:00Z') : nowMs;
   const f = legalFine(d, noticeMs);
@@ -1945,6 +1961,7 @@ async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
     ratePct: Math.round(f.rate * 1000) / 10, fine,
     disb_date: d.disb_date, expire_date: d.expire_date, landmark: d.nearest_landmark,
     ...a, noticeDate: noticeKey,
+    dc, minDc: LEGAL_MIN_DC, eligible: dc >= LEGAL_MIN_DC,
     served, servedToday: served.filter(s => s.date === noticeKey) };
 }
 
@@ -1965,18 +1982,19 @@ async function legalFind(db, user, args, nowMs) {
   if (digits.length >= 7) clauses.push('contact.ilike.%' + digits.slice(-9) + '%');
   const since = addDaysKey(todayKey(nowMs), -DECK_LOOKBACK_DAYS);
   const rows = await fetchAll(() => onTeams(db.from('defaulter_snapshots')
-    .select('ref, full_name, contact, team, arrears, status, ds, snapshot_date, weekday')
+    .select('ref, full_name, contact, team, arrears, status, ds, dc, snapshot_date, weekday')
     .eq('snapshot_type', 'current').gte('snapshot_date', since)
     .or(clauses.join(',')).order('snapshot_date', { ascending: false }).limit(LEGAL_FIND_LIMIT * 3), user.teams));
   const seen = new Map();
   for (const r of scoped(user, rows).sort((x, y) => String(y.snapshot_date).localeCompare(String(x.snapshot_date)))) {
     const k = K(r.ref);
     if (!k || seen.has(k)) continue;
+    // The DC rides along so the pick list can say who is below LEGAL_MIN_DC before a tap.
     seen.set(k, { ref: r.ref, name: r.full_name || '', team: r.team || '', contact: r.contact || '',
-      arrears: num(r.arrears), status: r.status || '', ds: r.ds || '', date: String(r.snapshot_date || '').slice(0, 10),
-      weekday: r.weekday || '' });
+      arrears: num(r.arrears), status: r.status || '', ds: r.ds || '', dc: missedDc_(r),
+      date: String(r.snapshot_date || '').slice(0, 10), weekday: r.weekday || '' });
   }
-  return { q, rows: [...seen.values()].slice(0, LEGAL_FIND_LIMIT), capped: seen.size > LEGAL_FIND_LIMIT };
+  return { q, rows: [...seen.values()].slice(0, LEGAL_FIND_LIMIT), capped: seen.size > LEGAL_FIND_LIMIT, minDc: LEGAL_MIN_DC };
 }
 
 /** HMCL/<initials>/<dd>/<mm>/<yyyy>, with -2, -3 ... when the same person is served again on
@@ -2004,6 +2022,9 @@ async function addDemandNotice(db, user, p, nowMs) {
   if (!p || !p.ref) throw badRequest('Pick a customer (REF#).');
   const d = await findDefaulter(db, user, p.ref, nowMs);
   if (!d) throw badRequest('That REF# is not in the current Defaulters list.');
+  // Refused here as well as withheld on the screen: the rule holds at creation, whatever the
+  // browser showed. See LEGAL_MIN_DC.
+  if (missedDc_(d) < LEGAL_MIN_DC) throw badRequest(legalDcMsg_(missedDc_(d)));
   const noticeKey = /^\d{4}-\d{2}-\d{2}$/.test(String(p.noticeDate)) ? p.noticeDate : todayKey(nowMs);
   const days = Math.max(1, Math.floor(num(p.noticeDays) || 7));
   const f = legalFine(d, Date.parse(noticeKey + 'T00:00:00Z'));
