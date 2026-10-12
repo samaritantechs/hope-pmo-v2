@@ -653,9 +653,17 @@ export function importRestructures(csvRows) {
    ONE ROW PER NOTICE, HOWEVER OFTEN THE REGISTER IS UPLOADED: the row's id is its notice
    reference (HMCL/HEN/24/09/2026-4), so an upload of the same register twice is the same rows
    twice -- upserted, never doubled. A row with no reference is keyed on its own facts. */
-export function noticeRowId(o) {
+/* THE ROW'S IDENTITY IS THE CUSTOMER -- "all the columns could go wrong so replace by ref no"
+   / "the whole column data". A re-upload's row for a customer overwrites that customer's
+   uploaded notice whatever else changed on the line (a corrected Kumb.Na., date, amount,
+   team or officer); a customer served more than once in one file keeps one row per line, in
+   the file's order (seq). A row with no reference is keyed on its own facts. The upload also
+   clears a customer's EARLIER uploaded notices before writing (upload.js replaceNoticesByRef),
+   so rows filed under the old Kumb.Na. key are replaced too. */
+export function noticeRowId(o, seq = 0) {
   const t = v => String(v == null ? '' : v).trim().toUpperCase();
-  const key = t(o.notice_id) || [t(o.ref), t(o.notice_date).slice(0, 10), String(Number(o.total_demand) || 0), t(o.issued_by)].join('|');
+  const key = t(o.ref) ? 'ref|' + t(o.ref) + '|' + seq
+    : [t(o.notice_id), t(o.notice_date).slice(0, 10), String(Number(o.total_demand) || 0), t(o.issued_by)].join('|');
   const hex = createHash('md5').update('notice|' + key).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
@@ -674,7 +682,16 @@ export function importDemandNotices(csvRows) {
      them carry a 5/14 or a 5/23 that settles it for both. */
   const dayFirst = inferDayFirst(objs.flatMap(({ raw: r, h }) =>
     [col(r, h, 'NOTICE DATE', 'NOTICEDATE'), col(r, h, 'TIMESTAMP')]));
+  const seen = new Map();   // ref -> how many rows of this file already carry it (seq)
   return objs.map(({ raw: r, h }) => {
+    /* THE TIMESTAMP, ON ITS OWN DAY. A cell with a clock keeps it (24/09/2026 10:15 is
+       07:15Z). A bare date ("7/13/2026") used to land at midnight EAT, which is 21:00Z the
+       evening before, and the Legal tab then said the notice was issued a day early --
+       "Issued by SAID MPANYU · 2026-07-12" for a 7/13 row. It lands at noon EAT now. */
+    const stampCell = col(r, h, 'TIMESTAMP');
+    const hasClock = /\d{1,2}:\d{2}/.test(String(stampCell == null ? '' : stampCell));
+    const stamp = hasClock ? stampOrNull(stampCell, dayFirst) : null;
+    const stampDay = dateOrNull(dateCell_(stampCell), dayFirst);
     const row = {
       notice_id: textOrNull(col(r, h, 'NOTICE ID', 'NOTICEID', 'KUMB.NA.', 'KUMB NA', 'REFERENCE NO')),
       ref: textOrNull(col(r, h, ...REF_HEADERS)),
@@ -691,9 +708,12 @@ export function importDemandNotices(csvRows) {
       other_inst: num(col(r, h, 'OTHER INST', 'OTHERINST')),
       issued_by: textOrNull(col(r, h, 'BY', 'ISSUED BY', 'LEGALOFFICER', 'LEGAL OFFICER')),
       // The sheet's Timestamp carries a clock ("24/09/2026 10:15"); a bare date is kept too.
-      created_at: stampOrNull(col(r, h, 'TIMESTAMP'), dayFirst) || dateOrNull(col(r, h, 'TIMESTAMP'), dayFirst) || new Date().toISOString(),
+      created_at: stamp || (stampDay ? stampDay + 'T09:00:00Z' : new Date().toISOString()),
     };
-    row.id = noticeRowId(row);
+    const k = String(row.ref == null ? '' : row.ref).trim().toUpperCase();
+    const seq = seen.get(k) || 0;
+    seen.set(k, seq + 1);
+    row.id = noticeRowId(row, seq);
     return row;
   }).filter(x => x.ref);
 }

@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-k';
+var BUILD = '2026-10-12-l';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6761,7 +6761,14 @@ function lgPrint(id){
 function lgDetails(r){
   var row = function(k, v, strong){
     return '<div class="frow"><span>'+k+'</span>'+(strong ? '<b>'+v+'</b>' : '<span>'+v+'</span>')+'</div>'; };
-  var d = function(v){ return v ? esc(String(v).slice(0,10)) : '—'; };
+  /* A timestamp on ITS OWN DAY (East Africa), not the UTC day: a notice issued at 00:30 or
+     one imported at "midnight" read as the evening before ("Issued by ... 2026-07-12" for a
+     7/13 row). A bare date (2026-07-13) is untouched by the shift. */
+  var d = function(v){
+    if (!v) return '—';
+    var t = Date.parse(String(v));
+    return isFinite(t) && /T|\s\d{1,2}:/.test(String(v)) ? esc(new Date(t + 3*3600*1000).toISOString().slice(0,10)) : esc(String(v).slice(0,10));
+  };
   var m = function(v){ return v == null ? '—' : money(v); };
   var paidLine = r.paid_since == null ? '— (RUN-ME-041)'
     : money(r.paid_since)

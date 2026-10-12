@@ -2941,49 +2941,69 @@ test('a demand notice is issued only to a customer at 2 DC and above', async () 
   assert.equal((await portalApi(fakeDb(t), ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW)).eligible, false);
 });
 
-/* THE REGISTER LANDS ON THE CUSTOMER'S TEAM AS IT IS TODAY -- "i want to upload the existing
-   demand notices so they go to their current teams and any legal assigned to that team gets
-   his previous demands automatic". The Legal tab is scoped by team, so a notice filed under a
-   team the customer has since left is one the lawyer who now holds them never sees. */
-test('an uploaded register is filed under each customer\'s current team, the registry\'s spelling, and names the teams nobody holds', async () => {
-  const { placeNoticesOnCurrentTeams } = await import('../api/upload.js');
+/* THE REGISTER'S TEAM IS THE TEAM -- "the demand importer misworked ... team moved from kijichi
+   to msamvu". The first upload re-filed each notice under the team today's deck gave the
+   customer; the legal unit's own Team column is the current team, so a notice is filed under
+   it, in the registry's spelling, and the deck is not consulted. */
+test('an uploaded register is filed under the team the sheet says, in the registry\'s spelling, and names the teams nobody holds', async () => {
+  const { placeNoticesOnSheetTeams } = await import('../api/upload.js');
   const db = fakeDb({
-    teams: [{ team: 'KIGAMBONI A' }, { team: 'KIGAMBONI B' }, { team: 'TENGERU-USARIVER' }, { team: 'MAJENGO' }],
+    teams: [{ team: 'KIJICHI' }, { team: 'MSAMVU' }, { team: 'TENGERU-USARIVER' }, { team: 'MAJENGO' }],
+    // Today's deck has ENEA on MSAMVU; the register says KIJICHI, and the register wins.
     defaulter_snapshots: [
-      // ANNA moved from KIGAMBONI B (the sheet's team) to KIGAMBONI A; today's deck says so.
-      { ref: '2204538455', team: 'KIGAMBONI A', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'b2', created_at: '2026-10-12T04:00:00Z' },
-      // An older deck still had her on B: the LATEST deck decides, not the first row found.
-      { ref: '2204538455', team: 'KIGAMBONI B', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-10-09', upload_batch: 'b1', created_at: '2026-10-09T04:00:00Z' },
-      { ref: '3212544265', team: 'MAJENGO', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'b2', created_at: '2026-10-12T04:00:00Z' },
-      // The initial deck is not the current one.
-      { ref: '3211680593', team: 'ARUSHA', snapshot_type: 'initial', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'i2', created_at: '2026-10-12T04:00:00Z' },
+      { ref: '4214791773', team: 'MSAMVU', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'b2', created_at: '2026-10-12T04:00:00Z' },
     ],
   });
   const rows = [
-    { id: 'n1', ref: '2204538455', team: 'KIGAMBONI B', notice_id: 'HMCL/AMN/13/05/2026' },
-    { id: 'n2', ref: '3211680593', team: 'TENGERU- USARIVER', notice_id: 'HMCL/SJK/14/05/2026' },   // off the deck; sheet spacing
-    { id: 'n3', ref: '3212544265', team: 'MAJENGO', notice_id: 'HMCL/HJA/14/05/2026' },             // on the deck, same team
-    { id: 'n4', ref: '3210618125', team: 'MOROMBOO', notice_id: 'HMCL/MAI/14/05/2026' },            // off the deck, team unknown
+    { id: 'n1', ref: '4214791773', team: 'KIJICHI', notice_id: 'HMCL/EGB/13/07/2026' },
+    { id: 'n2', ref: '3211680593', team: 'TENGERU- USARIVER', notice_id: 'HMCL/SJK/14/05/2026' },   // sheet spacing
+    { id: 'n3', ref: '3212544265', team: 'majengo', notice_id: 'HMCL/HJA/14/05/2026' },             // sheet case
+    { id: 'n4', ref: '3210618125', team: 'MOROMBOO', notice_id: 'HMCL/MAI/14/05/2026' },            // team unknown
   ];
-  const p = await placeNoticesOnCurrentTeams(db, rows);
+  const p = await placeNoticesOnSheetTeams(db, rows);
   const by = Object.fromEntries(p.records.map(r => [r.id, r.team]));
-  assert.equal(by.n1, 'KIGAMBONI A', 'the customer\'s team on TODAY\'S deck, not the sheet\'s');
-  assert.equal(by.n2, 'TENGERU-USARIVER', 'off the deck: the sheet\'s team, in the registry\'s own spelling');
+  assert.equal(by.n1, 'KIJICHI', 'the sheet\'s team, not the deck\'s');
+  assert.equal(by.n2, 'TENGERU-USARIVER', 'the registry\'s own spelling');
   assert.equal(by.n3, 'MAJENGO');
   assert.equal(by.n4, 'MOROMBOO', 'kept as written when the registry has no such team');
-  assert.equal(p.placed, 2); assert.equal(p.moved, 1); assert.equal(p.kept, 2);
+  assert.equal(p.filed, 3); assert.equal(p.respelled, 2);
   assert.deepEqual(p.unknown, ['MOROMBOO'], 'and NAMED, because nobody is scoped to see it');
-  assert.equal(p.deckDate, '2026-10-12');
-  // Once filed that way, the lawyer holding KIGAMBONI A sees ANNA's notice; B's lawyer does not.
+  // Filed that way, KIJICHI's lawyer sees ENEA's notice; MSAMVU's does not.
   const t = tables();
-  t.demand_notices = p.records.map(r => ({ ...r, full_name: 'X', created_at: '2026-05-13T14:34:47Z', notice_date: '2026-05-13', total_demand: 1 }));
-  const holdsA = { ...GMO, name: 'LAWYER A', teams: ['KIGAMBONI A'] };
-  const holdsB = { ...GMO, name: 'LAWYER B', teams: ['KIGAMBONI B'] };
-  assert.deepEqual((await portalApi(fakeDb(t), holdsA, 'demandNotices', {}, NOW)).rows.map(r => r.notice_id), ['HMCL/AMN/13/05/2026']);
-  assert.deepEqual((await portalApi(fakeDb(t), holdsB, 'demandNotices', {}, NOW)).rows, []);
-  // Nothing to place: no reads, nothing changed.
-  const none = await placeNoticesOnCurrentTeams(db, [{ id: 'z', ref: '', team: 'X' }]);
-  assert.equal(none.records.length, 1); assert.equal(none.placed, 0);
+  t.demand_notices = p.records.map(r => ({ ...r, full_name: 'X', created_at: '2026-07-13T09:00:00Z', notice_date: '2026-07-13', total_demand: 1 }));
+  const holdsK = { ...GMO, name: 'LAWYER K', teams: ['KIJICHI'] };
+  const holdsM = { ...GMO, name: 'LAWYER M', teams: ['MSAMVU'] };
+  assert.deepEqual((await portalApi(fakeDb(t), holdsK, 'demandNotices', {}, NOW)).rows.map(r => r.notice_id), ['HMCL/EGB/13/07/2026']);
+  assert.deepEqual((await portalApi(fakeDb(t), holdsM, 'demandNotices', {}, NOW)).rows, []);
+  const none = await placeNoticesOnSheetTeams(db, []);
+  assert.equal(none.records.length, 0); assert.equal(none.filed, 0);
+});
+
+/* REPLACE BY REF NO -- "what i upload should replace the existing without deleting new ones
+   like there is 1 2 3 4 5 and i reupload 1 2 3 then go overwrite demand 1 2 3 without deleting
+   4 5" / "all the columns could go wrong so replace by ref no" / "the whole column data". */
+test('a re-uploaded register replaces each customer\'s earlier uploaded notices and touches nothing else', async () => {
+  const { replaceNoticesByRef } = await import('../api/upload.js');
+  const db = fakeDb({ demand_notices: [
+    // 1, 2, 3: uploaded earlier (two lines for 2), under the old Kumb.Na. key.
+    { id: 'u1', ref: '1', team: 'A', notice_id: 'HMCL/1', upload_batch: 'old' },
+    { id: 'u2', ref: '2', team: 'A', notice_id: 'HMCL/2', upload_batch: 'old' },
+    { id: 'u2b', ref: '2', team: 'A', notice_id: 'HMCL/2-2', upload_batch: 'old' },
+    { id: 'u3', ref: '3', team: 'B', notice_id: 'HMCL/3', upload_batch: 'old' },
+    // 4, 5: uploaded earlier, not in this file -- stay.
+    { id: 'u4', ref: '4', team: 'B', notice_id: 'HMCL/4', upload_batch: 'old' },
+    { id: 'u5', ref: '5', team: 'C', notice_id: 'HMCL/5', upload_batch: 'old' },
+    // Issued in the app for customer 1 (no upload stamp) -- stays, whatever the file says.
+    { id: 'app1', ref: '1', team: 'A', notice_id: 'HMCL/APP/1', upload_batch: null },
+    // Written by THIS upload's earlier slice -- stays.
+    { id: 'me3', ref: '3', team: 'B', notice_id: 'HMCL/3', upload_batch: 'this-batch' },
+  ] });
+  const file = [{ ref: '1', team: 'A' }, { ref: '2', team: 'A' }, { ref: '3', team: 'B' }, { ref: '', team: 'X' }];
+  const removed = await replaceNoticesByRef(db, file, 'this-batch');
+  assert.equal(removed, 4, 'u1, u2, u2b and u3');
+  assert.deepEqual(db._dump('demand_notices').map(r => r.id).sort(), ['app1', 'me3', 'u4', 'u5']);
+  assert.equal(await replaceNoticesByRef(db, file, 'this-batch'), 0, 'nothing left to replace');
+  assert.equal(await replaceNoticesByRef(db, [], null), 0);
 });
 
 /* LEGAL RECOVERY ON THE DECK -- "add legal recovery slide at presentation, todays and weekly

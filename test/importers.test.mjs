@@ -42,6 +42,19 @@ test('the Google Sheets DemandNotices register imports as it is, once', () => {
   assert.equal('current_arrears' in n, false, 'sheet formulas against a deck that has moved on are not imported');
   assert.match(n.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   assert.equal(importDemandNotices(rows)[0].id, n.id, 'the same notice is the same row');
+  /* "all the columns could go wrong so replace by ref no" / "the whole column data": the row's
+     identity is the customer, so a corrected Kumb.Na., date or amount on the same REF# is the
+     SAME row (overwritten), while a second line for the same customer in one file is its own. */
+  const corrected = importDemandNotices([header, [...rows[1].slice(0, 7), '25/09/2026', 14, 9999, ...rows[1].slice(10)]]);
+  assert.equal(corrected[0].id, n.id, 'same customer, other columns changed: the same row');
+  const twice = importDemandNotices([header, rows[1], [...rows[1]]]);
+  assert.equal(twice.length, 2); assert.equal(twice[0].id, n.id); assert.notEqual(twice[1].id, n.id, 'a second line for the customer is its own row');
+  /* "Issued by SAID MPANYU · 2026-07-12" for a 7/13 row: a Timestamp with no clock landed at
+     midnight EAT, 21:00Z the evening before. It lands at noon EAT now, on its own day. */
+  const bare = importDemandNotices([['NoticeID', 'Timestamp', 'LegalOfficer', 'REF#', 'CustName', 'NoticeDate', 'Team'],
+    ['HMCL/EGB/13/07/2026', '7/13/2026', 'SAID MPANYU', '4214791773', 'ENEA GODFREY BASAYA', '7/13/2026', 'KIJICHI']]);
+  assert.equal(bare[0].created_at, '2026-07-13T09:00:00Z');
+  assert.equal(bare[0].notice_date, '2026-07-13'); assert.equal(bare[0].team, 'KIJICHI');
   // The portal's own export still reads.
   const own = importDemandNotices([['REF#', 'TEAM', 'FULLNAME', 'NOTICE DATE', 'TOTAL DEMAND', 'BY'],
     ['555', 'KONGOWE', 'ASHA', '2026-03-16', 326000, 'THE ADMIN']]);
