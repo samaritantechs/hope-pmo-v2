@@ -86,6 +86,18 @@ test('the Portfolio Monitoring register imports as the sheet exports it, one cas
   assert.equal(out[2].staff, 'RAMADHANI D. MOHAMED', 'trailing space trimmed');
 });
 
+/* "1 row(s) of the 81 in this file were NOT uploaded ... Skipped: (row with nothing readable
+   in it); (row with nothing readable in it); ..." -- twelve names for ONE skipped row. The
+   skipped-row namer in api/upload.js looked for the reference under REF_HEADERS, which this
+   register does not use, so every row looked skipped. It knows the register's own columns now. */
+test('the upload\'s skipped-row namer knows the deduction register\'s reference and customer columns', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../api/upload.js', import.meta.url), 'utf8');
+  const block = src.slice(src.indexOf('let skippedNames = [];'), src.indexOf('skippedNames.push('));
+  assert.ok(/REF_HEADERS\.map\(x => x\.toUpperCase\(\)\)\.concat\(\['REF NO YA MTEJA'\]\)/.test(block), 'the reference by its Swahili heading too');
+  assert.ok(/'CUSTOMER NAME', 'NAME', 'JINA LA MTEJA'\]/.test(block), 'and the customer by theirs');
+});
+
 /* THE REGISTER AS IT ACTUALLY ARRIVES -- "i want to upload the existing demand notices":
    American slash dates WITH A CLOCK on both NoticeDate ("5/13/2026 3:00:00") and Timestamp,
    figures with thousands commas, and the XLSX path's "2026-05-13 03:00". The notice date is

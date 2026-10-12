@@ -957,9 +957,13 @@ export default withApi(async (req, res) => {
     const kept = new Set(records.map(x => String(x.ref == null ? '' : x.ref).trim().toUpperCase()));
     for (const r of rows.slice(1)) {
       if (!Array.isArray(r) || !r.some(v => String(v == null ? '' : v).trim() !== '')) continue;
-      const ref = pick(r, REF_HEADERS.map(x => x.toUpperCase()));
+      /* The PMO deduction register names its reference and customer in Swahili (REF NO YA
+         MTEJA, JINA LA MTEJA). Without them here every row of that file looked skipped and
+         the one totals line that WAS skipped was named twelve times over as "(row with
+         nothing readable in it)" -- the count was right, the names were not. */
+      const ref = pick(r, REF_HEADERS.map(x => x.toUpperCase()).concat(['REF NO YA MTEJA']));
       if (ref && kept.has(ref.toUpperCase())) continue;
-      const name = pick(r, ['FULLNAME', 'FULL NAME', 'CUSTOMER NAME', 'NAME']);
+      const name = pick(r, ['FULLNAME', 'FULL NAME', 'CUSTOMER NAME', 'NAME', 'JINA LA MTEJA']);
       const any = pick(r, ['CUSTOMER NO', 'DOCKET#', 'DOCKET #', 'LOAN ID', 'TRACK#']);
       skippedNames.push([name, ref || any].filter(Boolean).join(' — ') || '(row with nothing readable in it)');
       if (skippedNames.length >= 12) break;
