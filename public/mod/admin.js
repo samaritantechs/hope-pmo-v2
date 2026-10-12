@@ -1009,3 +1009,408 @@ function settingForm(key, value){
       .catch(function(e){ toast(String(e.message||e), true); });
   };
 }
+
+// Read one key out of the settings rows the page already has, rather than a call of its own.
+function settingVal(rows, key, dflt){
+  var r = (rows||[]).find(function(x){ return x.key === key; });
+  return r ? r.value : dflt;
+}
+
+/* THE SETTINGS THAT RUN THE BUSINESS, NAMED, NOT HIDDEN.
+     "i needed these settings at seetings from the fresh start as i did in version one"
+   Every one of these already worked as a setting -- readable through the generic key/value
+   box if you already knew the exact key to type. That is not the same as being IN Settings:
+   the sales-target mismatch (1.58B shown, ~370m expected) was exactly this -- a setting nobody
+   knew existed, quietly running on its built-in fallback. These are the same keys the server
+   has always read (see settingNum/settingGet call sites in portal-core.js and call-core.js),
+   given a label, a current value and a Save button, grouped the way a person filling them in
+   from scratch would think about them. Nothing new is invented; everything here already had a
+   fallback default, which is why leaving a field exactly as shown changes nothing. */
+var SETTINGS_GROUPS = [
+  { id:'salesTarget', title:'Malengo ya mauzo / Sales targets', sub:'kila timu / per team',
+    preview:true, fields:[
+      { key:'SALES_TARGET_WEEKLY', label:'Kwa wiki (siku 5 za kazi) / Per week (5 working days), TZS',
+        type:'number', dflt:'100000000',
+        note:'Dashibodi na ripoti ya wiki: hii ÷ 5 × idadi ya timu = lengo la kampuni kwa siku. / The Dashboard and weekly report divide this by 5 and multiply by the number of teams for the whole-company daily figure.' },
+      { key:'SALES_TARGET_MONTHLY', label:'Kwa mwezi / Per month, TZS', type:'number', dflt:'400000000',
+        note:'HOPE Calls scorecard pekee. / HOPE Calls scorecard only -- a separate board from the two above.' },
+      /* THE THREE PERCENTAGE TARGETS. Every table on every screen -- the Orodha, the officer
+         boards, the deck on the wall -- turns a percentage GREEN once it reaches its target and
+         RED when it is under the JUMLA line; a blank target means nothing turns green. */
+      { key:'TARGET_EARLY_COL_PCT', label:'Lengo la Early Col % / Early collection % target', type:'number', dflt:'',
+        note:'Asilimia ya karatasi ya awali (initial). Wazi = hakuna kijani. / Initial-sheet collection %. Blank = nothing turns green.' },
+      { key:'TARGET_COL_PCT', label:'Lengo la Col % / Collection % target', type:'number', dflt:'',
+        note:'Ukusanyaji wa siku na wa PMO Collection. / Day collection and PMO Collection %.' },
+      { key:'TARGET_REC_PCT', label:'Lengo la Rec % / Recovery % target', type:'number', dflt:'',
+        note:'Kilichorejeshwa ÷ kisichokusanywa. Mauzo: 100% ya lengo ni kijani. / Recovered ÷ uncollected. Sales: 100% of target is green.' },
+    ] },
+  { id:'rotation', title:'Mzunguko wa kufuatilia wadaiwa / Recycling rotation',
+    sub:'nani anamiliki mdaiwa wiki hii / who owns a defaulter this week', fields:[
+      { key:'ASSIGN_ACTIVE', label:'Hai / Active -- mfululizo, ukitenganisha kwa mkato',
+        type:'text', dflt:'BIKE,MANAGER,GMO' },
+      { key:'ASSIGN_CHRONIC', label:'Sugu / Chronic', type:'text', dflt:'BIKE,GMO,MANAGER' },
+      { key:'ASSIGN_EXPIRED', label:'Muda umepita / Expired', type:'text', dflt:'MANAGER,GMO' },
+      { key:'ASSIGN_GRACE_WEEKS', label:'Wiki za neema kabla ya kuwa sugu / Grace weeks before chronic',
+        type:'number', dflt:'2' },
+      { key:'ASSIGN_BUCKET_DAYS', label:'Siku kabla ya kuzunguka (Hai) / Days before rotating (Active)',
+        type:'number', dflt:'2' },
+    ] },
+  { id:'restructure', title:'Marekebisho ya mikopo / Loan restructuring', sub:'sifa na masharti / eligibility and terms',
+    fields:[
+      { key:'RESTRUCTURE_MIN_DC', label:'Malipo ya chini yaliyokosekana kustahili / Min missed installments (DC) to qualify',
+        type:'number', dflt:'4' },
+      { key:'RESTRUCTURE_MAX_MONTHS', label:'Miezi ya juu ya malipo mapya / Max new repayment months',
+        type:'number', dflt:'4' },
+      { key:'RESTRUCTURE_INTEREST_PCT', label:'Riba mpya kwa kilichobaki (%) / New interest on the remaining (%)',
+        type:'number', dflt:'12' },
+    ] },
+  { id:'thresholds', title:'Vigezo vingine / Other thresholds', sub:null, fields:[
+      { key:'ABNORMAL_STEP', label:'Kizidisho cha malipo ya kawaida (TZS) / Normal payment multiple, TZS',
+        type:'number', dflt:'500',
+        note:'Malipo yasiyo kizidisho cha hii huonekana Abnormal Payments. / A payment that is not a multiple of this is flagged there.' },
+      { key:'CALL_MIN_SECS', label:'Sekunde za chini kuhesabu simu / Minimum seconds to count a call',
+        type:'number', dflt:'5' },
+      { key:'CALL_EARLY_MAX_BEHIND', label:'Kesho: nyuma siku ngapi bado zaonekana / Kesho tab: max days behind still shown',
+        type:'number', dflt:'1' },
+      { key:'CALL_CREDIT_MAX_PAID', label:'1-6: kiwango cha juu cha malipo / Count 1-6: upper paid limit',
+        type:'number', dflt:'5' },
+    ] },
+  /* THE LOCKED PHONE'S OWN SCREEN.
+     -------------------------------------------------------------------------------------
+       "I cant see where to edit this 'Simu hii ni mali ya hope...' at locking"
+
+     Every word on that screen has always come from settings -- and not one of them could be
+     found. Settings lists only rows that EXIST, so a key never written has nothing to click,
+     and the only way in was the key/value drawer, which needs the exact string typed from
+     memory. A setting nobody can find is a setting nobody has. So the five that compose the
+     screen are written out here with their real defaults, exactly like every other group.
+
+     The timing numbers (DEVICE_BEAT_SECONDS, DEVICE_OFFLINE_GRACE_HOURS and the rest) are
+     deliberately NOT here: this card is what a locked handset says, and those are how often
+     it speaks. They remain key/value rows -- docs/DEVICE-LOCKING.md section 6 lists them. */
+  { id:'lockscreen', title:'Skrini ya simu iliyofungwa / The locked phone\'s screen',
+    sub:'maneno yanatoka hapa, si kwenye app / the words come from here, not the app',
+    preview:true, fields:[
+      { key:'DEVICE_LOCK_BRAND', label:'Jina la kampuni juu / Company name across the top',
+        type:'text', dflt:'HOPE MICROCREDIT',
+        note:'Pia hujaza {brand} hapo chini. / Also fills {brand} below.' },
+      { key:'DEVICE_LOCK_MESSAGE', label:'Ujumbe / The message', type:'text', dflt:'',
+        note:'Wazi = ujumbe wa kawaida. Tumia {brand} na {namba}. / Blank uses the built-in sentence. '
+          + 'Write {brand} and {namba} where those belong — the server fills them in.' },
+      { key:'DEVICE_HELP_PHONE', label:'Namba ya kupiga / The number to call', type:'text', dflt:'',
+        note:'Hujaza {namba}. Ikiwa wazi, ujumbe wa kawaida hauahidi namba yoyote badala ya kuahidi tupu. '
+          + '/ Fills {namba}. Left blank, the built-in sentence promises no number rather than a blank one.' },
+      { key:'DEVICE_LOCK_LOGO', label:'Alama / The mark', type:'text', dflt:'',
+        note:'Wazi = alama ya HOPE (/lock-logo.png). Andika <b>none</b> kuiondoa kabisa. '
+          + '/ Blank means HOPE\'s mark. Write <b>none</b> for no mark at all — see docs/DEVICE-LOCKING.md §6a.' },
+    ] },
+  /* THE BENCH COMMANDS THEMSELVES -- what app, and from where.
+     -------------------------------------------------------------------------------------
+       "if there should be installation or anything then it must be included in the token
+        copy" / "should be inclusive in code if important"
+     INCLUDED BY DEFAULT, not opt-in: blank DEVICE_LOCK_APK_PATH uses the real path already in
+     use on this bench (apkPathFor_, portal-core.js), so the install step rides on every bench
+     command unless an operator deliberately writes <b>none</b> to leave it out. A bench
+     command that assumes the APK is already on the phone is exactly the trap that read
+     result=0 as success while nothing was ever installed. */
+  { id:'deviceBench', title:'Amri za benchi / The bench commands', sub:'app gani, na kutoka wapi / which app, and from where',
+    fields:[
+      { key:'DEVICE_LOCK_PACKAGE', label:'Package ya app / The app\'s package', type:'text', dflt:'',
+        note:'Wazi = com.samaritantechs.hooploanlock (app iliyopo tayari). Badilisha tu ukiwa na build yako '
+          + 'mwenyewe. / Blank = com.samaritantechs.hooploanlock (the app that already exists). Change this '
+          + 'only if you build and sign your own.' },
+      { key:'DEVICE_LOCK_APK_PATH', label:'Njia ya APK kwenye kompyuta ya benchi / The APK\'s path on the bench computer', type:'text', dflt:'',
+        note:'Wazi = %USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk (njia inayotumika tayari) -- hatua ya '
+          + '"Sakinisha" inakuwa sehemu ya kila amri ya benchi kiotomatiki. Andika <b>none</b> kuiacha nje. '
+          + '/ Blank = %USERPROFILE%\\Downloads\\HOOPLOAN-Lock.apk (the path already in use) -- the "Install" '
+          + 'step rides on every bench command automatically. Write <b>none</b> to leave it out.' },
+    ] },
+  /* WHERE SHIFT SENDS A PHONE BY DEFAULT.
+     -------------------------------------------------------------------------------------
+       "I dont need to fill anything during shifting from one to other"
+
+     One APK, two companies -- so "the other office" is not a choice anybody makes each
+     time a phone moves, it is a fact of the deployment. The Hamisha / Shift drawer opens
+     with this address already in the field; nobody types it unless it changes. */
+  { id:'deviceShift', title:'Kuhamisha simu kati ya makampuni / Shifting phones between companies',
+    sub:'anwani ya ofisi nyingine, kwa Hamisha / the other office\'s address, for Shift', fields:[
+      { key:'DEVICE_SHIFT_PARTNER', label:'Anwani ya HOOP / HOOP\'s address', type:'text',
+        dflt:'https://hoop-pmo.vercel.app',
+        note:'Hii ndiyo simu inayohamishwa inakoenda. Badilisha tu kama anwani yao imebadilika. '
+          + '/ This is where a shifted phone goes. Change it only if their address itself changes.' },
+    ] },
+  /* THE IMPREST GM AND THE ADDRESS ITS EMAIL LINKS POINT TO -- "i'll set GM email in
+     settings". A blank IMPREST_GM_EMAIL means no notice is sent at all; the request, approval
+     and report panes still work either way, exactly the same "courtesy, never the
+     dependency" rule the weekly report's ADMIN_EMAIL already follows. APP_BASE_URL is this
+     deployment's own web address; without it the notice is still sent, only without its two
+     links (Decide now, Open in the portal) -- see api/_lib/imprest.js. */
+  { id:'imprest', title:'Imprest -- GM na anwani ya email / GM and the email address',
+    sub:'nani anaidhinisha, na kiungo cha email kinaenda wapi / who decides, and where the email links point',
+    fields:[
+      { key:'IMPREST_GM_EMAIL', label:'Barua pepe ya GM / GM\'s email', type:'text', dflt:'',
+        note:'GM lazima awe na msimbo wake wa kuingia na tab ya Idhini ya imprest ikiwa imetikwa; '
+          + 'hii ni email tu ya kutuma taarifa. / The GM still needs their own access code with '
+          + 'Imprest approval ticked -- this only says where the notice email goes. Blank = no email sent.' },
+      { key:'APP_BASE_URL', label:'Anwani ya mfumo huu / This deployment\'s own web address', type:'text', dflt:'',
+        note:'Mfano https://hope-pmo-v2.vercel.app -- bila hii, viungo vya "Amua sasa" na "Fungua '
+          + 'kwenye portal" haviwekwi kwenye email. / e.g. https://hope-pmo-v2.vercel.app -- without '
+          + 'it, the email is still sent but without its Decide-now or Open-in-portal links.' },
+      /* "he's gonna request again now, i hope when gm approves he gets one" -- and the reason
+         he did not is almost always this field, blank. A blank EMAIL_FROM falls back to
+         Resend's own onboarding sender, which Resend will only deliver to the address of the
+         Resend ACCOUNT ITSELF -- enough to see the GM's own notice arrive (if the GM signed up
+         for the Resend account) and nothing else. A requester's personal Gmail is a different
+         address, so Resend silently refuses it -- the request still saves, the GM's own notice
+         still lands, and only the requester's decision email goes missing, which is exactly
+         the shape of the bug reported here. Same key the weekly report's ADMIN_EMAIL email
+         already uses (api/_lib/portal-core.js), shared rather than a second copy. */
+      { key:'EMAIL_FROM', label:'Mtumaji wa email / Email sender address', type:'text', dflt:'',
+        note:'Mfano HOPE PMO &lt;imprest@hopemicrocredit.co.tz&gt; -- lazima iwe kwenye domain '
+          + 'iliyothibitishwa Resend. Ikiachwa wazi, taarifa za GM zinaweza kufika lakini email za '
+          + 'maamuzi kwa waombaji HAZITAFIKA. / e.g. HOPE PMO &lt;imprest@hopemicrocredit.co.tz&gt; '
+          + '-- must be on a domain verified in Resend. Left blank, the GM\'s own notice may still '
+          + 'arrive but decision emails to REQUESTERS will silently fail to deliver.' },
+    ] },
+];
+
+function settingsGroupCard_(g, rows){
+  var html = '<div class="card"><div class="card-h">' + esc(g.title)
+    + (g.sub ? '<span class="sub">' + esc(g.sub) + '</span>' : '') + '</div><div class="cleanbox">'
+    + g.fields.map(function(f){
+        return '<div class="fld"><label>' + f.label + '</label>'
+          + '<input type="' + (f.type||'text') + '" id="cfg_' + f.key + '" value="'
+          + esc(settingVal(rows, f.key, f.dflt)) + '">'
+          + (f.note ? '<div class="fldnote">' + f.note + '</div>' : '') + '</div>';
+      }).join('')
+    + (g.preview ? '<div class="fldnote" id="cfgPreview_' + g.id + '"></div>' : '')
+    + '<div class="clact"><button class="btn sm" id="cfgSave_' + g.id + '">Hifadhi / Save</button></div>'
+    + '<div id="cfgOut_' + g.id + '" class="note" style="display:none"></div>'
+    + '</div></div>';
+  return html;
+}
+
+/* THE PREVIEW THAT WOULD HAVE CAUGHT THIS BEFORE IT SHIPPED.
+   "i doubt it uses a monthly target or what am not sure for i have 70+ teams so i expected
+    target to be around 370m+" -- the mismatch was never visible until it showed up on the
+    Dashboard, divided among teams and days by then. Sales Target now shows what it actually
+    produces, live, as you type -- so a number that is off by 4x is caught here instead. */
+function wireSettingsPreview_(){
+  wireLockPreview_();
+  var w = document.getElementById('cfg_SALES_TARGET_WEEKLY'), out = document.getElementById('cfgPreview_salesTarget');
+  if (!w || !out) return;
+  var n = Math.max(1, S.teamCount || 1);
+  var upd = function(){
+    var weekly = Number(w.value) || 0;
+    var daily = Math.round(weekly * n / 5);
+    out.textContent = 'Timu ' + n + ': TZS ' + money(weekly) + '/wiki kila moja → lengo la kampuni TZS '
+      + money(daily) + '/siku. / ' + n + ' teams: TZS ' + money(weekly) + '/week each → company target TZS '
+      + money(daily) + '/day.';
+  };
+  w.oninput = upd; upd();
+}
+
+/* SEPARATE FROM wireClean ON PURPOSE. wireClean returns early when the Settings cards are not
+   on screen -- which is every screen except Settings, including the Weekly report this button
+   lives on. Wired here it is reached wherever it is drawn, and does nothing where it is not. */
+/* The leaders sheet, out as a CSV in the importer's own shape. Built from what the SERVER says
+   the columns are rather than from a list here, so the round trip cannot drift: if the importer
+   learns a column, the download carries it without this file being touched. */
+function wireTeamsDownload(){
+  var b = document.getElementById('teamsDl');
+  if (!b) return;
+  b.onclick = function(){
+    b.disabled = true;
+    srv('teamsExport').then(function(d){
+      var q = function(v){ return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+      var lines = [d.headers.map(q).join(',')];
+      (d.rows || []).forEach(function(r){ lines.push(r.map(q).join(',')); });
+      download(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' }),
+        'leaders-' + today() + '.csv');
+      toast(money(d.count) + ' timu zimepakuliwa. / ' + d.count + ' teams downloaded.');
+      b.disabled = false;
+    }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
+  };
+}
+
+/* THE PHONE LIST: role, team, name, number -- one press, a real Excel file. Same
+   SpreadsheetML trick as exportXls (no library, works inside the WebView), but fed by the
+   server's staffExport rather than the on-screen table, because the on-screen staff list is
+   BY PERSON and the file wanted is BY ROLE AND TEAM, with the app's fresh numbers. */
+function wireStaffExcel(){
+  var b = document.getElementById('staffXl');
+  if (!b) return;
+  b.onclick = function(e){
+    e.stopPropagation();
+    b.disabled = true;
+    srv('staffExport').then(function(d){
+      var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
+        + '<xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>'
+        + '<x:Name>Namba</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>1</x:SplitHorizontal>'
+        + '<x:TopRowBottomPane>1</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet>'
+        + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
+        + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
+        + '</head><body><table><thead><tr><th>S/N</th>'
+        + d.headers.map(function(h){ return '<th>'+esc(h)+'</th>'; }).join('')
+        + '</tr></thead><tbody>'
+        + (d.rows||[]).map(function(r, i){
+            // Numbers stay TEXT on purpose: Excel eats a leading zero off a phone number.
+            return '<tr><td x:num>'+(i+1)+'</td>'+r.map(function(v){ return '<td x:str>'+esc(v==null?'':v)+'</td>'; }).join('')+'</tr>';
+          }).join('')
+        + '</tbody></table></body></html>';
+      download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}),
+        'namba-viongozi-maafisa-' + today() + '.xls');
+      toast(money(d.count) + ' namba zimepakuliwa. / ' + d.count + ' numbers downloaded.');
+      b.disabled = false;
+    }).catch(function(err){ b.disabled = false; toast(String(err.message||err), true); });
+  };
+}
+
+/* THREE SETTINGS CARDS USED TO BE WIRED HERE: "Rejista ya ufuatiliaji" (followupClean),
+   "Rebuild register" (rebuildFollowup) and the duplicate-upload sweep (purgeSuperseded). They
+   were removed from Settings on purpose -- the register repairs itself on every upload and the
+   sweep runs as upload housekeeping (see the note in api/upload.js beside purgeSuperseded) --
+   but their click wiring stayed behind, looking up ids no screen draws. Gone now; the server
+   functions remain for the API. */
+/* Cleaning old reports deletes a DAY OF HISTORY, so the flow is deliberately two-step: Check
+   counts the rows without touching anything, Clean asks once more and names the number. */
+function wireClean(){
+  var run = document.getElementById('clRun'), chk = document.getElementById('clCheck');
+  if (!run && !chk) return;
+  var chosen = function(){
+    return Array.prototype.filter.call(document.querySelectorAll('.clType'), function(c){ return c.checked; })
+      .map(function(c){ return c.value; });
+  };
+  var out = document.getElementById('clOut');
+  var say = function(html, bad){ out.style.display='block'; out.className = 'note'+(bad?' bad':''); out.innerHTML = html; };
+  // Ten report types is too many to tick one by one when the answer is usually "all of them".
+  var setAll = function(on){
+    Array.prototype.forEach.call(document.querySelectorAll('.clType'), function(c){ c.checked = on; });
+  };
+  var all = document.getElementById('clAll'), none = document.getElementById('clNone');
+  if (all) all.onclick = function(){ setAll(true); };
+  if (none) none.onclick = function(){ setAll(false); };
+  var call = function(dryRun){
+    var types = chosen();
+    if (!types.length){ say('Chagua angalau aina moja ya ripoti. / Choose at least one report type.', true); return; }
+    var date = document.getElementById('clDate').value;
+    var through = document.getElementById('clThrough').checked;
+    srv('purgeSnapshots', { date: date, types: types, through: through, dryRun: dryRun })
+      .then(function(r){
+        // Only name the reports that actually had something. A line listing eight zeroes buries
+        // the one number that mattered.
+        var hits = Object.keys(r.deleted).filter(function(k){ return r.deleted[k] > 0; });
+        var detail = hits.length
+          ? hits.map(function(k){ return k+': '+money(r.deleted[k]); }).join(' · ')
+          : 'hakuna kitu kwa tarehe hiyo / nothing stored for that date';
+        var kept = r.protectedRows
+          ? '<br><span style="color:var(--mut)">' + money(r.protectedRows)
+            + ' iliyoandikwa ndani ya mfumo imeachwa / typed inside the app, left alone</span>'
+          : '';
+        /* What ELSE goes. Removing a customer from the follow-up list takes their whole
+           comment history with them, and a cascade discovered afterwards is the worst kind of
+           surprise in a system holding the company's follow-up record. Said in red, before. */
+        var extra = '';
+        Object.keys(r.cascaded || {}).forEach(function(k){
+          var c = r.cascaded[k];
+          if (c.rows) extra += '<br><span style="color:var(--bad)"><b>' + money(c.rows) + '</b> '
+            + esc(c.label) + ' zitaondoka pamoja nao / go with them</span>';
+          if (c.stillDefaulters) extra += '<br><span style="color:var(--bad)"><b>' + money(c.stillDefaulters)
+            + '</b> kati yao bado ni wadaiwa hai / of these are still live defaulters</span>';
+        });
+        if (dryRun){
+          say('<b>'+money(r.total)+'</b> rows would be deleted for <b>'+esc(r.date)+'</b>'
+            + (r.through?' and everything before it':'') + '.<br>'+esc(detail) + kept + extra);
+        } else {
+          say('<b>'+money(r.total)+'</b> rows deleted. '+esc(detail) + kept + extra);
+          S.storage = null; render({ force:true });
+        }
+      })
+      .catch(function(e){ say(esc(String(e.message || e)), true); });
+  };
+  if (chk) chk.onclick = function(){ call(true); };
+  if (run) run.onclick = function(){
+    var types = chosen(), date = document.getElementById('clDate').value;
+    var through = document.getElementById('clThrough').checked;
+    if (!types.length){ say('Chagua angalau aina moja ya ripoti. / Choose at least one report type.', true); return; }
+    var warn = types.indexOf('followup') >= 0
+      ? '\n\nONYO / WARNING: "Follow-up list" huondoa wateja NA maoni yao yote.'
+        + ' / removes customers AND every comment ever written about them.'
+      : '';
+    if (!confirm('Futa ' + types.join(', ') + ' ya ' + date
+      + (through ? ' na zote za kabla yake' : '') + '?\n\nHistoria ya siku hiyo itapotea. / That day’s history will be gone.'
+      + warn)) return;
+    call(false);
+  };
+
+  var fuListSave = document.getElementById('fuListSave'), fuListOut = document.getElementById('fuListOut');
+  if (fuListSave) fuListSave.onclick = function(){
+    fuListOut.style.display = 'block'; fuListOut.className = 'note';
+    fuListOut.textContent = 'Inahifadhi\u2026';
+    srv('fuStatusesSave', { list: document.getElementById('fuList').value })
+      .then(function(f){
+        FU_STATUSES = f.fuStatuses; FU_NEED_DATE = f.fuNeedDate || [];
+        FU_NEED_NUMBER = f.fuNeedNumber || []; S.fuMeta = f;
+        fuListOut.innerHTML = '<b>' + f.fuStatuses.length + '</b> hali zimehifadhiwa. / statuses saved.'
+          + ' Simu zitapata orodha hii mara moja. / The phones get this list at once.';
+        toast('Imehifadhiwa. / Saved.');
+      })
+      .catch(function(e){ fuListOut.className = 'note bad'; fuListOut.textContent = String(e.message || e); });
+  };
+
+  var hintTimingSave = document.getElementById('hintTimingSave'), hintTimingOut = document.getElementById('hintTimingOut');
+  if (hintTimingSave) hintTimingSave.onclick = function(){
+    var every = Math.max(30, parseInt(document.getElementById('hintEvery').value, 10) || 240);
+    var hold = Math.max(3, parseInt(document.getElementById('hintHold').value, 10) || 7);
+    hintTimingOut.style.display = 'block'; hintTimingOut.className = 'note';
+    hintTimingOut.textContent = 'Inahifadhi…';
+    Promise.all([
+      srv('settingSet', { key: 'HINT_EVERY_SEC', value: String(every) }),
+      srv('settingSet', { key: 'HINT_HOLD_SEC', value: String(hold) }),
+    ]).then(function(){
+      hintTimingOut.innerHTML = 'Imehifadhiwa. Simu zitapata muda huu mara moja.'
+        + ' / Saved. Every screen picks this up on its next tip load.';
+      toast('Imehifadhiwa. / Saved.');
+    }).catch(function(e){ hintTimingOut.className = 'note bad'; hintTimingOut.textContent = String(e.message || e); });
+  };
+
+  wireSettingsPreview_();
+  SETTINGS_GROUPS.forEach(function(g){
+    var btn = document.getElementById('cfgSave_' + g.id), out = document.getElementById('cfgOut_' + g.id);
+    if (!btn) return;
+    btn.onclick = function(){
+      out.style.display = 'block'; out.className = 'note'; out.textContent = 'Inahifadhi…';
+      Promise.all(g.fields.map(function(f){
+        return srv('settingSet', { key: f.key, value: document.getElementById('cfg_' + f.key).value.trim() });
+      })).then(function(){
+        out.textContent = 'Imehifadhiwa. / Saved.';
+        toast('Imehifadhiwa. / Saved.');
+      }).catch(function(e){ out.className = 'note bad'; out.textContent = String(e.message || e); });
+    };
+  });
+
+  /* CHANGING YOUR OWN CODE. It signs you back in with the new one straight away -- the browser
+     is holding the old code, and a save that quietly left it holding a dead one would look
+     exactly like the change having failed. */
+  var pwSave = document.getElementById('pwSave'), pwOut = document.getElementById('pwOut');
+  if (pwSave) pwSave.onclick = function(){
+    var oldC = document.getElementById('pwOld').value.trim();
+    var newC = document.getElementById('pwNew').value.trim();
+    var newC2 = document.getElementById('pwNew2').value.trim();
+    pwOut.style.display = 'block'; pwOut.className = 'note'; pwOut.textContent = 'Inahifadhi\u2026';
+    srv('changeMyCode', { oldCode: oldC, newCode: newC, confirmCode: newC2 })
+      .then(function(r){
+        store('hopeCode', r.code);
+        S.code = r.code;
+        pushOfficerCode_(r.code);
+        pwOut.className = 'note';
+        pwOut.innerHTML = 'Msimbo umebadilishwa. / Code changed. '
+          + '<b>Uandike mahali salama.</b> / <b>Write it down somewhere safe.</b>';
+        document.getElementById('pwOld').value = '';
+        document.getElementById('pwNew').value = '';
+        document.getElementById('pwNew2').value = '';
+        toast('Msimbo umebadilishwa. / Code changed.');
+      })
+      .catch(function(e){ pwOut.className = 'note bad'; pwOut.textContent = String(e.message || e); });
+  };
+}

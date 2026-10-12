@@ -1764,3 +1764,33 @@ test('the portal modules: each parses, each view is mapped once, the core guards
   // The whole point. 977 KB before; the core must not grow back to that without somebody noticing.
   assert.ok(core.length < 620000, 'the core page is ' + core.length + ' bytes -- a screen that does not pivot results belongs in a module');
 });
+
+/* "Everywhere, upload page inclusive .. don't lose functionality efficiency". The upload page
+   loaded a near-megabyte spreadsheet library in a render-blocking tag before it would draw a
+   field; it is deferred now, the read waits for it, and the exports say so instead of
+   throwing if it is not in. The brand script asked /api/call for the logo on every page open
+   of every page; it asks once in six hours per device. Settings' and Teams & Staff's own
+   wiring left the core for the admin module, behind a guard; the Weekly report's stamp
+   button stayed. */
+test('the upload page defers its spreadsheet library and waits for it; the brand fetch is throttled; settings wiring left the core', () => {
+  const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf-8');
+  assert.ok(/<script defer id="xlsxLib" src="https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/xlsx\/0\.18\.5\/xlsx\.full\.min\.js"><\/script>/.test(up), 'the library tag is deferred');
+  assert.ok(!/<script src="https:\/\/cdnjs/.test(up), 'no render-blocking library tag is left');
+  assert.ok(/function xlsxReady_\(\)\{\s*\n\s*if \(window\.XLSX\) return Promise\.resolve\(\);/.test(up), 'xlsxReady_ answers at once when the library is in');
+  assert.ok(/function readWorkbook\(file\)\{\s*\n\s*return xlsxReady_\(\)\.then/.test(up), 'every workbook read waits for it');
+  assert.ok(/The spreadsheet reader has not loaded \(cdnjs\)/.test(up), 'and says so in words when it never comes');
+  assert.equal((up.match(/if \(!window\.XLSX\)\{ alert\(/g) || []).length, 2, 'the two xlsx exports refuse politely while it loads');
+  assert.ok(/XLSX\.read\(new Uint8Array\(buf\)/.test(up), 'the read itself is unchanged');
+  const brand = readFileSync(join(PUBLIC, 'brand.js'), 'utf-8');
+  assert.ok(/var BRAND_FRESH_MS = 6 \* 3600 \* 1000;/.test(brand) && /if \(seen && seenName && Date\.now\(\) - seenAt < BRAND_FRESH_MS\) return;/.test(brand), 'once in six hours per device');
+  assert.ok(/localStorage\.setItem\('hopeBrandAt', String\(Date\.now\(\)\)\)/.test(brand) && /localStorage\.setItem\('hopeBrandName', d\.brand\)/.test(brand), 'the name and the time are kept on the device');
+  assert.ok(/if \(window\.HOPE_NO_BRAND_FETCH\) return;/.test(brand), 'the call app still opts out entirely');
+  const core = appCore();
+  assert.ok(/wireStampWeek\(\);\s*\/\/ the Weekly report's own button: core/.test(core), 'the Weekly report\'s stamp button is wired from the core');
+  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireStaffExcel\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module');
+  for (const n of ['function wireClean(', 'var SETTINGS_GROUPS', 'function settingsGroupCard_(', 'function wireTeamsDownload(', 'function wireStaffExcel(']) {
+    assert.ok(!core.includes(n), n + ' is still in the core');
+    assert.ok(page('admin').includes(n), n + ' is not in the admin module');
+  }
+  assert.ok(core.includes('function wireStampWeek('), 'wireStampWeek stays in the core');
+});
