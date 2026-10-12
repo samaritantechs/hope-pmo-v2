@@ -31,7 +31,7 @@ const PUBLIC = new URL('../public/', import.meta.url).pathname;
    core first, so every slice that starts and ends inside one module still works; a slice that
    starts in a module and ends in the core bounds itself with page('name') instead. */
 const appCore = () => readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
-const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan'];
+const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports'];
 const page = name => readFileSync(join(PUBLIC, 'mod', name + '.js'), 'utf-8');
 const appSrc = () => appCore() + '\n' + MODS.map(page).join('\n');
 const scratch = mkdtempSync(join(tmpdir(), 'pages-'));
@@ -954,7 +954,7 @@ test('Settings offers a button to the officer-locations screen, with a real maps
   const wire = app.slice(app.indexOf("var sgOfficerLoc = document.getElementById"), app.indexOf("var so = document.getElementById('soToggle')"));
   assert.ok(/go\('officerloc'\)/.test(wire), 'the button actually navigates to the new screen');
 
-  const view = appCore().slice(appCore().indexOf('VIEWS.officerloc = function'), appCore().indexOf('/* MODULE: present'));
+  const view = page('reports').slice(page('reports').indexOf('VIEWS.officerloc = function'));
   assert.ok(/srv\('officerLocationsList'\)/.test(view), 'the screen reads the new server function');
   assert.ok(/https:\/\/www\.google\.com\/maps\?q=/.test(view), 'each row gets a real Google Maps link');
   assert.ok(/target="_blank"/.test(view), 'opened as a real link (now safe -- see onCreateWindow in MainActivity.java)');
