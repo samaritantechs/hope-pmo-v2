@@ -322,6 +322,9 @@ const BUDGETS = [
   ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
   ['Portfolio at Risk',       'par',                 {}, ADMIN,  5,   800,  5,  800],
   ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
+  /* PMO deductions: the window's rows, the balances outstanding before it, the teams and
+     the two settings (reporter rate, HR roles) -- one journey each, scoped at the database. */
+  ['PMO deductions',          'deductions',          {}, ADMIN,  5,   800,  5,  800],
   ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],
   /* 6 -> 8: two reads added with the letter rebuilt on the Google Sheets one -- the payments
      made since each notice (one RPC for the whole register, the question the register exists
@@ -912,7 +915,7 @@ const OFFICER_ROW_CEILING = 4000;
 /* Functions that CHANGE something. A speed sweep must not fire them, and their cost is not a
    read cost anyway. Everything not named here is swept. */
 const WRITERS = new Set(['addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint',
-  'deleteComplaint', 'addRestructure', 'decideRestructure', 'addDemandNotice', 'saveTeam',
+  'deleteComplaint', 'addRestructure', 'decideRestructure', 'addDemandNotice', 'addDeduction', 'hrDeduction', 'saveTeam',
   'deleteTeam', 'saveRole', 'deleteRole', 'saveCallAgent', 'settingSet', 'settingDelete',
   'systemOpenSet', 'saveAccessCode', 'deleteAccessCode', 'commissionSave', 'saveStaffTeams',
   'purgeSnapshots', 'cleanFollowup', 'removeCallUser', 'changeMyCode', 'fuStatusesSave',

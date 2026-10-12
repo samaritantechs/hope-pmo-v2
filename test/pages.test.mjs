@@ -1583,6 +1583,29 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
   assert.ok(/legalRecoveries:1/.test(app), 'cached like the other reads');
 });
 
+/* PMO DEDUCTION -- "i also want to build the pmo deduction pannel shift from google sheets into
+   the pmo portal" / "Am not yet seeing 'pmo deduction' nav under abnormal in the left pannel".
+   The nav item sits directly under Abnormal Payments; the tab carries the form, HR's column and
+   the report; the upload page takes the Google Sheets register once. */
+test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR column, report and register upload', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const nav = app.slice(app.indexOf("{ id:'abnormal',"), app.indexOf("{ id:'legal',"));
+  assert.ok(/\{ id:'deduct',\s+label:'Makato ya PMO \/ PMO Deduction'/.test(nav), 'directly under Abnormal Payments, before Legal');
+  assert.ok(/VIEWS\.deduct = function\(\)/.test(app) && /srv\('deductions', \{from:from, to:to\}\)/.test(app), 'the tab reads a date window');
+  assert.ok(/deductions:1/.test(app), 'cached like the other reads');
+  const view = app.slice(app.indexOf('VIEWS.deduct = function'), app.indexOf('VIEWS.restructure = function'));
+  assert.ok(/kpi\('Kesi \/ Cases'/.test(view) && /kpi\('Cha kulipiwa mteja \/ To pay'/.test(view) && /kpi\('Salio \/ Remaining'/.test(view), 'the sheet\'s report cards');
+  assert.ok(/id="newDeduction"/.test(view) && /id="dedReport"/.test(view), 'the form and the report buttons');
+  assert.ok(/function dedNew\(\)/.test(view) && /srv\('addDeduction'/.test(view) && /id="ddAdd"/.test(view), 'one case, many staff');
+  assert.ok(/function openDeduction\(r\)/.test(view) && /m\.canHr/.test(view) && /srv\('hrDeduction'/.test(view), 'HR\'s column on a tapped row, only for HR');
+  assert.ok(/function dedReport\(\)/.test(view) && /Reporter earnings/.test(view) && /Balances outstanding before/.test(view), 'the three-section report');
+  assert.ok(/d\.on === false \? '<div class="note">⚠ ' \+ esc\(d\.note/.test(view), 'a database without RUN-ME-043 says so');
+  assert.ok(/getElementById\('newDeduction'\)/.test(app) && /getElementById\('dedReport'\)/.test(app), 'wired with the tab');
+  const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
+  assert.ok(/<option value="pmo-deductions">/.test(up) && /'pmo-deductions': \[\]/.test(up) && /'pmo-deductions':1/.test(up) && /'pmo-deductions': 'append'/.test(up), 'the register upload kind');
+  assert.ok(/type === 'pmo-deductions'\)\s+return find\(\/deduct\/, \/portfolio\/, \/\^sheet1\$\/\)/.test(up), 'the workbook\'s Sheet1 is the register');
+});
+
 /* "a demand notice cant be generated for an expected/defaulter not from 2 DC and above". The
    New-notice drawer says the DC, and draws the Issue button only when the server's preview
    says the customer is at the rule; the pick list carries the DC on every line. */

@@ -458,6 +458,23 @@ create table if not exists notice_payment_ledger (
   primary key (ref, since, payment_id)
 );
 
+-- PMO deductions (RUN-ME-043): the Portfolio Monitoring form's register. One submission is one
+-- case with one row per accused staff (case_id ties them); the HR columns are filled later and
+-- remaining = to_pay − deducted the moment HR records the deduction.
+create table if not exists pmo_deductions (
+  id uuid primary key default gen_random_uuid(),
+  case_id text, submitted_at timestamptz not null default now(),
+  dept text, reporter text, team text, customer text, ref text, staff text,
+  amount_taken numeric(14,2), received_date date, discovery_date date, decision text,
+  deduction numeric(14,2), to_pay numeric(14,2),
+  hr_notes text, deducted numeric(14,2), remaining numeric(14,2), hr_by text, hr_at timestamptz,
+  created_by text, created_at timestamptz not null default now(),
+  upload_date date, upload_batch uuid
+);
+create index if not exists idx_pmo_deductions_at on pmo_deductions (submitted_at desc);
+create index if not exists idx_pmo_deductions_team on pmo_deductions (team, submitted_at desc);
+create index if not exists idx_pmo_deductions_staff on pmo_deductions (staff);
+
 -- =====================================================================================
 -- HOPE CALLS -- one table for logs, no weekly archive gymnastics needed. Postgres
 -- doesn't have a 10-million-cell ceiling; this can hold years of call history and

@@ -2767,6 +2767,92 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   assert.deepEqual(p2.served.map(s => s.date), ['2026-03-17', '2026-03-16'], 'the earlier ones are still listed, newest first');
 });
 
+/* PMO DEDUCTIONS -- "i also want to build the pmo deduction pannel shift from google sheets
+   into the pmo portal". The form is one case with many accused staff; the register is scoped
+   by team; HR's deduction sets remaining = to pay − deducted; the report is the sheet's three
+   sections: cases by team (to pay once per case), reporter earnings per unique case, and the
+   balances still outstanding from before the window. */
+test('a PMO deduction case is one submission with a row per accused staff, scoped, with HR\'s column and the report', async () => {
+  const t = tables();
+  // `deduct` is granted like `audit`: ticked on the officer, never assumed from USER_TABS.
+  const G = { ...GMO, tabs: GMO.tabs.concat(['deduct']) };
+  t.pmo_deductions = [
+    // Last month, two staff, HR already deducted one of them: remaining 20,000 is outstanding.
+    { id: 'd1', case_id: 'c-old', submitted_at: '2026-06-10T08:00:00Z', dept: 'RECOVERY', reporter: 'OLD REPORTER', team: 'KONGOWE',
+      customer: 'OLD CUSTOMER', ref: '111', staff: 'STAFF A', amount_taken: 30000, deduction: 30000, to_pay: 50000,
+      hr_notes: 'Kata Juni', deducted: 30000, remaining: 20000 },
+    { id: 'd2', case_id: 'c-old', submitted_at: '2026-06-10T08:00:00Z', dept: 'RECOVERY', reporter: 'OLD REPORTER', team: 'KONGOWE',
+      customer: 'OLD CUSTOMER', ref: '111', staff: 'STAFF B', amount_taken: 0, deduction: 20000, to_pay: 50000 },
+    // Another team's case this month: never seen by KONGOWE's officer.
+    { id: 'd3', case_id: 'c-mb', submitted_at: TODAY + 'T07:00:00Z', dept: 'RECOVERY', reporter: 'MB REPORTER', team: 'MBAGALA',
+      customer: 'MB CUSTOMER', ref: '999', staff: 'STAFF Z', amount_taken: 5000, deduction: 5000, to_pay: 5000 },
+  ];
+  const db = fakeDb(t);
+  // The form, by KONGOWE's officer: one case, two staff.
+  const made = await portalApi(db, G, 'addDeduction', { team: 'KONGOWE', customer: 'ASHA JUMA', ref: '555',
+    receivedDate: '2026-07-01', discoveryDate: TODAY, decision: 'Alitoa pesa kwa afisa', toPay: 100000,
+    staff: [{ name: 'JUMA G', amountTaken: 60000, deduction: 60000 }, { name: 'PILI P', amountTaken: 40000, deduction: 40000 }, { name: '  ', amountTaken: 1 }] }, NOW);
+  assert.equal(made.rows, 2, 'the blank staff line is dropped');
+  const stored = db._dump('pmo_deductions').filter(r => r.ref === '555');
+  assert.equal(stored.length, 2);
+  assert.equal(stored[0].case_id, stored[1].case_id, 'one case');
+  assert.equal(stored[0].reporter, 'JUMA G', 'the reporter is the signed-in person, never typed');
+  assert.equal(stored[0].dept, 'GMO'); assert.equal(stored[0].to_pay, 100000);
+  assert.equal(stored[1].staff, 'PILI P'); assert.equal(stored[1].deduction, 40000);
+  assert.equal(stored[0].remaining, undefined, 'HR\'s columns are empty on submission');
+  // Validation: team, customer, reference, decision and at least one staff.
+  await assert.rejects(() => portalApi(db, G, 'addDeduction', { team: 'MBAGALA', customer: 'X', ref: '1', decision: 'y', staff: [{ name: 'S' }] }, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, G, 'addDeduction', { team: 'KONGOWE', customer: '', ref: '1', decision: 'y', staff: [{ name: 'S' }] }, NOW), e => e.status === 400);
+  await assert.rejects(() => portalApi(db, G, 'addDeduction', { team: 'KONGOWE', customer: 'X', ref: '1', decision: 'y', staff: [] }, NOW), e => e.status === 400 && /staff/i.test(e.message));
+
+  // The tab, this month, for KONGOWE's officer: the new case only; to pay once per case.
+  const g = await portalApi(db, G, 'deductions', {}, NOW);
+  assert.equal(g.on, true); assert.equal(g.from, '2026-07-01'); assert.equal(g.to, TODAY);
+  assert.equal(g.cases, 1); assert.equal(g.entries, 2);
+  assert.equal(g.toPay, 100000, 'once per case, not once per staff line');
+  assert.equal(g.deduction, 100000); assert.equal(g.deducted, 0); assert.equal(g.remaining, 0);
+  assert.deepEqual(g.rows.map(r => r.team), ['KONGOWE', 'KONGOWE'], 'MBAGALA\'s case is not theirs');
+  assert.equal(g.canHr, false, 'a GMO does not record deductions');
+  assert.deepEqual(g.summary.map(s => [s.team, s.cases, s.entries, s.toPay]), [['KONGOWE', 1, 2, 100000]]);
+  assert.deepEqual(g.reporters, [{ reporter: 'JUMA G', cases: 1, earnings: 5000 }], 'TZS 5,000 per unique case');
+  assert.deepEqual(g.prevBalances, [{ staff: 'STAFF A', remaining: 20000 }], 'outstanding from before the window');
+  assert.deepEqual(g.staffList, ['JUMA G', 'PILI P']);
+  // The admin sees every team, and may record HR's deduction.
+  const a = await portalApi(db, ADMIN, 'deductions', {}, NOW);
+  assert.equal(a.cases, 2); assert.equal(a.toPay, 105000); assert.equal(a.canHr, true);
+  assert.deepEqual(a.reporters.map(r => r.reporter), ['JUMA G', 'MB REPORTER']);
+  // A window: June shows the old case, whose two lines sum what HR did.
+  const june = await portalApi(db, ADMIN, 'deductions', { from: '2026-06-01', to: '2026-06-30' }, NOW);
+  assert.equal(june.cases, 1); assert.equal(june.entries, 2); assert.equal(june.toPay, 50000);
+  assert.equal(june.deducted, 30000); assert.equal(june.remaining, 20000);
+  assert.deepEqual(june.prevBalances, [], 'nothing before June');
+
+  // HR's column: the sheet's onEdit, remaining = to pay − deducted, on the staff line.
+  await assert.rejects(() => portalApi(db, G, 'hrDeduction', { id: stored[0].id, deducted: 10000 }, NOW), e => e.status === 403);
+  const hr = { code: 'H', name: 'HR PERSON', role: 'HR', teams: null, tabs: ['deduct'] };
+  const h = await portalApi(db, hr, 'hrDeduction', { id: stored[0].id, hrNotes: 'Kata Agosti', deducted: 25000 }, NOW);
+  assert.equal(h.remaining, 75000);
+  const after = db._dump('pmo_deductions').find(r => r.id === stored[0].id);
+  assert.equal(after.deducted, 25000); assert.equal(after.remaining, 75000); assert.equal(after.hr_by, 'HR PERSON'); assert.equal(after.hr_notes, 'Kata Agosti');
+  assert.equal((await portalApi(db, G, 'deductions', {}, NOW)).remaining, 75000);
+  // A role named in the setting records too; one not named does not. (A fresh database: the
+  // settings read is memoised per database, as every screen relies on.)
+  const t3 = tables();
+  t3.settings.push({ key: 'DEDUCTION_HR_ROLES', value: 'ACCOUNTANT' });
+  t3.pmo_deductions = [{ ...stored[1] }];
+  const db3 = fakeDb(t3);
+  await assert.rejects(() => portalApi(db3, hr, 'hrDeduction', { id: stored[1].id, deducted: 1 }, NOW), e => e.status === 403, 'HR is no longer named');
+  const acc = await portalApi(db3, { code: 'C', name: 'ACC', role: 'Senior Accountant', teams: null, tabs: ['deduct'] }, 'hrDeduction', { id: stored[1].id, deducted: 40000 }, NOW);
+  assert.equal(acc.remaining, 60000, 'the word ACCOUNTANT inside the role is enough');
+
+  // Without RUN-ME-043 the tab says so instead of failing.
+  const db2 = fakeDb(tables());
+  const from = db2.from.bind(db2);
+  db2.from = n => { if (n === 'pmo_deductions') throw new Error('relation "public.pmo_deductions" does not exist'); return from(n); };
+  const off = await portalApi(db2, ADMIN, 'deductions', {}, NOW);
+  assert.equal(off.on, false); assert.match(off.note, /RUN-ME-043/); assert.deepEqual(off.rows, []);
+});
+
 /* "add recovered leo and recovered weekly cards at demand notice pannel, clickable to show list
    of the recoveries as the dashboard recovries are clickable to show list". The Legal tab
    carries the dashboard legal card's own reading, and the list behind either card is the same

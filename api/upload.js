@@ -22,7 +22,7 @@ import {
   importFollowup, importComments, commentsDateOrder,
   importLoans, loansDateOrder, importTeams, importReceivedPayments,
   importAccessCodes, importUserRoles,
-  importAbnormal, importComplaints, importRestructures, importDemandNotices,
+  importAbnormal, importComplaints, importRestructures, importDemandNotices, importDeductions,
   importCallUsers, importCallLogs, importSettings, importHints,
   REF_HEADERS,
 } from './_lib/importers.js';
@@ -278,7 +278,7 @@ export function uploadClock(startedAt, budgetMs = uploadBudget(), nowFn = Date.n
 
     Pure, so the decision is testable without a database: the route only carries it out. */
 export const STAMPED_TABLES = new Set(['loans', 'received_payments', 'abnormal_payments',
-  'complaints', 'restructures', 'demand_notices', 'followup_comments']);
+  'complaints', 'restructures', 'demand_notices', 'followup_comments', 'pmo_deductions']);
 
 /* Four of the stamped tables are ALSO written by people inside the app -- an officer's
    follow-up comment, a complaint logged at the desk, a restructure request, a demand notice
@@ -292,7 +292,7 @@ export const STAMPED_TABLES = new Set(['loans', 'received_payments', 'abnormal_p
    The other three are only ever uploaded, so replacing a date there can take everything
    carrying that stamp, including rows backfilled when the stamp was introduced. */
 export const APP_WRITABLE_TABLES = new Set(['complaints', 'restructures', 'demand_notices',
-  'followup_comments']);
+  'followup_comments', 'pmo_deductions']);
 
 /* TWO REPORTS CARRY THEIR OWN DATES, AND THOSE DATES ARE THE TRUTH.
    A loan approvals report says when each loan was approved. A received payments report says
@@ -885,6 +885,11 @@ export default withApi(async (req, res) => {
       noticePlace = await placeNoticesOnCurrentTeams(supabase, records);
       records = noticePlace.records;
       break;
+    case 'pmo-deductions':
+      // The Google Sheets Portfolio Monitoring register (Sheet1), keyed on each row's own facts.
+      table = 'pmo_deductions';
+      records = importDeductions(rows);
+      break;
     case 'call-users': {
       // team is a FK -- pass the real list so an unknown one is nulled instead of failing.
       const { data: t } = await supabase.from('teams').select('team');
@@ -1107,9 +1112,14 @@ export default withApi(async (req, res) => {
        register -- years of notices -- can be uploaded again after a correction without a
        customer being served twice on paper they only received once. */
     demand_notices: 'id',
+    /* Keyed on the row's own facts (importers.js deductionRowId: the submission's timestamp,
+       the customer, their reference and the staff named), so the Google Sheets register can
+       be uploaded again after a correction without doubling a case. */
+    pmo_deductions: 'id',
   };
   /* What the key MEANS, for the sentence below -- "matched on id" tells a person nothing. */
   const keyWords = {
+    pmo_deductions: 'the submission time, customer, reference and staff named together',
     received_payments: 'the transaction id (or the date, customer ref, amount, paying phone and sender together, where the sheet has no transaction id)',
     abnormal_payments: 'the transaction id (or the ref id, or the customer ref, amount, paying phone and sender together, where the sheet has neither)',
     loans: 'the loan\'s own identity', followup_comments: 'the comment\'s own identity',

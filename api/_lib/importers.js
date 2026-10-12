@@ -698,6 +698,60 @@ export function importDemandNotices(csvRows) {
   }).filter(x => x.ref);
 }
 
+/* THE PMO DEDUCTION REGISTER, AS THE GOOGLE SHEET EXPORTS IT -- "i also want to build the pmo
+   deduction pannel shift from google sheets into the pmo portal". Sheet1's sixteen columns:
+   TIMESTAMP, PMO DEPT, PMO NAME, TEAM, JINA LA MTEJA, REF NO YA MTEJA, JINA LA STAFF
+   MTUHUMIWA, KIASI ALICHOKULA, TAREHE ALIYOPOKEA, TAREHE YA UGUNDUZI / KIKAO, MAAUMUZI
+   (MAELEZO), MAKATO (KIASI), CHA KULIPIWA MTEJA, HR NOTES, DEDUCTED AMOUNT (HR), REMAINING
+   AMOUNT. One row per accused staff; the rows of one submission share a TIMESTAMP, which is
+   what makes them one case (the sheet's own caseKey). Keyed on the row's own facts, so the
+   register can be uploaded again after a correction without doubling. */
+const md5Uuid_ = s => {
+  const hex = createHash('md5').update(s).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
+export function deductionCaseId(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  return md5Uuid_('deduction-case|' + [t(o.submitted_at), t(o.customer), t(o.ref)].join('|'));
+}
+export function deductionRowId(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  return md5Uuid_('deduction|' + [t(o.submitted_at), t(o.customer), t(o.ref), t(o.staff)].join('|'));
+}
+export function importDeductions(csvRows) {
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = inferDayFirst(objs.flatMap(({ raw: r, h }) =>
+    [col(r, h, 'TIMESTAMP'), col(r, h, 'TAREHE ALIYOPOKEA'), col(r, h, 'TAREHE YA UGUNDUZI / KIKAO', 'TAREHE YA UGUNDUZI')]));
+  return objs.map(({ raw: r, h }) => {
+    const stampCell = col(r, h, 'TIMESTAMP');
+    const stamp = stampOrNull(stampCell, dayFirst);
+    const day = stamp ? null : dateOrNull(dateCell_(stampCell), dayFirst);
+    const row = {
+      // The clock as the sheet wrote it; a bare date lands at noon so it stays on its own day.
+      submitted_at: stamp || (day ? day + 'T12:00:00Z' : null),
+      dept: textOrNull(col(r, h, 'PMO DEPT', 'DEPT', 'ROLE / DEPT')),
+      reporter: textOrNull(col(r, h, 'PMO NAME', 'REPORTER', 'NAME')),
+      team: normTeam(col(r, h, 'TEAM', 'TEAM (LOCATION)')),
+      customer: textOrNull(col(r, h, 'JINA LA MTEJA', 'CUSTOMER', 'CUSTOMER NAME')),
+      ref: textOrNull(col(r, h, 'REF NO YA MTEJA', ...REF_HEADERS)),
+      staff: textOrNull(col(r, h, 'JINA LA STAFF MTUHUMIWA', 'STAFF', 'STAFF NAME')),
+      amount_taken: num(col(r, h, 'KIASI ALICHOKULA', 'KIASI', 'AMOUNT TAKEN')),
+      received_date: dateOrNull(dateCell_(col(r, h, 'TAREHE ALIYOPOKEA', 'RECEIVED DATE')), dayFirst),
+      discovery_date: dateOrNull(dateCell_(col(r, h, 'TAREHE YA UGUNDUZI / KIKAO', 'TAREHE YA UGUNDUZI', 'DISCOVERY DATE')), dayFirst),
+      decision: textOrNull(col(r, h, 'MAAUMUZI (MAELEZO)', 'MAAMUZI (MAELEZO)', 'MAAUMUZI', 'MAAMUZI', 'DECISION')),
+      deduction: num(col(r, h, 'MAKATO (KIASI)', 'MAKATO', 'DEDUCTION')),
+      to_pay: num(col(r, h, 'CHA KULIPIWA MTEJA', 'TO PAY')),
+      hr_notes: textOrNull(col(r, h, 'HR NOTES')),
+      deducted: num(col(r, h, 'DEDUCTED AMOUNT (HR)', 'DEDUCTED AMOUNT', 'DEDUCTED')),
+      remaining: num(col(r, h, 'REMAINING AMOUNT', 'REMAINING')),
+      created_by: textOrNull(col(r, h, 'PMO NAME', 'REPORTER', 'NAME')),
+    };
+    row.case_id = deductionCaseId(row);
+    row.id = deductionRowId(row);
+    return row;
+  }).filter(x => x.staff && (x.ref || x.customer) && x.submitted_at);
+}
+
 /** Call app registrations. LEADER is YES/NO text in the sheet and a boolean here; LEADER
     TEAMS is a comma list or ALL (ALL -> null, the same everything-scope convention as
     access codes). TEAM is nulled unless it is a real team -- it is a FOREIGN KEY. */
