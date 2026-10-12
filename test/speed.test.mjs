@@ -248,8 +248,13 @@ const BUDGETS = [
      strip shows), one for this screen's own dates -- the seven tiles, the week's end and last
      week's end -- both cached per scope for a minute. They replace arithmetic over rows this
      screen already read; the rows they cost are one per team per date asked. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   80,  90000,  34,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 60,  40000,  33,   900],
+  /* +3 TRIPS EACH (2026-10-12): the legal recovery card on top -- "the single card on top
+     too". The scoped notice register, the ledger fold and the week's payments against notices
+     (legalLedgerWeek_), the same reading as the deck's legal slide. Could the database do it
+     instead? The fold is the database doing it; what comes back is the register and a week of
+     payments against it, never the two-week payments book. Rows unchanged: both are small. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  37,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  36,   900],
   /* +4 TRIPS (2026-10-12): the legal recovery slide -- "add legal recovery slide at presentation,
      todays and weekly recovery columns as pmo recovery does". The roles table (which codes hold
      the legal tab by role), the notice register scoped like every other read here, the ledger

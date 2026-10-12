@@ -2864,6 +2864,23 @@ test('the legal recovery board credits each lawyer with the payments of the noti
   assert.match(off.legalNote, /RUN-ME-041a/);
   assert.equal(off.legal.find(r => r.officer === 'JOAKIMU ISSA').recovered, 0);
   assert.equal(off.legal.find(r => r.officer === 'JOAKIMU ISSA').owed, 800, 'the register still reads');
+
+  /* THE CARD ON TOP -- "the single card on top too": the same fold, every noticed customer in
+     scope added up, on dashboardFull. 555 (300 today, 400 this week), 999 (50, 50) and 777
+     (20, 20) against 800 + 0 + 500 owed. */
+  const dash = await portalApi(fakeDb(t), ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(dash.legal.on, true);
+  assert.equal(dash.legal.customers, 3);
+  assert.equal(dash.legal.owed, 1300);
+  assert.equal(dash.legal.tRecovered, 370);
+  assert.equal(dash.legal.recovered, 470);
+  assert.equal(dash.legal.pct, 36.2);
+  const dashG = await portalApi(fakeDb(t), GMO, 'dashboardFull', {}, NOW);
+  assert.equal(dashG.legal.customers, 1, 'scoped to KONGOWE\'s noticed customer');
+  assert.equal(dashG.legal.recovered, 400);
+  const dashOff = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
+  assert.equal(dashOff.legal.on, false);
+  assert.match(dashOff.legal.note, /RUN-ME-041a/);
 });
 
 test('upload status says what is still missing for today', async () => {
