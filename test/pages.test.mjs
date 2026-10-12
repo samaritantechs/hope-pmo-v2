@@ -26,6 +26,14 @@ import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
 const PUBLIC = new URL('../public/', import.meta.url).pathname;
+/* THE PORTAL IS THE CORE PAGE PLUS ITS TAB-OPENED MODULES (public/mod/*.js, fetched by modLoad_
+   in app.html the first time one of their tabs opens). appSrc() is the two read as one text,
+   core first, so every slice that starts and ends inside one module still works; a slice that
+   starts in a module and ends in the core bounds itself with page('name') instead. */
+const appCore = () => readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
+const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan'];
+const page = name => readFileSync(join(PUBLIC, 'mod', name + '.js'), 'utf-8');
+const appSrc = () => appCore() + '\n' + MODS.map(page).join('\n');
 const scratch = mkdtempSync(join(tmpdir(), 'pages-'));
 
 /** Inline scripts only. A <script src=...> is somebody else's file, and a JSON or template
@@ -92,7 +100,7 @@ test('public/sw.js parses', () => {
    The functions are pure -- no DOM, no network -- so they are lifted out of the page and run
    as themselves, against the same stubs the page gives them. */
 function liftFromApp(names) {
-  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const src = appSrc();
   const grab = re => {
     const m = src.match(re);
     assert.ok(m, 'app.html no longer contains ' + re + ' -- the extractor needs updating');
@@ -267,7 +275,7 @@ test('only a TIMEOUT buys a smaller slice; a bad file fails at once and says why
    The picking itself is a set of row KEYS, not row positions, which is what lets a tick
    survive a sort or a search. */
 function liftTable(names, state) {
-  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const src = appSrc();
   const grab = re => {
     const m = src.match(re);
     assert.ok(m, 'app.html no longer contains ' + re + ' -- the extractor needs updating');
@@ -332,7 +340,7 @@ test('ticking adds ONE cell to the header and to every row, and keeps them level
    nothing on screen saying so. The operator reads the first command's answer as the answer
    to both. So each command gets its own box and its own button. */
 test('the bench is never handed two adb commands in one copy box', () => {
-  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const src = appSrc();
   assert.ok(!/\\n'\s*\+\s*'adb /.test(src),
     'a copied block that starts a second adb command on a new line');
   assert.ok(!/adb [^'"\n]*\\n\s*adb /.test(src),
@@ -344,7 +352,7 @@ test('the bench is never handed two adb commands in one copy box', () => {
    without it. `am` then prints "Broadcast completed: result=0" -- no result code, no
    message, nothing in logcat -- which reads exactly like success while nothing happened. */
 test('every enrol broadcast the portal writes carries --include-stopped-packages', () => {
-  const src = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const src = appSrc();
   const casts = src.match(/adb shell am broadcast[^;]*/g) || [];
   assert.ok(casts.length >= 2, 'the batch command and the single-handset one');
   for (const c of casts) {
@@ -366,7 +374,7 @@ test('every enrol broadcast the portal writes carries --include-stopped-packages
    the same lesson on 27 Aug 2026 and pinned it the same way. */
 test('every setting the locked screen reads can be found on the Settings page', () => {
   const core = readFileSync(new URL('../api/_lib/device-core.js', import.meta.url).pathname, 'utf8');
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
 
   const block = core.match(/const LOCK_SETTINGS = \[([\s\S]*?)\];/);
   assert.ok(block, 'LOCK_SETTINGS should still be a literal array in device-core.js');
@@ -388,7 +396,7 @@ test('every setting the locked screen reads can be found on the Settings page', 
    only setting of its kind so far and a second scanner earns its keep once there are two. */
 test('the shift partner address can be edited on the Settings page', () => {
   const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(core.includes("'DEVICE_SHIFT_PARTNER'"), 'deviceList should still read this setting');
   const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
   assert.ok(groups.includes("key:'DEVICE_SHIFT_PARTNER'"),
@@ -410,8 +418,8 @@ test('the shift partner address can be edited on the Settings page', () => {
    withdraws or adds a book next changes ADJ_TARGETS and this test tells them where the
    page's copy of it lives. */
 test('the adjustments picker is built from the server\'s live targets, not from the labels', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  const view = app.slice(app.indexOf('VIEWS.adjust = function'), app.indexOf('VIEWS.abnormal = function'));
+  const app = appSrc();
+  const view = page('adjust');
 
   assert.ok(view.includes('d.targets'),
     'the picker should take its options from the server\'s `targets`');
@@ -450,8 +458,8 @@ test('the adjustments picker is built from the server\'s live targets, not from 
    save without one. This does not reach for the Team field beside it, which is genuinely
    optional (a blank team applies the row to the whole book) and stays labelled that way. */
 test('the REF field on the new-adjustment form is never labelled optional', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  const view = app.slice(app.indexOf('VIEWS.adjust = function'), app.indexOf('VIEWS.abnormal = function'));
+  const app = appSrc();
+  const view = page('adjust');
   assert.ok(!/id="adjRef"[^>]*>[\s\S]{0,2}<\/div>[\s\S]{0,400}hiari \/ optional/.test(view) &&
     !/REF[^<]*\(hiari \/ optional\)/.test(view),
     'the REF label must not read "hiari / optional" anywhere on the new-adjustment form');
@@ -471,7 +479,7 @@ test('the REF field on the new-adjustment form is never labelled optional', () =
    that rule was fixed, so Tuesday through Friday it kept captioning today's own figure
    "Uncollected (yesterday)". There is no "yesterday" case left in it at all now. */
 test('the Recovery-by-officer presentation slide never labels today\'s figure "yesterday"', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   assert.ok(/recBasis = d\.weekday === 'SAT' \|\| d\.weekday === 'SUN' \? 'week' : 'today'/.test(view),
     'Mon-Fri all read "today", weekend reads "week" -- matching recToday\'s own basis exactly');
@@ -489,7 +497,7 @@ test('the Recovery-by-officer presentation slide never labels today\'s figure "y
    the rows by `pct` (the week's Rec %) before slicing to twelve, so the officers a room
    actually wants to see -- the best percentages -- are the ones that survive the cut. */
 test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not the amount', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   const recBlock = view.slice(view.indexOf('var recRows ='), view.indexOf('slides.push({ id:\'recovery\''));
   assert.ok(/\.sort\(function\(a, b2\)\{ return \(b2\.pct == null \? -1 : b2\.pct\) - \(a\.pct == null \? -1 : a\.pct\)/.test(recBlock),
@@ -506,7 +514,7 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
    not all in collection, col in col, rec in rec and early col in early col" moves each line
    under the slide it is about. */
 test('each unit slide carries its own unassigned-teams line, drawn under its total', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   /* Four captions on the deck: the three unit slides' (the early and collection ones also
      carrying their Count 1 note -- a step not done is said on the screen that expected it) and
@@ -536,7 +544,7 @@ test('each unit slide carries its own unassigned-teams line, drawn under its tot
    to 1x when the drawing would not fit at 2x; it now takes the largest scale the canvas budget
    allows, so a picture that cannot have 2x still gets 1.7x rather than 1x. */
 test('the JPG export takes the largest scale the canvas budget allows, never a cliff to 1x', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const fn = app.slice(app.indexOf('function inkBox_'), app.indexOf("img.src = 'data:image/svg+xml"));
   assert.ok(/var sc = Math\.max\(1, Math\.min\(JPG_SCALE, 8000 \/ GW, 20000 \/ GH\)\);/.test(fn),
     'the scale is the budget divided by the drawing, capped at JPG_SCALE and floored at 1');
@@ -552,7 +560,7 @@ test('the JPG export takes the largest scale the canvas budget allows, never a c
 /* THE DASHBOARD ORODHA OPENS WITH THE OPM -- "add OPM column between S/N and team name". The
    S/N is the table engine's own first column, so OPM is the first declared one, then Team. */
 test('the dashboard Orodha names the OPM before the team', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const dash = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('THE MONTH REPORT --'));
   assert.ok(/S\.cols = \[[\s\S]*?byMonth\(ttl\(col\('opm','OPM'\)[^\n]*\)\),\s*\n\s*byMonth\(col\('team','Team'\)\),/.test(dash),
     'OPM is the first declared column, Team the second');
@@ -563,7 +571,7 @@ test('the dashboard Orodha names the OPM before the team', () => {
    "put nos of remaining ... between teams and uncollected", "No of teams between officer and
    initial on recovery slide", "list all officers in the 3 units and format red the least actives". */
 test('the early, recovery and calls slides carry the remaining count, the team count and every officer', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
   /* And Count 1 between the two -- "Btn remaining and customers columns in early collection pmo
@@ -592,7 +600,7 @@ test('the early, recovery and calls slides carry the remaining count, the team c
    check ran once, at sign-in, so a television on the deck since the morning never learnt a
    column had shipped. */
 test('a playing presentation checks the build on every refetch and resumes after the reload', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const refetch = app.slice(app.indexOf('function presRefetch'), app.indexOf('function presSlides'));
   assert.ok(/presCheckBuild_\(\);/.test(refetch), 'every refetch asks which version the server has');
   const check = app.slice(app.indexOf('function presCheckBuild_'), app.indexOf('function presResumeTake_'));
@@ -606,7 +614,7 @@ test('a playing presentation checks the build on every refetch and resumes after
   assert.ok(/var resume = presResumeTake_\(\);\s*\n\s*if \(resume && allowed\('present'\)\)/.test(start), 'start() picks the note up');
   assert.ok(/go\('present', resume\.weekOf \? \{ weekOf: resume\.weekOf \} : \{\}\);/.test(start), 'opens the present tab on the same week');
   assert.ok(/presStart\(Math\.min\(Number\(resume\.i\) \|\| 0, S\.slides\.length - 1\)\);/.test(start), 'and presses Play on the same slide once the figures are in');
-  assert.ok(/else go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\);/.test(start), 'everybody else lands where they always did');
+  assert.ok(/else go\(impTab \|\| lastView_\(\) \|\| firstAllowed_\(\) \|\| 'noaccess'\);/.test(start), 'everybody else lands on their last tab, else where they always did');
   // The note is read ONCE: a reload that does not resume must not resume on the next sign-in.
   const take = app.slice(app.indexOf('function presResumeTake_'), app.indexOf('function presRefetch'));
   assert.ok(/sessionStorage\.removeItem\(PRES_RESUME_KEY\);/.test(take));
@@ -614,7 +622,7 @@ test('a playing presentation checks the build on every refetch and resumes after
 
 /* AND THE PORTAL ITSELF -- "all autofix at interfaces with no need to refresh nor logout". */
 test('an open portal tab checks the build on a timer and when it comes back into view, and reloads itself onto the same tab', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const watch = app.slice(app.indexOf('function buildWatch_'), app.indexOf('function viewResumeTake_'));
   assert.ok(/if \(!S\.code \|\| !S\.me \|\| document\.hidden\) return;/.test(watch), 'signed in and in view, or nothing is asked');
   assert.ok(/fetch\('\/api\/me\?code=' \+ encodeURIComponent\(S\.code\)\)/.test(watch));
@@ -639,7 +647,7 @@ test('an open portal tab checks the build on a timer and when it comes back into
     to behave as excel: every opm will have descending collection ... its zigzag collection at
     each opm". The header click threw the first sort away. */
 test('a header click demotes the sort you had to the second level instead of discarding it', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const wire = app.slice(app.indexOf('function wireTable'), app.indexOf('function wireTable') + 2500);
   assert.ok(/if \(S\.sort===k\) S\.asc = !S\.asc;\s*\n\s*else \{ if \(S\.sort\) \{ S\.sort2 = S\.sort; S\.asc2 = S\.asc; \} S\.sort=k; S\.asc=false; \}/.test(wire),
     'same header: turn it round; another header: the old sort and its direction become "then by"');
@@ -661,7 +669,7 @@ test('a header click demotes the sort you had to the second level instead of dis
    on ONE slide, ranked on points gained -- "who pushed more percentages and who is the most
    stuck guy behind". Its own kind, because a table cannot fit sixteen officers with a bar each. */
 test('the presentation carries a day-progress slide for the three office units', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
   assert.ok(/slides\.push\(\{ id:'dayprog', kind:'progress'/.test(view), 'the slide exists, with its own kind');
   assert.ok(/b\.dayProgress/.test(view), 'and it reads officerBoards\' dayProgress');
@@ -684,7 +692,7 @@ test('the presentation carries a day-progress slide for the three office units',
    side, and one failure took the page. The dashboard tab already loads its boards after its
    core and fails them in their own place; this is the same rule brought to the deck. */
 test('the presentation asks for the dashboard first, the boards after, and plays without the boards', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.present = function'), app.indexOf('var PRES_REFRESH_MS'));
   assert.ok(!/Promise\.all\(\[srv/.test(view), 'the two heaviest reads are never fired side by side');
   assert.ok(/srv\('dashboardFull', wk\)\.then\(function\(d\)\{/.test(view), 'the dashboard comes first');
@@ -711,7 +719,7 @@ test('the presentation asks for the dashboard first, the boards after, and plays
    unretired (imprestRequest); the page says so up front, in the server's words, and closes the
    button so the form is not filled for nothing. */
 test('the imprest request page closes the form while an approved imprest is unretired', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.impreq = function'), app.indexOf('VIEWS.impappr = function'));
   assert.ok(/var blocked = !!\(d\.unretired && d\.unretired\.length\);/.test(view), 'the gate is the server\'s list, not a client guess');
   assert.ok(/esc\(d\.unretiredNote \|\| ''\)/.test(view), 'and the sentence is the server\'s own');
@@ -723,7 +731,7 @@ test('the imprest request page closes the form while an approved imprest is unre
    recovery card that opens when i click the day recovery widget, its so thick for the content".
    Opt-in per drawer; a form drawer that opens next drops the class. */
 test('the recovery customers drawer opens wide, and a normal drawer takes the width back', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(/\.drawer\.wide\{max-width:100%;border-radius:0\}/.test(app), "the wide rule fills the device, whatever its width");
   assert.ok(/function drawer\(html, opts\)\{\s*\$\('#drawer'\)\.classList\.toggle\('wide', !!\(opts && opts\.wide\)\);/.test(app),
     'drawer() toggles the class from the option -- on for wide, off for everything else');
@@ -742,7 +750,7 @@ test('the recovery customers drawer opens wide, and a normal drawer takes the wi
    fails to read a 13-digit epoch as a date string, so isFinite(t) was false and the raw
    milliseconds printed as-is. Proven by actually running cellText, not just matching source. */
 test('a "dt" column already holding a number is read as the timestamp it is, not re-parsed', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const start = app.indexOf('function cellText(r, c){');
   const end = app.indexOf('\nfunction telHref_');
   const src = app.slice(start, end);
@@ -769,7 +777,7 @@ test('a "dt" column already holding a number is read as the timestamp it is, not
    often EMAIL_FROM unset in Settings -- see settingsGroupCard_) looked identical to one that
    worked, and the only way anybody found out was the requester asking why nothing arrived. */
 test('the GM decide drawer reports whether the requester was actually emailed, not just the decision', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('function imprestDecideDrawer_'), app.indexOf('/* ---------- RIPOTI YA IMPREST'));
   assert.ok(/srv\('imprestDecide',/.test(view), 'sanity: this is the right function');
   assert.ok(/\.then\(function\(d\)\{/.test(view),
@@ -785,7 +793,7 @@ test('the GM decide drawer reports whether the requester was actually emailed, n
    to anyone but the Resend account's own address was invisible on the screen that lists every
    other Imprest knob. */
 test('EMAIL_FROM has a real Settings field now, explaining the Resend onboarding-sender trap', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf("id:'imprest',"), app.indexOf('function settingsGroupCard_'));
   assert.ok(/key:'EMAIL_FROM'/.test(view), 'EMAIL_FROM is a labelled field in the Imprest settings group');
   assert.ok(/Resend/.test(view), 'the note explains the Resend onboarding-sender restriction, not just the syntax');
@@ -801,7 +809,7 @@ test('EMAIL_FROM has a real Settings field now, explaining the Resend onboarding
    the run that needed nothing more done. Checked in both drawers -- the batch one and the
    single-phone token one build this the same way. */
 test('the all-in-one bench command chains install/&&/ownership/&/enrol, in both drawers', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const batch = app.slice(app.indexOf('function devEnrolDrawer_'), app.indexOf('/** THE SHARED VIEW.'));
   const single = app.slice(app.indexOf("$('#devToken').onclick"), app.indexOf("$('#devLock').onclick"));
   for (const [name, view] of [['batch', batch], ['single-phone', single]]) {
@@ -822,7 +830,7 @@ test('the all-in-one bench command chains install/&&/ownership/&/enrol, in both 
    takes (openCameraOverlay_ -> wirePhotoCapture_ -> kycUpload_ -> the server) rather than a
    second one bolted on beside it. */
 test('the camera device label is captured and carried through to the upload call', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const overlay = app.slice(app.indexOf('function openCameraOverlay_'), app.indexOf('function wirePhotoCapture_'));
   assert.ok(/stream(?:\s*&&\s*stream\.getVideoTracks)?.*getVideoTracks\(\)\[0\]/.test(overlay),
     'the overlay reads the label off its own live stream, not a fresh getUserMedia call');
@@ -847,7 +855,7 @@ test('the camera device label is captured and carried through to the upload call
    however the overlay closes, is what gives the back button something of its own to consume
    first. */
 test('the camera overlay pushes a history entry so the Android back button closes it, not the app', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const overlay = app.slice(app.indexOf('function openCameraOverlay_'), app.indexOf('function wirePhotoCapture_'));
   assert.ok(/history\.pushState\(/.test(overlay), 'a history entry is pushed when the overlay opens');
   assert.ok(/addEventListener\('popstate',\s*onPop\)/.test(overlay), 'a popstate handler is wired to close the overlay');
@@ -860,14 +868,14 @@ test('the camera overlay pushes a history entry so the Android back button close
    RECOMMENDATION. "Remove the fingerprint capture, only remain with signature and at field
    officer name filling and signature at recommendation." */
 test('thumbprint/fingerprint capture no longer exists anywhere in the KYC flow', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(!/lnThumbPad|lnGThumbPad|lnThumbClear|lnGThumbClear/.test(app), 'no thumbprint pad IDs remain');
   assert.ok(!/mode === 'stamp'/.test(app), 'the stamp (thumbprint) drawing mode is gone, not just unused');
   assert.ok(!/Alama ya kidole gumba/.test(app), 'the Swahili thumbprint label is gone');
 });
 
 test('the recommendation section captures the officer\'s own name and signature', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('card-h">5. Team recommendation'), app.indexOf("$('#lnSaveRec').onclick"));
   assert.ok(/id="lnOfficerName"/.test(view), 'an officer name field is offered');
   assert.ok(/captureRowPad_\('Sahihi ya afisa/.test(view), 'an officer signature pad is offered');
@@ -882,7 +890,7 @@ test('the recommendation section captures the officer\'s own name and signature'
    that ain't under their registration so there our camera has to take 2 photos, of the doc
    and the 2nd the customer holding it." */
 test('personal details offers the two-photo consent form capture for a receiving number that is not the customer\'s own', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const card = app.slice(app.indexOf('card-h">1. Personal details'), app.indexOf('lnSavePersonal'));
   assert.ok(/captureRowPhoto_\('Fomu ya idhini/.test(card), 'the consent-form-document capture is offered');
   assert.ok(/captureRowPhoto_\('Mteja akishikilia fomu/.test(card), 'the customer-holding-the-form capture is offered');
@@ -899,7 +907,7 @@ test('personal details offers the two-photo consent form capture for a receiving
    whole time the officer spends framing the shot to resolve in), and must never hold up the
    shutter if it doesn't land in time. */
 test('every KYC photo is stamped with the date/time, the officer, and a GPS fix when one lands in time', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const stamp = app.slice(app.indexOf('function stampPhoto_'), app.indexOf('function openCameraOverlay_'));
   assert.ok(/S\.me\s*&&\s*S\.me\.name/.test(stamp), 'the signed-in officer is read into the stamp');
   assert.ok(/geoCoords\s*\?/.test(stamp), 'a GPS fix is included when one is available');
@@ -918,7 +926,7 @@ test('every KYC photo is stamped with the date/time, the officer, and a GPS fix 
    "add neighbor no at customer service, they ask them who is near when we can't reach you,
    and not the guarantor, so we have alt no and neighbor no" */
 test('customer service registration asks for a neighbour\'s phone, distinct from the guarantor', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const form = app.slice(app.indexOf('function lnCsRegisterForm_'), app.indexOf('/* ---------- Manager: assignment'));
   assert.ok(/id="lnNeighborNo"/.test(form), 'a neighbour-phone field is offered at customer service');
   assert.ok(/neighbor_no:\s*\$\('#lnNeighborNo'\)\.value\.trim\(\)/.test(form), 'it is sent to csRegister on submit');
@@ -926,7 +934,7 @@ test('customer service registration asks for a neighbour\'s phone, distinct from
 
 /* "the 5 extra guarantors, 3 are (*) compulsory to fill" */
 test('the first 3 of the 5 extra guarantor contacts are required before the guarantor section saves', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const card = app.slice(app.indexOf('Wadhamini wa ziada'), app.indexOf("$('#lnSaveGuar').onclick"));
   assert.ok(/req\s*=\s*i\s*<\s*3/.test(card), 'the first 3 of the 5 are marked as the required ones');
   const guarStart = app.indexOf("$('#lnSaveGuar').onclick");
@@ -939,14 +947,14 @@ test('the first 3 of the 5 extra guarantor contacts are required before the guar
    they are by the devices without lockapp ... put their live location link on their rows in
    settings nav system view not call view" */
 test('Settings offers a button to the officer-locations screen, with a real maps link per row', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(/id:'officerloc'/.test(app), 'a nav entry exists for the screen (hidden, reached from a button)');
-  const settingsView = app.slice(app.indexOf('VIEWS.settings = function'), app.indexOf('VIEWS.officerloc = function'));
+  const settingsView = page('admin').slice(page('admin').indexOf('VIEWS.settings = function'));
   assert.ok(/id="sgOfficerLoc"/.test(settingsView), 'Settings offers a button into it');
   const wire = app.slice(app.indexOf("var sgOfficerLoc = document.getElementById"), app.indexOf("var so = document.getElementById('soToggle')"));
   assert.ok(/go\('officerloc'\)/.test(wire), 'the button actually navigates to the new screen');
 
-  const view = app.slice(app.indexOf('VIEWS.officerloc = function'), app.indexOf('VIEWS.present = function'));
+  const view = appCore().slice(appCore().indexOf('VIEWS.officerloc = function'), appCore().indexOf('/* MODULE: present'));
   assert.ok(/srv\('officerLocationsList'\)/.test(view), 'the screen reads the new server function');
   assert.ok(/https:\/\/www\.google\.com\/maps\?q=/.test(view), 'each row gets a real Google Maps link');
   assert.ok(/target="_blank"/.test(view), 'opened as a real link (now safe -- see onCreateWindow in MainActivity.java)');
@@ -954,7 +962,7 @@ test('Settings offers a button to the officer-locations screen, with a real maps
 
 /* RUN-ME-011: business grows from 1 photo to 3 named ones, residence from 1 to 4 each. */
 test('business verification offers all three named photos and saves all three', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const card = app.slice(app.indexOf('card-h">2. Business verification'), app.indexOf("$('#lnSaveGuar').onclick"));
   assert.ok(/lnBizPhotoBtn/.test(card) && /lnBizPhoto2Btn/.test(card) && /lnBizPhoto3Btn/.test(card),
     'three distinct capture buttons are offered');
@@ -965,7 +973,7 @@ test('business verification offers all three named photos and saves all three', 
 });
 
 test('customer and guarantor residence verification each offer and save four photos', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const custCard = app.slice(app.indexOf('card-h">3. Customer residence verification'), app.indexOf('card-h">4. Guarantor'));
   for (const id of ['lnCustResPhotoBtn', 'lnCustResPhoto2Btn', 'lnCustResPhoto3Btn', 'lnCustResPhoto4Btn']) {
     assert.ok(custCard.includes(id), 'customer residence offers ' + id);
@@ -986,7 +994,7 @@ test('customer and guarantor residence verification each offer and save four pho
 
 /* "10-photo contract capture + WhatsApp share with autogenerated caption" (RUN-ME-011) */
 test('the recommendation stage offers a 10-page contract capture and a WhatsApp share button', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const panel = app.slice(app.indexOf('card-h">5. Team recommendation'), app.indexOf('/* ---------- ID type'));
   assert.ok(/id="lnContractAddBtn"/.test(panel), 'a page-add button is offered');
   assert.ok(/id="lnContractWaBtn"/.test(panel), 'a WhatsApp share button is offered');
@@ -1012,7 +1020,7 @@ test('the recommendation stage offers a 10-page contract capture and a WhatsApp 
 /* "horizontal (not vertical) assessment stage switcher with business as 2nd stage" and
    "sticky customer card header while scrolling" */
 test('the assessment drawer has a sticky horizontal stage switcher, business as the 2nd stage', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const drawerCall = app.slice(app.indexOf('function lnTeamAssessForm_'), app.indexOf('// ---- ID type'));
   assert.ok(/class="ln-sticky"/.test(drawerCall), 'the header + switcher are in the sticky box');
   assert.ok(/class="ln-stagebar"/.test(drawerCall), 'a horizontal stage bar is rendered');
@@ -1030,7 +1038,7 @@ test('the assessment drawer has a sticky horizontal stage switcher, business as 
 
 /* "NIDA/phone number progress-dot input" -- digits shown as a count, never masked. */
 test('NIDA and phone fields in the assessment drawer show a digit-progress-dot row', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const dotsFn = app.slice(app.indexOf('function wireDigitDots_'), app.indexOf('function lnReasonPrompt_'));
   assert.ok(/\.match\(\/\\d\/g\)/.test(dotsFn), 'only digits are counted, not every character typed');
   assert.ok(!/type\s*=\s*.password/.test(dotsFn), 'the input itself is never masked -- it only reports a count');
@@ -1044,7 +1052,7 @@ test('NIDA and phone fields in the assessment drawer show a digit-progress-dot r
 /* "call verification tick at approval tied to min-seconds threshold from the approver's own
    call-sync login" */
 test('the credit approval drawer shows a call-verification tick read from the server, not a checkbox', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const fn = app.slice(app.indexOf('function lnCreditForm_'), app.indexOf('function lnDisburseForm_'));
   assert.ok(/id="lnCallVerify"/.test(fn), 'a place to show the result is offered');
   assert.ok(/srv\('creditCallCheck'/.test(fn), 'it reads the server-side check');
@@ -1057,7 +1065,7 @@ test('the credit approval drawer shows a call-verification tick read from the se
    days, autodelete once a matching approved loan appears, dropdown stale-reason comments, an
    ED/elapsed-days column" */
 test('the Assessment Plan screen is a real nav entry that reads and writes the new server functions', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(/id:'ln_assess_plan'/.test(app), 'a NAV_LOAN entry exists');
 
   const view = app.slice(app.indexOf('VIEWS.ln_assess_plan = function'), app.indexOf('function todayKey_'));
@@ -1068,7 +1076,7 @@ test('the Assessment Plan screen is a real nav entry that reads and writes the n
   const addWire = app.slice(app.indexOf('function wireLnAssessPlan_'), app.indexOf('function lnAssessPlanForm_'));
   assert.ok(/assessmentPlanSave/.test(addWire), 'adding a plan calls assessmentPlanSave');
 
-  const form = app.slice(app.indexOf('function lnAssessPlanForm_'), app.indexOf('function busy_'));
+  const form = page('loan').slice(page('loan').indexOf('function lnAssessPlanForm_'));
   assert.ok(/locked\s*=\s*row\.planned_date\s*<\s*todayKey_\(\)/.test(form), 'past-dated rows are locked client-side too');
   assert.ok(/lnPlanEditReason/.test(form), 'the stale-reason dropdown is offered');
   assert.ok(/assessmentPlanDelete/.test(form), 'a plan can be deleted from the drawer');
@@ -1077,7 +1085,7 @@ test('the Assessment Plan screen is a real nav entry that reads and writes the n
 /* "Users with multiple teams should also be able to create assessment plan ... they get their
    granted teams at access codes as we always pivot" */
 test('the Assessment Plan screen pivots by granted team and lets a multi-team code pick one on add and edit', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.ln_assess_plan = function'), app.indexOf('function todayKey_'));
   assert.ok(/srv\('assessmentPlanList',\s*\{\s*team:\s*S\.args\.team/.test(view), 'the list is asked for the pivoted team');
   assert.ok(/<select data-arg="team">/.test(view), 'the bar carries the team pivot (auto-wired like every other data-arg)');
@@ -1085,14 +1093,14 @@ test('the Assessment Plan screen pivots by granted team and lets a multi-team co
   assert.ok(/LN_PLAN_TEAMS_\.length\s*>\s*1/.test(view), 'both appear only when there is more than one team to choose from');
   const addWire = app.slice(app.indexOf('function wireLnAssessPlan_'), app.indexOf('function lnAssessPlanForm_'));
   assert.ok(/team:\s*teamSel\s*\?\s*teamSel\.value/.test(addWire), 'the picked team is sent on add');
-  const form = app.slice(app.indexOf('function lnAssessPlanForm_'), app.indexOf('function busy_'));
+  const form = page('loan').slice(page('loan').indexOf('function lnAssessPlanForm_'));
   assert.ok(/id="lnPlanEditTeam"/.test(form), 'the edit drawer offers the team picker on a future-dated plan');
   assert.ok(/fields\.team\s*=\s*editTeam\s*\?\s*editTeam\.value\s*:\s*row\.team/.test(form), 'and sends it, falling back to the row\'s own team');
 });
 
 /* "Importing payment at finance always require transaction ID too" */
 test('the finance payment import asks for TRANS_NO and stops on a line without one before sending', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const form = app.slice(app.indexOf('function lnImportPaymentsForm_'), app.indexOf("lnAct('financeImportPayments'"));
   assert.ok(/REF, AMOUNT, TRANS_NO, PAID_BY/.test(form), 'the paste format names the transaction column');
   assert.ok(/trans_no:\s*p\[2\]/.test(form), 'the third column is sent as trans_no');
@@ -1110,7 +1118,7 @@ test('the finance payment import asks for TRANS_NO and stops on a line without o
    mode "the button does nothing" describes, and it is the cheapest thing in the world to test.
    (Buttons without an id are wired by class or data-attribute and are not this test's job.) */
 test('every button app.html draws with an id is looked up by that id somewhere in the file', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const drawn = new Set([...app.matchAll(/<button[^>]*\bid="([A-Za-z0-9_-]+)"/g)].map(m => m[1]));
   assert.ok(drawn.size > 100, 'the page draws its buttons with ids (' + drawn.size + ' found)');
   const unwired = [...drawn].filter(id => {
@@ -1126,7 +1134,7 @@ test('every button app.html draws with an id is looked up by that id somewhere i
    user, but every dead lookup is one more place a reader has to check before trusting that a
    feature exists. Dynamic ids (built with + at render time) are excused by prefix. */
 test('every id app.html looks up with getElementById is one some screen can draw', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const rendered = new Set([...app.matchAll(/\bid=(?:"|'|\\")?([A-Za-z0-9_-]+)/g)].map(m => m[1]));
   const dynPrefix = [...app.matchAll(/id="([A-Za-z0-9_-]+)'\s*\+/g)].map(m => m[1]);
   const looked = new Set([...app.matchAll(/getElementById\(\s*'([A-Za-z0-9_-]+)'\s*\)/g)].map(m => m[1]));
@@ -1149,7 +1157,7 @@ test('every id app.html looks up with getElementById is one some screen can draw
    sign. Drawn for finance and gm only, a credit analyst could not reach the screen at all, and
    a finance user who chose "request one" was refused by the server after typing the reason. */
 test('the Reversals nav admits credit, and the screen offers each tab only its own half', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(/id:'ln_reversals',[^\n]*tab:\['finance','gm','loan_credit'\]/.test(app), 'loan_credit is on the nav gate');
   const view = app.slice(app.indexOf('VIEWS.ln_reversals'), app.indexOf('/* ---------- GM: carriers'));
   assert.ok(/var canAsk = lnHolds_\('loan_credit'\)/.test(view), 'the request scope hinges on holding loan_credit');
@@ -1166,7 +1174,7 @@ test('the Reversals nav admits credit, and the screen offers each tab only its o
    HOPE Loan words in one flat run with the PMO ones, so `gmo` or `manager` got ticked for a
    role by that name. The editor now draws HOPE Loan's under their own heading. */
 test('no HOPE Loan tab word is also a HOPE PMO tab, and the role editor keeps the two apart', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const navBlock = app.slice(app.indexOf('var NAV = ['), app.indexOf('var NAV_LOAN = ['));
   const loanBlock = app.slice(app.indexOf('var NAV_LOAN = ['), app.indexOf('];', app.indexOf('var NAV_LOAN = [')));
   const pmoWords = new Set([...navBlock.matchAll(/\bid:'([a-z_]+)'/g)].map(m => m[1])
@@ -1187,7 +1195,7 @@ test('no HOPE Loan tab word is also a HOPE PMO tab, and the role editor keeps th
    serves both owners; a plan drafts on itself, photos land under the plan, and Assign says
    what became of a matching plan. */
 test('the recommendation form drafts on an Assessment Plan, and the plan drawer opens it', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const form = app.slice(app.indexOf('function lnTeamAssessForm_(loanRow, planRow)'), app.indexOf('/* ---------- GMO / OPM senior review'));
   assert.ok(form.length > 1000, 'the form takes a plan row as its second owner');
   assert.ok(/lnActKeep_\('assessmentPlanDraftSave', \{ id: planRow\.id, section: section, fields: fields \}/.test(form), 'plan mode saves the draft on the plan');
@@ -1205,7 +1213,7 @@ test('the recommendation form drafts on an Assessment Plan, and the plan drawer 
     'the plan share button asks for the plan\'s own photos, not a loan\'s');
   const up = app.slice(app.indexOf('function kycUpload_('), app.indexOf('function wireCanvasPad_('));
   assert.ok(/\^plan:\(\.\+\)\$/.test(up) && /plan_id: pm\[1\]/.test(up), 'a plan: id in the loan slot uploads under the plan');
-  const planForm = app.slice(app.indexOf('function lnAssessPlanForm_('), app.indexOf('function busy_('));
+  const planForm = page('loan').slice(page('loan').indexOf('function lnAssessPlanForm_('));
   assert.ok(/id="lnPlanFillBtn"/.test(planForm) && /lnTeamAssessForm_\(null, row\)/.test(planForm), 'the plan drawer opens the form in plan mode');
   assert.ok(/row\.assignedRef/.test(planForm) && /Team &middot; Recommendation/.test(planForm), 'an already-assigned customer is pointed at the recommendation instead');
   const view = app.slice(app.indexOf('VIEWS.ln_assess_plan'), app.indexOf('function todayKey_'));
@@ -1218,7 +1226,7 @@ test('the recommendation form drafts on an Assessment Plan, and the plan drawer 
    section show saved ✓" -- a capture uploads at once but only lands on the record when its
    section is saved, so the label says which of the two it is. */
 test('a fresh capture reads "not saved yet" and turns to "Saved ✓" only when its section save succeeds', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const photo = app.slice(app.indexOf('function wirePhotoCapture_('), app.indexOf('function wireGpsCapture_('));
   assert.ok(/CAPTURE_PENDING_ = '[^']*bado haijahifadhiwa[^']*not saved yet'/.test(app), 'the pending wording says it is temporary');
   assert.ok(/CAPTURE_SAVED_ = '✓ Imehifadhiwa \/ Saved'/.test(app), 'the saved wording carries the tick');
@@ -1237,7 +1245,7 @@ test('a fresh capture reads "not saved yet" and turns to "Saved ✓" only when i
    to pop. One helper, used by the drawer, the presentation and the phone menu (the camera
    overlay had its own already). */
 test('the drawer, the presentation and the phone menu each give the Back button an entry to pop, and close on it', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const helper = app.slice(app.indexOf('var BACK_LAYERS_ = []'), app.indexOf('function drawer(html'));
   assert.ok(/history\.pushState\(\{ hopeLayer: name \}/.test(helper), 'opening a layer pushes one tagged entry');
   assert.ok(/if \(BACK_LAYERS_\.indexOf\(name\) >= 0\) return;/.test(helper), 'once, however often the layer redraws while open');
@@ -1258,7 +1266,7 @@ test('the drawer, the presentation and the phone menu each give the Back button 
 /* "I requested it as a drop down where multiple teams can be ticked and press okay to load the
    new dashboard not just every team selection initiating load." */
 test('the dashboard draws a team pick after the dot, sends it, remembers it, and carries it to the month report', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const dash = app.slice(app.indexOf('function teamPick_('), app.indexOf("kpi('Current arrears'"));
   assert.ok(/srv\('dashboardFull', \{ weekOf: S\.args\.weekOf \|\| '', teams: teamPickLoad_\(\) \}\)/.test(dash), 'the pick is sent');
   assert.ok(/data-carry="weekOf,teams"><\/button>' \+ teamPick_\(d\)/.test(dash), 'drawn right after the dot, and carried by it');
@@ -1280,7 +1288,7 @@ test('the dashboard draws a team pick after the dot, sends it, remembers it, and
    respective customers showing their initial arrears, current arrears and recovered, with grand
    totals." */
 test('every measured recovery tile is pressable and opens the customers behind it with a grand total', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const grid = app.slice(app.indexOf("trendGrid('Weekly recovery trend (Mon–Sun)'"), app.indexOf("Loan pipeline</div>"));
   assert.equal((grid.match(/, '', press\)/g) || []).length, 2, 'weekday tiles (weekend and Mon-Fri shapes) carry the press');
   assert.ok(/'tot', recTileAttrs_\('week'\)\)/.test(grid), 'the TOTAL tile opens the week');
@@ -1309,7 +1317,7 @@ test('every measured recovery tile is pressable and opens the customers behind i
    that data after click" -- the officer boards (thirty-odd reads) no longer fire with the
    dashboard; they wait behind a button. And a read whose connection dropped is asked once more. */
 test('the dashboard paints its core alone; the officer boards load on a tap; a dropped read is retried once', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const start = app.indexOf('VIEWS.dashboard = function');
   const view = app.slice(start, app.indexOf('/* =====', start));
   assert.ok(/DASH_LOAD_BOARDS_ = function\(\)\{[\s\S]*srv\('officerBoards'\)/.test(view), 'the boards wave lives inside the loader');
@@ -1325,7 +1333,7 @@ test('the dashboard paints its core alone; the officer boards load on a tap; a d
 /* THE ABNORMAL TAB OPENS ON ONE DAY -- "Pmos make daily followup .. they can't be always
    finding huge list" -- with a day strip: a day either side, a typed day, the latest, or all. */
 test('the abnormal payments tab asks for a day and carries a day strip', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.abnormal = function'), app.indexOf('VIEWS.credit = function'));
   assert.ok(/srv\('abnormal', \{ date: S\.args\.date \|\| '' \}\)/.test(view), 'the day asked for travels; blank is the latest');
   for (const h of ['data-abn-step="-1"', 'data-abn-step="1"', 'id="abnDate"', 'data-abn-set=""', 'data-abn-set="all"']) {
@@ -1342,7 +1350,7 @@ test('the abnormal payments tab asks for a day and carries a day strip', () => {
    A column may name its own two parts (`from`) for the keys made up as a board is drawn; the
    rows carry the parts; the bottom line divides their sums. Run for real, not just matched. */
 test('a percentage column with `from` totals as a ratio of the parts, and the boards declare them', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const src = app.slice(app.indexOf('var PCT_FROM = {'), app.indexOf('function autoTotals(rows, cols)'));
   const fillPctTotals = new Function(src + '\nreturn fillPctTotals;')();
   const rows = [
@@ -1373,7 +1381,7 @@ test('a percentage column with `from` totals as a ratio of the parts, and the bo
    on the first company widget, leave the officers and add the percentage performance ... on the
    company widget add pmo performance avrg (erly col, col, rec)". */
 test('the commission month widgets read each unit\'s ratio, and the company widget their average', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.cmmonth = function'), app.indexOf("board('cmMRec'"));
   assert.ok(/rPct = ratio\(rRec, rUncol\)/.test(view), 'recovery: recovered over uncollected');
   assert.ok(/ePct = ratio\(eCol, eExp\)/.test(view) && /pPct = ratio\(pCol, pExp\)/.test(view), 'early col and PMO: collected over expected');
@@ -1388,7 +1396,7 @@ test('the commission month widgets read each unit\'s ratio, and the company widg
 /* THE EARLY COLLECTION SWITCH ON THE RATES CARD -- "i need a switch at viwango/rates where i
    can change early collection commission mode to performance or back to counts". */
 test('the Rates card carries the early collection mode switch, its ladder and its bonus, all wired to Save', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const card = app.slice(app.indexOf('Viwango / Rates</div><div class="cmsrates">'), app.indexOf("board('cmRecWeek'"));
   assert.ok(/id="cmEarlyMode"/.test(card) && /value="counts"/.test(card) && /value="performance"/.test(card), 'the switch, two positions');
   assert.ok(/class="cmEarlyBand" data-floor="/.test(card), 'the plan\'s ladder, one box per band');
@@ -1411,12 +1419,12 @@ test('the Rates card carries the early collection mode switch, its ladder and it
    anything else either). Second, the functions that turn a month of percentages into shillings
    are executed here, so the plan the GM is looking at is the plan that would be built. */
 test('the daily bonus plan tab is wired, admin-grantable, and makes no server call', async () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(/\{ id:'bonusplan',\s+label:'Bonasi ya Kila Siku \/ Daily Bonus Plan'/.test(app), 'the nav entry');
   assert.ok(/VIEWS\.bonusplan = function/.test(app), 'the screen exists');
   assert.ok(/VC_SKIP = \{[^}]*bonusplan:1/.test(app), 'its boxes are never replayed from the view cache');
-  assert.ok(/wireForms\(\);\s*\n\s*bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint');
-  const code = app.slice(app.indexOf('BONASI YA KILA SIKU / DAILY BONUS PLAN'), app.indexOf('VIEWS.perf = function'));
+  assert.ok(/wireForms\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint, once its module is in');
+  const code = page('bonusplan').slice(page('bonusplan').indexOf('BONASI YA KILA SIKU / DAILY BONUS PLAN'));
   assert.ok(code.length > 5000, 'the extractor found the preview');
   assert.ok(!/\bsrv\(|\bfetch\(|XMLHttpRequest|localStorage|sessionStorage/.test(code),
     'the preview reads nothing and saves nothing');
@@ -1430,7 +1438,7 @@ test('the daily bonus plan tab is wired, admin-grantable, and makes no server ca
 });
 
 test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const src = app.slice(app.indexOf('var BP = null;'), app.indexOf('function bpState_()'));
   const m = new Function(src + '\nreturn { bpWhole_, bpDay_, bpMonth_, bpChecklist_, bpLeaderDay_, BP_PICK, BP_LEADERS };')();
   const cfg = () => ({ pot: 100000, w: { col: 40, sales: 30, rec: 30 }, g: { col: 96, sales: 80, rec: 120 },
@@ -1509,7 +1517,7 @@ test('the daily bonus maths: a day is worth its gates, a perfect month is exactl
    space under the heading and shrinks the type to the ratio, floor 8px, after every draw and
    on resize. The clamp() width rule is untouched: a table that fits is left as it was. */
 test('the presentation fits every slide to the screen after every draw and on resize', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/presSetHtml_\(/.test(draw), 'presDraw hands its HTML to the setter that fits it');
   const fit = app.slice(app.indexOf('function presFit_'), app.indexOf('function presProgGroup_'));
@@ -1533,7 +1541,7 @@ test('the presentation fits every slide to the screen after every draw and on re
    hcDev in the same browser), and nothing else does. "Some demands still put the maelezo
    table on second page": the print frame fits the letter right before the dialog opens. */
 test('the Legal calls send the handset id, and the print frame fits the letter before printing', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(/function hcDevice_\(\)\{[\s\S]*?localStorage\.getItem\('hcDev'\)/.test(app), 'the call app\'s own key, same origin');
   assert.ok(/srv\('demandNotices', \{ device: hcDevice_\(\) \}\)/.test(app));
   assert.ok(/srv\('demandNoticePrint', \{ id: id, device: hcDevice_\(\) \}\)/.test(app));
@@ -1557,7 +1565,7 @@ test('the Legal calls send the handset id, and the print frame fits the letter b
    the week side by side, the JUMLA percentages worked out from the totals, and the caption
    saying where the money comes from and when RUN-ME-041 is missing. */
 test('the presentation carries a legal recovery slide with today and the week per legal officer', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   assert.ok(app.indexOf("slides.push({ id:'pmo'") < app.indexOf("slides.push({ id:'legal'"), 'after PMO Collection');
   const legal = app.slice(app.indexOf("slides.push({ id:'legal'"), app.indexOf("slides.push({ id:'dayprog'"));
   assert.ok(/rows:\(b\.legal\|\|\[\]\)\.slice\(0,12\)/.test(legal), 'fed by officerBoards\' legal rows');
@@ -1578,7 +1586,7 @@ test('the presentation carries a legal recovery slide with today and the week pe
    of the recoveries as the dashboard recovries are clickable to show list." Two cards on the
    Legal tab, fed by demandNotices' legal reading, each opening legalRecoveriesDrawer_. */
 test('the Legal tab carries tappable recovered-today and recovered-this-week cards', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 9000);
   assert.ok(/kpi\('Imerejeshwa leo \/ Recovered today',[^;]*'lgRecT'\)/.test(view), 'today\'s card, with its id');
   assert.ok(/kpi\('Imerejeshwa wiki hii \/ Recovered this week',[^;]*'lgRecW'\)/.test(view), 'the week\'s card, with its id');
@@ -1597,7 +1605,7 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
    only (no daily/weekly pills), keeps the email button on the bar, and shows the week's
    recovered total per recycling category. */
 test('the Exp.Def Report carries the week arrows, no day/week pills, and the three weekly recovered cards', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
   assert.ok(/srv\('expdfReport', \{ weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server, nothing else');
   assert.ok(/HEAD = weekBar\(d, /.test(view), 'the same week bar as the dashboard');
@@ -1613,12 +1621,12 @@ test('the Exp.Def Report carries the week arrows, no day/week pills, and the thr
    The nav item sits directly under Abnormal Payments; the tab carries the form, HR's column and
    the report; the upload page takes the Google Sheets register once. */
 test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR column, report and register upload', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const nav = app.slice(app.indexOf("{ id:'abnormal',"), app.indexOf("{ id:'legal',"));
   assert.ok(/\{ id:'deduct',\s+label:'Makato ya PMO \/ PMO Deduction'/.test(nav), 'directly under Abnormal Payments, before Legal');
   assert.ok(/VIEWS\.deduct = function\(\)/.test(app) && /srv\('deductions', \{from:from, to:to\}\)/.test(app), 'the tab reads a date window');
   assert.ok(/deductions:1/.test(app), 'cached like the other reads');
-  const view = app.slice(app.indexOf('VIEWS.deduct = function'), app.indexOf('VIEWS.restructure = function'));
+  const view = page('deduct');
   assert.ok(/kpi\('Kesi \/ Cases'/.test(view) && /kpi\('Cha kulipiwa mteja \/ To pay'/.test(view) && /kpi\('Salio \/ Remaining'/.test(view), 'the sheet\'s report cards');
   assert.ok(/id="newDeduction"/.test(view) && /id="dedReport"/.test(view), 'the form and the report buttons');
   assert.ok(/function dedNew\(\)/.test(view) && /srv\('addDeduction'/.test(view) && /id="ddAdd"/.test(view), 'one case, many staff');
@@ -1635,7 +1643,7 @@ test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR colu
    New-notice drawer says the DC, and draws the Issue button only when the server's preview
    says the customer is at the rule; the pick list carries the DC on every line. */
 test('the New-notice drawer withholds Issue below the DC rule and says why', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const fn = app.slice(app.indexOf('function lgIssue()'), app.indexOf('function lgPrint('));
   assert.ok(/e\.eligible \? '<button class="btn w" id="lgGo">/.test(fn), 'the button only when eligible');
   assert.ok(/if \(e\.eligible\) \$\('#lgGo'\)\.onclick/.test(fn), 'and its handler likewise');
@@ -1648,8 +1656,8 @@ test('the New-notice drawer withholds Issue below the DC rule and says why', () 
    card." The Legal tab's card reads "48% · 1,100", the percentage from the server (of what the
    letters chased), and names the owed figure underneath. */
 test('the Legal tab\'s Recovery card carries the Rec % in front of the arrears drop, apart from Recovered since notice', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
-  const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('function legalRecoveriesDrawer_('));
+  const app = appSrc();
+  const view = page('legal').slice(0, page('legal').indexOf('function lgIssue('));
   /* "all i needed is 1. recovery to have difference of arrears at notice and current and rec%
      and 2. recovered amount since notices": two cards, two readings, never blended. */
   assert.ok(/kpi\('Urejeshaji \/ Recovery',\s*\(d\.recoveryPct != null \? pct\(d\.recoveryPct\) \+ ' · ' : ''\) \+ money\(d\.recovery\)/.test(view),
@@ -1661,7 +1669,7 @@ test('the Legal tab\'s Recovery card carries the Rec % in front of the arrears d
 });
 
 test('the dashboard carries a legal recovery card on top and today/week boards by legal officer', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('DASH_LOAD_BOARDS_ = function'));
   assert.ok(/kpi\('Legal recovery', money\(lg\.tRecovered \|\| 0\)/.test(view), 'the card, today\'s figure first');
   // pct() rounds the figure as sent (36.2 -> "36%"); pct(lg.pct / 100) was printing "(0%)".
@@ -1681,7 +1689,7 @@ test('the dashboard carries a legal recovery card on top and today/week boards b
    not: the name rule took the first average column (T.Avg). The two name columns now name
    M.Avg as their line, and colourCtx_ honours a column's own avgKey over the default order. */
 test('the dashboard Orodha paints a team name red on the month\'s average, not today\'s', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('/* =====================================================================================\n   THE MONTH REPORT'));
   assert.ok(/var byMonth = function\(c\)\{ c\.avgKey = 'mAvg'; return c; \};/.test(view), 'the line is M.Avg');
   assert.ok(/byMonth\(ttl\(col\('opm','OPM'\)/.test(view) && /byMonth\(col\('team','Team'\)\)/.test(view), 'on both name cells, the OPM and the team');
@@ -1694,22 +1702,65 @@ test('the dashboard Orodha paints a team name red on the month\'s average, not t
    each its own tick; the FIELD OFFICER row on Roles & access is marked as the team codes'
    row; the upload page takes the workbook's two tabs. */
 test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
-  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const app = appSrc();
   const nav = app.slice(app.indexOf("{ id:'deduct',"), app.indexOf("{ id:'legal',"));
   for (const id of ['advreq', 'advappr', 'advrep', 'advstaff']) assert.ok(new RegExp("\\{ id:'" + id + "',").test(nav), id + ' sits after PMO Deduction');
   assert.ok(/advStaff:1, advRequestPage:1, advQueue:1, advReport:1/.test(app), 'cached like the other reads');
-  const view = app.slice(app.indexOf('VIEWS.advreq = function'), app.indexOf('VIEWS.restructure = function'));
+  const view = page('advance');
   assert.ok(/srv\('advRequestPage', \{ staffId: staffId \}\)/.test(view) && /data-arg="staffId"/.test(view) && /id="advSubmit"/.test(view) && /srv\('advRequest'/.test(view), 'the ask: pick your name, submit');
   assert.ok(/monthTaken/.test(view) && /Only one request per month/.test(view), 'the month rule is said on the form');
   assert.ok(/VIEWS\.advappr = function/.test(view) && /srv\('advQueue'/.test(view) && /class="advChk"/.test(view) && /id="advDecideSave"/.test(view) && /srv\('advDecide', \{ updates: updates \}\)/.test(view), 'the GMO\'s bulk decision');
   assert.ok(/VIEWS\.advrep = function/.test(view) && /srv\('advReport'/.test(view) && /col\('account','Akaunti \/ Account'\)/.test(view) && /board\('advRepZones'/.test(view), 'the report with the accounts, by zone');
-  assert.ok(/VIEWS\.advstaff = function/.test(view) && /srv\('advStaff'/.test(view) && /id="newStaff"/.test(view) && /function advStaffForm\(x\)/.test(view) && /srv\('advStaffSave'/.test(view) && /srv\('advStaffStatus'/.test(view), 'HR\'s registry, form and switch');
+  assert.ok(/VIEWS\.advstaff = function/.test(view) && /srv\('advStaff'/.test(view) && /id="newAdvStaff"/.test(view) && /function advStaffForm\(x\)/.test(view) && /srv\('advStaffSave'/.test(view) && /srv\('advStaffStatus'/.test(view), 'HR\'s registry, form and switch');
   assert.ok(/\$\('#asNida'\)\.oninput/.test(view) && /dg\.slice\(0,4\)/.test(view), 'the birth date follows the NIDA number as it is typed');
   assert.ok(/d\.on === false \? '<div class="note">⚠ ' \+ esc\(d\.note/.test(view), 'a database without RUN-ME-044 says so');
-  assert.ok(/getElementById\('advSubmit'\)/.test(app) && /getElementById\('advDecideSave'\)/.test(app) && /getElementById\('newStaff'\)/.test(app), 'wired with the tabs');
+  assert.ok(/getElementById\('advSubmit'\)/.test(app) && /getElementById\('advDecideSave'\)/.test(app) && /getElementById\('newAdvStaff'\)/.test(app), 'wired with the tabs');
   assert.ok(/r\.teamCodes \? ' <span class="chip mut">F\.O · misimbo ya timu \/ team codes<\/span>'/.test(app), 'Roles & access marks the team codes\' row');
   const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
   assert.ok(/<option value="staff-registry">/.test(up) && /<option value="advance-requests">/.test(up), 'the two upload kinds');
   assert.ok(/'staff-registry': \[\], 'advance-requests': \[\]/.test(up) && /'staff-registry':1, 'advance-requests':1/.test(up) && /'staff-registry': 'append', 'advance-requests': 'append'/.test(up));
   assert.ok(/type === 'staff-registry'\)\s+return find\(\/\^database\$\/, \/staff\/, \/registry\/\)/.test(up) && /type === 'advance-requests'\)\s+return find\(\/\^advance requests\?\$\/, \/advance\//.test(up), 'the workbook\'s own tab names');
+});
+
+/* SCREENS THAT LOAD WHEN THEIR TAB OPENS -- "We can't load everything from there, these
+   imprests, advances demands etc that don't pivot results can be loaded when retrieved or at
+   tab open" / "Do everything to recover smoothness". The page had grown to 977 KB parsed whole
+   at every opening. Each of those screens is a module now (public/mod/*.js) fetched by
+   modLoad_ the first time one of its tabs opens: every module parses on its own, every view a
+   module defines is mapped to it (MOD_OF, or the ln_ rule for HOPE Loan) and defined nowhere
+   else, the loader fetches by BUILD, the core's early calls into module code are guarded, the
+   files are served un-cached like the page, and the core stays well under what it was. */
+test('the portal modules: each parses, each view is mapped once, the core guards its calls and stays small', async () => {
+  const vm = await import('node:vm');
+  const core = appCore();
+  const modOfSrc = core.match(/var MOD_OF = \{([\s\S]*?)\};/);
+  assert.ok(modOfSrc, 'MOD_OF moved -- update the extractor');
+  const modOf = Object.fromEntries([...modOfSrc[1].matchAll(/(\w+):'(\w+)'/g)].map(m => [m[1], m[2]]));
+  const onDisk = readdirSync(join(PUBLIC, 'mod')).map(f => f.replace(/\.js$/, '')).sort();
+  assert.deepEqual(onDisk, MODS.slice().sort(), 'the modules on disk are the ones the tests read');
+  for (const v of Object.values(modOf)) assert.ok(onDisk.includes(v), 'MOD_OF names a module that is not on disk: ' + v);
+  const coreViews = new Set([...core.matchAll(/^VIEWS\.([A-Za-z_]+) = function/gm)].map(m => m[1]));
+  for (const name of MODS) {
+    const src = page(name);
+    assert.doesNotThrow(() => new vm.Script(src, { filename: name + '.js' }), name + '.js does not parse');
+    const views = [...src.matchAll(/^VIEWS\.([A-Za-z_]+) = function/gm)].map(m => m[1]);
+    assert.ok(views.length >= 1, name + '.js defines no screen');
+    for (const v of views) {
+      const mapped = modOf[v] || (v.startsWith('ln_') ? 'loan' : null);
+      assert.equal(mapped, name, 'VIEWS.' + v + ' lives in ' + name + '.js but render() would fetch ' + mapped);
+      assert.ok(!coreViews.has(v), 'VIEWS.' + v + ' is defined in the core AND in ' + name + '.js');
+    }
+    assert.ok(/^\/\* [a-z]+ -- a screen of HOPE PMO's portal/.test(src), name + '.js lost its header');
+  }
+  for (const v of Object.keys(modOf)) assert.ok(!coreViews.has(v), 'VIEWS.' + v + ' is mapped to a module but still defined in the core');
+  assert.ok(/s\.src = '\/mod\/' \+ name \+ '\.js\?v=' \+ encodeURIComponent\(BUILD\)/.test(core), 'the loader fetches by BUILD');
+  assert.ok(/if \(mod && !MOD_READY_\[mod\]\) \{/.test(core) && /modLoad_\(mod\)\.then\(function\(\)\{ if \(S\.view === want\) render\(opts\); \}/.test(core), 'render() fetches the module first');
+  assert.ok(/if \(window\.wireDevices\) wireDevices\(\);/.test(core) && /if \(window\.bpWire_\) bpWire_\(\);/.test(core) && /pres: function\(\)\{ if \(window\.presStop\) presStop\(\); \}/.test(core)
+    && /S\.workspace === 'hopeloan' && window\.wireLnCs_/.test(core), 'the core\'s early calls into module code are guarded');
+  assert.ok(/go\(impTab \|\| lastView_\(\) \|\| firstAllowed_\(\) \|\| 'noaccess'\)/.test(core) && /store\('hopeLastView', view\)/.test(core), 'opening lands on the last tab');
+  assert.ok(/setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); \}, 2500\)/.test(core), 'the tips, announcement and bell follow the first screen, not race it');
+  const vercel = JSON.parse(readFileSync(join(PUBLIC, '..', 'vercel.json'), 'utf-8'));
+  assert.ok(vercel.headers.some(h => h.source === '/mod/(.*)' && h.headers.some(x => x.key === 'Cache-Control' && /no-cache/.test(x.value))), 'modules are served like the page: revalidated, never stale');
+  // The whole point. 977 KB before; the core must not grow back to that without somebody noticing.
+  assert.ok(core.length < 620000, 'the core page is ' + core.length + ' bytes -- a screen that does not pivot results belongs in a module');
 });

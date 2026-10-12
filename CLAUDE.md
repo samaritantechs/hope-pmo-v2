@@ -33,6 +33,11 @@ five minutes. Those two are not.
 - **No build step.** `public/*.html` is served exactly as written. `var BUILD` in
   `public/app.html` is the version; bump it on every front-end change. `/api/me` reports it and
   a page older than the server reloads itself past the cache.
+- **The portal opens light.** Screens that do not pivot results (imprest, advances, legal
+  demands, deductions, devices, Teams & Staff, Settings, the bonus plan, the deck, HOPE Loan)
+  live in `public/mod/*.js` and load the first time their tab opens (`modLoad_`, `MOD_OF` in
+  `app.html`). A new screen of that kind goes in a module, not the core; a module change needs
+  the `BUILD` bump too, since the loader fetches `/mod/<name>.js?v=BUILD`.
 - **Migrations are run by hand** in the Supabase SQL editor (`db/RUN-ME-*.sql`). Every code
   path that depends on one must work without it — fall back, never fail. The SQL editor sends
   a whole script as ONE statement, so a timeout anywhere in a file rolls back all of it: keep

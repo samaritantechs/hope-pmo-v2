@@ -19,7 +19,7 @@
    ===================================================================================== */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fakeDb } from './fake-db.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
@@ -30,7 +30,12 @@ const { loanApi, LOAN_FUNCTIONS } = await import('../api/_lib/loan-core.js');
 const { callApi } = await import('../api/_lib/call-core.js');
 
 const NOW = Date.parse('2026-07-24T09:00:00Z');   // Friday noon EAT, like the other suites
-const app = readFileSync(new URL('../public/app.html', import.meta.url), 'utf8');
+/* THE PORTAL IS THE CORE PAGE PLUS ITS TAB-OPENED MODULES (public/mod/*.js, fetched by
+   modLoad_ in app.html the first time one of their tabs opens). Read as one text, so a screen
+   or a srv() name that moved into a module is still audited; the nav list itself is the core's. */
+const core = readFileSync(new URL('../public/app.html', import.meta.url), 'utf8');
+const app = core + '\n' + readdirSync(new URL('../public/mod/', import.meta.url)).sort()
+  .map(f => readFileSync(new URL('../public/mod/' + f, import.meta.url), 'utf8')).join('\n');
 const phone = readFileSync(new URL('../public/call.html', import.meta.url), 'utf8');
 
 const names = (src, rx) => [...new Set([...src.matchAll(rx)].map(m => m[1]))];
@@ -75,7 +80,7 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
   assert.ok(/view==='upload'.*location\.href='\/upload'/.test(app), 'the upload nav lost its redirect');
   assert.ok(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8').includes('"/upload"'),
     'the /upload route left vercel.json while the nav still points there');
-  const navIds = names(app, /\{ id:'([A-Za-z_]+)',\s*label:/g).filter(id => id !== 'upload');
+  const navIds = names(core, /\{ id:'([A-Za-z_]+)',\s*label:/g).filter(id => id !== 'upload');
   assert.ok(navIds.length > 20, 'the extractor stopped seeing nav entries');
   const navMissing = navIds.filter(id => !views.has(id));
   assert.deepEqual(navMissing, [], 'nav items whose screen does not exist: ' + navMissing.join(', '));
@@ -167,8 +172,11 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
      (never assumed), and the expression still FALLS THROUGH to firstAllowed_() || 'noaccess'
      whenever there is no such link, so the original fallback is pinned exactly, just no
      longer the very first thing after "go(". */
-  assert.ok(/go\(impTab \|\| firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
+  /* lastView_ sits in the chain now -- the tab the person was on last time, which is still a tab
+     they hold (it checks allowed()) -- so a morning opening costs that one screen. */
+  assert.ok(/go\(impTab \|\| lastView_\(\) \|\| firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
     'the landing tab must fall through to one the person actually holds, never a fixed dashboard');
+  assert.ok(/function lastView_\(\)\{[\s\S]*?allowed\(v\)/.test(app), 'the remembered tab is checked against what the person holds today');
   assert.ok(/impTab = impId && \(allowed\('impappr'\)/.test(app),
     'the imprest deep-link target must itself be chosen through allowed(), never assumed');
 
