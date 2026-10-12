@@ -653,17 +653,19 @@ export function importRestructures(csvRows) {
    ONE ROW PER NOTICE, HOWEVER OFTEN THE REGISTER IS UPLOADED: the row's id is its notice
    reference (HMCL/HEN/24/09/2026-4), so an upload of the same register twice is the same rows
    twice -- upserted, never doubled. A row with no reference is keyed on its own facts. */
-/* THE ROW'S IDENTITY IS THE CUSTOMER -- "all the columns could go wrong so replace by ref no"
-   / "the whole column data". A re-upload's row for a customer overwrites that customer's
-   uploaded notice whatever else changed on the line (a corrected Kumb.Na., date, amount,
-   team or officer); a customer served more than once in one file keeps one row per line, in
-   the file's order (seq). A row with no reference is keyed on its own facts. The upload also
-   clears a customer's EARLIER uploaded notices before writing (upload.js replaceNoticesByRef),
-   so rows filed under the old Kumb.Na. key are replaced too. */
+/* ONE ROW PER KUMB.NA. -- the table keeps one notice per notice reference (the unique index
+   idx_demand_notice_id), so that is the row's identity. Keying on the customer alone ("replace
+   by ref no") ran a re-upload straight into that index -- "duplicate key value violates unique
+   constraint idx_demand_notice_id" -- the moment a Kumb.Na. stood on two lines: the same letter
+   listed twice, or listed again corrected. Those are ONE notice, the file's last line's columns
+   (upload.js dedupeByKey); the same customer under two Kumb.Na. is two notices. A line with no
+   Kumb.Na. is keyed on its customer and its place in the file (seq). "All the columns could go
+   wrong" is still honoured: the upload clears the earlier uploaded notices by REF NO AND by
+   Kumb.Na. before writing (upload.js replaceNoticesByRef), so whichever of the two was
+   corrected, the earlier row is replaced rather than doubled. */
 export function noticeRowId(o, seq = 0) {
   const t = v => String(v == null ? '' : v).trim().toUpperCase();
-  const key = t(o.ref) ? 'ref|' + t(o.ref) + '|' + seq
-    : [t(o.notice_id), t(o.notice_date).slice(0, 10), String(Number(o.total_demand) || 0), t(o.issued_by)].join('|');
+  const key = t(o.notice_id) ? 'kumb|' + t(o.notice_id) : 'ref|' + t(o.ref) + '|' + seq;
   const hex = createHash('md5').update('notice|' + key).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
@@ -682,7 +684,7 @@ export function importDemandNotices(csvRows) {
      them carry a 5/14 or a 5/23 that settles it for both. */
   const dayFirst = inferDayFirst(objs.flatMap(({ raw: r, h }) =>
     [col(r, h, 'NOTICE DATE', 'NOTICEDATE'), col(r, h, 'TIMESTAMP')]));
-  const seen = new Map();   // ref -> how many rows of this file already carry it (seq)
+  const seen = new Map();   // ref -> lines of this file already carrying it: the key of a line with no Kumb.Na.
   return objs.map(({ raw: r, h }) => {
     /* THE TIMESTAMP, ON ITS OWN DAY. A cell with a clock keeps it (24/09/2026 10:15 is
        07:15Z). A bare date ("7/13/2026") used to land at midnight EAT, which is 21:00Z the

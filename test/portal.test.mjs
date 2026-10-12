@@ -2981,29 +2981,42 @@ test('an uploaded register is filed under the team the sheet says, in the regist
 
 /* REPLACE BY REF NO -- "what i upload should replace the existing without deleting new ones
    like there is 1 2 3 4 5 and i reupload 1 2 3 then go overwrite demand 1 2 3 without deleting
-   4 5" / "all the columns could go wrong so replace by ref no" / "the whole column data". */
-test('a re-uploaded register replaces each customer\'s earlier uploaded notices and touches nothing else', async () => {
-  const { replaceNoticesByRef } = await import('../api/upload.js');
+   4 5" / "all the columns could go wrong so replace by ref no" / "the whole column data" -- and
+   by Kumb.Na. too: "duplicate key value violates unique constraint idx_demand_notice_id" was a
+   notice filed earlier under the wrong REF NO, which a match on REF NO alone left standing
+   beside the file's corrected line. */
+test('a re-uploaded register replaces the earlier uploaded notices by REF NO or Kumb.Na. and touches nothing else', async () => {
+  const { replaceNoticesByRef, noticeKumbClashes } = await import('../api/upload.js');
   const db = fakeDb({ demand_notices: [
-    // 1, 2, 3: uploaded earlier (two lines for 2), under the old Kumb.Na. key.
+    // 1, 2, 3: uploaded earlier (two lines for 2).
     { id: 'u1', ref: '1', team: 'A', notice_id: 'HMCL/1', upload_batch: 'old' },
     { id: 'u2', ref: '2', team: 'A', notice_id: 'HMCL/2', upload_batch: 'old' },
     { id: 'u2b', ref: '2', team: 'A', notice_id: 'HMCL/2-2', upload_batch: 'old' },
     { id: 'u3', ref: '3', team: 'B', notice_id: 'HMCL/3', upload_batch: 'old' },
+    // HMCL/6 filed earlier under the WRONG customer (9); the file has it under 6 -- found by Kumb.Na.
+    { id: 'u6', ref: '9', team: 'B', notice_id: 'HMCL/6', upload_batch: 'old' },
     // 4, 5: uploaded earlier, not in this file -- stay.
     { id: 'u4', ref: '4', team: 'B', notice_id: 'HMCL/4', upload_batch: 'old' },
     { id: 'u5', ref: '5', team: 'C', notice_id: 'HMCL/5', upload_batch: 'old' },
     // Issued in the app for customer 1 (no upload stamp) -- stays, whatever the file says.
     { id: 'app1', ref: '1', team: 'A', notice_id: 'HMCL/APP/1', upload_batch: null },
+    // Issued in the app under HMCL/7: the app's row stays and the file's line for it is held back.
+    { id: 'app7', ref: '7', team: 'A', notice_id: 'HMCL/7', upload_batch: null },
     // Written by THIS upload's earlier slice -- stays.
     { id: 'me3', ref: '3', team: 'B', notice_id: 'HMCL/3', upload_batch: 'this-batch' },
   ] });
-  const file = [{ ref: '1', team: 'A' }, { ref: '2', team: 'A' }, { ref: '3', team: 'B' }, { ref: '', team: 'X' }];
-  const removed = await replaceNoticesByRef(db, file, 'this-batch');
-  assert.equal(removed, 4, 'u1, u2, u2b and u3');
-  assert.deepEqual(db._dump('demand_notices').map(r => r.id).sort(), ['app1', 'me3', 'u4', 'u5']);
-  assert.equal(await replaceNoticesByRef(db, file, 'this-batch'), 0, 'nothing left to replace');
-  assert.equal(await replaceNoticesByRef(db, [], null), 0);
+  const file = [{ ref: '1', notice_id: 'HMCL/1' }, { ref: '2', notice_id: 'HMCL/2' }, { ref: '3', notice_id: 'HMCL/3' },
+    { ref: '6', notice_id: 'HMCL/6' }, { ref: '7', notice_id: 'HMCL/7' }, { ref: '', notice_id: '' }];
+  const out = await replaceNoticesByRef(db, file, 'this-batch');
+  assert.equal(out.removed, 5, 'u1, u2, u2b, u3 by REF NO and u6 by Kumb.Na.');
+  assert.deepEqual(db._dump('demand_notices').map(r => r.id).sort(), ['app1', 'app7', 'me3', 'u4', 'u5']);
+  assert.deepEqual(out.appHeld, ['HMCL/7']);
+  assert.deepEqual(out.records.map(r => r.ref), ['1', '2', '3', '6', ''], 'the line the app holds is not written');
+  assert.equal((await replaceNoticesByRef(db, file, 'this-batch')).removed, 0, 'nothing left to replace');
+  assert.equal((await replaceNoticesByRef(db, [], null)).removed, 0);
+  // One Kumb.Na. on two customers' lines is named: the table keeps one row per Kumb.Na.
+  assert.deepEqual(noticeKumbClashes([{ ref: '1', notice_id: 'HMCL/1' }, { ref: '8', notice_id: 'hmcl/1' }, { ref: '2', notice_id: 'HMCL/2' }]), ['HMCL/1: 1 & 8']);
+  assert.deepEqual(noticeKumbClashes(file), []);
 });
 
 /* LEGAL RECOVERY ON THE DECK -- "add legal recovery slide at presentation, todays and weekly

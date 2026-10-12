@@ -42,13 +42,21 @@ test('the Google Sheets DemandNotices register imports as it is, once', () => {
   assert.equal('current_arrears' in n, false, 'sheet formulas against a deck that has moved on are not imported');
   assert.match(n.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   assert.equal(importDemandNotices(rows)[0].id, n.id, 'the same notice is the same row');
-  /* "all the columns could go wrong so replace by ref no" / "the whole column data": the row's
-     identity is the customer, so a corrected Kumb.Na., date or amount on the same REF# is the
-     SAME row (overwritten), while a second line for the same customer in one file is its own. */
+  /* ONE ROW PER KUMB.NA. -- the table's own rule (idx_demand_notice_id), and the "duplicate key
+     value violates unique constraint" a customer-keyed re-upload ran into: a corrected date or
+     amount on the same Kumb.Na. is the SAME row, overwritten; the same Kumb.Na. twice is the
+     same row twice (collapsed at the write, the last line wins); the same customer under another
+     Kumb.Na. is their second notice; a line with no Kumb.Na. is keyed on the customer and its
+     place in the file, the same across uploads. */
   const corrected = importDemandNotices([header, [...rows[1].slice(0, 7), '25/09/2026', 14, 9999, ...rows[1].slice(10)]]);
-  assert.equal(corrected[0].id, n.id, 'same customer, other columns changed: the same row');
+  assert.equal(corrected[0].id, n.id, 'same Kumb.Na., other columns changed: the same row');
   const twice = importDemandNotices([header, rows[1], [...rows[1]]]);
-  assert.equal(twice.length, 2); assert.equal(twice[0].id, n.id); assert.notEqual(twice[1].id, n.id, 'a second line for the customer is its own row');
+  assert.equal(twice.length, 2); assert.equal(twice[1].id, n.id, 'the same Kumb.Na. twice is the same row twice');
+  const second = importDemandNotices([header, rows[1], ['HMCL/HEN/01/10/2026-2', ...rows[1].slice(1)]]);
+  assert.notEqual(second[1].id, n.id, 'the same customer under another Kumb.Na. is a second notice');
+  const noKumb = importDemandNotices([header, ['', ...rows[1].slice(1)], ['', ...rows[1].slice(1)]]);
+  assert.equal(noKumb.length, 2); assert.notEqual(noKumb[0].id, noKumb[1].id, 'no Kumb.Na.: the customer and the line');
+  assert.equal(importDemandNotices([header, ['', ...rows[1].slice(1)]])[0].id, noKumb[0].id, 'and the same across uploads');
   /* "Issued by SAID MPANYU · 2026-07-12" for a 7/13 row: a Timestamp with no clock landed at
      midnight EAT, 21:00Z the evening before. It lands at noon EAT now, on its own day. */
   const bare = importDemandNotices([['NoticeID', 'Timestamp', 'LegalOfficer', 'REF#', 'CustName', 'NoticeDate', 'Team'],

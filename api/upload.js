@@ -419,27 +419,58 @@ export async function placeNoticesOnSheetTeams(db, records) {
    like there is 1 2 3 4 5 and i reupload 1 2 3 then go overwrite demand 1 2 3 without deleting
    4 5" / "all the columns could go wrong so replace by ref no" / "the whole column data".
    Before the file's rows are written, every notice that an EARLIER UPLOAD filed for a customer
-   in this file is removed, so the file's row for that customer -- every column of it -- is
-   what stands. Customers the file does not mention keep theirs; notices issued in the app
-   carry no upload stamp and are never touched; rows this same upload wrote a slice ago (the
-   same batch) are kept, so a customer split across two slices does not lose a line. Chunked,
-   this rare upload only. */
+   in this file, OR under a Kumb.Na. in this file, is removed, so the file's row -- every column
+   of it -- is what stands. Both keys, because either can be the corrected column: a notice
+   filed earlier under the wrong REF NO is found by its Kumb.Na., one filed under the wrong
+   Kumb.Na. by its REF NO. Matching on REF NO alone left the first kind standing, and the write
+   then hit the table's one-row-per-Kumb.Na. index: "duplicate key value violates unique
+   constraint idx_demand_notice_id". Customers and Kumb.Na. the file does not mention keep
+   theirs; notices issued in the app carry no upload stamp and are never touched -- a file line
+   carrying a Kumb.Na. the app issued is left out and named (appHeld), the app's row being
+   somebody's work; rows this same upload wrote a slice ago (the same batch) are kept, so a
+   customer split across two slices does not lose a line. Chunked, this rare upload only. */
 export async function replaceNoticesByRef(db, records, batch) {
-  const refs = [...new Set(records.map(r => String(r.ref == null ? '' : r.ref).trim()).filter(Boolean))];
+  const S = v => String(v == null ? '' : v).trim();
+  const refs = [...new Set(records.map(r => S(r.ref)).filter(Boolean))];
+  const kumbs = [...new Set(records.map(r => S(r.notice_id)).filter(Boolean))];
+  const appHeld = new Set();
   let removed = 0;
-  for (let i = 0; i < refs.length; i += 400) {
-    const chunk = refs.slice(i, i + 400);
-    const q = () => { let s = db.from('demand_notices').select('id').not('upload_batch', 'is', null).in('ref', chunk); return batch ? s.neq('upload_batch', batch) : s; };
-    const { data: hits, error: rErr } = await q();
-    if (rErr) throw new Error('Could not read the earlier uploaded notices: ' + rErr.message);
-    if (!(hits || []).length) continue;
-    let d = db.from('demand_notices').delete().not('upload_batch', 'is', null).in('ref', chunk);
-    if (batch) d = d.neq('upload_batch', batch);
-    const { error } = await d;
-    if (error) throw new Error('Could not replace the earlier uploaded notices: ' + error.message);
-    removed += hits.length;
+  for (const [column, keys] of [['ref', refs], ['notice_id', kumbs]]) {
+    for (let i = 0; i < keys.length; i += 400) {
+      const chunk = keys.slice(i, i + 400);
+      const { data: hits, error: rErr } = await db.from('demand_notices').select('id, notice_id, upload_batch').in(column, chunk);
+      if (rErr) throw new Error('Could not read the earlier uploaded notices: ' + rErr.message);
+      let mine = 0;
+      for (const h of hits || []) {
+        if (h.upload_batch == null) { if (column === 'notice_id') appHeld.add(S(h.notice_id)); continue; }
+        if (batch && h.upload_batch === batch) continue;
+        mine++;
+      }
+      if (!mine) continue;
+      let d = db.from('demand_notices').delete().not('upload_batch', 'is', null).in(column, chunk);
+      if (batch) d = d.neq('upload_batch', batch);
+      const { error } = await d;
+      if (error) throw new Error('Could not replace the earlier uploaded notices: ' + error.message);
+      removed += mine;
+    }
   }
-  return removed;
+  return { removed, appHeld: [...appHeld].sort(),
+    records: appHeld.size ? records.filter(r => !appHeld.has(S(r.notice_id))) : records };
+}
+
+/* ONE KUMB.NA. ON TWO CUSTOMERS' LINES: the table keeps one row per Kumb.Na., so only the file's
+   last line is written (dedupeByKey). Named, so the register gets corrected rather than one
+   customer silently losing their notice. */
+export function noticeKumbClashes(records) {
+  const S = v => String(v == null ? '' : v).trim();
+  const by = new Map();
+  for (const r of records) {
+    const k = S(r.notice_id).toUpperCase();
+    if (!k) continue;
+    if (!by.has(k)) by.set(k, { kumb: S(r.notice_id), refs: new Set() });
+    by.get(k).refs.add(S(r.ref));
+  }
+  return [...by.values()].filter(x => x.refs.size > 1).map(x => `${x.kumb}: ${[...x.refs].join(' & ')}`);
 }
 
 export async function reconcileLoanIds(db, records) {
@@ -719,7 +750,7 @@ export default withApi(async (req, res) => {
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
   let table, records, commentsOrder = null, loansOrder, teamsDroppedCols = null;
-  let loansRelinked = 0, loansMerged = 0, receivedAbnormal = 0, receivedStep = 0, noticePlace = null, noticeReplaced = 0;
+  let loansRelinked = 0, loansMerged = 0, receivedAbnormal = 0, receivedStep = 0, noticePlace = null, noticeCleared = null, noticeClash = [];
   switch (type) {
     case 'defaulters-current':
     case 'defaulters-initial':
@@ -901,11 +932,13 @@ export default withApi(async (req, res) => {
       table = 'demand_notices';
       records = importDemandNotices(rows);
       // Each notice under the team the register says, in the registry's spelling -- see
-      // placeNoticesOnSheetTeams -- and the file's customers' EARLIER uploaded notices cleared
-      // first, so the file's row is what stands, every column of it (replaceNoticesByRef).
+      // placeNoticesOnSheetTeams -- and the EARLIER uploaded notices for the file's customers
+      // and Kumb.Na. cleared first, so the file's row is what stands, every column of it
+      // (replaceNoticesByRef). A Kumb.Na. on two customers' lines is named (noticeKumbClashes).
       noticePlace = await placeNoticesOnSheetTeams(supabase, records);
-      records = noticePlace.records;
-      noticeReplaced = await replaceNoticesByRef(supabase, records, partBatch);
+      noticeClash = noticeKumbClashes(noticePlace.records);
+      noticeCleared = await replaceNoticesByRef(supabase, noticePlace.records, partBatch);
+      records = noticeCleared.records;
       break;
     case 'pmo-deductions':
       // The Google Sheets Portfolio Monitoring register (Sheet1), keyed on each row's own facts.
@@ -1632,13 +1665,16 @@ export default withApi(async (req, res) => {
     dateOrder: commentsOrder ? (commentsOrder.dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
       : commentsOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
-    noticePlace: noticePlace ? { filed: noticePlace.filed, respelled: noticePlace.respelled, unknown: noticePlace.unknown, replaced: noticeReplaced } : undefined,
+    noticePlace: noticePlace ? { filed: noticePlace.filed, respelled: noticePlace.respelled, unknown: noticePlace.unknown,
+      replaced: noticeCleared ? noticeCleared.removed : 0, appHeld: noticeCleared ? noticeCleared.appHeld : [], clashes: noticeClash } : undefined,
     message: [
       /* WHERE EACH NOTICE WENT. A lawyer reads the Legal tab by team, so "it is in" is not
          enough: the answer says the notices are under the team the sheet gave them, how many
          of those were re-spelled to the registry's name, which teams nobody is scoped to see,
-         and that a re-upload overwrites by Kumb.Na. without touching anything else. */
-      noticePlace ? `${noticePlace.filed} notice(s) were filed under the team the sheet gives them${noticePlace.respelled ? `, ${noticePlace.respelled} of them under the registry's own spelling of that team` : ''}. ${noticePlace.unknown.length ? `⚠️ ${noticePlace.unknown.length} team name(s) are not in the Teams registry, so no legal officer is scoped to see those notices until the team is fixed: ${noticePlace.unknown.join(', ')}. ` : ''}${noticeReplaced ? `${noticeReplaced} earlier uploaded notice(s) for the customers in this file were REPLACED by the file's rows -- matched on REF NO, every column overwritten. ` : 'No earlier uploaded notice for these customers was found to replace. '}Customers not in the file, and notices issued in the app, were not touched. Each notice's recovery reads live from here on: arrears at notice against today's deck, and every payment the book records from the notice date, by REF# or the customer's phone.` : '',
+         and that a re-upload overwrites by REF NO or Kumb.Na. without touching anything else;
+         a line the app's own notice held back, and a Kumb.Na. on two customers' lines, are
+         NAMED -- a notice that is not in is not something to find out from a customer. */
+      noticePlace ? `${noticePlace.filed} notice(s) were filed under the team the sheet gives them${noticePlace.respelled ? `, ${noticePlace.respelled} of them under the registry's own spelling of that team` : ''}. ${noticePlace.unknown.length ? `⚠️ ${noticePlace.unknown.length} team name(s) are not in the Teams registry, so no legal officer is scoped to see those notices until the team is fixed: ${noticePlace.unknown.join(', ')}. ` : ''}${noticeCleared && noticeCleared.removed ? `${noticeCleared.removed} earlier uploaded notice(s) for the customers and Kumb.Na. in this file were REPLACED by the file's rows -- matched on REF NO or Kumb.Na., every column overwritten. ` : 'No earlier uploaded notice for these customers was found to replace. '}${noticeCleared && noticeCleared.appHeld.length ? `⚠️ ${noticeCleared.appHeld.length} line(s) of the file carry a Kumb.Na. that was issued in the app, and the app's own notice was kept -- those lines were NOT written: ${noticeCleared.appHeld.join(', ')}. ` : ''}${noticeClash.length ? `⚠️ ${noticeClash.length} Kumb.Na. stand on more than one customer's line in the file; one notice is kept per Kumb.Na., the file's LAST line -- correct the register and upload it again: ${noticeClash.join('; ')}. ` : ''}Customers not in the file, and notices issued in the app, were not touched. Each notice's recovery reads live from here on: arrears at notice against today's deck, and every payment the book records from the notice date, by REF# or the customer's phone.` : '',
       /* NAMED, not counted. This is the line that would have ended a week of searching. */
       skipped ? `\u26a0\ufe0f ${skipped} row(s) of the ${dataRows} in this file were NOT uploaded, because their reference column could not be read. They are not in the system and no screen can show them. Check the header spelling of the reference column against the rest of the file. Skipped: ${skippedNames.join('; ')}${skipped > skippedNames.length ? `; and ${skipped - skippedNames.length} more` : ''}.` : '',
       loansOrder !== undefined ? `Dates in this file were read as ${loansOrder === null ? 'DAY/MONTH (nothing in the file said which way round it writes them)' : loansOrder ? 'DAY/MONTH' : 'MONTH/DAY'}. Check one row against the report if a figure looks like it landed in the wrong month.` : '',
