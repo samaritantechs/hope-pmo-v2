@@ -1567,10 +1567,23 @@ test('the presentation carries a legal recovery slide with today and the week pe
    the single card on top too": a card on the headline row fed by dashboardFull's own fold, and
    two boards (today, the week) per legal officer fed by officerBoards' legal rows, after the
    recovery boards, with the JUMLA percentages worked out from the totals. */
+/* "Recovered since notice card, in demands - add % figure infront of amount in the same
+   card." The Legal tab's card reads "48% · 1,100", the percentage from the server (of what the
+   letters chased), and names the owed figure underneath. */
+test('the Legal tab\'s Recovered since notice card carries the Rec % in front of the amount', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 6000);
+  assert.ok(/kpi\('Recovered since notice',\s*\(d\.recoveredPct != null \? pct\(d\.recoveredPct\) \+ ' · ' : ''\) \+ money\(d\.recoveredSince\)/.test(view),
+    'the percentage first, then the amount, in the one card');
+  assert.ok(/d\.owed > 0 \? 'ya \/ of TZS ' \+ money\(d\.owed\)/.test(view), 'and what it is a percentage of, underneath');
+});
+
 test('the dashboard carries a legal recovery card on top and today/week boards by legal officer', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('DASH_LOAD_BOARDS_ = function'));
   assert.ok(/kpi\('Legal recovery', money\(lg\.tRecovered \|\| 0\)/.test(view), 'the card, today\'s figure first');
+  // pct() rounds the figure as sent (36.2 -> "36%"); pct(lg.pct / 100) was printing "(0%)".
+  assert.ok(/pct\(lg\.pct\)/.test(view) && !/pct\(lg\.pct \/ 100\)/.test(view), 'the week\'s share is not divided by a hundred first');
   assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by dashboardFull, not by the boards wave');
   assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on the card');
   assert.ok(view.indexOf("kpi('Abnormal payments'") < view.indexOf("kpi('Legal recovery'"), 'on the headline row, after the abnormal payments card');

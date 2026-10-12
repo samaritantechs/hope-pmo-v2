@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-e';
+var BUILD = '2026-10-12-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3638,7 +3638,9 @@ VIEWS.dashboard = function(){
       + (function(){ var lg = d.legal || {};
           return kpi('Legal recovery', money(lg.tRecovered || 0),
             lg.on === false ? (lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
-              : 'wiki / week TZS ' + money(lg.recovered || 0) + (lg.pct != null ? ' (' + pct(lg.pct / 100) + ')' : '')
+              /* pct() takes the percentage as the server sends it (36.2 -> "36%"); dividing
+                 by a hundred first was showing "(0%)" beside every week's figure. */
+              : 'wiki / week TZS ' + money(lg.recovered || 0) + (lg.pct != null ? ' (' + pct(lg.pct) + ')' : '')
                 + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed · owed TZS ' + money(lg.owed || 0),
             lg.on === false ? '' : ((lg.tRecovered || 0) > 0 ? 'good' : '')); })()
       + '</div>'
@@ -6320,8 +6322,13 @@ VIEWS.legal = function(){
          rergadless the arreas difference and the payments within notice are all recoveries":
          what the customer PAID since the notice (the received-payments book, db/RUN-ME-040)
          and how far their arrears fell. Recovered is the larger of the two, per notice. */
-      + kpi('Recovered since notice', money(d.recoveredSince),
-            money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
+      /* THE PERCENTAGE IN FRONT OF THE AMOUNT -- "add % figure infront of amount in the same
+         card": of what the letters chased (each customer's arrears at notice, once per person),
+         how much came back. The same Rec % the dashboard's legal card and the slide carry. */
+      + kpi('Recovered since notice',
+            (d.recoveredPct != null ? pct(d.recoveredPct) + ' · ' : '') + money(d.recoveredSince),
+            (d.owed > 0 ? 'ya / of TZS ' + money(d.owed) + ' zilizodaiwa / owed at notice · ' : '')
+              + money(d.cleared) + ' wamemaliza / cleared' + (d.asOf ? ' · deki ya ' + esc(d.asOf) : ''),
             d.recoveredSince > 0 ? 'good' : '')
       + (d.paymentsOn ? kpi('Paid since notice', money(d.paidSince),
             'malipo yaliyopokelewa baada ya notisi / received after the notice'
