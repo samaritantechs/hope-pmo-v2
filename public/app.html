@@ -708,7 +708,8 @@ var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
+  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1,
+  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
@@ -728,7 +729,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-n';
+var BUILD = '2026-10-12-o';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -948,6 +949,14 @@ var NAV = [
      in the left pannel"). Granted like `audit`: admins from the start, then whoever the tab
      is ticked for. */
   { id:'deduct',      label:'Makato ya PMO / PMO Deduction', ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/><path d="M15 15l2 2 4-4"/>' },
+  /* SALARY ADVANCE -- the HOPE advance-request Google Sheet moved in ("We need to shift that
+     into the app too"), four navs so each can be granted on its own on Roles & access: the
+     ask (field officers, on their team's code -- the FIELD OFFICER role), the GMO's desk, the
+     report with the bank accounts, HR's staff registry. */
+  { id:'advreq',      label:'Omba advance / Advance request', ic:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>' },
+  { id:'advappr',     label:'Idhini ya advance / Advance approval', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+  { id:'advrep',      label:'Ripoti ya advance / Advance report', ic:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>' },
+  { id:'advstaff',    label:'Wafanyakazi (HR) / HR staff data', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   { id:'legal',       label:'Legal / Demand Notices', ic:'<path d="M3 6l9-3 9 3"/><path d="M6 9v7a6 6 0 0 0 12 0V9"/><path d="M3 6l3 3M21 6l-3 3"/>' },
   { id:'restructure', label:'Loan Restructuring', ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
   { id:'credit',      label:'Credit Analysts', ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
@@ -6452,6 +6461,245 @@ function dedReport(){
   Array.prototype.forEach.call(root.querySelectorAll('[data-csv]'), function(el){ el.onclick = function(e){ e.stopPropagation(); exportBoard(el.getAttribute('data-csv'), 'csv'); }; });
 }
 
+/* =====================================================================================
+   SALARY ADVANCE -- the HOPE advance-request Google Sheet, moved in: "I found the this file
+   looks suspicious warning on the google sheet for Hope advance requests. We need to shift
+   that into the app too ... like how we moved the imprests and legal demands.. even the pmo
+   system at large". Four tabs, each its own nav and its own tick on Roles & access: advreq
+   (the ask), advappr (the GMO's desk), advrep (the report), advstaff (HR's registry).
+
+   The server decides the ZONE from the sign-in -- a team code is the team's zone on Teams &
+   Staff; a GMO's code is their teams' zones; HR and admins see every zone -- so a shared team
+   screen lists only its own zone's names ("to keep privacy") and nothing else about anyone.
+   ===================================================================================== */
+function advApprCls_(r){ var a = String(r.approval||'').toUpperCase(); return a === 'APPROVED' ? 'good' : a === 'DISAPPROVED' ? 'bad' : ''; }
+/* THE ASK. Pick your own name (your zone's list), the date, one of the amounts; the month's
+   rule and the amounts come from the server. Your own history sits below once a name is picked. */
+VIEWS.advreq = function(){
+  var staffId = S.args.staffId || '';
+  return srv('advRequestPage', { staffId: staffId }).then(function(d){
+    S.advReq = d;
+    var c = d.chosen;
+    var manyZones = !(d.zones && d.zones.length === 1);
+    HEAD = (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.noZoneTeams && d.noZoneTeams.length
+          ? '<div class="note bad">Timu hizi hazina zone kwenye Teams & Staff, hivyo wafanyakazi wake hawaonekani hapa: ' + esc(d.noZoneTeams.join(', '))
+            + '. / These teams carry no zone on Teams & Staff, so their staff cannot be listed here. Set the zone there and come back.</div>' : '')
+      + '<div class="card"><div class="card-h">📝 Ombi la advance ya mshahara / Advance salary request'
+        + '<span class="sub">' + esc(d.zones && d.zones.length ? 'zone: ' + d.zones.join(', ') : 'zone zote / every zone') + '</span></div>'
+      + '<div class="cleanbox">'
+      + '<div class="fld"><label>Jina lako / Your name *</label>'
+        + '<select data-arg="staffId"><option value="">— chagua jina lako / pick your name —</option>'
+        + (d.staff || []).map(function(s){
+            return '<option value="' + esc(s.id) + '"' + (c && c.id === s.id ? ' selected' : '') + '>' + esc(s.name)
+              + (s.role ? ' · ' + esc(s.role) : '') + (manyZones && s.zone ? ' (' + esc(s.zone) + ')' : '') + '</option>'; }).join('')
+        + '</select>'
+        + '<div class="fldnote">Majina ya zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your zone\'s names; nothing else about anyone is shown.</div></div>'
+      + (c
+          ? '<div class="facts">'
+              + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id) + '</b></div>'
+              + '<div class="frow"><span>Jina / Name</span><b>' + esc(c.name) + '</b></div>'
+              + '<div class="frow"><span>Wadhifa / Role</span><span>' + esc(c.role || '—') + '</span></div>'
+              + '<div class="frow"><span>Zone</span><span>' + esc(c.zone || '—') + '</span></div></div>'
+            + (d.monthTaken
+                ? '<div class="note bad">⚠️ Tayari kuna ombi la mwezi huu (' + esc(d.month) + '): TZS ' + money(d.monthTaken.amount) + ' · ' + esc(d.monthTaken.approval)
+                  + '. Ombi moja tu kwa mwezi. / You already have an advance request this month. Only one request per month is allowed.</div>'
+                : '<div class="fld"><label>Tarehe ya maombi / Application date</label><input id="advDate" type="date" value="' + today() + '"></div>'
+                  + '<div class="fld"><label>Kiasi (TZS) / Amount</label><select id="advAmount">'
+                  + (d.amounts || []).map(function(a){ return '<option value="' + a + '">' + money(a) + '</option>'; }).join('') + '</select></div>'
+                  + '<button class="btn w" id="advSubmit">Tuma ombi / Submit request</button>')
+          : '<div class="sub">Chagua jina lako kuona fomu na historia yako. / Pick your name to see the form and your own history.</div>')
+      + '</div></div>';
+    S.rows = c ? (d.mine || []) : [];
+    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('app_date','Tarehe ya maombi / App date','date'),
+      col('amount','Kiasi / Amount','money'), {key:'approval', label:'Idhini / Approval', cls:advApprCls_},
+      col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'), col('decided_at','Uamuzi / Decided','dt')];
+    ONROW = null;
+    S.foot = c ? money(S.rows.length) + ' maombi / requests · ' + c.name : '';
+  });
+};
+function advSubmit(){
+  var d = S.advReq || {}; var c = d.chosen; if (!c) return;
+  var amount = $('#advAmount').value, date = $('#advDate').value;
+  if (!date){ toast('Chagua tarehe ya maombi. / Pick the application date.', true); return; }
+  if (!confirm('Tuma ombi la advance la TZS ' + money(amount) + ' kwa jina la ' + c.name + '? / Submit an advance request of TZS ' + money(amount) + ' for ' + c.name + '?')) return;
+  srv('advRequest', { staffId: c.id, appDate: date, amount: amount })
+    .then(function(r){ toast('✅ Ombi limetumwa: TZS ' + money(r.amount) + '. / Advance request submitted.'); render({ force:true }); })
+    .catch(function(e){ toast(String(e.message||e), true); });
+}
+/* THE GMO'S DESK: the sheet's bulk approval, with the zone enforced by the sign-in. Tick,
+   choose, comment, save; what was decided in the last fourteen days sits below. */
+VIEWS.advappr = function(){
+  var zone = S.args.zone || '';
+  return srv('advQueue', { zone: zone }).then(function(d){
+    S.advQ = d;
+    var pend = d.pending || [];
+    HEAD = '<div class="kpis">'
+      + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
+      + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')
+      + kpi('Yaliyoamuliwa (siku 14) / Decided (14 days)', money((d.recent||[]).length))
+      + '</div>'
+      + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.noZoneTeams && d.noZoneTeams.length
+          ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(d.noZoneTeams.join(', '))
+            + '. / Teams with no zone on Teams & Staff: their officers\' requests cannot reach this desk until the zone is set.</div>' : '')
+      + bar('<select data-arg="zone"><option value="">Zone zote / All zones</option>'
+          + (d.zones||[]).map(function(z){ return '<option' + (zone===z?' selected':'') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
+          + (pend.length ? '<button class="btn sm" id="advDecideSave" style="margin-left:auto">💾 Hifadhi maamuzi / Save decisions</button>' : ''))
+      + '<div class="card"><div class="card-h">✅ Idhinisha maombi ya advance / Approve advance requests'
+        + '<span class="sub">tiki · chagua · andika maoni · hifadhi / tick · choose · comment · save</span></div>'
+      + (pend.length
+          ? '<div class="scroll"><table><thead><tr><th>✔</th><th>Staff</th><th>Zone</th><th class="r">Kiasi / Amount</th><th>Tarehe / App date</th><th>Imetumwa / Submitted</th><th>Idhini / Approval</th><th>Maoni / Comment</th></tr></thead><tbody>'
+            + pend.map(function(r, i){
+                return '<tr><td><input type="checkbox" class="advChk" data-i="' + i + '"></td>'
+                  + '<td><b>' + esc(r.staff_name||'') + '</b><br><span style="color:var(--mut);font-size:11px">' + esc(r.staff_id||'') + (r.staff_role ? ' · ' + esc(r.staff_role) : '') + '</span></td>'
+                  + '<td>' + esc(r.zone||'') + '</td><td class="r">' + money(r.amount) + '</td>'
+                  + '<td>' + esc(String(r.app_date||'').slice(0,10)) + '</td><td>' + esc(String(r.submitted_at||'').replace('T',' ').slice(0,16)) + '</td>'
+                  + '<td><select class="advSel" data-i="' + i + '">' + (d.approvals||['Approved','Disapproved']).map(function(a){ return '<option>' + esc(a) + '</option>'; }).join('') + '</select></td>'
+                  + '<td><input class="advCom" data-i="' + i + '" placeholder="Maoni / Comment"></td></tr>';
+              }).join('')
+            + '</tbody></table></div>'
+          : '<div class="note">Hakuna ombi linalosubiri. / No pending requests.</div>')
+      + '</div>';
+    S.rows = d.recent || [];
+    S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Staff'), col('staff_id','Staff ID'), col('zone','Zone'),
+      col('amount','Kiasi / Amount','money'), {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'),
+      col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')];
+    ONROW = null;
+    S.foot = 'Yaliyoamuliwa siku 14 zilizopita / Decided in the last 14 days: ' + money(S.rows.length);
+  });
+};
+function advDecideSave(){
+  var d = S.advQ || {}; var pend = d.pending || [];
+  var checked = Array.prototype.filter.call(document.querySelectorAll('.advChk'), function(c){ return c.checked; });
+  if (!checked.length){ toast('Tiki angalau ombi moja. / Tick at least one request.', true); return; }
+  var updates = checked.map(function(c){
+    var i = Number(c.getAttribute('data-i'));
+    return { id: pend[i].id, approval: document.querySelector('.advSel[data-i="' + i + '"]').value,
+      comment: document.querySelector('.advCom[data-i="' + i + '"]').value.trim() };
+  });
+  if (!confirm('Hifadhi maamuzi ' + updates.length + '? / Save ' + updates.length + ' decision(s)?')) return;
+  srv('advDecide', { updates: updates })
+    .then(function(r){
+      toast('Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved'
+        + (r.skipped && r.skipped.length ? ' · ' + r.skipped.join('; ') : '') + '.');
+      render({ force:true }); })
+    .catch(function(e){ toast(String(e.message||e), true); });
+}
+/* THE REPORT the sheet exported: a window, Approved by default, by zone, with the bank and
+   account beside each line so payroll can pay off the board (its own Excel / CSV buttons). */
+VIEWS.advrep = function(){
+  var from = S.args.from || '', to = S.args.to || '', approval = S.args.approval || '';
+  return srv('advReport', { from: from, to: to, approval: approval }).then(function(d){
+    S.advRep = d;
+    HEAD = '<div class="kpis">'
+      + kpi('Maombi / Requests', money(d.count), d.from + ' → ' + d.to + ' · ' + (d.approval === 'ALL' ? 'yote / all' : d.approval))
+      + kpi('Jumla / Amount', money(d.amount), 'TZS')
+      + kpi('Yaliyoidhinishwa / Approved', money(d.approved), null, 'good')
+      + kpi('Kiasi kilichoidhinishwa / Approved TZS', money(d.approvedAmount), 'kwa payroll / for payroll', 'good')
+      + '</div>'
+      + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + bar('<input type="date" data-arg="from" value="' + esc(d.from) + '">'
+        + '<input type="date" data-arg="to" value="' + esc(d.to) + '">'
+        + '<select data-arg="approval">' + (d.approvals||[]).map(function(a){
+            return '<option value="' + esc(a) + '"' + (String(d.approval).toUpperCase() === a.toUpperCase() ? ' selected' : '') + '>' + esc(a === 'ALL' ? 'Yote / All' : a) + '</option>'; }).join('') + '</select>'
+        + '<select data-filter="zone"><option value="">Zone zote / All zones</option>'
+        + (d.zones||[]).map(function(z){ return '<option' + (S.filters.zone===z?' selected':'') + '>' + esc(z) + '</option>'; }).join('') + '</select>')
+      + board('advRepZones', 'Kwa zone / By zone', 'maombi na kiasi kwa kila zone / requests and amount per zone', d.summary || [],
+          [col('zone','Zone'), col('requests','Maombi / Requests','num'), col('amount','Kiasi / Amount','money'),
+           col('approved','Approved','num'), col('approvedAmount','Approved TZS','money')],
+          sumRow(d.summary || [], ['requests','amount','approved','approvedAmount']));
+    S.rows = d.rows || [];
+    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_id','Staff ID'), col('staff_name','Staff'), col('staff_role','Wadhifa / Role'),
+      col('zone','Zone'), col('app_date','Tarehe ya maombi / App date','date'), col('amount','Kiasi / Amount','money'),
+      {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'),
+      col('bank','Benki / Bank'), col('account','Akaunti / Account'), col('code','Kupitia / Via')];
+    ONROW = null;
+    S.foot = money(d.count) + ' maombi / requests · TZS ' + money(d.amount) + ' · approved TZS ' + money(d.approvedAmount);
+  });
+};
+/* HR'S REGISTRY: the sheet's DATABASE tab. Search is the card's own box; a row opens the form;
+   New staff gets its ID generated (initials / running number / year) and its birth date read
+   off the NIDA number. */
+VIEWS.advstaff = function(){
+  return srv('advStaff', {}).then(function(d){
+    S.advStaffMeta = d;
+    HEAD = '<div class="kpis">'
+      + kpi('Wafanyakazi / Staff', money(d.total), money(d.active) + ' active')
+      + kpi('Zone', money((d.zones||[]).length), (d.zones||[]).join(', '))
+      + kpi('ID inayofuata / Next serial', esc(String(d.nextSerial||'')), 'herufi za kwanza / ' + esc(String(d.nextSerial||'')).padStart(3, '0') + ' / ' + esc(String(d.year||'')))
+      + '</div>'
+      + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.noZoneTeams && d.noZoneTeams.length
+          ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(d.noZoneTeams.join(', '))
+            + '. / Teams with no zone on Teams & Staff: set it there so their officers find their names on the request tab.</div>' : '')
+      + bar('<select data-filter="zone"><option value="">Zone zote / All zones</option>'
+        + (d.zones||[]).map(function(z){ return '<option' + (S.filters.zone===z?' selected':'') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
+        + '<select data-filter="status"><option value="">Active + Inactive</option>'
+          + '<option value="ACTIVE"' + (S.filters.status==='ACTIVE'?' selected':'') + '>Active</option>'
+          + '<option value="INACTIVE"' + (S.filters.status==='INACTIVE'?' selected':'') + '>Inactive</option></select>'
+        + '<button class="btn sm" id="newStaff">+ Staff mpya / New staff</button>');
+    S.rows = d.rows || [];
+    S.cols = [col('id','ID'), col('name','Jina / Name'), col('role','Wadhifa / Role'), col('zone','Zone'), col('phone','Simu / Phone'),
+      col('bank','Benki / Bank'), col('account','Akaunti / Account'), col('reg_date','Usajili / Reg date','date'),
+      col('birth_date','Kuzaliwa / Birth date','date'),
+      {key:'status', label:'Status', cls:function(r){ return String(r.status||'').toUpperCase()==='INACTIVE' ? 'bad' : 'good'; }}];
+    ONROW = advStaffForm;
+    S.foot = money(d.count) + ' staff · ' + money(d.active) + ' active';
+  });
+};
+function advStaffForm(x){
+  var m = S.advStaffMeta || { zones: [] };
+  var isNew = !x;
+  var v = function(k){ return x && x[k] != null ? x[k] : ''; };
+  var fld = function(id, label, val, type, extra){
+    return '<div class="fld"><label>' + label + '</label><input id="' + id + '" type="' + (type||'text') + '" value="' + esc(String(val)) + '"' + (extra||'') + '></div>'; };
+  drawer('<h3>' + (isNew ? 'Staff mpya / New staff' : esc(x.name)) + '</h3>'
+    + '<div class="sub">' + (isNew
+        ? 'ID itatengenezwa: herufi za kwanza za jina / namba ya mfululizo / mwaka (mf. JMM/001/2026). / The ID is generated: initials / running number / year.'
+        : 'ID: <b>' + esc(x.id) + '</b> · ' + esc(x.status||'')) + '</div>'
+    + fld('asReg', 'REG-DATE', v('reg_date') ? String(v('reg_date')).slice(0,10) : today(), 'date')
+    + fld('asId', 'ID (acha wazi itengenezwe / leave blank to generate)', v('id'), 'text', isNew ? '' : ' readonly')
+    + fld('asName', 'STAFF NAME *', v('name'))
+    + fld('asPhone', 'PHONE', v('phone'), 'tel') + fld('asPhone2', 'PHONE 2', v('phone2'), 'tel')
+    + fld('asRole', 'ROLE', v('role'))
+    + fld('asRes', 'Residence', v('residence'))
+    + fld('asBank', 'BANK NAME', v('bank')) + fld('asAcc', 'ACCOUNTS', v('account'))
+    + '<div class="fld"><label>ZONE (chini ya GMO / under GMO) *</label><input id="asZone" list="asZones" value="' + esc(v('zone')) + '">'
+      + '<datalist id="asZones">' + (m.zones||[]).map(function(z){ return '<option value="' + esc(z) + '">'; }).join('') + '</datalist>'
+      + '<div class="fldnote">Zone kama ilivyo kwenye Teams & Staff, ndiyo inayomfanya afisa aone jina lake. / The zone as Teams & Staff spells it: that is what lets an officer find this name.</div></div>'
+    + fld('asNida', 'NIDA-No', v('nida'), 'text', ' inputmode="numeric"')
+    + fld('asBirth', 'BIRTH DATE (kutoka NIDA / from the NIDA number)', v('birth_date') ? String(v('birth_date')).slice(0,10) : '', 'date')
+    + fld('asG1', 'JINA LA MDHAMINI', v('guarantor1')) + fld('asG1P', 'SIMU YA MDHAMINI', v('guarantor1_phone'), 'tel')
+    + fld('asG2', 'JINA LA MDHAMINI 2', v('guarantor2')) + fld('asG2P', 'SIMU YA MDHAMINI 2', v('guarantor2_phone'), 'tel')
+    + fld('asTin', 'TIN-No', v('tin')) + fld('asNssf', 'NSSF-No', v('nssf'))
+    + '<button class="btn w" id="asSave">Hifadhi / Save</button>'
+    + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px" id="asStatus">'
+        + (String(x.status||'').toUpperCase()==='INACTIVE' ? '● Weka Active / Set Active' : '○ Weka Inactive / Set Inactive') + '</button>'));
+  // The birth date follows the NIDA number as it is typed: its first eight digits, YYYYMMDD.
+  $('#asNida').oninput = function(){
+    var dg = String($('#asNida').value).replace(/\D/g, '');
+    if (dg.length >= 8) $('#asBirth').value = dg.slice(0,4) + '-' + dg.slice(4,6) + '-' + dg.slice(6,8);
+  };
+  $('#asSave').onclick = function(){
+    if (!$('#asName').value.trim()){ toast('Jina linahitajika. / The name is required.', true); return; }
+    if (!$('#asZone').value.trim()){ toast('Chagua zone. / Pick the zone.', true); return; }
+    srv('advStaffSave', { id: $('#asId').value, regDate: $('#asReg').value, name: $('#asName').value, phone: $('#asPhone').value, phone2: $('#asPhone2').value,
+      role: $('#asRole').value, residence: $('#asRes').value, bank: $('#asBank').value, account: $('#asAcc').value, zone: $('#asZone').value,
+      nida: $('#asNida').value, birthDate: $('#asBirth').value, guarantor1: $('#asG1').value, guarantor1Phone: $('#asG1P').value,
+      guarantor2: $('#asG2').value, guarantor2Phone: $('#asG2P').value, tin: $('#asTin').value, nssf: $('#asNssf').value,
+      status: x ? x.status : 'Active' })
+      .then(function(r){ toast((r.created ? 'Imeongezwa / Added: ' : 'Imehifadhiwa / Saved: ') + r.id); closeDrawer(); render({ force:true }); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+  if (!isNew) $('#asStatus').onclick = function(){
+    var next = String(x.status||'').toUpperCase()==='INACTIVE' ? 'Active' : 'Inactive';
+    srv('advStaffStatus', { id: x.id, status: next })
+      .then(function(){ toast(x.name + ' → ' + next); closeDrawer(); render({ force:true }); })
+      .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
+
 VIEWS.restructure = function(){
   return srv('restructures').then(function(d){
     var st = d.strategy;
@@ -9865,7 +10113,10 @@ VIEWS.settings = function(){
         + (ac.roles||[]).map(function(r, i){
             var n = (ac.rows||[]).filter(function(x){ return String(x.role||'').toUpperCase() === String(r.role||'').toUpperCase(); }).length;
             return '<tr class="clickrow" data-role="'+esc(r.role)+'"><td class="sn">'+(i+1)+'</td>'
-              + '<td><b>'+esc(r.role)+'</b></td>'
+              /* "I Need to see team / F.O (Field officer) at Nafasi na ruhusa / Roles & access":
+                 the row every team code signs in under -- tick it, and every field officer on
+                 a team code holds those tabs. */
+              + '<td><b>'+esc(r.role)+'</b>'+(r.teamCodes ? ' <span class="chip mut">F.O · misimbo ya timu / team codes</span>' : '')+'</td>'
               /* A role that has never been given a row reads differently from one deliberately
                  emptied, and on a screen being filled in from scratch that difference is the
                  whole point -- it says "this one is still waiting for you". */
@@ -13177,6 +13428,13 @@ function wireForms(){
   if (ndd) ndd.onclick = function(){ dedNew(); };
   var drp = document.getElementById('dedReport');
   if (drp) drp.onclick = function(){ dedReport(); };
+  // Salary advance: the ask, the GMO's bulk decision, HR's new-staff form.
+  var asb = document.getElementById('advSubmit');
+  if (asb) asb.onclick = function(){ advSubmit(); };
+  var adc = document.getElementById('advDecideSave');
+  if (adc) adc.onclick = function(){ advDecideSave(); };
+  var ans = document.getElementById('newStaff');
+  if (ans) ans.onclick = function(){ advStaffForm(null); };
   // Restructuring starts from the CUSTOMER, not from a blank form: you cannot type an
   // arrears figure that disagrees with the deck, and every derived number is computed rather
   // than entered. The old form asked for arrears, total, installments AND per-installment by

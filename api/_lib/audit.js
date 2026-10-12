@@ -50,6 +50,9 @@ export const AUDITED = new Set([
   'addRestructure', 'decideRestructure', 'addDemandNotice',
   // PMO deductions: a case names staff and money; HR's deduction is a write against a salary.
   'addDeduction', 'hrDeduction',
+  // Salary advance: a staff record is somebody's identity and bank account; a request and a
+  // decision are money against a salary.
+  'advStaffSave', 'advStaffStatus', 'advRequest', 'advDecide',
   // destructive maintenance
   'purgeSnapshots', 'purgeSuperseded', 'followupClean',
   /* THE COMPANY PHONE REGISTER. Locking a handset is an act against a named employee, and

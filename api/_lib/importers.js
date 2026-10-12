@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, nameOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst, nearestToDayIsDayFirst } from './parse.js';
+import { buildHeaderMap, normalizeHeader, col, num, dateOrNull, timeOrNull, dsText, normPhone, textOrNull, nameOrNull, normTeam, stampOrNull, inferDayFirst, tightestSpanIsDayFirst, nearestToDayIsDayFirst,
+  digitsCell, accountCell, phoneCell, nidaBirth } from './parse.js';
 
 // Every importer takes the raw parsed CSV rows (array of arrays, row 0 = headers) and
 // returns an array of objects ready to insert. Mapping is by HEADER NAME, not column
@@ -772,6 +773,92 @@ export function importDeductions(csvRows) {
     row.id = deductionRowId(row);
     return row;
   }).filter(x => x.staff && (x.ref || x.customer) && x.submitted_at);
+}
+
+/* THE STAFF_FUNDS WORKBOOK -- the HOPE advance-request system, moved in: "We need to shift
+   that into the app too ... I will also need to upload previous existing advances". Two of its
+   tabs are uploaded, once each:
+     DATABASE          ` (the registration date sits under a backtick header) | ID | STAFF NAME
+                       | PHONE | PHONE2 | ROLES | Residence | BANK NAME | ACCOUNTS | ZONE | NIDA
+                       | BIRTH DATE | JINA LA MDHAMINI | SIMU YA MDHAMINI | JINA LA MDHAMINI2 |
+                       SIMU YA MDHAMINI2 | TIN | NSSF | the twelve month columns | INITIALS ...
+     ADVANCE REQUESTS  TIMESTAMP | STAFF ID | STAFF NAME | TEAM/ROLE | APPLICATION DATE |
+                       REQUESTED | APPROVAL | COMMENT | ZONE | CODE | ACCOUNTS
+   The registry keeps the sheet's own IDs (the portal generates one only for staff typed in);
+   the birth date is read off the NIDA number, as asked, and off the sheet's column only when
+   there is no NIDA. Names and zones are stored upper-cased, so a zone typed on Teams & Staff,
+   on the HR form and in this file is one zone. The month-by-month activity columns are not
+   imported: the portal keeps one STATUS, Active unless the file says Inactive. */
+const advStatus_ = v => (/inactive|off|hapana|^no$|^0$/i.test(String(v == null ? '' : v).trim()) ? 'Inactive' : 'Active');
+export function importStaffRegistry(csvRows) {
+  const objs = rowsToObjects(csvRows);
+  const regOf = (r, h) => col(r, h, 'REG-DATE', 'REG DATE', 'REGDATE', 'REGISTRATION DATE', 'DATE', '`');
+  const dayFirst = inferDayFirst(objs.flatMap(({ raw: r, h }) => [regOf(r, h), col(r, h, 'BIRTH DATE', 'BIRTHDATE')]));
+  return objs.map(({ raw: r, h }) => {
+    const nida = digitsCell(col(r, h, 'NIDA-NO', 'NIDA NO', 'NIDA'));
+    const id = textOrNull(col(r, h, 'ID', 'STAFF ID'));
+    return {
+      id: id ? id.toUpperCase().replace(/\s+/g, '') : null,
+      reg_date: dateOrNull(dateCell_(regOf(r, h)), dayFirst),
+      name: normTeam(col(r, h, 'STAFF NAME', 'NAME', 'FULL NAME')),
+      phone: phoneCell(col(r, h, 'PHONE', 'PHONE1', 'SIMU')),
+      phone2: phoneCell(col(r, h, 'PHONE2', 'PHONE 2')),
+      role: textOrNull(col(r, h, 'ROLE', 'ROLES')),
+      residence: textOrNull(col(r, h, 'RESIDENCE', 'MAKAZI')),
+      bank: textOrNull(col(r, h, 'BANK NAME', 'BANK')),
+      account: accountCell(col(r, h, 'ACCOUNTS', 'ACCOUNT', 'ACCOUNT NO')),
+      zone: normTeam(col(r, h, 'ZONE', 'ZONE (UNDER GMO)')),
+      nida,
+      birth_date: nidaBirth(nida) || dateOrNull(dateCell_(col(r, h, 'BIRTH DATE', 'BIRTHDATE', 'BIRTH DATE(GENERATED FROM NIDA NO)')), dayFirst),
+      guarantor1: textOrNull(col(r, h, 'JINA LA MDHAMINI', 'GUARANTOR', 'GUARANTOR 1')),
+      guarantor1_phone: phoneCell(col(r, h, 'SIMU YA MDHAMINI', 'GUARANTOR PHONE', 'GUARANTOR 1 PHONE')),
+      guarantor2: textOrNull(col(r, h, 'JINA LA MDHAMINI2', 'JINA LA MDHAMINI 2', 'GUARANTOR 2')),
+      guarantor2_phone: phoneCell(col(r, h, 'SIMU YA MDHAMINI2', 'SIMU YA MDHAMINI 2', 'GUARANTOR 2 PHONE')),
+      tin: digitsCell(col(r, h, 'TIN-NO', 'TIN NO', 'TIN')),
+      nssf: digitsCell(col(r, h, 'NSSF-NO', 'NSSF NO', 'NSSF')),
+      status: advStatus_(col(r, h, 'STATUS') || 'Active'),
+    };
+  }).filter(x => x.id && x.name);
+}
+/** One request is its submission time, the staff and the amount together, so the register can
+    be uploaded again after a correction without a request doubling. */
+export function advanceRowId(o) {
+  const t = v => String(v == null ? '' : v).trim().toUpperCase();
+  return md5Uuid_('advance|' + [t(o.submitted_at), t(o.staff_id || o.staff_name), String(num(o.amount) || 0)].join('|'));
+}
+export const ADV_APPROVALS = ['Pending', 'Approved', 'Disapproved'];
+export const advApproval = v => {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  if (/^approved?$|^yes$|^ok$|^imeidhinishwa$/.test(s)) return 'Approved';
+  if (/^dis|^rejected|^declined|^denied|^no$|^imekataliwa/.test(s)) return 'Disapproved';
+  return 'Pending';
+};
+export function importAdvances(csvRows) {
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = inferDayFirst(objs.flatMap(({ raw: r, h }) => [col(r, h, 'TIMESTAMP'), col(r, h, 'APPLICATION DATE', 'APP DATE')]));
+  return objs.map(({ raw: r, h }) => {
+    const stampCell = col(r, h, 'TIMESTAMP');
+    const stamp = stampOrNull(stampCell, dayFirst);
+    const day = stamp ? null : dateOrNull(dateCell_(stampCell), dayFirst);
+    const codeCell = col(r, h, 'CODE', 'ADV CODE');
+    const staffId = textOrNull(col(r, h, 'STAFF ID', 'ID'));
+    const row = {
+      submitted_at: stamp || (day ? day + 'T12:00:00Z' : null),
+      staff_id: staffId ? staffId.toUpperCase().replace(/\s+/g, '') : null,
+      staff_name: normTeam(col(r, h, 'STAFF NAME', 'NAME')),
+      staff_role: textOrNull(col(r, h, 'TEAM/ROLE', 'TEAM / ROLE', 'ROLE')),
+      app_date: dateOrNull(dateCell_(col(r, h, 'APPLICATION DATE', 'APP DATE', 'DATE')), dayFirst),
+      amount: num(col(r, h, 'REQUESTED', 'AMOUNT', 'AMOUNT (TZS)')),
+      approval: advApproval(col(r, h, 'APPROVAL', 'STATUS')),
+      comment: textOrNull(col(r, h, 'COMMENT', 'COMMENTS')),
+      zone: normTeam(col(r, h, 'ZONE')),
+      code: digitsCell(codeCell) || textOrNull(codeCell),
+      account: accountCell(col(r, h, 'ACCOUNTS', 'ACCOUNT')),
+      created_by: normTeam(col(r, h, 'STAFF NAME', 'NAME')),
+    };
+    row.id = advanceRowId(row);
+    return row;
+  }).filter(x => x.staff_name && x.submitted_at && x.amount != null);
 }
 
 /** Call app registrations. LEADER is YES/NO text in the sheet and a boolean here; LEADER

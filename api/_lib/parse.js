@@ -317,3 +317,52 @@ export function normTeam(v) {
   const s = textOrNull(v);
   return s ? s.toUpperCase().replace(/\s+/g, ' ') : null;
 }
+
+/* THE STAFF_FUNDS WORKBOOK STORED NUMBERS WHERE THERE WERE IDENTIFIERS. A phone came back as
+   677111910.0, an account as 10214592156.0, a NIDA number as 2.001072167122e+19 -- the sheet
+   had already rounded that one to fifteen significant digits, so its last digits are gone for
+   good and only the first eight (the birth date) can be trusted. Every identifier is read back
+   to its digits first; a text cell with leading zeros ("0152826626000") keeps them. */
+export function digitsCell(v) {
+  if (v == null || v === '' || v instanceof Date) return null;
+  let s = String(v).trim();
+  // "20010721671220000000.00" is the whole number with a zero fraction: the digits are all
+  // there, so they are kept as they are rather than rounded through a double.
+  if (/^\d+\.\d+$/.test(s)) s = s.replace(/\..*$/, '');
+  else {
+    // "2.001072167122e+19": the point moved by the exponent, on the digits as written -- never
+    // through a double, which would turn the sheet's own ...220000000 into ...219998720.
+    const m = s.match(/^(\d+)(?:\.(\d+))?e\+?(\d+)$/i);
+    if (m) {
+      const digits = m[1] + (m[2] || ''), want = m[1].length + Number(m[3]);
+      s = digits.length >= want ? digits.slice(0, want) : digits + '0'.repeat(want - digits.length);
+    }
+  }
+  s = s.replace(/\D/g, '');
+  return s || null;
+}
+/** A bank account: digits with their leading zeros when the cell is a number or digits, else
+    the text as it is -- some banks write letters into theirs. */
+export function accountCell(v) {
+  const s = textOrNull(v);
+  if (s === null) return null;
+  return /^[\d.e+\-\s]+$/i.test(s) ? digitsCell(s) : s;
+}
+/** A phone from the sheet's numeric cell: back to its digits, then the system's 9-digit rule. */
+export function phoneCell(v) { return normPhone(digitsCell(v)); }
+/** A NIDA number carries the birth date in its first eight digits (YYYYMMDD) -- "BIRTH DATE
+    (Generated from NIDA No)". Null when the number is short or the date impossible. */
+export function nidaBirth(nida) {
+  const d = digitsCell(nida);
+  if (!d || d.length < 8) return null;
+  const y = +d.slice(0, 4), m = +d.slice(4, 6), day = +d.slice(6, 8);
+  if (y < 1900 || y > 2100 || m < 1 || m > 12 || day < 1 || day > 31) return null;
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+/** A staff ID the way the sheet wrote them -- JMM/001/2026: the initials of up to three words
+    of the name, a running number of at least three digits, the registration year. */
+export function staffIdFor(name, year, serial) {
+  const words = String(name || '').toUpperCase().split(/\s+/).map(w => w.replace(/[^A-Z]/g, '')).filter(Boolean);
+  const initials = words.slice(0, 3).map(w => w[0]).join('') || 'STF';
+  return `${initials}/${String(Math.max(1, Number(serial) || 1)).padStart(3, '0')}/${year}`;
+}
