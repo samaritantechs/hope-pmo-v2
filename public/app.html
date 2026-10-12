@@ -728,7 +728,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-c';
+var BUILD = '2026-10-12-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3870,12 +3870,20 @@ VIEWS.dashboard = function(){
        T.col% and Recovered amount as [recovered] before T.Rec%" -- the officer columns went
        back out (they live on the month report's leaders list); the two amounts the
        percentages are made from sit before them. */
+    /* RED BY THE MONTH, NOT THE DAY -- "Orodha / List at dashboard conditional formatting red
+       rows should be on the teams with less than monthly average - only". The name rule takes
+       the first average column on the table, and T.Avg sits before M.Avg, so a team under
+       TODAY's line went red by name however its month stood -- one bad morning painted a team
+       that is ahead for the month. The two name cells now name M.Avg as their line; every
+       percentage cell still colours on its own column. While the month columns are still
+       filling (M.Avg blank), no name goes red: a dash is not a verdict. */
+    var byMonth = function(c){ c.avgKey = 'mAvg'; return c; };
     S.cols = [
       /* WHOSE TEAM, before which team -- "add OPM column between S/N and team name". Off the
          teams table with the row (see slot() in dashboardFull); a name key, so it goes red under
          the line together with the team it runs. */
-      ttl(col('opm','OPM'), 'Operations manager / OPM wa timu'),
-      col('team','Team'),
+      byMonth(ttl(col('opm','OPM'), 'Operations manager / OPM wa timu')),
+      byMonth(col('team','Team')),
       pc('tSalesPct','T.Sales','Sales % leo / today, of the team’s daily target'),
       pc('mSalesPct','M.Sales','Sales % mwezi huu / month to date, of the monthly target'),
       pc('tEColPct','T.ECol','Early collection % leo / today (initial sheet)'),

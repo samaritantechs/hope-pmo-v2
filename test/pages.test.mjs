@@ -547,7 +547,7 @@ test('the JPG export takes the largest scale the canvas budget allows, never a c
 test('the dashboard Orodha names the OPM before the team', () => {
   const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
   const dash = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('THE MONTH REPORT --'));
-  assert.ok(/S\.cols = \[[\s\S]*?ttl\(col\('opm','OPM'\)[^\n]*\),\s*\n\s*col\('team','Team'\),/.test(dash),
+  assert.ok(/S\.cols = \[[\s\S]*?byMonth\(ttl\(col\('opm','OPM'\)[^\n]*\)\),\s*\n\s*byMonth\(col\('team','Team'\)\),/.test(dash),
     'OPM is the first declared column, Team the second');
   assert.ok(/NAME_KEYS = \{[^}]*\bopm:1/.test(app), 'and OPM is a name cell, so it reddens with the team under the line');
 });
@@ -1579,4 +1579,18 @@ test('the dashboard carries a legal recovery card on top and today/week boards b
   assert.ok(boards.indexOf("board('bRecW'") < boards.indexOf("board('bLegalT'"), 'after the recovery boards');
   assert.ok(/key:'tPct'[^}]*from:\['tRecovered','owed'\]/.test(boards) && /key:'pct'[^}]*from:\['recovered','owed'\]/.test(boards), 'JUMLA percentages from the totals');
   assert.ok(/b\.legalOn === false && b\.legalNote/.test(boards), 'and the missing ledger is said above them');
+});
+
+/* THE ORODHA'S RED NAMES FOLLOW THE MONTH -- "Orodha / List at dashboard conditional formatting
+   red rows should be on the teams with less than monthly average - only. is it so?" It was
+   not: the name rule took the first average column (T.Avg). The two name columns now name
+   M.Avg as their line, and colourCtx_ honours a column's own avgKey over the default order. */
+test('the dashboard Orodha paints a team name red on the month\'s average, not today\'s', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('/* =====================================================================================\n   THE MONTH REPORT'));
+  assert.ok(/var byMonth = function\(c\)\{ c\.avgKey = 'mAvg'; return c; \};/.test(view), 'the line is M.Avg');
+  assert.ok(/byMonth\(ttl\(col\('opm','OPM'\)/.test(view) && /byMonth\(col\('team','Team'\)\)/.test(view), 'on both name cells, the OPM and the team');
+  assert.ok(/pc\('mAvg','M\.Avg'/.test(view), 'and M.Avg is on the table to be read');
+  const ctx = app.slice(app.indexOf('function colourCtx_'), app.indexOf('function pctClass_'));
+  assert.ok(/var named = \(cols \|\| \[\]\)\.filter\(function\(c\)\{ return c\.avgKey; \}\)\[0\];/.test(ctx), 'a column\'s own avgKey wins over the default order');
 });
