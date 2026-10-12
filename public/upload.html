@@ -1171,7 +1171,8 @@ function suggestSheet(names){
   if (type === 'abnormal')           return find(/^abnormal/);
   if (type === 'complaints')         return find(/^complaints/);
   if (type === 'restructures')       return find(/restructur/);
-  if (type === 'demand-notices')     return find(/^demand notices/);
+  // The Google Sheets register's own tab is "DemandNotices", one word.
+  if (type === 'demand-notices')     return find(/^demand ?notices/, /demand/);
   if (type === 'call-users')         return find(/^call app users/, /^call users/);
   // "Call Logs" first, never a dated archive tab like "Call Logs 2026-07-20".
   if (type === 'call-logs')          return find(/^call logs$/, /^call logs/);

@@ -48,6 +48,44 @@ test('the Google Sheets DemandNotices register imports as it is, once', () => {
   assert.notEqual(own[0].id, n.id);
 });
 
+/* THE REGISTER AS IT ACTUALLY ARRIVES -- "i want to upload the existing demand notices":
+   American slash dates WITH A CLOCK on both NoticeDate ("5/13/2026 3:00:00") and Timestamp,
+   figures with thousands commas, and the XLSX path's "2026-05-13 03:00". The notice date is
+   the date part, never pushed through UTC; the timestamp keeps its clock (EAT). */
+test('the register\'s dated columns with a clock, and its comma figures, read as the sheet meant them', () => {
+  const header = ['NoticeID', 'Timestamp', 'AccessCode', 'LegalOfficer', 'REF#', 'CustName', 'Contact',
+    'NoticeDate', 'NoticeDays', 'FineAmount', 'TotalDemand', 'ArrearsAtNotice', 'CurrentArrears',
+    'Difference', 'Status', 'Team', 'OtherInst'];
+  const rows = [header,
+    ['HMCL/AMN/13/05/2026', '5/13/2026 17:34:47', 'JKM1626', 'JOAKIMU ISSA', '2204538455', 'ANNA MWAVILA NENDE', '695516618',
+      '5/13/2026 3:00:00', '7', '92,000.00', '710,000.00', '618,000.00', '583,000.00', '-35,000.00', 'Reduced', 'KIGAMBONI B', '102,000.00'],
+    ['HMCL/SJK/14/05/2026', '5/14/2026 9:53:06', 'God@1234', 'EMMANUEL NASSARI', '3211680593', 'SELEMANI JUMA KIPUSU', '693407660',
+      '5/14/2026 3:00:00', '7', '66,500.00', '984,500.00', '918,000.00', '908,000.00', '-10,000.00', 'Reduced', 'TENGERU- USARIVER', '102,000.00'],
+    // 1/2/2026 alone could be either way round; the 5/13s elsewhere in the file decide it.
+    ['HMCL/XYZ/02/01/2026', '1/2/2026 0:30:00', 'God@1234', 'EMMANUEL NASSARI', '3210000000', 'X Y Z', '0712 000 111',
+      '1/2/2026 0:30:00', '14', '0', '100,000', '100,000', '0', '0', 'Static', 'MAJENGO', '0'],
+  ];
+  const out = importDemandNotices(rows);
+  assert.equal(out.length, 3);
+  const a = out[0];
+  assert.equal(a.notice_id, 'HMCL/AMN/13/05/2026');
+  assert.equal(a.notice_date, '2026-05-13', 'the date part of a datetime cell, read month-first as the file shows');
+  assert.equal(a.created_at, '2026-05-13T14:34:47.000Z', 'the office clock, 17:34 EAT');
+  assert.equal(a.fine, 92000); assert.equal(a.total_demand, 710000); assert.equal(a.arrears_at_notice, 618000);
+  assert.equal(a.other_inst, 102000); assert.equal(a.notice_days, 7);
+  assert.equal(a.contact, '695516618'); assert.equal(a.team, 'KIGAMBONI B'); assert.equal(a.issued_by, 'JOAKIMU ISSA');
+  assert.equal(a.full_name, 'ANNA MWAVILA NENDE');
+  assert.equal('access_code' in a, false, 'the sheet\'s sign-in code is not a column here');
+  assert.equal(out[1].team, 'TENGERU- USARIVER', 'as written -- the upload files it under the registry\'s spelling');
+  assert.equal(out[2].notice_date, '2026-01-02', 'month-first, as the rest of the file; half past midnight stays the 2nd');
+  assert.equal(out[2].contact, '712000111');
+  // The XLSX path hands dates over as ISO with a clock.
+  const x = importDemandNotices([header, ['HMCL/AMN/13/05/2026', '2026-05-13 17:34', 'JKM1626', 'JOAKIMU ISSA', '2204538455',
+    'ANNA MWAVILA NENDE', '695516618', '2026-05-13 03:00', 7, 92000, 710000, 618000, 583000, -35000, 'Reduced', 'KIGAMBONI B', 102000]]);
+  assert.equal(x[0].notice_date, '2026-05-13');
+  assert.equal(x[0].id, a.id, 'the same notice, however the file was exported');
+});
+
 /* THE SHEET'S N.C COLUMN IS READ AS ITS OWN FIELD -- "expecting the dc single count are 171,
    but its 14 on presentation". Count 1 was first worked out from DUE SUMMARY, which is a
    different number: the 171 at N.C 1 read 4-5, 11-12 and 7-8 under it. A blank stays null

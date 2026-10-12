@@ -2759,6 +2759,51 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   assert.deepEqual(p2.served.map(s => s.date), ['2026-03-17', '2026-03-16'], 'the earlier ones are still listed, newest first');
 });
 
+/* THE REGISTER LANDS ON THE CUSTOMER'S TEAM AS IT IS TODAY -- "i want to upload the existing
+   demand notices so they go to their current teams and any legal assigned to that team gets
+   his previous demands automatic". The Legal tab is scoped by team, so a notice filed under a
+   team the customer has since left is one the lawyer who now holds them never sees. */
+test('an uploaded register is filed under each customer\'s current team, the registry\'s spelling, and names the teams nobody holds', async () => {
+  const { placeNoticesOnCurrentTeams } = await import('../api/upload.js');
+  const db = fakeDb({
+    teams: [{ team: 'KIGAMBONI A' }, { team: 'KIGAMBONI B' }, { team: 'TENGERU-USARIVER' }, { team: 'MAJENGO' }],
+    defaulter_snapshots: [
+      // ANNA moved from KIGAMBONI B (the sheet's team) to KIGAMBONI A; today's deck says so.
+      { ref: '2204538455', team: 'KIGAMBONI A', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'b2', created_at: '2026-10-12T04:00:00Z' },
+      // An older deck still had her on B: the LATEST deck decides, not the first row found.
+      { ref: '2204538455', team: 'KIGAMBONI B', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-10-09', upload_batch: 'b1', created_at: '2026-10-09T04:00:00Z' },
+      { ref: '3212544265', team: 'MAJENGO', snapshot_type: 'current', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'b2', created_at: '2026-10-12T04:00:00Z' },
+      // The initial deck is not the current one.
+      { ref: '3211680593', team: 'ARUSHA', snapshot_type: 'initial', weekday: 'MON', snapshot_date: '2026-10-12', upload_batch: 'i2', created_at: '2026-10-12T04:00:00Z' },
+    ],
+  });
+  const rows = [
+    { id: 'n1', ref: '2204538455', team: 'KIGAMBONI B', notice_id: 'HMCL/AMN/13/05/2026' },
+    { id: 'n2', ref: '3211680593', team: 'TENGERU- USARIVER', notice_id: 'HMCL/SJK/14/05/2026' },   // off the deck; sheet spacing
+    { id: 'n3', ref: '3212544265', team: 'MAJENGO', notice_id: 'HMCL/HJA/14/05/2026' },             // on the deck, same team
+    { id: 'n4', ref: '3210618125', team: 'MOROMBOO', notice_id: 'HMCL/MAI/14/05/2026' },            // off the deck, team unknown
+  ];
+  const p = await placeNoticesOnCurrentTeams(db, rows);
+  const by = Object.fromEntries(p.records.map(r => [r.id, r.team]));
+  assert.equal(by.n1, 'KIGAMBONI A', 'the customer\'s team on TODAY\'S deck, not the sheet\'s');
+  assert.equal(by.n2, 'TENGERU-USARIVER', 'off the deck: the sheet\'s team, in the registry\'s own spelling');
+  assert.equal(by.n3, 'MAJENGO');
+  assert.equal(by.n4, 'MOROMBOO', 'kept as written when the registry has no such team');
+  assert.equal(p.placed, 2); assert.equal(p.moved, 1); assert.equal(p.kept, 2);
+  assert.deepEqual(p.unknown, ['MOROMBOO'], 'and NAMED, because nobody is scoped to see it');
+  assert.equal(p.deckDate, '2026-10-12');
+  // Once filed that way, the lawyer holding KIGAMBONI A sees ANNA's notice; B's lawyer does not.
+  const t = tables();
+  t.demand_notices = p.records.map(r => ({ ...r, full_name: 'X', created_at: '2026-05-13T14:34:47Z', notice_date: '2026-05-13', total_demand: 1 }));
+  const holdsA = { ...GMO, name: 'LAWYER A', teams: ['KIGAMBONI A'] };
+  const holdsB = { ...GMO, name: 'LAWYER B', teams: ['KIGAMBONI B'] };
+  assert.deepEqual((await portalApi(fakeDb(t), holdsA, 'demandNotices', {}, NOW)).rows.map(r => r.notice_id), ['HMCL/AMN/13/05/2026']);
+  assert.deepEqual((await portalApi(fakeDb(t), holdsB, 'demandNotices', {}, NOW)).rows, []);
+  // Nothing to place: no reads, nothing changed.
+  const none = await placeNoticesOnCurrentTeams(db, [{ id: 'z', ref: '', team: 'X' }]);
+  assert.equal(none.records.length, 1); assert.equal(none.placed, 0);
+});
+
 test('upload status says what is still missing for today', async () => {
   const db = fakeDb(tables());
   const d = await portalApi(db, ADMIN, 'uploadStatus', {}, NOW);
