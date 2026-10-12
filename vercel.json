@@ -84,6 +84,15 @@
       ]
     },
     {
+      "source": "/mod/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
+      ]
+    },
+    {
       "source": "/live.webmanifest",
       "headers": [
         {
