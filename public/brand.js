@@ -77,10 +77,24 @@
   // Painted from the device first, so a returning visitor never watches the stand-in swap for
   // the real logo a second later. The network still refreshes it below; this only decides what
   // is on screen in the meantime.
-  var seen = null;
-  try { seen = localStorage.getItem('hopeLogo'); } catch (e) {}
-  if (seen) paint(seen, null);
+  var seen = null, seenName = null, seenAt = 0;
+  try {
+    seen = localStorage.getItem('hopeLogo');
+    seenName = localStorage.getItem('hopeBrandName');
+    seenAt = Number(localStorage.getItem('hopeBrandAt')) || 0;
+  } catch (e) {}
+  if (seen) paint(seen, seenName);
+  if (seenName) {
+    var kept = document.querySelectorAll('[data-brandname]');
+    for (var q = 0; q < kept.length; q++) kept[q].textContent = seenName;
+  }
   if (window.HOPE_NO_BRAND_FETCH) return;
+  /* ONCE IN SIX HOURS PER DEVICE, NOT ONCE PER PAGE OPEN. This is a request to /api/call -- the
+     door three hundred officers work behind -- made by every portal, upload and launcher page
+     on every open, for a logo and a name that change about never. With both already on the
+     device and fresh enough, the page is drawn from them and the call app is left alone. */
+  var BRAND_FRESH_MS = 6 * 3600 * 1000;
+  if (seen && seenName && Date.now() - seenAt < BRAND_FRESH_MS) return;
 
   try {
     fetch('/api/call', {
@@ -92,7 +106,9 @@
       if (d.brand) {
         var names = document.querySelectorAll('[data-brandname]');
         for (var j = 0; j < names.length; j++) names[j].textContent = d.brand;
+        try { localStorage.setItem('hopeBrandName', d.brand); } catch (e) {}
       }
+      try { localStorage.setItem('hopeBrandAt', String(Date.now())); } catch (e) {}
       if (!d.logo) return;
       if (d.logo === seen) return;                 // already on screen from the device
       // The mark is only replaced by an image that has actually LOADED.

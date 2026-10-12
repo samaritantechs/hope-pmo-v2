@@ -4,7 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HOPE PMO — Upload</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- THE SPREADSHEET LIBRARY LOADS BESIDE THE PAGE, NOT BEFORE IT. Without `defer` this one tag
+     (close to a megabyte) had to download and run before the browser would draw a single
+     field -- "App loads too much at opening". Deferred, the page paints at once and the
+     library arrives while the person picks their file; readWorkbook waits for it (xlsxReady_)
+     and says so if it has not come, so nothing an upload does changed. -->
+<script defer id="xlsxLib" src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{--bg:#0B1120;--card:#131C2E;--line:#22304A;--txt:#E5EAF2;--mut:#8B9AB3;--b500:#3B82F6;--b600:#2563EB;--ok:#4ADE80;--bad:#F87171}
   *{box-sizing:border-box}
@@ -661,6 +666,7 @@ function saveBytes_(name, mime, u8){
   saveBlob_(name, new Blob([u8], { type: mime }));
 }
 function saveSmsFile_(d){
+  if (!window.XLSX){ alert('Kisomaji cha Excel bado kinapakia — jaribu tena baada ya sekunde chache. / The spreadsheet library is still loading — try again in a few seconds.'); return; }
   var aoa = [d.headers].concat(d.rows || []);
   var ws = XLSX.utils.aoa_to_sheet(aoa);
   var wb = XLSX.utils.book_new();
@@ -858,6 +864,7 @@ function saveCreditInfoXlsx_(d){
   ].concat((s.byState || []).map(function(x){ return [x.state, x.customers, x.curArr, x.recovered]; }))
    .concat([[], ['Mchambuzi / Analyst', 'Wateja', 'Deni la sasa', 'Kilichorejeshwa', 'Success %']])
    .concat((s.byAnalyst || []).map(function(x){ return [x.analyst, x.customers, x.curArr, x.recovered, x.success]; }));
+  if (!window.XLSX){ alert('Kisomaji cha Excel bado kinapakia — jaribu tena baada ya sekunde chache. / The spreadsheet library is still loading — try again in a few seconds.'); return; }
   var wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), 'Muhtasari');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'Credit info');
@@ -1241,8 +1248,25 @@ function pickDataSheet_(wb){
   }
   return wb.SheetNames[0];   // nothing recognizable found anywhere -- fall back to the original behavior
 }
+/* The deferred library (the <script defer id="xlsxLib"> in the head) is usually in long before
+   a file is chosen; when it is not -- a slow line, cdnjs unreachable -- the read waits for it
+   and then fails with words rather than "XLSX is not defined". Twenty seconds is far past what
+   the download takes on the office line and still short enough to act on. */
+var XLSX_WAIT_MS = 20000;
+function xlsxReady_(){
+  if (window.XLSX) return Promise.resolve();
+  return new Promise(function(res, rej){
+    var s = document.getElementById('xlsxLib');
+    var fail = function(){ rej(new Error('Kisomaji cha Excel hakijapakia (cdnjs). Angalia mtandao kisha chagua faili tena. '
+      + '/ The spreadsheet reader has not loaded (cdnjs). Check the connection, then choose the file again.')); };
+    if (!s) return fail();
+    var t = setTimeout(fail, XLSX_WAIT_MS);
+    s.addEventListener('load', function(){ clearTimeout(t); window.XLSX ? res() : fail(); });
+    s.addEventListener('error', function(){ clearTimeout(t); fail(); });
+  });
+}
 function readWorkbook(file){
-  return file.arrayBuffer().then(function(buf){
+  return xlsxReady_().then(function(){ return file.arrayBuffer(); }).then(function(buf){
     return XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
   });
 }
