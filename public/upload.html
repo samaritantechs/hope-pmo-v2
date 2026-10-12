@@ -109,6 +109,10 @@
         <!-- The Google Sheets Portfolio Monitoring register (its Sheet1), once, to bring the
              history in; from then on cases are typed on the PMO Deduction tab. -->
         <option value="pmo-deductions">PMO Deductions (Portfolio Monitoring register)</option>
+        <!-- The STAFF_FUNDS workbook (the HOPE advance-request sheet), once each: its DATABASE
+             tab is HR's staff registry, its ADVANCE REQUESTS tab the register of requests. -->
+        <option value="staff-registry">Staff registry (STAFF_FUNDS · DATABASE tab)</option>
+        <option value="advance-requests">Advance requests (STAFF_FUNDS · ADVANCE REQUESTS tab)</option>
       </optgroup>
       <optgroup label="Admin (settings permission required)">
         <option value="access-codes">Access Codes</option>
@@ -356,6 +360,7 @@ var TYPE_META = {
   'followup': [], 'comments': [], 'teams': [], 'received': [],
   'access-codes': [], 'user-roles': [],
   'abnormal': [], 'complaints': [], 'restructures': [], 'demand-notices': [], 'pmo-deductions': [],
+  'staff-registry': [], 'advance-requests': [],
   'call-users': [], 'call-logs': [], 'settings': [], 'hints': [],
   // The logo is the one upload that is not a spreadsheet. It goes to the CALL_LOGO_URL
   // setting rather than a table, and from there to every screen in the system at once.
@@ -366,7 +371,7 @@ function isLogo_(){ return $('type').value === 'logo'; }
     one chosen date. Snapshots are absent on purpose: their snapshot date already supersedes,
     so offering a choice there would be a second way to say the same thing. */
 var STAMPED = { 'loans':1, 'received':1, 'abnormal':1, 'complaints':1, 'restructures':1,
-                'demand-notices':1, 'comments':1, 'pmo-deductions':1 };
+                'demand-notices':1, 'comments':1, 'pmo-deductions':1, 'staff-registry':1, 'advance-requests':1 };
 function isStamped_(){ return !!STAMPED[$('type').value]; }
 /* Two reports carry their own dates, and for those the dates in the FILE decide everything --
    including what "Replace all" clears. Re-pull the approvals report for 27 July, upload it as a
@@ -449,6 +454,9 @@ var TYPE_BEHAVIOUR = {
   // Keyed on each row's own facts (the submission time, customer, reference and staff), so
   // the Google Sheets register can be sent again after a correction without doubling.
   'pmo-deductions': 'append',
+  // The STAFF_FUNDS workbook: the registry on its staff IDs, the advance register on each
+  // row's own facts -- either can be sent again after a correction without doubling.
+  'staff-registry': 'append', 'advance-requests': 'append',
   'hints': 'replaceAll', 'logo': 'logo',
 };
 function syncFields(){
@@ -1182,6 +1190,10 @@ function suggestSheet(names){
   // The Portfolio Monitoring workbook's register is its "Sheet1"; TeamList, Admins and the
   // hand-kept side sheets ("Before April", "OUT OF PMO") are not the register.
   if (type === 'pmo-deductions')     return find(/deduct/, /portfolio/, /^sheet1$/);
+  // The STAFF_FUNDS workbook: its "database" tab is the registry, "ADVANCE REQUESTS" the register;
+  // "zonecodes", "STAFF LOAN REQ" and the scratch sheets are neither.
+  if (type === 'staff-registry')     return find(/^database$/, /staff/, /registry/);
+  if (type === 'advance-requests')   return find(/^advance requests?$/, /advance/);
   if (type === 'call-users')         return find(/^call app users/, /^call users/);
   // "Call Logs" first, never a dated archive tab like "Call Logs 2026-07-20".
   if (type === 'call-logs')          return find(/^call logs$/, /^call logs/);

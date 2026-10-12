@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { supabase } from './_lib/supabase.js';
-import { authCodeResolved, withApi } from './_lib/auth.js';
+import { authCodeResolvedPortal, withApi } from './_lib/auth.js';
 import { isSystemOpen, isAdminUser } from './_lib/system-gate.js';
 import { canSwitchWorkspace } from './_lib/workspace.js';
 
@@ -15,7 +15,8 @@ export default withApi(async (req, res) => {
   /* Deliberately NOT behind the open/closed switch. This is how the launcher finds out who
      somebody is AND whether the system is open at all -- gate it and the closed message could
      never be drawn, only a bare "invalid code". */
-  const user = await authCodeResolved(req.query.code);
+  // The portal's door: an access code, or a team code signed in as the FIELD OFFICER role.
+  const user = await authCodeResolvedPortal(req.query.code);
   const tabs = user.tabs;
   const admin = isAdminUser(user);
   const open = admin || await isSystemOpen(supabase);

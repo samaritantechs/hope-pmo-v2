@@ -10,7 +10,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
 const { importAccessCodes, importUserRoles, importComments, commentId, commentsDateOrder, importExpected, importDemandNotices,
-  importDeductions, deductionCaseId }
+  importDeductions, deductionCaseId, importStaffRegistry, importAdvances, advanceRowId }
   = await import('../api/_lib/importers.js');
 
 /* THE GOOGLE SHEETS DEMAND-NOTICE REGISTER, AS IT IS EXPORTED -- "Its time for the legal unit to
@@ -1571,4 +1571,48 @@ test('a dash in a leaders-sheet role column imports as nobody, not as a name', a
     assert.equal(nameOrNull(v), null, JSON.stringify(v) + ' is nobody');
   for (const v of ['ASHA', 'O. JUMA', '0712', 'A-B', 'NONE K'])
     assert.equal(nameOrNull(v), String(v).trim(), JSON.stringify(v) + ' is a name');
+});
+
+/* THE STAFF_FUNDS WORKBOOK -- "We need to shift that into the app too ... I will also need to
+   upload previous existing advances". The DATABASE tab (a backtick over the registration
+   date, numbers where the identifiers are) and the ADVANCE REQUESTS tab, as the sheet exports
+   them: phones, accounts and NIDA numbers back to their digits, the birth date off the NIDA,
+   the sheet's own IDs kept, and a request keyed on its own facts. */
+test('the STAFF_FUNDS DATABASE and ADVANCE REQUESTS tabs import as they are', () => {
+  const header = ['`', 'ID', 'STAFF NAME', 'PHONE', 'PHONE2', 'ROLES', 'Residence', 'BANK NAME', 'ACCOUNTS', 'ZONE', 'NIDA',
+    'BIRTH DATE', 'JINA LA MDHAMINI', 'SIMU YA MDHAMINI', 'JINA LA MDHAMINI2', 'SIMU YA MDHAMINI2', 'TIN', 'NSSF', 'JANUARY', 'INITIALS'];
+  const rows = importStaffRegistry([header,
+    ['2026-01-22 00:00:00', 'JMM/1001/2026', 'Jaffary Mohamed Markii', '677111910.0', '787325158.0', 'PMO - SUPERVISOR', 'Arusha, Arusha', 'EXIM',
+      '0152826626000', 'HQ - PMO', '2.001072167122e+19', '21-07-2001', 'Rajesh Mwakalobo', '671202033.0', 'Ajay Mwambela', '671202070.0', '19237111.0', '1245221225.0', 'Active', 'JMM'],
+    ['2026-01-23 00:00:00', 'AAA/2002/2026', 'ADAMU ATHUMANI ADAMU', null, '654624764.0', 'Manager - Nyamagana A', 'Karatu, Arusha', 'NMB',
+      '0152898435400', 'mwanza', '20000316161090000215', '16-03-2000', '', '', '', '', '', '', 'Inactive', 'AAA'],
+    ['2026-01-24 00:00:00', '', 'NO ID', '', '', '', '', '', '', 'MARA', '', '', '', '', '', '', '', '', '', ''],
+  ]);
+  assert.equal(rows.length, 2, 'a line with no ID is not a staff');
+  const j = rows[0];
+  assert.equal(j.id, 'JMM/1001/2026'); assert.equal(j.reg_date, '2026-01-22'); assert.equal(j.name, 'JAFFARY MOHAMED MARKII');
+  assert.equal(j.phone, '677111910'); assert.equal(j.phone2, '787325158', 'the sheet\'s numeric cells, back to digits');
+  assert.equal(j.role, 'PMO - SUPERVISOR'); assert.equal(j.bank, 'EXIM'); assert.equal(j.account, '0152826626000', 'leading zero kept');
+  assert.equal(j.zone, 'HQ - PMO'); assert.ok(j.nida.startsWith('2001072167122'), 'the sheet had rounded the number; its first digits survive');
+  assert.equal(j.birth_date, '2001-07-21', 'off the NIDA');
+  assert.equal(j.guarantor1, 'Rajesh Mwakalobo'); assert.equal(j.guarantor1_phone, '671202033'); assert.equal(j.guarantor2_phone, '671202070');
+  assert.equal(j.tin, '19237111'); assert.equal(j.nssf, '1245221225'); assert.equal(j.status, 'Active');
+  assert.equal(rows[1].nida, '20000316161090000215'); assert.equal(rows[1].birth_date, '2000-03-16'); assert.equal(rows[1].zone, 'MWANZA');
+  assert.equal(rows[1].status, 'Active', 'the month columns are not a status'); assert.equal(rows[1].phone, null);
+  assert.equal(importStaffRegistry([['ID', 'STAFF NAME', 'STATUS'], ['A/1/2026', 'A', 'Inactive']])[0].status, 'Inactive');
+  // The requests register.
+  const adv = importAdvances([['TIMESTAMP', 'STAFF ID', 'STAFF NAME', 'TEAM/ROLE', 'APPLICATION DATE', 'REQUESTED', 'APPROVAL', 'COMMENT', 'ZONE', 'CODE', 'ACCOUNTS'],
+    ['2026-05-13 08:55:36.250000', 'JAK/2066/2026', 'JACKSON A. KILAGALILA', 'Manager', '2026-05-13 00:00:00', '150000.0', 'Approved', null, 'DAR EAST', '5612.0', '0152898591700'],
+    ['2026-05-14 09:00:00', 'MIS/222/2026', 'MOHAMED IBRAHIM SAWATI', 'Field Officer', '2026-05-14 00:00:00', '100000', 'Disapproved', 'subiri', 'MARA', '7861.0', '10214592156'],
+    ['2026-05-15 09:00:00', '', 'NOBODY', 'Field Officer', '2026-05-15', '', 'Pending', null, 'MARA', '', ''],
+  ]);
+  assert.equal(adv.length, 2, 'no amount, no request');
+  const a = adv[0];
+  assert.ok(a.submitted_at.startsWith('2026-05-13T05:55:36'), 'the sheet\'s clock, EAT, stored as UTC');
+  assert.equal(a.staff_id, 'JAK/2066/2026'); assert.equal(a.staff_name, 'JACKSON A. KILAGALILA'); assert.equal(a.staff_role, 'Manager');
+  assert.equal(a.app_date, '2026-05-13'); assert.equal(a.amount, 150000); assert.equal(a.approval, 'Approved');
+  assert.equal(a.zone, 'DAR EAST'); assert.equal(a.code, '5612'); assert.equal(a.account, '0152898591700');
+  assert.equal(adv[1].approval, 'Disapproved'); assert.equal(adv[1].comment, 'subiri'); assert.equal(adv[1].account, '10214592156');
+  assert.equal(advanceRowId(a), a.id, 'the same request is the same row'); assert.notEqual(a.id, adv[1].id);
+  assert.match(a.id, /^[0-9a-f]{8}-/);
 });

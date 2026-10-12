@@ -1,6 +1,7 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
-import { teamAllowed, ADMIN_TABS, ALL_TABS } from './auth.js';
-import { nameOrNull } from './parse.js';
+import { teamAllowed, ADMIN_TABS, ALL_TABS, FIELD_OFFICER_ROLE } from './auth.js';
+import { nameOrNull, textOrNull, digitsCell, accountCell, phoneCell, nidaBirth, staffIdFor } from './parse.js';
+import { ADV_APPROVALS } from './importers.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch, pickFirstBatch, latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
@@ -1615,6 +1616,282 @@ async function hrDeduction(db, user, p, nowMs = Date.now()) {
   const { error } = await db.from('pmo_deductions').update(fields).eq('id', p.id);
   if (error) throw new Error(error.message);
   return { id: p.id, ...fields };
+}
+
+/* =====================================================================================
+   SALARY ADVANCE -- the HOPE advance-request system (the STAFF_FUNDS Google Sheet), moved in:
+   "I found the this file looks suspicious warning on the google sheet for Hope advance
+   requests. We need to shift that into the app too ... like how we moved the imprests and
+   legal demands.. even the pmo system at large".
+
+   WHAT THE SHEET DID, KEPT: a staff DATABASE (HR's), an ADVANCE REQUESTS register, a zone
+   code per GMO region that opened that zone's staff list to whoever typed it, one request per
+   staff per month, four amounts to choose from, the GMO approving their zone's requests in
+   bulk with a comment, and a report of the approved ones over a window with the bank accounts
+   for payroll.
+
+   WHAT THE PORTAL DOES INSTEAD OF THE ZONE CODE: the sign-in decides the zone. A field officer
+   signs in with their TEAM'S code (auth.js teamCodeUser: the FIELD OFFICER role, given its tabs
+   on Roles & access like any other), and their team's ZONE on Teams & Staff is the zone whose
+   staff they may pick their own name from -- "he will be able to choose his name on a list of
+   names of the officers under GMO teams to keep privacy". A GMO's code holds their teams, so
+   their zones; an admin or HR holds every team, so every zone. ONE definition (advZones_) for
+   the request, the approval and the registry alike, and the zone filter is applied at the
+   database. A team with no zone contributes nothing, and the screen names it.
+
+   Four tabs, granted like every other: advreq (ask), advappr (decide), advrep (the report),
+   advstaff (HR's registry). Admins hold all four from the start.
+
+   ONE DIFFERENCE, ON PURPOSE: a DISAPPROVED request does not use up the month -- the sheet
+   counted any row, so a staff whose request was turned down could not ask again until the
+   next month, which nobody intended. */
+const ADV_AMOUNTS_KEY = 'ADVANCE_AMOUNTS', ADV_AMOUNTS_DEFAULT = '50000, 100000, 150000, 200000';
+const ADV_NOTE = 'Jedwali la advance halipo bado: endesha db/RUN-ME-044-salary-advance.sql kwenye SQL editor. '
+  + '/ The salary-advance tables are not there yet: run db/RUN-ME-044-salary-advance.sql in the SQL editor.';
+const advMissing_ = e => /staff_registry|advance_requests|does not exist|schema cache/i.test(String((e && e.message) || e || ''));
+/** A read of either table, null when RUN-ME-044 has not been run -- the tab says so, nothing fails. */
+async function advRead_(q) {
+  try { return await fetchAll(q); } catch (e) { if (advMissing_(e)) return null; throw e; }
+}
+const advDate_ = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+const advUpper_ = v => { const s = textOrNull(v); return s ? s.toUpperCase().replace(/\s+/g, ' ') : null; };
+/** The zones a signed-in person may see: null for every zone (ALL teams), else the distinct
+    zones of the teams they hold, as Teams & Staff spells them (upper-cased). */
+function advZones_(user, teamRows) {
+  if (!user.teams) return { zones: null, noZoneTeams: [] };
+  const mine = teamRows.filter(t => teamAllowed(user, t.team));
+  const zones = [...new Set(mine.map(t => K(t.zone)).filter(Boolean))].sort();
+  return { zones, noZoneTeams: mine.filter(t => !K(t.zone)).map(t => t.team).sort() };
+}
+const advZoneOk_ = (zones, zone) => zones === null || zones.some(z => z === K(zone));
+const onZones_ = (q, zones) => (zones === null ? q : q.in('zone', zones));
+function advAmounts_(cfg) {
+  const list = String(cfg.get(ADV_AMOUNTS_KEY, ADV_AMOUNTS_DEFAULT)).split(/[,;]/).map(x => num(x)).filter(x => x > 0);
+  return [...new Set(list)].sort((a, b) => a - b);
+}
+/** THE STAFF ID FOR SOMEBODY TYPED IN -- "Use any logic you feel like just tell me how you
+    did it": the initials of up to three words of the name, then a running number (the
+    registry's count + 1, bumped past any ID already taken), then the year of today --
+    JMM/001/2026, the sheet's own shape. Uploaded staff keep the sheet's IDs. */
+function advNextId_(rows, name, nowMs) {
+  const have = new Set(rows.map(r => K(r.id)));
+  const year = todayKey(nowMs).slice(0, 4);
+  let serial = rows.length + 1, id = staffIdFor(name, year, serial);
+  while (have.has(K(id))) id = staffIdFor(name, year, ++serial);
+  return id;
+}
+const advMonth_ = v => String(v == null ? '' : v).slice(0, 7);
+function advZoneList_(teamRows, regRows, zones) {
+  const all = [...new Set(teamRows.map(t => K(t.zone)).concat((regRows || []).map(r => K(r.zone))).filter(Boolean))].sort();
+  return zones === null ? all : all.filter(z => zones.includes(z));
+}
+/** HR's registry: everybody in the zones the viewer may see, searchable; the zone list the
+    form offers (Teams & Staff's zones plus any already in the registry); the next serial. */
+async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) {
+  const teamRows = await readTeamsAll(db, nowMs);
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const rows0 = await advRead_(() => onZones_(db.from('staff_registry').select('*').order('name', { ascending: true }), zones));
+  const on = Array.isArray(rows0);
+  let rows = (rows0 || []).filter(r => advZoneOk_(zones, r.zone));
+  if (zone) rows = rows.filter(r => K(r.zone) === K(zone));
+  if (status) rows = rows.filter(r => K(r.status) === K(status));
+  const needle = K(q);
+  if (needle) rows = rows.filter(r => [r.name, r.id, r.phone, r.role, r.zone, r.bank].some(v => K(v).includes(needle)));
+  return { rows, count: rows.length, on, note: on ? null : ADV_NOTE,
+    zones: advZoneList_(teamRows, rows0, zones), noZoneTeams,
+    active: (rows0 || []).filter(r => K(r.status) !== 'INACTIVE').length, total: (rows0 || []).length,
+    nextSerial: (rows0 || []).length + 1, year: todayKey(nowMs).slice(0, 4) };
+}
+/** Add or edit one staff. The ID is generated when blank (advNextId_); an edit keeps it. The
+    birth date is read off the NIDA number, as asked, else taken as typed. */
+async function advStaffSave(db, user, p, nowMs = Date.now()) {
+  if (!p) throw badRequest('Nothing to save.');
+  const name = advUpper_(p.name);
+  if (!name) throw badRequest('Jina la staff linahitajika. / The staff name is required.');
+  const zone = advUpper_(p.zone);
+  if (!zone) throw badRequest('Chagua zone (chini ya GMO). / Pick the zone (under a GMO).');
+  const teamRows = await readTeamsAll(db, nowMs);
+  const { zones } = advZones_(user, teamRows);
+  if (!advZoneOk_(zones, zone)) throw forbidden(`You do not have access to zone ${zone}.`);
+  const nida = digitsCell(p.nida);
+  const birth = nidaBirth(nida) || advDate_(p.birthDate);
+  const at = new Date(nowMs).toISOString();
+  const fields = {
+    reg_date: advDate_(p.regDate) || todayKey(nowMs), name,
+    phone: phoneCell(p.phone), phone2: phoneCell(p.phone2),
+    role: textOrNull(p.role), residence: textOrNull(p.residence),
+    bank: textOrNull(p.bank), account: accountCell(p.account), zone,
+    nida, birth_date: birth,
+    guarantor1: textOrNull(p.guarantor1), guarantor1_phone: phoneCell(p.guarantor1Phone),
+    guarantor2: textOrNull(p.guarantor2), guarantor2_phone: phoneCell(p.guarantor2Phone),
+    tin: digitsCell(p.tin), nssf: digitsCell(p.nssf),
+    status: K(p.status) === 'INACTIVE' ? 'Inactive' : 'Active',
+    updated_by: user.name, updated_at: at,
+  };
+  let id = String(p.id || '').trim().toUpperCase().replace(/\s+/g, '');
+  const all = await advRead_(() => db.from('staff_registry').select('id, zone'));
+  if (all === null) throw badRequest(ADV_NOTE);
+  const existing = id ? all.find(r => K(r.id) === id) : null;
+  if (existing) {
+    if (!advZoneOk_(zones, existing.zone)) throw forbidden(`You do not have access to zone ${existing.zone}.`);
+    const { error } = await db.from('staff_registry').update(fields).eq('id', existing.id);
+    if (error) throw new Error(error.message);
+    return { id: existing.id, name, zone, birth_date: birth, created: false };
+  }
+  if (!id) id = advNextId_(all, name, nowMs);
+  const { error } = await db.from('staff_registry').insert({ id, ...fields, created_by: user.name, created_at: at });
+  if (error) { if (advMissing_(error)) throw badRequest(ADV_NOTE); throw new Error(error.message); }
+  return { id, name, zone, birth_date: birth, created: true };
+}
+/** The Active / Inactive switch. An inactive staff is off every request list and keeps their history. */
+async function advStaffStatus(db, user, p, nowMs = Date.now()) {
+  if (!p || !p.id) throw badRequest('id is required');
+  const { data: prev, error: rErr } = await db.from('staff_registry').select('id, zone, status').eq('id', String(p.id).trim()).maybeSingle();
+  if (rErr) { if (advMissing_(rErr)) throw badRequest(ADV_NOTE); throw new Error(rErr.message); }
+  if (!prev) throw badRequest('That staff is no longer in the registry.');
+  const { zones } = advZones_(user, await readTeamsAll(db, nowMs));
+  if (!advZoneOk_(zones, prev.zone)) throw forbidden(`You do not have access to zone ${prev.zone}.`);
+  const status = K(p.status) === 'INACTIVE' ? 'Inactive' : 'Active';
+  const { error } = await db.from('staff_registry').update({ status, updated_by: user.name, updated_at: new Date(nowMs).toISOString() }).eq('id', prev.id);
+  if (error) throw new Error(error.message);
+  return { id: prev.id, status };
+}
+/** The request tab: the names of the viewer's zone(s) -- id, name, role, zone and nothing
+    else, so a shared screen gives nothing away -- the amounts on offer, and, once a name is
+    picked, that one person's own requests and whether this month is already taken. */
+async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
+  const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY])]);
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const staff0 = await advRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones));
+  const on = Array.isArray(staff0);
+  const staff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone))
+    .map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
+  const month = todayKey(nowMs).slice(0, 7);
+  let chosen = null, mine = [], monthTaken = null;
+  const want = String(staffId || '').trim().toUpperCase();
+  if (want) {
+    chosen = staff.find(s => K(s.id) === want) || null;
+    if (chosen) {
+      mine = (await advRead_(() => db.from('advance_requests').select('id, submitted_at, app_date, amount, approval, comment, decided_by, decided_at')
+        .eq('staff_id', chosen.id).order('submitted_at', { ascending: false }).limit(12))) || [];
+      monthTaken = mine.find(r => advMonth_(r.submitted_at) === month && K(r.approval) !== 'DISAPPROVED') || null;
+    }
+  }
+  return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
+    staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, mine, monthTaken,
+    requester: user.name, teamCode: !!user.teamCode };
+}
+/** The ask: a staff of the viewer's zone, one of the amounts, one per calendar month. The bank
+    account is copied from the registry at this moment, as the sheet did, so the report prints
+    what payroll needs without a second lookup. */
+async function advRequest(db, user, p, nowMs = Date.now()) {
+  if (!p) throw badRequest('Nothing to save.');
+  const staffId = String(p.staffId || '').trim().toUpperCase();
+  if (!staffId) throw badRequest('Chagua jina lako kwenye orodha. / Pick your name from the list.');
+  const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY])]);
+  const { zones } = advZones_(user, teamRows);
+  const { data: s, error: sErr } = await db.from('staff_registry').select('*').eq('id', staffId).maybeSingle();
+  if (sErr) { if (advMissing_(sErr)) throw badRequest(ADV_NOTE); throw new Error(sErr.message); }
+  if (!s) throw badRequest('Jina hilo halipo kwenye orodha ya wafanyakazi. / That staff is not in the registry.');
+  if (K(s.status) === 'INACTIVE') throw badRequest('Staff huyu si active. / This staff is marked inactive.');
+  if (!advZoneOk_(zones, s.zone)) throw forbidden(`You do not have access to zone ${s.zone}.`);
+  const amounts = advAmounts_(cfg);
+  const amount = num(p.amount);
+  if (!amounts.includes(amount)) throw badRequest('Chagua kiasi kutoka kwenye orodha: ' + amounts.join(', ') + '. / Pick one of the amounts offered.');
+  const month = todayKey(nowMs).slice(0, 7);
+  const prior = await advRead_(() => db.from('advance_requests').select('id, submitted_at, approval')
+    .eq('staff_id', s.id).gte('submitted_at', month + '-01').neq('approval', 'Disapproved'));
+  if (prior === null) throw badRequest(ADV_NOTE);
+  if (prior.some(r => advMonth_(r.submitted_at) === month)) {
+    throw badRequest('⚠️ Tayari kuna ombi la advance la mwezi huu kwa jina hili. Ombi moja tu kwa mwezi. '
+      + '/ You already have an advance request this month. Only one request per month is allowed.');
+  }
+  const at = new Date(nowMs).toISOString();
+  const row = { submitted_at: at, staff_id: s.id, staff_name: s.name, staff_role: s.role || null,
+    app_date: advDate_(p.appDate) || todayKey(nowMs), amount, approval: 'Pending', comment: null,
+    zone: K(s.zone) || null, code: user.teamCode ? (user.teams || [])[0] || null : (user.role || null),
+    account: s.account || null, created_by: user.name, created_at: at };
+  const { data: ins, error } = await db.from('advance_requests').insert(row).select('id');
+  if (error) { if (advMissing_(error)) throw badRequest(ADV_NOTE); throw new Error(error.message); }
+  return { id: (ins && ins[0] && ins[0].id) || null, staffId: s.id, staffName: s.name, amount, zone: row.zone, month };
+}
+/** The GMO's desk: what is pending in their zone(s), oldest first, and what was decided in the
+    last fourteen days so a decision can be checked without opening the report. */
+async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
+  const teamRows = await readTeamsAll(db, nowMs);
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const since = addDaysKey(todayKey(nowMs), -14);
+  const [pending0, recent0] = await Promise.all([
+    advRead_(() => onZones_(db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: true }), zones)),
+    advRead_(() => onZones_(db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(200), zones)),
+  ]);
+  const on = Array.isArray(pending0);
+  const pick = rows => (rows || []).filter(r => advZoneOk_(zones, r.zone) && (!zone || K(r.zone) === K(zone)));
+  const pending = pick(pending0), recent = pick(recent0);
+  return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length,
+    amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
+    zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
+    noZoneTeams, approvals: ADV_APPROVALS.slice(1) };
+}
+/** Bulk decide: Approved or Disapproved, with a comment, on requests of the viewer's zone(s)
+    that are still pending. The sheet's bulkUpdateAdvances, with the zone enforced here. */
+async function advDecide(db, user, p, nowMs = Date.now()) {
+  const updates = (p && Array.isArray(p.updates) ? p.updates : []).map(u => ({
+    id: String((u && u.id) || '').trim(), approval: ADV_APPROVALS.find(a => K(a) === K(u && u.approval)) || null,
+    comment: textOrNull(u && u.comment) })).filter(u => u.id);
+  if (!updates.length) throw badRequest('Chagua angalau ombi moja. / Select at least one request.');
+  if (updates.some(u => !u.approval || u.approval === 'Pending')) throw badRequest('Kila ombi lichaguliwe Approved au Disapproved. / Each request needs Approved or Disapproved.');
+  const { zones } = advZones_(user, await readTeamsAll(db, nowMs));
+  const rows = await advRead_(() => db.from('advance_requests').select('id, zone, approval, staff_name, amount').in('id', updates.map(u => u.id)));
+  if (rows === null) throw badRequest(ADV_NOTE);
+  const by = new Map(rows.map(r => [String(r.id), r]));
+  const at = new Date(nowMs).toISOString();
+  let approved = 0, disapproved = 0; const skipped = [];
+  for (const u of updates) {
+    const r = by.get(u.id);
+    if (!r) { skipped.push(u.id + ': no longer there'); continue; }
+    if (!advZoneOk_(zones, r.zone)) throw forbidden(`You do not have access to zone ${r.zone}.`);
+    if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval}`); continue; }
+    const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
+    if (error) throw new Error(error.message);
+    if (u.approval === 'Approved') approved++; else disapproved++;
+  }
+  return { updated: approved + disapproved, approved, disapproved, skipped };
+}
+/** The report the sheet exported: the requests of a window, Approved by default, by zone,
+    with the bank and account beside each so payroll can be paid off the board. */
+async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Date.now()) {
+  const today = todayKey(nowMs);
+  const fromKey = advDate_(from) || today.slice(0, 8) + '01';
+  const toKey = advDate_(to) || today;
+  const want = approval == null || approval === '' ? 'Approved' : (K(approval) === 'ALL' ? 'ALL' : (ADV_APPROVALS.find(a => K(a) === K(approval)) || 'Approved'));
+  const teamRows = await readTeamsAll(db, nowMs);
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const rows0 = await advRead_(() => {
+    let q = onZones_(db.from('advance_requests').select('*').gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
+      .order('submitted_at', { ascending: true }), zones);
+    return want === 'ALL' ? q : q.eq('approval', want);
+  });
+  const on = Array.isArray(rows0);
+  let rows = (rows0 || []).filter(r => advZoneOk_(zones, r.zone) && (!zone || K(r.zone) === K(zone)));
+  const ids = [...new Set(rows.map(r => r.staff_id).filter(Boolean))];
+  const reg = ids.length && ids.length <= 400 ? (await advRead_(() => db.from('staff_registry').select('id, bank, account, phone').in('id', ids))) || [] : [];
+  const regBy = new Map(reg.map(r => [K(r.id), r]));
+  rows = rows.map(r => { const s = regBy.get(K(r.staff_id)) || {}; return { ...r, bank: s.bank || null, account: r.account || s.account || null, phone: s.phone || null }; });
+  const byZone = new Map();
+  for (const r of rows) {
+    const z = K(r.zone) || '—';
+    const s = byZone.get(z) || { zone: z, requests: 0, amount: 0, approved: 0, approvedAmount: 0 };
+    s.requests++; s.amount += num(r.amount);
+    if (K(r.approval) === 'APPROVED') { s.approved++; s.approvedAmount += num(r.amount); }
+    byZone.set(z, s);
+  }
+  const summary = [...byZone.values()].sort((a, b) => a.zone.localeCompare(b.zone));
+  return { rows, count: rows.length, from: fromKey, to: toKey, approval: want, on, note: on ? null : ADV_NOTE,
+    amount: rows.reduce((s2, r) => s2 + num(r.amount), 0),
+    approved: rows.filter(r => K(r.approval) === 'APPROVED').length,
+    approvedAmount: rows.filter(r => K(r.approval) === 'APPROVED').reduce((s2, r) => s2 + num(r.amount), 0),
+    summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(ADV_APPROVALS) };
 }
 
 /** Loan restructuring. A restructure is a written offer: the customer pays something now, and
@@ -6356,6 +6633,14 @@ export function mergeRoles_(roleRows, codeRows) {
   /* ADMIN is listed even on a book where no code carries it yet, because it is the one role
      that must never be un-grantable -- and it holds every tab whatever its row says. */
   if (!out.has('ADMIN')) out.set('ADMIN', { role: 'ADMIN', tabs: [], unset: true });
+  /* FIELD OFFICER is the role every TEAM CODE signs the portal in as (auth.js teamCodeUser), so
+     it is listed before any code carries it -- "I Need to see team / F.O (Field officer) at
+     Nafasi na ruhusa / Roles & access so that we grant the switch for all the users and I
+     decide what navs are to be accessed by team codes there". `teamCodes` lets the screen say
+     whose row it is. */
+  const fo = K(FIELD_OFFICER_ROLE);
+  if (!out.has(fo)) out.set(fo, { role: FIELD_OFFICER_ROLE, tabs: [], unset: true, teamCodes: true });
+  else out.get(fo).teamCodes = true;
   return [...out.values()].sort((a, b) => (K(a.role) < K(b.role) ? -1 : K(a.role) > K(b.role) ? 1 : 0));
 }
 
@@ -8723,6 +9008,7 @@ const FN = {
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
   deductions, addDeduction, hrDeduction,
+  advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -9109,6 +9395,11 @@ const FN_TAB = {
   // PMO Deduction: the form, the register and HR's column, one tab. Who may record a
   // deduction is narrowed further inside hrDeduction (DEDUCTION_HR_ROLES).
   deductions: ['deduct'], addDeduction: ['deduct'], hrDeduction: ['deduct'],
+  // Salary advance: four panes, four authorities.
+  advStaff: ['advstaff'], advStaffSave: ['advstaff'], advStaffStatus: ['advstaff'],
+  advRequestPage: ['advreq'], advRequest: ['advreq'],
+  advQueue: ['advappr'], advDecide: ['advappr'],
+  advReport: ['advrep'],
   /* The credit info report and its stats pane ride on the Credit Analysts tab rather than
      asking the admin to tick a new permission for a second view onto a book somebody already
      holds. The download page and the pane both come through here. */

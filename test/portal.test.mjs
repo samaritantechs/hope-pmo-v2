@@ -11204,3 +11204,127 @@ test('the audit report answers the questionnaire for a month: cohort, aging, PAR
   const nobody = { code: 'N', name: 'N', role: 'GMO', teams: null, tabs: ['dashboard'] };
   await assert.rejects(() => run('auditReport', { month: '2026-07' }, nobody, dbWithRpc(t)), e => e.status === 403);
 });
+
+/* SALARY ADVANCE -- "I found the this file looks suspicious warning on the google sheet for
+   Hope advance requests. We need to shift that into the app too ... like how we moved the
+   imprests and legal demands". HR's registry (IDs generated, the birth date off the NIDA), the
+   ask on a TEAM CODE (the team's zone decides the names on offer; one per month; the amounts
+   offered), the GMO's bulk decision within their zone, the report with the accounts -- and
+   without RUN-ME-044 every tab says so. */
+test('salary advance: the registry, the ask on a team code, the GMO\'s decision and the report, all by zone', async () => {
+  const { teamCodeUser, FIELD_OFFICER_ROLE } = await import('../api/_lib/auth.js');
+  const { mergeRoles_ } = await import('../api/_lib/portal-core.js');
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
+  t.teams[1] = { ...t.teams[1], zone: 'MARA', team_code: 'MBA456' };
+  t.teams.push({ team: 'NOZONE', team_code: 'NZ1' });
+  t.staff_registry = [
+    { id: 'AAA/001/2026', name: 'ASHA ALI AMANI', role: 'Field Officer', zone: 'DAR EAST', status: 'Active', account: '0152000111', bank: 'NMB', phone: '711000111' },
+    { id: 'BBB/002/2026', name: 'BAHATI B', role: 'Field Officer', zone: 'DAR EAST', status: 'Inactive', account: '0152000222' },
+    { id: 'CCC/003/2026', name: 'CHIKU C', role: 'Manager', zone: 'MARA', status: 'Active', account: '0152000333' },
+  ];
+  t.advance_requests = [
+    // CHIKU asked last month, approved: not this month's.
+    { id: 'r-old', submitted_at: '2026-06-10T08:00:00Z', staff_id: 'CCC/003/2026', staff_name: 'CHIKU C', zone: 'MARA', amount: 100000, approval: 'Approved', decided_by: 'GMO M', decided_at: '2026-06-11T08:00:00Z', app_date: '2026-06-10' },
+    // ASHA's DISAPPROVED one this month does not use the month up (the sheet counted it).
+    { id: 'r-no', submitted_at: '2026-07-18T08:00:00Z', staff_id: 'AAA/001/2026', staff_name: 'ASHA ALI AMANI', zone: 'DAR EAST', amount: 50000, approval: 'Disapproved', comment: 'subiri', decided_by: 'GMO D', decided_at: '2026-07-19T08:00:00Z', app_date: '2026-07-18' },
+  ];
+  const db = fakeDb(t);
+
+  // A team code is a FIELD OFFICER on that one team, matched the way HOPE Calls matches it;
+  // the row is on Roles & access before any code carries it, marked as the team codes' row.
+  const fo = await teamCodeUser('kon-123', db);
+  assert.equal(fo.role, FIELD_OFFICER_ROLE); assert.deepEqual(fo.teams, ['KONGOWE']); assert.equal(fo.teamCode, true);
+  assert.equal(fo.name, 'KONGOWE · F.O');
+  assert.equal(await teamCodeUser('nope', db), null); assert.equal(await teamCodeUser('', db), null);
+  const roles = mergeRoles_([{ role: 'ADMIN', tabs: ['settings'] }], [{ role: 'GMO' }]);
+  assert.ok(roles.find(r => r.role === FIELD_OFFICER_ROLE && r.teamCodes && r.unset), 'listed, unset, as the team codes\' row');
+  assert.ok(mergeRoles_([{ role: 'Field Officer', tabs: ['advreq'] }], []).find(r => r.role === 'Field Officer' && r.teamCodes && r.tabs[0] === 'advreq'), 'a ticked row keeps its spelling and its tabs');
+  const FO = { ...fo, tabs: ['advreq'] };
+
+  // THE ASK: the team's zone (DAR EAST) decides the names -- active only, nothing else about them.
+  const page = await portalApi(db, FO, 'advRequestPage', {}, NOW);
+  assert.equal(page.on, true); assert.deepEqual(page.zones, ['DAR EAST']); assert.equal(page.teamCode, true);
+  assert.deepEqual(page.staff.map(s => s.name), ['ASHA ALI AMANI'], 'MARA\'s staff and the inactive one are not offered');
+  assert.deepEqual(Object.keys(page.staff[0]).sort(), ['id', 'name', 'role', 'zone'], 'no account, no phone, no NIDA on a shared screen');
+  assert.deepEqual(page.amounts, [50000, 100000, 150000, 200000]);
+  const picked = await portalApi(db, FO, 'advRequestPage', { staffId: 'aaa/001/2026' }, NOW);
+  assert.equal(picked.chosen.name, 'ASHA ALI AMANI'); assert.equal(picked.monthTaken, null, 'a disapproved request does not use the month up');
+  assert.equal(picked.mine.length, 1);
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'CCC/003/2026', amount: 50000 }, NOW), e => e.status === 403, 'another zone\'s staff');
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 70000 }, NOW), e => e.status === 400 && /amount/i.test(e.message));
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'BBB/002/2026', amount: 50000 }, NOW), e => e.status === 400 && /inactive/i.test(e.message));
+  const made = await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: '150000', appDate: TODAY }, NOW);
+  assert.equal(made.amount, 150000); assert.equal(made.zone, 'DAR EAST');
+  const stored = db._dump('advance_requests').find(r => r.id === made.id);
+  assert.equal(stored.approval, 'Pending'); assert.equal(stored.account, '0152000111', 'the account rides along for payroll');
+  assert.equal(stored.code, 'KONGOWE', 'asked through the team code'); assert.equal(stored.staff_name, 'ASHA ALI AMANI');
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /one request per month/i.test(e.message));
+  assert.ok((await portalApi(db, FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW)).monthTaken, 'and the form says so');
+
+  // THE GMO'S DESK: DAR EAST's GMO sees the pending one; MARA's sees nothing; neither decides the other's.
+  const gmoD = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advappr'] };
+  const gmoM = { code: 'GM', name: 'GMO M', role: 'GMO', teams: ['MBAGALA'], tabs: ['advappr', 'advrep'] };
+  const qD = await portalApi(db, gmoD, 'advQueue', {}, NOW);
+  assert.deepEqual(qD.pending.map(r => r.staff_name), ['ASHA ALI AMANI']); assert.equal(qD.amount, 150000);
+  assert.deepEqual(qD.recent.map(r => r.id), ['r-no'], 'decided in the last fourteen days');
+  assert.deepEqual((await portalApi(db, gmoM, 'advQueue', {}, NOW)).pending, []);
+  await assert.rejects(() => portalApi(db, gmoM, 'advDecide', { updates: [{ id: made.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, gmoD, 'advDecide', { updates: [{ id: made.id, approval: 'Pending' }] }, NOW), e => e.status === 400);
+  await assert.rejects(() => portalApi(db, gmoD, 'advDecide', { updates: [] }, NOW), e => e.status === 400);
+  const dec = await portalApi(db, gmoD, 'advDecide', { updates: [{ id: made.id, approval: 'approved', comment: 'sawa' }, { id: 'r-no', approval: 'Approved' }] }, NOW);
+  assert.equal(dec.approved, 1); assert.equal(dec.disapproved, 0); assert.deepEqual(dec.skipped, ['ASHA ALI AMANI: already Disapproved']);
+  const after = db._dump('advance_requests').find(r => r.id === made.id);
+  assert.equal(after.approval, 'Approved'); assert.equal(after.comment, 'sawa'); assert.equal(after.decided_by, 'GMO D');
+
+  // THE REPORT: this month, Approved by default, the bank beside the account; every zone for the admin.
+  const rep = await portalApi(db, ADMIN, 'advReport', {}, NOW);
+  assert.equal(rep.approval, 'Approved'); assert.deepEqual(rep.rows.map(r => r.staff_name), ['ASHA ALI AMANI']);
+  assert.equal(rep.rows[0].bank, 'NMB'); assert.equal(rep.rows[0].account, '0152000111'); assert.equal(rep.approvedAmount, 150000);
+  assert.deepEqual(rep.summary, [{ zone: 'DAR EAST', requests: 1, amount: 150000, approved: 1, approvedAmount: 150000 }]);
+  assert.deepEqual(rep.zones, ['DAR EAST', 'MARA']);
+  const all = await portalApi(db, ADMIN, 'advReport', { from: '2026-06-01', to: TODAY, approval: 'ALL' }, NOW);
+  assert.equal(all.count, 3); assert.equal(all.approved, 2);
+  assert.deepEqual((await portalApi(db, gmoM, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW)).rows.map(r => r.id), ['r-old'], 'MARA only');
+
+  // HR'S REGISTRY: the ID generated (initials / running number / year), the birth date off the NIDA, the switch.
+  const hr = { code: 'H', name: 'HR PERSON', role: 'HR', teams: null, tabs: ['advstaff'] };
+  const reg = await portalApi(db, hr, 'advStaff', {}, NOW);
+  assert.equal(reg.total, 3); assert.equal(reg.active, 2); assert.deepEqual(reg.zones, ['DAR EAST', 'MARA']);
+  assert.deepEqual(reg.noZoneTeams, [], 'an all-teams viewer has no team to be told about'); assert.equal(reg.nextSerial, 4);
+  const saved = await portalApi(db, hr, 'advStaffSave', { name: 'jaffary mohamed markii', zone: 'dar east', phone: '677 111 910',
+    nida: '20010721671220000000.00', account: '0152826626000', bank: 'EXIM', role: 'PMO - SUPERVISOR' }, NOW);
+  assert.equal(saved.id, 'JMM/004/2026'); assert.equal(saved.birth_date, '2001-07-21'); assert.equal(saved.created, true);
+  const srow = db._dump('staff_registry').find(r => r.id === 'JMM/004/2026');
+  assert.equal(srow.name, 'JAFFARY MOHAMED MARKII'); assert.equal(srow.zone, 'DAR EAST'); assert.equal(srow.phone, '677111910');
+  assert.equal(srow.account, '0152826626000', 'leading zero kept'); assert.equal(srow.nida, '20010721671220000000'); assert.equal(srow.status, 'Active');
+  assert.equal(srow.reg_date, TODAY); assert.equal(srow.created_by, 'HR PERSON');
+  // A second JMM takes the next running number; an edit keeps the ID; a typed ID is honoured.
+  assert.equal((await portalApi(db, hr, 'advStaffSave', { name: 'JUMA M MAKAME', zone: 'MARA' }, NOW)).id, 'JMM/005/2026');
+  const edited = await portalApi(db, hr, 'advStaffSave', { id: 'jmm/004/2026', name: 'JAFFARY MOHAMED MARKII', zone: 'DAR EAST', bank: 'CRDB' }, NOW);
+  assert.equal(edited.created, false); assert.equal(db._dump('staff_registry').find(r => r.id === 'JMM/004/2026').bank, 'CRDB');
+  assert.equal((await portalApi(db, hr, 'advStaffSave', { id: 'XYZ/777/2025', name: 'OLD STAFF', zone: 'MARA' }, NOW)).id, 'XYZ/777/2025');
+  const off = await portalApi(db, hr, 'advStaffStatus', { id: 'JMM/004/2026', status: 'Inactive' }, NOW);
+  assert.equal(off.status, 'Inactive');
+  assert.ok(!(await portalApi(db, FO, 'advRequestPage', {}, NOW)).staff.find(s => s.id === 'JMM/004/2026'), 'off the request list');
+  // A zone-scoped holder of the HR tab cannot write into another zone; a team with no zone is named to them.
+  const scopedHr = { code: 'S', name: 'SCOPED', role: 'GMO', teams: ['KONGOWE', 'NOZONE'], tabs: ['advstaff'] };
+  await assert.rejects(() => portalApi(db, scopedHr, 'advStaffSave', { name: 'X Y', zone: 'MARA' }, NOW), e => e.status === 403);
+  assert.deepEqual((await portalApi(db, scopedHr, 'advStaff', {}, NOW)).noZoneTeams, ['NOZONE']);
+  assert.deepEqual((await portalApi(db, scopedHr, 'advStaff', {}, NOW)).rows.map(r => r.zone), ['DAR EAST', 'DAR EAST', 'DAR EAST']);
+  await assert.rejects(() => portalApi(db, scopedHr, 'advStaffStatus', { id: 'CCC/003/2026', status: 'Inactive' }, NOW), e => e.status === 403);
+  // The gates are the tabs, not the role.
+  await assert.rejects(() => portalApi(db, { ...FO, tabs: [] }, 'advRequestPage', {}, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, FO, 'advQueue', {}, NOW), e => e.status === 403);
+
+  // Without RUN-ME-044 the tabs say so instead of failing.
+  const db2 = fakeDb(tables());
+  const from = db2.from.bind(db2);
+  db2.from = n => { if (n === 'staff_registry' || n === 'advance_requests') throw new Error('relation "public.' + n + '" does not exist'); return from(n); };
+  const none = await portalApi(db2, ADMIN, 'advRequestPage', {}, NOW);
+  assert.equal(none.on, false); assert.match(none.note, /RUN-ME-044/); assert.deepEqual(none.staff, []);
+  assert.equal((await portalApi(db2, ADMIN, 'advQueue', {}, NOW)).on, false);
+  assert.equal((await portalApi(db2, ADMIN, 'advReport', {}, NOW)).on, false);
+  assert.equal((await portalApi(db2, ADMIN, 'advStaff', {}, NOW)).on, false);
+  await assert.rejects(() => portalApi(db2, ADMIN, 'advStaffSave', { name: 'A B', zone: 'Z' }, NOW), e => e.status === 400 && /RUN-ME-044/.test(e.message));
+});

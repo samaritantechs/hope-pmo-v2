@@ -1689,3 +1689,27 @@ test('the dashboard Orodha paints a team name red on the month\'s average, not t
   const ctx = app.slice(app.indexOf('function colourCtx_'), app.indexOf('function pctClass_'));
   assert.ok(/var named = \(cols \|\| \[\]\)\.filter\(function\(c\)\{ return c\.avgKey; \}\)\[0\];/.test(ctx), 'a column\'s own avgKey wins over the default order');
 });
+
+/* SALARY ADVANCE -- "We need to shift that into the app too". Four navs after PMO Deduction,
+   each its own tick; the FIELD OFFICER row on Roles & access is marked as the team codes'
+   row; the upload page takes the workbook's two tabs. */
+test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
+  const app = readFileSync(join(PUBLIC, 'app.html'), 'utf8');
+  const nav = app.slice(app.indexOf("{ id:'deduct',"), app.indexOf("{ id:'legal',"));
+  for (const id of ['advreq', 'advappr', 'advrep', 'advstaff']) assert.ok(new RegExp("\\{ id:'" + id + "',").test(nav), id + ' sits after PMO Deduction');
+  assert.ok(/advStaff:1, advRequestPage:1, advQueue:1, advReport:1/.test(app), 'cached like the other reads');
+  const view = app.slice(app.indexOf('VIEWS.advreq = function'), app.indexOf('VIEWS.restructure = function'));
+  assert.ok(/srv\('advRequestPage', \{ staffId: staffId \}\)/.test(view) && /data-arg="staffId"/.test(view) && /id="advSubmit"/.test(view) && /srv\('advRequest'/.test(view), 'the ask: pick your name, submit');
+  assert.ok(/monthTaken/.test(view) && /Only one request per month/.test(view), 'the month rule is said on the form');
+  assert.ok(/VIEWS\.advappr = function/.test(view) && /srv\('advQueue'/.test(view) && /class="advChk"/.test(view) && /id="advDecideSave"/.test(view) && /srv\('advDecide', \{ updates: updates \}\)/.test(view), 'the GMO\'s bulk decision');
+  assert.ok(/VIEWS\.advrep = function/.test(view) && /srv\('advReport'/.test(view) && /col\('account','Akaunti \/ Account'\)/.test(view) && /board\('advRepZones'/.test(view), 'the report with the accounts, by zone');
+  assert.ok(/VIEWS\.advstaff = function/.test(view) && /srv\('advStaff'/.test(view) && /id="newStaff"/.test(view) && /function advStaffForm\(x\)/.test(view) && /srv\('advStaffSave'/.test(view) && /srv\('advStaffStatus'/.test(view), 'HR\'s registry, form and switch');
+  assert.ok(/\$\('#asNida'\)\.oninput/.test(view) && /dg\.slice\(0,4\)/.test(view), 'the birth date follows the NIDA number as it is typed');
+  assert.ok(/d\.on === false \? '<div class="note">⚠ ' \+ esc\(d\.note/.test(view), 'a database without RUN-ME-044 says so');
+  assert.ok(/getElementById\('advSubmit'\)/.test(app) && /getElementById\('advDecideSave'\)/.test(app) && /getElementById\('newStaff'\)/.test(app), 'wired with the tabs');
+  assert.ok(/r\.teamCodes \? ' <span class="chip mut">F\.O · misimbo ya timu \/ team codes<\/span>'/.test(app), 'Roles & access marks the team codes\' row');
+  const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
+  assert.ok(/<option value="staff-registry">/.test(up) && /<option value="advance-requests">/.test(up), 'the two upload kinds');
+  assert.ok(/'staff-registry': \[\], 'advance-requests': \[\]/.test(up) && /'staff-registry':1, 'advance-requests':1/.test(up) && /'staff-registry': 'append', 'advance-requests': 'append'/.test(up));
+  assert.ok(/type === 'staff-registry'\)\s+return find\(\/\^database\$\/, \/staff\/, \/registry\/\)/.test(up) && /type === 'advance-requests'\)\s+return find\(\/\^advance requests\?\$\/, \/advance\//.test(up), 'the workbook\'s own tab names');
+});

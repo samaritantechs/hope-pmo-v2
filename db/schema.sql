@@ -475,6 +475,32 @@ create index if not exists idx_pmo_deductions_at on pmo_deductions (submitted_at
 create index if not exists idx_pmo_deductions_team on pmo_deductions (team, submitted_at desc);
 create index if not exists idx_pmo_deductions_staff on pmo_deductions (staff);
 
+-- Salary advance (RUN-ME-044): the STAFF_FUNDS Google Sheet moved in. staff_registry is the
+-- sheet's DATABASE tab (HR's, keyed on the staff ID: initials / running number / year);
+-- advance_requests is its ADVANCE REQUESTS tab, one row per request, decided by the GMO of
+-- the staff's zone.
+create table if not exists staff_registry (
+  id text primary key, reg_date date, name text not null, phone text, phone2 text, role text,
+  residence text, bank text, account text, zone text, nida text, birth_date date,
+  guarantor1 text, guarantor1_phone text, guarantor2 text, guarantor2_phone text, tin text, nssf text,
+  status text not null default 'Active',
+  created_by text, created_at timestamptz not null default now(), updated_by text, updated_at timestamptz,
+  upload_date date, upload_batch uuid
+);
+create index if not exists idx_staff_registry_zone on staff_registry (zone, status);
+create index if not exists idx_staff_registry_name on staff_registry (name);
+create table if not exists advance_requests (
+  id uuid primary key default gen_random_uuid(), submitted_at timestamptz not null default now(),
+  staff_id text, staff_name text not null, staff_role text, app_date date, amount numeric(14,2) not null,
+  approval text not null default 'Pending', comment text, zone text, code text, account text,
+  decided_by text, decided_at timestamptz,
+  created_by text, created_at timestamptz not null default now(),
+  upload_date date, upload_batch uuid
+);
+create index if not exists idx_advance_requests_at on advance_requests (submitted_at desc);
+create index if not exists idx_advance_requests_zone on advance_requests (zone, approval, submitted_at desc);
+create index if not exists idx_advance_requests_staff on advance_requests (staff_id, submitted_at desc);
+
 -- =====================================================================================
 -- HOPE CALLS -- one table for logs, no weekly archive gymnastics needed. Postgres
 -- doesn't have a 10-million-cell ceiling; this can hold years of call history and

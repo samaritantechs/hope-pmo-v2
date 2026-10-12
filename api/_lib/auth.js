@@ -87,7 +87,13 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    Google Sheets) is granted the same way `audit` is: admins hold it from the start, and the
    recovery officers who report cases, and HR who records the deductions, get it when the tab
    is ticked on their role or code. */
-export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct']);
+/* SALARY ADVANCE -- four panes, four authorities, granted like `audit`: admins hold them from
+   the start, and a role gets one when it is ticked. advreq is the ask (a field officer, on
+   their team's code, picking their own name from their zone's list); advappr is the GMO's
+   desk; advrep is the report with the bank accounts; advstaff is HR's staff registry.
+     "I decide what navs are to be accessed by team codes there" */
+export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
+  'advreq', 'advappr', 'advrep', 'advstaff']);
 /* `bonusplan` (the daily bonus plan preview) follows `audit`: admins hold it from the start and it
    is opened to a role by ticking it. It reads nothing from the server -- it is a page of example
    figures and boxes -- so there is no function behind it to gate, only the tab. */
@@ -96,7 +102,8 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
    screen every code should carry.
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
-export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct'];
+export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
+  'advreq', 'advappr', 'advrep', 'advstaff'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set
@@ -223,11 +230,56 @@ export async function authCodeResolved(code) {
   return user;
 }
 
+/* =======================================================================================
+   A TEAM CODE OPENS THE PORTAL AS A FIELD OFFICER.
+
+     "as we already allow officers to see the portal view I Need to see team / F.O (Field
+      officer) at Nafasi na ruhusa / Roles & access so that we grant the switch for all the
+      users and I decide what navs are to be accessed by team codes there"
+
+   Three hundred officers sign HOPE Calls in with their TEAM'S code (teams.team_code), and
+   none of them holds an access code of their own. The portal door now accepts that same code
+   when no access code matches it: the person is signed in as the team, in the FIELD OFFICER
+   role, holding that one team -- and the tabs they may open are whatever Roles & access has
+   ticked on FIELD OFFICER, one row for every team code at once. Nothing ticked, nothing
+   opened: the same empty-means-empty rule every role lives by.
+
+   ONLY THE PORTAL'S DOORS DO THIS (gatedUser, and /api/me which draws the launcher). The
+   calls door (api/call.js) keeps calling authCodeResolved, which still refuses a team code,
+   because its own registration reads team codes itself and hands the officer their NAME and
+   their team -- a team code resolving to "the team" there would register a handset as the
+   team instead of the person. The code typed is matched the way HOPE Calls matches it: letters
+   and digits only, case blind. One extra read, on a miss only, never on an access code. */
+export const FIELD_OFFICER_ROLE = 'FIELD OFFICER';
+export async function teamCodeUser(code, db = supabase) {
+  const key = String(code || '').trim().toUpperCase().replace(/[^0-9A-Z]/g, '');
+  if (!key) return null;
+  const { data, error } = await runQuery(() => db.from('teams').select('team, team_code'));
+  if (error || !data) return null;
+  const hit = data.find(t => String(t.team_code || '').toUpperCase().replace(/[^0-9A-Z]/g, '') === key);
+  if (!hit) return null;
+  return { code: hit.team_code, name: hit.team + ' · F.O', role: FIELD_OFFICER_ROLE, teams: [hit.team], tabs: [], teamCode: true };
+}
+/** authCodeResolved for the PORTAL: an access code first, exactly as before; a team code only
+    when no access code matches. The AuthError for an unknown code is the same one. */
+export async function authCodeResolvedPortal(code) {
+  let user;
+  try { user = await authCode(code); }
+  catch (e) {
+    if (!(e instanceof AuthError) || !/Invalid access code/.test(e.message)) throw e;
+    user = await teamCodeUser(code);
+    if (!user) throw e;
+  }
+  user.tabs = resolveTabs(user, await roleTabsOf(user.role));
+  user.readOnly = isReadOnly(user);
+  return user;
+}
+
 /** Every door into the system side of this deployment: identity, then the admin's open/closed
     switch. Calls has its own door (api/call.js) and is deliberately NOT behind this one -- the
     whole point of closing the system is that field officers carry on working. */
 export async function gatedUser(code) {
-  const user = await authCodeResolved(code);
+  const user = await authCodeResolvedPortal(code);
   await requireSystemOpen(supabase, user);
   return user;
 }
