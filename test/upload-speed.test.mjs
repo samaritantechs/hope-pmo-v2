@@ -421,3 +421,49 @@ test('abnormal payments: a row already in the book is not stored twice, and the 
   // function (RUN-ME-036 not yet run) is tolerated exactly like the other two trims.
   assert.ok(c.log.some(l => l.table === 'rpc:prune_abnormal_payments'), 'prune_abnormal_payments is called on the last slice');
 });
+
+/* WHAT A SECOND UPLOAD DOES, SAID FROM THE KEY. The result's `behaviour` sentence told every
+   stamped append upload that "uploading the same file twice would store it twice" -- written
+   before the registers had keys, and still said of the demand-notice register after it was
+   being REPLACED by REF NO or Kumb.Na. (replaceNoticesByRef) and upserted on the notice's own
+   id. The sentence sent people to Replace all for a correction append already makes. */
+test('the behaviour sentence says what a re-upload of THIS table does, from its key', async () => {
+  const header = ['NoticeID', 'Timestamp', 'AccessCode', 'LegalOfficer', 'REF#', 'CustName', 'Contact',
+    'NoticeDate', 'NoticeDays', 'FineAmount', 'TotalDemand', 'ArrearsAtNotice', 'CurrentArrears',
+    'Difference', 'Status', 'Team', 'OtherInst'];
+  const row = ['HMCL/HEN/24/09/2026-4', '24/09/2026 10:15', 'L1', 'JOHN LEGAL', '2206464347',
+    'HUMPHREY EZEKIEL NDONE', '774711656', '24/09/2026', 7, 2493500, 12323500, 9830000, 9000000, -830000,
+    'Reduced', 'TEAM1', 1133334];
+  const c = countingDb(baseTables({ demand_notices: [], notice_payments: [] }));
+  let res = await callUpload(c.db, { code: 'A', type: 'demand-notices', meta: { mode: 'append' }, rows: [header, row] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.behaviour.mode, 'append');
+  assert.match(res.body.behaviour.text, /^Added under \d{4}-\d{2}-\d{2}\. An earlier uploaded notice for the same REF NO or Kumb\.Na\. is REPLACED by the file's row, never stored twice\./);
+  assert.doesNotMatch(res.body.behaviour.text, /store it twice/);
+  // And the sentence is true: the same register again is the same single row.
+  res = await callUpload(c.db, { code: 'A', type: 'demand-notices', meta: { mode: 'append' }, rows: [header, row] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(c.dump('demand_notices').length, 1, 'replaced, not doubled');
+  assert.equal(res.body.noticePlace.replaced, 1);
+  // A keyed register that is upserted rather than cleared says so from its key words.
+  const dHeader = ['Timestamp', 'CUSTOMER NAME', 'REF NO', 'TEAM', 'STAFF NAME', 'AMOUNT'];
+  const d = countingDb(baseTables({ pmo_deductions: [] }));
+  res = await callUpload(d.db, { code: 'A', type: 'pmo-deductions', meta: { mode: 'append' },
+    rows: [dHeader, ['2026-09-01 09:00', 'C1', 'R1', 'TEAM1', 'S1', 5000]] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.match(res.body.behaviour.text, /is UPDATED in place, never stored twice/);
+  assert.match(res.body.behaviour.text, /the submission time, customer, reference and staff named together/);
+  // The payment books keep the copy already in -- their self-dated sentence says that, not "twice".
+  const p = countingDb(baseTables());
+  res = await callUpload(p.db, { code: 'A', type: 'received', meta: {},
+    rows: [['PAYMENT DATE', 'TEAM', 'CUSTOMER NAME', 'TRANSACTION ID', 'AMOUNT PAID'], ['2026-09-01', 'TEAM1', 'A', 'T1', 500]] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.match(res.body.behaviour.text, /a payment already in the book \(matched on the transaction id/);
+  assert.doesNotMatch(res.body.behaviour.text, /store it twice/);
+  // A register with no key genuinely appends, and still says so.
+  const k = countingDb(baseTables({ complaints: [] }));
+  res = await callUpload(k.db, { code: 'A', type: 'complaints', meta: { mode: 'append', uploadDate: '2026-09-01' },
+    rows: [['REF#', 'TEAM', 'COMPLAINANT', 'DETAILS'], ['R1', 'TEAM1', 'X', 'late']] });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.match(res.body.behaviour.text, /Added under 2026-09-01\. Uploading the same file twice would store it twice\./);
+});

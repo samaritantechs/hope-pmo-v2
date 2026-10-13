@@ -1406,6 +1406,20 @@ export default withApi(async (req, res) => {
        : replacedDates.length <= 4 ? replacedDates.join(', ')
        : `${replacedDates.length} days, ${replacedDates[0]} to ${replacedDates[replacedDates.length - 1]}`)
     : uploadDate;
+  /* WHAT A SECOND UPLOAD OF THE SAME FILE DOES, said from the key the table is written on.
+     "Uploading the same file twice would store it twice" was written before most of these
+     tables had a key, and it stayed on after: the demand-notice register is REPLACED by REF NO
+     or Kumb.Na. before it is written, the deductions register and the STAFF_FUNDS pair are
+     upserted on each row's own facts, the pipeline on the loan's number, the two payment books
+     keep the copy already in. The sentence sent people to "Replace all" for a correction that
+     append already makes -- and Replace all takes the whole date with it. */
+  const again = !upsertTables[table]
+    ? 'uploading the same file twice would store it twice'
+    : table === 'demand_notices'
+      ? 'an earlier uploaded notice for the same REF NO or Kumb.Na. is REPLACED by the file\'s row, never stored twice'
+      : keepFirst
+        ? `a payment already in the book (matched on ${keyWords[table]}) is left alone, never stored twice`
+        : `a row already in (matched on ${keyWords[table] || upsertTables[table]}) is UPDATED in place, never stored twice`;
   const behaviour = stamped
     ? (plan.sameDayRedo
         ? { mode: 'replace-date', text: `This is the ${meta.stage ? String(meta.stage).toUpperCase() + ' ' : ''}list for ${dayPhrase} now: `
@@ -1416,8 +1430,8 @@ export default withApi(async (req, res) => {
             + (plan.dateCol ? ` The days come from the "${plan.dateCol.replace(/_/g, ' ')}" column in your file, not from the upload date.` : '')
             + (plan.uploadedOnly ? ' Anything staff entered in the app was left alone — only uploaded rows were replaced.' : '') }
         : { mode: 'append', text: plan.dateCol
-            ? `Added. Each row counts under its own "${plan.dateCol.replace(/_/g, ' ')}" from the file, so re-pulled dates land on the right day — but uploading the same file twice would store it twice. Choose "Badilisha yote / Replace all" to redo a day instead.`
-            : `Added to the ${uploadDate} report. Uploading the same file again under this date would store it twice — choose "Replace all for this date" to redo a day instead.` })
+            ? `Added. Each row counts under its own "${plan.dateCol.replace(/_/g, ' ')}" from the file, so re-pulled dates land on the right day — and ${again}. To redo a day wholesale (rows you removed from the file gone too), choose "Badilisha yote / Replace all".`
+            : `Added under ${uploadDate}. ${again.charAt(0).toUpperCase() + again.slice(1)}. To redo this date wholesale (rows you removed from the file gone too), choose "Replace all for this date".` })
     : SNAPSHOT_TABLES.has(table)
     ? { mode: 'supersede', text: 'This date now reads from THIS upload. An earlier upload of the same date stays in history but no longer counts, so nothing is doubled.' }
     : table === 'hints'

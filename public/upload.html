@@ -410,11 +410,13 @@ function setMode_(m){
       : 'Kila kitu kilichopakiwa kwa tarehe hii kitafutwa kwanza, kisha faili hii iwekwe. Tarehe nyingine haziguswi. / '
         + 'Everything already uploaded under this report date is removed first, then this file is written. No other date is touched.';
   } else {
+    // Both self-dated reports are keyed (the payment's transaction, the loan's number), so a
+    // row already in is corrected, not doubled -- the server's own answer says the same.
     b.textContent = dl
-      ? 'Kila safu inahesabiwa kwa siku yake yenyewe (' + dl + '). / '
+      ? 'Kila safu inahesabiwa kwa siku yake yenyewe (' + dl + '). Safu iliyopo tayari haihifadhiwi mara mbili. / '
         + 'Each row counts under its OWN ' + dl + ' from the file, so a re-pulled report lands on the right days. '
-        + 'Uploading the same file twice would still store it twice — use "Badilisha yote" to redo a day.'
-      : (BEHAVIOUR.append || '');
+        + 'A row already in is matched on its own identity and not stored twice — "Badilisha yote" redoes a day wholesale, rows you removed from the file gone too.'
+      : (BEHAVIOUR[TYPE_BEHAVIOUR[$('type').value]] || BEHAVIOUR.append || '');
   }
 }
 
@@ -427,6 +429,18 @@ var BEHAVIOUR = {
     + 'Re-uploading UPDATES the rows that already exist — corrections land, duplicates do not.',
   append:    'Kila upakiaji unaongeza kwenye tarehe uliyochagua. Ukitaka kurudia siku, chagua "Badilisha yote". / '
     + 'Each upload ADDS to the report date you chose. To redo a day, choose "Replace all" — only that date is touched.',
+  /* The registers that came over from Google Sheets are keyed on each row's own facts, and the
+     demand-notice register is cleared by REF NO or Kumb.Na. before it is written: sending a
+     corrected sheet again corrects, it never doubles. "Each upload ADDS" sent people to Replace
+     all for that, and Replace all takes the whole date with it. */
+  register:  'Kupakia tena kunasahihisha safu zilizopo, hakuzirudii. "Badilisha yote" hufuta tarehe nzima kwanza. / '
+    + 'Re-uploading UPDATES a row already in (matched on its own facts) rather than storing it twice. '
+    + '"Replace all" clears the whole date first, so rows you removed from the file go too.',
+  notices:   'Notisi iliyopakiwa awali kwa REF NO au Kumb.Na. ileile inabadilishwa na safu ya faili, haiongezwi mara mbili. Notisi zilizotolewa kwenye app haziguswi. / '
+    + 'A notice already uploaded for the same REF NO or Kumb.Na. is REPLACED by the file\'s row — nothing is stored twice. '
+    + 'Notices issued in the app are never touched.',
+  payments:  'Malipo yaliyopo tayari kwenye kitabu hayahifadhiwi mara mbili — laha inaweza kutumwa tena. / '
+    + 'A payment already in the book is left alone, never stored twice — a sheet can be sent again.',
   replaceAll:'Inabadilisha laha nzima. Ukiondoa kidokezo kwenye faili, kinatoweka kwenye app. / '
     + 'Replaces the WHOLE sheet — a tip you delete from the file disappears from the app.',
   commentsUpdate: 'Maoni yaleyale hayarudiwi — unaweza kupakia faili la historia tena bila hofu. / '
@@ -454,14 +468,14 @@ var TYPE_BEHAVIOUR = {
      of v1 comments is never one clean go, and without this the second attempt doubled every
      comment already stored. */
   'comments': 'commentsUpdate',
-  'received': 'append', 'abnormal': 'append',
-  'complaints': 'append', 'restructures': 'append', 'demand-notices': 'append',
+  'received': 'payments', 'abnormal': 'payments',
+  'complaints': 'append', 'restructures': 'append', 'demand-notices': 'notices',
   // Keyed on each row's own facts (the submission time, customer, reference and staff), so
   // the Google Sheets register can be sent again after a correction without doubling.
-  'pmo-deductions': 'append',
+  'pmo-deductions': 'register',
   // The STAFF_FUNDS workbook: the registry on its staff IDs, the advance register on each
   // row's own facts -- either can be sent again after a correction without doubling.
-  'staff-registry': 'append', 'advance-requests': 'append',
+  'staff-registry': 'register', 'advance-requests': 'register',
   'hints': 'replaceAll', 'logo': 'logo',
 };
 function syncFields(){

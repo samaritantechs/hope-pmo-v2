@@ -1635,7 +1635,7 @@ test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR colu
   assert.ok(/d\.on === false \? '<div class="note">⚠ ' \+ esc\(d\.note/.test(view), 'a database without RUN-ME-043 says so');
   assert.ok(/getElementById\('newDeduction'\)/.test(app) && /getElementById\('dedReport'\)/.test(app), 'wired with the tab');
   const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
-  assert.ok(/<option value="pmo-deductions">/.test(up) && /'pmo-deductions': \[\]/.test(up) && /'pmo-deductions':1/.test(up) && /'pmo-deductions': 'append'/.test(up), 'the register upload kind');
+  assert.ok(/<option value="pmo-deductions">/.test(up) && /'pmo-deductions': \[\]/.test(up) && /'pmo-deductions':1/.test(up) && /'pmo-deductions': 'register'/.test(up), 'the register upload kind');
   assert.ok(/type === 'pmo-deductions'\)\s+return find\(\/deduct\/, \/portfolio\/, \/\^sheet1\$\/\)/.test(up), 'the workbook\'s Sheet1 is the register');
 });
 
@@ -1718,8 +1718,34 @@ test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
   assert.ok(/r\.teamCodes \? ' <span class="chip mut">F\.O · misimbo ya timu \/ team codes<\/span>'/.test(app), 'Roles & access marks the team codes\' row');
   const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
   assert.ok(/<option value="staff-registry">/.test(up) && /<option value="advance-requests">/.test(up), 'the two upload kinds');
-  assert.ok(/'staff-registry': \[\], 'advance-requests': \[\]/.test(up) && /'staff-registry':1, 'advance-requests':1/.test(up) && /'staff-registry': 'append', 'advance-requests': 'append'/.test(up));
+  assert.ok(/'staff-registry': \[\], 'advance-requests': \[\]/.test(up) && /'staff-registry':1, 'advance-requests':1/.test(up) && /'staff-registry': 'register', 'advance-requests': 'register'/.test(up));
   assert.ok(/type === 'staff-registry'\)\s+return find\(\/\^database\$\/, \/staff\/, \/registry\/\)/.test(up) && /type === 'advance-requests'\)\s+return find\(\/\^advance requests\?\$\/, \/advance\//.test(up), 'the workbook\'s own tab names');
+});
+
+/* WHAT A SECOND UPLOAD DOES, SAID FROM THE KEY. "Uploading the same file twice would store it
+   twice" stayed on the page and in the result after the registers were keyed; it sent people
+   to Replace all -- which takes the whole date -- for a correction append already makes. The
+   page's hint per kind now matches what the server does: the demand-notice register is replaced
+   by REF NO or Kumb.Na., the Google Sheets registers are updated on their own facts, the
+   payment books keep the copy already in, and only the un-keyed registers still append. */
+test('the upload page says what a re-upload does per kind, from the key the server writes on', () => {
+  const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
+  const map = up.match(/var TYPE_BEHAVIOUR = \{([\s\S]*?)\};/);
+  assert.ok(map, 'TYPE_BEHAVIOUR moved -- update the extractor');
+  const kinds = Object.fromEntries([...map[1].matchAll(/'([\w-]+)': '(\w+)'/g)].map(m => [m[1], m[2]]));
+  assert.equal(kinds['demand-notices'], 'notices');
+  for (const k of ['pmo-deductions', 'staff-registry', 'advance-requests']) assert.equal(kinds[k], 'register', k);
+  for (const k of ['received', 'abnormal']) assert.equal(kinds[k], 'payments', k);
+  for (const k of ['complaints', 'restructures']) assert.equal(kinds[k], 'append', k + ' has no key and genuinely appends');
+  const hints = up.match(/var BEHAVIOUR = \{([\s\S]*?)\n\};/);
+  assert.ok(hints);
+  for (const key of ['register', 'notices', 'payments']) assert.ok(new RegExp('^  ' + key + ':', 'm').test(hints[1]), 'a hint for ' + key);
+  assert.ok(/REF NO or Kumb\.Na\. is REPLACED by the file\\'s row/.test(hints[1]) && /Notices issued in the app are never touched/.test(hints[1]));
+  assert.ok(!/store it twice/.test(up), 'the page no longer says any re-upload stores a file twice');
+  // The self-dated reports' own hint (setMode_) says it too, and the stamped kinds' hint is read
+  // per kind rather than overwritten with the generic "each upload ADDS".
+  assert.ok(/A row already in is matched on its own identity and not stored twice/.test(up));
+  assert.ok(/: \(BEHAVIOUR\[TYPE_BEHAVIOUR\[\$\('type'\)\.value\]\] \|\| BEHAVIOUR\.append \|\| ''\)/.test(up));
 });
 
 /* SCREENS THAT LOAD WHEN THEIR TAB OPENS -- "We can't load everything from there, these
