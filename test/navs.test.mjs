@@ -177,6 +177,21 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
   assert.ok(/go\(impTab \|\| lastView_\(\) \|\| firstAllowed_\(\) \|\| 'noaccess'\)/.test(app),
     'the landing tab must fall through to one the person actually holds, never a fixed dashboard');
   assert.ok(/function lastView_\(\)\{[\s\S]*?allowed\(v\)/.test(app), 'the remembered tab is checked against what the person holds today');
+  /* NEVER A DOOR -- "dashboard hits back to upload page and i cant access portal on pc". The
+     upload tab sends the browser to /upload, and go() remembered it as the last tab before
+     doing so, so every later opening of the portal left for the upload page at once. The same
+     list gates both the write and the read, so a browser that already holds 'upload' gets in. */
+  const noLanding = app.match(/var NO_LANDING_ = (\{[^}]*\});/);
+  assert.ok(noLanding, 'NO_LANDING_ is the one list of tabs that are never a landing');
+  const lastViewSrc = app.match(/function lastView_\(\)\{[\s\S]*?\n\}/)[0];
+  for (const remembered of ['upload', 'present', 'noaccess', 'dashboard', 'legal']) {
+    const got = new Function('load', 'allowed', 'var NO_LANDING_ = ' + noLanding[1] + ';' + lastViewSrc + '; return lastView_();')(
+      () => remembered, () => true);
+    assert.equal(got, ['upload', 'present', 'noaccess'].includes(remembered) ? null : remembered, 'remembered ' + remembered);
+  }
+  assert.ok(/if \(t && !NO_LANDING_\[view\]\) store\('hopeLastView', view\);/.test(app), 'the write is gated by the same list');
+  assert.ok(app.indexOf("store('hopeLastView', view)") < app.indexOf("if (view==='upload'){ location.href='/upload'; return; }"),
+    'the store still runs before the upload door, which is exactly why the list has to gate it');
   assert.ok(/impTab = impId && \(allowed\('impappr'\)/.test(app),
     'the imprest deep-link target must itself be chosen through allowed(), never assumed');
 
