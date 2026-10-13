@@ -729,7 +729,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-12-s';
+var BUILD = '2026-10-13-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1238,10 +1238,19 @@ function modLoad_(name){
   return MOD_LOADING_[name];
 }
 /* WHERE TO LAND NEXT TIME: the tab you were on, so opening the portal costs that one screen
-   and not the dashboard every morning (the deck is never resumed this way -- it runs timers). */
+   and not the dashboard every morning.
+
+   NEVER A DOOR. The upload tab is not a screen: go() sends the browser to /upload. Remembering
+   it sent every opening of the portal straight back out -- "dashboard hits back to upload page
+   and i cant access portal on pc" -- with no way back in from the keyboard, since the only
+   way to land somewhere else was to open the portal. The deck runs timers and is never
+   resumed; 'noaccess' is nowhere to return to. One list, used both where the tab is stored
+   and where it is read, so a browser that remembered 'upload' before this list existed is
+   let back in too. */
+var NO_LANDING_ = { upload: 1, present: 1, noaccess: 1 };
 function lastView_(){
   var v = load('hopeLastView');
-  return v && v !== 'present' && v !== 'noaccess' && allowed(v) ? v : null;
+  return v && !NO_LANDING_[v] && allowed(v) ? v : null;
 }
 function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
@@ -1278,7 +1287,7 @@ function go(view, args){
   // nothing -- so it would otherwise show its own id as the page title.
   $('#title').textContent = t ? t.label
     : (view === 'noaccess' ? 'Ruhusa hazijawekwa / Access not set yet' : view);
-  if (t && view !== 'present') store('hopeLastView', view);   // where the next opening lands -- lastView_
+  if (t && !NO_LANDING_[view]) store('hopeLastView', view);   // where the next opening lands -- lastView_
   Array.prototype.forEach.call(document.querySelectorAll('#nav button'), function(b){
     b.classList.toggle('on', b.getAttribute('data-v')===view);
   });
