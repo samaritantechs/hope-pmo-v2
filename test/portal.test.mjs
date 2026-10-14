@@ -11297,6 +11297,27 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'S5/005/2026', amount: 50000 }, NOW), e => e.status === 403 && /not of your role/.test(e.message));
   db._dump('staff_registry').splice(db._dump('staff_registry').length - spelt.length, spelt.length);
   db._dump('advance_requests').splice(db._dump('advance_requests').findIndex(r => r.staff_id === 'S2/002/2026'), 1);
+  /* A DEPARTMENT IS NOT A ZONE -- "Hadn't there been credits at my initial HR file?": the
+     sheet zoned HQ people "HQ - CREDIT", "HQ - PMO", "MANAGEMENT", and a credit code's zones
+     are its teams', so no credit name was ever on its list. A department row belongs to its
+     role: offered to every holder of the role whatever their teams, never to a team code; its
+     request carries no zone, sits in the role's history, and reaches the role's desk in any
+     zone. */
+  db._dump('staff_registry').push({ id: 'ANA/011/2026', name: 'ANNA ANALYST', role: 'CREDIT ANALYST', zone: 'HQ - CREDIT', status: 'Active', account: '0152000999' },
+    { id: 'BOS/012/2026', name: 'THE BOSS', role: 'GENERAL MANAGER', zone: 'MANAGEMENT', status: 'Active' });
+  db._dump('roles').push({ role: 'CREDIT', tabs: ['advreq', 'advappr'], approver_role: 'CREDIT' });
+  assert.deepEqual((await portalApi(db, credit, 'advRequestPage', {}, NOW)).staff.map(s => s.name), ['ANNA ANALYST'], 'the department\'s credit names, whatever the code\'s teams');
+  assert.deepEqual((await portalApi(db, FO, 'advRequestPage', {}, NOW)).staff.map(s => s.name), ['ASHA ALI AMANI'], 'not on a team code\'s list');
+  assert.deepEqual((await portalApi(db, { ...credit, role: 'GENERAL MANAGER' }, 'advRequestPage', {}, NOW)).staff.map(s => s.name), ['THE BOSS'], 'MANAGEMENT is a department too');
+  const rDept = await portalApi(db, credit, 'advRequest', { staffId: 'ANA/011/2026', amount: 50000 }, NOW);
+  assert.equal(db._dump('advance_requests').find(r => r.id === rDept.id).zone, null, 'a department request carries no zone');
+  assert.deepEqual((await portalApi(db, credit, 'advRequestPage', {}, NOW)).history.map(r => r.staff_name), ['ANNA ANALYST'], 'and sits in the role\'s history');
+  const creditM = { code: 'CM', name: 'CREDIT MARA', role: 'Credit', teams: ['MBAGALA'], tabs: ['advappr'] };
+  assert.deepEqual((await portalApi(db, creditM, 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['ANNA ANALYST'], 'reaches the role\'s desk in any zone');
+  assert.equal((await portalApi(db, creditM, 'advDecide', { updates: [{ id: rDept.id, approval: 'Approved' }] }, NOW)).approved, 1);
+  db._dump('advance_requests').splice(db._dump('advance_requests').findIndex(r => r.id === rDept.id), 1);
+  db._dump('staff_registry').splice(db._dump('staff_registry').length - 2, 2);
+  db._dump('roles').pop();
   assert.deepEqual(page.amounts, [50000, 100000, 150000, 200000]);
   const picked = await portalApi(db, FO, 'advRequestPage', { staffId: 'aaa/001/2026' }, NOW);
   assert.equal(picked.chosen.name, 'ASHA ALI AMANI'); assert.equal(picked.monthTaken, null, 'a disapproved request does not use the month up');
