@@ -18,7 +18,7 @@
 function advApprCls_(r){ var a = String(r.approval||'').toUpperCase(); return a === 'APPROVED' ? 'good' : a === 'DISAPPROVED' ? 'bad' : ''; }
 
 /* THE ASK. Pick your own name (your zone's list), the date, one of the amounts; the month's
-   rule and the amounts come from the server. Your own history sits below once a name is picked. */
+   rule and the amounts come from the server. The history of the role's requests sits below for approvers and report holders only. */
 VIEWS.advreq = function(){
   var staffId = S.args.staffId || '', staffName = S.args.staffName || '';
   return srv('advRequestPage', { staffId: staffId, staffName: staffName }).then(function(d){
@@ -76,6 +76,9 @@ VIEWS.advreq = function(){
     /* THE HISTORY OF YOUR ROLE IN YOUR ZONE -- "allow users to see history of their requests
        so teams see history of their zone as FOs": a team code sees its zone's field officers'
        requests, a credit officer the zone's credit ones, newest first. */
+    /* ...but only approvers and holders of the report see it -- "remove requests history to all
+       users except approvers": anyone else gets the form alone, no list, no table. */
+    if (d.canHistory === false){ S.rows = []; S.cols = []; ONROW = null; return; }
     S.rows = d.history || [];
     S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('zone','Zone'),
       col('app_date','Tarehe ya maombi / App date','date'), col('amount','Kiasi / Amount','money'),

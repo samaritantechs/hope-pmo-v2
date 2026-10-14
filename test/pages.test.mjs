@@ -1813,6 +1813,7 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(sql46.includes('alter table public.roles add column if not exists approver_code text;') && sql46.split('\n').length < 100, 'RUN-ME-046, under 100 lines');
   // The request screen is the viewer's ROLE in their zone: the names, the history, the month's rule with a date alone.
   assert.ok(!/d\.mine/.test(adv) && /S\.rows = d\.history \|\| \[\];/.test(adv) && /col\('staff_name','Jina \/ Name'\)/.test(adv), 'the history of the role in the zone, with names');
+  assert.ok(/d\.canHistory === false\)\{ S\.rows = \[\]; S\.cols = \[\];/.test(adv), 'a requester who is not an approver gets the form and no list');
   assert.ok(/wadhifa \/ role: ' \+ d\.role/.test(adv) && /d\.roleNote \? '<div class="note bad"/.test(adv), 'the subtitle names the role; a registry spelled otherwise is said');
   assert.ok(/d\.monthTaken\.submitted_at/.test(adv) && !/monthTaken\.amount/.test(adv), 'the month\'s rule with a date alone');
   assert.ok(/list="asRoles"/.test(adv) && /m\.roleNames/.test(adv), 'HR picks ROLE from Roles & access spellings');

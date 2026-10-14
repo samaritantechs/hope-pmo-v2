@@ -2001,16 +2001,25 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
      word -- "CREDIT%" brings the analysts, "FIELD%" brings nobody) and the role's requests
      that carry no zone. An admin's zone read already brings every row. */
   const dept = !admin && !cs && zones !== null;
+  /* THE HISTORY IS FOR THE PEOPLE WHO DECIDE -- "There are complaints, remove requests history
+     to all users except approvers .. at requests tab": a requester picks a name and asks;
+     they are not shown anybody's requests. Who is an approver: an admin, anyone holding the
+     approval or the report tab ("it's only those authorized report to see all"), and anyone
+     the routing makes a desk (roles they approve, roles they supervise whole, codes they
+     supervise). For everyone else the history is not read at all. */
+  const desk = advDeskOf_(routing, user).desk, tabs = user.tabs || [];
+  const seesHistory = admin || tabs.includes('advappr') || tabs.includes('advrep')
+    || !!(desk.roles.length || desk.deptRoles.length || desk.supervisees.length);
   const roleWord = advRoleWords_(user.role)[0] || '~none~';
   const histQ = () => db.from('advance_requests').select('id, submitted_at, staff_id, staff_name, zone, app_date, amount, approval, comment, decided_by, decided_at, req_role')
     .order('submitted_at', { ascending: false }).limit(100);
   const [staff0, history0, agents0, deptStaff0, deptHist0] = await Promise.all([
     advRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones)),
     // ilike, not eq: a code's role keeps its own spelling ("Credit"), and .eq() is exact-case.
-    advRead_(() => admin ? onZones_(histQ(), zones) : onZones_(histQ(), zones).ilike('req_role', String(user.role || '~none~'))),
+    seesHistory ? advRead_(() => admin ? onZones_(histQ(), zones) : onZones_(histQ(), zones).ilike('req_role', String(user.role || '~none~'))) : [],
     cs ? advRead_(() => db.from('call_agents').select('user_id, names')) : [],
     dept ? advRead_(() => onDept_(db.from('staff_registry').select('id, name, role, zone, status').ilike('role', roleWord + '%')).order('name', { ascending: true })) : [],
-    dept ? advRead_(() => histQ().is('zone', null).ilike('req_role', String(user.role || '~none~'))) : [],
+    dept && seesHistory ? advRead_(() => histQ().is('zone', null).ilike('req_role', String(user.role || '~none~'))) : [],
   ]);
   const on = Array.isArray(staff0);
   const zoneStaff = (staff0 || []).concat(deptStaff0 || []).filter(r => K(r.status) !== 'INACTIVE' && (advZoneOk_(zones, r.zone) || advDeptZone_(r.zone)))
@@ -2057,7 +2066,7 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
   }
   return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, monthTaken,
-    role: admin ? null : (user.role || ''), roleNote, history, csAgents: cs,
+    role: admin ? null : (user.role || ''), roleNote, history: seesHistory ? history : [], canHistory: seesHistory, csAgents: cs,
     requester: user.name, teamCode: !!user.teamCode,
     route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
     routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
