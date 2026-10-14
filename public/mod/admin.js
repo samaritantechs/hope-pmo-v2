@@ -299,6 +299,12 @@ function roleForm(x){
   var codeRows = (S.acRows || []).slice().sort(function(a, b){ return (String(a.role||'') + ' ' + String(a.name||'')).localeCompare(String(b.role||'') + ' ' + String(b.name||'')); });
   var codesMasked = codeRows.some(function(c){ return c.code === '••••'; });
   var supCode = String((x && x.approver_code) || '');
+  /* THE APPROVER OF THIS ROLE, AS A ROLE -- "At field officer role ... I expected to choose
+     gmo role not a single person user ... Not just field officer, and the rest": the same
+     fact as the list above read from the requester's side (FIELD OFFICER → GMO), on every
+     role's form. This role's own line is here, not in the list above. */
+  var curAppr = String((x && x.approver_role) || '').toUpperCase();
+  var roleKnown = roleRows.some(function(r){ return String(r.role||'').toUpperCase() === curAppr; });
   drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
     + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
@@ -322,16 +328,24 @@ function roleForm(x){
        tab too, whatever the box says). */
     + '<div class="fld" id="rApprovesWrap">'
       + '<label>Huidhinisha maombi ya advance ya wadhifa / Approves advance requests from roles</label><div class="checks">'
-      + roleRows.map(function(r){
-          var rr = String(r.role||'').toUpperCase(), ap = String(r.approver_role||'').toUpperCase();
+      + roleRows.filter(function(r){ return String(r.role||'').toUpperCase() !== me; }).map(function(r){
+          var ap = String(r.approver_role||'').toUpperCase();
           var mine = !!me && ap === me;
           return '<label><input type="checkbox" class="rApp" value="'+esc(r.role)+'"'+(mine ? ' checked' : '')+'> '+esc(r.role)
-            + (rr === me ? ' <span class="chip mut">wadhifa uleule → msimamizi kwa msimbo / same role → supervisor per code</span>' : '')
             + (ap && !mine ? ' <span style="color:var(--mut);font-size:11px">(sasa / now: '+esc(r.approver_role)+')</span>' : '')
             + '</label>'; }).join('')
-      + '</div><div class="fldnote">Ukitiki wadhifa hapa, wadhifa huu unapata tab ya <b>advappr</b> wenyewe, na maombi ya advance ya wadhifa huo huja kwenye dawati lake, ndani ya zone zake. Ukitiki wadhifa huu wenyewe (CREDIT → CREDIT), kila msimbo wa wadhifa huo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin. Wadhifa una mwidhinishaji mmoja tu: ukiutiki hapa, unaondoka kwa yule wa awali.'
-        + ' / Tick a role here and this role gets the <b>advappr</b> tab by itself; that role\'s advance requests then come to this desk, within its zones. Tick this role itself (credit → credit) and name ONE supervisor for the whole role below, or a supervisor on each code, or the request reaches nobody but an admin. A role has ONE approver: ticking it here takes it off the one it had.'
+      + '</div><div class="fldnote">Ukitiki wadhifa hapa, wadhifa huu unapata tab ya <b>advappr</b> wenyewe, na maombi ya advance ya wadhifa huo huja kwenye dawati lake, ndani ya zone zake. Wadhifa una mwidhinishaji mmoja tu: ukiutiki hapa, unaondoka kwa yule wa awali.'
+        + ' / Tick a role here and this role gets the <b>advappr</b> tab by itself; that role\'s advance requests then come to this desk, within its zones. A role has ONE approver: ticking it here takes it off the one it had.'
         + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
+    + '<div class="fld"><label>Mwidhinishaji wa wadhifa huu — wadhifa / Approver of this role — a role</label>'
+      + '<select id="rApproverRole"><option value="">— hakuna / none —</option>'
+      + roleRows.map(function(r){ var rr = String(r.role||'').toUpperCase();
+          return '<option value="'+esc(r.role)+'"'+(rr === curAppr ? ' selected' : '')+'>'+esc(r.role)
+            + (rr === me ? ' — wadhifa uleule: msimamizi kwa msimbo / same role: a supervisor per code' : '')+'</option>'; }).join('')
+      + (curAppr && !roleKnown ? '<option value="'+esc(curAppr)+'" selected>'+esc(curAppr)+'</option>' : '')
+      + '</select>'
+      + '<div class="fldnote">Kila mwenye wadhifa huo huona na kuamua maombi ya advance ya wadhifa huu, ndani ya zone zake — FIELD OFFICER → GMO, MANAGER → GMO, PMO COLLECTION → PMO MANAGER — na anapata tab ya <b>advappr</b> wenyewe. Ukichagua wadhifa huu wenyewe (CREDIT → CREDIT), taja msimamizi mmoja hapa chini, au kwenye kila msimbo. Mtu mmoja (hapa chini, au kwenye msimbo) anashinda wadhifa.'
+        + ' / Every holder of that role sees and decides this role\'s advance requests, within their zones — FIELD OFFICER → GMO, MANAGER → GMO, PMO COLLECTION → PMO MANAGER — and gets the <b>advappr</b> tab by itself. Pick this role itself (credit → credit) and name one supervisor below, or on each code. A named person (below, or on a code) wins over the role.</div></div>'
     + '<div class="fld"><label>Msimamizi wa wadhifa huu — mtu mmoja / One supervisor for this whole role</label>'
       + '<select id="rSupCode"'+(codesMasked ? ' disabled' : '')+'><option value="">— hakuna / none —</option>'
       + codeRows.map(function(c){ return '<option value="'+esc(c.code)+'"'+(c.code === supCode ? ' selected' : '')+'>'+esc(c.name||'')+' · '+esc(c.role||'')+'</option>'; }).join('')
@@ -357,6 +371,8 @@ function roleForm(x){
       .map(function(c){ return c.value; }).join(',');
     var supSel = document.getElementById('rSupCode');
     srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs, approves: approves,
+      // This role's own approver, as the select shows it: blank clears it.
+      approverRole: $('#rApproverRole').value,
       // A disabled picker (codes masked) says nothing, and nothing said is nothing changed.
       approverCode: supSel && !supSel.disabled ? supSel.value : undefined })
       // The tabs save on any database; the approvals only with RUN-ME-045, and the answer says.
