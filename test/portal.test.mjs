@@ -11424,6 +11424,55 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
    approver other role next". The names come off the call-agents roster, each matched to the
    HR registry by name where it is there; the request carries no zone and still reaches the
    role's approver; the month's rule holds by name for a name with no registry row. */
+/* THE APPROVAL TAB IS THE APPROVER'S, NOT THE DEPARTMENT'S -- "I expect all credit don't see
+   approval tab except the approver I chose". Naming a person (the one supervisor of a role, or a
+   code's own supervisor) puts the tab on THEIR code; a role that approves itself holds nothing
+   by it; and the clean slate takes the grants back, and Undo returns them exactly. */
+test('advance approval tab: the person chosen holds it on their own code, the rest of the department does not', async () => {
+  const { resolveTabs } = await import('../api/_lib/auth.js');
+  const t = tables();
+  t.roles.push({ role: 'CREDIT', tabs: ['advreq'] }, { role: 'GMO', tabs: ['advreq', 'advappr'] }, { role: 'PMO COLLECTION', tabs: ['advreq'] }, { role: 'PMO MANAGER', tabs: ['advreq'] });
+  t.access_codes.push(
+    { code: 'C1', name: 'CREDIT ONE', role: 'CREDIT', teams: ['KONGOWE'], tabs: [] },
+    { code: 'C2', name: 'CREDIT TWO', role: 'Credit', teams: ['KONGOWE'], tabs: ['advreq'] },
+    { code: 'C3', name: 'CREDIT THREE', role: 'CREDIT', teams: ['KONGOWE'], tabs: [] },
+    { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: [] },
+    { code: 'P1', name: 'PMO COLL', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] },
+    { code: 'PM', name: 'PMO BOSS', role: 'PMO MANAGER', teams: null, tabs: [] });
+  const db = fakeDb(t);
+  const tabsOf = code => { const c = db._dump('access_codes').find(x => x.code === code); return resolveTabs(c, (db._dump('roles').find(r => r.role === K(c.role)) || {}).tabs); };
+  const K = x => String(x).trim().toUpperCase();
+  // The one supervisor of the whole credit role, credit approving credit: C2 holds the tab, nobody else of credit.
+  const saved = await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverRole: 'credit', approverCode: 'C2' }, NOW);
+  assert.equal(saved.grantedTab, 'C2'); assert.deepEqual(saved.tabs, ['advreq'], 'the role itself holds no approval tab');
+  assert.ok(tabsOf('C2').includes('advappr'), 'the person chosen'); assert.ok(tabsOf('C2').includes('advreq'), 'and what the code held before');
+  assert.ok(!tabsOf('C1').includes('advappr') && !tabsOf('C3').includes('advappr'), 'the rest of credit does not see the approval tab');
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'CREDIT').tabs, ['advreq']);
+  // Saving the same person again writes nothing and says nothing.
+  assert.equal((await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverCode: 'C2' }, NOW)).grantedTab, undefined);
+  // A code's own supervisor gets it too; one whose ROLE already holds it is not given a second copy.
+  assert.equal((await portalApi(db, ADMIN, 'saveAccessCode', { code: 'C1', name: 'CREDIT ONE', role: 'CREDIT', teams: 'KONGOWE', supervisor: 'C3' }, NOW)).grantedTab, 'C3');
+  assert.ok(tabsOf('C3').includes('advappr')); assert.ok(!tabsOf('C1').includes('advappr'), 'the supervised one does not');
+  const viaRole = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'P1', name: 'PMO COLL', role: 'PMO COLLECTION', teams: 'KONGOWE', supervisor: 'GD', roleSupervisor: true }, NOW);
+  assert.equal(viaRole.grantedTab, undefined, 'the GMO role already holds the tab');
+  assert.deepEqual(db._dump('access_codes').find(c => c.code === 'GD').tabs, [], 'nothing written for it');
+  const viaRole2 = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'P1', name: 'PMO COLL', role: 'PMO COLLECTION', teams: 'KONGOWE', supervisor: 'PM', roleSupervisor: true }, NOW);
+  assert.equal(viaRole2.grantedTab, 'PM'); assert.ok(tabsOf('PM').includes('advappr'));
+  // A supervisor that does not exist is refused before anything is written.
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverCode: 'NOPE' }, NOW), e => e.status === 400);
+  // A role that approves ANOTHER role still holds the tab as a whole: every GMO decides the F.O.s of their zone.
+  const gm = await portalApi(db, ADMIN, 'saveRole', { role: 'pmo manager', tabs: 'advreq', approves: 'PMO COLLECTION' }, NOW);
+  assert.deepEqual(gm.tabs, ['advreq', 'advappr']);
+  // THE CLEAN SLATE takes the tab off the codes it was given to, and Undo puts every one back exactly.
+  const before = JSON.stringify(db._dump('access_codes').map(c => ({ code: c.code, tabs: c.tabs || [] })));
+  const cleared = await portalApi(db, ADMIN, 'resetApprovals', {}, NOW);
+  assert.equal(cleared.codeTabsCleared, 3, 'C2, C3 and PM held it on their own codes');
+  assert.ok(db._dump('access_codes').every(c => !(c.tabs || []).includes('advappr')));
+  assert.ok(tabsOf('C2').includes('advreq'), 'the other tabs on the code stay');
+  const undone = await portalApi(db, ADMIN, 'resetApprovals', { undo: true }, NOW);
+  assert.equal(undone.grants, 3);
+  assert.equal(JSON.stringify(db._dump('access_codes').map(c => ({ code: c.code, tabs: c.tabs || [] }))), before, 'every code exactly as it was');
+});
 test('customer service on the advance request: one shared code, the names off the call-agents roster, a zone-less request reaching the approver role', async () => {
   const t = tables();
   t.teams[0] = { ...t.teams[0], zone: 'DAR EAST' };
@@ -11653,7 +11702,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.deepEqual(db._dump('roles').find(r => r.role === 'PMO MANAGER').tabs, ['advreq', 'advappr'], 'the approver named from this side gets the tab too');
   await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverRole: 'credit', approves: '' }, NOW);
   assert.equal(byRole().CREDIT, 'CREDIT', 'the role itself, said in the select, is not undone by an approves list without it');
-  assert.deepEqual(db._dump('roles').find(r => r.role === 'CREDIT').tabs, ['advreq', 'advappr'], 'and holds the tab');
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'CREDIT').tabs, ['advreq'], 'but a role approving only itself does not hand the tab to every holder of it -- the person named does');
   await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverRole: '', approves: 'credit' }, NOW);
   assert.equal(byRole().CREDIT, null, 'the select wins over the list on the role\'s own line');
   await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq, advappr', approverRole: 'credit' }, NOW);
