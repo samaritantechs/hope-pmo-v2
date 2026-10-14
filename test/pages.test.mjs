@@ -1184,9 +1184,41 @@ test('no HOPE Loan tab word is also a HOPE PMO tab, and the role editor keeps th
   assert.deepEqual(shared, [], 'a word that opens both systems: ' + shared.join(', '));
   assert.ok(loanWords.has('loan_credit') && !loanWords.has('credit'), 'HOPE Loan credit is loan_credit');
   const form = app.slice(app.indexOf('function roleForm('), app.indexOf('function teamForm('));
-  assert.ok(/Tabs — HOPE PMO/.test(form) && /Tabs — HOPE Loan/.test(form), 'two headed lists');
-  assert.ok(/all\.filter\(function\(t\)\{ return !isLoanTab_\(t\); \}\)/.test(form), 'PMO words in the first');
-  assert.ok(/all\.filter\(isLoanTab_\)/.test(form), 'HOPE Loan words in the second');
+  assert.ok(/Tabs — HOPE PMO/.test(form) && /Tabs — HOPE Management/.test(form) && /Tabs — HOPE Loan/.test(form), 'three headed lists');
+  assert.ok(/all\.filter\(function\(t\)\{ return !isLoanTab_\(t\) && !isMgmtTab_\(t\); \}\)/.test(form), 'PMO words in the first');
+  assert.ok(/all\.filter\(isMgmtTab_\)/.test(form), 'HOPE Management words in the second');
+  assert.ok(/all\.filter\(isLoanTab_\)/.test(form), 'HOPE Loan words in the third');
+});
+
+/* THE THIRD DIVISION -- "App is becoming bigger as we had hopeloan and hope pmo divisions in the
+   left nav we now have to have 3 by adding hope management ... since there are many tabs not
+   associated with portfolio followups". The company screens carry div:'mgmt' on their NAV
+   entry, are drawn under their own heading in MGMT_ORDER, and tick in their own list on Roles
+   & access; the sidebar's headings appear only when more than one division is drawn. */
+test('the sidebar has three divisions: HOPE Loan, HOPE PMO and HOPE Management, one definition each', async () => {
+  const vm = await import('node:vm');
+  const core = appCore();
+  const navSrc = core.match(/var NAV = \[[\s\S]*?\n\];/)[0];
+  const orderSrc = core.match(/var MGMT_ORDER = \[[\s\S]*?\];/)[0];
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext(navSrc + '\n' + orderSrc, ctx);
+  // Out of the vm realm (its Array is not this realm's Array, and strict deepEqual minds).
+  const nav = JSON.parse(JSON.stringify(ctx.NAV)), order = JSON.parse(JSON.stringify(ctx.MGMT_ORDER));
+  const mgmt = nav.filter(n => n.div === 'mgmt').map(n => n.id);
+  const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'impreq', 'impappr', 'imprep', 'deduct',
+    'commission', 'bonusplan', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
+  assert.deepEqual(order, expected, 'the management division, in its own order');
+  for (const id of expected) assert.ok(mgmt.includes(id), id + ' is flagged div:mgmt');
+  for (const id of mgmt) assert.ok(order.includes(id) || nav.find(n => n.id === id).hidden, id + ' is flagged but not placed (hidden ones ride on their screen)');
+  for (const id of ['dashboard', 'apps', 'followup', 'expected', 'weekly', 'legal', 'calls', 'upload', 'present', 'credit', 'par', 'reports']) {
+    assert.ok(!mgmt.includes(id), id + ' stays HOPE PMO: it is portfolio work');
+  }
+  assert.ok(/function isMgmtId_\(id\)/.test(core), 'one helper names the division');
+  const build = core.slice(core.indexOf('function buildNav(){'), core.indexOf('/* ====', core.indexOf('function buildNav(){')));
+  assert.ok(/label: 'HOPE Loan'/.test(build) && /label: 'HOPE PMO'/.test(build) && /label: 'HOPE Management'/.test(build), 'three sections');
+  assert.ok(/n\.div !== 'mgmt' && allowed\(n\.id\) && !n\.hidden/.test(build), 'HOPE PMO is everything not flagged');
+  assert.ok(/MGMT_ORDER\.map\(/.test(build) && /if \(sections\.length > 1\)/.test(build), 'drawn in MGMT_ORDER, headings only when more than one division shows');
+  assert.ok(/function isMgmtTab_\(t\)\{ return !isLoanTab_\(t\) && isMgmtId_\(t\); \}/.test(page('admin')), 'Roles & access reads the same flag');
 });
 
 /* "allow the pre-fillable info of loan recommendation at assessment plan and saving only -
@@ -1420,7 +1452,7 @@ test('the Rates card carries the early collection mode switch, its ladder and it
    are executed here, so the plan the GM is looking at is the plan that would be built. */
 test('the daily bonus plan tab is wired, admin-grantable, and makes no server call', async () => {
   const app = appSrc();
-  assert.ok(/\{ id:'bonusplan',\s+label:'Bonasi ya Kila Siku \/ Daily Bonus Plan'/.test(app), 'the nav entry');
+  assert.ok(/\{ id:'bonusplan',\s+div:'mgmt', label:'Bonasi ya Kila Siku \/ Daily Bonus Plan'/.test(app), 'the nav entry, in HOPE Management');
   assert.ok(/VIEWS\.bonusplan = function/.test(app), 'the screen exists');
   assert.ok(/VC_SKIP = \{[^}]*bonusplan:1/.test(app), 'its boxes are never replayed from the view cache');
   assert.ok(/wireForms\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint, once its module is in');
@@ -1623,7 +1655,8 @@ test('the Exp.Def Report carries the week arrows, no day/week pills, and the thr
 test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR column, report and register upload', () => {
   const app = appSrc();
   const nav = app.slice(app.indexOf("{ id:'abnormal',"), app.indexOf("{ id:'legal',"));
-  assert.ok(/\{ id:'deduct',\s+label:'Makato ya PMO \/ PMO Deduction'/.test(nav), 'directly under Abnormal Payments, before Legal');
+  // Its NAV entry still sits under Abnormal Payments in the list; drawn, it is HOPE Management's (div:'mgmt', MGMT_ORDER).
+  assert.ok(/\{ id:'deduct',\s+div:'mgmt', label:'Makato ya PMO \/ PMO Deduction'/.test(nav), 'directly under Abnormal Payments in NAV, flagged for HOPE Management');
   assert.ok(/VIEWS\.deduct = function\(\)/.test(app) && /srv\('deductions', \{from:from, to:to\}\)/.test(app), 'the tab reads a date window');
   assert.ok(/deductions:1/.test(app), 'cached like the other reads');
   const view = page('deduct');

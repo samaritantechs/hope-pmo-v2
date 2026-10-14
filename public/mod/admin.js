@@ -253,6 +253,9 @@ function loanTabSet_(){
 }
 
 function isLoanTab_(t){ return !!loanTabSet_()[t]; }
+/* Which tick words belong to HOPE Management -- read off NAV's own div flags (isMgmtId_ in
+   the core), so the third list here and the third division of the sidebar are one definition. */
+function isMgmtTab_(t){ return !isLoanTab_(t) && isMgmtId_(t); }
 
 /* The screens a tick word opens, named beside the word, so "gmo" reads as "GMO Review" and
    not as whatever the admin assumed. */
@@ -298,8 +301,15 @@ function roleForm(x){
        to say the first six open HOPE LOAN -- so a role called GMO got `gmo` ticked, a manager
        got `manager`, and each found a second system in their sidebar. Every box now says
        which system it opens and which screens. */
+    /* THREE LISTS NOW, one per division of the sidebar: HOPE PMO's working screens, HOPE
+       Management's company screens, HOPE Loan's origination screens. */
     + '<div class="fld"><label>Tabs — HOPE PMO</label><div class="checks">'
-    + all.filter(function(t){ return !isLoanTab_(t); }).map(function(t){ return tabTick_(t, have); }).join('')
+    + all.filter(function(t){ return !isLoanTab_(t) && !isMgmtTab_(t); }).map(function(t){ return tabTick_(t, have); }).join('')
+    + '</div></div>'
+    + '<div class="fld"><label>Tabs — HOPE Management</label>'
+    + '<div class="fldnote">Watu, fedha, simu, rekodi na Settings — si ufuatiliaji wa portfolio. / People, money, phones, records and Settings — not portfolio follow-up.</div>'
+    + '<div class="checks">'
+    + all.filter(isMgmtTab_).map(function(t){ return tabTick_(t, have); }).join('')
     + '</div></div>'
     /* "if I choose approver then approver gets the approval tab automatic" -- so the list is
        always open, and ticking a role in it ticks advappr above by itself (the server adds the
@@ -713,7 +723,10 @@ VIEWS.settings = function(){
         + (ac.routingOn === false ? '<br>⚠️ ' + esc(ac.routingNote || '') : '')
         + '</div>'
         + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Wadhifa / Role</th>'
-        + '<th>Tabs</th><th class="r">Idadi</th><th>Mwidhinishaji wa advance / Advance approver</th><th class="r">Misimbo / Codes</th><th></th></tr></thead><tbody>'
+        /* "At roles what is idadi ... I thought it's number of assigned users by role, I have
+           single pmo manager and am seeing 23!" -- it was the tab count, and the users were the
+           column after it. Both now say what they count. */
+        + '<th>Tabs</th><th class="r">Idadi ya tabs / Tabs count</th><th>Mwidhinishaji wa advance / Advance approver</th><th class="r">Watumiaji / Users (codes)</th><th></th></tr></thead><tbody>'
         + (ac.roles||[]).map(function(r, i){
             var n = (ac.rows||[]).filter(function(x){ return String(x.role||'').toUpperCase() === String(r.role||'').toUpperCase(); }).length;
             var ap = String(r.approver_role || '');
