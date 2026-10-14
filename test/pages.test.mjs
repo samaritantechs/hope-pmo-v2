@@ -1801,7 +1801,9 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(!/style="display:none"/.test(admin.slice(admin.indexOf('id="rApprovesWrap"'), admin.indexOf('id="rApprovesWrap"') + 80)), 'the list is always open');
   assert.ok(/sasa \/ now: '\+esc\(r\.approver_role\)/.test(admin), 'a role already pointing elsewhere says so');
   assert.ok(/id="resetApprovals"/.test(admin) && /id="undoApprovals"/.test(admin) && /function wireApprovalsReset_\(\)/.test(admin) && /srv\('resetApprovals', \{ undo: true \}\)/.test(admin), 'the clean slate and its undo');
-  assert.ok(!/id="rApprover"/.test(admin), 'one way to set it, not two');
+  // "I expected to choose gmo role not a single person user ... Not just field officer, and
+  // the rest": the role's own approver, as a role, on every role's form -- and sent on save.
+  assert.ok(/id="rApproverRole"/.test(admin) && /approverRole: \$\('#rApproverRole'\)\.value/.test(admin), 'the role form names its own approver as a role, and sends it');
   // One supervisor for a whole role (RUN-ME-046): on the role form, or from a code's form with one tick.
   assert.ok(/id="rSupCode"/.test(admin) && /approverCode: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the role form names one supervisor for the whole role');
   assert.ok(/id="kSupRole"/.test(admin) && /roleSupervisor: !!\(document\.getElementById\('kSupRole'\)/.test(admin), 'the code form can write them on the role instead');

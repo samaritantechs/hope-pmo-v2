@@ -6753,12 +6753,15 @@ async function saveRole(db, user, p) {
   const want = hasApproves
     ? new Set(String(Array.isArray(p.approves) ? p.approves.join(',') : (p.approves || '')).split(/[;,]/).map(x => K(x)).filter(Boolean))
     : new Set();
-  const tabs = want.size && !tabs0.includes('advappr') ? tabs0.concat('advappr') : tabs0;
   /* THE ADVANCE APPROVER OF THIS ROLE (RUN-ME-045, advRouteOf_): sent by the form as a role
-     name or blank. Not mentioned means not changed. On a database without the column the
-     tabs are still saved and the answer says the approver was not. */
+     name or blank -- "At field officer role ... I expected to choose gmo role not a single
+     person user ... Not just field officer, and the rest". Not mentioned means not changed.
+     On a database without the column the tabs are still saved and the answer says the
+     approver was not. Said explicitly, it is the one word on THIS role's approver: the
+     `approves` list below then speaks for the other roles only. */
   const hasApprover = !!p && p.approverRole !== undefined;
   const approverRole = hasApprover ? (String(p.approverRole || '').trim().toUpperCase() || null) : undefined;
+  const tabs = want.size && !tabs0.includes('advappr') ? tabs0.concat('advappr') : tabs0;
   /* ONE SUPERVISOR FOR THE WHOLE ROLE (RUN-ME-046, roles.approver_code) -- "choose role user
      as supervisor of the whole dept not assigning every user to the same person": a code,
      which has to exist, or blank to clear. Not mentioned means not changed. */
@@ -6780,23 +6783,37 @@ async function saveRole(db, user, p) {
      Each of them gets this role as its approver_role (one approver per role, so a role ticked
      here leaves whichever approver it had), and any role that pointed here and is now
      unticked is cleared. Not mentioned means not changed. */
-  let approves, approvesSaved = hasApproves;
-  if (hasApproves) {
+  let approves, approvesSaved = hasApproves, tabsOut = tabs;
+  const grantTab = approverSaved && approverRole;                            // the approver named here gets the tab
+  if (hasApproves || grantTab) {
     const roleRows = await fetchAll(() => db.from('roles').select('*'));
     const have = new Map(roleRows.map(r => [K(r.role), r]));
-    const writes = [];
-    for (const r of want) if (!have.has(r) || K(have.get(r).approver_role) !== role) writes.push({ role: have.has(r) ? have.get(r).role : r, approver_role: role });
-    for (const r of roleRows) if (K(r.approver_role) === role && !want.has(K(r.role))) writes.push({ role: r.role, approver_role: null });
-    if (writes.length) {
-      const r2 = await rolesUpsert_(db, writes);
+    const writes = new Map();                                                 // one row per role, fields merged
+    const put = (name, fields) => writes.set(K(name), { ...(writes.get(K(name)) || { role: have.has(K(name)) ? have.get(K(name)).role : name }), ...fields });
+    if (hasApproves) {
+      // This role's own line is the approverRole above when that was said; never both.
+      for (const r of want) if (!(hasApprover && r === role) && (!have.has(r) || K(have.get(r).approver_role) !== role)) put(r, { approver_role: role });
+      for (const r of roleRows) if (!(hasApprover && K(r.role) === role) && K(r.approver_role) === role && !want.has(K(r.role))) put(r.role, { approver_role: null });
+      approves = [...want].sort();
+    }
+    /* "if I choose approver then approver gets the approval tab automatic" -- from this side
+       too: the role chosen as approver (this one included, credit → credit) holds the
+       approval tab from now on -- once the approver itself is saved, so a database without
+       RUN-ME-045 hands out no tab for a routing it has not got. */
+    if (grantTab) {
+      const self = approverRole === role;
+      const a = self ? null : have.get(approverRole), aTabs = self ? tabs : ((a && a.tabs) || []);
+      if (!aTabs.includes('advappr')) { put(approverRole, { tabs: aTabs.concat('advappr') }); if (self) tabsOut = aTabs.concat('advappr'); }
+    }
+    if (writes.size) {
+      const r2 = await rolesUpsert_(db, [...writes.values()]);
       if (r2.dropped.includes('approver_role')) approvesSaved = false;
     }
-    approves = [...want].sort();
   }
   const notes = [];
   if ((hasApprover && !approverSaved) || (hasApproves && !approvesSaved)) notes.push(ADV_ROUTE_NOTE);
   if (hasCode && !codeSaved) notes.push(ADV_DEPT_NOTE);
-  const out = { role, tabs, note: notes.length ? notes.join(' ') : null };
+  const out = { role, tabs: tabsOut, note: notes.length ? notes.join(' ') : null };
   if (approverSaved) out.approverRole = approverRole;
   if (approvesSaved) out.approves = approves;
   if (codeSaved) out.approverCode = approverCode;

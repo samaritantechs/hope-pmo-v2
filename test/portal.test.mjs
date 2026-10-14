@@ -11594,6 +11594,22 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.equal(byRole().BIKE, 'PMO MANAGER', 'another approver\'s role is not touched');
   await portalApi(db, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advreq, advappr' }, NOW);
   assert.equal(byRole()['FIELD OFFICER'], 'GMO', 'not mentioned means not changed');
+  /* FROM THE REQUESTER'S SIDE TOO -- "At field officer role ... I expected to choose gmo role
+     not a single person user ... Not just field officer, and the rest": the role's form names
+     its approver as a role; the approver gets the approval tab by itself; said explicitly, it
+     is the one word on this role's own approver, whatever the approves list says. */
+  await portalApi(db, ADMIN, 'saveRole', { role: 'pmo manager', tabs: 'advreq', approves: 'PMO COLLECTION, BIKE' }, NOW);
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'PMO MANAGER').tabs, ['advreq', 'advappr']);
+  await portalApi(db, ADMIN, 'saveRole', { role: 'pmo manager', tabs: 'advreq' }, NOW);                  // the tab off again
+  const fromReq = await portalApi(db, ADMIN, 'saveRole', { role: 'bike', tabs: 'advreq', approverRole: 'pmo manager', approves: '' }, NOW);
+  assert.equal(fromReq.approverRole, 'PMO MANAGER'); assert.equal(byRole().BIKE, 'PMO MANAGER');
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'PMO MANAGER').tabs, ['advreq', 'advappr'], 'the approver named from this side gets the tab too');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverRole: 'credit', approves: '' }, NOW);
+  assert.equal(byRole().CREDIT, 'CREDIT', 'the role itself, said in the select, is not undone by an approves list without it');
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'CREDIT').tabs, ['advreq', 'advappr'], 'and holds the tab');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverRole: '', approves: 'credit' }, NOW);
+  assert.equal(byRole().CREDIT, null, 'the select wins over the list on the role\'s own line');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq, advappr', approverRole: 'credit' }, NOW);
 
   // THE CLEAN SLATE -- "Clear all approval granted roles so that I start granting and choosing
   // what they govern": the tab, the approvers and the supervisors off every role and code but
