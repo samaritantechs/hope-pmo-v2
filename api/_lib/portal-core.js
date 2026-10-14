@@ -6798,6 +6798,24 @@ async function teams(db, user) {
     // list this feeds was quietly unable to grant any of the seven until now.
     roles: roleRows, allTabs: ALL_TABS.slice() };
 }
+/** "if I choose approver then approver gets the approval tab automatic" -- for a PERSON named as
+    somebody's approver (a code's supervisor, or the one supervisor of a whole role): the tab goes
+    on THEIR code, not on their role, so a department that approves itself (credit) shows the
+    approval tab to the person chosen and to nobody else of it. Nothing is written when the code
+    already holds it, on its own row or through its role. Returns the code when it was granted. */
+async function grantApprovalToCode_(db, code) {
+  const { data: c } = await db.from('access_codes').select('code, role, tabs').eq('code', code).maybeSingle();
+  if (!c) return null;
+  const own = Array.isArray(c.tabs) ? c.tabs : [];
+  if (own.includes('advappr')) return null;
+  const roleRows = await fetchAll(() => db.from('roles').select('role, tabs'));
+  const mine = roleRows.find(r => K(r.role) === K(c.role));
+  if (mine && (mine.tabs || []).includes('advappr')) return null;
+  const { error } = await db.from('access_codes').update({ tabs: own.concat('advappr') }).eq('code', c.code);
+  if (error) throw new Error(error.message);
+  noteCodesWritten(db);
+  return c.code;
+}
 async function saveRole(db, user, p) {
   requireAdmin(user);
   const role = String((p && p.role) || '').trim().toUpperCase();
@@ -6822,7 +6840,10 @@ async function saveRole(db, user, p) {
      `approves` list below then speaks for the other roles only. */
   const hasApprover = !!p && p.approverRole !== undefined;
   const approverRole = hasApprover ? (String(p.approverRole || '').trim().toUpperCase() || null) : undefined;
-  const tabs = want.size && !tabs0.includes('advappr') ? tabs0.concat('advappr') : tabs0;
+  /* ...but a role that approves ONLY ITSELF does not -- "I expect all credit don't see approval
+     tab except the approver I chose": credit → credit means a person is named (below), and the
+     tab belongs to that person, not to every credit code. */
+  const tabs = [...want].some(r => r !== role) && !tabs0.includes('advappr') ? tabs0.concat('advappr') : tabs0;
   /* ONE SUPERVISOR FOR THE WHOLE ROLE (RUN-ME-046, roles.approver_code) -- "choose role user
      as supervisor of the whole dept not assigning every user to the same person": a code,
      which has to exist, or blank to clear. Not mentioned means not changed. */
@@ -6861,10 +6882,9 @@ async function saveRole(db, user, p) {
        too: the role chosen as approver (this one included, credit → credit) holds the
        approval tab from now on -- once the approver itself is saved, so a database without
        RUN-ME-045 hands out no tab for a routing it has not got. */
-    if (grantTab) {
-      const self = approverRole === role;
-      const a = self ? null : have.get(approverRole), aTabs = self ? tabs : ((a && a.tabs) || []);
-      if (!aTabs.includes('advappr')) { put(approverRole, { tabs: aTabs.concat('advappr') }); if (self) tabsOut = aTabs.concat('advappr'); }
+    if (grantTab && approverRole !== role) {
+      const a = have.get(approverRole), aTabs = (a && a.tabs) || [];
+      if (!aTabs.includes('advappr')) put(approverRole, { tabs: aTabs.concat('advappr') });
     }
     if (writes.size) {
       const r2 = await rolesUpsert_(db, [...writes.values()]);
@@ -6874,7 +6894,10 @@ async function saveRole(db, user, p) {
   const notes = [];
   if ((hasApprover && !approverSaved) || (hasApproves && !approvesSaved)) notes.push(ADV_ROUTE_NOTE);
   if (hasCode && !codeSaved) notes.push(ADV_DEPT_NOTE);
+  // The person named for the whole role holds the approval tab from now on, on their own code.
+  const grantedTab = codeSaved && approverCode ? await grantApprovalToCode_(db, approverCode) : null;
   const out = { role, tabs: tabsOut, note: notes.length ? notes.join(' ') : null };
+  if (grantedTab) out.grantedTab = grantedTab;
   if (approverSaved) out.approverRole = approverRole;
   if (approvesSaved) out.approves = approves;
   if (codeSaved) out.approverCode = approverCode;
@@ -6891,8 +6914,8 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
   requireAdmin(user);
   const roleRows = await fetchAll(() => db.from('roles').select('*'));
   let codeRows, on = true;
-  try { codeRows = await fetchAll(() => db.from('access_codes').select('code, supervisor')); }
-  catch (e) { if (!advColMissing_(e, ['supervisor'])) throw e; on = false; codeRows = []; }
+  try { codeRows = await fetchAll(() => db.from('access_codes').select('code, supervisor, tabs')); }
+  catch (e) { if (!advColMissing_(e, ['supervisor'])) throw e; on = false; codeRows = await fetchAll(() => db.from('access_codes').select('code, tabs')); }
   // The whole row, routing columns included; rolesUpsert_ drops whichever the database lacks.
   const roleRow = r => ({ role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null, approver_code: r.approver_code || null });
 
@@ -6909,7 +6932,13 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
       if (error) throw new Error(error.message);
       codes++;
     }
-    return { undone: true, roles: saved.roles.length, codes, at: saved.at };
+    // The approval tab a person was given on their own code (the supervisor chosen): exactly as it was.
+    for (const g of (saved.grants || [])) {
+      const { error } = await db.from('access_codes').update({ tabs: g.tabs || [] }).eq('code', g.code);
+      if (error) throw new Error(error.message);
+    }
+    if ((saved.grants || []).length) noteCodesWritten(db);
+    return { undone: true, roles: saved.roles.length, codes, grants: (saved.grants || []).length, at: saved.at };
   }
 
   const at = new Date(nowMs).toISOString();
@@ -6917,6 +6946,7 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
     at, by: user.name || user.code,
     roles: roleRows.map(roleRow),
     codes: codeRows.filter(c => c.supervisor).map(c => ({ code: c.code, supervisor: c.supervisor })),
+    grants: codeRows.filter(c => (c.tabs || []).includes('advappr')).map(c => ({ code: c.code, tabs: c.tabs || [] })),   // the tab held on a code itself
   };
   const { error: bErr } = await db.from('settings')
     .upsert({ key: ADV_APPROVALS_BACKUP_KEY, value: JSON.stringify(backup) }, { onConflict: 'key' });
@@ -6931,8 +6961,13 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
     if (error) throw new Error(error.message);
     codesCleared++;
   }
+  for (const g of backup.grants) {
+    const { error } = await db.from('access_codes').update({ tabs: g.tabs.filter(t => t !== 'advappr') }).eq('code', g.code);
+    if (error) throw new Error(error.message);
+  }
+  if (backup.grants.length) noteCodesWritten(db);
   return { tabsCleared: others.filter(r => (r.tabs || []).includes('advappr')).length,
-    approversCleared: others.filter(r => r.approver_role || r.approver_code).length, codesCleared, at,
+    approversCleared: others.filter(r => r.approver_role || r.approver_code).length, codesCleared, codeTabsCleared: backup.grants.length, at,
     routingOn: on, note: on ? null : ADV_ROUTE_NOTE };
 }
 /* A CLEAN SLATE TO SET THE ROLES FROM, AND A WAY BACK.
@@ -7257,8 +7292,11 @@ async function saveAccessCode(db, user, p) {
   const notes = [];
   if (hasSup && !supSaved) notes.push(ADV_ROUTE_NOTE);
   if (roleSup && !roleSup.saved) notes.push(ADV_DEPT_NOTE);
+  // The supervisor named here (for this code, or for its whole role) gets the approval tab on their own code.
+  const grantedTab = supervisor && supSaved && (!forRole || (roleSup && roleSup.saved)) ? await grantApprovalToCode_(db, supervisor) : null;
   return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff,
     supervisor: supSaved ? (forRole ? null : supervisor) : undefined, roleSupervisor: roleSup,
+    ...(grantedTab ? { grantedTab } : {}),
     note: notes.length ? notes.join(' ') : null };
 }
 /* =======================================================================================
