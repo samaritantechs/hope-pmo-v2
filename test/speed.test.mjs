@@ -337,7 +337,10 @@ const BUDGETS = [
      it to say who will see the request; the desk to decide what it shows. A named supervisor's
      desk adds one read of their people's requests by code, narrowed at the database.
      +1 trip on the ask (2026-10-14): the history of the viewer's role in their zones, narrowed
-     at the database to that role and those zones, 100 rows at most. */
+     at the database to that role and those zones, 100 rows at most.
+     A zone-scoped code (not this admin) pays two more on the ask (2026-10-14): the department
+     rows of its role (HQ - CREDIT, MANAGEMENT; narrowed to the role's first word) and the
+     role's requests that carry no zone. */
   ['Advance: the ask',        'advRequestPage',      {}, ADMIN,  9,  1800,  9, 1800],
   ['Advance: GMO queue',      'advQueue',            {}, ADMIN,  7,  1000,  7, 1000],
   ['Advance: report',         'advReport',           {}, ADMIN,  5,  1500,  5, 1500],
