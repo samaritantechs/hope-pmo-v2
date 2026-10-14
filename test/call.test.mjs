@@ -2496,3 +2496,28 @@ test('Ripoti: the database rollup and the row read produce the same report, fiel
   assert.equal(quiet.ruleNote, undefined);
   assert.equal(quiet.totals.calls, 0);
 });
+
+/* THE WAY ACROSS, WITHOUT A SECOND SIGN-IN -- "when people press the switch the system is
+   re-prompting to enter code yet they already logged in for calls". A registered handset is
+   handed the code its registration rests on -- the team's code for an officer, the leader's
+   own access code (by the name on their account, when exactly one carries it) -- and the
+   switch stores it where the portal signs in from. An unregistered device gets nothing. */
+test('api_portalCode: the switch into the portal signs in with the code the handset already used', async () => {
+  const t = makeTables();
+  t.call_users = [
+    { user_id: 'U1', name: 'OFFICER ONE', team: 'KONGOWE', role: 'OFFICER', device_id: 'DEV-O', is_leader: false, active: true },
+    { user_id: 'U2', name: 'ASHA JUMA', team: 'KONGOWE', role: 'MANAGEMENT', device_id: 'DEV-L', is_leader: true, active: true },
+    { user_id: 'U3', name: 'NOBODY', team: 'KONGOWE', role: 'MANAGEMENT', device_id: 'DEV-N', is_leader: true, active: true },
+    { user_id: 'U4', name: 'NO CODE TEAM', team: 'NOCODE', role: 'OFFICER', device_id: 'DEV-T', is_leader: false, active: true },
+  ];
+  t.teams.push({ team: 'NOCODE' });
+  const db = fakeDb(t);
+  assert.deepEqual(await callApi(db, 'api_portalCode', ['DEV-O'], NOW), { ok: true, code: 'KON123', kind: 'team' }, 'an officer: the team\'s code');
+  assert.deepEqual(await callApi(db, 'api_portalCode', ['DEV-L'], NOW), { ok: true, code: 'LEAD1', kind: 'access' }, 'a leader: their own code, by name');
+  assert.deepEqual(await callApi(db, 'api_portalCode', ['DEV-N'], NOW), { ok: false, error: 'NO_CODE' }, 'a leader whose name is on no code');
+  assert.deepEqual(await callApi(db, 'api_portalCode', ['DEV-T'], NOW), { ok: false, error: 'NO_TEAM_CODE' }, 'a team with no code');
+  assert.equal((await callApi(db, 'api_portalCode', ['nope'], NOW)).ok, false, 'an unregistered device');
+  // Two codes carrying the same name: neither is handed out.
+  db._dump('access_codes').push({ code: 'LEAD2', name: 'ASHA JUMA', role: 'GMO', teams: null, tabs: [] });
+  assert.deepEqual(await callApi(db, 'api_portalCode', ['DEV-L'], NOW), { ok: false, error: 'AMBIGUOUS_NAME' });
+});

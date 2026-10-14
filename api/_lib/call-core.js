@@ -2503,9 +2503,33 @@ async function callNotifSeen(db, [dev], nowMs) {
   return { ok: true, ...(await notifSeenCore(db, notifKeyFor(cu.user_id), nowMs)) };
 }
 
+/* THE WAY ACROSS, WITHOUT A SECOND SIGN-IN.
+     "when people press the switch the system is re-prompting to enter code yet they already
+      logged in for calls"
+   The code this handset signed in with is the code the portal signs in with: an officer's
+   TEAM code (teams.team_code -- the portal's FIELD OFFICER door), a leader's own ACCESS code
+   (the one carrying the name on their account, and only when exactly one does). The phone's
+   registered device id is the authority, the same one every other call here rests on; nothing
+   is opened that the handset could not already open by typing the code it typed to register. */
+async function portalCode(db, [dev], nowMs) {
+  const cu = await userByDeviceSoft(db, dev);
+  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  if (!cu.is_leader) {
+    const rows = await readTeamsAll(db, nowMs);
+    const t = rows.find(r => K(r.team) === K(cu.team));
+    return t && t.team_code ? { ok: true, code: t.team_code, kind: 'team' } : { ok: false, error: 'NO_TEAM_CODE' };
+  }
+  const { data, error } = await db.from('access_codes').select('code, name').ilike('name', String(cu.name || '~none~'));
+  if (error) throw new Error(error.message);
+  const mine = (data || []).filter(c => K(c.name) === K(cu.name));
+  return mine.length === 1 ? { ok: true, code: mine[0].code, kind: 'access' }
+    : { ok: false, error: mine.length ? 'AMBIGUOUS_NAME' : 'NO_CODE' };
+}
+
 const HANDLERS = {
   api_brand: brand,
   api_teamCode: teamCode,
+  api_portalCode: portalCode,
   api_customerLookup: customerLookup,
   api_widget: widget,
   api_announcement: announcement,

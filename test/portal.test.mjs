@@ -11356,6 +11356,56 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   await assert.rejects(() => portalApi(db2, ADMIN, 'advStaffSave', { name: 'A B', zone: 'Z' }, NOW), e => e.status === 400 && /RUN-ME-044/.test(e.message));
 });
 
+/* CUSTOMER SERVICE IS ONE SHARED CODE -- "I can't have many customer service users, I had
+   given them a single code but remember they have their names enlisted under call agent
+   settings, so I need the role CUSTOMER SERVICE to be treated special case at advance request
+   they choose list of their names from that very single account and I'll assign their
+   approver other role next". The names come off the call-agents roster, each matched to the
+   HR registry by name where it is there; the request carries no zone and still reaches the
+   role's approver; the month's rule holds by name for a name with no registry row. */
+test('customer service on the advance request: one shared code, the names off the call-agents roster, a zone-less request reaching the approver role', async () => {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST' };
+  t.call_agents = [{ user_id: 'Callagent1', names: 'Amina Mustafa, Nadhir Msangi' }, { user_id: 'Callagent2', names: 'Veronica Mkemwa' }];
+  t.staff_registry = [
+    { id: 'AMM/001/2026', name: 'AMINA MUSTAFA', role: 'Customer Service', zone: 'HQ', status: 'Active', account: '0100' },
+    { id: 'FOX/002/2026', name: 'FIELD GUY', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+  ];
+  t.roles.push({ role: 'CUSTOMER SERVICE', tabs: ['advreq'], approver_role: 'MANAGER' }, { role: 'MANAGER', tabs: ['advappr'] });
+  t.access_codes.push({ code: 'CS', name: 'CUSTOMER SERVICE DESK', role: 'Customer Service', teams: null, tabs: [] },
+    { code: 'MG', name: 'THE MANAGER', role: 'MANAGER', teams: ['KONGOWE'], tabs: [] });
+  t.advance_requests = [];
+  const db = fakeDb(t);
+  const cs = { code: 'CS', name: 'CUSTOMER SERVICE DESK', role: 'Customer Service', teams: null, tabs: ['advreq'] };
+  const page = await portalApi(db, cs, 'advRequestPage', {}, NOW);
+  assert.equal(page.csAgents, true);
+  assert.deepEqual(page.staff.map(s => [s.name, s.id, s.onRegistry]),
+    [['AMINA MUSTAFA', 'AMM/001/2026', true], ['Nadhir Msangi', null, false], ['Veronica Mkemwa', null, false]],
+    'the roster\'s names; the registry\'s ID and spelling where the name is there');
+  assert.equal(page.route.label, 'MANAGER (wadhifa / by role)');
+  const picked = await portalApi(db, cs, 'advRequestPage', { staffName: 'nadhir msangi' }, NOW);
+  assert.equal(picked.chosen.name, 'Nadhir Msangi'); assert.equal(picked.monthTaken, null);
+  const r1 = await portalApi(db, cs, 'advRequest', { staffName: 'Nadhir Msangi', amount: 50000 }, NOW);
+  const row = db._dump('advance_requests').find(r => r.id === r1.id);
+  assert.equal(row.staff_id, null); assert.equal(row.staff_name, 'Nadhir Msangi'); assert.equal(row.zone, null);
+  assert.equal(row.req_role, 'CUSTOMER SERVICE', 'upper-cased, whatever the code spells'); assert.equal(row.req_code, 'CS');
+  await assert.rejects(() => portalApi(db, cs, 'advRequest', { staffName: 'Nadhir Msangi', amount: 50000 }, NOW), e => /one request per month/i.test(e.message), 'the month\'s rule holds by name');
+  assert.ok((await portalApi(db, cs, 'advRequestPage', { staffName: 'Nadhir Msangi' }, NOW)).monthTaken, 'and the form says so');
+  await assert.rejects(() => portalApi(db, cs, 'advRequest', { staffName: 'Somebody Else', amount: 50000 }, NOW), e => /call-agents roster/.test(e.message));
+  const r2 = await portalApi(db, cs, 'advRequest', { staffId: 'AMM/001/2026', amount: 100000 }, NOW);
+  assert.equal(db._dump('advance_requests').find(r => r.id === r2.id).account, '0100', 'a name on the registry carries its account');
+  // The manager of ONE zone still sees both: a request with no zone belongs to the role.
+  const mg = { code: 'MG', name: 'THE MANAGER', role: 'MANAGER', teams: ['KONGOWE'], tabs: ['advappr'] };
+  const q = await portalApi(db, mg, 'advQueue', {}, NOW);
+  assert.deepEqual(q.pending.map(r => r.staff_name).sort(), ['AMINA MUSTAFA', 'Nadhir Msangi']);
+  assert.equal((await portalApi(db, mg, 'advDecide', { updates: [{ id: r1.id, approval: 'Approved' }] }, NOW)).approved, 1);
+  assert.deepEqual((await portalApi(db, cs, 'advRequestPage', {}, NOW)).history.map(r => r.staff_name).sort(), ['AMINA MUSTAFA', 'Nadhir Msangi'], 'the desk\'s own history');
+  // Not customer service: a plain code still picks by ID only, and a name means nothing.
+  const fo = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
+  assert.equal((await portalApi(db, fo, 'advRequestPage', {}, NOW)).csAgents, false);
+  await assert.rejects(() => portalApi(db, fo, 'advRequest', { staffName: 'FIELD GUY', amount: 50000 }, NOW), e => /Pick your name/.test(e.message));
+});
+
 /* WHO APPROVES WHOSE ADVANCE -- "choose role credit choose supervisor from role credit and
    select their approver ... choose role pmo collection choose their approver as role pmo
    manager ... gmo sees only advances of teams, managers, bikes, and themselves ... this also
