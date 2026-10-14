@@ -293,6 +293,12 @@ function roleForm(x){
      names a supervisor on the code form. */
   var roleRows = (S.roleMeta && S.roleMeta.roles) || [];
   var me = x ? String(x.role || '').toUpperCase() : '';
+  /* ONE SUPERVISOR FOR THE WHOLE ROLE (RUN-ME-046) -- "choose role user as supervisor of the
+     whole dept not assigning every user to the same person": one code, by name and role; a
+     read-only admin's list carries no codes, so the picker shows disabled. */
+  var codeRows = (S.acRows || []).slice().sort(function(a, b){ return (String(a.role||'') + ' ' + String(a.name||'')).localeCompare(String(b.role||'') + ' ' + String(b.name||'')); });
+  var codesMasked = codeRows.some(function(c){ return c.code === '••••'; });
+  var supCode = String((x && x.approver_code) || '');
   drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
     + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
@@ -324,8 +330,14 @@ function roleForm(x){
             + (ap && !mine ? ' <span style="color:var(--mut);font-size:11px">(sasa / now: '+esc(r.approver_role)+')</span>' : '')
             + '</label>'; }).join('')
       + '</div><div class="fldnote">Ukitiki wadhifa hapa, wadhifa huu unapata tab ya <b>advappr</b> wenyewe, na maombi ya advance ya wadhifa huo huja kwenye dawati lake, ndani ya zone zake. Ukitiki wadhifa huu wenyewe (CREDIT → CREDIT), kila msimbo wa wadhifa huo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin. Wadhifa una mwidhinishaji mmoja tu: ukiutiki hapa, unaondoka kwa yule wa awali.'
-        + ' / Tick a role here and this role gets the <b>advappr</b> tab by itself; that role\'s advance requests then come to this desk, within its zones. Tick this role itself (credit → credit) and each of its codes must then name a supervisor on the code form, or the request reaches nobody but an admin. A role has ONE approver: ticking it here takes it off the one it had.'
+        + ' / Tick a role here and this role gets the <b>advappr</b> tab by itself; that role\'s advance requests then come to this desk, within its zones. Tick this role itself (credit → credit) and name ONE supervisor for the whole role below, or a supervisor on each code, or the request reaches nobody but an admin. A role has ONE approver: ticking it here takes it off the one it had.'
         + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
+    + '<div class="fld"><label>Msimamizi wa wadhifa huu — mtu mmoja / One supervisor for this whole role</label>'
+      + '<select id="rSupCode"'+(codesMasked ? ' disabled' : '')+'><option value="">— hakuna / none —</option>'
+      + codeRows.map(function(c){ return '<option value="'+esc(c.code)+'"'+(c.code === supCode ? ' selected' : '')+'>'+esc(c.name||'')+' · '+esc(c.role||'')+'</option>'; }).join('')
+      + '</select>'
+      + '<div class="fldnote">Maombi yote ya advance ya wadhifa huu huenda kwa mtu huyu, zone yoyote, bila kumchagua kwenye kila msimbo. Msimamizi aliyechaguliwa kwenye msimbo wenyewe anashinda.'
+        + ' / Every advance request of this role goes to this person, whatever the zone, with nothing to set on each code. A supervisor named on a code itself wins over this.</div></div>'
     + '<div class="fld"><label>Tabs — HOPE Loan</label>'
     + '<div class="fldnote">Hizi hufungua HOPE LOAN, si skrini za HOPE PMO. / These open HOPE LOAN screens, not HOPE PMO ones.</div>'
     + '<div class="checks">'
@@ -343,7 +355,10 @@ function roleForm(x){
       .map(function(c){ return c.value; }).join(',');
     var approves = Array.prototype.filter.call(document.querySelectorAll('.rApp'), function(c){ return c.checked; })
       .map(function(c){ return c.value; }).join(',');
-    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs, approves: approves })
+    var supSel = document.getElementById('rSupCode');
+    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs, approves: approves,
+      // A disabled picker (codes masked) says nothing, and nothing said is nothing changed.
+      approverCode: supSel && !supSel.disabled ? supSel.value : undefined })
       // The tabs save on any database; the approvals only with RUN-ME-045, and the answer says.
       .then(function(r){ toast(r && r.note ? '⚠️ Tabs zimehifadhiwa; uidhinishaji haujahifadhiwa. / Tabs saved; the approvals were not: ' + r.note : 'Imehifadhiwa. / Saved.', !!(r && r.note)); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
@@ -750,9 +765,11 @@ VIEWS.settings = function(){
                  which roles this one approves -- since that is how a GMO reads it. */
               + '<td style="white-space:normal">'
                 + (ap ? esc(ap)
-                    + (ap.toUpperCase() === String(r.role||'').toUpperCase() ? ' <span class="chip mut">msimamizi kwa msimbo / supervisor per code</span>' : '')
+                    + (ap.toUpperCase() === String(r.role||'').toUpperCase() && !r.approverName ? ' <span class="chip mut">msimamizi kwa msimbo / supervisor per code</span>' : '')
                     + (apRow && (apRow.tabs||[]).indexOf('advappr') < 0 ? ' <span class="chip bad">hana tab advappr / approver lacks the advappr tab</span>' : '')
-                  : '<span class="chip mut">—</span>')
+                  : (r.approverName ? '' : '<span class="chip mut">—</span>'))
+                // The one person who supervises the whole role (RUN-ME-046), by name.
+                + (r.approverName ? (ap ? ' · ' : '') + '<span class="chip ok">msimamizi / supervisor: ' + esc(r.approverName) + '</span>' : '')
                 + (approves.length ? '<div style="color:var(--mut);font-size:11px">huidhinisha / approves: '+esc(approves.join(', '))+'</div>' : '')
               + '</td>'
               + '<td class="r">'+money(n)+'</td>'
@@ -1004,8 +1021,13 @@ function codeForm(x){
       + '<select id="kSup"'+(masked ? ' disabled' : '')+'><option value="">— hakuna: wadhifa wa kuidhinisha ndio unaamua / none: the approver role decides —</option>'
       + others.map(function(c){ return '<option value="'+esc(c.code)+'"'+(c.code === sup ? ' selected' : '')+'>'+esc(c.name||'')+' · '+esc(c.role||'')+'</option>'; }).join('')
       + '</select>'
-      + '<div class="fldnote">Akichaguliwa, yeye pekee ndiye anayeona maombi ya advance ya msimbo huu, zone yoyote. Lazima pale wadhifa wa kuidhinisha ni uleule (CREDIT → CREDIT); hiari pale ni wadhifa mwingine.'
-        + ' / When set, only this person sees this code\'s advance requests, whatever the zone. Required where the approver role is the same department (credit → credit); optional where it is another role.'
+      /* "At codes I choose role user as supervisor of the whole dept not assigning every user
+         to the same person": one tick writes the chosen person on this code's ROLE instead. */
+      + '<label class="chk" style="margin-top:6px"><input type="checkbox" id="kSupRole"> Mfanye msimamizi wa wadhifa wote wa <b id="kSupRoleName">'+esc(x ? x.role : '')+'</b> — si msimbo huu tu / Make them the supervisor of every <b>'+esc(x ? x.role : '')+'</b> code, not this code only</label>'
+      + '<div class="fldnote">Akichaguliwa, yeye pekee ndiye anayeona maombi ya advance ya msimbo huu, zone yoyote. Ukitiki "wadhifa wote", anaandikwa mara moja kwenye wadhifa na msimbo huu unaachwa wazi.'
+        + ' / When set, only this person sees this code\'s advance requests, whatever the zone. Tick "every code" and they are written once on the role, with this code left blank.'
+        + (function(){ var rr = (S.roles||[]).filter(function(r){ return x && String(r.role||'').toUpperCase() === String(x.role||'').toUpperCase(); })[0];
+            return rr && rr.approverName ? '<br>Msimamizi wa wadhifa huu sasa / this role\'s supervisor now: <b>' + esc(rr.approverName) + '</b>' : ''; })()
         + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
     /* NO TAB LIST HERE ANY MORE. "remove the tabs column from access codes, I need a new role
        assign table before access codes ... so now we decide easy for all users". A code used
@@ -1025,7 +1047,8 @@ function codeForm(x){
       role:document.getElementById('kRole').value.trim(), teams:document.getElementById('kTeams').value.trim(),
       tabs:tabs,
       // A disabled picker (codes masked) says nothing, and nothing said is nothing changed.
-      supervisor: supSel && !supSel.disabled ? supSel.value : undefined })
+      supervisor: supSel && !supSel.disabled ? supSel.value : undefined,
+      roleSupervisor: !!(document.getElementById('kSupRole') && document.getElementById('kSupRole').checked) })
       /* THE ROSTER FOLLOWED, SO SAY SO. Saving a code now also re-files that person in the
          teams table, and a change to a screen the admin is not looking at has to be reported
          or it is indistinguishable from nothing happening. */
@@ -1038,7 +1061,8 @@ function codeForm(x){
           if (s.cleared) bits.push('ameondolewa kwenye timu ' + s.cleared + ' / removed from ' + s.cleared);
           if (bits.length) msg += ' Timu na Wafanyakazi: ' + bits.join('; ') + ' (' + s.role.toUpperCase() + ').';
         }
-        // The code saves on any database; the supervisor only with RUN-ME-045, and the answer says.
+        if (r && r.roleSupervisor && r.roleSupervisor.saved) msg += ' Msimamizi wa wadhifa wote wa ' + r.roleSupervisor.role + ' ameandikwa. / Written as the supervisor of every ' + r.roleSupervisor.role + ' code.';
+        // The code saves on any database; the supervisors only with RUN-ME-045/046, and the answer says.
         if (r && r.note) msg += ' ⚠️ Msimamizi hajahifadhiwa / the supervisor was not saved: ' + r.note;
         toast(msg, !!(r && r.note)); closeDrawer(); render();
       })

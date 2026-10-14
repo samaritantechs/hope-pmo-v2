@@ -100,9 +100,11 @@ VIEWS.advappr = function(){
        supervises -- or, plainly, that nothing is routed to it yet and where that is set. An
        admin's desk shows every request and names the ones that reach nobody else. */
     var desk = d.desk || {};
-    var deskLine = desk.admin ? 'admin — maombi yote / every request'
-      : ((desk.roles||[]).length ? 'wadhifa unaoidhinisha / roles you approve: ' + desk.roles.join(', ') : '')
-        + ((desk.supervisees||[]).length ? ((desk.roles||[]).length ? ' · ' : '') + 'unaowasimamia / you supervise: ' + desk.supervisees.map(function(s){ return s.name; }).join(', ') : '');
+    var deskBits = [];
+    if ((desk.roles||[]).length) deskBits.push('wadhifa unaoidhinisha / roles you approve: ' + desk.roles.join(', '));
+    if ((desk.deptRoles||[]).length) deskBits.push('msimamizi wa wadhifa wote / supervisor of every code of: ' + desk.deptRoles.join(', '));
+    if ((desk.supervisees||[]).length) deskBits.push('unaowasimamia / you supervise: ' + desk.supervisees.map(function(s){ return s.name; }).join(', '));
+    var deskLine = desk.admin ? 'admin — maombi yote / every request' : deskBits.join(' · ');
     HEAD = '<div class="kpis">'
       + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
       + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')

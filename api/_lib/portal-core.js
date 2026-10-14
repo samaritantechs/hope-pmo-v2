@@ -1720,6 +1720,23 @@ function advZoneList_(teamRows, regRows, zones) {
    ADMIN only, and both the ask and the admin's desk say so by name. */
 const ADV_ROUTE_NOTE = 'Uelekezaji wa maombi (mwidhinishaji kwa wadhifa, msimamizi kwa msimbo) unahitaji db/RUN-ME-045-advance-approvers.sql. '
   + '/ Routing to an approver role or a named supervisor needs db/RUN-ME-045-advance-approvers.sql in the SQL editor; until then every holder of the approval tab sees their zones, as before.';
+const ADV_DEPT_NOTE = 'Msimamizi mmoja wa wadhifa mzima anahitaji db/RUN-ME-046-role-supervisor.sql. '
+  + '/ One supervisor for a whole role needs db/RUN-ME-046-role-supervisor.sql in the SQL editor; until then name the supervisor on each code.';
+/** Upsert role rows, dropping a routing column the database has not got yet (RUN-ME-045's
+    approver_role, RUN-ME-046's approver_code) and saying which, so the rest still saves. */
+async function rolesUpsert_(db, rows) {
+  const dropped = [];
+  let payload = rows.map(r => ({ ...r }));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error } = await db.from('roles').upsert(payload, { onConflict: 'role' });
+    if (!error) return { dropped };
+    const col = ['approver_code', 'approver_role'].find(c => advColMissing_(error, [c]) && payload.some(r => c in r));
+    if (!col) throw new Error(error.message);
+    dropped.push(col);
+    payload = payload.map(r => { const o = { ...r }; delete o[col]; return o; });
+  }
+  throw new Error('The roles could not be saved.');
+}
 /** PostgREST's two refusals of a column the database has not got: on a read ("column x.y
     does not exist") and on a write ("Could not find the 'y' column ... schema cache"). */
 const advColMissing_ = (e, cols) => { const s = String((e && e.message) || e || ''); return /schema cache|column/i.test(s) && cols.some(c => s.includes(c)); };
@@ -1728,16 +1745,28 @@ const advColMissing_ = (e, cols) => { const s = String((e && e.message) || e || 
     column), and every reader of it then falls back to the zone rule. */
 export function advRoutingOf_(roleRows, codeRows, on = true) {
   const approverOf = new Map();                         // K(role) -> K(approver role)
-  for (const r of (roleRows || [])) { const a = K(r.approver_role); if (K(r.role) && a) approverOf.set(K(r.role), a); }
   const codes = new Map();                              // K(code) -> the code row
   for (const c of (codeRows || [])) if (c && c.code) codes.set(K(c.code), c);
-  const supervisorOf = code => {                        // the named supervisor of a code, as a row, or null
+  /* ONE SUPERVISOR FOR A WHOLE ROLE (RUN-ME-046, roles.approver_code) -- "At codes I choose
+     role user as supervisor of the whole dept not assigning every user to the same person
+     loosing energy all the way". K(role) -> the code row of the one person; a code that is
+     gone names nobody. */
+  const deptSupervisorOf = new Map();
+  for (const r of (roleRows || [])) {
+    const a = K(r.approver_role); if (K(r.role) && a) approverOf.set(K(r.role), a);
+    const s = r.approver_code ? codes.get(K(r.approver_code)) : null;
+    if (K(r.role) && s) deptSupervisorOf.set(K(r.role), s);
+  }
+  const supervisorOf = code => {                        // the code's OWN named supervisor, as a row, or null
     const c = codes.get(K(code));
     if (!c || !c.supervisor) return null;
     return codes.get(K(c.supervisor)) || null;          // a supervisor whose code is gone names nobody
   };
-  return { on, approverOf, codes, supervisorOf,
+  const deptRolesOf = code => [...deptSupervisorOf].filter(([, s]) => K(s.code) === K(code)).map(([r]) => r).sort();
+  return { on, approverOf, codes, supervisorOf, deptSupervisorOf, deptRolesOf,
     rolesApprovedBy: role => [...approverOf].filter(([, a]) => a === K(role)).map(([r]) => r).sort(),
+    // The codes this person supervises BY NAME on the code itself. A whole role they supervise
+    // is read by role instead (deptRolesOf), since its requesters include team codes.
     supervisees: code => [...codes.values()].filter(c => c.supervisor && K(c.supervisor) === K(code))
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))) };
 }
@@ -1760,14 +1789,19 @@ async function advRouting_(db) {
 function advRouteOf_(routing, r) {
   const role = K(r && r.req_role), code = K(r && r.req_code);
   if (!role && !code) return { kind: 'legacy', to: null };
+  // The code's own supervisor first, then the one named for the whole role, then the role.
   const sup = code ? routing.supervisorOf(code) : null;
-  if (sup) return { kind: 'supervisor', to: K(sup.code), name: sup.name || sup.code };
-  const a = role ? routing.approverOf.get(role) : null;
+  if (sup) return { kind: 'supervisor', to: K(sup.code), name: sup.name || sup.code, dept: false };
+  const c = code ? routing.codes.get(code) : null;
+  const roleOf = role || (c ? K(c.role) : '');
+  const dept = roleOf ? routing.deptSupervisorOf.get(roleOf) : null;
+  if (dept) return { kind: 'supervisor', to: K(dept.code), name: dept.name || dept.code, dept: true, role: roleOf };
+  const a = roleOf ? routing.approverOf.get(roleOf) : null;
   if (a) return { kind: 'role', to: a };
-  return { kind: 'none', to: null, role: role || null };
+  return { kind: 'none', to: null, role: roleOf || null };
 }
 function advRouteLabel_(route, zone) {
-  if (route.kind === 'supervisor') return route.name + ' (msimamizi / supervisor)';
+  if (route.kind === 'supervisor') return route.name + (route.dept ? ' (msimamizi wa wadhifa ' + route.role + ' / supervisor of role ' + route.role + ')' : ' (msimamizi / supervisor)');
   if (route.kind === 'role') return route.to + (zone ? ' · zone ' + K(zone) : '') + ' (wadhifa / by role)';
   if (route.kind === 'legacy') return 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing';
   return '⚠️ hakuna — wadhifa ' + (route.role || '?') + ' hauna mwidhinishaji / nobody: role ' + (route.role || '?') + ' has no approver set (an admin only)';
@@ -1977,26 +2011,32 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
      legacy rows reach them through), and -- for a named supervisor -- their people's requests
      by code, whatever zone those sit in. Then the one routing rule decides each row. */
   const mine = routing.on ? routing.supervisees(user.code).map(c => c.code) : [];
+  // A whole role this person supervises (RUN-ME-046) is read by ROLE, whatever the zone --
+  // its requesters include team codes, which are not codes on the book. ilike: a code's
+  // role keeps its own spelling.
+  const deptRoles = routing.on ? routing.deptRolesOf(user.code) : [];
   const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: false });
   const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
-  const [pending0, recent0, pendS, recS] = await Promise.all([
+  const [pending0, recent0, pendS, recS, ...byRole] = await Promise.all([
     advRead_(() => onZones_(pendQ(), zones)),
     advRead_(() => onZones_(recQ(), zones)),
     mine.length ? advRead_(() => pendQ().in('req_code', mine)) : [],
     mine.length ? advRead_(() => recQ().in('req_code', mine)) : [],
+    ...deptRoles.map(role => advRead_(() => pendQ().ilike('req_role', role))),
+    ...deptRoles.map(role => advRead_(() => recQ().ilike('req_role', role))),
   ]);
   const on = Array.isArray(pending0);
-  const merge = (a, b) => { const by = new Map(); for (const r of (a || []).concat(b || [])) by.set(String(r.id), r); return [...by.values()]; };
+  const merge = (...lists) => { const by = new Map(); for (const l of lists) for (const r of (l || [])) by.set(String(r.id), r); return [...by.values()]; };
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
   const withRoute = r => ({ ...r, route: advRouteLabel_(advRouteOf_(routing, r), r.zone) });
-  const pending = merge(pending0, pendS).filter(sees)
+  const pending = merge(pending0, pendS, ...byRole.slice(0, deptRoles.length)).filter(sees)
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
-  const recent = merge(recent0, recS).filter(r => sees(r) || K(r.decided_by) === K(user.name))
+  const recent = merge(recent0, recS, ...byRole.slice(deptRoles.length)).filter(r => sees(r) || K(r.decided_by) === K(user.name))
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
-  // What this desk IS -- the roles routed to it and the people it supervises -- and, for an
-  // admin, the pending requests that reach nobody else, by name.
+  // What this desk IS -- the roles routed to it, the roles it supervises whole, the people it
+  // supervises by name -- and, for an admin, the pending requests that reach nobody else.
   const admin = isAdminUser(user);
-  const desk = { admin, roles: routing.rolesApprovedBy(user.role),
+  const desk = { admin, roles: routing.rolesApprovedBy(user.role), deptRoles,
     supervisees: routing.supervisees(user.code).map(c => ({ name: c.name, role: c.role })) };
   const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role, zone: r.zone })) : [];
   return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length, month,
@@ -6627,13 +6667,21 @@ async function saveRole(db, user, p) {
      tabs are still saved and the answer says the approver was not. */
   const hasApprover = !!p && p.approverRole !== undefined;
   const approverRole = hasApprover ? (String(p.approverRole || '').trim().toUpperCase() || null) : undefined;
-  let { error } = await db.from('roles').upsert(hasApprover ? { role, tabs, approver_role: approverRole } : { role, tabs }, { onConflict: 'role' });
-  let approverSaved = hasApprover;
-  if (error && hasApprover && advColMissing_(error, ['approver_role'])) {
-    approverSaved = false;
-    ({ error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' }));
+  /* ONE SUPERVISOR FOR THE WHOLE ROLE (RUN-ME-046, roles.approver_code) -- "choose role user
+     as supervisor of the whole dept not assigning every user to the same person": a code,
+     which has to exist, or blank to clear. Not mentioned means not changed. */
+  const hasCode = !!p && p.approverCode !== undefined;
+  const approverCode = hasCode ? (String(p.approverCode || '').trim() || null) : undefined;
+  if (approverCode) {
+    const { data: supRow } = await db.from('access_codes').select('code').eq('code', approverCode).maybeSingle();
+    if (!supRow) throw badRequest('Msimbo wa msimamizi haupo. / The supervisor\'s code does not exist.');
   }
-  if (error) throw new Error(error.message);
+  const row = { role, tabs };
+  if (hasApprover) row.approver_role = approverRole;
+  if (hasCode) row.approver_code = approverCode;
+  const { dropped } = await rolesUpsert_(db, [row]);
+  const approverSaved = hasApprover && !dropped.includes('approver_role');
+  const codeSaved = hasCode && !dropped.includes('approver_code');
   /* THE OTHER DIRECTION, WHICH IS HOW THE FORM NOW ASKS IT -- "granting someone approval tab
      I choose which roles they can approve ... Simplest solving. If I choose same role then I
      select user". `approves` is the list of roles whose advance requests THIS role approves.
@@ -6648,15 +6696,18 @@ async function saveRole(db, user, p) {
     for (const r of want) if (!have.has(r) || K(have.get(r).approver_role) !== role) writes.push({ role: have.has(r) ? have.get(r).role : r, approver_role: role });
     for (const r of roleRows) if (K(r.approver_role) === role && !want.has(K(r.role))) writes.push({ role: r.role, approver_role: null });
     if (writes.length) {
-      const { error: aErr } = await db.from('roles').upsert(writes, { onConflict: 'role' });
-      if (aErr) { if (advColMissing_(aErr, ['approver_role'])) approvesSaved = false; else throw new Error(aErr.message); }
+      const r2 = await rolesUpsert_(db, writes);
+      if (r2.dropped.includes('approver_role')) approvesSaved = false;
     }
     approves = [...want].sort();
   }
-  const unsaved = (hasApprover && !approverSaved) || (hasApproves && !approvesSaved);
-  const out = { role, tabs, note: unsaved ? ADV_ROUTE_NOTE : null };
+  const notes = [];
+  if ((hasApprover && !approverSaved) || (hasApproves && !approvesSaved)) notes.push(ADV_ROUTE_NOTE);
+  if (hasCode && !codeSaved) notes.push(ADV_DEPT_NOTE);
+  const out = { role, tabs, note: notes.length ? notes.join(' ') : null };
   if (approverSaved) out.approverRole = approverRole;
   if (approvesSaved) out.approves = approves;
+  if (codeSaved) out.approverCode = approverCode;
   return out;
 }
 /* A CLEAN SLATE FOR THE APPROVALS, AND A WAY BACK -- "Clear all approval granted roles so
@@ -6672,7 +6723,8 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
   let codeRows, on = true;
   try { codeRows = await fetchAll(() => db.from('access_codes').select('code, supervisor')); }
   catch (e) { if (!advColMissing_(e, ['supervisor'])) throw e; on = false; codeRows = []; }
-  const roleRow = r => (on ? { role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null } : { role: r.role, tabs: r.tabs || [] });
+  // The whole row, routing columns included; rolesUpsert_ drops whichever the database lacks.
+  const roleRow = r => ({ role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null, approver_code: r.approver_code || null });
 
   if (p && p.undo) {
     let saved = null;
@@ -6680,10 +6732,7 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
     if (!saved || !Array.isArray(saved.roles)) {
       throw badRequest('Hakuna nakala ya kurudisha. / There is no saved state to restore — the approvals have not been cleared yet.');
     }
-    if (saved.roles.length) {
-      const { error } = await db.from('roles').upsert(saved.roles.map(roleRow), { onConflict: 'role' });
-      if (error) throw new Error(error.message);
-    }
+    if (saved.roles.length) await rolesUpsert_(db, saved.roles.map(roleRow));
     let codes = 0;
     if (on) for (const c of (saved.codes || [])) {
       const { error } = await db.from('access_codes').update({ supervisor: c.supervisor || null }).eq('code', c.code);
@@ -6696,7 +6745,7 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
   const at = new Date(nowMs).toISOString();
   const backup = {
     at, by: user.name || user.code,
-    roles: roleRows.map(r => ({ role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null })),
+    roles: roleRows.map(roleRow),
     codes: codeRows.filter(c => c.supervisor).map(c => ({ code: c.code, supervisor: c.supervisor })),
   };
   const { error: bErr } = await db.from('settings')
@@ -6704,11 +6753,8 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
   if (bErr) throw new Error('Nakala haikuhifadhika, kwa hivyo hakuna kilichofutwa. / The backup could not be saved, so nothing was cleared: ' + bErr.message);
   noteSettingsWritten(db);
   const others = roleRows.filter(r => K(r.role) !== 'ADMIN');
-  const wanted = others.map(r => roleRow({ role: r.role, tabs: (r.tabs || []).filter(t => t !== 'advappr'), approver_role: null }));
-  if (wanted.length) {
-    const { error } = await db.from('roles').upsert(wanted, { onConflict: 'role' });
-    if (error) throw new Error(error.message);
-  }
+  const wanted = others.map(r => roleRow({ role: r.role, tabs: (r.tabs || []).filter(t => t !== 'advappr') }));
+  if (wanted.length) await rolesUpsert_(db, wanted);
   let codesCleared = 0;
   if (on) for (const c of backup.codes) {
     const { error } = await db.from('access_codes').update({ supervisor: null }).eq('code', c.code);
@@ -6716,7 +6762,7 @@ async function resetApprovals(db, user, p, nowMs = Date.now()) {
     codesCleared++;
   }
   return { tabsCleared: others.filter(r => (r.tabs || []).includes('advappr')).length,
-    approversCleared: others.filter(r => r.approver_role).length, codesCleared, at,
+    approversCleared: others.filter(r => r.approver_role || r.approver_code).length, codesCleared, at,
     routingOn: on, note: on ? null : ADV_ROUTE_NOTE };
 }
 /* A CLEAN SLATE TO SET THE ROLES FROM, AND A WAY BACK.
@@ -6951,7 +6997,11 @@ async function accessCodes(db, user) {
   } catch (e) {}
   // allTabs rides along so the role tab list on this screen can be a checkbox list instead of
   // free text -- "ticking the nav pannels ... because writing could error".
-  return { rows: out, count: rows.length, roles: mergeRoles_(roleRows, rows),
+  // A role's whole-role supervisor (RUN-ME-046) as a NAME beside it; the code is a secret.
+  const roles = mergeRoles_(roleRows, rows).map(r => ({ ...r,
+    approverName: r.approver_code ? (nameOf.get(K(r.approver_code)) || null) : null,
+    approver_code: user.readOnly && r.approver_code ? '••••' : (r.approver_code || null) }));
+  return { rows: out, count: rows.length, roles,
     allTabs: ALL_TABS.slice(), roleBackupAt: backupAt, approvalsBackupAt,
     routingOn, routingNote: routingOn ? null : ADV_ROUTE_NOTE };
 }
@@ -7003,14 +7053,24 @@ async function saveAccessCode(db, user, p) {
     const { data: supRow } = await db.from('access_codes').select('code').eq('code', supervisor).maybeSingle();
     if (!supRow) throw badRequest('Msimbo wa msimamizi haupo. / The supervisor\'s code does not exist.');
   }
+  /* "At codes I choose role user as supervisor of the whole dept not assigning every user to
+     the same person": with `roleSupervisor` the chosen person is written ONCE, on this code's
+     ROLE (roles.approver_code, RUN-ME-046), and this code's own supervisor is left blank so the
+     role's applies to it like to every other code of that role. */
+  const forRole = hasSup && !!supervisor && !!p.roleSupervisor;
   const row = { code, name: nextName, role: nextRole, teams: nextTeams, tabs: list(p.tabs) || [] };
-  let { error } = await db.from('access_codes').upsert(hasSup ? { ...row, supervisor } : row, { onConflict: 'code' });
+  let { error } = await db.from('access_codes').upsert(hasSup ? { ...row, supervisor: forRole ? null : supervisor } : row, { onConflict: 'code' });
   let supSaved = hasSup;
   if (error && hasSup && advColMissing_(error, ['supervisor'])) {
     supSaved = false;
     ({ error } = await db.from('access_codes').upsert(row, { onConflict: 'code' }));
   }
   if (error) throw new Error(error.message);
+  let roleSup = null;
+  if (forRole) {
+    const { dropped } = await rolesUpsert_(db, [{ role: K(nextRole), approver_code: supervisor }]);
+    roleSup = { role: K(nextRole), saved: !dropped.includes('approver_code') };
+  }
   noteCodesWritten(db);                       // the codes lay over the sheet: every board re-reads
   if (oldCode && oldCode !== code) {
     // Only after the new row exists -- a failure here leaves a duplicate, which an admin can
@@ -7024,8 +7084,12 @@ async function saveAccessCode(db, user, p) {
   const staff = await syncStaffFromCode(db, user,
     { name: nextName, prevName, role: nextRole, teams: nextTeams });
 
+  const notes = [];
+  if (hasSup && !supSaved) notes.push(ADV_ROUTE_NOTE);
+  if (roleSup && !roleSup.saved) notes.push(ADV_DEPT_NOTE);
   return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff,
-    supervisor: supSaved ? supervisor : undefined, note: hasSup && !supSaved ? ADV_ROUTE_NOTE : null };
+    supervisor: supSaved ? (forRole ? null : supervisor) : undefined, roleSupervisor: roleSup,
+    note: notes.length ? notes.join(' ') : null };
 }
 /* =======================================================================================
    AN ACCESS CODE AND THE TEAMS TABLE ARE ONE FACT KEPT IN TWO PLACES.
