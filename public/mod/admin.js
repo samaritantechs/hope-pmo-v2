@@ -290,7 +290,6 @@ function roleForm(x){
      names a supervisor on the code form. */
   var roleRows = (S.roleMeta && S.roleMeta.roles) || [];
   var me = x ? String(x.role || '').toUpperCase() : '';
-  var hasAppr = have.indexOf('advappr') >= 0;
   drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
     + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
@@ -302,7 +301,10 @@ function roleForm(x){
     + '<div class="fld"><label>Tabs — HOPE PMO</label><div class="checks">'
     + all.filter(function(t){ return !isLoanTab_(t); }).map(function(t){ return tabTick_(t, have); }).join('')
     + '</div></div>'
-    + '<div class="fld" id="rApprovesWrap"'+(hasAppr ? '' : ' style="display:none"')+'>'
+    /* "if I choose approver then approver gets the approval tab automatic" -- so the list is
+       always open, and ticking a role in it ticks advappr above by itself (the server adds the
+       tab too, whatever the box says). */
+    + '<div class="fld" id="rApprovesWrap">'
       + '<label>Huidhinisha maombi ya advance ya wadhifa / Approves advance requests from roles</label><div class="checks">'
       + roleRows.map(function(r){
           var rr = String(r.role||'').toUpperCase(), ap = String(r.approver_role||'').toUpperCase();
@@ -311,8 +313,8 @@ function roleForm(x){
             + (rr === me ? ' <span class="chip mut">wadhifa uleule → msimamizi kwa msimbo / same role → supervisor per code</span>' : '')
             + (ap && !mine ? ' <span style="color:var(--mut);font-size:11px">(sasa / now: '+esc(r.approver_role)+')</span>' : '')
             + '</label>'; }).join('')
-      + '</div><div class="fldnote">Kila wadhifa uliotikiwa hapa, maombi yake ya advance huja kwenye dawati la wadhifa huu, ndani ya zone zake. Ukitiki wadhifa huu wenyewe (CREDIT → CREDIT), kila msimbo wa wadhifa huo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin. Wadhifa una mwidhinishaji mmoja tu: ukiutiki hapa, unaondoka kwa yule wa awali.'
-        + ' / Every role ticked here sends its advance requests to this role\'s desk, within its zones. Tick this role itself (credit → credit) and each of its codes must then name a supervisor on the code form, or the request reaches nobody but an admin. A role has ONE approver: ticking it here takes it off the one it had.'
+      + '</div><div class="fldnote">Ukitiki wadhifa hapa, wadhifa huu unapata tab ya <b>advappr</b> wenyewe, na maombi ya advance ya wadhifa huo huja kwenye dawati lake, ndani ya zone zake. Ukitiki wadhifa huu wenyewe (CREDIT → CREDIT), kila msimbo wa wadhifa huo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin. Wadhifa una mwidhinishaji mmoja tu: ukiutiki hapa, unaondoka kwa yule wa awali.'
+        + ' / Tick a role here and this role gets the <b>advappr</b> tab by itself; that role\'s advance requests then come to this desk, within its zones. Tick this role itself (credit → credit) and each of its codes must then name a supervisor on the code form, or the request reaches nobody but an admin. A role has ONE approver: ticking it here takes it off the one it had.'
         + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
     + '<div class="fld"><label>Tabs — HOPE Loan</label>'
     + '<div class="fldnote">Hizi hufungua HOPE LOAN, si skrini za HOPE PMO. / These open HOPE LOAN screens, not HOPE PMO ones.</div>'
@@ -321,10 +323,11 @@ function roleForm(x){
     + '</div></div>'
     + '<button class="btn w" id="rSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="rDel">Futa / Delete role</button>'));
-  // The "approves" list follows the advappr tick as it is made, so the question is asked at
-  // the moment the tab is granted.
+  // Ticking a role to approve ticks the approval tab by itself: one decision, not two.
   var apprTick = document.querySelector('.rTab[value="advappr"]');
-  if (apprTick) apprTick.onchange = function(){ $('#rApprovesWrap').style.display = apprTick.checked ? '' : 'none'; };
+  Array.prototype.forEach.call(document.querySelectorAll('.rApp'), function(c){
+    c.onchange = function(){ if (c.checked && apprTick) apprTick.checked = true; };
+  });
   $('#rSave').onclick = function(){
     var tabs = Array.prototype.filter.call(document.querySelectorAll('.rTab'), function(c){ return c.checked; })
       .map(function(c){ return c.value; }).join(',');

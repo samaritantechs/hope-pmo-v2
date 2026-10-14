@@ -1757,12 +1757,16 @@ test('advance routing: Roles & access takes the approver role, the code form the
   const admin = page('admin'), adv = page('advance');
   // From the approver's side: the list under the advappr tick, following it live.
   assert.ok(/id="rApprovesWrap"/.test(admin) && /class="rApp"/.test(admin) && /approves: approves/.test(admin), 'the role form sends the roles this role approves');
-  assert.ok(/querySelector\('\.rTab\[value="advappr"\]'\)/.test(admin) && /rApprovesWrap'\)\.style\.display = apprTick\.checked/.test(admin), 'the list follows the advappr tick');
+  assert.ok(/querySelector\('\.rTab\[value="advappr"\]'\)/.test(admin) && /if \(c\.checked && apprTick\) apprTick\.checked = true;/.test(admin), 'ticking a role to approve ticks the approval tab by itself');
+  assert.ok(!/style="display:none"/.test(admin.slice(admin.indexOf('id="rApprovesWrap"'), admin.indexOf('id="rApprovesWrap"') + 80)), 'the list is always open');
   assert.ok(/sasa \/ now: '\+esc\(r\.approver_role\)/.test(admin), 'a role already pointing elsewhere says so');
   assert.ok(/id="resetApprovals"/.test(admin) && /id="undoApprovals"/.test(admin) && /function wireApprovalsReset_\(\)/.test(admin) && /srv\('resetApprovals', \{ undo: true \}\)/.test(admin), 'the clean slate and its undo');
   assert.ok(!/id="rApprover"/.test(admin), 'one way to set it, not two');
-  // Only the approver sees requests: no history under the form, the month's rule with a date alone.
-  assert.ok(!/d\.mine/.test(adv) && /S\.rows = \[\]; S\.cols = \[\];/.test(adv) && /d\.monthTaken\.submitted_at/.test(adv) && !/monthTaken\.amount/.test(adv), 'the request screen lists nobody\'s requests');
+  // The request screen is the viewer's ROLE in their zone: the names, the history, the month's rule with a date alone.
+  assert.ok(!/d\.mine/.test(adv) && /S\.rows = d\.history \|\| \[\];/.test(adv) && /col\('staff_name','Jina \/ Name'\)/.test(adv), 'the history of the role in the zone, with names');
+  assert.ok(/wadhifa \/ role: ' \+ d\.role/.test(adv) && /d\.roleNote \? '<div class="note bad"/.test(adv), 'the subtitle names the role; a registry spelled otherwise is said');
+  assert.ok(/d\.monthTaken\.submitted_at/.test(adv) && !/monthTaken\.amount/.test(adv), 'the month\'s rule with a date alone');
+  assert.ok(/list="asRoles"/.test(adv) && /m\.roleNames/.test(adv), 'HR picks ROLE from Roles & access spellings');
   assert.ok(/Decided this month/.test(adv) && /newest first/.test(adv), 'the desk says its default and its order');
   assert.ok(/id="kSup"/.test(admin) && /supervisor: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the code form sends the supervisor, or nothing when the picker is masked');
   assert.ok(/Mwidhinishaji wa advance \/ Advance approver/.test(admin) && /<th>Msimamizi \/ Supervisor<\/th>/.test(admin), 'both tables carry the column');

@@ -11250,6 +11250,21 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.equal(page.on, true); assert.deepEqual(page.zones, ['DAR EAST']); assert.equal(page.teamCode, true);
   assert.deepEqual(page.staff.map(s => s.name), ['ASHA ALI AMANI'], 'MARA\'s staff and the inactive one are not offered');
   assert.deepEqual(Object.keys(page.staff[0]).sort(), ['id', 'name', 'role', 'zone'], 'no account, no phone, no NIDA on a shared screen');
+  /* NAMES OF YOUR ROLE ONLY -- "credit can't be choosing names mixed with FOs": a credit code
+     of the same zone sees no field officer, and is told how the registry spells its roles;
+     a credit staff added under the role as Roles & access spells it appears; a team code
+     ("FIELD OFFICER") matches the sheet's "Field Officer", "F.O" and "TEAM" alike. */
+  const credit = { code: 'CR', name: 'CREDIT PERSON', role: 'Credit', teams: ['KONGOWE'], tabs: ['advreq'] };
+  const cPage = await portalApi(db, credit, 'advRequestPage', {}, NOW);
+  assert.deepEqual(cPage.staff, []); assert.equal(cPage.role, 'Credit');
+  assert.match(cPage.roleNote, /No name with role Credit on your zone's registry; the registry spells roles as: Field Officer/);
+  db._dump('staff_registry').push({ id: 'CRD/009/2026', name: 'CREDIT STAFF', role: 'CREDIT', zone: 'DAR EAST', status: 'Active' },
+    { id: 'TMM/010/2026', name: 'TEAM SPELT', role: 'TEAM', zone: 'DAR EAST', status: 'Active' });
+  assert.deepEqual((await portalApi(db, credit, 'advRequestPage', {}, NOW)).staff.map(s => s.name), ['CREDIT STAFF']);
+  assert.deepEqual((await portalApi(db, FO, 'advRequestPage', {}, NOW)).staff.map(s => s.name), ['ASHA ALI AMANI', 'TEAM SPELT'], 'the sheet\'s TEAM is a field officer');
+  assert.equal((await portalApi(db, ADMIN, 'advRequestPage', {}, NOW)).staff.length, 4, 'an admin sees every active name'); assert.equal((await portalApi(db, ADMIN, 'advRequestPage', {}, NOW)).role, null);
+  await assert.rejects(() => portalApi(db, credit, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 403 && /not of your role/.test(e.message), 'nor can a credit code file for a field officer');
+  db._dump('staff_registry').splice(db._dump('staff_registry').length - 2, 2);
   assert.deepEqual(page.amounts, [50000, 100000, 150000, 200000]);
   const picked = await portalApi(db, FO, 'advRequestPage', { staffId: 'aaa/001/2026' }, NOW);
   assert.equal(picked.chosen.name, 'ASHA ALI AMANI'); assert.equal(picked.monthTaken, null, 'a disapproved request does not use the month up');
@@ -11266,8 +11281,13 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.equal(made.route.kind, 'role'); assert.match(made.route.label, /^GMO · zone DAR EAST/);
   assert.equal(picked.route.kind, 'role', 'and the ask said who would see it before it was sent');
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /one request per month/i.test(e.message));
-  const takenNow = (await portalApi(db, FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW)).monthTaken;
-  assert.deepEqual(Object.keys(takenNow), ['submitted_at'], 'and the form says so -- the date alone, no amount and no decision');
+  const afterAsk = await portalApi(db, FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW);
+  assert.deepEqual(Object.keys(afterAsk.monthTaken), ['submitted_at'], 'and the form says so -- the date alone, no amount and no decision');
+  /* THE HISTORY OF YOUR ROLE IN YOUR ZONE -- "allow users to see history of their requests so
+     teams see history of their zone as FOs": the team code sees the request it filed (and not
+     the sheet's rows, which name no role); a credit code of the same zone does not. */
+  assert.deepEqual(afterAsk.history.map(r => r.staff_name), ['ASHA ALI AMANI']);
+  assert.deepEqual((await portalApi(db, credit, 'advRequestPage', {}, NOW)).history, []);
 
   // THE GMO'S DESK: DAR EAST's GMO sees the pending one; MARA's sees nothing; neither decides the other's.
   const gmoD = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advappr'] };
@@ -11368,7 +11388,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   t.staff_registry = [
     { id: 'AAA/001/2026', name: 'ASHA', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
     { id: 'CCC/002/2026', name: 'CREDIT ONE', role: 'Credit', zone: 'DAR EAST', status: 'Active' },
-    { id: 'PPP/003/2026', name: 'PMO COLL', role: 'PMO', zone: 'DAR EAST', status: 'Active' },
+    { id: 'PPP/003/2026', name: 'PMO COLL', role: 'Pmo Collection', zone: 'DAR EAST', status: 'Active' },
     { id: 'LLL/004/2026', name: 'LAWYER', role: 'Legal', zone: 'DAR EAST', status: 'Active' },
     { id: 'GGG/005/2026', name: 'GMO D', role: 'GMO', zone: 'DAR EAST', status: 'Active' },
   ];
@@ -11462,8 +11482,10 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // FROM THE APPROVER'S SIDE -- "granting someone approval tab I choose which roles they can
   // approve": the form sends the roles this role approves; each gets this role as its
   // approver, one already pointing elsewhere moves, and one unticked is cleared.
-  const ga = await portalApi(db, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advreq, advappr', approves: 'field officer, manager, bike, gmo' }, NOW);
+  const ga = await portalApi(db, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advreq', approves: 'field officer, manager, bike, gmo' }, NOW);
   assert.deepEqual(ga.approves, ['BIKE', 'FIELD OFFICER', 'GMO', 'MANAGER']); assert.equal(ga.note, null);
+  assert.deepEqual(ga.tabs, ['advreq', 'advappr'], '"if I choose approver then approver gets the approval tab automatic"');
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'GMO').tabs, ['advreq', 'advappr']);
   const byRole = () => Object.fromEntries(db._dump('roles').map(r => [r.role, r.approver_role || null]));
   assert.equal(byRole()['FIELD OFFICER'], 'GMO'); assert.equal(byRole().GMO, 'GMO');
   assert.equal(byRole().MANAGER, 'GMO', 'a role with no row yet is created with its approver'); assert.equal(byRole().BIKE, 'GMO');
@@ -11504,7 +11526,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // WITHOUT RUN-ME-045: the old zone rule everywhere, and every screen says the routing is not in.
   const t2 = tables();
   t2.teams[0] = { ...t2.teams[0], zone: 'DAR EAST' };
-  t2.staff_registry = [{ id: 'AAA/001/2026', name: 'ASHA', role: 'FO', zone: 'DAR EAST', status: 'Active' }];
+  t2.staff_registry = [{ id: 'AAA/001/2026', name: 'ASHA', role: 'Credit', zone: 'DAR EAST', status: 'Active' }];
   t2.advance_requests = [];
   const old = fakeDb(t2, { missingColumns: { roles: ['approver_role'], access_codes: ['supervisor'], advance_requests: ['req_role', 'req_code'] } });
   const oldReq = await portalApi(old, { code: 'C9', name: 'ANY', role: 'CREDIT', teams: ['KONGOWE'], tabs: ['advreq'] }, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);

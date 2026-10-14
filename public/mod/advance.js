@@ -30,7 +30,11 @@ VIEWS.advreq = function(){
           ? '<div class="note bad">Timu hizi hazina zone kwenye Teams & Staff, hivyo wafanyakazi wake hawaonekani hapa: ' + esc(d.noZoneTeams.join(', '))
             + '. / These teams carry no zone on Teams & Staff, so their staff cannot be listed here. Set the zone there and come back.</div>' : '')
       + '<div class="card"><div class="card-h">📝 Ombi la advance ya mshahara / Advance salary request'
-        + '<span class="sub">' + esc(d.zones && d.zones.length ? 'zone: ' + d.zones.join(', ') : 'zone zote / every zone') + '</span></div>'
+        /* The names of YOUR role in your zone -- "credit can't be choosing names mixed with
+           FOs" -- and the subtitle says which role and which zone that is. */
+        + '<span class="sub">' + esc((d.role ? 'wadhifa / role: ' + d.role + ' · ' : 'wadhifa zote / every role · ')
+          + (d.zones && d.zones.length ? 'zone: ' + d.zones.join(', ') : 'zone zote / every zone')) + '</span></div>'
+      + (d.roleNote ? '<div class="note bad" style="margin:10px 14px 0">⚠️ ' + esc(d.roleNote) + '</div>' : '')
       /* WHO WILL SEE IT, said before it is sent (advRouteOf_ on the server): the approver role
          in the zone, the named supervisor, or -- by name -- nobody but an admin, so a request
          that reaches no desk is never found out from silence. */
@@ -43,7 +47,7 @@ VIEWS.advreq = function(){
             return '<option value="' + esc(s.id) + '"' + (c && c.id === s.id ? ' selected' : '') + '>' + esc(s.name)
               + (s.role ? ' · ' + esc(s.role) : '') + (manyZones && s.zone ? ' (' + esc(s.zone) + ')' : '') + '</option>'; }).join('')
         + '</select>'
-        + '<div class="fldnote">Majina ya zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your zone\'s names; nothing else about anyone is shown.</div></div>'
+        + '<div class="fldnote">Majina ya wadhifa wako katika zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your role\'s names in your zone; nothing else about anyone is shown.</div></div>'
       + (c
           ? '<div class="facts">'
               + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id) + '</b></div>'
@@ -60,12 +64,18 @@ VIEWS.advreq = function(){
                   + '<div class="fld"><label>Kiasi (TZS) / Amount</label><select id="advAmount">'
                   + (d.amounts || []).map(function(a){ return '<option value="' + a + '">' + money(a) + '</option>'; }).join('') + '</select></div>'
                   + '<button class="btn w" id="advSubmit">Tuma ombi / Submit request</button>')
-          : '<div class="sub">Chagua jina lako kuona fomu. Maombi na maamuzi yake huonwa na mwidhinishaji tu. / Pick your name to see the form. Requests and their decisions are seen by the approver only.</div>')
+          : '<div class="sub">Chagua jina lako kuona fomu. / Pick your name to see the form.</div>')
       + '</div></div>';
-    // No table under the form: a person's requests are the approver's to see, not the zone's.
-    S.rows = []; S.cols = [];
+    /* THE HISTORY OF YOUR ROLE IN YOUR ZONE -- "allow users to see history of their requests
+       so teams see history of their zone as FOs": a team code sees its zone's field officers'
+       requests, a credit officer the zone's credit ones, newest first. */
+    S.rows = d.history || [];
+    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('zone','Zone'),
+      col('app_date','Tarehe ya maombi / App date','date'), col('amount','Kiasi / Amount','money'),
+      {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'),
+      col('decided_by','Aliyeamua / Decided by'), col('decided_at','Uamuzi / Decided','dt')];
     ONROW = null;
-    S.foot = '';
+    S.foot = 'Historia ya maombi ya ' + (d.role ? 'wadhifa ' + d.role : 'wadhifa zote') + ' katika zone yako / History of ' + (d.role ? d.role : 'every role') + ' requests in your zone(s): ' + money(S.rows.length) + ' · mapya juu / newest first';
   });
 };
 
@@ -238,7 +248,10 @@ function advStaffForm(x){
     + fld('asId', 'ID (acha wazi itengenezwe / leave blank to generate)', v('id'), 'text', isNew ? '' : ' readonly')
     + fld('asName', 'STAFF NAME *', v('name'))
     + fld('asPhone', 'PHONE', v('phone'), 'tel') + fld('asPhone2', 'PHONE 2', v('phone2'), 'tel')
-    + fld('asRole', 'ROLE', v('role'))
+    /* ROLE as Roles & access spells it: the request tab lists a name only under its own role,
+       so a role typed another way puts the person on nobody's list. Free text stays allowed. */
+    + '<div class="fld"><label>ROLE (kama Nafasi na ruhusa inavyouita / as Roles &amp; access spells it)</label><input id="asRole" list="asRoles" value="' + esc(String(v('role'))) + '">'
+      + '<datalist id="asRoles">' + (m.roleNames||[]).map(function(r){ return '<option value="' + esc(r) + '">'; }).join('') + '</datalist></div>'
     + fld('asRes', 'Residence', v('residence'))
     + fld('asBank', 'BANK NAME', v('bank')) + fld('asAcc', 'ACCOUNTS', v('account'))
     + '<div class="fld"><label>ZONE (chini ya GMO / under GMO) *</label><input id="asZone" list="asZones" value="' + esc(v('zone')) + '">'
