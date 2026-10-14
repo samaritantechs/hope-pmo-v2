@@ -97,6 +97,18 @@ function advSubmit(){
     .catch(function(e){ toast(String(e.message||e), true); });
 }
 
+/* WHAT A DESK IS, in words, for the desk and the report alike (advDeskOf_ on the server): the
+   roles routed to it, the roles it supervises whole, the people it supervises by name -- "every
+   request" for an admin -- or '' when nothing is routed to it yet. */
+function advDeskLine_(desk){
+  if (desk.admin) return 'admin — maombi yote / every request';
+  var bits = [];
+  if ((desk.roles||[]).length) bits.push('wadhifa unaoidhinisha / roles you approve: ' + desk.roles.join(', '));
+  if ((desk.deptRoles||[]).length) bits.push('msimamizi wa wadhifa wote / supervisor of every code of: ' + desk.deptRoles.join(', '));
+  if ((desk.supervisees||[]).length) bits.push('unaowasimamia / you supervise: ' + desk.supervisees.map(function(s){ return s.name; }).join(', '));
+  return bits.join(' · ');
+}
+
 /* THE GMO'S DESK: the sheet's bulk approval, with the zone enforced by the sign-in. Tick,
    choose, comment, save; what was decided in the last fourteen days sits below. */
 VIEWS.advappr = function(){
@@ -107,12 +119,7 @@ VIEWS.advappr = function(){
     /* WHAT THIS DESK IS (advRouteOf_ on the server): the roles routed to it and the people it
        supervises -- or, plainly, that nothing is routed to it yet and where that is set. An
        admin's desk shows every request and names the ones that reach nobody else. */
-    var desk = d.desk || {};
-    var deskBits = [];
-    if ((desk.roles||[]).length) deskBits.push('wadhifa unaoidhinisha / roles you approve: ' + desk.roles.join(', '));
-    if ((desk.deptRoles||[]).length) deskBits.push('msimamizi wa wadhifa wote / supervisor of every code of: ' + desk.deptRoles.join(', '));
-    if ((desk.supervisees||[]).length) deskBits.push('unaowasimamia / you supervise: ' + desk.supervisees.map(function(s){ return s.name; }).join(', '));
-    var deskLine = desk.admin ? 'admin — maombi yote / every request' : deskBits.join(' · ');
+    var deskLine = advDeskLine_(d.desk || {});
     HEAD = '<div class="kpis">'
       + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
       + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')
@@ -179,11 +186,15 @@ function advDecideSave(){
 }
 
 /* THE REPORT the sheet exported: a window, Approved by default, by zone, with the bank and
-   account beside each line so payroll can pay off the board (its own Excel / CSV buttons). */
+   account beside each line so payroll can pay off the board (its own Excel / CSV buttons).
+   A desk's report is the desk's requests -- routed to it or decided by it -- and the screen
+   says so; an admin's is every request. */
 VIEWS.advrep = function(){
   var from = S.args.from || '', to = S.args.to || '', approval = S.args.approval || '';
   return srv('advReport', { from: from, to: to, approval: approval }).then(function(d){
     S.advRep = d;
+    var desk = d.desk || {};
+    var deskLine = advDeskLine_(desk);
     HEAD = '<div class="kpis">'
       + kpi('Maombi / Requests', money(d.count), d.from + ' → ' + d.to + ' · ' + (d.approval === 'ALL' ? 'yote / all' : d.approval))
       + kpi('Jumla / Amount', money(d.amount), 'TZS')
@@ -191,6 +202,13 @@ VIEWS.advrep = function(){
       + kpi('Kiasi kilichoidhinishwa / Approved TZS', money(d.approvedAmount), 'kwa payroll / for payroll', 'good')
       + '</div>'
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.routingOn === false
+          ? '<div class="note">⚠ ' + esc(d.routingNote || '') + '</div>'
+          : '<div class="note' + (deskLine ? '' : ' bad') + '">Ripoti hii inaonyesha / This report shows: '
+              + (desk.admin ? esc(deskLine)
+                 : deskLine ? 'maombi yaliyoelekezwa kwako na uliyoyaamua / the requests routed to your desk and the ones you decided — ' + esc(deskLine)
+                 : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako — maombi ya zone yako yaliyotumwa kabla ya uelekezaji, na uliyoyaamua, tu. / nothing is routed to your desk — only your zone\'s requests filed before routing, and the ones you decided.')
+              + '</div>')
       + bar('<input type="date" data-arg="from" value="' + esc(d.from) + '">'
         + '<input type="date" data-arg="to" value="' + esc(d.to) + '">'
         + '<select data-arg="approval">' + (d.approvals||[]).map(function(a){
