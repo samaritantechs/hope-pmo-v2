@@ -282,9 +282,23 @@ function roleForm(x){
   var isNew = !x;
   var all = (S.roleMeta && S.roleMeta.allTabs) || [];
   var have = (x && x.tabs) || [];
+  /* THE ADVANCE APPROVER OF THIS ROLE (RUN-ME-045): any role on the book, the role itself
+     included -- "choose role credit choose supervisor from role credit", "choose role pmo
+     collection choose their approver as role pmo manager". An approver that is no longer a
+     role still shows, so it can be seen and changed rather than silently dropped. */
+  var roleNames = ((S.roleMeta && S.roleMeta.roles) || []).map(function(r){ return r.role; });
+  var ap = String((x && x.approver_role) || '');
+  if (ap && !roleNames.some(function(r){ return r.toUpperCase() === ap.toUpperCase(); })) roleNames.push(ap);
   drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
     + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
+    + '<div class="fld"><label>Mwidhinishaji wa advance / Advance approver (wadhifa / role)</label>'
+      + '<select id="rApprover"><option value="">— hakuna / none —</option>'
+      + roleNames.map(function(r){ return '<option value="'+esc(r)+'"'+(r.toUpperCase() === ap.toUpperCase() ? ' selected' : '')+'>'+esc(r)+'</option>'; }).join('')
+      + '</select>'
+      + '<div class="fldnote">Maombi ya advance ya wadhifa huu huenda kwa kila mwenye wadhifa unaochaguliwa hapa, ndani ya zone zake. Ukichagua wadhifa uleule (mf. CREDIT → CREDIT), kila msimbo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin.'
+        + ' / This role\'s advance requests go to every holder of the approver role, within their zones. Pick the SAME role (credit → credit) and each code must then name its supervisor on the code form, or the request reaches nobody but an admin.'
+        + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
     /* TWO LISTS, EACH UNDER ITS OWN NAME. One flat run of words put `gmo`, `manager`, `team`,
        `finance`, `gm` and `customer_service` beside `dashboard` and `followup` with nothing
        to say the first six open HOPE LOAN -- so a role called GMO got `gmo` ticked, a manager
@@ -303,8 +317,9 @@ function roleForm(x){
   $('#rSave').onclick = function(){
     var tabs = Array.prototype.filter.call(document.querySelectorAll('.rTab'), function(c){ return c.checked; })
       .map(function(c){ return c.value; }).join(',');
-    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs })
-      .then(function(){ toast('Imehifadhiwa. / Saved.'); closeDrawer(); render(); })
+    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs, approverRole: $('#rApprover').value })
+      // The tabs save on any database; the approver only with RUN-ME-045, and the answer says.
+      .then(function(r){ toast(r && r.note ? '⚠️ Tabs zimehifadhiwa; mwidhinishaji hajahifadhiwa. / Tabs saved; the approver was not: ' + r.note : 'Imehifadhiwa. / Saved.', !!(r && r.note)); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
   if (!isNew) $('#rDel').onclick = function(){
@@ -542,6 +557,9 @@ VIEWS.settings = function(){
     S.roles = ac.roles || [];
     // The roles card and its drawer live on THIS screen now, and both read S.roleMeta.
     S.roleMeta = { roles: ac.roles || [], allTabs: ac.allTabs || [] };
+    // The code form's supervisor picker reads the codes list, and both forms say when the
+    // routing columns (RUN-ME-045) are not in yet.
+    S.acRows = ac.rows || []; S.routingOn = ac.routingOn; S.routingNote = ac.routingNote || '';
     // Feeds codeForm's tab checkboxes -- HOPE PMO and HOPE Loan together, same list roleForm
     // already draws from, so "Extra tabs" stops being a box where a typo grants nothing.
     S.allTabs = ac.allTabs || [];
@@ -664,10 +682,23 @@ VIEWS.settings = function(){
            it keeps, and that it can be taken back, before it is pressed. */
         + '<br><b>Anza upya</b> huondoa tabs zote kwa nafasi zote (ADMIN inabaki na zote) ili uanze kupanga upya &mdash; hali ya sasa inahifadhiwa na <b>Rudisha</b> inairejesha.'
         + ' / <b>Start empty</b> clears every role\'s tabs (ADMIN keeps all of them) so you can set them deliberately. The current state is saved first, and <b>Undo</b> puts it back.</div>'
+        /* WHO APPROVES WHOSE ADVANCE, set here and on the code form (RUN-ME-045): "choose role
+           credit choose supervisor from role credit ... choose role pmo collection choose their
+           approver as role pmo manager ... this also sounds neat for me to setup not you in bg".
+           The sheet routed by department zone codes with approver codes; the portal routes on
+           the role that asks (this column) and, where named, the code's own supervisor. */
+        + '<br><b>Mwidhinishaji wa advance</b>: kila wadhifa huchagua wadhifa unaoidhinisha maombi yake ya advance (F.O → GMO, PMO COLLECTION → PMO MANAGER). Ukichagua wadhifa uleule (CREDIT → CREDIT), kila msimbo huchaguliwa msimamizi wake kwenye fomu ya msimbo.'
+        + ' / <b>Advance approver</b>: each role picks the role that approves its advance requests. Pick the SAME role (credit → credit) and each code then names its supervisor on the code form.'
+        + (ac.routingOn === false ? '<br>⚠️ ' + esc(ac.routingNote || '') : '')
+        + '</div>'
         + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Wadhifa / Role</th>'
-        + '<th>Tabs</th><th class="r">Idadi</th><th class="r">Misimbo / Codes</th><th></th></tr></thead><tbody>'
+        + '<th>Tabs</th><th class="r">Idadi</th><th>Mwidhinishaji wa advance / Advance approver</th><th class="r">Misimbo / Codes</th><th></th></tr></thead><tbody>'
         + (ac.roles||[]).map(function(r, i){
             var n = (ac.rows||[]).filter(function(x){ return String(x.role||'').toUpperCase() === String(r.role||'').toUpperCase(); }).length;
+            var ap = String(r.approver_role || '');
+            var apRow = ap ? (ac.roles||[]).filter(function(x){ return String(x.role||'').toUpperCase() === ap.toUpperCase(); })[0] : null;
+            var approves = (ac.roles||[]).filter(function(x){ return x.approver_role && String(x.approver_role).toUpperCase() === String(r.role||'').toUpperCase(); })
+              .map(function(x){ return x.role; });
             return '<tr class="clickrow" data-role="'+esc(r.role)+'"><td class="sn">'+(i+1)+'</td>'
               /* "I Need to see team / F.O (Field officer) at Nafasi na ruhusa / Roles & access":
                  the row every team code signs in under -- tick it, and every field officer on
@@ -679,6 +710,17 @@ VIEWS.settings = function(){
               + '<td style="white-space:normal">'+((r.tabs||[]).length ? esc(r.tabs.join(', '))
                   : (r.unset ? '<span class="chip mut">haijawekwa / not set yet</span>' : '—'))+'</td>'
               + '<td class="r">'+((r.tabs||[]).length)+'</td>'
+              /* The approver, with the two things worth a warning beside it: the same role (so
+                 every code needs a named supervisor) and an approver role that does not hold
+                 the approval tab (so nobody would see the requests). And the other direction --
+                 which roles this one approves -- since that is how a GMO reads it. */
+              + '<td style="white-space:normal">'
+                + (ap ? esc(ap)
+                    + (ap.toUpperCase() === String(r.role||'').toUpperCase() ? ' <span class="chip mut">msimamizi kwa msimbo / supervisor per code</span>' : '')
+                    + (apRow && (apRow.tabs||[]).indexOf('advappr') < 0 ? ' <span class="chip bad">hana tab advappr / approver lacks the advappr tab</span>' : '')
+                  : '<span class="chip mut">—</span>')
+                + (approves.length ? '<div style="color:var(--mut);font-size:11px">huidhinisha / approves: '+esc(approves.join(', '))+'</div>' : '')
+              + '</td>'
               + '<td class="r">'+money(n)+'</td>'
               + '<td class="r"><button class="btn sm ghost" data-role="'+esc(r.role)+'">Badili / Edit</button></td></tr>';
           }).join('') + '</tbody></table></div></div>'
@@ -686,10 +728,12 @@ VIEWS.settings = function(){
       + '<div class="card"><div class="card-h">Misimbo ya kuingia / Access codes'
         + '<span class="sub"><button class="btn sm" id="newCode">+ Msimbo mpya / New code</button>'
         + ' <a href="/upload?admin=1" style="margin-left:8px">Pakia orodha / Upload a list &rarr;</a></span></div>'
-      + '<div class="scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Teams</th><th>Code</th><th></th></tr></thead><tbody>'
+      + '<div class="scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Teams</th><th>Msimamizi / Supervisor</th><th>Code</th><th></th></tr></thead><tbody>'
       + ac.rows.map(function(x, i){
           return '<tr><td>'+esc(x.name)+'</td><td>'+esc(x.role)+'</td>'
             + '<td>'+esc(x.teams?x.teams.join(', '):'ALL')+'</td>'
+            // The supervisor as a NAME -- the code it is stored as is a password.
+            + '<td>'+(x.supervisorName ? esc(x.supervisorName) : (x.supervisor ? '<span class="chip bad">msimbo haupo / code gone</span>' : '—'))+'</td>'
             + '<td><code>'+esc(x.code)+'</code></td>'
             + '<td class="r"><button class="btn sm ghost" data-code="'+esc(x.code)+'">Badili / Edit</button></td></tr>';
         }).join('') + '</tbody></table></div></div>'
@@ -891,6 +935,14 @@ function codeForm(x){
   var isNew = !x;
   var roles = (S.roles||[]).map(function(r){ return r.role; });
   if (x && roles.indexOf(x.role) < 0) roles.push(x.role);
+  /* THE ADVANCE SUPERVISOR OF THIS CODE (RUN-ME-045): one other code, offered by NAME and
+     role -- "even select codeuser as the supervisor ... At their code I have to choose one
+     credit as supervisor". A read-only admin's list carries no codes (they are masked), so
+     the picker is shown disabled rather than offering a choice that cannot be saved. */
+  var others = (S.acRows||[]).filter(function(c){ return !x || c.code !== x.code; })
+    .sort(function(a, b){ return (String(a.role||'') + ' ' + String(a.name||'')).localeCompare(String(b.role||'') + ' ' + String(b.name||'')); });
+  var masked = others.some(function(c){ return c.code === '••••'; });
+  var sup = String((x && x.supervisor) || '');
   drawer('<h3>'+(isNew?'Msimbo mpya / New access code':'Badili / Edit '+esc(x.name))+'</h3>'
     + '<div class="sub">Msimbo ndio nywila -- usiushirikishe. / The code is the password.</div>'
     + '<div class="fld"><label>Msimbo / Code</label><input id="kCode" value="'+esc(x?x.code:'')+'">'
@@ -914,6 +966,13 @@ function codeForm(x){
       + '<div class="fldnote">Kwa wadhifa wenye safu kwenye jedwali la timu (OPM, RECOVERY, GMO, MANAGER, CREDIT, EXPECTED, BIKE), orodha hii pia inamweka mtu huyu kwenye Timu na Wafanyakazi. ALL haimpi mtu timu zote — inafungua tu kuona.'
       + '<br>For a role that has a column in the teams table, this list also files the person into Teams &amp; Staff. ALL only opens the view; it never makes somebody the officer of every team.</div>'
       + '</div>'
+    + '<div class="fld"><label>Msimamizi wa advance / Advance supervisor (anayeidhinisha maombi ya msimbo huu / who approves this code\'s requests)</label>'
+      + '<select id="kSup"'+(masked ? ' disabled' : '')+'><option value="">— hakuna: wadhifa wa kuidhinisha ndio unaamua / none: the approver role decides —</option>'
+      + others.map(function(c){ return '<option value="'+esc(c.code)+'"'+(c.code === sup ? ' selected' : '')+'>'+esc(c.name||'')+' · '+esc(c.role||'')+'</option>'; }).join('')
+      + '</select>'
+      + '<div class="fldnote">Akichaguliwa, yeye pekee ndiye anayeona maombi ya advance ya msimbo huu, zone yoyote. Lazima pale wadhifa wa kuidhinisha ni uleule (CREDIT → CREDIT); hiari pale ni wadhifa mwingine.'
+        + ' / When set, only this person sees this code\'s advance requests, whatever the zone. Required where the approver role is the same department (credit → credit); optional where it is another role.'
+        + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
     /* NO TAB LIST HERE ANY MORE. "remove the tabs column from access codes, I need a new role
        assign table before access codes ... so now we decide easy for all users". A code used
        to be able to carry extra tabs of its own, which meant a permission could be granted in
@@ -927,9 +986,12 @@ function codeForm(x){
   document.getElementById('kSave').onclick = function(){
     var tabs = Array.prototype.filter.call(document.querySelectorAll('.kTab'), function(c){ return c.checked; })
       .map(function(c){ return c.value; }).join(',');
+    var supSel = document.getElementById('kSup');
     srv('saveAccessCode', { code:document.getElementById('kCode').value.trim(), oldCode:(x?x.code:''), name:document.getElementById('kName').value.trim(),
       role:document.getElementById('kRole').value.trim(), teams:document.getElementById('kTeams').value.trim(),
-      tabs:tabs })
+      tabs:tabs,
+      // A disabled picker (codes masked) says nothing, and nothing said is nothing changed.
+      supervisor: supSel && !supSel.disabled ? supSel.value : undefined })
       /* THE ROSTER FOLLOWED, SO SAY SO. Saving a code now also re-files that person in the
          teams table, and a change to a screen the admin is not looking at has to be reported
          or it is indistinguishable from nothing happening. */
@@ -942,7 +1004,9 @@ function codeForm(x){
           if (s.cleared) bits.push('ameondolewa kwenye timu ' + s.cleared + ' / removed from ' + s.cleared);
           if (bits.length) msg += ' Timu na Wafanyakazi: ' + bits.join('; ') + ' (' + s.role.toUpperCase() + ').';
         }
-        toast(msg); closeDrawer(); render();
+        // The code saves on any database; the supervisor only with RUN-ME-045, and the answer says.
+        if (r && r.note) msg += ' ⚠️ Msimamizi hajahifadhiwa / the supervisor was not saved: ' + r.note;
+        toast(msg, !!(r && r.note)); closeDrawer(); render();
       })
       .catch(function(e){ toast(String(e.message||e), true); });
   };

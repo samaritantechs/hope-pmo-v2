@@ -1748,6 +1748,31 @@ test('the upload page says what a re-upload does per kind, from the key the serv
   assert.ok(/: \(BEHAVIOUR\[TYPE_BEHAVIOUR\[\$\('type'\)\.value\]\] \|\| BEHAVIOUR\.append \|\| ''\)/.test(up));
 });
 
+/* WHO APPROVES WHOSE ADVANCE -- "choose role credit choose supervisor from role credit and
+   select their approver ... choose role pmo collection choose their approver as role pmo
+   manager ... this also sounds neat for me to setup not you in bg". Set up on the two screens
+   the admin already uses: the approver role on Roles & access, the supervisor on the code
+   form; the ask says where the request goes, the desk says what it is. */
+test('advance routing: Roles & access takes the approver role, the code form the supervisor, the ask and the desk say where a request goes', () => {
+  const admin = page('admin'), adv = page('advance');
+  assert.ok(/id="rApprover"/.test(admin) && /approverRole: \$\('#rApprover'\)\.value/.test(admin), 'the role form sends the approver role');
+  assert.ok(/id="kSup"/.test(admin) && /supervisor: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the code form sends the supervisor, or nothing when the picker is masked');
+  assert.ok(/Mwidhinishaji wa advance \/ Advance approver/.test(admin) && /<th>Msimamizi \/ Supervisor<\/th>/.test(admin), 'both tables carry the column');
+  assert.ok(/x\.supervisorName \? esc\(x\.supervisorName\)/.test(admin), 'the codes table names the supervisor, never the code');
+  assert.ok(/hana tab advappr \/ approver lacks the advappr tab/.test(admin) && /msimamizi kwa msimbo \/ supervisor per code/.test(admin), 'the two warnings beside an approver');
+  assert.ok(/S\.acRows = ac\.rows \|\| \[\]; S\.routingOn = ac\.routingOn/.test(admin), 'the settings screen hands the picker its list and the RUN-ME-045 state');
+  assert.ok((admin.match(/RUN-ME-045|routingNote/g) || []).length >= 3, 'both forms say when the routing columns are not in');
+  assert.ok(/Ombi lako litaenda kwa \/ Your request goes to: <b>' \+ esc\(d\.route\.label\)/.test(adv), 'the ask says who will see it');
+  assert.ok(/d\.route\.kind === 'none' \? ' bad'/.test(adv), 'and says "nobody" in red');
+  assert.ok(/Dawati lako \/ Your desk: /.test(adv) && /desk\.supervisees/.test(adv) && /d\.unrouted/.test(adv), 'the desk says what it is and names the unrouted');
+  assert.ok(/<th>Kwa \/ To<\/th>/.test(adv) && /esc\(r\.route\|\|''\)/.test(adv) && /col\('route','Kwa \/ To'\)/.test(adv), 'each row says where it went');
+  const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
+  for (const col of ['roles            add column if not exists approver_role', 'access_codes     add column if not exists supervisor', 'add column if not exists req_role', 'add column if not exists req_code']) {
+    assert.ok(sql.includes(col), 'RUN-ME-045 adds ' + col);
+  }
+  assert.ok(sql.split('\n').length < 100, 'under 100 lines');
+});
+
 /* SCREENS THAT LOAD WHEN THEIR TAB OPENS -- "We can't load everything from there, these
    imprests, advances demands etc that don't pivot results can be loaded when retrieved or at
    tab open" / "Do everything to recover smoothness". The page had grown to 977 KB parsed whole

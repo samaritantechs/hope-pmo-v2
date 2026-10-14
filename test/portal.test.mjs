@@ -11218,6 +11218,9 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
   t.teams[1] = { ...t.teams[1], zone: 'MARA', team_code: 'MBA456' };
   t.teams.push({ team: 'NOZONE', team_code: 'NZ1' });
+  // Routing (RUN-ME-045): the team codes' role is approved by the GMO of the zone -- the
+  // sheet's rule, now set on Roles & access rather than built in.
+  t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' });
   t.staff_registry = [
     { id: 'AAA/001/2026', name: 'ASHA ALI AMANI', role: 'Field Officer', zone: 'DAR EAST', status: 'Active', account: '0152000111', bank: 'NMB', phone: '711000111' },
     { id: 'BBB/002/2026', name: 'BAHATI B', role: 'Field Officer', zone: 'DAR EAST', status: 'Inactive', account: '0152000222' },
@@ -11259,6 +11262,9 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   const stored = db._dump('advance_requests').find(r => r.id === made.id);
   assert.equal(stored.approval, 'Pending'); assert.equal(stored.account, '0152000111', 'the account rides along for payroll');
   assert.equal(stored.code, 'KONGOWE', 'asked through the team code'); assert.equal(stored.staff_name, 'ASHA ALI AMANI');
+  assert.equal(stored.req_role, FIELD_OFFICER_ROLE); assert.equal(stored.req_code, 'KON 123', 'the requester is written on the row -- what the desk routes on');
+  assert.equal(made.route.kind, 'role'); assert.match(made.route.label, /^GMO · zone DAR EAST/);
+  assert.equal(picked.route.kind, 'role', 'and the ask said who would see it before it was sent');
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /one request per month/i.test(e.message));
   assert.ok((await portalApi(db, FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW)).monthTaken, 'and the form says so');
 
@@ -11327,4 +11333,151 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.equal((await portalApi(db2, ADMIN, 'advReport', {}, NOW)).on, false);
   assert.equal((await portalApi(db2, ADMIN, 'advStaff', {}, NOW)).on, false);
   await assert.rejects(() => portalApi(db2, ADMIN, 'advStaffSave', { name: 'A B', zone: 'Z' }, NOW), e => e.status === 400 && /RUN-ME-044/.test(e.message));
+});
+
+/* WHO APPROVES WHOSE ADVANCE -- "choose role credit choose supervisor from role credit and
+   select their approver ... choose role pmo collection choose their approver as role pmo
+   manager ... gmo sees only advances of teams, managers, bikes, and themselves ... this also
+   sounds neat for me to setup not you in bg". The sheet routed by department zone codes with
+   approver codes; the portal routes on the role and the code that ask, set up on Roles &
+   access and the code form. One rule (advRouteOf_) for the ask, the desk and the decision. */
+test('advance routing: the approver role on Roles & access, the named supervisor on the code, the desk and the decision follow them', async () => {
+  const { advRoutingOf_ } = await import('../api/_lib/portal-core.js');
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
+  t.teams[1] = { ...t.teams[1], zone: 'MARA', team_code: 'MBA456' };
+  t.roles.push(
+    { role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' },
+    { role: 'GMO', tabs: ['advreq', 'advappr'], approver_role: 'GMO' },           // a GMO's own request: the zone's GMOs
+    { role: 'CREDIT', tabs: ['advreq', 'advappr'], approver_role: 'CREDIT' },     // same department: a named supervisor is the only way
+    { role: 'PMO COLLECTION', tabs: ['advreq'], approver_role: 'PMO MANAGER' },
+    { role: 'PMO MANAGER', tabs: ['advappr'] },
+    { role: 'LEGAL', tabs: ['advreq'] },                                           // no approver set
+  );
+  t.access_codes.push(
+    { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: [] },
+    { code: 'GM', name: 'GMO M', role: 'GMO', teams: ['MBAGALA'], tabs: [] },
+    { code: 'C1', name: 'CREDIT ONE', role: 'CREDIT', teams: ['KONGOWE'], tabs: [], supervisor: 'C2' },
+    { code: 'C2', name: 'CREDIT TWO', role: 'CREDIT', teams: ['MBAGALA'], tabs: [] },      // supervises C1, from another zone
+    { code: 'C3', name: 'CREDIT THREE', role: 'CREDIT', teams: ['KONGOWE'], tabs: [] },   // same zone as C1, not its supervisor
+    { code: 'P1', name: 'PMO COLL', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] },
+    { code: 'PM', name: 'PMO BOSS', role: 'PMO MANAGER', teams: null, tabs: [] },
+    { code: 'L1', name: 'LAWYER', role: 'LEGAL', teams: ['KONGOWE'], tabs: [] },
+  );
+  t.staff_registry = [
+    { id: 'AAA/001/2026', name: 'ASHA', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+    { id: 'CCC/002/2026', name: 'CREDIT ONE', role: 'Credit', zone: 'DAR EAST', status: 'Active' },
+    { id: 'PPP/003/2026', name: 'PMO COLL', role: 'PMO', zone: 'DAR EAST', status: 'Active' },
+    { id: 'LLL/004/2026', name: 'LAWYER', role: 'Legal', zone: 'DAR EAST', status: 'Active' },
+    { id: 'GGG/005/2026', name: 'GMO D', role: 'GMO', zone: 'DAR EAST', status: 'Active' },
+  ];
+  t.advance_requests = [
+    // The sheet's uploaded register, and anything filed before RUN-ME-045: no requester on the row.
+    { id: 'r-legacy', submitted_at: '2026-07-10T08:00:00Z', staff_id: 'X', staff_name: 'OLD ONE', zone: 'DAR EAST', amount: 50000, approval: 'Pending', app_date: '2026-07-10' },
+  ];
+  const db = fakeDb(t);
+  const user = (code, extra) => ({ ...t.access_codes.find(c => c.code === code), tabs: ['advreq', 'advappr'], ...extra });
+  const FO = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
+
+  // THE RULE ITSELF, on the table the two screens write.
+  const routing = advRoutingOf_(t.roles, t.access_codes);
+  assert.deepEqual(routing.rolesApprovedBy('gmo'), ['FIELD OFFICER', 'GMO']);
+  assert.deepEqual(routing.supervisees('C2').map(c => c.code), ['C1']);
+  assert.equal(routing.supervisorOf('c1').name, 'CREDIT TWO'); assert.equal(routing.supervisorOf('C3'), null);
+
+  // THE ASK says who will see it, before it is sent -- and "nobody" is said by name.
+  assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).route.label, 'GMO · zone DAR EAST (wadhifa / by role)');
+  assert.equal((await portalApi(db, user('C1'), 'advRequestPage', {}, NOW)).route.label, 'CREDIT TWO (msimamizi / supervisor)');
+  assert.equal((await portalApi(db, user('P1'), 'advRequestPage', {}, NOW)).route.label, 'PMO MANAGER · zone DAR EAST (wadhifa / by role)');
+  const noOne = await portalApi(db, user('L1'), 'advRequestPage', {}, NOW);
+  assert.equal(noOne.route.kind, 'none'); assert.match(noOne.route.label, /nobody: role LEGAL has no approver set/);
+  const rFo = await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
+  const rC1 = await portalApi(db, user('C1'), 'advRequest', { staffId: 'CCC/002/2026', amount: 50000 }, NOW);
+  const rP1 = await portalApi(db, user('P1'), 'advRequest', { staffId: 'PPP/003/2026', amount: 100000 }, NOW);
+  const rL1 = await portalApi(db, user('L1'), 'advRequest', { staffId: 'LLL/004/2026', amount: 50000 }, NOW);
+  const rGd = await portalApi(db, user('GD'), 'advRequest', { staffId: 'GGG/005/2026', amount: 150000 }, NOW);
+  assert.equal(rC1.route.kind, 'supervisor'); assert.equal(rL1.route.kind, 'none'); assert.equal(rL1.routed, true);
+
+  // THE DESK. The GMO of DAR EAST: the field officer, the legacy row, and their own -- NOT the
+  // credit, PMO or legal requests of the same zone.
+  const qGd = await portalApi(db, user('GD'), 'advQueue', {}, NOW);
+  assert.deepEqual(qGd.pending.map(r => r.staff_name), ['OLD ONE', 'ASHA', 'GMO D']);
+  assert.deepEqual(qGd.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], supervisees: [] });
+  assert.equal(qGd.pending[1].route, 'GMO · zone DAR EAST (wadhifa / by role)');
+  assert.equal(qGd.pending[0].route, 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing');
+  assert.deepEqual(qGd.unrouted, [], 'only an admin is told about the unrouted');
+  // MARA's GMO: nothing of DAR EAST's.
+  assert.deepEqual((await portalApi(db, user('GM'), 'advQueue', {}, NOW)).pending, []);
+  // The named supervisor sees their person's request from ANOTHER zone; the colleague in the
+  // same zone and the same role does not; neither sees the field officer's.
+  const qC2 = await portalApi(db, user('C2'), 'advQueue', {}, NOW);
+  assert.deepEqual(qC2.pending.map(r => r.staff_name), ['CREDIT ONE']);
+  assert.equal(qC2.pending[0].route, 'CREDIT TWO (msimamizi / supervisor)');
+  assert.deepEqual(qC2.desk.supervisees, [{ name: 'CREDIT ONE', role: 'CREDIT' }]);
+  assert.deepEqual((await portalApi(db, user('C3'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'only the legacy row, which reaches the zone\'s desk as before');
+  // The other department's manager (every team, so every zone) sees the PMO collection
+  // request, by role -- and the legacy row, as any holder of the tab did before routing.
+  const qPm = await portalApi(db, user('PM'), 'advQueue', {}, NOW);
+  assert.deepEqual(qPm.pending.map(r => r.staff_name), ['OLD ONE', 'PMO COLL']);
+  // The admin sees all five, and is told by name which one reaches nobody else.
+  const qA = await portalApi(db, ADMIN, 'advQueue', {}, NOW);
+  assert.equal(qA.pending.length, 6); assert.equal(qA.desk.admin, true);
+  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST' }]);
+  assert.equal(qA.routingOn, true); assert.equal(qA.routingNote, null);
+
+  // THE DECISION follows the same rule: the supervisor decides across the zone; a colleague
+  // of the same role and zone cannot; the GMO cannot decide the credit request; the admin can.
+  await assert.rejects(() => portalApi(db, user('C3'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved' }] }, NOW), e => e.status === 403 && /not routed to your desk/.test(e.message));
+  await assert.rejects(() => portalApi(db, user('GD'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, user('GM'), 'advDecide', { updates: [{ id: rFo.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
+  assert.equal((await portalApi(db, user('C2'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved', comment: 'ok' }] }, NOW)).approved, 1);
+  assert.equal((await portalApi(db, user('GD'), 'advDecide', { updates: [{ id: rFo.id, approval: 'Disapproved' }, { id: rGd.id, approval: 'Approved' }] }, NOW)).updated, 2);
+  assert.equal((await portalApi(db, ADMIN, 'advDecide', { updates: [{ id: rL1.id, approval: 'Approved' }] }, NOW)).approved, 1);
+  // The decided ones sit under "recent" for the desk that decided them and the desk they were routed to.
+  assert.deepEqual((await portalApi(db, user('C2'), 'advQueue', {}, NOW)).recent.map(r => r.staff_name), ['CREDIT ONE']);
+  assert.deepEqual((await portalApi(db, user('C1'), 'advQueue', {}, NOW)).recent, [], 'the requester is not a desk');
+
+  // THE TWO SCREENS THAT SET IT UP. Roles & access writes the approver role; the code form the
+  // supervisor -- which has to exist and cannot be the code itself. The codes list names the
+  // supervisor rather than showing the code.
+  assert.deepEqual(await portalApi(db, ADMIN, 'saveRole', { role: 'legal', tabs: 'advreq', approverRole: 'pmo manager' }, NOW),
+    { role: 'LEGAL', tabs: ['advreq'], approverRole: 'PMO MANAGER', note: null });
+  assert.equal(db._dump('roles').find(r => r.role === 'LEGAL').approver_role, 'PMO MANAGER');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'legal', tabs: 'advreq' }, NOW);
+  assert.equal(db._dump('roles').find(r => r.role === 'LEGAL').approver_role, 'PMO MANAGER', 'not mentioned means not changed');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'legal', tabs: 'advreq', approverRole: '' }, NOW);
+  assert.equal(db._dump('roles').find(r => r.role === 'LEGAL').approver_role, null, 'blank clears it');
+  const sv = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'C3', name: 'CREDIT THREE', role: 'CREDIT', teams: 'KONGOWE', supervisor: 'C2' }, NOW);
+  assert.equal(sv.supervisor, 'C2'); assert.equal(sv.note, null);
+  assert.equal(db._dump('access_codes').find(c => c.code === 'C3').supervisor, 'C2');
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveAccessCode', { code: 'C3', name: 'CREDIT THREE', role: 'CREDIT', supervisor: 'C3' }, NOW), e => e.status === 400 && /own supervisor/.test(e.message));
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveAccessCode', { code: 'C3', name: 'CREDIT THREE', role: 'CREDIT', supervisor: 'NOPE' }, NOW), e => e.status === 400 && /does not exist/.test(e.message));
+  const ac = await portalApi(db, ADMIN, 'accessCodes', {}, NOW);
+  assert.equal(ac.routingOn, true);
+  assert.equal(ac.rows.find(c => c.code === 'C1').supervisorName, 'CREDIT TWO');
+  assert.equal(ac.roles.find(r => r.role === 'CREDIT').approver_role, 'CREDIT');
+  const ro = await portalApi(db, { ...ADMIN, readOnly: true }, 'accessCodes', {}, NOW);
+  assert.equal(ro.rows.find(c => c.name === 'CREDIT ONE').supervisor, '••••', 'a read-only admin never sees a code, the supervisor\'s included');
+
+  // WITHOUT RUN-ME-045: the old zone rule everywhere, and every screen says the routing is not in.
+  const t2 = tables();
+  t2.teams[0] = { ...t2.teams[0], zone: 'DAR EAST' };
+  t2.staff_registry = [{ id: 'AAA/001/2026', name: 'ASHA', role: 'FO', zone: 'DAR EAST', status: 'Active' }];
+  t2.advance_requests = [];
+  const old = fakeDb(t2, { missingColumns: { roles: ['approver_role'], access_codes: ['supervisor'], advance_requests: ['req_role', 'req_code'] } });
+  const oldReq = await portalApi(old, { code: 'C9', name: 'ANY', role: 'CREDIT', teams: ['KONGOWE'], tabs: ['advreq'] }, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
+  assert.equal(oldReq.routed, false); assert.match(oldReq.routingNote, /RUN-ME-045/); assert.equal(oldReq.route.kind, 'legacy');
+  assert.equal(old._dump('advance_requests').find(r => r.id === oldReq.id).req_role, undefined, 'the two columns are left out of the write');
+  const oldQ = await portalApi(old, { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advappr'] }, 'advQueue', {}, NOW);
+  assert.equal(oldQ.routingOn, false); assert.match(oldQ.routingNote, /RUN-ME-045/);
+  assert.deepEqual(oldQ.pending.map(r => r.staff_name), ['ASHA'], 'the zone rule, as before');
+  assert.equal((await portalApi(old, ADMIN, 'advRequestPage', {}, NOW)).routingOn, false);
+  const oldRole = await portalApi(old, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverRole: 'credit' }, NOW);
+  assert.deepEqual(oldRole.tabs, ['advreq']); assert.equal(oldRole.approverRole, undefined); assert.match(oldRole.note, /RUN-ME-045/);
+  assert.ok(old._dump('roles').find(r => r.role === 'CREDIT'), 'the tabs still saved');
+  const oldCode = await portalApi(old, ADMIN, 'saveAccessCode', { code: 'C9', name: 'ANY', role: 'CREDIT', teams: 'ALL', supervisor: 'A' }, NOW);
+  assert.equal(oldCode.supervisor, undefined); assert.match(oldCode.note, /RUN-ME-045/);
+  assert.ok(old._dump('access_codes').find(c => c.code === 'C9'), 'the code still saved');
+  const oldAc = await portalApi(old, ADMIN, 'accessCodes', {}, NOW);
+  assert.equal(oldAc.routingOn, false); assert.match(oldAc.routingNote, /RUN-ME-045/);
 });
