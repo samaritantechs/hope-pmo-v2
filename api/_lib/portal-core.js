@@ -25,7 +25,7 @@ import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { commandFor, noteDeviceSettingsWritten } from './device-core.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
-import { isSystemOpen, clearSystemOpenCache, readsAsOpen } from './system-gate.js';
+import { isSystemOpen, clearSystemOpenCache, readsAsOpen, isAdminUser } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
 import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten, tAdjusted,
@@ -1685,6 +1685,102 @@ function advZoneList_(teamRows, regRows, zones) {
   const all = [...new Set(teamRows.map(t => K(t.zone)).concat((regRows || []).map(r => K(r.zone))).filter(Boolean))].sort();
   return zones === null ? all : all.filter(z => zones.includes(z));
 }
+
+/* =====================================================================================
+   WHO APPROVES WHOSE ADVANCE -- routing by role and by named supervisor (RUN-ME-045).
+   =====================================================================================
+     "choose role credit choose supervisor from role credit and select their approver ...
+      choose role pmo collection choose their approver as role pmo manager (choosing the
+      approver from code user is optional because pmo manager is already aside the pmo
+      collection unlike credit where approver is of the same dept I must choose username of
+      usercode to see the approval tab) ... remember gmo sees only advances of teams,
+      managers, bikes, and themselves ... this also sounds neat for me to setup not you in bg"
+     "In the Google sheet it was handled since the codes of zones had credit zone, pmo zone
+      and etc with approver codes allover"
+
+   The sheet routed by DEPARTMENT ZONE CODES, each with its approver codes. The portal
+   replaced zone codes with the sign-in, so the routing is rebuilt on what the sign-in knows
+   -- the ROLE of the code that asks, and the code itself -- and the admin sets it up on the
+   screens they already use, not in a file here:
+
+     Roles & access   roles.approver_role    the role that approves THIS role's requests.
+                                             Every holder of it sees the request, in their
+                                             zones (a GMO: their zones' field officers,
+                                             managers, bikes -- and GMOs, if GMO → GMO).
+     the code form    access_codes.supervisor ONE named approver (another code). When set,
+                                             only that person sees the code's requests --
+                                             the way credit → credit has to work, or every
+                                             credit officer would see every colleague's.
+                                             Optional where the approver is another role.
+
+   ONE RULE, advRouteOf_, read by the ask (to say who will see it), the desk (to show it)
+   and the decision (to refuse anyone else). A request from before RUN-ME-045 -- or from the
+   sheet's uploaded register -- names no requester and keeps reaching the zone's desk as it
+   always did. A request whose role has no approver and whose code names nobody reaches an
+   ADMIN only, and both the ask and the admin's desk say so by name. */
+const ADV_ROUTE_NOTE = 'Uelekezaji wa maombi (mwidhinishaji kwa wadhifa, msimamizi kwa msimbo) unahitaji db/RUN-ME-045-advance-approvers.sql. '
+  + '/ Routing to an approver role or a named supervisor needs db/RUN-ME-045-advance-approvers.sql in the SQL editor; until then every holder of the approval tab sees their zones, as before.';
+/** PostgREST's two refusals of a column the database has not got: on a read ("column x.y
+    does not exist") and on a write ("Could not find the 'y' column ... schema cache"). */
+const advColMissing_ = (e, cols) => { const s = String((e && e.message) || e || ''); return /schema cache|column/i.test(s) && cols.some(c => s.includes(c)); };
+/** The routing table, built from the roles and the codes: who approves which role, who
+    supervises which code. `on` is false on a database without RUN-ME-045 (no supervisor
+    column), and every reader of it then falls back to the zone rule. */
+export function advRoutingOf_(roleRows, codeRows, on = true) {
+  const approverOf = new Map();                         // K(role) -> K(approver role)
+  for (const r of (roleRows || [])) { const a = K(r.approver_role); if (K(r.role) && a) approverOf.set(K(r.role), a); }
+  const codes = new Map();                              // K(code) -> the code row
+  for (const c of (codeRows || [])) if (c && c.code) codes.set(K(c.code), c);
+  const supervisorOf = code => {                        // the named supervisor of a code, as a row, or null
+    const c = codes.get(K(code));
+    if (!c || !c.supervisor) return null;
+    return codes.get(K(c.supervisor)) || null;          // a supervisor whose code is gone names nobody
+  };
+  return { on, approverOf, codes, supervisorOf,
+    rolesApprovedBy: role => [...approverOf].filter(([, a]) => a === K(role)).map(([r]) => r).sort(),
+    supervisees: code => [...codes.values()].filter(c => c.supervisor && K(c.supervisor) === K(code))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))) };
+}
+async function advRouting_(db) {
+  const roleRows = await fetchAll(() => db.from('roles').select('*'));
+  let codeRows, on = true;
+  try { codeRows = await fetchAll(() => db.from('access_codes').select('code, name, role, teams, supervisor')); }
+  catch (e) {
+    if (!advColMissing_(e, ['supervisor'])) throw e;
+    on = false;
+    codeRows = await fetchAll(() => db.from('access_codes').select('code, name, role, teams'));
+  }
+  return advRoutingOf_(roleRows, codeRows, on);
+}
+/** Where ONE request goes, from the requester written on it (req_role / req_code):
+      supervisor  the requester's code names a supervisor: that one person, whatever the zone
+      role        the requester's role names an approver role: every holder of it, in zone
+      legacy      no requester on the row (before RUN-ME-045, or the sheet's register): the zone
+      none        a role with no approver and a code naming nobody: an admin only */
+function advRouteOf_(routing, r) {
+  const role = K(r && r.req_role), code = K(r && r.req_code);
+  if (!role && !code) return { kind: 'legacy', to: null };
+  const sup = code ? routing.supervisorOf(code) : null;
+  if (sup) return { kind: 'supervisor', to: K(sup.code), name: sup.name || sup.code };
+  const a = role ? routing.approverOf.get(role) : null;
+  if (a) return { kind: 'role', to: a };
+  return { kind: 'none', to: null, role: role || null };
+}
+function advRouteLabel_(route, zone) {
+  if (route.kind === 'supervisor') return route.name + ' (msimamizi / supervisor)';
+  if (route.kind === 'role') return route.to + (zone ? ' · zone ' + K(zone) : '') + ' (wadhifa / by role)';
+  if (route.kind === 'legacy') return 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing';
+  return '⚠️ hakuna — wadhifa ' + (route.role || '?') + ' hauna mwidhinishaji / nobody: role ' + (route.role || '?') + ' has no approver set (an admin only)';
+}
+/** Whether this viewer's desk shows this request. An admin's desk shows every one. */
+function advSees_(routing, user, zones, r) {
+  if (isAdminUser(user)) return true;
+  const route = advRouteOf_(routing, r);
+  if (route.kind === 'supervisor') return route.to === K(user.code);
+  if (route.kind === 'role') return route.to === K(user.role) && advZoneOk_(zones, r.zone);
+  if (route.kind === 'legacy') return advZoneOk_(zones, r.zone);
+  return false;
+}
 /** HR's registry: everybody in the zones the viewer may see, searchable; the zone list the
     form offers (Teams & Staff's zones plus any already in the registry); the next serial. */
 async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) {
@@ -1760,8 +1856,11 @@ async function advStaffStatus(db, user, p, nowMs = Date.now()) {
     else, so a shared screen gives nothing away -- the amounts on offer, and, once a name is
     picked, that one person's own requests and whether this month is already taken. */
 async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
-  const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY])]);
+  const [teamRows, cfg, routing] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY]), advRouting_(db)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
+  // Who will see the request this sign-in files -- said before it is sent, so "nobody" is
+  // never found out from silence.
+  const route = advRouteOf_(routing, { req_role: user.role, req_code: user.code });
   const staff0 = await advRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones));
   const on = Array.isArray(staff0);
   const staff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone))
@@ -1779,7 +1878,9 @@ async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
   }
   return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, mine, monthTaken,
-    requester: user.name, teamCode: !!user.teamCode };
+    requester: user.name, teamCode: !!user.teamCode,
+    route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
+    routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
 }
 /** The ask: a staff of the viewer's zone, one of the amounts, one per calendar month. The bank
     account is copied from the registry at this moment, as the sheet did, so the report prints
@@ -1811,38 +1912,70 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
     app_date: advDate_(p.appDate) || todayKey(nowMs), amount, approval: 'Pending', comment: null,
     zone: K(s.zone) || null, code: user.teamCode ? (user.teams || [])[0] || null : (user.role || null),
     account: s.account || null, created_by: user.name, created_at: at };
-  const { data: ins, error } = await db.from('advance_requests').insert(row).select('id');
+  /* THE REQUESTER, WRITTEN ON THE ROW: the role and the code that filed it are what the desk
+     routes on (advRouteOf_). On a database without RUN-ME-045 the two columns are left out
+     and the request reaches the zone's desk as before -- the answer says which. */
+  let routed = true;
+  let { data: ins, error } = await db.from('advance_requests').insert({ ...row, req_role: user.role || null, req_code: user.code || null }).select('id');
+  if (error && advColMissing_(error, ['req_role', 'req_code'])) {
+    routed = false;
+    ({ data: ins, error } = await db.from('advance_requests').insert(row).select('id'));
+  }
   if (error) { if (advMissing_(error)) throw badRequest(ADV_NOTE); throw new Error(error.message); }
-  return { id: (ins && ins[0] && ins[0].id) || null, staffId: s.id, staffName: s.name, amount, zone: row.zone, month };
+  const route = routed ? advRouteOf_(await advRouting_(db), { req_role: user.role, req_code: user.code }) : { kind: 'legacy' };
+  return { id: (ins && ins[0] && ins[0].id) || null, staffId: s.id, staffName: s.name, amount, zone: row.zone, month,
+    routed, route: { kind: route.kind, label: advRouteLabel_(route, row.zone) }, routingNote: routed ? null : ADV_ROUTE_NOTE };
 }
 /** The GMO's desk: what is pending in their zone(s), oldest first, and what was decided in the
     last fourteen days so a decision can be checked without opening the report. */
 async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
-  const teamRows = await readTeamsAll(db, nowMs);
+  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   const since = addDaysKey(todayKey(nowMs), -14);
-  const [pending0, recent0] = await Promise.all([
-    advRead_(() => onZones_(db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: true }), zones)),
-    advRead_(() => onZones_(db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(200), zones)),
+  /* TWO READS, BOTH NARROWED AT THE DATABASE: the viewer's zones (what the role rule and the
+     legacy rows reach them through), and -- for a named supervisor -- their people's requests
+     by code, whatever zone those sit in. Then the one routing rule decides each row. */
+  const mine = routing.on ? routing.supervisees(user.code).map(c => c.code) : [];
+  const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: true });
+  const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(200);
+  const [pending0, recent0, pendS, recS] = await Promise.all([
+    advRead_(() => onZones_(pendQ(), zones)),
+    advRead_(() => onZones_(recQ(), zones)),
+    mine.length ? advRead_(() => pendQ().in('req_code', mine)) : [],
+    mine.length ? advRead_(() => recQ().in('req_code', mine)) : [],
   ]);
   const on = Array.isArray(pending0);
-  const pick = rows => (rows || []).filter(r => advZoneOk_(zones, r.zone) && (!zone || K(r.zone) === K(zone)));
-  const pending = pick(pending0), recent = pick(recent0);
+  const merge = (a, b) => { const by = new Map(); for (const r of (a || []).concat(b || [])) by.set(String(r.id), r); return [...by.values()]; };
+  const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
+  const withRoute = r => ({ ...r, route: advRouteLabel_(advRouteOf_(routing, r), r.zone) });
+  const pending = merge(pending0, pendS).filter(sees)
+    .sort((a, b) => String(a.submitted_at).localeCompare(String(b.submitted_at))).map(withRoute);
+  const recent = merge(recent0, recS).filter(r => sees(r) || K(r.decided_by) === K(user.name))
+    .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
+  // What this desk IS -- the roles routed to it and the people it supervises -- and, for an
+  // admin, the pending requests that reach nobody else, by name.
+  const admin = isAdminUser(user);
+  const desk = { admin, roles: routing.rolesApprovedBy(user.role),
+    supervisees: routing.supervisees(user.code).map(c => ({ name: c.name, role: c.role })) };
+  const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role, zone: r.zone })) : [];
   return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
     zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
-    noZoneTeams, approvals: ADV_APPROVALS.slice(1) };
+    noZoneTeams, approvals: ADV_APPROVALS.slice(1),
+    desk, unrouted, routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
 }
-/** Bulk decide: Approved or Disapproved, with a comment, on requests of the viewer's zone(s)
-    that are still pending. The sheet's bulkUpdateAdvances, with the zone enforced here. */
+/** Bulk decide: Approved or Disapproved, with a comment, on requests routed to this desk
+    (advSees_: the zone for the role rule and the legacy rows, the person for a supervisor,
+    everything for an admin) that are still pending. The sheet's bulkUpdateAdvances. */
 async function advDecide(db, user, p, nowMs = Date.now()) {
   const updates = (p && Array.isArray(p.updates) ? p.updates : []).map(u => ({
     id: String((u && u.id) || '').trim(), approval: ADV_APPROVALS.find(a => K(a) === K(u && u.approval)) || null,
     comment: textOrNull(u && u.comment) })).filter(u => u.id);
   if (!updates.length) throw badRequest('Chagua angalau ombi moja. / Select at least one request.');
   if (updates.some(u => !u.approval || u.approval === 'Pending')) throw badRequest('Kila ombi lichaguliwe Approved au Disapproved. / Each request needs Approved or Disapproved.');
-  const { zones } = advZones_(user, await readTeamsAll(db, nowMs));
-  const rows = await advRead_(() => db.from('advance_requests').select('id, zone, approval, staff_name, amount').in('id', updates.map(u => u.id)));
+  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
+  const { zones } = advZones_(user, teamRows);
+  const rows = await advRead_(() => db.from('advance_requests').select('*').in('id', updates.map(u => u.id)));
   if (rows === null) throw badRequest(ADV_NOTE);
   const by = new Map(rows.map(r => [String(r.id), r]));
   const at = new Date(nowMs).toISOString();
@@ -1850,7 +1983,8 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
   for (const u of updates) {
     const r = by.get(u.id);
     if (!r) { skipped.push(u.id + ': no longer there'); continue; }
-    if (!advZoneOk_(zones, r.zone)) throw forbidden(`You do not have access to zone ${r.zone}.`);
+    if (!advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') throw forbidden(`You do not have access to zone ${r.zone}.`);
+    if (!advSees_(routing, user, zones, r)) throw forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
     if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval}`); continue; }
     const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
     if (error) throw new Error(error.message);
@@ -6439,9 +6573,19 @@ async function saveRole(db, user, p) {
   // out here before this file's own smsGaps/saveTeam-shaped audit went looking for it.
   const tabs = String((p && p.tabs) || '').split(/[;,]/).map(x => x.trim().toLowerCase())
     .filter(x => ALL_TABS.includes(x));
-  const { error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' });
+  /* THE ADVANCE APPROVER OF THIS ROLE (RUN-ME-045, advRouteOf_): sent by the form as a role
+     name or blank. Not mentioned means not changed. On a database without the column the
+     tabs are still saved and the answer says the approver was not. */
+  const hasApprover = !!p && p.approverRole !== undefined;
+  const approverRole = hasApprover ? (String(p.approverRole || '').trim().toUpperCase() || null) : undefined;
+  let { error } = await db.from('roles').upsert(hasApprover ? { role, tabs, approver_role: approverRole } : { role, tabs }, { onConflict: 'role' });
+  let approverSaved = hasApprover;
+  if (error && hasApprover && advColMissing_(error, ['approver_role'])) {
+    approverSaved = false;
+    ({ error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' }));
+  }
   if (error) throw new Error(error.message);
-  return { role, tabs };
+  return { role, tabs, approverRole: approverSaved ? approverRole : undefined, note: hasApprover && !approverSaved ? ADV_ROUTE_NOTE : null };
 }
 /* A CLEAN SLATE TO SET THE ROLES FROM, AND A WAY BACK.
 
@@ -6646,14 +6790,22 @@ export function mergeRoles_(roleRows, codeRows) {
 
 async function accessCodes(db, user) {
   requireAdmin(user);
-  const [rows, roleRows] = await Promise.all([
-    fetchAll(() => db.from('access_codes').select('code, name, role, teams, tabs').order('name', { ascending: true })),
+  /* The codes with their advance supervisor (RUN-ME-045), or without it on a database that has
+     not got the column yet -- `routingOn` tells the screen which, so the forms can say so. */
+  const codesQ = cols => fetchAll(() => db.from('access_codes').select(cols).order('name', { ascending: true }));
+  let rows, routingOn = true;
+  const [rows0, roleRows] = await Promise.all([
+    codesQ('code, name, role, teams, tabs, supervisor').catch(e => { if (!advColMissing_(e, ['supervisor'])) throw e; routingOn = false; return null; }),
     fetchAll(() => db.from('roles').select('*').order('role', { ascending: true })),
   ]);
+  rows = rows0 || await codesQ('code, name, role, teams, tabs');
+  // The supervisor as a NAME beside the code that holds it -- the code itself is a secret.
+  const nameOf = new Map(rows.map(r => [K(r.code), r.name || r.code]));
+  rows = rows.map(r => ({ ...r, supervisorName: r.supervisor ? (nameOf.get(K(r.supervisor)) || null) : null }));
   /* A code IS a password. A read-only supervisor sees who holds access and with what role and
      scope -- never the secrets themselves. Checking the system and collecting its keys are
      different jobs, and this screen only serves the first to them. */
-  const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••' })) : rows;
+  const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••', supervisor: r.supervisor ? '••••' : null })) : rows;
   /* Whether there is a saved state to undo back to -- the Roles card offers the button only
      when pressing it would actually restore something. */
   let backupAt = null;
@@ -6664,7 +6816,8 @@ async function accessCodes(db, user) {
   // allTabs rides along so the role tab list on this screen can be a checkbox list instead of
   // free text -- "ticking the nav pannels ... because writing could error".
   return { rows: out, count: rows.length, roles: mergeRoles_(roleRows, rows),
-    allTabs: ALL_TABS.slice(), roleBackupAt: backupAt };
+    allTabs: ALL_TABS.slice(), roleBackupAt: backupAt,
+    routingOn, routingNote: routingOn ? null : ADV_ROUTE_NOTE };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
@@ -6704,10 +6857,23 @@ async function saveAccessCode(db, user, p) {
     prevName = was ? was.name : null;
   }
 
-  const { error } = await db.from('access_codes').upsert({
-    code, name: nextName, role: nextRole,
-    teams: nextTeams, tabs: list(p.tabs) || [],
-  }, { onConflict: 'code' });
+  /* THE ADVANCE SUPERVISOR OF THIS CODE (RUN-ME-045, advRouteOf_): another code, sent by the
+     form as the code or blank. Not mentioned means not changed. It has to exist and cannot be
+     the code itself -- a request routed to a code that is nobody's reaches nobody. */
+  const hasSup = p.supervisor !== undefined;
+  const supervisor = hasSup ? (String(p.supervisor || '').trim() || null) : undefined;
+  if (supervisor) {
+    if (K(supervisor) === K(code)) throw badRequest('Msimamizi hawezi kuwa msimbo huu wenyewe. / A code cannot be its own supervisor.');
+    const { data: supRow } = await db.from('access_codes').select('code').eq('code', supervisor).maybeSingle();
+    if (!supRow) throw badRequest('Msimbo wa msimamizi haupo. / The supervisor\'s code does not exist.');
+  }
+  const row = { code, name: nextName, role: nextRole, teams: nextTeams, tabs: list(p.tabs) || [] };
+  let { error } = await db.from('access_codes').upsert(hasSup ? { ...row, supervisor } : row, { onConflict: 'code' });
+  let supSaved = hasSup;
+  if (error && hasSup && advColMissing_(error, ['supervisor'])) {
+    supSaved = false;
+    ({ error } = await db.from('access_codes').upsert(row, { onConflict: 'code' }));
+  }
   if (error) throw new Error(error.message);
   noteCodesWritten(db);                       // the codes lay over the sheet: every board re-reads
   if (oldCode && oldCode !== code) {
@@ -6722,7 +6888,8 @@ async function saveAccessCode(db, user, p) {
   const staff = await syncStaffFromCode(db, user,
     { name: nextName, prevName, role: nextRole, teams: nextTeams });
 
-  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff };
+  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff,
+    supervisor: supSaved ? supervisor : undefined, note: hasSup && !supSaved ? ADV_ROUTE_NOTE : null };
 }
 /* =======================================================================================
    AN ACCESS CODE AND THE TEAMS TABLE ARE ONE FACT KEPT IN TWO PLACES.

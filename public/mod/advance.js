@@ -31,6 +31,11 @@ VIEWS.advreq = function(){
             + '. / These teams carry no zone on Teams & Staff, so their staff cannot be listed here. Set the zone there and come back.</div>' : '')
       + '<div class="card"><div class="card-h">📝 Ombi la advance ya mshahara / Advance salary request'
         + '<span class="sub">' + esc(d.zones && d.zones.length ? 'zone: ' + d.zones.join(', ') : 'zone zote / every zone') + '</span></div>'
+      /* WHO WILL SEE IT, said before it is sent (advRouteOf_ on the server): the approver role
+         in the zone, the named supervisor, or -- by name -- nobody but an admin, so a request
+         that reaches no desk is never found out from silence. */
+      + (d.route ? '<div class="note' + (d.route.kind === 'none' ? ' bad' : '') + '" style="margin:10px 14px 0">Ombi lako litaenda kwa / Your request goes to: <b>' + esc(d.route.label) + '</b></div>' : '')
+      + (d.routingOn === false ? '<div class="note" style="margin:10px 14px 0">⚠ ' + esc(d.routingNote || '') + '</div>' : '')
       + '<div class="cleanbox">'
       + '<div class="fld"><label>Jina lako / Your name *</label>'
         + '<select data-arg="staffId"><option value="">— chagua jina lako / pick your name —</option>'
@@ -69,7 +74,7 @@ function advSubmit(){
   if (!date){ toast('Chagua tarehe ya maombi. / Pick the application date.', true); return; }
   if (!confirm('Tuma ombi la advance la TZS ' + money(amount) + ' kwa jina la ' + c.name + '? / Submit an advance request of TZS ' + money(amount) + ' for ' + c.name + '?')) return;
   srv('advRequest', { staffId: c.id, appDate: date, amount: amount })
-    .then(function(r){ toast('✅ Ombi limetumwa: TZS ' + money(r.amount) + '. / Advance request submitted.'); render({ force:true }); })
+    .then(function(r){ toast('✅ Ombi limetumwa: TZS ' + money(r.amount) + (r.route ? ' → ' + r.route.label : '') + '. / Advance request submitted.'); render({ force:true }); })
     .catch(function(e){ toast(String(e.message||e), true); });
 }
 
@@ -80,12 +85,28 @@ VIEWS.advappr = function(){
   return srv('advQueue', { zone: zone }).then(function(d){
     S.advQ = d;
     var pend = d.pending || [];
+    /* WHAT THIS DESK IS (advRouteOf_ on the server): the roles routed to it and the people it
+       supervises -- or, plainly, that nothing is routed to it yet and where that is set. An
+       admin's desk shows every request and names the ones that reach nobody else. */
+    var desk = d.desk || {};
+    var deskLine = desk.admin ? 'admin — maombi yote / every request'
+      : ((desk.roles||[]).length ? 'wadhifa unaoidhinisha / roles you approve: ' + desk.roles.join(', ') : '')
+        + ((desk.supervisees||[]).length ? ((desk.roles||[]).length ? ' · ' : '') + 'unaowasimamia / you supervise: ' + desk.supervisees.map(function(s){ return s.name; }).join(', ') : '');
     HEAD = '<div class="kpis">'
       + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
       + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')
       + kpi('Yaliyoamuliwa (siku 14) / Decided (14 days)', money((d.recent||[]).length))
       + '</div>'
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.routingOn === false
+          ? '<div class="note">⚠ ' + esc(d.routingNote || '') + '</div>'
+          : '<div class="note' + (deskLine ? '' : ' bad') + '">Dawati lako / Your desk: ' + (deskLine ? esc(deskLine)
+              : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako bado — admin aweke mwidhinishaji kwenye Nafasi na ruhusa, au akuchague kama msimamizi kwenye msimbo. / nothing is routed to this desk yet: an admin sets the approver role on Roles & access, or names you as a supervisor on a code.') + '</div>')
+      + ((d.unrouted||[]).length
+          ? '<div class="note bad">⚠️ Maombi ' + d.unrouted.length + ' hayamfikii mtu isipokuwa admin — wadhifa wao hauna mwidhinishaji: '
+            + esc(d.unrouted.map(function(u){ return u.staff_name + ' (' + (u.req_role || '?') + ')'; }).join(', '))
+            + '. Weka mwidhinishaji kwenye Nafasi na ruhusa. / ' + d.unrouted.length + ' request(s) reach nobody but an admin — their role has no approver set. Set it on Roles & access.</div>'
+          : '')
       + (d.noZoneTeams && d.noZoneTeams.length
           ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(d.noZoneTeams.join(', '))
             + '. / Teams with no zone on Teams & Staff: their officers\' requests cannot reach this desk until the zone is set.</div>' : '')
@@ -95,11 +116,13 @@ VIEWS.advappr = function(){
       + '<div class="card"><div class="card-h">✅ Idhinisha maombi ya advance / Approve advance requests'
         + '<span class="sub">tiki · chagua · andika maoni · hifadhi / tick · choose · comment · save</span></div>'
       + (pend.length
-          ? '<div class="scroll"><table><thead><tr><th>✔</th><th>Staff</th><th>Zone</th><th class="r">Kiasi / Amount</th><th>Tarehe / App date</th><th>Imetumwa / Submitted</th><th>Idhini / Approval</th><th>Maoni / Comment</th></tr></thead><tbody>'
+          ? '<div class="scroll"><table><thead><tr><th>✔</th><th>Staff</th><th>Zone</th><th>Kwa / To</th><th class="r">Kiasi / Amount</th><th>Tarehe / App date</th><th>Imetumwa / Submitted</th><th>Idhini / Approval</th><th>Maoni / Comment</th></tr></thead><tbody>'
             + pend.map(function(r, i){
                 return '<tr><td><input type="checkbox" class="advChk" data-i="' + i + '"></td>'
                   + '<td><b>' + esc(r.staff_name||'') + '</b><br><span style="color:var(--mut);font-size:11px">' + esc(r.staff_id||'') + (r.staff_role ? ' · ' + esc(r.staff_role) : '') + '</span></td>'
-                  + '<td>' + esc(r.zone||'') + '</td><td class="r">' + money(r.amount) + '</td>'
+                  + '<td>' + esc(r.zone||'') + '</td>'
+                  + '<td style="white-space:normal;font-size:11px">' + esc(r.route||'') + '</td>'
+                  + '<td class="r">' + money(r.amount) + '</td>'
                   + '<td>' + esc(String(r.app_date||'').slice(0,10)) + '</td><td>' + esc(String(r.submitted_at||'').replace('T',' ').slice(0,16)) + '</td>'
                   + '<td><select class="advSel" data-i="' + i + '">' + (d.approvals||['Approved','Disapproved']).map(function(a){ return '<option>' + esc(a) + '</option>'; }).join('') + '</select></td>'
                   + '<td><input class="advCom" data-i="' + i + '" placeholder="Maoni / Comment"></td></tr>';
@@ -108,7 +131,7 @@ VIEWS.advappr = function(){
           : '<div class="note">Hakuna ombi linalosubiri. / No pending requests.</div>')
       + '</div>';
     S.rows = d.recent || [];
-    S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Staff'), col('staff_id','Staff ID'), col('zone','Zone'),
+    S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Staff'), col('staff_id','Staff ID'), col('zone','Zone'), col('route','Kwa / To'),
       col('amount','Kiasi / Amount','money'), {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'),
       col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')];
     ONROW = null;

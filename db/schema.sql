@@ -40,12 +40,16 @@ create table if not exists access_codes (
   last_lat double precision,
   last_lng double precision,
   last_loc_acc integer,           -- metres, as the handset reported
-  last_loc_at timestamptz         -- when the FIX was taken, not when it was sent
+  last_loc_at timestamptz,        -- when the FIX was taken, not when it was sent
+  -- RUN-ME-045: ONE named approver of this code's salary-advance requests (another code), or null.
+  supervisor text
 );
 
 create table if not exists roles (
   role text primary key,
-  tabs text[]
+  tabs text[],
+  -- RUN-ME-045: the role that approves this role's salary-advance requests (null = unset).
+  approver_role text
 );
 
 create table if not exists settings (
@@ -495,11 +499,14 @@ create table if not exists advance_requests (
   approval text not null default 'Pending', comment text, zone text, code text, account text,
   decided_by text, decided_at timestamptz,
   created_by text, created_at timestamptz not null default now(),
-  upload_date date, upload_batch uuid
+  upload_date date, upload_batch uuid,
+  -- RUN-ME-045: the role and code that FILED the request -- what the approval desk routes on.
+  req_role text, req_code text
 );
 create index if not exists idx_advance_requests_at on advance_requests (submitted_at desc);
 create index if not exists idx_advance_requests_zone on advance_requests (zone, approval, submitted_at desc);
 create index if not exists idx_advance_requests_staff on advance_requests (staff_id, submitted_at desc);
+create index if not exists idx_advance_requests_req on advance_requests (req_code, approval, submitted_at desc);
 
 -- =====================================================================================
 -- HOPE CALLS -- one table for logs, no weekly archive gymnastics needed. Postgres
