@@ -26,6 +26,7 @@ import { commandFor, noteDeviceSettingsWritten } from './device-core.js';
 import { audited, auditList, AUDITED } from './audit.js';
 import { recordPerformance, performanceHistory, recordsFor } from './performance.js';
 import { isSystemOpen, clearSystemOpenCache, readsAsOpen, isAdminUser } from './system-gate.js';
+import { isAdvApprover } from './adv-approver.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. Its own
    file since the shared dashboard reads it too -- see the header of adjustments.js. */
 import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustmentsWritten, tAdjusted,
@@ -1796,7 +1797,9 @@ export function advRoutingOf_(roleRows, codeRows, on = true) {
     const exact = hit.filter(n => advRoleWords_(n).join(' ') === words);
     return exact.length === 1 ? exact[0] : null;
   };
-  return { on, approverOf, codes, supervisorOf, deptSupervisorOf, deptRolesOf, roleOfSheetRole,
+  /* Whether this sign-in is an approver at all (adv-approver.js, the one rule): what the sidebar and the request tab's history ask. */
+  const isApprover = user => isAdvApprover(roleRows || [], codeRows || [], user);
+  return { on, approverOf, codes, supervisorOf, deptSupervisorOf, deptRolesOf, roleOfSheetRole, isApprover,
     rolesApprovedBy: role => [...approverOf].filter(([, a]) => a === K(role)).map(([r]) => r).sort(),
     // The codes this person supervises BY NAME on the code itself. A whole role they supervise
     // is read by role instead (deptRolesOf), since its requesters include team codes.
@@ -2004,12 +2007,12 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
   /* THE HISTORY IS FOR THE PEOPLE WHO DECIDE -- "There are complaints, remove requests history
      to all users except approvers .. at requests tab": a requester picks a name and asks;
      they are not shown anybody's requests. Who is an approver: an admin, anyone holding the
-     approval or the report tab ("it's only those authorized report to see all"), and anyone
-     the routing makes a desk (roles they approve, roles they supervise whole, codes they
-     supervise). For everyone else the history is not read at all. */
-  const desk = advDeskOf_(routing, user).desk, tabs = user.tabs || [];
-  const seesHistory = admin || tabs.includes('advappr') || tabs.includes('advrep')
-    || !!(desk.roles.length || desk.deptRoles.length || desk.supervisees.length);
+     report tab ("it's only those authorized report to see all"), and anyone the routing makes
+     an approver (adv-approver.js -- a ticked approval tab alone is not enough). Without
+     RUN-ME-045 the tab is the only evidence there is. For everyone else the history is not
+     read at all. */
+  const tabs = user.tabs || [];
+  const seesHistory = admin || tabs.includes('advrep') || (routing.on ? routing.isApprover(user) : tabs.includes('advappr'));
   const roleWord = advRoleWords_(user.role)[0] || '~none~';
   const histQ = () => db.from('advance_requests').select('id, submitted_at, staff_id, staff_name, zone, app_date, amount, approval, comment, decided_by, decided_at, req_role')
     .order('submitted_at', { ascending: false }).limit(100);

@@ -11344,8 +11344,13 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
      (and the database is not even asked for it); the same code holding the approval tab, or
      the report, gets the role's history. */
   assert.deepEqual(afterAsk.history, []); assert.equal(afterAsk.canHistory, false);
+  /* A ticked approval tab is not enough: the routing decides who an approver is (adv-approver.js).
+     A team code holding the tab by a stray tick, whose approver is the GMO, still gets no list... */
   const foAppr = await portalApi(db, { ...FO, tabs: ['advreq', 'advappr'] }, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW);
-  assert.equal(foAppr.canHistory, true); assert.deepEqual(foAppr.history.map(r => r.staff_name), ['ASHA ALI AMANI']);
+  assert.equal(foAppr.canHistory, false); assert.deepEqual(foAppr.history, []);
+  // ...and the GMO of the zone, who approves the field officers by role, does.
+  const gmoH = await portalApi(db, { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advreq', 'advappr'] }, 'advRequestPage', {}, NOW);
+  assert.equal(gmoH.canHistory, true);
   const foRep = await portalApi(db, { ...FO, tabs: ['advreq', 'advrep'] }, 'advRequestPage', {}, NOW);
   assert.equal(foRep.canHistory, true); assert.deepEqual(foRep.history.map(r => r.staff_name), ['ASHA ALI AMANI'], 'the report\'s holders see it too');
   assert.deepEqual((await portalApi(db, credit, 'advRequestPage', {}, NOW)).history, []);
@@ -11472,6 +11477,40 @@ test('advance approval tab: the person chosen holds it on their own code, the re
   const undone = await portalApi(db, ADMIN, 'resetApprovals', { undo: true }, NOW);
   assert.equal(undone.grants, 3);
   assert.equal(JSON.stringify(db._dump('access_codes').map(c => ({ code: c.code, tabs: c.tabs || [] }))), before, 'every code exactly as it was');
+});
+/* THE SIDEBAR OFFERS THE APPROVAL TAB TO APPROVERS, WHATEVER A ROLE IS TICKED FOR -- "It's not just
+   credit but roles that have their own approver ... Behave so". One rule (adv-approver.js). */
+test('approval tab in the sidebar: only the people the routing makes approvers, whatever is ticked', async () => {
+  const { isAdvApprover, withoutIdleApprovalTab } = await import('../api/_lib/adv-approver.js');
+  const roles = [
+    { role: 'CREDIT', approver_role: 'CREDIT', approver_code: 'R1' },        // credit approves itself through ONE person
+    { role: 'BIKE', approver_role: 'BIKE', approver_code: null },            // approves itself; one code names a supervisor
+    { role: 'LEGAL', approver_role: 'LEGAL', approver_code: null },          // approves itself, nobody named
+    { role: 'GMO', approver_role: 'GMO', approver_code: null },
+    { role: 'FIELD OFFICER', approver_role: 'GMO', approver_code: null },    // the GMO approves it
+    { role: 'PMO COLLECTION', approver_role: 'PMO MANAGER', approver_code: null },
+    { role: 'PMO MANAGER', approver_role: null, approver_code: null },
+    { role: 'HR', approver_role: null, approver_code: null },
+  ];
+  const codes = [{ code: 'B1', role: 'BIKE', supervisor: 'B2' }, { code: 'B2', role: 'Bike', supervisor: null }];
+  const asks = (role, code) => isAdvApprover(roles, codes.filter(c => c.supervisor), { role, code });
+  assert.equal(asks('Credit', 'R1'), true, 'the one person named for credit');
+  assert.equal(asks('CREDIT', 'C9'), false, 'the rest of credit: not approvers, whatever the role is ticked for');
+  assert.equal(asks('BIKE', 'B2'), true, 'a person named on a bike code'); assert.equal(asks('BIKE', 'B3'), false, 'the other bike codes');
+  assert.equal(asks('LEGAL', 'L1'), true, 'a role approving only itself, nobody named: its holders decide each other\'s');
+  assert.equal(asks('GMO', 'G1'), true, 'a GMO approves the field officers by role');
+  assert.equal(asks('FIELD OFFICER', 'F1'), false, 'a role whose approver is the GMO'); assert.equal(asks('PMO COLLECTION', 'P1'), false);
+  assert.equal(asks('PMO MANAGER', 'M1'), true, 'approves PMO COLLECTION by role'); assert.equal(asks('HR', 'H1'), false, 'a role with no approver at all');
+  // The sidebar: the tab is dropped for a non-approver, kept for an approver; nothing else is touched; trouble hides nothing.
+  const t = tables(); t.roles.push(...roles); t.access_codes.push({ code: 'B1', name: 'BIKE ONE', role: 'BIKE', supervisor: 'B2', tabs: [] }, { code: 'B2', name: 'BIKE TWO', role: 'Bike', tabs: [] });
+  const db = fakeDb(t);
+  const tabs = ['advreq', 'advappr', 'upload'];
+  assert.deepEqual(await withoutIdleApprovalTab(db, { role: 'CREDIT', code: 'C9' }, tabs), ['advreq', 'upload']);
+  assert.deepEqual(await withoutIdleApprovalTab(db, { role: 'Credit', code: 'R1' }, tabs), tabs);
+  assert.deepEqual(await withoutIdleApprovalTab(db, { role: 'GMO', code: 'G1' }, tabs), tabs);
+  assert.deepEqual(await withoutIdleApprovalTab(db, { role: 'CREDIT', code: 'C9' }, ['advreq']), ['advreq'], 'no approval tab, no reads');
+  const noCols = fakeDb(tables(), { missingColumns: { roles: ['approver_role', 'approver_code'], access_codes: ['supervisor'] } });
+  assert.deepEqual(await withoutIdleApprovalTab(noCols, { role: 'CREDIT', code: 'C9' }, tabs), tabs, 'a database without RUN-ME-045 hides nothing');
 });
 test('customer service on the advance request: one shared code, the names off the call-agents roster, a zone-less request reaching the approver role', async () => {
   const t = tables();
