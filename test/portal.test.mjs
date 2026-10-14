@@ -11339,7 +11339,15 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   /* THE HISTORY OF YOUR ROLE IN YOUR ZONE -- "allow users to see history of their requests so
      teams see history of their zone as FOs": the team code sees the request it filed (and not
      the sheet's rows, which name no role); a credit code of the same zone does not. */
-  assert.deepEqual(afterAsk.history.map(r => r.staff_name), ['ASHA ALI AMANI']);
+  /* ...but only for the people who decide -- "There are complaints, remove requests history to
+     all users except approvers .. at requests tab": the team code that only asks gets no list
+     (and the database is not even asked for it); the same code holding the approval tab, or
+     the report, gets the role's history. */
+  assert.deepEqual(afterAsk.history, []); assert.equal(afterAsk.canHistory, false);
+  const foAppr = await portalApi(db, { ...FO, tabs: ['advreq', 'advappr'] }, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW);
+  assert.equal(foAppr.canHistory, true); assert.deepEqual(foAppr.history.map(r => r.staff_name), ['ASHA ALI AMANI']);
+  const foRep = await portalApi(db, { ...FO, tabs: ['advreq', 'advrep'] }, 'advRequestPage', {}, NOW);
+  assert.equal(foRep.canHistory, true); assert.deepEqual(foRep.history.map(r => r.staff_name), ['ASHA ALI AMANI'], 'the report\'s holders see it too');
   assert.deepEqual((await portalApi(db, credit, 'advRequestPage', {}, NOW)).history, []);
 
   // THE GMO'S DESK: DAR EAST's GMO sees the pending one; MARA's sees nothing; neither decides the other's.
@@ -11452,7 +11460,9 @@ test('customer service on the advance request: one shared code, the names off th
   const q = await portalApi(db, mg, 'advQueue', {}, NOW);
   assert.deepEqual(q.pending.map(r => r.staff_name).sort(), ['AMINA MUSTAFA', 'Nadhir Msangi']);
   assert.equal((await portalApi(db, mg, 'advDecide', { updates: [{ id: r1.id, approval: 'Approved' }] }, NOW)).approved, 1);
-  assert.deepEqual((await portalApi(db, cs, 'advRequestPage', {}, NOW)).history.map(r => r.staff_name).sort(), ['AMINA MUSTAFA', 'Nadhir Msangi'], 'the desk\'s own history');
+  assert.deepEqual((await portalApi(db, { ...cs, tabs: ['advreq', 'advrep'] }, 'advRequestPage', {}, NOW)).history.map(r => r.staff_name).sort(), ['AMINA MUSTAFA', 'Nadhir Msangi'], 'the history, for the report\'s holders');
+  const csPlain = await portalApi(db, { ...cs, tabs: ['advreq'] }, 'advRequestPage', {}, NOW);
+  assert.deepEqual(csPlain.history, [], 'customer service only asks'); assert.equal(csPlain.canHistory, false);
   // Not customer service: a plain code still picks by ID only, and a name means nothing.
   const fo = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
   assert.equal((await portalApi(db, fo, 'advRequestPage', {}, NOW)).csAgents, false);
