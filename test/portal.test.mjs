@@ -11265,6 +11265,38 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.equal((await portalApi(db, ADMIN, 'advRequestPage', {}, NOW)).staff.length, 4, 'an admin sees every active name'); assert.equal((await portalApi(db, ADMIN, 'advRequestPage', {}, NOW)).role, null);
   await assert.rejects(() => portalApi(db, credit, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 403 && /not of your role/.test(e.message), 'nor can a credit code file for a field officer');
   db._dump('staff_registry').splice(db._dump('staff_registry').length - 2, 2);
+  /* THE REGISTRY WRITES "ROLE - TEAM" -- the sheet's TEAM/ROLE column, 135 of 409 rows on
+     2026-10-14 -- and an exact key hid every one of those names from their own role's picker.
+     The words of one role open the other: a team code sees its zone's field officers however
+     the team is appended, never a manager; CREDIT sees CREDIT ANALYST; PMO COLLECTION sees the
+     registry's "PMO"; BIKE sees "Bike Recovery - Dar North"; GMO sees "GMO KAGERA" -- and GM
+     does not, nor does anybody see a blank role. */
+  const spelt = [
+    { id: 'S1/001/2026', name: 'KIMARA FO', role: 'Field Officer - Kimara', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S2/002/2026', name: 'MBEZI LO', role: 'LOAN OFFICER - MBEZI', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S3/003/2026', name: 'MBAGALA O', role: 'OFFICER - MBAGALA', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S4/004/2026', name: 'DOTTED FO', role: 'F.O', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S5/005/2026', name: 'BUKOBA MGR', role: 'Manager - Bukoba', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S6/006/2026', name: 'ANALYST', role: 'CREDIT ANALYST', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S7/007/2026', name: 'PMO PLAIN', role: 'PMO', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S8/008/2026', name: 'PMO BOSS', role: 'PMO - MANAGER', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S9/009/2026', name: 'BIKE DN', role: 'Bike Recovery - Dar North', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S10/010/2026', name: 'GMO KAG', role: 'GMO KAGERA', zone: 'DAR EAST', status: 'Active' },
+    { id: 'S11/011/2026', name: 'NO ROLE', role: '', zone: 'DAR EAST', status: 'Active' },
+  ];
+  db._dump('staff_registry').push(...spelt);
+  const namesFor = async role => (await portalApi(db, { code: 'X', name: 'X', role, teams: ['KONGOWE'], tabs: ['advreq'] }, 'advRequestPage', {}, NOW)).staff.map(s => s.name);
+  assert.deepEqual(await namesFor(FIELD_OFFICER_ROLE), ['ASHA ALI AMANI', 'DOTTED FO', 'KIMARA FO', 'MBAGALA O', 'MBEZI LO']);
+  assert.deepEqual(await namesFor('Manager'), ['BUKOBA MGR'], 'not PMO - MANAGER');
+  assert.deepEqual(await namesFor('Credit'), ['ANALYST']);
+  assert.deepEqual(await namesFor('PMO COLLECTION'), ['PMO PLAIN'], 'the registry\'s bare "PMO", not the PMO manager');
+  assert.deepEqual(await namesFor('PMO MANAGER'), ['PMO BOSS', 'PMO PLAIN'], 'the department\'s head sees the department');
+  assert.deepEqual(await namesFor('BIKE'), ['BIKE DN']); assert.deepEqual(await namesFor('BIKE RECOVERY'), ['BIKE DN']);
+  assert.deepEqual(await namesFor('GMO'), ['GMO KAG']); assert.deepEqual(await namesFor('GM'), []); assert.deepEqual(await namesFor(''), []);
+  assert.equal((await portalApi(db, FO, 'advRequest', { staffId: 'S2/002/2026', amount: 50000 }, NOW)).staffName, 'MBEZI LO', 'and the ask takes the name the list offered');
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'S5/005/2026', amount: 50000 }, NOW), e => e.status === 403 && /not of your role/.test(e.message));
+  db._dump('staff_registry').splice(db._dump('staff_registry').length - spelt.length, spelt.length);
+  db._dump('advance_requests').splice(db._dump('advance_requests').findIndex(r => r.staff_id === 'S2/002/2026'), 1);
   assert.deepEqual(page.amounts, [50000, 100000, 150000, 200000]);
   const picked = await portalApi(db, FO, 'advRequestPage', { staffId: 'aaa/001/2026' }, NOW);
   assert.equal(picked.chosen.name, 'ASHA ALI AMANI'); assert.equal(picked.monthTaken, null, 'a disapproved request does not use the month up');

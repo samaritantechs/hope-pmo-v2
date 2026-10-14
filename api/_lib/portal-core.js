@@ -1837,7 +1837,7 @@ const advMerge_ = (...lists) => { const by = new Map(); for (const l of lists) f
     form offers (Teams & Staff's zones plus any already in the registry); the next serial. */
 async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) {
   // The role names as Roles & access spells them, for the form's ROLE picker: the request
-  // tab lists a name only under its own role (advRoleKey_), so the spelling has to agree.
+  // tab lists a name only under its own role (advRoleSame_), so the first words have to agree.
   const [teamRows, roleRows] = await Promise.all([readTeamsAll(db, nowMs), fetchAll(() => db.from('roles').select('role'))]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   const rows0 = await advRead_(() => onZones_(db.from('staff_registry').select('*').order('name', { ascending: true }), zones));
@@ -1908,16 +1908,37 @@ async function advStaffStatus(db, user, p, nowMs = Date.now()) {
   return { id: prev.id, status };
 }
 /** A role as the registry and Roles & access may each spell it -- "Field Officer", "FIELD
-    OFFICER", "F.O", the sheet's "TEAM" -- reduced to one key, so a credit officer's list is
-    credit names only and a team code's is the zone's field officers. */
-const advRoleKey_ = v => { const k = K(v).replace(/[^A-Z0-9]/g, ''); return k === 'FO' || k === 'TEAM' || k === 'TEAMS' ? 'FIELDOFFICER' : k; };
+    OFFICER", "F.O", the sheet's "TEAM", "LOAN OFFICER" -- reduced to words, so a credit
+    officer's list is credit names only and a team code's is the zone's field officers.
+    THE REGISTRY WRITES "ROLE - TEAM" (the sheet's TEAM/ROLE column: "Field Officer - Kimara",
+    "LOAN OFFICER - MBEZI", "Manager - Bukoba", "GMO KAGERA", "Bike Recovery - Dar North"),
+    and 135 of its 409 rows did on 2026-10-14 -- an exact key hid every one of those names
+    from their own role's picker. So two roles are the same when the words of one open the
+    other: GMO and GMO KAGERA, PMO COLLECTION and PMO, CREDIT and CREDIT ANALYST, BIKE and
+    BIKE RECOVERY -- never MANAGER and PMO MANAGER, never GM and GMO, never a blank. */
+const ADV_ROLE_ALIAS = { 'FO': 'FIELD OFFICER', 'F O': 'FIELD OFFICER', 'TEAM': 'FIELD OFFICER', 'TEAMS': 'FIELD OFFICER',
+  'LOAN OFFICER': 'FIELD OFFICER', 'OFFICER': 'FIELD OFFICER' };
+function advRoleWords_(v) {
+  const words = K(v).split(/[^A-Z0-9]+/).filter(Boolean);
+  for (const n of [2, 1]) {
+    const alias = ADV_ROLE_ALIAS[words.slice(0, n).join(' ')];
+    if (alias) return alias.split(' ').concat(words.slice(n));
+  }
+  return words;
+}
+function advRoleSame_(a, b) {
+  const x = advRoleWords_(a), y = advRoleWords_(b);
+  if (!x.length || !y.length) return false;
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return false;
+  return true;
+}
 /** CUSTOMER SERVICE IS ONE SHARED CODE -- "I can't have many customer service users, I had
     given them a single code but remember they have their names enlisted under call agent
     settings, so I need the role CUSTOMER SERVICE to be treated special case at advance
     request: they choose list of their names from that very single account". The names come
     off the call-agents roster (Settings), each matched to the HR registry by name for its ID
     and account; a request carries no zone and reaches the role's approver wherever they sit. */
-const advCustomerService_ = user => !isAdminUser(user) && advRoleKey_(user.role) === 'CUSTOMERSERVICE';
+const advCustomerService_ = user => !isAdminUser(user) && advRoleSame_(user.role, 'CUSTOMER SERVICE');
 const advAgentNames_ = agentRows => [...new Set((agentRows || []).flatMap(a => String(a.names || '').split(/[,;]/).map(s => s.trim()).filter(Boolean)))]
   .sort((a, b) => a.localeCompare(b));
 /** The request tab: the names of the viewer's ROLE in their zone(s) -- "each role see list of
@@ -1945,7 +1966,6 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
     cs ? advRead_(() => db.from('call_agents').select('user_id, names')) : [],
   ]);
   const on = Array.isArray(staff0);
-  const roleKey = advRoleKey_(user.role);
   const zoneStaff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone));
   let staff;
   if (cs) {
@@ -1957,7 +1977,7 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
       return { id: r ? r.id : null, name: r ? r.name : n, role: r ? (r.role || 'CUSTOMER SERVICE') : 'CUSTOMER SERVICE', zone: r ? (r.zone || '') : '', onRegistry: !!r };
     });
   } else {
-    staff = (admin ? zoneStaff : zoneStaff.filter(r => advRoleKey_(r.role) === roleKey))
+    staff = (admin ? zoneStaff : zoneStaff.filter(r => advRoleSame_(r.role, user.role)))
       .map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
   }
   /* NONE OF THIS ROLE, WHILE THE ZONE HAS STAFF: the spellings the registry carries are named,
@@ -2021,7 +2041,7 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
   if (s.zone && !advZoneOk_(zones, s.zone)) throw forbidden(`You do not have access to zone ${s.zone}.`);
   // The same rule the list is drawn by: a name of another role is not on offer. Customer
   // service picks off the roster by name, whatever role HR typed on the registry row.
-  if (!isAdminUser(user) && !cs && advRoleKey_(s.role) !== advRoleKey_(user.role)) {
+  if (!isAdminUser(user) && !cs && !advRoleSame_(s.role, user.role)) {
     throw forbidden(`Jina hilo si la wadhifa wako (${user.role}). / That name is not of your role (${user.role}).`);
   }
   const amounts = advAmounts_(cfg);
