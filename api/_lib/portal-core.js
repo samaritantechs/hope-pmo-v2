@@ -1665,6 +1665,11 @@ function advZones_(user, teamRows) {
 }
 const advZoneOk_ = (zones, zone) => zones === null || zones.some(z => z === K(zone));
 const onZones_ = (q, zones) => (zones === null ? q : q.in('zone', zones));
+/** The zone read of the advance desk and report, once routing is on: it brings only the older
+    requests that name no requester (they are routed by the role text on the row); every other
+    request reaches a desk by code or by role, in their own reads. An admin reads the lot, and a
+    database without RUN-ME-045 has no req_role to ask about. */
+const onZoneLegacy_ = (q, zones, routing, admin) => { const z = onZones_(q, zones); return routing && routing.on && !admin ? z.is('req_role', null) : z; };
 /* A DEPARTMENT IS NOT A ZONE -- "Hadn't there been credits at my initial HR file?". The sheet
    zoned its HQ people by department ("HQ - CREDIT", "HQ - PMO", "HQ - CUSTOMER SERVICE",
    "MANAGEMENT"), and a code's zones are its teams', so no credit analyst was ever on a credit
@@ -1725,9 +1730,14 @@ function advZoneList_(teamRows, regRows, zones) {
 
    ONE RULE, advRouteOf_, read by the ask (to say who will see it), the desk (to show it)
    and the decision (to refuse anyone else). A request from before RUN-ME-045 -- or from the
-   sheet's uploaded register -- names no requester and keeps reaching the zone's desk as it
-   always did. A request whose role has no approver and whose code names nobody reaches an
-   ADMIN only, and both the ask and the admin's desk say so by name. */
+   sheet's uploaded register -- names no requester code, but it does carry the requester's role
+   as the sheet wrote it (staff_role), and that is read the way the request tab reads a
+   registry role (advRoleSame_) to find the one role it is, and so who approves it: "legal is
+   seeing other roles' requests and of which she even ain't approver" -- the zone alone is not a
+   reason to see a request. A request whose role has no approver, whose role is not one role,
+   and whose code names nobody reaches an ADMIN only, and both the ask and the admin's desk say
+   so by name. Only a database without RUN-ME-045 still lets every holder of the tab see
+   their zones. */
 const ADV_ROUTE_NOTE = 'Uelekezaji wa maombi (mwidhinishaji kwa wadhifa, msimamizi kwa msimbo) unahitaji db/RUN-ME-045-advance-approvers.sql. '
   + '/ Routing to an approver role or a named supervisor needs db/RUN-ME-045-advance-approvers.sql in the SQL editor; until then every holder of the approval tab sees their zones, as before.';
 const ADV_DEPT_NOTE = 'Msimamizi mmoja wa wadhifa mzima anahitaji db/RUN-ME-046-role-supervisor.sql. '
@@ -1773,7 +1783,20 @@ export function advRoutingOf_(roleRows, codeRows, on = true) {
     return codes.get(K(c.supervisor)) || null;          // a supervisor whose code is gone names nobody
   };
   const deptRolesOf = code => [...deptSupervisorOf].filter(([, s]) => K(s.code) === K(code)).map(([r]) => r).sort();
-  return { on, approverOf, codes, supervisorOf, deptSupervisorOf, deptRolesOf,
+  /* THE ROLE A SHEET'S ROLE TEXT IS ("LOAN OFFICER - MSAMVU" is FIELD OFFICER): the one role, of
+     those Roles & access and the codes know, whose words open it or that it opens (advRoleSame_).
+     When more than one fits ("PMO" fits every PMO role) only an exact spelling counts; else
+     nobody -- and a request nobody can place reaches an admin, never a whole zone. */
+  const roleNames = [...new Set([...(roleRows || []).map(r => K(r.role)), ...[...codes.values()].map(c => K(c.role))].filter(Boolean))];
+  const roleOfSheetRole = text => {
+    if (!K(text)) return null;
+    const hit = roleNames.filter(n => advRoleSame_(text, n));
+    if (hit.length === 1) return hit[0];
+    const words = advRoleWords_(text).join(' ');
+    const exact = hit.filter(n => advRoleWords_(n).join(' ') === words);
+    return exact.length === 1 ? exact[0] : null;
+  };
+  return { on, approverOf, codes, supervisorOf, deptSupervisorOf, deptRolesOf, roleOfSheetRole,
     rolesApprovedBy: role => [...approverOf].filter(([, a]) => a === K(role)).map(([r]) => r).sort(),
     // The codes this person supervises BY NAME on the code itself. A whole role they supervise
     // is read by role instead (deptRolesOf), since its requesters include team codes.
@@ -1794,16 +1817,23 @@ async function advRouting_(db) {
 /** Where ONE request goes, from the requester written on it (req_role / req_code):
       supervisor  the requester's code names a supervisor: that one person, whatever the zone
       role        the requester's role names an approver role: every holder of it, in zone
-      legacy      no requester on the row (before RUN-ME-045, or the sheet's register): the zone
-      none        a role with no approver and a code naming nobody: an admin only */
+      legacy      no requester on the row AND a database without RUN-ME-045: the zone
+      none        a role with no approver and a code naming nobody, or an older row whose
+                  role text is not one role: an admin only
+    A row with no requester but a role of the sheet's (staff_role) is routed by that role. */
 function advRouteOf_(routing, r) {
   const role = K(r && r.req_role), code = K(r && r.req_code);
-  if (!role && !code) return { kind: 'legacy', to: null };
+  let sheetRole = '';
+  if (!role && !code) {
+    if (!routing.on) return { kind: 'legacy', to: null };            // no RUN-ME-045: the zone, as it always was
+    sheetRole = routing.roleOfSheetRole(r && r.staff_role);
+    if (!sheetRole) return { kind: 'none', to: null, role: K(r && r.staff_role) || null, legacy: true };
+  }
   // The code's own supervisor first, then the one named for the whole role, then the role.
   const sup = code ? routing.supervisorOf(code) : null;
   if (sup) return { kind: 'supervisor', to: K(sup.code), name: sup.name || sup.code, dept: false };
   const c = code ? routing.codes.get(code) : null;
-  const roleOf = role || (c ? K(c.role) : '');
+  const roleOf = role || sheetRole || (c ? K(c.role) : '');
   const dept = roleOf ? routing.deptSupervisorOf.get(roleOf) : null;
   if (dept) return { kind: 'supervisor', to: K(dept.code), name: dept.name || dept.code, dept: true, role: roleOf };
   const a = roleOf ? routing.approverOf.get(roleOf) : null;
@@ -1814,6 +1844,7 @@ function advRouteLabel_(route, zone) {
   if (route.kind === 'supervisor') return route.name + (route.dept ? ' (msimamizi wa wadhifa ' + route.role + ' / supervisor of role ' + route.role + ')' : ' (msimamizi / supervisor)');
   if (route.kind === 'role') return route.to + (zone ? ' · zone ' + K(zone) : '') + ' (wadhifa / by role)';
   if (route.kind === 'legacy') return 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing';
+  if (route.legacy) return '⚠️ hakuna — wadhifa wa ombi la zamani (' + (route.role || 'haukuandikwa / none written') + ') si wadhifa mmoja unaojulikana / nobody: the role on this older request (' + (route.role || 'none written') + ') is not one role Roles & access knows (an admin only)';
   return '⚠️ hakuna — wadhifa ' + (route.role || '?') + ' hauna mwidhinishaji / nobody: role ' + (route.role || '?') + ' has no approver set (an admin only)';
 }
 /** Whether this viewer's desk shows this request. An admin's desk shows every one. */
@@ -2120,8 +2151,8 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: false });
   const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
   const [pending0, recent0, pendS, recS, pendR, recR] = await Promise.all([
-    advRead_(() => onZones_(pendQ(), zones)),
-    advRead_(() => onZones_(recQ(), zones)),
+    advRead_(() => onZoneLegacy_(pendQ(), zones, routing, isAdminUser(user))),
+    advRead_(() => onZoneLegacy_(recQ(), zones, routing, isAdminUser(user))),
     mine.length ? advRead_(() => pendQ().in('req_code', mine)) : [],
     mine.length ? advRead_(() => recQ().in('req_code', mine)) : [],
     roleKeys.length ? advRead_(() => pendQ().in('req_role', roleKeys)) : [],
@@ -2136,7 +2167,7 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
   // What this desk IS (advDeskOf_) -- and, for an admin, the pending requests that reach nobody else.
   const admin = desk.admin;
-  const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role, zone: r.zone })) : [];
+  const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role || r.staff_role, zone: r.zone })) : [];
   return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length, month,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
     zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
@@ -2193,7 +2224,7 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
     return want === 'ALL' ? q : q.eq('approval', want);
   };
   const [rows0, rowsS, rowsR] = await Promise.all([
-    advRead_(() => onZones_(winQ(), zones)),
+    advRead_(() => onZoneLegacy_(winQ(), zones, routing, admin)),
     mine.length ? advRead_(() => winQ().in('req_code', mine)) : [],
     roleKeys.length ? advRead_(() => winQ().in('req_role', roleKeys)) : [],
   ]);

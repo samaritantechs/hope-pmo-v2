@@ -11228,9 +11228,9 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   ];
   t.advance_requests = [
     // CHIKU asked last month, approved: not this month's.
-    { id: 'r-old', submitted_at: '2026-06-10T08:00:00Z', staff_id: 'CCC/003/2026', staff_name: 'CHIKU C', zone: 'MARA', amount: 100000, approval: 'Approved', decided_by: 'GMO M', decided_at: '2026-06-11T08:00:00Z', app_date: '2026-06-10' },
+    { id: 'r-old', submitted_at: '2026-06-10T08:00:00Z', staff_id: 'CCC/003/2026', staff_name: 'CHIKU C', staff_role: 'Field Officer - Musoma', zone: 'MARA', amount: 100000, approval: 'Approved', decided_by: 'GMO M', decided_at: '2026-06-11T08:00:00Z', app_date: '2026-06-10' },
     // ASHA's DISAPPROVED one this month does not use the month up (the sheet counted it).
-    { id: 'r-no', submitted_at: '2026-07-18T08:00:00Z', staff_id: 'AAA/001/2026', staff_name: 'ASHA ALI AMANI', zone: 'DAR EAST', amount: 50000, approval: 'Disapproved', comment: 'subiri', decided_by: 'GMO D', decided_at: '2026-07-19T08:00:00Z', app_date: '2026-07-18' },
+    { id: 'r-no', submitted_at: '2026-07-18T08:00:00Z', staff_id: 'AAA/001/2026', staff_name: 'ASHA ALI AMANI', staff_role: 'Field Officer', zone: 'DAR EAST', amount: 50000, approval: 'Disapproved', comment: 'subiri', decided_by: 'GMO D', decided_at: '2026-07-19T08:00:00Z', app_date: '2026-07-18' },
   ];
   const db = fakeDb(t);
 
@@ -11497,7 +11497,11 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   ];
   t.advance_requests = [
     // The sheet's uploaded register, and anything filed before RUN-ME-045: no requester on the row.
-    { id: 'r-legacy', submitted_at: '2026-07-10T08:00:00Z', staff_id: 'X', staff_name: 'OLD ONE', zone: 'DAR EAST', amount: 50000, approval: 'Pending', app_date: '2026-07-10' },
+    // It carries the requester's role as the sheet wrote it, and that is what routes it: a field officer's request is the GMO's.
+    { id: 'r-legacy', submitted_at: '2026-07-10T08:00:00Z', staff_id: 'X', staff_name: 'OLD ONE', staff_role: 'LOAN OFFICER - MSAMVU', zone: 'DAR EAST', amount: 50000, approval: 'Pending', app_date: '2026-07-10' },
+    // An older request whose role the sheet left blank, and one whose role is not one role: nobody's but an admin's.
+    { id: 'r-norole', submitted_at: '2026-07-09T08:00:00Z', staff_id: 'Y', staff_name: 'NO ROLE', staff_role: null, zone: 'DAR EAST', amount: 30000, approval: 'Pending', app_date: '2026-07-09' },
+    { id: 'r-pmo', submitted_at: '2026-07-08T08:00:00Z', staff_id: 'Z', staff_name: 'ANY PMO', staff_role: 'PMO', zone: 'DAR EAST', amount: 30000, approval: 'Pending', app_date: '2026-07-08' },
   ];
   const db = fakeDb(t);
   const user = (code, extra) => ({ ...t.access_codes.find(c => c.code === code), tabs: ['advreq', 'advappr'], ...extra });
@@ -11508,6 +11512,10 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.deepEqual(routing.rolesApprovedBy('gmo'), ['FIELD OFFICER', 'GMO']);
   assert.deepEqual(routing.supervisees('C2').map(c => c.code), ['C1']);
   assert.equal(routing.supervisorOf('c1').name, 'CREDIT TWO'); assert.equal(routing.supervisorOf('C3'), null);
+  // THE ROLE A SHEET'S ROLE TEXT IS: the one role its words open, never a guess between several.
+  assert.equal(routing.roleOfSheetRole('LOAN OFFICER - MSAMVU'), 'FIELD OFFICER'); assert.equal(routing.roleOfSheetRole('F.O Singida'), 'FIELD OFFICER');
+  assert.equal(routing.roleOfSheetRole('Pmo Collection - Dodoma'), 'PMO COLLECTION'); assert.equal(routing.roleOfSheetRole('GMO KAGERA'), 'GMO');
+  assert.equal(routing.roleOfSheetRole('PMO'), null, 'PMO is every PMO role: nobody\'s guess'); assert.equal(routing.roleOfSheetRole(''), null); assert.equal(routing.roleOfSheetRole('Cook'), null);
 
   // THE ASK says who will see it, before it is sent -- and "nobody" is said by name.
   assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).route.label, 'GMO · zone DAR EAST (wadhifa / by role)');
@@ -11522,13 +11530,13 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   const rGd = await portalApi(db, user('GD'), 'advRequest', { staffId: 'GGG/005/2026', amount: 150000 }, NOW);
   assert.equal(rC1.route.kind, 'supervisor'); assert.equal(rL1.route.kind, 'none'); assert.equal(rL1.routed, true);
 
-  // THE DESK. The GMO of DAR EAST: the field officer, the legacy row, and their own -- NOT the
-  // credit, PMO or legal requests of the same zone.
+  // THE DESK. The GMO of DAR EAST: the field officer, the older field officer's request (read
+  // from its role text), and their own -- NOT the credit, PMO or legal requests of the same zone.
   const qGd = await portalApi(db, user('GD'), 'advQueue', {}, NOW);
   assert.deepEqual(qGd.pending.map(r => r.staff_name), ['ASHA', 'GMO D', 'OLD ONE'], 'newest first -- "new requests are on top"');
   assert.deepEqual(qGd.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], deptRoles: [], supervisees: [] });
   assert.equal(qGd.pending[0].route, 'GMO · zone DAR EAST (wadhifa / by role)');
-  assert.equal(qGd.pending[2].route, 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing');
+  assert.equal(qGd.pending[2].route, 'GMO · zone DAR EAST (wadhifa / by role)', 'the older request is routed by the role on it, not by its zone');
   assert.deepEqual(qGd.unrouted, [], 'only an admin is told about the unrouted');
   // MARA's GMO: nothing of DAR EAST's.
   assert.deepEqual((await portalApi(db, user('GM'), 'advQueue', {}, NOW)).pending, []);
@@ -11538,20 +11546,27 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.deepEqual(qC2.pending.map(r => r.staff_name), ['CREDIT ONE']);
   assert.equal(qC2.pending[0].route, 'CREDIT TWO (msimamizi / supervisor)');
   assert.deepEqual(qC2.desk.supervisees, [{ name: 'CREDIT ONE', role: 'CREDIT' }]);
-  assert.deepEqual((await portalApi(db, user('C3'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'only the legacy row, which reaches the zone\'s desk as before');
-  // The other department's manager (every team, so every zone) sees the PMO collection
-  // request, by role -- and the legacy row, as any holder of the tab did before routing.
+  /* "legal is seeing other roles' requests and of which she even ain't approver": holding the
+     tab and a team in the zone is not a reason to see a request. A colleague of the requester's
+     role, and a LAWYER, who approve nothing, see nothing -- not even the older field officer's. */
+  assert.deepEqual((await portalApi(db, user('C3'), 'advQueue', {}, NOW)).pending, [], 'a credit colleague approves no one');
+  assert.deepEqual((await portalApi(db, user('L1'), 'advQueue', {}, NOW)).pending, [], 'a lawyer with the tab and the zone approves no one');
+  assert.equal((await portalApi(db, user('L1'), 'advQueue', {}, NOW)).count, 0);
+  // The other department's manager (every team, so every zone) sees the PMO collection request, by role.
   const qPm = await portalApi(db, user('PM'), 'advQueue', {}, NOW);
-  assert.deepEqual(qPm.pending.map(r => r.staff_name), ['PMO COLL', 'OLD ONE']);
-  // The admin sees all five, and is told by name which one reaches nobody else.
+  assert.deepEqual(qPm.pending.map(r => r.staff_name), ['PMO COLL']);
+  // The admin sees all of them, and is told by name which reach nobody else: the lawyer's request
+  // (no approver), the older one with no role, and the older "PMO", which is every PMO role.
   const qA = await portalApi(db, ADMIN, 'advQueue', {}, NOW);
-  assert.equal(qA.pending.length, 6); assert.equal(qA.desk.admin, true);
-  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST' }]);
+  assert.equal(qA.pending.length, 8); assert.equal(qA.desk.admin, true);
+  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST' }, { staff_name: 'NO ROLE', req_role: null, zone: 'DAR EAST' }, { staff_name: 'ANY PMO', req_role: 'PMO', zone: 'DAR EAST' }]);
+  assert.match(qA.pending.find(r => r.staff_name === 'NO ROLE').route, /older request/);
   assert.equal(qA.routingOn, true); assert.equal(qA.routingNote, null);
 
   // THE DECISION follows the same rule: the supervisor decides across the zone; a colleague
   // of the same role and zone cannot; the GMO cannot decide the credit request; the admin can.
   await assert.rejects(() => portalApi(db, user('C3'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved' }] }, NOW), e => e.status === 403 && /not routed to your desk/.test(e.message));
+  await assert.rejects(() => portalApi(db, user('L1'), 'advDecide', { updates: [{ id: 'r-legacy', approval: 'Approved' }] }, NOW), e => e.status === 403 && /not routed to your desk/.test(e.message), 'nor can a lawyer decide the older field officer\'s request');
   await assert.rejects(() => portalApi(db, user('GD'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
   await assert.rejects(() => portalApi(db, user('GM'), 'advDecide', { updates: [{ id: rFo.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
   assert.equal((await portalApi(db, user('C2'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved', comment: 'ok' }] }, NOW)).approved, 1);
@@ -11570,11 +11585,12 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.deepEqual(gdRep.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], deptRoles: [], supervisees: [] });
   assert.equal(gdRep.routingOn, true);
   assert.deepEqual((await repOf(user('C2'))).rows.map(r => r.staff_name), ['CREDIT ONE'], 'the named supervisor: their person, from another zone');
-  assert.deepEqual((await repOf(user('C3'))).rows.map(r => r.staff_name), ['OLD ONE'], 'a colleague of the role and zone: only the legacy row');
+  assert.deepEqual((await repOf(user('C3'))).rows, [], 'a colleague of the role and zone approves no one: nothing');
+  assert.deepEqual((await repOf(user('L1'))).rows, [], 'a lawyer with the report: nothing');
   assert.deepEqual((await repOf(user('GM'))).rows, [], 'MARA\'s GMO: nothing of DAR EAST\'s');
-  assert.deepEqual((await repOf(user('PM'))).rows.map(r => r.staff_name).sort(), ['OLD ONE', 'PMO COLL']);
+  assert.deepEqual((await repOf(user('PM'))).rows.map(r => r.staff_name).sort(), ['PMO COLL']);
   const aRep = await portalApi(db, ADMIN, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
-  assert.equal(aRep.count, 6); assert.equal(aRep.desk.admin, true);
+  assert.equal(aRep.count, 8); assert.equal(aRep.desk.admin, true);
 
   // THE TWO SCREENS THAT SET IT UP. Roles & access writes the approver role; the code form the
   // supervisor -- which has to exist and cannot be the code itself. The codes list names the
@@ -11648,7 +11664,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.ok(db._dump('access_codes').every(c => !c.supervisor), 'every supervisor cleared');
   assert.deepEqual(db._dump('roles').find(r => r.role === 'GMO').tabs, ['advreq'], 'the other tabs stay');
   assert.ok((await portalApi(db, ADMIN, 'accessCodes', {}, NOW)).approvalsBackupAt, 'and Undo is offered');
-  assert.deepEqual((await portalApi(db, user('GD', { tabs: ['advappr'] }), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'a desk with nothing routed to it sees only the legacy row');
+  assert.deepEqual((await portalApi(db, user('GD', { tabs: ['advappr'] }), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), [], 'a desk with nothing routed to it sees nothing');
   const undone = await portalApi(db, ADMIN, 'resetApprovals', { undo: true }, NOW);
   assert.equal(undone.undone, true); assert.equal(undone.codes, 2);
   assert.equal(snap().roles, before.roles, 'every role exactly as it was');
@@ -11676,7 +11692,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   const qC2b = await portalApi(db, user('C2'), 'advQueue', {}, NOW);
   assert.deepEqual(qC2b.pending.map(r => r.staff_name), ['CREDIT FOUR'], 'the role\'s supervisor, in another zone, sees it');
   assert.equal(qC2b.pending[0].route, DEPT_LABEL); assert.deepEqual(qC2b.desk.deptRoles, ['CREDIT']);
-  assert.deepEqual((await portalApi(db, user('C3'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'a colleague of the role does not');
+  assert.deepEqual((await portalApi(db, user('C3'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), [], 'a colleague of the role does not');
   await assert.rejects(() => portalApi(db, user('C3'), 'advDecide', { updates: [{ id: rC4.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
   assert.equal((await portalApi(db, user('C2'), 'advDecide', { updates: [{ id: rC4.id, approval: 'Approved' }] }, NOW)).approved, 1);
   // A team code's role too: name one person for every FIELD OFFICER and the zone no longer decides.
@@ -11684,7 +11700,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).route.label, 'GMO M (msimamizi wa wadhifa FIELD OFFICER / supervisor of role FIELD OFFICER)');
   const rFo2 = await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
   assert.deepEqual((await portalApi(db, user('GM'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['ASHA'], 'MARA\'s GMO, named for the role, sees DAR EAST\'s field officer');
-  assert.deepEqual((await portalApi(db, user('GD'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'the zone\'s GMO no longer does');
+  assert.deepEqual((await portalApi(db, user('GD'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), [], 'the zone\'s GMO no longer does, nor the older field officer\'s request routed with the role');
   const gdRep2 = (await repOf(user('GD'))).rows.map(r => r.id);
   assert.ok(gdRep2.includes(rFo.id) && !gdRep2.includes(rFo2.id), 'the report keeps what the desk decided and drops what moved away from it');
   assert.ok((await repOf(user('GM'))).rows.map(r => r.id).includes(rFo2.id), 'and follows the request to the new desk');

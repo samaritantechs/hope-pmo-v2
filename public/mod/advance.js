@@ -133,7 +133,7 @@ VIEWS.advappr = function(){
       + ((d.unrouted||[]).length
           ? '<div class="note bad">⚠️ Maombi ' + d.unrouted.length + ' hayamfikii mtu isipokuwa admin — wadhifa wao hauna mwidhinishaji: '
             + esc(d.unrouted.map(function(u){ return u.staff_name + ' (' + (u.req_role || '?') + ')'; }).join(', '))
-            + '. Weka mwidhinishaji kwenye Nafasi na ruhusa. / ' + d.unrouted.length + ' request(s) reach nobody but an admin — their role has no approver set. Set it on Roles & access.</div>'
+            + '. Weka mwidhinishaji kwenye Nafasi na ruhusa. / ' + d.unrouted.length + ' request(s) reach nobody but an admin — their role has no approver set, or an older request\'s role is not one role Roles & access knows. Set the approver on Roles & access.</div>'
           : '')
       + (d.noZoneTeams && d.noZoneTeams.length
           ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(d.noZoneTeams.join(', '))
@@ -207,7 +207,7 @@ VIEWS.advrep = function(){
           : '<div class="note' + (deskLine ? '' : ' bad') + '">Ripoti hii inaonyesha / This report shows: '
               + (desk.admin ? esc(deskLine)
                  : deskLine ? 'maombi yaliyoelekezwa kwako na uliyoyaamua / the requests routed to your desk and the ones you decided — ' + esc(deskLine)
-                 : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako — maombi ya zone yako yaliyotumwa kabla ya uelekezaji, na uliyoyaamua, tu. / nothing is routed to your desk — only your zone\'s requests filed before routing, and the ones you decided.')
+                 : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako — utaona uliyoyaamua tu. / nothing is routed to your desk — you see only the ones you decided.')
               + '</div>')
       + bar('<input type="date" data-arg="from" value="' + esc(d.from) + '">'
         + '<input type="date" data-arg="to" value="' + esc(d.to) + '">'
