@@ -11508,6 +11508,21 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.deepEqual((await portalApi(db, user('C2'), 'advQueue', {}, NOW)).recent.map(r => r.staff_name), ['CREDIT ONE']);
   assert.deepEqual((await portalApi(db, user('C1'), 'advQueue', {}, NOW)).recent, [], 'the requester is not a desk');
 
+  /* THE REPORT IS THE DESK'S TOO -- "Roles with advance reports granted see all requests
+     regardless not approving those people": a holder of the report sees what is routed to
+     their desk and what they decided, nothing else of the zone; the admin's report is the book. */
+  const repOf = async u => portalApi(db, { ...u, tabs: ['advrep'] }, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
+  const gdRep = await repOf(user('GD'));
+  assert.deepEqual(gdRep.rows.map(r => r.staff_name).sort(), ['ASHA', 'GMO D', 'OLD ONE'], 'the field officer, their own, the legacy row -- not the credit, PMO or legal requests of the zone');
+  assert.deepEqual(gdRep.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], deptRoles: [], supervisees: [] });
+  assert.equal(gdRep.routingOn, true);
+  assert.deepEqual((await repOf(user('C2'))).rows.map(r => r.staff_name), ['CREDIT ONE'], 'the named supervisor: their person, from another zone');
+  assert.deepEqual((await repOf(user('C3'))).rows.map(r => r.staff_name), ['OLD ONE'], 'a colleague of the role and zone: only the legacy row');
+  assert.deepEqual((await repOf(user('GM'))).rows, [], 'MARA\'s GMO: nothing of DAR EAST\'s');
+  assert.deepEqual((await repOf(user('PM'))).rows.map(r => r.staff_name).sort(), ['OLD ONE', 'PMO COLL']);
+  const aRep = await portalApi(db, ADMIN, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
+  assert.equal(aRep.count, 6); assert.equal(aRep.desk.admin, true);
+
   // THE TWO SCREENS THAT SET IT UP. Roles & access writes the approver role; the code form the
   // supervisor -- which has to exist and cannot be the code itself. The codes list names the
   // supervisor rather than showing the code.
@@ -11598,9 +11613,12 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // A team code's role too: name one person for every FIELD OFFICER and the zone no longer decides.
   await portalApi(db, ADMIN, 'saveRole', { role: 'field officer', tabs: 'advreq', approverCode: 'GM' }, NOW);
   assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).route.label, 'GMO M (msimamizi wa wadhifa FIELD OFFICER / supervisor of role FIELD OFFICER)');
-  await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
+  const rFo2 = await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
   assert.deepEqual((await portalApi(db, user('GM'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['ASHA'], 'MARA\'s GMO, named for the role, sees DAR EAST\'s field officer');
   assert.deepEqual((await portalApi(db, user('GD'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'the zone\'s GMO no longer does');
+  const gdRep2 = (await repOf(user('GD'))).rows.map(r => r.id);
+  assert.ok(gdRep2.includes(rFo.id) && !gdRep2.includes(rFo2.id), 'the report keeps what the desk decided and drops what moved away from it');
+  assert.ok((await repOf(user('GM'))).rows.map(r => r.id).includes(rFo2.id), 'and follows the request to the new desk');
   await portalApi(db, ADMIN, 'saveRole', { role: 'field officer', tabs: 'advreq', approverCode: '' }, NOW);
   assert.equal(db._dump('roles').find(r => r.role === 'FIELD OFFICER').approver_code, null, 'blank clears it');
   // From the code's form: tick "every code of this role" and the person is written once on the role, the code left blank.

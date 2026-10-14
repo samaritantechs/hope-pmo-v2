@@ -183,6 +183,8 @@ function counting(tables, opts) {
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
 // Ticked for the ordinary screens -- see the note beside GMO in portal.test.mjs.
 const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: USER_TABS.slice() };
+// A holder of the advance report who is not an admin: the report is their desk's, not the zone's.
+const ADV_DESK = { code: 'G', name: 'GMO G', role: 'GMO', teams: [TEAMS[0]], tabs: ['advrep'] };
 
 /* ROWS ARE A BUDGET TOO, and leaving them out is how three unbounded reads of the comment log
    sat behind a guard that was passing. A filtered fetchAll costs ONE round trip and can still
@@ -339,6 +341,12 @@ const BUDGETS = [
   ['Advance: the ask',        'advRequestPage',      {}, ADMIN,  9,  1800,  9, 1800],
   ['Advance: GMO queue',      'advQueue',            {}, ADMIN,  7,  1000,  7, 1000],
   ['Advance: report',         'advReport',           {}, ADMIN,  5,  1500,  5, 1500],
+  /* A DESK'S report (2026-10-14) -- "Roles with advance reports granted see all requests
+     regardless not approving those people": +2 trips for the routing table (the roles, the
+     codes) and the queue's two narrowed reads (by req_code for a named supervisor, by req_role
+     for the roles routed to the desk), each skipped when the desk has none -- so 7 for this
+     GMO with nothing routed, 9 at most. An admin's report reads no routing: the whole window. */
+  ['Advance: report (a desk)', 'advReport',          {}, ADV_DESK, 9, 1500,  9, 1500],
   ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],
   /* 6 -> 8: two reads added with the letter rebuilt on the Google Sheets one -- the payments
      made since each notice (one RPC for the whole register, the question the register exists

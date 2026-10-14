@@ -1816,6 +1816,23 @@ function advSees_(routing, user, zones, r) {
   if (route.kind === 'legacy') return advZoneOk_(zones, r.zone);
   return false;
 }
+/** The three ways requests reach ONE desk, for the queue and the report alike: the codes it
+    supervises by name (read by req_code, whatever zone those sit in), the roles it supervises
+    whole (RUN-ME-046) and the roles routed to it (both read by req_role, in one exact `in`;
+    req_role is written upper-cased) -- and the desk as the screen describes it. Without the
+    routing (no RUN-ME-045, or an admin, who reads none) there is only the zone read. */
+function advDeskOf_(routing, user) {
+  const on = !!(routing && routing.on);
+  const mine = on ? routing.supervisees(user.code).map(c => c.code) : [];
+  const deptRoles = on ? routing.deptRolesOf(user.code) : [];
+  const roleKeys = on ? [...new Set(routing.rolesApprovedBy(user.role).concat(deptRoles).map(K))] : [];
+  const desk = { admin: isAdminUser(user), roles: routing ? routing.rolesApprovedBy(user.role) : [], deptRoles,
+    supervisees: routing ? routing.supervisees(user.code).map(c => ({ name: c.name, role: c.role })) : [] };
+  return { mine, roleKeys, desk };
+}
+/** The zone read, the by-code read and the by-role read, as one list: a row the three brought
+    twice is one row. */
+const advMerge_ = (...lists) => { const by = new Map(); for (const l of lists) for (const r of (l || [])) by.set(String(r.id), r); return [...by.values()]; };
 /** HR's registry: everybody in the zones the viewer may see, searchable; the zone list the
     form offers (Teams & Staff's zones plus any already in the registry); the next serial. */
 async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) {
@@ -2052,19 +2069,13 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
      under it, rather than a fortnight that is empty most of the time. */
   const month = todayKey(nowMs).slice(0, 7);
   const since = month + '-01';
-  /* TWO READS, BOTH NARROWED AT THE DATABASE: the viewer's zones (what the role rule and the
-     legacy rows reach them through), and -- for a named supervisor -- their people's requests
-     by code, whatever zone those sit in. Then the one routing rule decides each row. */
-  const mine = routing.on ? routing.supervisees(user.code).map(c => c.code) : [];
-  // A whole role this person supervises (RUN-ME-046) is read by ROLE, whatever the zone --
-  // its requesters include team codes, which are not codes on the book. ilike: a code's
-  // role keeps its own spelling.
-  const deptRoles = routing.on ? routing.deptRolesOf(user.code) : [];
-  /* AND BY ROLE, WHATEVER THE ZONE: the roles routed to this desk and the roles it supervises
-     whole, in one exact `in` (req_role is written upper-cased; the zone read above still
-     catches older spellings in zone). A customer-service request carries no zone -- one
-     shared code, names off the roster -- so the zone read alone would never bring it. */
-  const roleKeys = routing.on ? [...new Set(routing.rolesApprovedBy(user.role).concat(deptRoles).map(K))] : [];
+  /* THREE READS, ALL NARROWED AT THE DATABASE (advDeskOf_): the viewer's zones (what the role
+     rule and the legacy rows reach them through); for a named supervisor, their people's
+     requests by code, whatever zone those sit in; and by role, whatever the zone -- the roles
+     routed to this desk and the roles it supervises whole. A customer-service request carries
+     no zone -- one shared code, names off the roster -- so the zone read alone would never
+     bring it. Then the one routing rule decides each row. */
+  const { mine, roleKeys, desk } = advDeskOf_(routing, user);
   const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: false });
   const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
   const [pending0, recent0, pendS, recS, pendR, recR] = await Promise.all([
@@ -2076,18 +2087,14 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
     roleKeys.length ? advRead_(() => recQ().in('req_role', roleKeys)) : [],
   ]);
   const on = Array.isArray(pending0);
-  const merge = (...lists) => { const by = new Map(); for (const l of lists) for (const r of (l || [])) by.set(String(r.id), r); return [...by.values()]; };
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
   const withRoute = r => ({ ...r, route: advRouteLabel_(advRouteOf_(routing, r), r.zone) });
-  const pending = merge(pending0, pendS, pendR).filter(sees)
+  const pending = advMerge_(pending0, pendS, pendR).filter(sees)
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
-  const recent = merge(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
+  const recent = advMerge_(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
-  // What this desk IS -- the roles routed to it, the roles it supervises whole, the people it
-  // supervises by name -- and, for an admin, the pending requests that reach nobody else.
-  const admin = isAdminUser(user);
-  const desk = { admin, roles: routing.rolesApprovedBy(user.role), deptRoles,
-    supervisees: routing.supervisees(user.code).map(c => ({ name: c.name, role: c.role })) };
+  // What this desk IS (advDeskOf_) -- and, for an admin, the pending requests that reach nobody else.
+  const admin = desk.admin;
   const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role, zone: r.zone })) : [];
   return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length, month,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
@@ -2124,21 +2131,35 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
   return { updated: approved + disapproved, approved, disapproved, skipped };
 }
 /** The report the sheet exported: the requests of a window, Approved by default, by zone,
-    with the bank and account beside each so payroll can be paid off the board. */
+    with the bank and account beside each so payroll can be paid off the board.
+    WHOSE REQUESTS -- "Roles with advance reports granted see all requests regardless not
+    approving those people": a desk's report is what that desk decides on (advSees_, the one
+    routing rule, read the way the queue reads it) and what it decided -- not the zone. An
+    admin's report is the whole book, which is what payroll pays off. */
 async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Date.now()) {
   const today = todayKey(nowMs);
   const fromKey = advDate_(from) || today.slice(0, 8) + '01';
   const toKey = advDate_(to) || today;
   const want = approval == null || approval === '' ? 'Approved' : (K(approval) === 'ALL' ? 'ALL' : (ADV_APPROVALS.find(a => K(a) === K(approval)) || 'Approved'));
-  const teamRows = await readTeamsAll(db, nowMs);
+  const admin = isAdminUser(user);
+  // An admin's report is every row of the window: no routing table to read for it.
+  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), admin ? null : advRouting_(db)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
-  const rows0 = await advRead_(() => {
-    let q = onZones_(db.from('advance_requests').select('*').gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
-      .order('submitted_at', { ascending: false }), zones);      // newest first, like the desk
+  const { mine, roleKeys, desk } = advDeskOf_(routing, user);
+  const winQ = () => {
+    const q = db.from('advance_requests').select('*').gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
+      .order('submitted_at', { ascending: false });               // newest first, like the desk
     return want === 'ALL' ? q : q.eq('approval', want);
-  });
+  };
+  const [rows0, rowsS, rowsR] = await Promise.all([
+    advRead_(() => onZones_(winQ(), zones)),
+    mine.length ? advRead_(() => winQ().in('req_code', mine)) : [],
+    roleKeys.length ? advRead_(() => winQ().in('req_role', roleKeys)) : [],
+  ]);
   const on = Array.isArray(rows0);
-  let rows = (rows0 || []).filter(r => advZoneOk_(zones, r.zone) && (!zone || K(r.zone) === K(zone)));
+  const sees = r => (admin ? advZoneOk_(zones, r.zone) : (advSees_(routing, user, zones, r) || K(r.decided_by) === K(user.name)))
+    && (!zone || K(r.zone) === K(zone));
+  let rows = advMerge_(rows0, rowsS, rowsR).filter(sees).sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
   const ids = [...new Set(rows.map(r => r.staff_id).filter(Boolean))];
   const reg = ids.length && ids.length <= 400 ? (await advRead_(() => db.from('staff_registry').select('id, bank, account, phone').in('id', ids))) || [] : [];
   const regBy = new Map(reg.map(r => [K(r.id), r]));
@@ -2156,7 +2177,8 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
     amount: rows.reduce((s2, r) => s2 + num(r.amount), 0),
     approved: rows.filter(r => K(r.approval) === 'APPROVED').length,
     approvedAmount: rows.filter(r => K(r.approval) === 'APPROVED').reduce((s2, r) => s2 + num(r.amount), 0),
-    summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(ADV_APPROVALS) };
+    summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(ADV_APPROVALS),
+    desk, routingOn: routing ? routing.on : true, routingNote: routing && !routing.on ? ADV_ROUTE_NOTE : null };
 }
 
 /** Loan restructuring. A restructure is a written offer: the customer pays something now, and
