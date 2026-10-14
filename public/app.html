@@ -729,7 +729,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-14-c';
+var BUILD = '2026-10-14-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -935,11 +935,11 @@ var NAV = [
      filed under a different word higher up the nav. */
   { id:'expdfrep',    label:'Exp.Def Report', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h2M8 18h2M13 17l2 2 4-4"/>' },
   { id:'followup',    label:'Defaulters Followup', ic:'<path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.22a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>' },
-  { id:'commission',  label:'My Commission', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
+  { id:'commission',  div:'mgmt', label:'My Commission', ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
   /* THE DAILY BONUS PLAN -- a PREVIEW of the daily bonus meter and the leaders' checklist, so the
      GM can see the idea and say what to change. Admin-only until it is ticked on a role, like
      `audit`; it reads nothing and saves nothing. */
-  { id:'bonusplan',   label:'Bonasi ya Kila Siku / Daily Bonus Plan', ic:'<path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/>' },
+  { id:'bonusplan',   div:'mgmt', label:'Bonasi ya Kila Siku / Daily Bonus Plan', ic:'<path d="M4 20V11M10 20V4M16 20v-6M22 20H2"/>' },
   { id:'promises',    label:'Promise to Pay', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
   { id:'fureport',    label:'Followup Report', ic:'<path d="M9 2h6a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2z"/><path d="M9 11h6M9 15h6"/>' },
   { id:'calls',       label:'Call Reports', ic:'<path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H3v-7a9 9 0 0 1 18 0v7h-3a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/>' },
@@ -948,15 +948,15 @@ var NAV = [
      DIRECTLY UNDER Abnormal Payments ("Am not yet seeing 'pmo deduction' nav under abnormal
      in the left pannel"). Granted like `audit`: admins from the start, then whoever the tab
      is ticked for. */
-  { id:'deduct',      label:'Makato ya PMO / PMO Deduction', ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/><path d="M15 15l2 2 4-4"/>' },
+  { id:'deduct',      div:'mgmt', label:'Makato ya PMO / PMO Deduction', ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h6"/><path d="M15 15l2 2 4-4"/>' },
   /* SALARY ADVANCE -- the HOPE advance-request Google Sheet moved in ("We need to shift that
      into the app too"), four navs so each can be granted on its own on Roles & access: the
      ask (field officers, on their team's code -- the FIELD OFFICER role), the GMO's desk, the
      report with the bank accounts, HR's staff registry. */
-  { id:'advreq',      label:'Omba advance / Advance request', ic:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>' },
-  { id:'advappr',     label:'Idhini ya advance / Advance approval', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
-  { id:'advrep',      label:'Ripoti ya advance / Advance report', ic:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>' },
-  { id:'advstaff',    label:'Wafanyakazi (HR) / HR staff data', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
+  { id:'advreq',      div:'mgmt', label:'Omba advance / Advance request', ic:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>' },
+  { id:'advappr',     div:'mgmt', label:'Idhini ya advance / Advance approval', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+  { id:'advrep',      div:'mgmt', label:'Ripoti ya advance / Advance report', ic:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>' },
+  { id:'advstaff',    div:'mgmt', label:'Wafanyakazi (HR) / HR staff data', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   { id:'legal',       label:'Legal / Demand Notices', ic:'<path d="M3 6l9-3 9 3"/><path d="M6 9v7a6 6 0 0 0 12 0V9"/><path d="M3 6l3 3M21 6l-3 3"/>' },
   { id:'restructure', label:'Loan Restructuring', ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
   { id:'credit',      label:'Credit Analysts', ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
@@ -978,13 +978,13 @@ var NAV = [
      impreq asks (and sees their own history); impappr is the GM's desk -- decide, and the
      accommodation-rate table; imprep is the review copy, where the accountant also writes the
      funded amount once the GM has decided. */
-  { id:'impreq',      label:'Omba Imprest / Imprest request',
+  { id:'impreq',      div:'mgmt', label:'Omba Imprest / Imprest request',
     ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15.5l2 2 4-4"/>' },
-  { id:'impappr',     label:'Idhini ya Imprest / Imprest approval',
+  { id:'impappr',     div:'mgmt', label:'Idhini ya Imprest / Imprest approval',
     ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M9 15l2 2 4-4"/><path d="M8 19h.01M12 19h.01"/>' },
-  { id:'imprep',      label:'Ripoti ya Imprest / Imprest report',
+  { id:'imprep',      div:'mgmt', label:'Ripoti ya Imprest / Imprest report',
     ic:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M7 14h4M7 17h7"/>' },
-  { id:'teams',       label:'Teams & Staff', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
+  { id:'teams',       div:'mgmt', label:'Teams & Staff', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   /* THE COMPANY PHONE REGISTER, AS TWO PANES BECAUSE IT IS TWO AUTHORITIES.
        "field officers, managers, gmos, pmos etc are provided with company devices and some of
         uor unworth employees quit with our phones so GM has ordered to implement those two
@@ -993,18 +993,18 @@ var NAV = [
      the two cannot drift into disagreeing about the fleet. What differs is which orders each
      offers, and the SERVER gates the order itself on the state being asked for, so hiding a
      button here is the courtesy rather than the rule. */
-  { id:'devlock',     label:'Kufunga simu / Locking',
+  { id:'devlock',     div:'mgmt', label:'Kufunga simu / Locking',
     ic:'<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/><path d="M9 10V8a3 3 0 0 1 6 0v2"/><rect x="8" y="10" width="8" height="5" rx="1"/>' },
-  { id:'devunlock',   label:'Kufungua simu / Unlocking',
+  { id:'devunlock',   div:'mgmt', label:'Kufungua simu / Unlocking',
     ic:'<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/><path d="M9 10V8a3 3 0 0 1 6 0"/><rect x="8" y="10" width="8" height="5" rx="1"/>' },
   { id:'upload',      label:'Upload Reports', ic:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/>' },
-  { id:'settings',    label:'Settings', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>' },
+  { id:'settings',    div:'mgmt', label:'Settings', ic:'<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/>' },
   /* Granted, not assumed -- which is now true of every tab in this list, not only this one.
      Admins hold it from the start; anyone else gets it when the tab is ticked on their role. */
   /* WHO WAS BEST, AND WHEN. A read of what was RECORDED, never a recomputation -- the whole
      point is that these figures are not re-derived from a teams table that has since changed. */
-  { id:'perf',        label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
-  { id:'audit',       label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+  { id:'perf',        div:'mgmt', label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
+  { id:'audit',       div:'mgmt', label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
   /* "they aint seen anywhere even in my admin user yet they are in the uploaded file"
      The findcust VIEW lives on -- reached by the magnifier in the top bar -- but its sidenav
      entry was removed on request. `hidden` keeps it out of the drawn nav while go() and the
@@ -1018,7 +1018,7 @@ var NAV = [
     ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>' },
   /* Reached from the blinking dot on My Commission, exactly the way the month report is
      reached from the dashboard's -- the month's commission record, not one more drawer item. */
-  { id:'cmmonth', label:'Kamisheni ya Mwezi / Month Commission', hidden: true,
+  { id:'cmmonth', div:'mgmt', label:'Kamisheni ya Mwezi / Month Commission', hidden: true,
     ic:'<circle cx="12" cy="12" r="9"/><path d="M12 6v12M15.5 8.5c-.8-.9-2-1.4-3.5-1.4-1.9 0-3 1-3 2.2 0 3 6.5 1.6 6.5 4.6 0 1.3-1.3 2.3-3.2 2.3-1.6 0-2.9-.6-3.8-1.6"/>' },
   /* Reached from the blinking dot beside the Weekly Report's stamp button, the same way the
      month report is reached from the dashboard's -- "put a blue blinking dot for this infront
@@ -1030,7 +1030,7 @@ var NAV = [
      settings nav system view not call view" -- a standalone screen, reached from a button on
      Settings rather than a nav item of its own (it is one more thing an admin opens, not
      something anybody browses to daily). */
-  { id:'officerloc', label:'Mahali walipo maafisa / Officer locations', hidden: true,
+  { id:'officerloc', div:'mgmt', label:'Mahali walipo maafisa / Officer locations', hidden: true,
     ic:'<path d="M12 21s-7-6.5-7-11a7 7 0 0 1 14 0c0 4.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>' }
 ];
 /* =====================================================================================
@@ -1061,6 +1061,24 @@ var NAV = [
    The phone is untouched. An officer sees their teams in HOPE Calls exactly as before -- this
    is the portal's nav list and nothing else. */
 var HIDDEN_VIEWS = ['findcust', 'monthreport', 'cmmonth', 'teamtrend'];
+
+/* =====================================================================================
+   HOPE MANAGEMENT -- the third division of the sidebar.
+   =====================================================================================
+     "App is becoming bigger as we had hopeloan and hope pmo divisions in the left nav we now
+      have to have 3 by adding hope management ... since there are many tabs not associated
+      with portfolio followups."
+
+   The screens that are about the company rather than the portfolio -- people (Teams & Staff,
+   HR's registry), money (advances, imprest, deductions, commission, the bonus plan), the
+   phones, the records (Best of, the audit log) and Settings -- carry `div:'mgmt'` on their NAV
+   entry and are drawn under their own heading, in THIS order (grouped by what they are, not
+   by the working day the HOPE PMO list follows). Nothing else about them changes: same ids,
+   same ticks on Roles & access (in their own list there too), same gate, same screens. A tab
+   that is not here is HOPE PMO's. To move one, flag it and place it here. */
+var MGMT_ORDER = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'impreq', 'impappr', 'imprep', 'deduct',
+  'commission', 'bonusplan', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
+function isMgmtId_(id){ var n = NAV.filter(function(x){ return x.id===id; })[0]; return !!(n && n.div === 'mgmt'); }
 
 /* =====================================================================================
    HOPE LOAN'S OWN NAV -- one screen per stage, gated on the HOPE LOAN TAB, not the role name.
@@ -1168,29 +1186,32 @@ function buildNav(){
     b.onclick = function(){ go(n.id); };
     el.appendChild(b);
   }
-  // HOPE LOAN FIRST, THEN HOPE PMO -- "hopeloanones should start before the pmo ones". Origination
-  // is the front door for anyone who holds one of its tabs; everything else follows below it.
-  var loanShown = false;
+  /* THREE DIVISIONS, ONE SCROLL. HOPE Loan first ("hopeloanones should start before the pmo
+     ones" -- origination is the front door for anyone holding one of its tabs), then HOPE PMO
+     in its working-day order, then HOPE Management in MGMT_ORDER. Each heading is drawn only
+     when its division has at least one tab this code holds, and headings appear at all only
+     when more than one division is drawn -- a code holding tabs of one division alone still
+     gets the plain, unlabelled list it always had. */
+  var sections = [];
   if (S.me.hopeLoanAvailable) {
     var loanItems = NAV_LOAN.filter(function(n){ return allowed(n.id) && !n.hidden; });
-    if (loanItems.length) {
-      var loanHead = document.createElement('div');
-      loanHead.className = 'navhead';
-      loanHead.textContent = 'HOPE Loan';
-      el.appendChild(loanHead);
-      loanItems.forEach(drawItem);
-      loanShown = true;
+    if (loanItems.length) sections.push({ label: 'HOPE Loan', items: loanItems });
+  }
+  var pmoItems = NAV.filter(function(n){ return n.div !== 'mgmt' && allowed(n.id) && !n.hidden; });
+  if (pmoItems.length) sections.push({ label: 'HOPE PMO', items: pmoItems });
+  var mgmtItems = MGMT_ORDER.map(function(id){ return NAV.filter(function(n){ return n.id===id; })[0]; })
+    .concat(NAV.filter(function(n){ return n.div === 'mgmt' && MGMT_ORDER.indexOf(n.id) < 0; }))   // flagged but not placed: last
+    .filter(function(n){ return n && n.div === 'mgmt' && allowed(n.id) && !n.hidden; });
+  if (mgmtItems.length) sections.push({ label: 'HOPE Management', items: mgmtItems });
+  sections.forEach(function(s){
+    if (sections.length > 1) {
+      var head = document.createElement('div');
+      head.className = 'navhead';
+      head.textContent = s.label;
+      el.appendChild(head);
     }
-  }
-  // A second label only once there is something above it to tell it apart from -- a code with
-  // no HOPE Loan tab still gets the plain, unlabelled list it always had.
-  if (loanShown) {
-    var pmoHead = document.createElement('div');
-    pmoHead.className = 'navhead';
-    pmoHead.textContent = 'HOPE PMO';
-    el.appendChild(pmoHead);
-  }
-  NAV.forEach(function(n){ if (allowed(n.id) && !n.hidden) drawItem(n); });
+    s.items.forEach(drawItem);
+  });
 }
 /* =====================================================================================
    SCREENS THAT LOAD WHEN THEIR TAB OPENS.
