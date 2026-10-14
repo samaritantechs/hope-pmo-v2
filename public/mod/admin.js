@@ -282,23 +282,18 @@ function roleForm(x){
   var isNew = !x;
   var all = (S.roleMeta && S.roleMeta.allTabs) || [];
   var have = (x && x.tabs) || [];
-  /* THE ADVANCE APPROVER OF THIS ROLE (RUN-ME-045): any role on the book, the role itself
-     included -- "choose role credit choose supervisor from role credit", "choose role pmo
-     collection choose their approver as role pmo manager". An approver that is no longer a
-     role still shows, so it can be seen and changed rather than silently dropped. */
-  var roleNames = ((S.roleMeta && S.roleMeta.roles) || []).map(function(r){ return r.role; });
-  var ap = String((x && x.approver_role) || '');
-  if (ap && !roleNames.some(function(r){ return r.toUpperCase() === ap.toUpperCase(); })) roleNames.push(ap);
+  /* WHAT THIS ROLE APPROVES (RUN-ME-045), asked from the approver's side -- "granting someone
+     approval tab I choose which roles they can approve ... Simplest solving. If I choose same
+     role then I select user". The list shows under the advappr tick and follows it live; a
+     role ticked here gets THIS role as its approver (one approver per role, so one already
+     pointing elsewhere says so and moves). The same role ticked means each of its codes then
+     names a supervisor on the code form. */
+  var roleRows = (S.roleMeta && S.roleMeta.roles) || [];
+  var me = x ? String(x.role || '').toUpperCase() : '';
+  var hasAppr = have.indexOf('advappr') >= 0;
   drawer('<h3>'+(isNew?'Wadhifa mpya / New role':esc(x.role))+'</h3>'
     + '<div class="sub">Msimbo wenye orodha tupu ya tabs hurithi hii. / A code with a blank tab list inherits this one.</div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="rName" value="'+esc(x?x.role:'')+'"'+(isNew?'':' readonly')+'></div>'
-    + '<div class="fld"><label>Mwidhinishaji wa advance / Advance approver (wadhifa / role)</label>'
-      + '<select id="rApprover"><option value="">— hakuna / none —</option>'
-      + roleNames.map(function(r){ return '<option value="'+esc(r)+'"'+(r.toUpperCase() === ap.toUpperCase() ? ' selected' : '')+'>'+esc(r)+'</option>'; }).join('')
-      + '</select>'
-      + '<div class="fldnote">Maombi ya advance ya wadhifa huu huenda kwa kila mwenye wadhifa unaochaguliwa hapa, ndani ya zone zake. Ukichagua wadhifa uleule (mf. CREDIT → CREDIT), kila msimbo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin.'
-        + ' / This role\'s advance requests go to every holder of the approver role, within their zones. Pick the SAME role (credit → credit) and each code must then name its supervisor on the code form, or the request reaches nobody but an admin.'
-        + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
     /* TWO LISTS, EACH UNDER ITS OWN NAME. One flat run of words put `gmo`, `manager`, `team`,
        `finance`, `gm` and `customer_service` beside `dashboard` and `followup` with nothing
        to say the first six open HOPE LOAN -- so a role called GMO got `gmo` ticked, a manager
@@ -307,6 +302,18 @@ function roleForm(x){
     + '<div class="fld"><label>Tabs — HOPE PMO</label><div class="checks">'
     + all.filter(function(t){ return !isLoanTab_(t); }).map(function(t){ return tabTick_(t, have); }).join('')
     + '</div></div>'
+    + '<div class="fld" id="rApprovesWrap"'+(hasAppr ? '' : ' style="display:none"')+'>'
+      + '<label>Huidhinisha maombi ya advance ya wadhifa / Approves advance requests from roles</label><div class="checks">'
+      + roleRows.map(function(r){
+          var rr = String(r.role||'').toUpperCase(), ap = String(r.approver_role||'').toUpperCase();
+          var mine = !!me && ap === me;
+          return '<label><input type="checkbox" class="rApp" value="'+esc(r.role)+'"'+(mine ? ' checked' : '')+'> '+esc(r.role)
+            + (rr === me ? ' <span class="chip mut">wadhifa uleule → msimamizi kwa msimbo / same role → supervisor per code</span>' : '')
+            + (ap && !mine ? ' <span style="color:var(--mut);font-size:11px">(sasa / now: '+esc(r.approver_role)+')</span>' : '')
+            + '</label>'; }).join('')
+      + '</div><div class="fldnote">Kila wadhifa uliotikiwa hapa, maombi yake ya advance huja kwenye dawati la wadhifa huu, ndani ya zone zake. Ukitiki wadhifa huu wenyewe (CREDIT → CREDIT), kila msimbo wa wadhifa huo lazima uchaguliwe msimamizi wake kwenye fomu ya msimbo — vinginevyo ombi halimfikii mtu isipokuwa admin. Wadhifa una mwidhinishaji mmoja tu: ukiutiki hapa, unaondoka kwa yule wa awali.'
+        + ' / Every role ticked here sends its advance requests to this role\'s desk, within its zones. Tick this role itself (credit → credit) and each of its codes must then name a supervisor on the code form, or the request reaches nobody but an admin. A role has ONE approver: ticking it here takes it off the one it had.'
+        + (S.routingOn === false ? '<br>⚠️ ' + esc(S.routingNote || '') : '') + '</div></div>'
     + '<div class="fld"><label>Tabs — HOPE Loan</label>'
     + '<div class="fldnote">Hizi hufungua HOPE LOAN, si skrini za HOPE PMO. / These open HOPE LOAN screens, not HOPE PMO ones.</div>'
     + '<div class="checks">'
@@ -314,12 +321,18 @@ function roleForm(x){
     + '</div></div>'
     + '<button class="btn w" id="rSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="rDel">Futa / Delete role</button>'));
+  // The "approves" list follows the advappr tick as it is made, so the question is asked at
+  // the moment the tab is granted.
+  var apprTick = document.querySelector('.rTab[value="advappr"]');
+  if (apprTick) apprTick.onchange = function(){ $('#rApprovesWrap').style.display = apprTick.checked ? '' : 'none'; };
   $('#rSave').onclick = function(){
     var tabs = Array.prototype.filter.call(document.querySelectorAll('.rTab'), function(c){ return c.checked; })
       .map(function(c){ return c.value; }).join(',');
-    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs, approverRole: $('#rApprover').value })
-      // The tabs save on any database; the approver only with RUN-ME-045, and the answer says.
-      .then(function(r){ toast(r && r.note ? '⚠️ Tabs zimehifadhiwa; mwidhinishaji hajahifadhiwa. / Tabs saved; the approver was not: ' + r.note : 'Imehifadhiwa. / Saved.', !!(r && r.note)); closeDrawer(); render(); })
+    var approves = Array.prototype.filter.call(document.querySelectorAll('.rApp'), function(c){ return c.checked; })
+      .map(function(c){ return c.value; }).join(',');
+    srv('saveRole', { role: $('#rName').value.trim(), tabs: tabs, approves: approves })
+      // The tabs save on any database; the approvals only with RUN-ME-045, and the answer says.
+      .then(function(r){ toast(r && r.note ? '⚠️ Tabs zimehifadhiwa; uidhinishaji haujahifadhiwa. / Tabs saved; the approvals were not: ' + r.note : 'Imehifadhiwa. / Saved.', !!(r && r.note)); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
   if (!isNew) $('#rDel').onclick = function(){
@@ -674,6 +687,11 @@ VIEWS.settings = function(){
         + '<span class="sub">'
         + '<button class="btn sm ghost" id="resetRoles">Anza upya / Start empty</button>'
         + (ac.roleBackupAt ? ' <button class="btn sm ghost" id="undoRoles">Rudisha / Undo</button>' : '')
+        /* "Clear all approval granted roles so that I start granting and choosing what they
+           govern" -- the approval tab, the approvers and the supervisors, off every role and
+           code but ADMIN, saved first so it can be put back. */
+        + ' <button class="btn sm ghost" id="resetApprovals">Futa uidhinishaji / Clear approvals</button>'
+        + (ac.approvalsBackupAt ? ' <button class="btn sm ghost" id="undoApprovals">Rudisha uidhinishaji / Undo approvals</button>' : '')
         + ' <button class="btn sm" id="newRole">+ Wadhifa mpya / New role</button></span></div>'
         + '<div class="note" style="margin:10px 14px">Bofya wadhifa kuchagua tabs zake. Kila msimbo wenye wadhifa huu hurithi orodha hii.'
         + ' / Tap a role to tick its tabs. Every access code with that role inherits this list.'
@@ -687,8 +705,8 @@ VIEWS.settings = function(){
            approver as role pmo manager ... this also sounds neat for me to setup not you in bg".
            The sheet routed by department zone codes with approver codes; the portal routes on
            the role that asks (this column) and, where named, the code's own supervisor. */
-        + '<br><b>Mwidhinishaji wa advance</b>: kila wadhifa huchagua wadhifa unaoidhinisha maombi yake ya advance (F.O → GMO, PMO COLLECTION → PMO MANAGER). Ukichagua wadhifa uleule (CREDIT → CREDIT), kila msimbo huchaguliwa msimamizi wake kwenye fomu ya msimbo.'
-        + ' / <b>Advance approver</b>: each role picks the role that approves its advance requests. Pick the SAME role (credit → credit) and each code then names its supervisor on the code form.'
+        + '<br><b>Uidhinishaji wa advance</b>: unapompa wadhifa tab ya <b>advappr</b>, tiki wadhifa anazoidhinisha (GMO: F.O, MANAGER, BIKE; PMO MANAGER: PMO COLLECTION). Ukitiki wadhifa uleule (CREDIT → CREDIT), kila msimbo huchaguliwa msimamizi wake kwenye fomu ya msimbo. <b>Futa uidhinishaji</b> huondoa tab hiyo, waidhinishaji na wasimamizi wote (ADMIN inabaki) ili uanze kupanga — <b>Rudisha</b> inairejesha.'
+        + ' / <b>Advance approvals</b>: when you grant a role the <b>advappr</b> tab, tick the roles it approves (GMO: F.O, MANAGER, BIKE; PMO MANAGER: PMO COLLECTION). Tick the SAME role (credit → credit) and each code then names its supervisor on the code form. <b>Clear approvals</b> takes that tab, every approver and every supervisor off (ADMIN keeps it) so you grant from empty; <b>Undo</b> puts them back.'
         + (ac.routingOn === false ? '<br>⚠️ ' + esc(ac.routingNote || '') : '')
         + '</div>'
         + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Wadhifa / Role</th>'
@@ -1338,6 +1356,33 @@ function wireStaffExcel(){
    functions remain for the API. */
 /* Cleaning old reports deletes a DAY OF HISTORY, so the flow is deliberately two-step: Check
    counts the rows without touching anything, Clean asks once more and names the number. */
+/* The approvals' clean slate and its way back -- wired like the roles' own (resetRoles /
+   undoRoles in the core), called from wireForms once this module is in. */
+function wireApprovalsReset_(){
+  var b = document.getElementById('resetApprovals');
+  if (b) b.onclick = function(){
+    if (!confirm('Ondoa tab ya advappr, waidhinishaji na wasimamizi wote kwa nafasi na misimbo yote? ADMIN inabaki, na hali ya sasa inahifadhiwa ili uweze kurudisha.'
+      + '\n\nTake the advappr tab, every approver and every supervisor off every role and code? ADMIN keeps the tab. The current state is saved first, so Undo can put it back.')) return;
+    b.disabled = true;
+    srv('resetApprovals', {})
+      .then(function(r){
+        toast('Imefutwa: tab kwa nafasi ' + money(r.tabsCleared) + ', waidhinishaji ' + money(r.approversCleared) + ', wasimamizi ' + money(r.codesCleared)
+          + '. / Cleared: the tab off ' + money(r.tabsCleared) + ' role(s), ' + money(r.approversCleared) + ' approver(s), ' + money(r.codesCleared) + ' supervisor(s).'
+          + (r.note ? ' ⚠️ ' + r.note : ''), !!r.note);
+        render();
+      })
+      .catch(function(e){ b.disabled = false; toast(String(e.message||e), true); });
+  };
+  var u = document.getElementById('undoApprovals');
+  if (u) u.onclick = function(){
+    if (!confirm('Rudisha uidhinishaji wote kama ulivyokuwa kabla ya "Futa uidhinishaji"?\n\nPut every approval, approver and supervisor back as it was before "Clear approvals"?')) return;
+    u.disabled = true;
+    srv('resetApprovals', { undo: true })
+      .then(function(r){ toast('Imerudishwa: nafasi ' + money(r.roles) + ', misimbo ' + money(r.codes) + '. / Restored ' + money(r.roles) + ' role(s) and ' + money(r.codes) + ' code(s).'); render(); })
+      .catch(function(e){ u.disabled = false; toast(String(e.message||e), true); });
+  };
+}
+
 function wireClean(){
   var run = document.getElementById('clRun'), chk = document.getElementById('clCheck');
   if (!run && !chk) return;

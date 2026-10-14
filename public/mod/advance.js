@@ -50,21 +50,22 @@ VIEWS.advreq = function(){
               + '<div class="frow"><span>Jina / Name</span><b>' + esc(c.name) + '</b></div>'
               + '<div class="frow"><span>Wadhifa / Role</span><span>' + esc(c.role || '—') + '</span></div>'
               + '<div class="frow"><span>Zone</span><span>' + esc(c.zone || '—') + '</span></div></div>'
+            /* No amount, no decision, no history on this shared screen -- "Only approvers see
+               that". Just the one fact the month's rule needs: a request already went in. */
             + (d.monthTaken
-                ? '<div class="note bad">⚠️ Tayari kuna ombi la mwezi huu (' + esc(d.month) + '): TZS ' + money(d.monthTaken.amount) + ' · ' + esc(d.monthTaken.approval)
-                  + '. Ombi moja tu kwa mwezi. / You already have an advance request this month. Only one request per month is allowed.</div>'
+                ? '<div class="note bad">⚠️ Ombi la mwezi huu (' + esc(d.month) + ') tayari limetumwa tarehe ' + esc(String(d.monthTaken.submitted_at||'').slice(0,10))
+                  + '. Ombi moja tu kwa mwezi; mwidhinishaji ndiye anayeliona. / A request for this month was already sent on ' + esc(String(d.monthTaken.submitted_at||'').slice(0,10))
+                  + '. One request per month; the approver sees it.</div>'
                 : '<div class="fld"><label>Tarehe ya maombi / Application date</label><input id="advDate" type="date" value="' + today() + '"></div>'
                   + '<div class="fld"><label>Kiasi (TZS) / Amount</label><select id="advAmount">'
                   + (d.amounts || []).map(function(a){ return '<option value="' + a + '">' + money(a) + '</option>'; }).join('') + '</select></div>'
                   + '<button class="btn w" id="advSubmit">Tuma ombi / Submit request</button>')
-          : '<div class="sub">Chagua jina lako kuona fomu na historia yako. / Pick your name to see the form and your own history.</div>')
+          : '<div class="sub">Chagua jina lako kuona fomu. Maombi na maamuzi yake huonwa na mwidhinishaji tu. / Pick your name to see the form. Requests and their decisions are seen by the approver only.</div>')
       + '</div></div>';
-    S.rows = c ? (d.mine || []) : [];
-    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('app_date','Tarehe ya maombi / App date','date'),
-      col('amount','Kiasi / Amount','money'), {key:'approval', label:'Idhini / Approval', cls:advApprCls_},
-      col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'), col('decided_at','Uamuzi / Decided','dt')];
+    // No table under the form: a person's requests are the approver's to see, not the zone's.
+    S.rows = []; S.cols = [];
     ONROW = null;
-    S.foot = c ? money(S.rows.length) + ' maombi / requests · ' + c.name : '';
+    S.foot = '';
   });
 };
 
@@ -95,7 +96,7 @@ VIEWS.advappr = function(){
     HEAD = '<div class="kpis">'
       + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
       + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')
-      + kpi('Yaliyoamuliwa (siku 14) / Decided (14 days)', money((d.recent||[]).length))
+      + kpi('Yaliyoamuliwa mwezi huu / Decided this month', money((d.recent||[]).length), esc(d.month || ''))
       + '</div>'
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
       + (d.routingOn === false
@@ -114,7 +115,7 @@ VIEWS.advappr = function(){
           + (d.zones||[]).map(function(z){ return '<option' + (zone===z?' selected':'') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
           + (pend.length ? '<button class="btn sm" id="advDecideSave" style="margin-left:auto">💾 Hifadhi maamuzi / Save decisions</button>' : ''))
       + '<div class="card"><div class="card-h">✅ Idhinisha maombi ya advance / Approve advance requests'
-        + '<span class="sub">tiki · chagua · andika maoni · hifadhi / tick · choose · comment · save</span></div>'
+        + '<span class="sub">mapya juu / newest first · tiki · chagua · andika maoni · hifadhi / tick · choose · comment · save</span></div>'
       + (pend.length
           ? '<div class="scroll"><table><thead><tr><th>✔</th><th>Staff</th><th>Zone</th><th>Kwa / To</th><th class="r">Kiasi / Amount</th><th>Tarehe / App date</th><th>Imetumwa / Submitted</th><th>Idhini / Approval</th><th>Maoni / Comment</th></tr></thead><tbody>'
             + pend.map(function(r, i){
@@ -135,7 +136,7 @@ VIEWS.advappr = function(){
       col('amount','Kiasi / Amount','money'), {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'),
       col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')];
     ONROW = null;
-    S.foot = 'Yaliyoamuliwa siku 14 zilizopita / Decided in the last 14 days: ' + money(S.rows.length);
+    S.foot = 'Yaliyoamuliwa mwezi huu (' + esc(d.month || '') + ') / Decided this month: ' + money(S.rows.length) + ' · mapya juu / newest first';
   });
 };
 
