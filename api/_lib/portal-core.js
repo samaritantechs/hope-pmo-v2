@@ -1866,18 +1866,24 @@ async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
   const staff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone))
     .map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
   const month = todayKey(nowMs).slice(0, 7);
-  let chosen = null, mine = [], monthTaken = null;
+  let chosen = null, monthTaken = null;
   const want = String(staffId || '').trim().toUpperCase();
   if (want) {
     chosen = staff.find(s => K(s.id) === want) || null;
+    /* ONLY THE APPROVER SEES REQUESTS -- "those who have requested under their roles:
+       approvers will see their requests, not as imprest requesters do. Only approvers see
+       that." This screen is shared (anyone in the zone can pick any name), so it no longer
+       lists a person's history: it reads only whether THIS month is already taken, and says
+       so with the date and nothing else -- no amount, no decision. */
     if (chosen) {
-      mine = (await advRead_(() => db.from('advance_requests').select('id, submitted_at, app_date, amount, approval, comment, decided_by, decided_at')
-        .eq('staff_id', chosen.id).order('submitted_at', { ascending: false }).limit(12))) || [];
-      monthTaken = mine.find(r => advMonth_(r.submitted_at) === month && K(r.approval) !== 'DISAPPROVED') || null;
+      const taken = (await advRead_(() => db.from('advance_requests').select('id, submitted_at')
+        .eq('staff_id', chosen.id).gte('submitted_at', month + '-01').neq('approval', 'Disapproved').limit(3))) || [];
+      const hit = taken.find(r => advMonth_(r.submitted_at) === month);
+      monthTaken = hit ? { submitted_at: hit.submitted_at } : null;
     }
   }
   return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
-    staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, mine, monthTaken,
+    staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, monthTaken,
     requester: user.name, teamCode: !!user.teamCode,
     route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
     routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
@@ -1931,13 +1937,18 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
 async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
-  const since = addDaysKey(todayKey(nowMs), -14);
+  /* NEWEST FIRST, AND THIS MONTH BY DEFAULT -- "always autosort latest/newest to oldest so
+     that new requests are on top and the default rest is of current month not just landing
+     on empty": pending from the latest down, and what was decided since the 1st of the month
+     under it, rather than a fortnight that is empty most of the time. */
+  const month = todayKey(nowMs).slice(0, 7);
+  const since = month + '-01';
   /* TWO READS, BOTH NARROWED AT THE DATABASE: the viewer's zones (what the role rule and the
      legacy rows reach them through), and -- for a named supervisor -- their people's requests
      by code, whatever zone those sit in. Then the one routing rule decides each row. */
   const mine = routing.on ? routing.supervisees(user.code).map(c => c.code) : [];
-  const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: true });
-  const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(200);
+  const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: false });
+  const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
   const [pending0, recent0, pendS, recS] = await Promise.all([
     advRead_(() => onZones_(pendQ(), zones)),
     advRead_(() => onZones_(recQ(), zones)),
@@ -1949,7 +1960,7 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
   const withRoute = r => ({ ...r, route: advRouteLabel_(advRouteOf_(routing, r), r.zone) });
   const pending = merge(pending0, pendS).filter(sees)
-    .sort((a, b) => String(a.submitted_at).localeCompare(String(b.submitted_at))).map(withRoute);
+    .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
   const recent = merge(recent0, recS).filter(r => sees(r) || K(r.decided_by) === K(user.name))
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
   // What this desk IS -- the roles routed to it and the people it supervises -- and, for an
@@ -1958,7 +1969,7 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   const desk = { admin, roles: routing.rolesApprovedBy(user.role),
     supervisees: routing.supervisees(user.code).map(c => ({ name: c.name, role: c.role })) };
   const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role, zone: r.zone })) : [];
-  return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length,
+  return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length, month,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
     zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
     noZoneTeams, approvals: ADV_APPROVALS.slice(1),
@@ -2003,7 +2014,7 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   const rows0 = await advRead_(() => {
     let q = onZones_(db.from('advance_requests').select('*').gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
-      .order('submitted_at', { ascending: true }), zones);
+      .order('submitted_at', { ascending: false }), zones);      // newest first, like the desk
     return want === 'ALL' ? q : q.eq('approval', want);
   });
   const on = Array.isArray(rows0);
@@ -6585,7 +6596,92 @@ async function saveRole(db, user, p) {
     ({ error } = await db.from('roles').upsert({ role, tabs }, { onConflict: 'role' }));
   }
   if (error) throw new Error(error.message);
-  return { role, tabs, approverRole: approverSaved ? approverRole : undefined, note: hasApprover && !approverSaved ? ADV_ROUTE_NOTE : null };
+  /* THE OTHER DIRECTION, WHICH IS HOW THE FORM NOW ASKS IT -- "granting someone approval tab
+     I choose which roles they can approve ... Simplest solving. If I choose same role then I
+     select user". `approves` is the list of roles whose advance requests THIS role approves.
+     Each of them gets this role as its approver_role (one approver per role, so a role ticked
+     here leaves whichever approver it had), and any role that pointed here and is now
+     unticked is cleared. Not mentioned means not changed. */
+  const hasApproves = !!p && p.approves !== undefined;
+  let approves, approvesSaved = hasApproves;
+  if (hasApproves) {
+    const want = new Set(String(Array.isArray(p.approves) ? p.approves.join(',') : (p.approves || '')).split(/[;,]/).map(x => K(x)).filter(Boolean));
+    const roleRows = await fetchAll(() => db.from('roles').select('*'));
+    const have = new Map(roleRows.map(r => [K(r.role), r]));
+    const writes = [];
+    for (const r of want) if (!have.has(r) || K(have.get(r).approver_role) !== role) writes.push({ role: have.has(r) ? have.get(r).role : r, approver_role: role });
+    for (const r of roleRows) if (K(r.approver_role) === role && !want.has(K(r.role))) writes.push({ role: r.role, approver_role: null });
+    if (writes.length) {
+      const { error: aErr } = await db.from('roles').upsert(writes, { onConflict: 'role' });
+      if (aErr) { if (advColMissing_(aErr, ['approver_role'])) approvesSaved = false; else throw new Error(aErr.message); }
+    }
+    approves = [...want].sort();
+  }
+  const unsaved = (hasApprover && !approverSaved) || (hasApproves && !approvesSaved);
+  const out = { role, tabs, note: unsaved ? ADV_ROUTE_NOTE : null };
+  if (approverSaved) out.approverRole = approverRole;
+  if (approvesSaved) out.approves = approves;
+  return out;
+}
+/* A CLEAN SLATE FOR THE APPROVALS, AND A WAY BACK -- "Clear all approval granted roles so
+   that I start granting and choosing what they govern. That's all about privacy of all
+   company departments and units". Every role but ADMIN loses the approval tab and its
+   approver; every code loses its supervisor. The exact state is written to settings first,
+   and `undo` puts it back, the same way resetRoleTabs works. ADMIN keeps the tab -- it holds
+   every tab whatever its row says -- and nothing else about any role is touched. */
+const ADV_APPROVALS_BACKUP_KEY = 'ADV_APPROVALS_BACKUP';
+async function resetApprovals(db, user, p, nowMs = Date.now()) {
+  requireAdmin(user);
+  const roleRows = await fetchAll(() => db.from('roles').select('*'));
+  let codeRows, on = true;
+  try { codeRows = await fetchAll(() => db.from('access_codes').select('code, supervisor')); }
+  catch (e) { if (!advColMissing_(e, ['supervisor'])) throw e; on = false; codeRows = []; }
+  const roleRow = r => (on ? { role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null } : { role: r.role, tabs: r.tabs || [] });
+
+  if (p && p.undo) {
+    let saved = null;
+    try { saved = JSON.parse((await settingGet(db, ADV_APPROVALS_BACKUP_KEY)) || 'null'); } catch (e) {}
+    if (!saved || !Array.isArray(saved.roles)) {
+      throw badRequest('Hakuna nakala ya kurudisha. / There is no saved state to restore — the approvals have not been cleared yet.');
+    }
+    if (saved.roles.length) {
+      const { error } = await db.from('roles').upsert(saved.roles.map(roleRow), { onConflict: 'role' });
+      if (error) throw new Error(error.message);
+    }
+    let codes = 0;
+    if (on) for (const c of (saved.codes || [])) {
+      const { error } = await db.from('access_codes').update({ supervisor: c.supervisor || null }).eq('code', c.code);
+      if (error) throw new Error(error.message);
+      codes++;
+    }
+    return { undone: true, roles: saved.roles.length, codes, at: saved.at };
+  }
+
+  const at = new Date(nowMs).toISOString();
+  const backup = {
+    at, by: user.name || user.code,
+    roles: roleRows.map(r => ({ role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null })),
+    codes: codeRows.filter(c => c.supervisor).map(c => ({ code: c.code, supervisor: c.supervisor })),
+  };
+  const { error: bErr } = await db.from('settings')
+    .upsert({ key: ADV_APPROVALS_BACKUP_KEY, value: JSON.stringify(backup) }, { onConflict: 'key' });
+  if (bErr) throw new Error('Nakala haikuhifadhika, kwa hivyo hakuna kilichofutwa. / The backup could not be saved, so nothing was cleared: ' + bErr.message);
+  noteSettingsWritten(db);
+  const others = roleRows.filter(r => K(r.role) !== 'ADMIN');
+  const wanted = others.map(r => roleRow({ role: r.role, tabs: (r.tabs || []).filter(t => t !== 'advappr'), approver_role: null }));
+  if (wanted.length) {
+    const { error } = await db.from('roles').upsert(wanted, { onConflict: 'role' });
+    if (error) throw new Error(error.message);
+  }
+  let codesCleared = 0;
+  if (on) for (const c of backup.codes) {
+    const { error } = await db.from('access_codes').update({ supervisor: null }).eq('code', c.code);
+    if (error) throw new Error(error.message);
+    codesCleared++;
+  }
+  return { tabsCleared: others.filter(r => (r.tabs || []).includes('advappr')).length,
+    approversCleared: others.filter(r => r.approver_role).length, codesCleared, at,
+    routingOn: on, note: on ? null : ADV_ROUTE_NOTE };
 }
 /* A CLEAN SLATE TO SET THE ROLES FROM, AND A WAY BACK.
 
@@ -6808,15 +6904,19 @@ async function accessCodes(db, user) {
   const out = user.readOnly ? rows.map(r => ({ ...r, code: '••••', supervisor: r.supervisor ? '••••' : null })) : rows;
   /* Whether there is a saved state to undo back to -- the Roles card offers the button only
      when pressing it would actually restore something. */
-  let backupAt = null;
+  let backupAt = null, approvalsBackupAt = null;
   try {
     const saved = JSON.parse((await settingGet(db, ROLE_TABS_BACKUP_KEY)) || 'null');
     if (saved && Array.isArray(saved.roles)) backupAt = saved.at || true;
   } catch (e) {}
+  try {
+    const saved = JSON.parse((await settingGet(db, ADV_APPROVALS_BACKUP_KEY)) || 'null');
+    if (saved && Array.isArray(saved.roles)) approvalsBackupAt = saved.at || true;
+  } catch (e) {}
   // allTabs rides along so the role tab list on this screen can be a checkbox list instead of
   // free text -- "ticking the nav pannels ... because writing could error".
   return { rows: out, count: rows.length, roles: mergeRoles_(roleRows, rows),
-    allTabs: ALL_TABS.slice(), roleBackupAt: backupAt,
+    allTabs: ALL_TABS.slice(), roleBackupAt: backupAt, approvalsBackupAt,
     routingOn, routingNote: routingOn ? null : ADV_ROUTE_NOTE };
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
@@ -9179,7 +9279,7 @@ const FN = {
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
-  teams, saveRole, deleteRole, resetRoleTabs, callAgents, saveCallAgent, settings: settingsList, settingSet,
+  teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
   accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
   /* The company phone register -- two panes, one register. deviceToken is exported under a

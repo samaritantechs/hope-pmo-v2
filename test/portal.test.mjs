@@ -11253,7 +11253,7 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.deepEqual(page.amounts, [50000, 100000, 150000, 200000]);
   const picked = await portalApi(db, FO, 'advRequestPage', { staffId: 'aaa/001/2026' }, NOW);
   assert.equal(picked.chosen.name, 'ASHA ALI AMANI'); assert.equal(picked.monthTaken, null, 'a disapproved request does not use the month up');
-  assert.equal(picked.mine.length, 1);
+  assert.equal('mine' in picked, false, 'no history on the shared request screen -- "Only approvers see that"');
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'CCC/003/2026', amount: 50000 }, NOW), e => e.status === 403, 'another zone\'s staff');
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 70000 }, NOW), e => e.status === 400 && /amount/i.test(e.message));
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'BBB/002/2026', amount: 50000 }, NOW), e => e.status === 400 && /inactive/i.test(e.message));
@@ -11266,14 +11266,15 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.equal(made.route.kind, 'role'); assert.match(made.route.label, /^GMO · zone DAR EAST/);
   assert.equal(picked.route.kind, 'role', 'and the ask said who would see it before it was sent');
   await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /one request per month/i.test(e.message));
-  assert.ok((await portalApi(db, FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW)).monthTaken, 'and the form says so');
+  const takenNow = (await portalApi(db, FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW)).monthTaken;
+  assert.deepEqual(Object.keys(takenNow), ['submitted_at'], 'and the form says so -- the date alone, no amount and no decision');
 
   // THE GMO'S DESK: DAR EAST's GMO sees the pending one; MARA's sees nothing; neither decides the other's.
   const gmoD = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advappr'] };
   const gmoM = { code: 'GM', name: 'GMO M', role: 'GMO', teams: ['MBAGALA'], tabs: ['advappr', 'advrep'] };
   const qD = await portalApi(db, gmoD, 'advQueue', {}, NOW);
   assert.deepEqual(qD.pending.map(r => r.staff_name), ['ASHA ALI AMANI']); assert.equal(qD.amount, 150000);
-  assert.deepEqual(qD.recent.map(r => r.id), ['r-no'], 'decided in the last fourteen days');
+  assert.deepEqual(qD.recent.map(r => r.id), ['r-no'], 'decided this month'); assert.equal(qD.month, TODAY.slice(0, 7));
   assert.deepEqual((await portalApi(db, gmoM, 'advQueue', {}, NOW)).pending, []);
   await assert.rejects(() => portalApi(db, gmoM, 'advDecide', { updates: [{ id: made.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
   await assert.rejects(() => portalApi(db, gmoD, 'advDecide', { updates: [{ id: made.id, approval: 'Pending' }] }, NOW), e => e.status === 400);
@@ -11401,10 +11402,10 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // THE DESK. The GMO of DAR EAST: the field officer, the legacy row, and their own -- NOT the
   // credit, PMO or legal requests of the same zone.
   const qGd = await portalApi(db, user('GD'), 'advQueue', {}, NOW);
-  assert.deepEqual(qGd.pending.map(r => r.staff_name), ['OLD ONE', 'ASHA', 'GMO D']);
+  assert.deepEqual(qGd.pending.map(r => r.staff_name), ['ASHA', 'GMO D', 'OLD ONE'], 'newest first -- "new requests are on top"');
   assert.deepEqual(qGd.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], supervisees: [] });
-  assert.equal(qGd.pending[1].route, 'GMO · zone DAR EAST (wadhifa / by role)');
-  assert.equal(qGd.pending[0].route, 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing');
+  assert.equal(qGd.pending[0].route, 'GMO · zone DAR EAST (wadhifa / by role)');
+  assert.equal(qGd.pending[2].route, 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing');
   assert.deepEqual(qGd.unrouted, [], 'only an admin is told about the unrouted');
   // MARA's GMO: nothing of DAR EAST's.
   assert.deepEqual((await portalApi(db, user('GM'), 'advQueue', {}, NOW)).pending, []);
@@ -11418,7 +11419,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // The other department's manager (every team, so every zone) sees the PMO collection
   // request, by role -- and the legacy row, as any holder of the tab did before routing.
   const qPm = await portalApi(db, user('PM'), 'advQueue', {}, NOW);
-  assert.deepEqual(qPm.pending.map(r => r.staff_name), ['OLD ONE', 'PMO COLL']);
+  assert.deepEqual(qPm.pending.map(r => r.staff_name), ['PMO COLL', 'OLD ONE']);
   // The admin sees all five, and is told by name which one reaches nobody else.
   const qA = await portalApi(db, ADMIN, 'advQueue', {}, NOW);
   assert.equal(qA.pending.length, 6); assert.equal(qA.desk.admin, true);
@@ -11456,6 +11457,47 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.equal(ac.routingOn, true);
   assert.equal(ac.rows.find(c => c.code === 'C1').supervisorName, 'CREDIT TWO');
   assert.equal(ac.roles.find(r => r.role === 'CREDIT').approver_role, 'CREDIT');
+  assert.equal(ac.approvalsBackupAt, null, 'nothing cleared yet, so nothing to undo');
+
+  // FROM THE APPROVER'S SIDE -- "granting someone approval tab I choose which roles they can
+  // approve": the form sends the roles this role approves; each gets this role as its
+  // approver, one already pointing elsewhere moves, and one unticked is cleared.
+  const ga = await portalApi(db, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advreq, advappr', approves: 'field officer, manager, bike, gmo' }, NOW);
+  assert.deepEqual(ga.approves, ['BIKE', 'FIELD OFFICER', 'GMO', 'MANAGER']); assert.equal(ga.note, null);
+  const byRole = () => Object.fromEntries(db._dump('roles').map(r => [r.role, r.approver_role || null]));
+  assert.equal(byRole()['FIELD OFFICER'], 'GMO'); assert.equal(byRole().GMO, 'GMO');
+  assert.equal(byRole().MANAGER, 'GMO', 'a role with no row yet is created with its approver'); assert.equal(byRole().BIKE, 'GMO');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'pmo manager', tabs: 'advappr', approves: 'PMO COLLECTION, BIKE' }, NOW);
+  assert.equal(byRole().BIKE, 'PMO MANAGER', 'ticked under another approver: it moves');
+  assert.equal(byRole()['PMO COLLECTION'], 'PMO MANAGER');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advreq, advappr', approves: 'field officer' }, NOW);
+  assert.equal(byRole().MANAGER, null, 'unticked: cleared'); assert.equal(byRole().GMO, null); assert.equal(byRole()['FIELD OFFICER'], 'GMO');
+  assert.equal(byRole().BIKE, 'PMO MANAGER', 'another approver\'s role is not touched');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advreq, advappr' }, NOW);
+  assert.equal(byRole()['FIELD OFFICER'], 'GMO', 'not mentioned means not changed');
+
+  // THE CLEAN SLATE -- "Clear all approval granted roles so that I start granting and choosing
+  // what they govern": the tab, the approvers and the supervisors off every role and code but
+  // ADMIN, saved first; undo puts every one of them back.
+  // Compared with the columns spelled out: a fixture row that never carried approver_role and
+  // a restored row holding null are the same row to Postgres.
+  const snap = () => ({
+    roles: JSON.stringify(db._dump('roles').map(r => ({ role: r.role, tabs: r.tabs || [], approver_role: r.approver_role || null }))),
+    codes: JSON.stringify(db._dump('access_codes').map(c => ({ ...c, supervisor: c.supervisor || null }))) });
+  const before = snap();
+  const cleared = await portalApi(db, ADMIN, 'resetApprovals', {}, NOW);
+  assert.equal(cleared.tabsCleared, 3, 'GMO, CREDIT, PMO MANAGER held advappr'); assert.ok(cleared.approversCleared >= 3); assert.equal(cleared.codesCleared, 2, 'C1 and C3');
+  assert.equal(cleared.note, null);
+  assert.ok(db._dump('roles').every(r => r.role === 'ADMIN' || (!(r.tabs || []).includes('advappr') && !r.approver_role)), 'every role but ADMIN cleared');
+  assert.ok(db._dump('access_codes').every(c => !c.supervisor), 'every supervisor cleared');
+  assert.deepEqual(db._dump('roles').find(r => r.role === 'GMO').tabs, ['advreq'], 'the other tabs stay');
+  assert.ok((await portalApi(db, ADMIN, 'accessCodes', {}, NOW)).approvalsBackupAt, 'and Undo is offered');
+  assert.deepEqual((await portalApi(db, user('GD', { tabs: ['advappr'] }), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'a desk with nothing routed to it sees only the legacy row');
+  const undone = await portalApi(db, ADMIN, 'resetApprovals', { undo: true }, NOW);
+  assert.equal(undone.undone, true); assert.equal(undone.codes, 2);
+  assert.equal(snap().roles, before.roles, 'every role exactly as it was');
+  assert.equal(snap().codes, before.codes, 'every code exactly as it was');
+  await assert.rejects(() => portalApi(db, user('GD'), 'resetApprovals', {}, NOW), e => e.status === 403, 'admins only');
   const ro = await portalApi(db, { ...ADMIN, readOnly: true }, 'accessCodes', {}, NOW);
   assert.equal(ro.rows.find(c => c.name === 'CREDIT ONE').supervisor, '••••', 'a read-only admin never sees a code, the supervisor\'s included');
 
@@ -11480,4 +11522,9 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.ok(old._dump('access_codes').find(c => c.code === 'C9'), 'the code still saved');
   const oldAc = await portalApi(old, ADMIN, 'accessCodes', {}, NOW);
   assert.equal(oldAc.routingOn, false); assert.match(oldAc.routingNote, /RUN-ME-045/);
+  const oldAppr = await portalApi(old, ADMIN, 'saveRole', { role: 'gmo', tabs: 'advappr', approves: 'credit' }, NOW);
+  assert.equal(oldAppr.approves, undefined); assert.match(oldAppr.note, /RUN-ME-045/);
+  const oldReset = await portalApi(old, ADMIN, 'resetApprovals', {}, NOW);
+  assert.equal(oldReset.routingOn, false); assert.match(oldReset.note, /RUN-ME-045/);
+  assert.ok(!(old._dump('roles').find(r => r.role === 'GMO').tabs || []).includes('advappr'), 'the tab still comes off');
 });

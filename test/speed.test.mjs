@@ -928,7 +928,7 @@ const OFFICER_ROW_CEILING = 4000;
 const WRITERS = new Set(['addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint',
   'deleteComplaint', 'addRestructure', 'decideRestructure', 'addDemandNotice', 'addDeduction', 'hrDeduction',
   'advStaffSave', 'advStaffStatus', 'advRequest', 'advDecide', 'saveTeam',
-  'deleteTeam', 'saveRole', 'deleteRole', 'saveCallAgent', 'settingSet', 'settingDelete',
+  'deleteTeam', 'saveRole', 'deleteRole', 'resetApprovals', 'saveCallAgent', 'settingSet', 'settingDelete',
   'systemOpenSet', 'saveAccessCode', 'deleteAccessCode', 'commissionSave', 'saveStaffTeams',
   'purgeSnapshots', 'cleanFollowup', 'removeCallUser', 'changeMyCode', 'fuStatusesSave',
   'stampWeek', 'teamsImport', 'purgeSuperseded', 'retireUploads', 'saveHint', 'deleteHint',

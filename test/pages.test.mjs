@@ -1708,7 +1708,7 @@ test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
   assert.ok(/advStaff:1, advRequestPage:1, advQueue:1, advReport:1/.test(app), 'cached like the other reads');
   const view = page('advance');
   assert.ok(/srv\('advRequestPage', \{ staffId: staffId \}\)/.test(view) && /data-arg="staffId"/.test(view) && /id="advSubmit"/.test(view) && /srv\('advRequest'/.test(view), 'the ask: pick your name, submit');
-  assert.ok(/monthTaken/.test(view) && /Only one request per month/.test(view), 'the month rule is said on the form');
+  assert.ok(/monthTaken/.test(view) && /One request per month; the approver sees it/.test(view), 'the month rule is said on the form -- the date alone, the rest is the approver\'s');
   assert.ok(/VIEWS\.advappr = function/.test(view) && /srv\('advQueue'/.test(view) && /class="advChk"/.test(view) && /id="advDecideSave"/.test(view) && /srv\('advDecide', \{ updates: updates \}\)/.test(view), 'the GMO\'s bulk decision');
   assert.ok(/VIEWS\.advrep = function/.test(view) && /srv\('advReport'/.test(view) && /col\('account','Akaunti \/ Account'\)/.test(view) && /board\('advRepZones'/.test(view), 'the report with the accounts, by zone');
   assert.ok(/VIEWS\.advstaff = function/.test(view) && /srv\('advStaff'/.test(view) && /id="newAdvStaff"/.test(view) && /function advStaffForm\(x\)/.test(view) && /srv\('advStaffSave'/.test(view) && /srv\('advStaffStatus'/.test(view), 'HR\'s registry, form and switch');
@@ -1755,7 +1755,15 @@ test('the upload page says what a re-upload does per kind, from the key the serv
    form; the ask says where the request goes, the desk says what it is. */
 test('advance routing: Roles & access takes the approver role, the code form the supervisor, the ask and the desk say where a request goes', () => {
   const admin = page('admin'), adv = page('advance');
-  assert.ok(/id="rApprover"/.test(admin) && /approverRole: \$\('#rApprover'\)\.value/.test(admin), 'the role form sends the approver role');
+  // From the approver's side: the list under the advappr tick, following it live.
+  assert.ok(/id="rApprovesWrap"/.test(admin) && /class="rApp"/.test(admin) && /approves: approves/.test(admin), 'the role form sends the roles this role approves');
+  assert.ok(/querySelector\('\.rTab\[value="advappr"\]'\)/.test(admin) && /rApprovesWrap'\)\.style\.display = apprTick\.checked/.test(admin), 'the list follows the advappr tick');
+  assert.ok(/sasa \/ now: '\+esc\(r\.approver_role\)/.test(admin), 'a role already pointing elsewhere says so');
+  assert.ok(/id="resetApprovals"/.test(admin) && /id="undoApprovals"/.test(admin) && /function wireApprovalsReset_\(\)/.test(admin) && /srv\('resetApprovals', \{ undo: true \}\)/.test(admin), 'the clean slate and its undo');
+  assert.ok(!/id="rApprover"/.test(admin), 'one way to set it, not two');
+  // Only the approver sees requests: no history under the form, the month's rule with a date alone.
+  assert.ok(!/d\.mine/.test(adv) && /S\.rows = \[\]; S\.cols = \[\];/.test(adv) && /d\.monthTaken\.submitted_at/.test(adv) && !/monthTaken\.amount/.test(adv), 'the request screen lists nobody\'s requests');
+  assert.ok(/Decided this month/.test(adv) && /newest first/.test(adv), 'the desk says its default and its order');
   assert.ok(/id="kSup"/.test(admin) && /supervisor: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the code form sends the supervisor, or nothing when the picker is masked');
   assert.ok(/Mwidhinishaji wa advance \/ Advance approver/.test(admin) && /<th>Msimamizi \/ Supervisor<\/th>/.test(admin), 'both tables carry the column');
   assert.ok(/x\.supervisorName \? esc\(x\.supervisorName\)/.test(admin), 'the codes table names the supervisor, never the code');
@@ -1838,7 +1846,7 @@ test('the upload page defers its spreadsheet library and waits for it; the brand
   assert.ok(/if \(window\.HOPE_NO_BRAND_FETCH\) return;/.test(brand), 'the call app still opts out entirely');
   const core = appCore();
   assert.ok(/wireStampWeek\(\);\s*\/\/ the Weekly report's own button: core/.test(core), 'the Weekly report\'s stamp button is wired from the core');
-  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireStaffExcel\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module');
+  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireStaffExcel\(\); wireApprovalsReset_\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module');
   for (const n of ['function wireClean(', 'var SETTINGS_GROUPS', 'function settingsGroupCard_(', 'function wireTeamsDownload(', 'function wireStaffExcel(']) {
     assert.ok(!core.includes(n), n + ' is still in the core');
     assert.ok(page('admin').includes(n), n + ' is not in the admin module');

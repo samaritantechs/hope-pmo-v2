@@ -39,7 +39,7 @@ import { fetchAll, runQuery } from './supabase.js';
     stops covering the next function somebody names differently, and the failure is invisible. */
 export const AUDITED = new Set([
   // teams & staff
-  'saveTeam', 'deleteTeam', 'saveStaffTeams', 'saveRole', 'deleteRole',
+  'saveTeam', 'deleteTeam', 'saveStaffTeams', 'saveRole', 'deleteRole', 'resetApprovals',
   'saveAccessCode', 'deleteAccessCode', 'changeMyCode',
   'saveCallAgent', 'removeCallUser', 'saveOfficerAccount', 'deleteOfficerAccount',
   // settings & the system switch
