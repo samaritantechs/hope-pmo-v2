@@ -1795,6 +1795,13 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/sasa \/ now: '\+esc\(r\.approver_role\)/.test(admin), 'a role already pointing elsewhere says so');
   assert.ok(/id="resetApprovals"/.test(admin) && /id="undoApprovals"/.test(admin) && /function wireApprovalsReset_\(\)/.test(admin) && /srv\('resetApprovals', \{ undo: true \}\)/.test(admin), 'the clean slate and its undo');
   assert.ok(!/id="rApprover"/.test(admin), 'one way to set it, not two');
+  // One supervisor for a whole role (RUN-ME-046): on the role form, or from a code's form with one tick.
+  assert.ok(/id="rSupCode"/.test(admin) && /approverCode: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the role form names one supervisor for the whole role');
+  assert.ok(/id="kSupRole"/.test(admin) && /roleSupervisor: !!\(document\.getElementById\('kSupRole'\)/.test(admin), 'the code form can write them on the role instead');
+  assert.ok(/r\.approverName/.test(admin) && /msimamizi \/ supervisor: ' \+ esc\(r\.approverName\)/.test(admin), 'the roles table names the role\'s supervisor, never the code');
+  assert.ok(/desk\.deptRoles/.test(adv) && /supervisor of every code of: /.test(adv), 'the desk says which roles it supervises whole');
+  const sql46 = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-046-role-supervisor.sql'), 'utf8');
+  assert.ok(sql46.includes('alter table public.roles add column if not exists approver_code text;') && sql46.split('\n').length < 100, 'RUN-ME-046, under 100 lines');
   // The request screen is the viewer's ROLE in their zone: the names, the history, the month's rule with a date alone.
   assert.ok(!/d\.mine/.test(adv) && /S\.rows = d\.history \|\| \[\];/.test(adv) && /col\('staff_name','Jina \/ Name'\)/.test(adv), 'the history of the role in the zone, with names');
   assert.ok(/wadhifa \/ role: ' \+ d\.role/.test(adv) && /d\.roleNote \? '<div class="note bad"/.test(adv), 'the subtitle names the role; a registry spelled otherwise is said');

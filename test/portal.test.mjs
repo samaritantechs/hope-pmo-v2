@@ -11423,7 +11423,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // credit, PMO or legal requests of the same zone.
   const qGd = await portalApi(db, user('GD'), 'advQueue', {}, NOW);
   assert.deepEqual(qGd.pending.map(r => r.staff_name), ['ASHA', 'GMO D', 'OLD ONE'], 'newest first -- "new requests are on top"');
-  assert.deepEqual(qGd.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], supervisees: [] });
+  assert.deepEqual(qGd.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], deptRoles: [], supervisees: [] });
   assert.equal(qGd.pending[0].route, 'GMO · zone DAR EAST (wadhifa / by role)');
   assert.equal(qGd.pending[2].route, 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing');
   assert.deepEqual(qGd.unrouted, [], 'only an admin is told about the unrouted');
@@ -11523,12 +11523,57 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   const ro = await portalApi(db, { ...ADMIN, readOnly: true }, 'accessCodes', {}, NOW);
   assert.equal(ro.rows.find(c => c.name === 'CREDIT ONE').supervisor, '••••', 'a read-only admin never sees a code, the supervisor\'s included');
 
+  /* ONE SUPERVISOR FOR A WHOLE ROLE (RUN-ME-046) -- "At codes I choose role user as supervisor
+     of the whole dept not assigning every user to the same person loosing energy all the way".
+     Named once on the role, the person's desk reads the whole role whatever the zone; a code's
+     own supervisor still wins; a team code's role works the same way. */
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'C4', name: 'CREDIT FOUR', role: 'Credit', teams: 'KONGOWE' }, NOW);
+  const c4 = { code: 'C4', name: 'CREDIT FOUR', role: 'Credit', teams: ['KONGOWE'], tabs: ['advreq', 'advappr'] };
+  const dept = await portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq, advappr', approverCode: 'C2' }, NOW);
+  assert.equal(dept.approverCode, 'C2'); assert.equal(dept.note, null);
+  assert.equal(db._dump('roles').find(r => r.role === 'CREDIT').approver_code, 'C2');
+  await assert.rejects(() => portalApi(db, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverCode: 'NOPE' }, NOW), e => e.status === 400 && /does not exist/.test(e.message));
+  const DEPT_LABEL = 'CREDIT TWO (msimamizi wa wadhifa CREDIT / supervisor of role CREDIT)';
+  assert.equal((await portalApi(db, c4, 'advRequestPage', {}, NOW)).route.label, DEPT_LABEL, 'the ask says so');
+  assert.equal((await portalApi(db, user('C1'), 'advRequestPage', {}, NOW)).route.label, 'CREDIT TWO (msimamizi / supervisor)', 'a code\'s own supervisor still wins');
+  db._dump('staff_registry').push({ id: 'CCC/044/2026', name: 'CREDIT FOUR', role: 'Credit', zone: 'DAR EAST', status: 'Active' });
+  const rC4 = await portalApi(db, c4, 'advRequest', { staffId: 'CCC/044/2026', amount: 50000 }, NOW);
+  assert.equal(rC4.route.kind, 'supervisor');
+  const qC2b = await portalApi(db, user('C2'), 'advQueue', {}, NOW);
+  assert.deepEqual(qC2b.pending.map(r => r.staff_name), ['CREDIT FOUR'], 'the role\'s supervisor, in another zone, sees it');
+  assert.equal(qC2b.pending[0].route, DEPT_LABEL); assert.deepEqual(qC2b.desk.deptRoles, ['CREDIT']);
+  assert.deepEqual((await portalApi(db, user('C3'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'a colleague of the role does not');
+  await assert.rejects(() => portalApi(db, user('C3'), 'advDecide', { updates: [{ id: rC4.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
+  assert.equal((await portalApi(db, user('C2'), 'advDecide', { updates: [{ id: rC4.id, approval: 'Approved' }] }, NOW)).approved, 1);
+  // A team code's role too: name one person for every FIELD OFFICER and the zone no longer decides.
+  await portalApi(db, ADMIN, 'saveRole', { role: 'field officer', tabs: 'advreq', approverCode: 'GM' }, NOW);
+  assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).route.label, 'GMO M (msimamizi wa wadhifa FIELD OFFICER / supervisor of role FIELD OFFICER)');
+  await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
+  assert.deepEqual((await portalApi(db, user('GM'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['ASHA'], 'MARA\'s GMO, named for the role, sees DAR EAST\'s field officer');
+  assert.deepEqual((await portalApi(db, user('GD'), 'advQueue', {}, NOW)).pending.map(r => r.staff_name), ['OLD ONE'], 'the zone\'s GMO no longer does');
+  await portalApi(db, ADMIN, 'saveRole', { role: 'field officer', tabs: 'advreq', approverCode: '' }, NOW);
+  assert.equal(db._dump('roles').find(r => r.role === 'FIELD OFFICER').approver_code, null, 'blank clears it');
+  // From the code's form: tick "every code of this role" and the person is written once on the role, the code left blank.
+  const fromCode = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'P1', name: 'PMO COLL', role: 'PMO COLLECTION', teams: 'KONGOWE', supervisor: 'PM', roleSupervisor: true }, NOW);
+  assert.deepEqual(fromCode.roleSupervisor, { role: 'PMO COLLECTION', saved: true }); assert.equal(fromCode.supervisor, null);
+  assert.equal(db._dump('roles').find(r => r.role === 'PMO COLLECTION').approver_code, 'PM');
+  assert.equal(db._dump('access_codes').find(c => c.code === 'P1').supervisor, null);
+  // Roles & access names the supervisor, never the code; a read-only admin sees neither.
+  const ac2 = await portalApi(db, ADMIN, 'accessCodes', {}, NOW);
+  assert.equal(ac2.roles.find(r => r.role === 'CREDIT').approverName, 'CREDIT TWO');
+  assert.equal((await portalApi(db, { ...ADMIN, readOnly: true }, 'accessCodes', {}, NOW)).roles.find(r => r.role === 'CREDIT').approver_code, '••••');
+  // The clean slate takes it too, and undo brings it back.
+  await portalApi(db, ADMIN, 'resetApprovals', {}, NOW);
+  assert.ok(db._dump('roles').every(r => r.role === 'ADMIN' || !r.approver_code), 'cleared');
+  await portalApi(db, ADMIN, 'resetApprovals', { undo: true }, NOW);
+  assert.equal(db._dump('roles').find(r => r.role === 'CREDIT').approver_code, 'C2', 'restored');
+
   // WITHOUT RUN-ME-045: the old zone rule everywhere, and every screen says the routing is not in.
   const t2 = tables();
   t2.teams[0] = { ...t2.teams[0], zone: 'DAR EAST' };
   t2.staff_registry = [{ id: 'AAA/001/2026', name: 'ASHA', role: 'Credit', zone: 'DAR EAST', status: 'Active' }];
   t2.advance_requests = [];
-  const old = fakeDb(t2, { missingColumns: { roles: ['approver_role'], access_codes: ['supervisor'], advance_requests: ['req_role', 'req_code'] } });
+  const old = fakeDb(t2, { missingColumns: { roles: ['approver_role', 'approver_code'], access_codes: ['supervisor'], advance_requests: ['req_role', 'req_code'] } });
   const oldReq = await portalApi(old, { code: 'C9', name: 'ANY', role: 'CREDIT', teams: ['KONGOWE'], tabs: ['advreq'] }, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
   assert.equal(oldReq.routed, false); assert.match(oldReq.routingNote, /RUN-ME-045/); assert.equal(oldReq.route.kind, 'legacy');
   assert.equal(old._dump('advance_requests').find(r => r.id === oldReq.id).req_role, undefined, 'the two columns are left out of the write');
@@ -11549,4 +11594,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   const oldReset = await portalApi(old, ADMIN, 'resetApprovals', {}, NOW);
   assert.equal(oldReset.routingOn, false); assert.match(oldReset.note, /RUN-ME-045/);
   assert.ok(!(old._dump('roles').find(r => r.role === 'GMO').tabs || []).includes('advappr'), 'the tab still comes off');
+  // WITHOUT RUN-ME-046: the whole-role supervisor is not saved, the tabs are, and the answer names the file.
+  const oldDept = await portalApi(old, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverCode: 'A' }, NOW);
+  assert.equal(oldDept.approverCode, undefined); assert.deepEqual(oldDept.tabs, ['advreq']); assert.match(oldDept.note, /RUN-ME-046/);
 });

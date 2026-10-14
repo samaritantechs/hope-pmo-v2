@@ -49,7 +49,9 @@ create table if not exists roles (
   role text primary key,
   tabs text[],
   -- RUN-ME-045: the role that approves this role's salary-advance requests (null = unset).
-  approver_role text
+  approver_role text,
+  -- RUN-ME-046: the ONE code that approves this role's requests, whatever the zone (null = none).
+  approver_code text
 );
 
 create table if not exists settings (
