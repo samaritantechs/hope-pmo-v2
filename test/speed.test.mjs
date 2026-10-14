@@ -328,12 +328,15 @@ const BUDGETS = [
   /* SALARY ADVANCE: the registry, the ask, the GMO's queue, the report -- the teams read (two
      trips: the teams and the codes laid over them), the amounts setting where the form needs
      it, and one or two reads of the two RUN-ME-044 tables, each zone-scoped at the database. */
-  ['Advance: HR registry',    'advStaff',            {}, ADMIN,  4,  1500,  4, 1500],
+  // +1 trip (2026-10-14): the role names, for the form's ROLE picker.
+  ['Advance: HR registry',    'advStaff',            {}, ADMIN,  5,  1520,  5, 1520],
   /* +2 trips each (RUN-ME-045, 2026-10-14): the roles and the codes, which are the routing
      table -- who approves which role, who supervises which code (advRouting_). The ask reads
      it to say who will see the request; the desk to decide what it shows. A named supervisor's
-     desk adds one read of their people's requests by code, narrowed at the database. */
-  ['Advance: the ask',        'advRequestPage',      {}, ADMIN,  8,  1700,  8, 1700],
+     desk adds one read of their people's requests by code, narrowed at the database.
+     +1 trip on the ask (2026-10-14): the history of the viewer's role in their zones, narrowed
+     at the database to that role and those zones, 100 rows at most. */
+  ['Advance: the ask',        'advRequestPage',      {}, ADMIN,  9,  1800,  9, 1800],
   ['Advance: GMO queue',      'advQueue',            {}, ADMIN,  7,  1000,  7, 1000],
   ['Advance: report',         'advReport',           {}, ADMIN,  5,  1500,  5, 1500],
   ['Restructures',            'restructures',        {}, ADMIN,  6,   200,  6,  200],

@@ -1784,7 +1784,9 @@ function advSees_(routing, user, zones, r) {
 /** HR's registry: everybody in the zones the viewer may see, searchable; the zone list the
     form offers (Teams & Staff's zones plus any already in the registry); the next serial. */
 async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) {
-  const teamRows = await readTeamsAll(db, nowMs);
+  // The role names as Roles & access spells them, for the form's ROLE picker: the request
+  // tab lists a name only under its own role (advRoleKey_), so the spelling has to agree.
+  const [teamRows, roleRows] = await Promise.all([readTeamsAll(db, nowMs), fetchAll(() => db.from('roles').select('role'))]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   const rows0 = await advRead_(() => onZones_(db.from('staff_registry').select('*').order('name', { ascending: true }), zones));
   const on = Array.isArray(rows0);
@@ -1795,6 +1797,7 @@ async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) 
   if (needle) rows = rows.filter(r => [r.name, r.id, r.phone, r.role, r.zone, r.bank].some(v => K(v).includes(needle)));
   return { rows, count: rows.length, on, note: on ? null : ADV_NOTE,
     zones: advZoneList_(teamRows, rows0, zones), noZoneTeams,
+    roleNames: [...new Set(roleRows.map(r => String(r.role || '').trim()).filter(Boolean))].sort(),
     active: (rows0 || []).filter(r => K(r.status) !== 'INACTIVE').length, total: (rows0 || []).length,
     nextSerial: (rows0 || []).length + 1, year: todayKey(nowMs).slice(0, 4) };
 }
@@ -1852,29 +1855,51 @@ async function advStaffStatus(db, user, p, nowMs = Date.now()) {
   if (error) throw new Error(error.message);
   return { id: prev.id, status };
 }
-/** The request tab: the names of the viewer's zone(s) -- id, name, role, zone and nothing
-    else, so a shared screen gives nothing away -- the amounts on offer, and, once a name is
-    picked, that one person's own requests and whether this month is already taken. */
+/** A role as the registry and Roles & access may each spell it -- "Field Officer", "FIELD
+    OFFICER", "F.O", the sheet's "TEAM" -- reduced to one key, so a credit officer's list is
+    credit names only and a team code's is the zone's field officers. */
+const advRoleKey_ = v => { const k = K(v).replace(/[^A-Z0-9]/g, ''); return k === 'FO' || k === 'TEAM' || k === 'TEAMS' ? 'FIELDOFFICER' : k; };
+/** The request tab: the names of the viewer's ROLE in their zone(s) -- "each role see list of
+    names under their roles in the zone only, credit can't be choosing names mixed with FOs"
+    -- id, name, role, zone and nothing else; the amounts on offer; whether the picked name's
+    month is already taken; and the history of that role's requests in those zones, so a team
+    code sees its zone's field officers' requests and a credit officer the zone's credit ones.
+    An admin sees every name and every request. */
 async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
   const [teamRows, cfg, routing] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY]), advRouting_(db)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const admin = isAdminUser(user);
   // Who will see the request this sign-in files -- said before it is sent, so "nobody" is
   // never found out from silence.
   const route = advRouteOf_(routing, { req_role: user.role, req_code: user.code });
-  const staff0 = await advRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones));
+  const [staff0, history0] = await Promise.all([
+    advRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones)),
+    advRead_(() => {
+      const q = onZones_(db.from('advance_requests').select('id, submitted_at, staff_id, staff_name, zone, app_date, amount, approval, comment, decided_by, decided_at, req_role')
+        .order('submitted_at', { ascending: false }).limit(100), zones);
+      // ilike, not eq: a code's role keeps its own spelling ("Credit"), and .eq() is exact-case.
+      return admin ? q : q.ilike('req_role', String(user.role || '~none~'));
+    }),
+  ]);
   const on = Array.isArray(staff0);
-  const staff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone))
+  const roleKey = advRoleKey_(user.role);
+  const zoneStaff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone));
+  const staff = (admin ? zoneStaff : zoneStaff.filter(r => advRoleKey_(r.role) === roleKey))
     .map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
+  /* NONE OF THIS ROLE, WHILE THE ZONE HAS STAFF: the spellings the registry carries are named,
+     so HR can set ROLE there as Roles & access spells it rather than the officer hunting. */
+  const spellings = [...new Set(zoneStaff.map(s => String(s.role || '').trim() || '—'))].sort();
+  const roleNote = !admin && on && !staff.length && zoneStaff.length
+    ? `Hakuna jina la wadhifa ${user.role} kwenye rejista ya zone yako; rejista inaandika wadhifa kama: ${spellings.join(', ')}. HR aandike ROLE kama Nafasi na ruhusa inavyouita. `
+      + `/ No name with role ${user.role} on your zone's registry; the registry spells roles as: ${spellings.join(', ')}. HR should set ROLE there as Roles & access spells it.`
+    : null;
+  const history = (history0 || []).filter(r => advZoneOk_(zones, r.zone));
   const month = todayKey(nowMs).slice(0, 7);
   let chosen = null, monthTaken = null;
   const want = String(staffId || '').trim().toUpperCase();
   if (want) {
     chosen = staff.find(s => K(s.id) === want) || null;
-    /* ONLY THE APPROVER SEES REQUESTS -- "those who have requested under their roles:
-       approvers will see their requests, not as imprest requesters do. Only approvers see
-       that." This screen is shared (anyone in the zone can pick any name), so it no longer
-       lists a person's history: it reads only whether THIS month is already taken, and says
-       so with the date and nothing else -- no amount, no decision. */
+    // Whether THIS month is already taken for the picked name -- the date alone.
     if (chosen) {
       const taken = (await advRead_(() => db.from('advance_requests').select('id, submitted_at')
         .eq('staff_id', chosen.id).gte('submitted_at', month + '-01').neq('approval', 'Disapproved').limit(3))) || [];
@@ -1884,6 +1909,7 @@ async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
   }
   return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, monthTaken,
+    role: admin ? null : (user.role || ''), roleNote, history,
     requester: user.name, teamCode: !!user.teamCode,
     route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
     routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
@@ -1902,6 +1928,10 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
   if (!s) throw badRequest('Jina hilo halipo kwenye orodha ya wafanyakazi. / That staff is not in the registry.');
   if (K(s.status) === 'INACTIVE') throw badRequest('Staff huyu si active. / This staff is marked inactive.');
   if (!advZoneOk_(zones, s.zone)) throw forbidden(`You do not have access to zone ${s.zone}.`);
+  // The same rule the list is drawn by: a name of another role is not on offer.
+  if (!isAdminUser(user) && advRoleKey_(s.role) !== advRoleKey_(user.role)) {
+    throw forbidden(`Jina hilo si la wadhifa wako (${user.role}). / That name is not of your role (${user.role}).`);
+  }
   const amounts = advAmounts_(cfg);
   const amount = num(p.amount);
   if (!amounts.includes(amount)) throw badRequest('Chagua kiasi kutoka kwenye orodha: ' + amounts.join(', ') + '. / Pick one of the amounts offered.');
@@ -6582,8 +6612,16 @@ async function saveRole(db, user, p) {
   // ALL_TABS, not ADMIN_TABS -- the checkbox list above now offers HOPE Loan's seven
   // alongside HOPE PMO's, and a role saved with one ticked was being silently stripped back
   // out here before this file's own smsGaps/saveTeam-shaped audit went looking for it.
-  const tabs = String((p && p.tabs) || '').split(/[;,]/).map(x => x.trim().toLowerCase())
+  const tabs0 = String((p && p.tabs) || '').split(/[;,]/).map(x => x.trim().toLowerCase())
     .filter(x => ALL_TABS.includes(x));
+  /* "if I choose approver then approver gets the approval tab automatic": a role given
+     something to approve holds the approval tab from that moment, whether or not the box was
+     ticked -- the two are one decision. */
+  const hasApproves = !!p && p.approves !== undefined;
+  const want = hasApproves
+    ? new Set(String(Array.isArray(p.approves) ? p.approves.join(',') : (p.approves || '')).split(/[;,]/).map(x => K(x)).filter(Boolean))
+    : new Set();
+  const tabs = want.size && !tabs0.includes('advappr') ? tabs0.concat('advappr') : tabs0;
   /* THE ADVANCE APPROVER OF THIS ROLE (RUN-ME-045, advRouteOf_): sent by the form as a role
      name or blank. Not mentioned means not changed. On a database without the column the
      tabs are still saved and the answer says the approver was not. */
@@ -6602,10 +6640,8 @@ async function saveRole(db, user, p) {
      Each of them gets this role as its approver_role (one approver per role, so a role ticked
      here leaves whichever approver it had), and any role that pointed here and is now
      unticked is cleared. Not mentioned means not changed. */
-  const hasApproves = !!p && p.approves !== undefined;
   let approves, approvesSaved = hasApproves;
   if (hasApproves) {
-    const want = new Set(String(Array.isArray(p.approves) ? p.approves.join(',') : (p.approves || '')).split(/[;,]/).map(x => K(x)).filter(Boolean));
     const roleRows = await fetchAll(() => db.from('roles').select('*'));
     const have = new Map(roleRows.map(r => [K(r.role), r]));
     const writes = [];
