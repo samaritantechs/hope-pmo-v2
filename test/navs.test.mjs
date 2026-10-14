@@ -165,6 +165,10 @@ test('every nav item, ALWAYS entry and data-go button lands on a screen that exi
     'the server reads a different stamp (' + (found && found[1]) + ') than the page reports ('
     + pageBuild[1] + ')');
   assert.ok(/freshEnough_/.test(app), 'the page stopped checking whether it is out of date');
+  /* THE APPROVAL TAB IS DRAWN FOR APPROVERS ONLY -- "It's not just credit but roles that have their own
+     approver ... Behave so": /api/me is what the sidebar is drawn from, and it asks adv-approver.js
+     (the one rule) before it hands the tab over; an admin is not asked. */
+  assert.ok(/withoutIdleApprovalTab\(supabase, user, user\.tabs\)/.test(meSrc) && /admin \? user\.tabs :/.test(meSrc), 'api/me.js stopped dropping the approval tab for non-approvers');
   /* THE INVARIANT IS "a tab this person actually holds, never a fixed dashboard" -- not the
      exact call site, which the imprest GM email's ?imp= deep link (imprestOpenDeepLink_) has
      legitimately grown a prefix on: go(impTab || firstAllowed_() || 'noaccess'). Both halves

@@ -3,6 +3,7 @@ import { supabase } from './_lib/supabase.js';
 import { authCodeResolvedPortal, withApi } from './_lib/auth.js';
 import { isSystemOpen, isAdminUser } from './_lib/system-gate.js';
 import { canSwitchWorkspace } from './_lib/workspace.js';
+import { withoutIdleApprovalTab } from './_lib/adv-approver.js';
 
 // GET /api/me?code=XXX
 // Who is this code, and what may they open? The launcher (public/home.html) calls this to
@@ -17,8 +18,10 @@ export default withApi(async (req, res) => {
      never be drawn, only a bare "invalid code". */
   // The portal's door: an access code, or a team code signed in as the FIELD OFFICER role.
   const user = await authCodeResolvedPortal(req.query.code);
-  const tabs = user.tabs;
   const admin = isAdminUser(user);
+  /* The approval tab is for the people the routing makes approvers, whatever a role is ticked for
+     (adv-approver.js): a department that has its own approver does not draw it for the rest. */
+  const tabs = admin ? user.tabs : await withoutIdleApprovalTab(supabase, user, user.tabs);
   const open = admin || await isSystemOpen(supabase);
   return {
     name: user.name,
