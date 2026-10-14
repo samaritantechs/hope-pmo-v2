@@ -1811,7 +1811,8 @@ function advSees_(routing, user, zones, r) {
   if (isAdminUser(user)) return true;
   const route = advRouteOf_(routing, r);
   if (route.kind === 'supervisor') return route.to === K(user.code);
-  if (route.kind === 'role') return route.to === K(user.role) && advZoneOk_(zones, r.zone);
+  // A request with no zone (customer service) belongs to the role, not to any zone's desk.
+  if (route.kind === 'role') return route.to === K(user.role) && (!r.zone || advZoneOk_(zones, r.zone));
   if (route.kind === 'legacy') return advZoneOk_(zones, r.zone);
   return false;
 }
@@ -1893,20 +1894,30 @@ async function advStaffStatus(db, user, p, nowMs = Date.now()) {
     OFFICER", "F.O", the sheet's "TEAM" -- reduced to one key, so a credit officer's list is
     credit names only and a team code's is the zone's field officers. */
 const advRoleKey_ = v => { const k = K(v).replace(/[^A-Z0-9]/g, ''); return k === 'FO' || k === 'TEAM' || k === 'TEAMS' ? 'FIELDOFFICER' : k; };
+/** CUSTOMER SERVICE IS ONE SHARED CODE -- "I can't have many customer service users, I had
+    given them a single code but remember they have their names enlisted under call agent
+    settings, so I need the role CUSTOMER SERVICE to be treated special case at advance
+    request: they choose list of their names from that very single account". The names come
+    off the call-agents roster (Settings), each matched to the HR registry by name for its ID
+    and account; a request carries no zone and reaches the role's approver wherever they sit. */
+const advCustomerService_ = user => !isAdminUser(user) && advRoleKey_(user.role) === 'CUSTOMERSERVICE';
+const advAgentNames_ = agentRows => [...new Set((agentRows || []).flatMap(a => String(a.names || '').split(/[,;]/).map(s => s.trim()).filter(Boolean)))]
+  .sort((a, b) => a.localeCompare(b));
 /** The request tab: the names of the viewer's ROLE in their zone(s) -- "each role see list of
     names under their roles in the zone only, credit can't be choosing names mixed with FOs"
     -- id, name, role, zone and nothing else; the amounts on offer; whether the picked name's
     month is already taken; and the history of that role's requests in those zones, so a team
     code sees its zone's field officers' requests and a credit officer the zone's credit ones.
     An admin sees every name and every request. */
-async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
+async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Date.now()) {
   const [teamRows, cfg, routing] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY]), advRouting_(db)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   const admin = isAdminUser(user);
+  const cs = advCustomerService_(user);
   // Who will see the request this sign-in files -- said before it is sent, so "nobody" is
   // never found out from silence.
   const route = advRouteOf_(routing, { req_role: user.role, req_code: user.code });
-  const [staff0, history0] = await Promise.all([
+  const [staff0, history0, agents0] = await Promise.all([
     advRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones)),
     advRead_(() => {
       const q = onZones_(db.from('advance_requests').select('id, submitted_at, staff_id, staff_name, zone, app_date, amount, approval, comment, decided_by, decided_at, req_role')
@@ -1914,36 +1925,52 @@ async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
       // ilike, not eq: a code's role keeps its own spelling ("Credit"), and .eq() is exact-case.
       return admin ? q : q.ilike('req_role', String(user.role || '~none~'));
     }),
+    cs ? advRead_(() => db.from('call_agents').select('user_id, names')) : [],
   ]);
   const on = Array.isArray(staff0);
   const roleKey = advRoleKey_(user.role);
   const zoneStaff = (staff0 || []).filter(r => K(r.status) !== 'INACTIVE' && advZoneOk_(zones, r.zone));
-  const staff = (admin ? zoneStaff : zoneStaff.filter(r => advRoleKey_(r.role) === roleKey))
-    .map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
+  let staff;
+  if (cs) {
+    // The roster's names; the registry's row where the name is there (ID, account, spelling),
+    // and the name alone where it is not -- offered, and said so, rather than lost.
+    const regBy = new Map(zoneStaff.map(r => [K(r.name), r]));
+    staff = advAgentNames_(agents0).map(n => {
+      const r = regBy.get(K(n));
+      return { id: r ? r.id : null, name: r ? r.name : n, role: r ? (r.role || 'CUSTOMER SERVICE') : 'CUSTOMER SERVICE', zone: r ? (r.zone || '') : '', onRegistry: !!r };
+    });
+  } else {
+    staff = (admin ? zoneStaff : zoneStaff.filter(r => advRoleKey_(r.role) === roleKey))
+      .map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
+  }
   /* NONE OF THIS ROLE, WHILE THE ZONE HAS STAFF: the spellings the registry carries are named,
      so HR can set ROLE there as Roles & access spells it rather than the officer hunting. */
   const spellings = [...new Set(zoneStaff.map(s => String(s.role || '').trim() || '—'))].sort();
-  const roleNote = !admin && on && !staff.length && zoneStaff.length
+  const roleNote = !admin && !cs && on && !staff.length && zoneStaff.length
     ? `Hakuna jina la wadhifa ${user.role} kwenye rejista ya zone yako; rejista inaandika wadhifa kama: ${spellings.join(', ')}. HR aandike ROLE kama Nafasi na ruhusa inavyouita. `
       + `/ No name with role ${user.role} on your zone's registry; the registry spells roles as: ${spellings.join(', ')}. HR should set ROLE there as Roles & access spells it.`
-    : null;
-  const history = (history0 || []).filter(r => advZoneOk_(zones, r.zone));
+    : (cs && on && !staff.length ? 'Hakuna majina kwenye orodha ya mawakala wa simu (Settings → Call agents). / No names on the call-agents roster yet (Settings → Call agents).' : null);
+  // A request with no zone (customer service) is nobody's to hide: it belongs to the role.
+  const history = (history0 || []).filter(r => !r.zone || advZoneOk_(zones, r.zone));
   const month = todayKey(nowMs).slice(0, 7);
   let chosen = null, monthTaken = null;
-  const want = String(staffId || '').trim().toUpperCase();
-  if (want) {
-    chosen = staff.find(s => K(s.id) === want) || null;
-    // Whether THIS month is already taken for the picked name -- the date alone.
+  const wantId = K(staffId), wantName = K(staffName);
+  if (wantId || wantName) {
+    chosen = staff.find(s => (wantId && s.id && K(s.id) === wantId) || (wantName && K(s.name) === wantName)) || null;
+    // Whether THIS month is already taken for the picked name -- the date alone. A name with
+    // no registry row (a roster name) is matched on the name itself, under this role.
     if (chosen) {
-      const taken = (await advRead_(() => db.from('advance_requests').select('id, submitted_at')
-        .eq('staff_id', chosen.id).gte('submitted_at', month + '-01').neq('approval', 'Disapproved').limit(3))) || [];
+      const taken = (await advRead_(() => {
+        const q = db.from('advance_requests').select('id, submitted_at').gte('submitted_at', month + '-01').neq('approval', 'Disapproved').limit(3);
+        return chosen.id ? q.eq('staff_id', chosen.id) : q.ilike('staff_name', chosen.name).ilike('req_role', String(user.role || '~none~'));
+      })) || [];
       const hit = taken.find(r => advMonth_(r.submitted_at) === month);
       monthTaken = hit ? { submitted_at: hit.submitted_at } : null;
     }
   }
   return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, monthTaken,
-    role: admin ? null : (user.role || ''), roleNote, history,
+    role: admin ? null : (user.role || ''), roleNote, history, csAgents: cs,
     requester: user.name, teamCode: !!user.teamCode,
     route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
     routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
@@ -1954,39 +1981,57 @@ async function advRequestPage(db, user, { staffId } = {}, nowMs = Date.now()) {
 async function advRequest(db, user, p, nowMs = Date.now()) {
   if (!p) throw badRequest('Nothing to save.');
   const staffId = String(p.staffId || '').trim().toUpperCase();
-  if (!staffId) throw badRequest('Chagua jina lako kwenye orodha. / Pick your name from the list.');
+  const staffName = String(p.staffName || '').trim();
+  const cs = advCustomerService_(user);
+  if (!staffId && !(cs && staffName)) throw badRequest('Chagua jina lako kwenye orodha. / Pick your name from the list.');
   const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY])]);
   const { zones } = advZones_(user, teamRows);
-  const { data: s, error: sErr } = await db.from('staff_registry').select('*').eq('id', staffId).maybeSingle();
-  if (sErr) { if (advMissing_(sErr)) throw badRequest(ADV_NOTE); throw new Error(sErr.message); }
+  let s;
+  if (cs && !staffId) {
+    // A roster name with no registry row (advCustomerService_): the name is the identity.
+    const agents = await advRead_(() => db.from('call_agents').select('names'));
+    const hit = advAgentNames_(agents).find(n => K(n) === K(staffName));
+    if (!hit) throw badRequest('Jina hilo halipo kwenye orodha ya mawakala wa simu. / That name is not on the call-agents roster.');
+    const reg = (await advRead_(() => db.from('staff_registry').select('*').ilike('name', hit).limit(2))) || [];
+    s = reg.find(r => K(r.status) !== 'INACTIVE') || { id: null, name: hit, role: 'CUSTOMER SERVICE', zone: null, account: null, status: 'Active' };
+  } else {
+    const { data: row, error: sErr } = await db.from('staff_registry').select('*').eq('id', staffId).maybeSingle();
+    if (sErr) { if (advMissing_(sErr)) throw badRequest(ADV_NOTE); throw new Error(sErr.message); }
+    s = row;
+  }
   if (!s) throw badRequest('Jina hilo halipo kwenye orodha ya wafanyakazi. / That staff is not in the registry.');
   if (K(s.status) === 'INACTIVE') throw badRequest('Staff huyu si active. / This staff is marked inactive.');
-  if (!advZoneOk_(zones, s.zone)) throw forbidden(`You do not have access to zone ${s.zone}.`);
-  // The same rule the list is drawn by: a name of another role is not on offer.
-  if (!isAdminUser(user) && advRoleKey_(s.role) !== advRoleKey_(user.role)) {
+  if (s.zone && !advZoneOk_(zones, s.zone)) throw forbidden(`You do not have access to zone ${s.zone}.`);
+  // The same rule the list is drawn by: a name of another role is not on offer. Customer
+  // service picks off the roster by name, whatever role HR typed on the registry row.
+  if (!isAdminUser(user) && !cs && advRoleKey_(s.role) !== advRoleKey_(user.role)) {
     throw forbidden(`Jina hilo si la wadhifa wako (${user.role}). / That name is not of your role (${user.role}).`);
   }
   const amounts = advAmounts_(cfg);
   const amount = num(p.amount);
   if (!amounts.includes(amount)) throw badRequest('Chagua kiasi kutoka kwenye orodha: ' + amounts.join(', ') + '. / Pick one of the amounts offered.');
   const month = todayKey(nowMs).slice(0, 7);
-  const prior = await advRead_(() => db.from('advance_requests').select('id, submitted_at, approval')
-    .eq('staff_id', s.id).gte('submitted_at', month + '-01').neq('approval', 'Disapproved'));
+  const prior = await advRead_(() => {
+    const q = db.from('advance_requests').select('id, submitted_at, approval').gte('submitted_at', month + '-01').neq('approval', 'Disapproved');
+    return s.id ? q.eq('staff_id', s.id) : q.ilike('staff_name', s.name).ilike('req_role', String(user.role || '~none~'));
+  });
   if (prior === null) throw badRequest(ADV_NOTE);
   if (prior.some(r => advMonth_(r.submitted_at) === month)) {
     throw badRequest('⚠️ Tayari kuna ombi la advance la mwezi huu kwa jina hili. Ombi moja tu kwa mwezi. '
       + '/ You already have an advance request this month. Only one request per month is allowed.');
   }
   const at = new Date(nowMs).toISOString();
-  const row = { submitted_at: at, staff_id: s.id, staff_name: s.name, staff_role: s.role || null,
+  const row = { submitted_at: at, staff_id: s.id || null, staff_name: s.name, staff_role: s.role || null,
     app_date: advDate_(p.appDate) || todayKey(nowMs), amount, approval: 'Pending', comment: null,
-    zone: K(s.zone) || null, code: user.teamCode ? (user.teams || [])[0] || null : (user.role || null),
+    // Customer service is no zone's: its requests belong to the role wherever the approver sits.
+    zone: cs ? null : (K(s.zone) || null), code: user.teamCode ? (user.teams || [])[0] || null : (user.role || null),
     account: s.account || null, created_by: user.name, created_at: at };
   /* THE REQUESTER, WRITTEN ON THE ROW: the role and the code that filed it are what the desk
      routes on (advRouteOf_). On a database without RUN-ME-045 the two columns are left out
      and the request reaches the zone's desk as before -- the answer says which. */
   let routed = true;
-  let { data: ins, error } = await db.from('advance_requests').insert({ ...row, req_role: user.role || null, req_code: user.code || null }).select('id');
+  // req_role upper-cased, so a desk can read a role's requests with one exact `in`.
+  let { data: ins, error } = await db.from('advance_requests').insert({ ...row, req_role: K(user.role) || null, req_code: user.code || null }).select('id');
   if (error && advColMissing_(error, ['req_role', 'req_code'])) {
     routed = false;
     ({ data: ins, error } = await db.from('advance_requests').insert(row).select('id'));
@@ -2015,23 +2060,28 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   // its requesters include team codes, which are not codes on the book. ilike: a code's
   // role keeps its own spelling.
   const deptRoles = routing.on ? routing.deptRolesOf(user.code) : [];
+  /* AND BY ROLE, WHATEVER THE ZONE: the roles routed to this desk and the roles it supervises
+     whole, in one exact `in` (req_role is written upper-cased; the zone read above still
+     catches older spellings in zone). A customer-service request carries no zone -- one
+     shared code, names off the roster -- so the zone read alone would never bring it. */
+  const roleKeys = routing.on ? [...new Set(routing.rolesApprovedBy(user.role).concat(deptRoles).map(K))] : [];
   const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: false });
   const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
-  const [pending0, recent0, pendS, recS, ...byRole] = await Promise.all([
+  const [pending0, recent0, pendS, recS, pendR, recR] = await Promise.all([
     advRead_(() => onZones_(pendQ(), zones)),
     advRead_(() => onZones_(recQ(), zones)),
     mine.length ? advRead_(() => pendQ().in('req_code', mine)) : [],
     mine.length ? advRead_(() => recQ().in('req_code', mine)) : [],
-    ...deptRoles.map(role => advRead_(() => pendQ().ilike('req_role', role))),
-    ...deptRoles.map(role => advRead_(() => recQ().ilike('req_role', role))),
+    roleKeys.length ? advRead_(() => pendQ().in('req_role', roleKeys)) : [],
+    roleKeys.length ? advRead_(() => recQ().in('req_role', roleKeys)) : [],
   ]);
   const on = Array.isArray(pending0);
   const merge = (...lists) => { const by = new Map(); for (const l of lists) for (const r of (l || [])) by.set(String(r.id), r); return [...by.values()]; };
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
   const withRoute = r => ({ ...r, route: advRouteLabel_(advRouteOf_(routing, r), r.zone) });
-  const pending = merge(pending0, pendS, ...byRole.slice(0, deptRoles.length)).filter(sees)
+  const pending = merge(pending0, pendS, pendR).filter(sees)
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
-  const recent = merge(recent0, recS, ...byRole.slice(deptRoles.length)).filter(r => sees(r) || K(r.decided_by) === K(user.name))
+  const recent = merge(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
   // What this desk IS -- the roles routed to it, the roles it supervises whole, the people it
   // supervises by name -- and, for an admin, the pending requests that reach nobody else.
@@ -2064,7 +2114,7 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
   for (const u of updates) {
     const r = by.get(u.id);
     if (!r) { skipped.push(u.id + ': no longer there'); continue; }
-    if (!advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') throw forbidden(`You do not have access to zone ${r.zone}.`);
+    if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') throw forbidden(`You do not have access to zone ${r.zone}.`);
     if (!advSees_(routing, user, zones, r)) throw forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
     if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval}`); continue; }
     const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);

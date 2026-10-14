@@ -990,6 +990,10 @@ $('#regBtn').onclick = function(){
       // Remember who this handset is from the very first sign-in, so the NEXT launch -- and
       // every return from a phone call -- goes straight in instead of waiting on the network.
       try { localStorage.removeItem('hcLoggedOut'); localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      /* AND THE CODE JUST TYPED IS THE PORTAL'S SIGN-IN TOO -- the team code opens the portal
+         as a field officer, a leader's code as themselves -- so the switch to the system never
+         asks for it a second time. Same key the portal keeps its own sign-in under. */
+      try { localStorage.setItem('hopeCode', regRole === 'officer' ? pass : code); } catch(e){}
       return enterApp(d);
     }
     throw new Error('Registration did not complete. Try again.');
@@ -1119,6 +1123,21 @@ function enterApp(d){
      portal's, so a leader who also holds an admin code is not pre-judged here. */
   const canSwap = d.systemOpen === true || d.systemAdmin === true || d.leader === true;
   $('#swapBtn').classList.toggle('hide', !canSwap);
+  /* NO SECOND SIGN-IN -- "when people press the switch the system is re-prompting to enter
+     code yet they already logged in for calls". A handset registered before this kept no code
+     on the device; it asks the server for the one its registration rests on (api_portalCode:
+     the team's code, or the leader's own) and stores it where the portal signs in from, then
+     goes. A handset that already holds one, or a server that cannot answer, just goes -- the
+     portal's own sign-in is still there behind it. One request, on the press, never at boot. */
+  $('#swapBtn').onclick = function(ev){
+    var have = null; try { have = localStorage.getItem('hopeCode'); } catch(e){}
+    if (have) return;
+    ev.preventDefault();
+    srv('api_portalCode', DEV)
+      .then(function(r){ if (r && r.ok && r.code) { try { localStorage.setItem('hopeCode', r.code); } catch(e){} } })
+      .catch(function(){})
+      .then(function(){ location.href = '/dashboard'; });
+  };
   if (canSwap) {
     $('#swapBtn').title = (d.systemOpen === true || d.systemAdmin === true)
       ? 'Nenda kwenye mfumo / Switch to the system'

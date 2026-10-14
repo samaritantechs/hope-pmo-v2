@@ -20,11 +20,14 @@ function advApprCls_(r){ var a = String(r.approval||'').toUpperCase(); return a 
 /* THE ASK. Pick your own name (your zone's list), the date, one of the amounts; the month's
    rule and the amounts come from the server. Your own history sits below once a name is picked. */
 VIEWS.advreq = function(){
-  var staffId = S.args.staffId || '';
-  return srv('advRequestPage', { staffId: staffId }).then(function(d){
+  var staffId = S.args.staffId || '', staffName = S.args.staffName || '';
+  return srv('advRequestPage', { staffId: staffId, staffName: staffName }).then(function(d){
     S.advReq = d;
     var c = d.chosen;
     var manyZones = !(d.zones && d.zones.length === 1);
+    /* CUSTOMER SERVICE: one shared code, so the names are the call-agents roster's (Settings)
+       and are picked BY NAME; a name HR has not put on the registry is still offered, flagged. */
+    var byName = !!d.csAgents;
     HEAD = (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
       + (d.noZoneTeams && d.noZoneTeams.length
           ? '<div class="note bad">Timu hizi hazina zone kwenye Teams & Staff, hivyo wafanyakazi wake hawaonekani hapa: ' + esc(d.noZoneTeams.join(', '))
@@ -42,15 +45,19 @@ VIEWS.advreq = function(){
       + (d.routingOn === false ? '<div class="note" style="margin:10px 14px 0">⚠ ' + esc(d.routingNote || '') + '</div>' : '')
       + '<div class="cleanbox">'
       + '<div class="fld"><label>Jina lako / Your name *</label>'
-        + '<select data-arg="staffId"><option value="">— chagua jina lako / pick your name —</option>'
+        + '<select data-arg="' + (byName ? 'staffName' : 'staffId') + '"><option value="">— chagua jina lako / pick your name —</option>'
         + (d.staff || []).map(function(s){
-            return '<option value="' + esc(s.id) + '"' + (c && c.id === s.id ? ' selected' : '') + '>' + esc(s.name)
-              + (s.role ? ' · ' + esc(s.role) : '') + (manyZones && s.zone ? ' (' + esc(s.zone) + ')' : '') + '</option>'; }).join('')
+            var v = byName ? s.name : s.id, on = c && (byName ? c.name === s.name : c.id === s.id);
+            return '<option value="' + esc(v) + '"' + (on ? ' selected' : '') + '>' + esc(s.name)
+              + (s.onRegistry === false ? ' ⚠ si kwenye rejista ya HR / not on HR registry' : '')
+              + (s.role && !byName ? ' · ' + esc(s.role) : '') + (manyZones && s.zone ? ' (' + esc(s.zone) + ')' : '') + '</option>'; }).join('')
         + '</select>'
-        + '<div class="fldnote">Majina ya wadhifa wako katika zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your role\'s names in your zone; nothing else about anyone is shown.</div></div>'
+        + '<div class="fldnote">' + (byName
+            ? 'Majina kutoka orodha ya mawakala wa simu (Settings → Call agents). Jina lisilo kwenye rejista ya HR bado linaweza kuomba; HR aliongeze ili akaunti ya benki ipatikane. / Names from the call-agents roster (Settings → Call agents). A name not on the HR registry can still ask; HR should add it so the bank account is there.'
+            : 'Majina ya wadhifa wako katika zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your role\'s names in your zone; nothing else about anyone is shown.') + '</div></div>'
       + (c
           ? '<div class="facts">'
-              + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id) + '</b></div>'
+              + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id || '— (si kwenye rejista ya HR / not on HR registry)') + '</b></div>'
               + '<div class="frow"><span>Jina / Name</span><b>' + esc(c.name) + '</b></div>'
               + '<div class="frow"><span>Wadhifa / Role</span><span>' + esc(c.role || '—') + '</span></div>'
               + '<div class="frow"><span>Zone</span><span>' + esc(c.zone || '—') + '</span></div></div>'
@@ -84,7 +91,8 @@ function advSubmit(){
   var amount = $('#advAmount').value, date = $('#advDate').value;
   if (!date){ toast('Chagua tarehe ya maombi. / Pick the application date.', true); return; }
   if (!confirm('Tuma ombi la advance la TZS ' + money(amount) + ' kwa jina la ' + c.name + '? / Submit an advance request of TZS ' + money(amount) + ' for ' + c.name + '?')) return;
-  srv('advRequest', { staffId: c.id, appDate: date, amount: amount })
+  // A roster name with no registry row goes by name (customer service); everyone else by ID.
+  srv('advRequest', { staffId: c.id || '', staffName: c.name, appDate: date, amount: amount })
     .then(function(r){ toast('✅ Ombi limetumwa: TZS ' + money(r.amount) + (r.route ? ' → ' + r.route.label : '') + '. / Advance request submitted.'); render({ force:true }); })
     .catch(function(e){ toast(String(e.message||e), true); });
 }

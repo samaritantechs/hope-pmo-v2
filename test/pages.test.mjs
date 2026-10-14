@@ -1740,7 +1740,14 @@ test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
   for (const id of ['advreq', 'advappr', 'advrep', 'advstaff']) assert.ok(new RegExp("\\{ id:'" + id + "',").test(nav), id + ' sits after PMO Deduction');
   assert.ok(/advStaff:1, advRequestPage:1, advQueue:1, advReport:1/.test(app), 'cached like the other reads');
   const view = page('advance');
-  assert.ok(/srv\('advRequestPage', \{ staffId: staffId \}\)/.test(view) && /data-arg="staffId"/.test(view) && /id="advSubmit"/.test(view) && /srv\('advRequest'/.test(view), 'the ask: pick your name, submit');
+  assert.ok(/srv\('advRequestPage', \{ staffId: staffId, staffName: staffName \}\)/.test(view) && /data-arg="' \+ \(byName \? 'staffName' : 'staffId'\) \+ '"/.test(view) && /id="advSubmit"/.test(view) && /srv\('advRequest'/.test(view), 'the ask: pick your name (by ID, or by name for customer service), submit');
+  // Customer service: one shared code, the names off the call-agents roster, picked by name.
+  assert.ok(/var byName = !!d\.csAgents;/.test(view) && /not on HR registry/.test(view) && /staffId: c\.id \|\| '', staffName: c\.name/.test(view), 'a roster name with no registry row still asks, by name');
+  // The switch from Calls carries the sign-in across: the code typed at registration is kept,
+  // and a handset registered before that asks for its code on the press.
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf8');
+  assert.ok(/localStorage\.setItem\('hopeCode', regRole === 'officer' \? pass : code\)/.test(call), 'registration keeps the code where the portal signs in from');
+  assert.ok(/\$\('#swapBtn'\)\.onclick = function\(ev\)/.test(call) && /srv\('api_portalCode', DEV\)/.test(call) && /location\.href = '\/dashboard'/.test(call), 'the switch asks for the code it registered with, then goes');
   assert.ok(/monthTaken/.test(view) && /One request per month; the approver sees it/.test(view), 'the month rule is said on the form -- the date alone, the rest is the approver\'s');
   assert.ok(/VIEWS\.advappr = function/.test(view) && /srv\('advQueue'/.test(view) && /class="advChk"/.test(view) && /id="advDecideSave"/.test(view) && /srv\('advDecide', \{ updates: updates \}\)/.test(view), 'the GMO\'s bulk decision');
   assert.ok(/VIEWS\.advrep = function/.test(view) && /srv\('advReport'/.test(view) && /col\('account','Akaunti \/ Account'\)/.test(view) && /board\('advRepZones'/.test(view), 'the report with the accounts, by zone');
