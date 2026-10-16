@@ -36,6 +36,8 @@ import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustments
    own tables, not a helper this file's other logic reaches into. */
 import { imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund } from './imprest.js';
+/* PHONE NOTIFICATIONS -- the bell's switch and the subscription it keeps. See _lib/push.js. */
+import { pushKey, pushSubscribe, pushUnsubscribe, pushTest } from './push.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -9741,6 +9743,8 @@ const FN = {
   /* IMPREST -- ask, decide, fund, retire, review. See _lib/imprest.js. */
   imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
+  /* PHONE NOTIFICATIONS -- turned on and off from the bell. See _lib/push.js. */
+  pushKey, pushSubscribe, pushUnsubscribe, pushTest,
   officerBeat, officerLocationsList,
 };
 
@@ -10138,6 +10142,10 @@ const FN_TAB = {
   imprestRetire: ['impreq'],
   imprestPhotos: ['impreq', 'impappr', 'imprep'],
   imprestReport: ['imprep'], imprestFund: ['imprep'],
+  /* PHONE NOTIFICATIONS. The only topic so far is a new imprest request, so the switch is
+     offered to the approval pane's holders; a second topic adds its tab here and in
+     PUSH_TOPICS (_lib/push.js), which is what decides who hears what. */
+  pushKey: ['impappr'], pushSubscribe: ['impappr'], pushUnsubscribe: ['impappr'], pushTest: ['impappr'],
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the
