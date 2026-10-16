@@ -11661,7 +11661,13 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // The admin sees all of them, and is told by name which reach nobody else: the lawyer's request (no approver).
   const qA = await portalApi(db, ADMIN, 'advQueue', {}, NOW);
   assert.equal(qA.pending.length, 8); assert.equal(qA.desk.admin, true);
-  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST' }]);
+  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST', why: 'no approver set' }]);
+  /* ...and by name a request that routes to a role NOBODY holds in its zone: the GMOs hold DAR EAST and MARA here, not LAKE ZONE
+     ("no GMO code holds a team in zone LAKE ZONE" -- seen only by an admin, which the desk now says instead of staying silent). */
+  db._dump('advance_requests').push({ id: 'r-lake', submitted_at: '2026-07-07T08:00:00Z', staff_id: 'LZ', staff_name: 'LAKE ZONE OFFICER', staff_role: 'Field Officer', zone: 'LAKE ZONE', amount: 50000, approval: 'Pending', app_date: '2026-07-07' });
+  const qLake = await portalApi(db, ADMIN, 'advQueue', {}, NOW);
+  assert.deepEqual(qLake.unrouted.map(u => [u.staff_name, u.why]), [['LAWYER', 'no approver set'], ['LAKE ZONE OFFICER', 'no GMO holds zone LAKE ZONE']]);
+  db._dump('advance_requests').pop();
   // ...and a lawyer, who approves no field officer, still sees none of the older rows.
   assert.deepEqual((await portalApi(db, user('L1'), 'advQueue', {}, NOW)).pending, []);
   assert.equal(qA.routingOn, true); assert.equal(qA.routingNote, null);
@@ -11675,6 +11681,11 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   assert.equal((await portalApi(db, user('C2'), 'advDecide', { updates: [{ id: rC1.id, approval: 'Approved', comment: 'ok' }] }, NOW)).approved, 1);
   assert.equal((await portalApi(db, user('GD'), 'advDecide', { updates: [{ id: rFo.id, approval: 'Disapproved' }, { id: rGd.id, approval: 'Approved' }] }, NOW)).updated, 2);
   assert.equal((await portalApi(db, ADMIN, 'advDecide', { updates: [{ id: rL1.id, approval: 'Approved' }] }, NOW)).approved, 1);
+  // A bulk save with a request that is not this desk's decides the rest and NAMES it -- it used to stop at the first one,
+  // leaving every request after it "still Pending" with only a 403 to show for it. One request that is not yours is still the refusal.
+  const mixed = await portalApi(db, user('PM'), 'advDecide', { updates: [{ id: rFo.id, approval: 'Approved' }, { id: rP1.id, approval: 'Approved', comment: 'bulk' }] }, NOW);
+  assert.equal(mixed.approved, 1); assert.match(mixed.skipped.join(' '), /ASHA.*not routed to your desk/);
+  await assert.rejects(() => portalApi(db, user('PM'), 'advDecide', { updates: [{ id: rFo.id, approval: 'Approved' }] }, NOW), e => e.status === 403);
   // The decided ones sit under "recent" for the desk that decided them and the desk they were routed to.
   assert.deepEqual((await portalApi(db, user('C2'), 'advQueue', {}, NOW)).recent.map(r => r.staff_name), ['CREDIT ONE']);
   assert.deepEqual((await portalApi(db, user('C1'), 'advQueue', {}, NOW)).recent, [], 'the requester is not a desk');
