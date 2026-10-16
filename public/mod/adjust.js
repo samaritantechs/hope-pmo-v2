@@ -63,7 +63,7 @@ VIEWS.adjust = function(){
         !net ? '' : (up ? 'good' : 'bad'));
     };
     HEAD = '<div class="kpis">'
-      + kpi('Marekebisho / Adjustments', money((d.rows||[]).length))
+      + kpi('Miamala / Adjustments', money((d.rows||[]).length))
       + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net', (tg['expected-initial']||0) < 0 ? 'bad' : '')
       + kpi('Expected — Current', money(tg['expected-current'] || 0), 'jumla / net', (tg['expected-current']||0) < 0 ? 'bad' : '')
       /* WHICH WAY EACH ARREARS BOOK'S NET MOVES RECOVERY. They pull opposite ways -- recovery
@@ -165,7 +165,7 @@ VIEWS.adjust = function(){
        is being counted, whether the deck has overtaken it, or what to type to make it count. */
     ONROW = function(r){
       var cs = r.countState || '';
-      drawer('<h3>Rekebisho / Adjustment</h3>'
+      drawer('<h3>Muamala / Adjustment</h3>'
         + '<div class="sub">' + esc(ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + esc(r.adj_date)
           + (r.team ? ' · ' + esc(r.team) : ' · kitabu chote / whole book') + '</div>'
         + (r.countNote ? '<div class="note ' + (cs === 'superseded' ? 'bad' : cs === 'counted' ? 'good' : '')
@@ -210,7 +210,7 @@ VIEWS.adjust = function(){
         + '<div class="fld"><label>Sababu / Reason</label>'
           + '<input id="adjEditReason" value="' + esc(r.reason || '') + '"></div>'
         + '<button class="btn w" id="adjEditSave">Hifadhi mabadiliko / Save changes</button>'
-        + '<button class="btn w ghost" id="adjEditDel" style="margin-top:8px">Futa rekebisho / Delete this adjustment</button>');
+        + '<button class="btn w ghost" id="adjEditDel" style="margin-top:8px">Futa muamala / Delete this adjustment</button>');
       $('#adjEditSave').onclick = function(){
         var v = Number($('#adjEditAmt').value);
         if (!isFinite(v) || !v) { toast('Weka kiasi kisicho sifuri. / A non-zero amount is required.', true); return; }
@@ -222,11 +222,11 @@ VIEWS.adjust = function(){
         srv('adjustmentAmend', { id: r.id, amount: v, date: dt,
               target: $('#adjEditTarget').value, team: $('#adjEditTeam').value,
               ref: $('#adjEditRef').value, reason: $('#adjEditReason').value })
-          .then(function(){ closeDrawer(); toast('Rekebisho limehifadhiwa. / Adjustment saved.'); render({ force: true }); })
+          .then(function(){ closeDrawer(); toast('Muamala umehifadhiwa. / Adjustment saved.'); render({ force: true }); })
           .catch(function(e){ toast(String(e.message || e), true); });
       };
       $('#adjEditDel').onclick = function(){
-        if (!confirm('Futa rekebisho hili? / Delete this adjustment?\n\n'
+        if (!confirm('Futa muamala huu? / Delete this adjustment?\n\n'
             + (ADJ_TARGET_LABELS[r.target] || r.target) + ' · ' + r.adj_date
             + ' · TZS ' + money(num(r.amount)))) return;
         srv('adjustmentDelete', { id: r.id })
