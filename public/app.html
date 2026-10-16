@@ -744,7 +744,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-i';
+var BUILD = '2026-10-16-j';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1301,6 +1301,8 @@ function lastView_(){
   return v && !NO_LANDING_[v] && allowed(v) ? v : null;
 }
 function go(view, args){
+  // A new version noted by buildWatch_ is applied here, where the screen changes anyway: the reload lands on the tab asked for.
+  if (S.buildBehind && view !== 'upload' && buildApply_({ view: view, args: args || {} })) return;
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   /* args is only ever passed by a [data-go] button that CARRIES something across the switch
      (the month-report chip carries the chosen week); everything else still starts clean. */
@@ -1462,12 +1464,20 @@ function freshEnough_(me){
      "I expect both the catherine type issue and presentation slides all autofix at interfaces
       with no need to refresh nor logout"
    freshEnough_ ran once, at sign-in. A tab left open since the morning kept the morning's
-   code all day. Every few minutes, and whenever the tab comes back into view, the page asks
-   /api/me which version the server has; when it is behind, and nobody is in the middle of
-   typing or has a drawer open, it writes down the tab it is on and reloads past the cache by
-   the one guarded path, and start() opens the same tab again. Signed in throughout: the code
-   is in local storage. A playing deck has its own check (presCheckBuild_) and is left to it. */
-var BUILD_WATCH_MS = 5 * 60 * 1000;
+   code all day. Every fifteen minutes the page asks /api/me which version the server has; when
+   it is behind it NOTES it, and the reload past the cache happens at a quiet moment only
+   (buildApply_): while the tab is hidden, or at the next tab switch, where the screen changes
+   anyway -- never under somebody's eyes, never while typing or with a drawer open. It writes
+   down the tab it is on and start() opens the same tab again. Signed in throughout: the code
+   is in local storage. A playing deck has its own check (presCheckBuild_) and is left to it.
+
+   IT USED TO BE EVERY FIVE MINUTES AND THE MOMENT THE TAB CAME BACK INTO VIEW, reloading at
+   once -- "The system is like autorefreshing the current page so constant that it bores ...
+   shifting windows or apps autorefreshes immediately - better sync data but dont do so or do
+   so like timely 15mins". On a day of several deploys that was a page reloading under people
+   every time they glanced at WhatsApp. The data syncs (the bell, the announcement, a tab's own
+   quiet re-read) stay; only the RELOAD waits for a moment nobody is looking. */
+var BUILD_WATCH_MS = 15 * 60 * 1000;
 var VIEW_RESUME_KEY = 'hopeViewResume';
 /** Something on the screen that a reload would lose: a field being typed in, a drawer, a form
     with a value changed from what it was drawn with, or the deck playing. */
@@ -1488,14 +1498,25 @@ function pageBusy_(){
   return false;
 }
 function buildWatch_(){
-  if (!S.code || !S.me || document.hidden) return;
+  if (!S.code || !S.me) return;
   fetch('/api/me?code=' + encodeURIComponent(S.code)).then(readJson_).then(function(x){
     var me = x && x.body;
     if (!me || !me.build || me.build === BUILD) return;
-    if (pageBusy_()) return;                       // tried again on the next tick
-    try { sessionStorage.setItem(VIEW_RESUME_KEY, JSON.stringify({ view: S.view, args: S.args || {} })); } catch (e) {}
-    freshEnough_(me);
+    S.buildBehind = me;                            // noted; applied by buildApply_ at a quiet moment
+    buildApply_();
   }).catch(function(){ /* a missed check is tried again on the next tick */ });
+}
+/** The reload itself, when nobody is looking: the tab is hidden (then it comes back fresh, on the
+    same screen), or a tab switch is under way (`to`: the screen asked for is the one resumed).
+    Not while typing, not with a drawer open, not with the deck playing -- tried again later. */
+function buildApply_(to){
+  if (!S.buildBehind || pageBusy_()) return false;
+  if (!document.hidden && !to) return false;       // visible and reading: wait for a tab switch
+  var n = to || { view: S.view, args: S.args || {} };
+  try { sessionStorage.setItem(VIEW_RESUME_KEY, JSON.stringify({ view: n.view, args: n.args || {} })); } catch (e) {}
+  var reloading = !freshEnough_(S.buildBehind);
+  if (!reloading) S.buildBehind = null;            // already tried this build once: not asked again until the next note
+  return reloading;
 }
 function viewResumeTake_(){
   try {
@@ -1574,6 +1595,8 @@ function start(me){
     else go(impTab || lastView_() || firstAllowed_() || 'noaccess');
   }
   setInterval(buildWatch_, BUILD_WATCH_MS);
+  // A noted new version is applied the moment the tab goes out of view -- it comes back fresh.
+  document.addEventListener('visibilitychange', function(){ if (document.hidden) buildApply_(); });
   /* THE FIRST SCREEN'S OWN READS GO FIRST. The tips, the announcement and the bell are three
      more requests nobody is waiting for at the moment of opening; they follow a breath later,
      after the tab somebody actually opened has had the connection to itself. */
@@ -1587,7 +1610,7 @@ function start(me){
   // Checked again when somebody comes back to the tab, so a notice posted mid-morning reaches
   // a screen that has been sitting open since eight.
   document.addEventListener('visibilitychange', function(){
-    if (!document.hidden){ annCheck(); bellRefresh(); buildWatch_(); }
+    if (!document.hidden){ annCheck(); bellRefresh(); }          // syncs, not a reload: buildWatch_ keeps to its clock
   });
 }
 

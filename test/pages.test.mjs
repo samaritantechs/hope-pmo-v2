@@ -621,14 +621,19 @@ test('a playing presentation checks the build on every refetch and resumes after
 });
 
 /* AND THE PORTAL ITSELF -- "all autofix at interfaces with no need to refresh nor logout". */
-test('an open portal tab checks the build on a timer and when it comes back into view, and reloads itself onto the same tab', () => {
+/* ...BUT NEVER UNDER SOMEBODY'S EYES -- "The system is like autorefreshing the current page so constant that it bores ...
+   shifting windows or apps autorefreshes immediately - better sync data but dont do so or do so like timely 15mins": the
+   check is every fifteen minutes, a new version is NOTED, and the reload waits for the tab to be hidden or for a tab switch. */
+test('an open portal tab checks the build every fifteen minutes and reloads itself only at a quiet moment, onto the same tab', () => {
   const app = appSrc();
   const watch = app.slice(app.indexOf('function buildWatch_'), app.indexOf('function viewResumeTake_'));
-  assert.ok(/if \(!S\.code \|\| !S\.me \|\| document\.hidden\) return;/.test(watch), 'signed in and in view, or nothing is asked');
+  assert.ok(/if \(!S\.code \|\| !S\.me\) return;/.test(watch), 'signed in, or nothing is asked');
   assert.ok(/fetch\('\/api\/me\?code=' \+ encodeURIComponent\(S\.code\)\)/.test(watch));
-  assert.ok(/if \(pageBusy_\(\)\) return;/.test(watch), 'never under somebody\'s fingers');
-  assert.ok(/sessionStorage\.setItem\(VIEW_RESUME_KEY, JSON\.stringify\(\{ view: S\.view, args: S\.args \|\| \{\} \}\)\)/.test(watch)
-    && /freshEnough_\(me\);/.test(watch), 'notes the tab, reloads by the one guarded path');
+  assert.ok(/S\.buildBehind = me;\s*\/\/ noted/.test(watch) && /function buildApply_\(to\)/.test(watch), 'a new version is noted, not applied on the spot');
+  assert.ok(/if \(!S\.buildBehind \|\| pageBusy_\(\)\) return false;/.test(watch), 'never under somebody\'s fingers');
+  assert.ok(/if \(!document\.hidden && !to\) return false;/.test(watch), 'visible and reading: it waits');
+  assert.ok(/sessionStorage\.setItem\(VIEW_RESUME_KEY, JSON\.stringify\(\{ view: n\.view, args: n\.args \|\| \{\} \}\)\)/.test(watch)
+    && /var reloading = !freshEnough_\(S\.buildBehind\);/.test(watch), 'notes the tab, reloads by the one guarded path');
   const busy = app.slice(app.indexOf('function pageBusy_'), app.indexOf('function buildWatch_'));
   assert.ok(/\/\^\(INPUT\|TEXTAREA\|SELECT\)\$\/\.test\(a\.tagName\)/.test(busy), 'a field in focus');
   assert.ok(/bg\.style\.display === 'flex'/.test(busy), 'a drawer open');
@@ -636,10 +641,13 @@ test('an open portal tab checks the build on a timer and when it comes back into
   assert.ok(/el\.value \|\| ''\) !== \(el\.defaultValue \|\| ''\)/.test(busy), 'a form changed from how it was drawn');
   const start = app.slice(app.indexOf('function start(me)'), app.indexOf('/* ----------------------------------------------------------- table engine'));
   assert.ok(/setInterval\(buildWatch_, BUILD_WATCH_MS\);/.test(start), 'on a timer');
-  assert.ok(/if \(!document\.hidden\)\{ annCheck\(\); bellRefresh\(\); buildWatch_\(\); \}/.test(start), 'and when the tab comes back');
+  assert.ok(/if \(document\.hidden\) buildApply_\(\); \}\);/.test(start), 'applied the moment the tab goes out of view');
+  assert.ok(/if \(!document\.hidden\)\{ annCheck\(\); bellRefresh\(\); \}/.test(start) && !/bellRefresh\(\); buildWatch_\(\);/.test(start), 'coming back syncs the bell and the notice -- no version check, no reload');
   assert.ok(/var vres = viewResumeTake_\(\);\s*\n\s*if \(!impTab && vres && allowed\(vres\.view\)\) go\(vres\.view, vres\.args \|\| \{\}\);/.test(start),
     'start() opens the tab the reload was taken from');
-  assert.ok(/var BUILD_WATCH_MS = 5 \* 60 \* 1000;/.test(app), 'every five minutes: one tiny read per open tab');
+  const go = app.slice(app.indexOf('function go(view, args){'), app.indexOf('function go(view, args){') + 400);
+  assert.ok(/if \(S\.buildBehind && view !== 'upload' && buildApply_\(\{ view: view, args: args \|\| \{\} \}\)\) return;/.test(go), 'or at the next tab switch, landing on the tab asked for');
+  assert.ok(/var BUILD_WATCH_MS = 15 \* 60 \* 1000;/.test(app), 'every fifteen minutes: one tiny read per open tab');
 });
 
 /* CLICKING A SECOND HEADER KEEPS THE FIRST SORT AS "THEN BY", LIKE EXCEL.
