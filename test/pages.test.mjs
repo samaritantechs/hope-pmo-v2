@@ -1846,6 +1846,15 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/list="asRoles"/.test(adv) && /m\.roleNames/.test(adv), 'HR picks ROLE from Roles & access spellings');
   assert.ok(/Decided this month/.test(adv) && /newest first/.test(adv), 'the desk says its default and its order');
   assert.ok(/id="kSup"/.test(admin) && /supervisor: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the code form sends the supervisor, or nothing when the picker is masked');
+  /* THE CODE FORM PICKS THE PERSON FROM THE HR REGISTRY, BY SEARCH -- "should allow picking with search from hr db not teams
+     and staff table, so that we take the really right one". The old "Pick from Teams & Staff" select was never filled. */
+  assert.ok(/id="kFind"/.test(admin) && /id="kHits"/.test(admin) && !/id="kPick"/.test(admin) && !/Pick from Teams &amp; Staff/.test(admin), 'a search box in place of the empty select');
+  const find = admin.slice(admin.indexOf('function codeFindWire_(roles)'), admin.indexOf('function settingForm(key, value)'));
+  assert.ok(/srv\('advStaff', \{ q: q \}\)/.test(find) && /if \(q !== last\) return;/.test(find), 'asks the registry\'s own search, the last keystroke owns the box');
+  assert.ok(/esc\(r\.role \|\| '—'\) \+ ' · ' \+ esc\(r\.zone \|\| '—'\) \+ ' · ' \+ esc\(r\.id \|\| ''\)/.test(find), 'each hit shows role, zone and ID -- the right one is told apart');
+  assert.ok(/document\.getElementById\('kName'\)\.value = r\.name \|\| '';/.test(find) && /document\.getElementById\('kRole'\)\.value = roleAs\(r\.role\);/.test(find), 'a tap fills the name and the role as Roles & access spells it');
+  assert.ok(/srvTeams_\(\)\.then\(function\(d\)\{/.test(find) && /document\.getElementById\('kTeams'\)\.value = mine\.join\(', '\);/.test(find), 'the teams from the roster where that exact name sits');
+  assert.ok(/codeFindWire_\(roles\);/.test(admin), 'wired with the form');
   assert.ok(/Mwidhinishaji wa advance \/ Advance approver/.test(admin) && /<th>Msimamizi \/ Supervisor<\/th>/.test(admin), 'both tables carry the column');
   assert.ok(/x\.supervisorName \? esc\(x\.supervisorName\)/.test(admin), 'the codes table names the supervisor, never the code');
   assert.ok(/hana tab advappr \/ approver lacks the advappr tab/.test(admin) && /msimamizi kwa msimbo \/ supervisor per code/.test(admin), 'the two warnings beside an approver');
