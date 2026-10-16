@@ -11613,6 +11613,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // THE ROLE A SHEET'S ROLE TEXT IS: the one role its words open, never a guess between several.
   assert.equal(routing.roleOfSheetRole('LOAN OFFICER - MSAMVU'), 'FIELD OFFICER'); assert.equal(routing.roleOfSheetRole('F.O Singida'), 'FIELD OFFICER');
   assert.equal(routing.roleOfSheetRole('Pmo Collection - Dodoma'), 'PMO COLLECTION'); assert.equal(routing.roleOfSheetRole('GMO KAGERA'), 'GMO');
+  assert.equal(advRoutingOf_([{ role: 'CUSTOMER SERVICE' }], []).roleOfSheetRole('Call Agent - Supervisor'), 'CUSTOMER SERVICE', 'HR spells customer service staff CALL AGENT');
   assert.equal(routing.roleOfSheetRole('PMO'), null, 'PMO is every PMO role: nobody\'s guess'); assert.equal(routing.roleOfSheetRole(''), null); assert.equal(routing.roleOfSheetRole('Cook'), null);
 
   // THE ASK says who will see it, before it is sent -- and "nobody" is said by name.
@@ -11631,7 +11632,11 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // THE DESK. The GMO of DAR EAST: the field officer, the older field officer's request (read
   // from its role text), and their own -- NOT the credit, PMO or legal requests of the same zone.
   const qGd = await portalApi(db, user('GD'), 'advQueue', {}, NOW);
-  assert.deepEqual(qGd.pending.map(r => r.staff_name), ['ASHA', 'GMO D', 'OLD ONE'], 'newest first -- "new requests are on top"');
+  /* The older rows the sheet filled with a role that cannot be placed (blank, "PMO") are the GMO's too -- "GMO complain of
+     not being able to approve advances that we had imported pending": they go where the field officers' requests go. */
+  assert.deepEqual(qGd.pending.map(r => r.staff_name), ['ASHA', 'GMO D', 'OLD ONE', 'NO ROLE', 'ANY PMO'], 'newest first -- "new requests are on top"');
+  assert.match(qGd.pending.find(r => r.staff_name === 'NO ROLE').route, /^GMO · zone DAR EAST .*not recognised: goes to the FIELD OFFICER approver/);
+  assert.equal(qGd.pending.find(r => r.staff_name === 'NO ROLE').routeTo, 'GMO'); assert.equal(qGd.pending.find(r => r.staff_name === 'OLD ONE').routeKind, 'role');
   assert.deepEqual(qGd.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], deptRoles: [], supervisees: [] });
   assert.equal(qGd.pending[0].route, 'GMO · zone DAR EAST (wadhifa / by role)');
   assert.equal(qGd.pending[2].route, 'GMO · zone DAR EAST (wadhifa / by role)', 'the older request is routed by the role on it, not by its zone');
@@ -11653,12 +11658,12 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   // The other department's manager (every team, so every zone) sees the PMO collection request, by role.
   const qPm = await portalApi(db, user('PM'), 'advQueue', {}, NOW);
   assert.deepEqual(qPm.pending.map(r => r.staff_name), ['PMO COLL']);
-  // The admin sees all of them, and is told by name which reach nobody else: the lawyer's request
-  // (no approver), the older one with no role, and the older "PMO", which is every PMO role.
+  // The admin sees all of them, and is told by name which reach nobody else: the lawyer's request (no approver).
   const qA = await portalApi(db, ADMIN, 'advQueue', {}, NOW);
   assert.equal(qA.pending.length, 8); assert.equal(qA.desk.admin, true);
-  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST' }, { staff_name: 'NO ROLE', req_role: null, zone: 'DAR EAST' }, { staff_name: 'ANY PMO', req_role: 'PMO', zone: 'DAR EAST' }]);
-  assert.match(qA.pending.find(r => r.staff_name === 'NO ROLE').route, /older request/);
+  assert.deepEqual(qA.unrouted, [{ staff_name: 'LAWYER', req_role: 'LEGAL', zone: 'DAR EAST' }]);
+  // ...and a lawyer, who approves no field officer, still sees none of the older rows.
+  assert.deepEqual((await portalApi(db, user('L1'), 'advQueue', {}, NOW)).pending, []);
   assert.equal(qA.routingOn, true); assert.equal(qA.routingNote, null);
 
   // THE DECISION follows the same rule: the supervisor decides across the zone; a colleague
@@ -11679,7 +11684,7 @@ test('advance routing: the approver role on Roles & access, the named supervisor
      their desk and what they decided, nothing else of the zone; the admin's report is the book. */
   const repOf = async u => portalApi(db, { ...u, tabs: ['advrep'] }, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
   const gdRep = await repOf(user('GD'));
-  assert.deepEqual(gdRep.rows.map(r => r.staff_name).sort(), ['ASHA', 'GMO D', 'OLD ONE'], 'the field officer, their own, the legacy row -- not the credit, PMO or legal requests of the zone');
+  assert.deepEqual(gdRep.rows.map(r => r.staff_name).sort(), ['ANY PMO', 'ASHA', 'GMO D', 'NO ROLE', 'OLD ONE'], 'the field officer, their own, the older rows -- not the credit, PMO or legal requests of the zone');
   assert.deepEqual(gdRep.desk, { admin: false, roles: ['FIELD OFFICER', 'GMO'], deptRoles: [], supervisees: [] });
   assert.equal(gdRep.routingOn, true);
   assert.deepEqual((await repOf(user('C2'))).rows.map(r => r.staff_name), ['CREDIT ONE'], 'the named supervisor: their person, from another zone');

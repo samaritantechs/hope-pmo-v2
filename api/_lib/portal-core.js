@@ -1826,11 +1826,18 @@ async function advRouting_(db) {
     A row with no requester but a role of the sheet's (staff_role) is routed by that role. */
 function advRouteOf_(routing, r) {
   const role = K(r && r.req_role), code = K(r && r.req_code);
-  let sheetRole = '';
+  let sheetRole = '', guess = false;
   if (!role && !code) {
     if (!routing.on) return { kind: 'legacy', to: null };            // no RUN-ME-045: the zone, as it always was
     sheetRole = routing.roleOfSheetRole(r && r.staff_role);
-    if (!sheetRole) return { kind: 'none', to: null, role: K(r && r.staff_role) || null, legacy: true };
+    /* "GMO complain of not being able to approve advances that we had imported pending": the sheet's
+       register carries whatever was typed under TEAM/ROLE -- blank, a team name, "PMO" -- and an
+       older row whose role cannot be placed was shown to an admin alone, so no GMO could decide the
+       imported ones. The sheet's own population was the field officers of a zone, decided by that
+       zone's GMO, so a row that cannot be placed goes where the field officers' requests go: the
+       approver of FIELD OFFICER (a person named for the whole role, else the approver role), in
+       the row's zone. Said on the row (`guess`), and an admin still sees every one. */
+    if (!sheetRole) { sheetRole = K(FIELD_OFFICER_ROLE); guess = true; }
   }
   // The code's own supervisor first, then the one named for the whole role, then the role.
   const sup = code ? routing.supervisorOf(code) : null;
@@ -1838,12 +1845,16 @@ function advRouteOf_(routing, r) {
   const c = code ? routing.codes.get(code) : null;
   const roleOf = role || sheetRole || (c ? K(c.role) : '');
   const dept = roleOf ? routing.deptSupervisorOf.get(roleOf) : null;
-  if (dept) return { kind: 'supervisor', to: K(dept.code), name: dept.name || dept.code, dept: true, role: roleOf };
+  if (dept) return { kind: 'supervisor', to: K(dept.code), name: dept.name || dept.code, dept: true, role: roleOf, ...(guess ? { guess: true } : {}) };
   const a = roleOf ? routing.approverOf.get(roleOf) : null;
-  if (a) return { kind: 'role', to: a };
+  if (a) return { kind: 'role', to: a, ...(guess ? { guess: true } : {}) };
   return { kind: 'none', to: null, role: roleOf || null };
 }
 function advRouteLabel_(route, zone) {
+  const guess = route.guess ? ' · wadhifa halikutambulika kwenye ombi la zamani — linakwenda kwa mwidhinishaji wa FIELD OFFICER / role on this older request not recognised: goes to the FIELD OFFICER approver' : '';
+  return advRouteLabelBase_(route, zone) + guess;
+}
+function advRouteLabelBase_(route, zone) {
   if (route.kind === 'supervisor') return route.name + (route.dept ? ' (msimamizi wa wadhifa ' + route.role + ' / supervisor of role ' + route.role + ')' : ' (msimamizi / supervisor)');
   if (route.kind === 'role') return route.to + (zone ? ' · zone ' + K(zone) : '') + ' (wadhifa / by role)';
   if (route.kind === 'legacy') return 'dawati la zone, kabla ya uelekezaji / the zone\'s desk, filed before routing';
@@ -1961,7 +1972,8 @@ async function advStaffStatus(db, user, p, nowMs = Date.now()) {
     other: GMO and GMO KAGERA, PMO COLLECTION and PMO, CREDIT and CREDIT ANALYST, BIKE and
     BIKE RECOVERY -- never MANAGER and PMO MANAGER, never GM and GMO, never a blank. */
 const ADV_ROLE_ALIAS = { 'FO': 'FIELD OFFICER', 'F O': 'FIELD OFFICER', 'TEAM': 'FIELD OFFICER', 'TEAMS': 'FIELD OFFICER',
-  'LOAN OFFICER': 'FIELD OFFICER', 'OFFICER': 'FIELD OFFICER' };
+  'LOAN OFFICER': 'FIELD OFFICER', 'OFFICER': 'FIELD OFFICER',
+  'CALL AGENT': 'CUSTOMER SERVICE' };           // the registry spells customer service staff CALL AGENT; the code's role is CUSTOMER SERVICE
 function advRoleWords_(v) {
   const words = K(v).split(/[^A-Z0-9]+/).filter(Boolean);
   for (const n of [2, 1]) {
@@ -2172,7 +2184,7 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   ]);
   const on = Array.isArray(pending0);
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
-  const withRoute = r => ({ ...r, route: advRouteLabel_(advRouteOf_(routing, r), r.zone) });
+  const withRoute = r => { const rt = advRouteOf_(routing, r); return { ...r, route: advRouteLabel_(rt, r.zone), routeTo: rt.kind === 'role' ? rt.to : rt.kind === 'supervisor' ? rt.name : rt.kind === 'legacy' ? 'zone' : 'admin', routeKind: rt.kind }; };
   const pending = advMerge_(pending0, pendS, pendR).filter(sees)
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
   const recent = advMerge_(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
