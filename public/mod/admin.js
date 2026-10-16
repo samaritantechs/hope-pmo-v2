@@ -255,7 +255,7 @@ function loanTabSet_(){
 function isLoanTab_(t){ return !!loanTabSet_()[t]; }
 /* Which tick words belong to HOPE Management -- read off NAV's own div flags (isMgmtId_ in
    the core), so the third list here and the third division of the sidebar are one definition. */
-function isMgmtTab_(t){ return !isLoanTab_(t) && isMgmtId_(t); }
+function isMgmtTab_(t){ return !isLoanTab_(t) && (isMgmtId_(t) || t === 'advfinal'); }   // advfinal has no nav of its own; it belongs with the advance ticks
 
 /* The screens a tick word opens, named beside the word, so "gmo" reads as "GMO Review" and
    not as whatever the admin assumed. */
@@ -269,6 +269,9 @@ function tabScreens_(t){
   } else {
     NAV.forEach(function(n){ if ((n.tab ? n.tab === t : n.id === t) && !n.hidden) names.push(n.label); });
     if (t === 'upload') names.push('Upload Reports');
+    /* A permission with no screen of its own: the finance manager's Finalize / Reopen buttons on the Advance report, and the
+       whole book there (so give advrep with it). */
+    if (t === 'advfinal') names.push('Kamilisha mwezi kwenye Ripoti ya advance (Meneja wa Fedha; pamoja na advrep) / Finalize the month on the Advance report (finance manager; with advrep)');
   }
   return names;
 }
