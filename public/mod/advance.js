@@ -446,8 +446,7 @@ function advStaffForm(x){
     + fld('asG2', 'JINA LA MDHAMINI 2', v('guarantor2')) + fld('asG2P', 'SIMU YA MDHAMINI 2', v('guarantor2_phone'), 'tel')
     + fld('asTin', 'TIN-No', v('tin')) + fld('asNssf', 'NSSF-No', v('nssf'))
     + '<button class="btn w" id="asSave">Hifadhi / Save</button>'
-    + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px" id="asStatus">'
-        + (String(x.status||'').toUpperCase()==='INACTIVE' ? '● Weka Active / Set Active' : '○ Weka Inactive / Set Inactive') + '</button>'));
+    + (isNew ? '' : advStatusBtns_(x)));
   // The birth date follows the NIDA number as it is typed: its first eight digits, YYYYMMDD.
   $('#asNida').oninput = function(){
     var dg = String($('#asNida').value).replace(/\D/g, '');
@@ -464,10 +463,27 @@ function advStaffForm(x){
       .then(function(r){ toast((r.created ? 'Imeongezwa / Added: ' : 'Imehifadhiwa / Saved: ') + r.id); closeDrawer(); render({ force:true }); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
-  if (!isNew) $('#asStatus').onclick = function(){
-    var next = String(x.status||'').toUpperCase()==='INACTIVE' ? 'Active' : 'Inactive';
-    srv('advStaffStatus', { id: x.id, status: next })
-      .then(function(){ toast(x.name + ' → ' + next); closeDrawer(); render({ force:true }); })
-      .catch(function(e){ toast(String(e.message||e), true); });
-  };
+  if (!isNew) {
+    var setStatus = function(next){
+      if (!confirm(next === 'Inactive'
+          ? 'Mtoe ' + x.name + ' (Inactive)? Anatoka kwenye orodha za maombi; historia yake inabaki.\n\nSet ' + x.name + ' Inactive? Off every request list; their history is kept.'
+          : 'Mrudishe ' + x.name + ' (Active)?\n\nSet ' + x.name + ' Active again?')) return;
+      srv('advStaffStatus', { id: x.id, status: next })
+        .then(function(){ toast(x.name + ' → ' + next); closeDrawer(); render({ force:true }); })
+        .catch(function(e){ toast(String(e.message||e), true); });
+    };
+    $('#asActive').onclick = function(){ setStatus('Active'); };
+    $('#asInactive').onclick = function(){ setStatus('Inactive'); };
+  }
+}
+/* ACTIVE / INACTIVE AS TWO BUTTONS, green on the left and red on the right, the current state lit and dead -- "activate and
+   deactivate are confusing madam hr, have it to left and right button green and red, not the single gray one" / "we need
+   like deactivating these left staff". The live button is the action: red takes out someone who left. */
+function advStatusBtns_(x){
+  var inactive = String(x.status||'').toUpperCase() === 'INACTIVE';
+  return '<div class="fld" style="margin-top:10px"><label>Hali / Status: <b>' + (inactive ? 'Inactive' : 'Active') + '</b></label>'
+    + '<div style="display:flex;gap:8px">'
+    + '<button class="btn w good" id="asActive" style="flex:1"' + (inactive ? '' : ' disabled') + '>✓ Active / Anafanya kazi</button>'
+    + '<button class="btn w danger" id="asInactive" style="flex:1"' + (inactive ? ' disabled' : '') + '>✕ Inactive / Ameondoka</button>'
+    + '</div><div class="fldnote">Bofya nyekundu kumtoa aliyeondoka: anatoka kwenye orodha za maombi, historia inabaki. Kijani humrudisha. / Tap red for someone who left: off every request list, history kept. Green brings them back.</div></div>';
 }

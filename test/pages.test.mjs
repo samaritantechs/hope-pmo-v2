@@ -1873,6 +1873,13 @@ test('advance routing: Roles & access takes the approver role, the code form the
      read only list ... only role MANAGEMENT and I can make the alterations": no New button, no card on a row, the what-to-send line. */
   assert.ok(/var edit = d\.canEdit !== false;/.test(staffV) && /ONROW = edit \? advStaffForm : null;/.test(staffV), 'a row opens the card only for an editor');
   assert.ok(/edit \? '<button class="btn sm" id="newAdvStaff">/.test(staffV) && /kusoma tu \/ read-only<\/span>/.test(staffV), 'no New button for a reader');
+  /* ACTIVE / INACTIVE AS TWO BUTTONS, green left, red right, the current one dead -- "activate and deactivate are confusing madam
+     hr, have it to left and right button green and red, not the single gray one". */
+  const form = adv.slice(adv.indexOf('function advStaffForm(x)'), adv.indexOf('function advStatusBtns_(x)') + 1200);
+  assert.ok(/<button class="btn w good" id="asActive" style="flex:1"' \+ \(inactive \? '' : ' disabled'\)/.test(form) && /<button class="btn w danger" id="asInactive" style="flex:1"' \+ \(inactive \? ' disabled' : ''\)/.test(form), 'green Active on the left, red Inactive on the right, the current state dead');
+  assert.ok(!/id="asStatus"/.test(adv) && !/Set Inactive/.test(adv), 'the single grey toggle is gone');
+  assert.ok(/\$\('#asActive'\)\.onclick = function\(\)\{ setStatus\('Active'\); \}/.test(form) && /\$\('#asInactive'\)\.onclick = function\(\)\{ setStatus\('Inactive'\); \}/.test(form) && /srv\('advStaffStatus', \{ id: x\.id, status: next \}\)/.test(form), 'each button sets its own state, after a confirm');
+  assert.ok(/\.btn\.good\{background:var\(--ok\)/.test(appSrc()), 'the green button style');
   assert.ok(/Read-only list of your zones\\' staff/.test(staffV) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(staffV), 'a reader is told what to send for a change');
   assert.ok(/S\.foldDot=''; S\.fit=false;/.test(appSrc()), 'go() clears it, so no other tab inherits the wrap');
   assert.ok(/'<div class="scroll'\+\(S\.fit\?' fit':''\)\+'"><table>/.test(appSrc()), 'the main list carries the class');
