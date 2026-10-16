@@ -2007,5 +2007,11 @@ test('one sign-out for the system and HOPE Calls: either side signs out both', (
   assert.ok(/\$\('out'\)\.onclick = function\(\)\{ if \(window\.HOPESession\) HOPESession\.signOutAll\(\)/.test(home), 'the launcher\'s too');
   assert.ok(/function doLogout\(\)\{[^]*?HOPESession\.clearPortal\(\)/.test(call), 'Calls\' sign-out takes the portal\'s code');
   assert.ok(/function signedOutElsewhere_\(\)\{[^}]*S\.code && !load\('hopeCode'\)/.test(app) && /addEventListener\('visibilitychange'/.test(app) && /addEventListener\('pageshow'/.test(app), 'the portal follows a sign-out made elsewhere');
+  /* NO FLASH OF THE SIGN-IN BOX ON A SIGNED-IN DEVICE -- "Remove the single second flash image of the login page during switching
+     between callapp and systemapp views": with a stored code the box is not painted while /api/me is asked; refused or unanswered, it is. */
+  const boot = app.slice(app.indexOf('/* ----------------------------------------------------------- boot */'));
+  assert.ok(/if \(!saved\) return;\s*\n\s*S\.code = saved;[^]*?\$\('#signin'\)\.classList\.add\('booting'\);\s*\n\s*fetch\('\/api\/me\?code='/.test(boot), 'the box is hidden before the server is asked');
+  assert.ok(/\$\('#code'\)\.value=''; \$\('#signin'\)\.classList\.remove\('booting'\); \}/.test(boot) && /\.catch\(function\(\)\{ \$\('#signin'\)\.classList\.remove\('booting'\); \}\)/.test(boot), 'and shown again when the code is refused or nothing answers');
+  assert.ok(/#signin\.booting \.box\{display:none\}/.test(app) && /#signin\.booting::after\{content:'Inafungua/.test(app), 'the brand ground and a word stay in its place');
   assert.ok(/function signedOutElsewhere_\(\)\{[^]*?hcLoggedOut[^]*?if \(out && S\.entered\) doLogout\(\)/.test(call) && /addEventListener\('storage'/.test(call), 'Calls follows a sign-out made elsewhere');
 });

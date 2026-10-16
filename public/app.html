@@ -58,6 +58,11 @@
   #signin p{margin:0 0 18px;font-size:13px;color:var(--mut)}
   #signin input{width:100%;padding:13px 14px;border:1.5px solid var(--line);border-radius:11px;margin-bottom:12px}
   #signin input:focus{outline:none;border-color:var(--b500);box-shadow:0 0 0 3px var(--b100)}
+  /* NO FLASH OF THE SIGN-IN BOX ON A SIGNED-IN DEVICE -- "Remove the single second flash image of the login page during
+     switching between callapp and systemapp views". With a code already stored, the box stays unpainted for the one
+     round-trip /api/me takes (the brand ground and a word remain), and is shown only if that code is refused. */
+  #signin.booting .box{display:none}
+  #signin.booting::after{content:'Inafungua\2026 / Opening\2026';color:#fff;opacity:.75;font-size:13.5px;font-weight:600;letter-spacing:.02em}
   .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;border:0;cursor:pointer;border-radius:10px;
     padding:11px 16px;font-weight:700;font-size:14px;background:var(--b700);color:#fff}
   .btn.w{width:100%;padding:13px}
@@ -744,7 +749,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-k';
+var BUILD = '2026-10-16-l';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6321,13 +6326,15 @@ function wireForms(){
   var saved = load('hopeCode');
   if (!saved) return;
   S.code = saved;
+  // A stored code is a signed-in device: the sign-in box is not painted while the server is asked (see #signin.booting).
+  $('#signin').classList.add('booting');
   fetch('/api/me?code='+encodeURIComponent(saved))
     .then(readJson_)
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) { pushOfficerCode_(saved); start(x.body); }
-      else { store('hopeCode', null); pushOfficerCode_(''); $('#code').value=''; }
+      else { store('hopeCode', null); pushOfficerCode_(''); $('#code').value=''; $('#signin').classList.remove('booting'); }
     })
-    .catch(function(){});
+    .catch(function(){ $('#signin').classList.remove('booting'); });   // no answer: the box is the way back in
 })();
 </script>
 <script src="/brand.js"></script>
