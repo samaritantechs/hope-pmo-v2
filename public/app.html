@@ -124,6 +124,15 @@
   .tblsearch input{width:100%;padding:8px 11px;border:1.5px solid var(--line);border-radius:9px;font-size:13px}
   .tblsearch input:focus{outline:none;border-color:var(--b500)}
   .scroll{overflow-x:auto}
+  /* FIT. A tab that sets S.fit draws its list to the card's width on a laptop: the cells wrap instead of the
+     table scrolling sideways, so the LAST column is in sight -- "the table should autofit width so that hr sees
+     to status of active and inactive without scrolling right" (HR staff data, eleven columns). A phone keeps
+     the sideways scroll: eleven columns wrapped into 360px read as nothing. The JPG copy keeps nowrap (its own
+     sheet, below). */
+  @media (min-width:900px){
+    .scroll.fit th,.scroll.fit td{white-space:normal;overflow-wrap:anywhere;padding:7px 8px}
+    .scroll.fit th{line-height:1.2}
+  }
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:left;padding:8px 12px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;
     border-bottom:1px solid var(--line);white-space:nowrap;background:var(--b50);cursor:pointer;user-select:none}
@@ -729,7 +738,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-e';
+var BUILD = '2026-10-16-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1289,7 +1298,7 @@ function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   /* args is only ever passed by a [data-go] button that CARRIES something across the switch
      (the month-report chip carries the chosen week); everything else still starts clean. */
-  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot='';
+  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot=''; S.fit=false;
   /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
      mode left over from whatever was open before. Every request from here rides S.workspace to
      the server (see srv() below), which resolves it for real against this code's own tabs --
@@ -1936,7 +1945,8 @@ function tableHtml(rows, cols, onRow){
   if (tot) body += '<tr class="totrow">' + (pick ? '<td class="sn"></td>' : '') + '<td class="sn"></td>'
     + cols.map(function(c, i){
     return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>';
-  return '<div class="scroll"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  // S.fit: the list wraps to the card's width on a laptop instead of scrolling sideways (see the .scroll.fit rule).
+  return '<div class="scroll'+(S.fit?' fit':'')+'"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
 function wireTable(rows, onRow){
   Array.prototype.forEach.call(document.querySelectorAll('th[data-sort]'), function(th){
