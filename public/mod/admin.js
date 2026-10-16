@@ -1018,17 +1018,19 @@ function codeForm(x){
     + '<div class="fld"><label>Msimbo / Code</label><input id="kCode" value="'+esc(x?x.code:'')+'">'
       + (isNew ? '' : '<div class="fldnote">Unaweza kuubadilisha — mtumiaji ataingia na mpya. / You can change this; the holder signs in with the new one from that moment.</div>')
       + '</div>'
-    /* THE NAME COMES FROM TEAMS & STAFF, NOT FROM TYPING.
-       "the access code of any leader should be created without inputing another name but by
-        setting only the code for that role and they find their names roles and codes ready
-        so that we solve name mismatches too"
-       Every screen that matches this person later -- roles, phones, reports -- matches the
-       SPELLING stored in the teams table, so a code created with a retyped variant of the
-       same human is a mismatch built in on day one. Picking fills name, role and teams from
-       the roster; all three stay editable for the rare code that is not a roster person. */
-    + '<div class="fld"><label>Chagua kutoka Timu na Wafanyakazi / Pick from Teams &amp; Staff</label>'
-      + '<select id="kPick"><option value="">\u2014 chagua mtu / pick a person \u2014</option></select>'
-      + '<div class="fldnote">Jina, wadhifa na timu vinajazwa kutoka jedwali \u2014 hakuna kuandika jina mara ya pili. / Fills the fields below from the staff table, so the spelling can never drift.</div></div>'
+    /* THE NAME COMES FROM THE HR REGISTRY, NOT FROM TYPING -- and not from the Teams & Staff roster either.
+       "the access code of any leader should be created without inputing another name but by setting only the code for
+        that role and they find their names roles and codes ready so that we solve name mismatches too", then "should
+        allow picking with search from hr db not teams and staff table, so that we take the really right one".
+       The registry row carries the ID, role and zone, so two people sharing a first name are told apart before the code
+       is made. Type two letters, pick a hit (codeFindWire_): the name and the role fill from the registry -- the role as
+       Roles & access spells it when the registry's first words agree -- and the teams from the roster where that exact
+       name already sits. All three stay editable for the rare code that is not a registry person. (The old "Pick from
+       Teams & Staff" select was drawn and never filled: a box that did nothing.) */
+    + '<div class="fld"><label>Tafuta kwenye rejista ya HR / Search the HR staff registry</label>'
+      + '<input id="kFind" placeholder="jina, ID, simu au wadhifa / name, ID, phone or role" autocomplete="off">'
+      + '<div id="kHits"></div>'
+      + '<div class="fldnote" id="kPicked">Andika herufi 2+: majina na ID kutoka Wafanyakazi (HR). Jina na wadhifa vinajazwa; ID na zone vinaonekana ili uchukue mtu sahihi. / Type 2+ letters: names and IDs from HR staff data. Name and role fill in; the ID and zone show so you take the right one.</div></div>'
     + '<div class="fld"><label>Jina / Name</label><input id="kName" value="'+esc(x?x.name:'')+'"></div>'
     + '<div class="fld"><label>Wadhifa / Role</label><input id="kRole" list="roleList" value="'+esc(x?x.role:'')+'">'
       + '<datalist id="roleList">'+roles.map(function(r){ return '<option value="'+esc(r)+'">'; }).join('')+'</datalist></div>'
@@ -1058,6 +1060,7 @@ function codeForm(x){
       + ' / Access comes from the ROLE. Set it in the <b>Roles &amp; access</b> table above this list; saving here clears any extra tabs this code still carried.</div>'
     + '<button class="btn w" id="kSave">Hifadhi / Save</button>'
     + (isNew ? '' : '<button class="btn ghost w" style="margin-top:8px;color:var(--bad);border-color:var(--badline)" id="kDel">Futa msimbo / Delete code</button>'));
+  codeFindWire_(roles);
   document.getElementById('kSave').onclick = function(){
     var tabs = Array.prototype.filter.call(document.querySelectorAll('.kTab'), function(c){ return c.checked; })
       .map(function(c){ return c.value; }).join(',');
@@ -1093,6 +1096,54 @@ function codeForm(x){
     srv('deleteAccessCode', { code:x.code })
       .then(function(){ toast('Imefutwa.'); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
+  };
+}
+
+/* THE REGISTRY SEARCH BEHIND THE CODE FORM (codeForm). The typed text goes to advStaff -- the server's own search over
+   name, ID, phone, role, zone and bank, every zone for an admin -- the hits are listed with their ID, role and zone, and a
+   tap fills the form. The teams come from the roster (srvTeams_) where that exact name already sits in a role column
+   (TEAM_ROLES, the one list of those columns). */
+function codeFindWire_(roles){
+  var inp = document.getElementById('kFind'), hits = document.getElementById('kHits'), note = document.getElementById('kPicked');
+  if (!inp || !hits || !note) return;
+  var timer = null, last = '';
+  var words = function(v){ return String(v || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim(); };
+  // The registry's "Field Officer - Kimara" as Roles & access spells it: the longest role whose words open the registry's.
+  var roleAs = function(reg){
+    var w = words(reg), best = '';
+    (roles || []).forEach(function(r){ var k = words(r); if (k && (w === k || w.indexOf(k + ' ') === 0) && k.length > words(best).length) best = r; });
+    return best || String(reg || '');
+  };
+  var pick = function(r){
+    document.getElementById('kName').value = r.name || '';
+    document.getElementById('kRole').value = roleAs(r.role);
+    hits.innerHTML = ''; inp.value = r.name || '';
+    note.innerHTML = '✅ ' + esc(r.name || '') + ' · ID <b>' + esc(r.id || '') + '</b> · ' + esc(r.role || '—') + ' · zone ' + esc(r.zone || '—')
+      + (String(r.status || '').toUpperCase() === 'INACTIVE' ? ' · <span class="chip bad">Inactive</span>' : '');
+    srvTeams_().then(function(d){
+      var name = words(r.name);
+      var mine = (d.rows || []).filter(function(t){ return TEAM_ROLES.some(function(c){ return words(t[c]) === name; }); }).map(function(t){ return t.team; });
+      if (mine.length) { document.getElementById('kTeams').value = mine.join(', '); note.innerHTML += ' · timu / teams: ' + esc(mine.join(', ')); }
+      else note.innerHTML += ' · hayupo kwenye Timu na Wafanyakazi bado: andika timu zake / not on Teams & Staff yet: type the teams';
+    }).catch(function(){});
+  };
+  inp.oninput = function(){
+    var q = inp.value.trim();
+    clearTimeout(timer);
+    if (q.length < 2) { hits.innerHTML = ''; return; }
+    timer = setTimeout(function(){
+      last = q;
+      srv('advStaff', { q: q }).then(function(d){
+        if (q !== last) return;                         // a later keystroke owns the box
+        var rows = (d.rows || []).slice(0, 15);
+        hits.innerHTML = rows.length
+          ? rows.map(function(r, i){ return '<button type="button" class="btn sm ghost" data-i="' + i + '" style="margin:4px 4px 0 0">' + esc(r.name || '')
+              + ' <span class="mutl">· ' + esc(r.role || '—') + ' · ' + esc(r.zone || '—') + ' · ' + esc(r.id || '') + (String(r.status || '').toUpperCase() === 'INACTIVE' ? ' · INACTIVE' : '') + '</span></button>'; }).join('')
+            + ((d.count || 0) > 15 ? '<div class="fldnote">' + money(d.count) + ' wanalingana — andika zaidi / match — type more</div>' : '')
+          : '<div class="fldnote">Hakuna jina kama hilo kwenye rejista ya HR — mwongeze kwenye Wafanyakazi (HR) kwanza, au andika jina hapa chini. / No such name on the HR registry — add them on HR staff data first, or type the name below.</div>';
+        Array.prototype.forEach.call(hits.querySelectorAll('button[data-i]'), function(b){ b.onclick = function(){ pick(rows[+b.getAttribute('data-i')]); }; });
+      }).catch(function(e){ hits.innerHTML = '<div class="fldnote">' + esc(String(e.message || e)) + '</div>'; });
+    }, 300);
   };
 }
 
