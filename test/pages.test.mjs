@@ -1869,6 +1869,11 @@ test('advance routing: Roles & access takes the approver role, the code form the
      scrolling right": a tab sets S.fit, the main list wraps to the card's width on a laptop, and the flag dies with the tab. */
   const staffV = adv.slice(adv.indexOf('VIEWS.advstaff'), adv.indexOf('function advStaffForm'));
   assert.ok(/S\.fit = true;/.test(staffV), 'HR staff data asks for the fitted list');
+  /* READ-ONLY FOR A GMO -- "grant gmos the staff db, so they see only staff of their zones/teams ... they cant open staff card =
+     read only list ... only role MANAGEMENT and I can make the alterations": no New button, no card on a row, the what-to-send line. */
+  assert.ok(/var edit = d\.canEdit !== false;/.test(staffV) && /ONROW = edit \? advStaffForm : null;/.test(staffV), 'a row opens the card only for an editor');
+  assert.ok(/edit \? '<button class="btn sm" id="newAdvStaff">/.test(staffV) && /kusoma tu \/ read-only<\/span>/.test(staffV), 'no New button for a reader');
+  assert.ok(/Read-only list of your zones\\' staff/.test(staffV) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(staffV), 'a reader is told what to send for a change');
   assert.ok(/S\.foldDot=''; S\.fit=false;/.test(appSrc()), 'go() clears it, so no other tab inherits the wrap');
   assert.ok(/'<div class="scroll'\+\(S\.fit\?' fit':''\)\+'"><table>/.test(appSrc()), 'the main list carries the class');
   assert.ok(/@media \(min-width:900px\)\{\s*\.scroll\.fit th,\.scroll\.fit td\{white-space:normal;overflow-wrap:anywhere/.test(appSrc()), 'cells wrap on a laptop; a phone keeps the sideways scroll');
