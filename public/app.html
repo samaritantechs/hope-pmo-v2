@@ -751,7 +751,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-o';
+var BUILD = '2026-10-16-p';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1460,8 +1460,11 @@ function bellOpen(){
    rather than offering a switch that does nothing. The state shown is the PHONE's own -- the
    browser's subscription, asked for each time the bell opens -- never a remembered flag. */
 var PUSH_SCOPE = '/push/';
+/* The imprest pane this code holds, if any -- the switch is offered to all three ("all imprest
+   processes send browser / device notifications"); the server decides which steps each hears. */
+function impTab_(){ return allowed('impappr') ? 'impappr' : allowed('imprep') ? 'imprep' : allowed('impreq') ? 'impreq' : null; }
 function pushOffer_(){
-  return !!(window.PushManager && navigator.serviceWorker && S.me && allowed('impappr'));
+  return !!(window.PushManager && navigator.serviceWorker && S.me && impTab_());
 }
 function pushReg_(){
   return navigator.serviceWorker.register('/push-sw.js', { scope: PUSH_SCOPE }).then(function(reg){
@@ -1538,10 +1541,10 @@ function pushOn_(){
       return pushReg_().then(function(reg){
         return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes_(k.publicKey) });
       }).then(function(sub){
-        return srv('pushSubscribe', { sub: sub.toJSON(), topics: ['IMPREST'], ua: navigator.userAgent.slice(0, 160) })
+        return srv('pushSubscribe', { sub: sub.toJSON(), ua: navigator.userAgent.slice(0, 160) })
           .then(function(){
-            pushRedraw_(sub, 'Simu hii itaarifiwa kila ombi la imprest linapoingia. Bonyeza Jaribu kuthibitisha. '
-              + '/ This phone is told of every new imprest request. Tap Test to prove it.');
+            pushRedraw_(sub, 'Simu hii itaarifiwa kwa kila hatua ya imprest inayokuhusu. Bonyeza Jaribu kuthibitisha. '
+              + '/ This phone is told of every imprest step that concerns you. Tap Test to prove it.');
           });
       });
     });
@@ -1564,7 +1567,8 @@ if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
     if (d.type !== 'hope-open' || !d.url || !S.me) return;
     var id = '';
     try { id = new URL(d.url, location.origin).searchParams.get('imp') || ''; } catch (x) {}
-    if (id && allowed('impappr')) { IMPREST_DEEPLINK_ID = id; go('impappr'); }
+    var tab = impTab_();
+    if (id && tab) { IMPREST_DEEPLINK_ID = id; go(tab); }
   });
 }
 

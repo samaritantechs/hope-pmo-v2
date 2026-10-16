@@ -38,7 +38,7 @@
 import { fetchAll, runQuery } from './supabase.js';
 import { num } from './recovery.js';
 import { sendMail, noticeHtml, noticeButton } from './mail.js';
-import { pushTopic } from './push.js';
+import { pushTopic, pushCode, pushNoteOf } from './push.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 function bad(msg) { const e = new Error(msg); e.status = 400; throw e; }
@@ -324,8 +324,11 @@ export async function imprestRequest(db, user, args, nowMs) {
   }, { nowMs });
   // pushNote says so whenever a phone was NOT reached -- even when another one was.
   return { ok: true, id, total, accomRate, emailed: mail.sent, emailNote: mail.sent ? '' : mail.reason,
-    pushed: push.sent, pushNote: (push.failed || !push.sent) ? push.reason : '' };
+    pushed: push.sent, pushNote: pushNoteOf(push) };
 }
+/* The deep link every imprest push carries: the portal lands on whichever imprest pane the
+   code holds and opens the row (imprestOpenDeepLink_ in app.html). */
+const impLink_ = id => '/dashboard?imp=' + encodeURIComponent(id);
 
 /** The requester's own history, and only their own -- with the rate table so the form can
     offer roles without a second trip. */
@@ -454,8 +457,24 @@ export async function imprestDecide(db, user, args, nowMs) {
     html: noticeHtml('Ombi lako la imprest / Your imprest request', facts,
       approve ? 'Ukifika, jaza retirement na picha za risiti. / On arrival, file the retirement with receipt photos.'
               : 'Wasiliana na GM ukihitaji maelezo. / Speak to the GM if you need more.') });
+  /* THE PHONES: the requester hears the decision on their own handset; an approval also
+     reaches the accountant, whose next move it is. "all imprest processes send browser /
+     device notifications." */
+  const who = row.full_name || row.staff_name || '';
+  const travel = String(row.travel_date || '').slice(0, 10);
+  const mine = await pushCode(db, row.staff_code, 'IMPREST_MINE', {
+    title: approve ? 'Imprest yako imeidhinishwa / Your imprest: approved' : 'Imprest yako imekataliwa / Your imprest: rejected',
+    body: (approve ? money0(granted) + ' TZS' : (comment || '').slice(0, 80)) + ' · ' + travel,
+    url: impLink_(id), tag: 'imprest-' + id + '-decided',
+  }, { nowMs });
+  const fund = approve ? await pushTopic(db, 'IMPREST_FUND', {
+    title: 'Imprest imeidhinishwa — inasubiri kutolewa / Approved, to be funded',
+    body: who + ' · ' + money0(granted) + ' TZS · ' + travel,
+    url: impLink_(id), tag: 'imprest-' + id + '-fund',
+  }, { nowMs }) : null;
   return { ok: true, id, status: patch.status, granted,
-    emailed: { requester: requester.sent }, emailNote: requester.sent ? '' : requester.reason };
+    emailed: { requester: requester.sent }, emailNote: requester.sent ? '' : requester.reason,
+    pushed: mine.sent + (fund ? fund.sent : 0), pushNote: pushNoteOf(mine, fund) };
 }
 
 /** THE RETIREMENT. Own request, approved, not yet retired; once, ever. Ported from hoop-pmo's
@@ -559,7 +578,17 @@ export async function imprestRetire(db, user, args, nowMs) {
     .eq('id', id).eq('retired_at', at).select('id');
   if (uErr) throw new Error(uErr.message);
   if (!done || !done.length) busy();
-  return { ok: true, id, total, approved, balance, photos: sized.length };
+  /* THE PHONES: a retirement is the approver's to review and the accountant's to reconcile. */
+  const note = {
+    title: 'Retirement ya imprest imewasilishwa / Imprest retirement filed',
+    body: (row.full_name || row.staff_name || user.name || '') + ' · ' + money0(total) + ' TZS'
+      + ' · salio / balance ' + money0(balance) + ' TZS',
+    url: impLink_(id), tag: 'imprest-' + id + '-retired',
+  };
+  const toAppr = await pushTopic(db, 'IMPREST', note, { nowMs });
+  const toFund = await pushTopic(db, 'IMPREST_FUND', note, { nowMs });
+  return { ok: true, id, total, approved, balance, photos: sized.length,
+    pushed: toAppr.sent + toFund.sent, pushNote: pushNoteOf(toAppr, toFund) };
 }
 
 /** The receipts for ONE request, on demand -- a requester sees only their own; a holder of
@@ -681,7 +710,7 @@ export async function imprestFund(db, user, args, nowMs) {
   if (amount === null) bad('Kiasi kilicholipwa lazima kiwe namba nzima (0 inaruhusiwa). / The funded amount must be a whole number (0 is allowed).');
   let rows;
   try {
-    rows = await fetchAll(() => db.from('imprest_requests').select('id, status').eq('id', id));
+    rows = await fetchAll(() => db.from('imprest_requests').select('id, status, staff_code, travel_date').eq('id', id));
   } catch (e) {
     if (!tableMissing(e)) throw e;
     bad(IMP_NOT_READY);
@@ -694,7 +723,13 @@ export async function imprestFund(db, user, args, nowMs) {
     .update({ funded_amount: amount, funded_by: user.name || '', funded_at: at, updated_at: at })
     .eq('id', id);
   if (error) throw new Error(error.message);
-  return { ok: true, id, amount };
+  /* THE PHONE: the requester hears that the money left -- the one step they are waiting on. */
+  const mine = await pushCode(db, row.staff_code, 'IMPREST_MINE', {
+    title: 'Imprest yako imetolewa / Your imprest was funded',
+    body: money0(amount) + ' TZS · ' + String(row.travel_date || '').slice(0, 10),
+    url: impLink_(id), tag: 'imprest-' + id + '-funded',
+  }, { nowMs });
+  return { ok: true, id, amount, pushed: mine.sent, pushNote: pushNoteOf(mine) };
 }
 
 /* ==================================================================== THE EMAIL ACTION LINKS

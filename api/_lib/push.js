@@ -32,9 +32,13 @@ import { createHmac, createECDH } from 'node:crypto';
 import { fetchAll } from './supabase.js';
 
 export const PUSH_SUB_PREFIX = 'PUSH_SUB_';
-/** Which tab a code must hold to hear each topic. A topic nobody's tab names cannot be
-    subscribed to, so a phone can never be told about a screen its code cannot open. */
-export const PUSH_TOPICS = { IMPREST: ['impappr'] };
+/** Which tab a code must hold to hear each topic -- "all imprest processes send browser /
+    device notifications". A topic nobody's tab names cannot be subscribed to, so a phone can
+    never be told about a screen its code cannot open.
+      IMPREST       a new request, and a retirement filed      -> the approver (Idhini)
+      IMPREST_FUND  approved and waiting to be paid out, and a retirement filed -> the accountant (Ripoti)
+      IMPREST_MINE  MY request decided or funded               -> the requester (Omba), own rows only */
+export const PUSH_TOPICS = { IMPREST: ['impappr'], IMPREST_FUND: ['imprep'], IMPREST_MINE: ['impreq'] };
 const MAX_SUBS = 5;                 // handsets per code: a phone, a spare, a tablet -- not a history
 const SEND_TIMEOUT_MS = 6000;       // one push service that hangs must not hold the request open
 const FANOUT_BUDGET_MS = 9000;      // the whole round, after the row and after the email
@@ -132,8 +136,9 @@ export async function pushSubscribe(db, user, args, nowMs) {
   const a = args || {};
   const sub = a.sub || a.subscription;
   if (!validSub_(sub)) bad('Usajili wa arifa haukueleweka -- jaribu tena. / The push subscription is malformed; try again.');
+  /* No topics named = everything this code may hear. The bell does not choose; the tabs do. */
   const may = topicsFor(user);
-  const asked = (Array.isArray(a.topics) && a.topics.length ? a.topics : ['IMPREST']).map(K);
+  const asked = (Array.isArray(a.topics) && a.topics.length ? a.topics : may).map(K);
   const topics = [...new Set(asked.filter(t => may.includes(t)))];
   if (!topics.length) forbid('Hakuna arifa iliyofunguliwa kwa wadhifa wako. / No notification topic is open to your role.');
   const row = { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
@@ -179,6 +184,23 @@ export async function pushTopic(db, topic, payload, opts) {
     .filter(t => t.subs.length);
   if (!targets.length) return { sent: 0, failed: 0, reason: 'hakuna simu iliyowashwa / no phone has alerts on' };
   return sendTo_(db, targets, payload, opts);
+}
+/** ONE code's handsets, for the topic -- how a requester hears about their OWN request and
+    nobody else's. Same answer shape as pushTopic; never throws. */
+export async function pushCode(db, code, topic, payload, opts) {
+  if (!K(code)) return { sent: 0, failed: 0, reason: 'hakuna msimbo / no code on the row' };
+  let subs;
+  try { subs = await readSubs_(db, code); }
+  catch (e) { return { sent: 0, failed: 0, reason: String((e && e.message) || e).slice(0, 120) }; }
+  const want = K(topic);
+  subs = subs.filter(s => (s.topics || []).map(K).includes(want));
+  if (!subs.length) return { sent: 0, failed: 0, reason: 'simu ya ' + K(code) + ' haijawashwa / ' + K(code) + ' has no phone on' };
+  return sendTo_(db, [{ code, subs }], payload, opts);
+}
+/** The one line a screen shows about several sends: '' when every phone that should have
+    heard did, otherwise what went wrong. */
+export function pushNoteOf(...results) {
+  return results.filter(r => r && (r.failed || !r.sent)).map(r => r.reason).filter(Boolean).join('; ').slice(0, 240);
 }
 const withTimeout_ = (p, ms) => new Promise((res, rej) => {
   const t = setTimeout(() => rej(Object.assign(new Error('push timeout'), { statusCode: 0 })), ms);

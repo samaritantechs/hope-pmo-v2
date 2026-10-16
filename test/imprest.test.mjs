@@ -376,15 +376,22 @@ test('push keys: derived from the deployment when none are set -- stable, a P-25
   process.env.VAPID_PUBLIC_KEY = 'pub'; process.env.VAPID_PRIVATE_KEY = 'priv'; _resetKeys();
   assert.equal(vapidKeys().source, 'env');
   delete process.env.VAPID_PUBLIC_KEY; delete process.env.VAPID_PRIVATE_KEY; _resetKeys();
-  assert.deepEqual(topicsFor(GM), ['IMPREST']); assert.deepEqual(topicsFor(REP), []); assert.deepEqual(topicsFor(ADMIN), ['IMPREST']);
+  assert.deepEqual(topicsFor(GM), ['IMPREST']); assert.deepEqual(topicsFor(REP), ['IMPREST_FUND']);
+  assert.deepEqual(topicsFor(STAFF), ['IMPREST_MINE']); assert.deepEqual(topicsFor(NOTAB), []);
+  assert.deepEqual(topicsFor(ADMIN), ['IMPREST', 'IMPREST_FUND', 'IMPREST_MINE']);
 });
 
-test('push: the approval pane holder subscribes from the bell; the requester and the accountant cannot', async () => {
+test('push: whoever holds an imprest pane subscribes from the bell, and hears only that pane\'s steps', async () => {
   const t = tables(); const db = db_(t);
-  await assert.rejects(portalApi(db, STAFF, 'pushSubscribe', { sub: SUB(1) }, NOW), /haujafunguliwa|not open to your role/);
-  await assert.rejects(portalApi(db, REP, 'pushKey', {}, NOW), /haujafunguliwa|not open to your role/);
+  await assert.rejects(portalApi(db, NOTAB, 'pushSubscribe', { sub: SUB(1) }, NOW), /haujafunguliwa|not open to your role/);
   const key = await portalApi(db, GM, 'pushKey', {}, NOW);
-  assert.ok(key.publicKey && key.devices === 0 && key.topics.includes('IMPREST') && key.note === '');
+  assert.ok(key.publicKey && key.devices === 0 && key.note === '');
+  assert.deepEqual(key.topics, ['IMPREST']);
+  assert.deepEqual((await portalApi(db, REP, 'pushKey', {}, NOW)).topics, ['IMPREST_FUND']);
+  assert.deepEqual((await portalApi(db, STAFF, 'pushKey', {}, NOW)).topics, ['IMPREST_MINE']);
+  // no topics named by the phone: everything the code may hear, decided by its tabs
+  assert.deepEqual((await portalApi(db, STAFF, 'pushSubscribe', { sub: SUB(7) }, NOW)).topics, ['IMPREST_MINE']);
+  assert.deepEqual(subsOf(db, 'S1')[0].topics, ['IMPREST_MINE']);
   const r = await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1), topics: ['IMPREST'], ua: 'Chrome Android' }, NOW);
   assert.equal(r.devices, 1); assert.deepEqual(r.topics, ['IMPREST']);
   const rows = subsOf(db, 'GM1');
@@ -451,6 +458,46 @@ test('push: nothing on = nothing sent, said in the answer; a phone the service s
   assert.equal(r2.pushed, 0); assert.match(r2.pushNote, /ECONNRESET/);
   assert.equal(subsOf(db, 'GM1').length, 1);
   _setSend(async (sub, body, opts) => { pushes.push({ endpoint: sub.endpoint, body: JSON.parse(body), opts }); return { statusCode: 201 }; });
+});
+
+test('push: every step after the ask -- the decision and the funding reach the requester, an approval and a retirement the accountant, a retirement the approver', async () => {
+  const db = db_();
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);       // approver
+  await portalApi(db, REP, 'pushSubscribe', { sub: SUB(2) }, NOW);      // accountant
+  await portalApi(db, STAFF, 'pushSubscribe', { sub: SUB(3) }, NOW);    // requester
+  await portalApi(db, STAFF2, 'pushSubscribe', { sub: SUB(4) }, NOW);   // another requester
+  const r = await askOne(db);
+  assert.deepEqual(pushes.map(p => p.endpoint), [SUB(1).endpoint], 'the ask: the approver only');
+  // a rejection reaches its requester alone, with the reason
+  const rj = await askOne(db, STAFF2);
+  pushes = [];
+  const dR = await portalApi(db, GM, 'imprestDecide', { id: rj.id, approve: false, comment: 'no budget' }, NOW);
+  assert.equal(dR.pushed, 1); assert.deepEqual(pushes.map(p => p.endpoint), [SUB(4).endpoint]);
+  assert.match(pushes[0].body.title, /imekataliwa|rejected/); assert.match(pushes[0].body.body, /no budget/);
+  // an approval reaches the requester and the accountant
+  pushes = [];
+  const dA = await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true, approvedAmount: 15000 }, NOW);
+  assert.equal(dA.pushed, 2); assert.equal(dA.pushNote, '');
+  assert.deepEqual(pushes.map(p => p.endpoint).sort(), [SUB(2).endpoint, SUB(3).endpoint].sort());
+  const toReq = pushes.find(p => p.endpoint === SUB(3).endpoint), toAcc = pushes.find(p => p.endpoint === SUB(2).endpoint);
+  assert.match(toReq.body.title, /imeidhinishwa|approved/); assert.match(toReq.body.body, /15,000 TZS/);
+  assert.match(toAcc.body.title, /inasubiri kutolewa|to be funded/); assert.match(toAcc.body.body, /JOHN OFFICER/);
+  assert.ok(pushes.every(p => p.body.url === '/dashboard?imp=' + r.id), 'every tap lands on the request');
+  // the funding reaches the requester
+  pushes = [];
+  const f = await portalApi(db, REP, 'imprestFund', { id: r.id, amount: 15000 }, NOW);
+  assert.equal(f.pushed, 1); assert.deepEqual(pushes.map(p => p.endpoint), [SUB(3).endpoint]);
+  assert.match(pushes[0].body.title, /imetolewa|funded/); assert.match(pushes[0].body.body, /15,000 TZS/);
+  // the retirement reaches the approver and the accountant, not the requester
+  pushes = [];
+  const ret = await portalApi(db, STAFF, 'imprestRetire', { id: r.id, accomActual: 12000, photos: [RECEIPT] }, NOW);
+  assert.equal(ret.pushed, 2);
+  assert.deepEqual(pushes.map(p => p.endpoint).sort(), [SUB(1).endpoint, SUB(2).endpoint].sort());
+  assert.match(pushes[0].body.title, /Retirement/); assert.match(pushes[0].body.body, /12,000 TZS/); assert.match(pushes[0].body.body, /3,000 TZS/);
+  // a requester whose phone is off: the decision still stands, and the screen is told
+  const r3 = await askOne(db, { ...STAFF, code: 'S3', name: 'THIRD' });
+  const d3 = await portalApi(db, GM, 'imprestDecide', { id: r3.id, approve: true }, NOW);
+  assert.equal(d3.status, 'approved'); assert.equal(d3.pushed, 1, 'the accountant still hears'); assert.match(d3.pushNote, /S3/);
 });
 
 test('push: the test button reaches this code\'s own phones only', async () => {
