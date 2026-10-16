@@ -111,6 +111,11 @@
   .kpi .l{font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
   .kpi .v{font-size:19px;font-weight:800;margin-top:3px}
   .kpi .s{font-size:11px;color:var(--soft);margin-top:2px}
+  /* A TAPPABLE CARD: a KPI that is also a pill -- it carries the bar's data-arg/data-val and narrows the list below it
+     (PMO Deduction's cards). Lit while it is the one chosen. */
+  .kpi.tap{cursor:pointer;transition:border-color .12s}
+  .kpi.tap:hover,.kpi.tap:focus-visible{border-color:var(--b500);outline:none}
+  .kpi.tap.on{border-color:var(--b500);background:var(--b50)}
   .good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
 
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
@@ -738,7 +743,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-f';
+var BUILD = '2026-10-16-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
