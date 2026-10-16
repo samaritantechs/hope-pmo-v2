@@ -216,7 +216,8 @@ function renderHome(me){
     + '</div>'
     + '<div class="tiles">' + tiles + '</div>' + closedNote
     + '<div class="hint">Chagua sehemu unayotaka kuendelea nayo.<br>Choose which part of the system to open.</div>';
-  $('out').onclick = function(){ store('hopeCode', null); renderSignIn(); };
+  // Signing out here signs out of HOPE Calls too (brand.js, HOPESession): one sign-out for the whole system.
+  $('out').onclick = function(){ if (window.HOPESession) HOPESession.signOutAll(); else store('hopeCode', null); renderSignIn(); };
 }
 
 /* =====================================================================================

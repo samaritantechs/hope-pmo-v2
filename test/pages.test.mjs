@@ -1918,3 +1918,32 @@ test('the upload page defers its spreadsheet library and waits for it; the brand
   }
   assert.ok(core.includes('function wireStampWeek('), 'wireStampWeek stays in the core');
 });
+
+/* ONE SIGN-OUT FOR THE PORTAL, THE LAUNCHER AND HOPE CALLS -- "Logging out inside the system should directly logout to calls
+   too.. since we enabled single login but the logouts are still multiple". The one definition is HOPESession in brand.js; the
+   pages call it, and each reacts when the other signed out while it was open. */
+test('one sign-out for the system and HOPE Calls: either side signs out both', () => {
+  const brand = readFileSync(join(PUBLIC, 'brand.js'), 'utf-8');
+  const block = brand.slice(brand.indexOf('/* HOPESession:begin'), brand.indexOf('/* HOPESession:end */'));
+  assert.ok(block.length > 200, 'HOPESession is in brand.js');
+  const store = new Map([['hopeCode', 'KON 123'], ['hcBoot_v1', '{}'], ['hcListCache_v1', 'x'], ['hcDaySummary_v1', 'x'], ['hcUi_v1', 'x'], ['hcLogo', 'keep'], ['other', 'keep']]);
+  const native = [];
+  const win = { HopeCalls: { setOfficerCode: c => native.push(c) } };
+  const ls = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
+  new Function('window', 'localStorage', block)(win, ls);
+  // The portal's sign-out takes Calls with it...
+  win.HOPESession.signOutAll();
+  assert.equal(store.has('hopeCode'), false, 'the portal code is gone'); assert.equal(store.get('hcLoggedOut'), '1', 'Calls is signed out');
+  for (const k of ['hcBoot_v1', 'hcListCache_v1', 'hcDaySummary_v1', 'hcUi_v1']) assert.equal(store.has(k), false, k + ' is dropped');
+  assert.equal(store.get('hcLogo'), 'keep'); assert.equal(store.get('other'), 'keep'); assert.deepEqual(native, [''], 'the native location service is told');
+  // ...and Calls' own sign-out takes the portal's code (and nothing else of Calls', which doLogout clears itself).
+  store.set('hopeCode', 'KON 123'); store.delete('hcLoggedOut'); store.set('hcBoot_v1', '{}');
+  win.HOPESession.clearPortal();
+  assert.equal(store.has('hopeCode'), false); assert.equal(store.get('hcBoot_v1'), '{}', 'clearPortal leaves Calls\' own keys to Calls');
+  const app = appSrc(), call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8'), home = readFileSync(join(PUBLIC, 'home.html'), 'utf-8');
+  assert.ok(/\$\('#outBtn'\)\.onclick = function\(\)\{[^}]*HOPESession\.signOutAll\(\)/.test(app), 'the portal\'s Toka signs out of both');
+  assert.ok(/\$\('out'\)\.onclick = function\(\)\{ if \(window\.HOPESession\) HOPESession\.signOutAll\(\)/.test(home), 'the launcher\'s too');
+  assert.ok(/function doLogout\(\)\{[^]*?HOPESession\.clearPortal\(\)/.test(call), 'Calls\' sign-out takes the portal\'s code');
+  assert.ok(/function signedOutElsewhere_\(\)\{[^}]*S\.code && !load\('hopeCode'\)/.test(app) && /addEventListener\('visibilitychange'/.test(app) && /addEventListener\('pageshow'/.test(app), 'the portal follows a sign-out made elsewhere');
+  assert.ok(/function signedOutElsewhere_\(\)\{[^]*?hcLoggedOut[^]*?if \(out && S\.entered\) doLogout\(\)/.test(call) && /addEventListener\('storage'/.test(call), 'Calls follows a sign-out made elsewhere');
+});
