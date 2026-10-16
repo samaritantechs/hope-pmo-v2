@@ -54,7 +54,12 @@ VIEWS.advreq = function(){
         + '</select>'
         + '<div class="fldnote">' + (byName
             ? 'Majina kutoka orodha ya mawakala wa simu (Settings → Call agents). Jina lisilo kwenye rejista ya HR bado linaweza kuomba; HR aliongeze ili akaunti ya benki ipatikane. / Names from the call-agents roster (Settings → Call agents). A name not on the HR registry can still ask; HR should add it so the bank account is there.'
-            : 'Majina ya wadhifa wako katika zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your role\'s names in your zone; nothing else about anyone is shown.') + '</div></div>'
+            : 'Majina ya wadhifa wako katika zone yako tu; hakuna taarifa nyingine ya mtu inayoonyeshwa. / Only your role\'s names in your zone; nothing else about anyone is shown.') + '</div>'
+        /* HOW TO REPORT A MISSING PERSON -- "how must they report a missing person so that when those staff login they must see
+           themselves to request?": the exact list HR needs, said where the officer is looking. */
+        + (byName ? '' : '<div class="fldnote">Jina lako halionekani? Mwambie GMO wako au HR atume: <b>JINA KAMILI (kama benki) · WADHIFA · TIMU · SIMU · BENKI + AKAUNTI · TIN</b>. '
+          + 'Utaonekana baada ya HR kuweka wadhifa sahihi na zone ya timu yako. / Can\'t find your name? Ask your GMO or HR to send: <b>full name (as at the bank) · role · team · phone · bank + account · TIN</b>. '
+          + 'You appear once HR has set your role and your team\'s zone.</div>') + '</div>'
       + (c
           ? '<div class="facts">'
               + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id || '— (si kwenye rejista ya HR / not on HR registry)') + '</b></div>'
