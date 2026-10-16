@@ -1814,6 +1814,10 @@ test('advance routing: Roles & access takes the approver role, the code form the
   // The request screen is the viewer's ROLE in their zone: the names, the history, the month's rule with a date alone.
   assert.ok(!/d\.mine/.test(adv) && /S\.rows = d\.history \|\| \[\];/.test(adv) && /col\('staff_name','Jina \/ Name'\)/.test(adv), 'the history of the role in the zone, with names');
   assert.ok(/d\.canHistory === false\)\{ S\.rows = \[\]; S\.cols = \[\];/.test(adv), 'a requester who is not an approver gets the form and no list');
+  /* THE REPORT'S LAST COLUMN IS THE APPROVAL DATE -- "at adv report, remove kupitia/via last column replace with approval date". */
+  const repView = adv.slice(adv.indexOf('VIEWS.advrep'), adv.indexOf('VIEWS.advstaff'));
+  assert.ok(/col\('decided_at','Tarehe ya idhini \/ Approval date','dt'\)\];/.test(repView), 'the report ends with the approval date');
+  assert.ok(!/Kupitia|col\('code'/.test(repView), 'and no longer shows the Via column');
   assert.ok(/wadhifa \/ role: ' \+ d\.role/.test(adv) && /d\.roleNote \? '<div class="note bad"/.test(adv), 'the subtitle names the role; a registry spelled otherwise is said');
   assert.ok(/d\.monthTaken\.submitted_at/.test(adv) && !/monthTaken\.amount/.test(adv), 'the month\'s rule with a date alone');
   assert.ok(/list="asRoles"/.test(adv) && /m\.roleNames/.test(adv), 'HR picks ROLE from Roles & access spellings');
