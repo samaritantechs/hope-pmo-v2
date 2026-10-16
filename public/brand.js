@@ -204,3 +204,36 @@
     window.hopeSecrets();
   }
 })();
+
+/* HOPESession:begin
+   ONE SIGN-OUT FOR THE PORTAL, THE LAUNCHER AND HOPE CALLS.
+
+     "Logging out inside the system should directly logout to calls too.. since we enabled single
+      login but the logouts are still multiple"
+
+   They share one origin and so one localStorage. The portal and the launcher sign in from
+   `hopeCode`; HOPE Calls remembers who the handset is (hcBoot_v1, and what it last showed under
+   the other hc* keys) and lets the handset straight back in unless hcLoggedOut is set. Signing out
+   of the portal cleared `hopeCode` and nothing else, so Calls stayed open -- and signing out of
+   Calls cleared its own keys and left the portal signed in. Both directions now clear both, here,
+   once: the pages call this rather than each keeping its own list of keys. The native bridge is
+   told too, because the officer's location service runs for whoever is signed in. ES5-plain. */
+(function () {
+  var CALLS_KEYS = ['hcListCache_v1', 'hcBoot_v1', 'hcDaySummary_v1', 'hcUi_v1'];
+  function rm(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  var api = {
+    // The portal's side: the code every portal page signs in from, and the native copy of it.
+    clearPortal: function () {
+      rm('hopeCode');
+      try { if (window.HopeCalls && window.HopeCalls.setOfficerCode) window.HopeCalls.setOfficerCode(''); } catch (e) {}
+    },
+    // Calls' side: signed out, with what it remembered about this handset's officer dropped.
+    clearCalls: function () {
+      try { localStorage.setItem('hcLoggedOut', '1'); } catch (e) {}
+      for (var i = 0; i < CALLS_KEYS.length; i++) rm(CALLS_KEYS[i]);
+    },
+    signOutAll: function () { api.clearPortal(); api.clearCalls(); }
+  };
+  window.HOPESession = api;
+})();
+/* HOPESession:end */

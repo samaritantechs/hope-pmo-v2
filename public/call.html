@@ -924,6 +924,9 @@ function boot(){
 }
 function doLogout(){
   try { localStorage.setItem('hcLoggedOut', '1'); } catch(e){}
+  /* SIGNING OUT HERE SIGNS OUT OF THE PORTAL TOO -- "since we enabled single login but the logouts are still multiple":
+     the portal signs in from hopeCode, so it goes with this (brand.js, HOPESession). */
+  try { if (window.HOPESession) HOPESession.clearPortal(); else localStorage.removeItem('hopeCode'); } catch(e){}
   if (S.syncTimer) { clearInterval(S.syncTimer); S.syncTimer = null; }
   S.boot = null; S.entered = false; S.cache = {}; S.cacheAt = {}; S.fetching = {}; S.rows = []; S.q = ''; S.view = 'today'; S.repData = null; S.curRef = null;
   /* SIGNING OUT IS THE ONLY THING THAT TAKES THE STRIP AWAY, and it must take the saved copy
@@ -953,6 +956,15 @@ function doLogout(){
   $('#scrBoot').classList.add('hide');
   $('#scrRegister').classList.remove('hide');
 }
+/* Signed out of the portal or the launcher (which sets hcLoggedOut) while this page is open -- another tab, or this page
+   restored from the back-forward cache -- sends this one to its sign-in as well. */
+function signedOutElsewhere_(){
+  var out = false; try { out = localStorage.getItem('hcLoggedOut') === '1'; } catch(e){}
+  if (out && S.entered) doLogout();
+}
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) signedOutElsewhere_(); });
+window.addEventListener('pageshow', function(ev){ if (ev.persisted) signedOutElsewhere_(); });
+window.addEventListener('storage', function(ev){ if (ev.key === 'hcLoggedOut') signedOutElsewhere_(); });
 function showConfirm_(msg, onYes){
   $('#confirmMsg').textContent = msg;
   $('#confirmModal').style.display = 'flex';
