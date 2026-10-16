@@ -1660,7 +1660,16 @@ test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR colu
   assert.ok(/VIEWS\.deduct = function\(\)/.test(app) && /srv\('deductions', \{from:from, to:to\}\)/.test(app), 'the tab reads a date window');
   assert.ok(/deductions:1/.test(app), 'cached like the other reads');
   const view = page('deduct');
-  assert.ok(/kpi\('Kesi \/ Cases'/.test(view) && /kpi\('Cha kulipiwa mteja \/ To pay'/.test(view) && /kpi\('Salio \/ Remaining'/.test(view), 'the sheet\'s report cards');
+  assert.ok(/label: 'Kesi \/ Cases'/.test(view) && /label: 'Cha kulipiwa mteja \/ To pay'/.test(view) && /label: 'Salio \/ Remaining'/.test(view), 'the sheet\'s report cards');
+  /* THE CARDS ARE THE LIST'S FILTERS -- "the salio remaining card should be clickable to open its list, all cards exactly - add
+     all card neccesary": every card is a pill (data-arg="show"), lit when chosen; Taken, Awaiting HR, Outstanding-before and
+     Reporters are the added ones; the list follows the dates and opens newest first, without the report button. */
+  assert.ok(/function dedCard_\(key, on, label, value, sub, cls\)/.test(view) && /data-arg="show" data-val="' \+ key \+ '" role="button" tabindex="0"/.test(view), 'a card is a pill of the bar');
+  for (const k of ['all', 'taken', 'topay', 'proposed', 'deducted', 'remaining', 'nohr', 'prev', 'reporters']) assert.ok(new RegExp("card\\('" + k + "', ").test(view), 'card ' + k);
+  assert.ok(/S\.rows = rows\.filter\(DED_SHOW_\[show\]\.keep\);/.test(view) && /show === 'prev'/.test(view) && /show === 'reporters'/.test(view), 'each card opens its own list');
+  assert.ok(/if \(S\.sort == null\)\{ S\.sort = 'submitted_at'; S\.asc = false; \}/.test(view), 'newest first on the tab\'s first paint');
+  assert.ok(/The list follows the dates you pick, newest first/.test(view), 'said on the screen');
+  assert.ok(/\.kpi\.tap\{cursor:pointer/.test(app) && /\.kpi\.tap\.on\{border-color:var\(--b500\)/.test(app), 'the tappable card style, lit when chosen');
   assert.ok(/id="newDeduction"/.test(view) && /id="dedReport"/.test(view), 'the form and the report buttons');
   assert.ok(/function dedNew\(\)/.test(view) && /srv\('addDeduction'/.test(view) && /id="ddAdd"/.test(view), 'one case, many staff');
   assert.ok(/function openDeduction\(r\)/.test(view) && /m\.canHr/.test(view) && /srv\('hrDeduction'/.test(view), 'HR\'s column on a tapped row, only for HR');
