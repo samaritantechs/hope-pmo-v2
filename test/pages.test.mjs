@@ -2033,14 +2033,16 @@ test('phone notifications: the bell offers the switch to the approval pane, the 
   const app = appSrc();
   const sw = readFileSync(join(PUBLIC, 'push-sw.js'), 'utf-8');
   const vercel = JSON.parse(readFileSync(join(PUBLIC, '..', 'vercel.json'), 'utf-8'));
-  assert.ok(/function pushOffer_\(\)\{\s*return !!\(window\.PushManager && navigator\.serviceWorker && S\.me && allowed\('impappr'\)\);/.test(app), 'offered only where it can work, to the approval pane');
+  assert.ok(/function pushOffer_\(\)\{\s*return !!\(window\.PushManager && navigator\.serviceWorker && S\.me && impTab_\(\)\);/.test(app)
+    && /function impTab_\(\)\{ return allowed\('impappr'\) \? 'impappr' : allowed\('imprep'\) \? 'imprep' : allowed\('impreq'\) \? 'impreq' : null; \}/.test(app),
+    'offered only where it can work, to whoever holds an imprest pane');
   assert.ok(/navigator\.serviceWorker\.register\('\/push-sw\.js', \{ scope: PUSH_SCOPE \}\)/.test(app) && /var PUSH_SCOPE = '\/push\/';/.test(app), 'its own scope, never the crisis worker\'s');
   assert.ok(/\+ \(pushOffer_\(\) \? pushBlock_\(undefined, ''\) : ''\)/.test(app) && /if \(pushOffer_\(\)\) pushState_\(\);/.test(app), 'in the bell, the state read from the phone itself');
   assert.ok(/Notification\.requestPermission\(\)/.test(app) && /userVisibleOnly: true, applicationServerKey: b64uToBytes_\(k\.publicKey\)/.test(app)
-    && /srv\('pushSubscribe', \{ sub: sub\.toJSON\(\), topics: \['IMPREST'\]/.test(app), 'asks the phone, subscribes with the server\'s key and files it');
+    && /srv\('pushSubscribe', \{ sub: sub\.toJSON\(\), ua:/.test(app), 'asks the phone, subscribes with the server\'s key and files it -- no topics chosen on the phone, the tabs decide');
   assert.ok(/srv\('pushUnsubscribe', \{ endpoint: ep \}\)/.test(app) && /srv\('pushTest', \{\}\)/.test(app), 'off, and a test to prove it');
   assert.ok(/iPhone: weka portal kwenye Home Screen kwanza/.test(app), 'an iPhone is told Safari\'s rule instead of a dead switch');
-  assert.ok(/d\.type !== 'hope-open'/.test(app) && /IMPREST_DEEPLINK_ID = id; go\('impappr'\);/.test(app), 'a tap while the portal is open goes to the request');
+  assert.ok(/d\.type !== 'hope-open'/.test(app) && /var tab = impTab_\(\);\s*\n\s*if \(id && tab\) \{ IMPREST_DEEPLINK_ID = id; go\(tab\); \}/.test(app), 'a tap while the portal is open goes to the request, on the pane this code holds');
   assert.ok(/addEventListener\('push'/.test(sw) && /showNotification\(d\.title \|\| 'HOPE PMO'/.test(sw) && /addEventListener\('notificationclick'/.test(sw)
     && /clients\.openWindow\(url\)/.test(sw) && /postMessage\(\{ type: 'hope-open', url: url \}\)/.test(sw), 'the worker draws the push and opens the item');
   assert.ok(!/addEventListener\('fetch'/.test(sw) && !/caches\./.test(sw), 'and caches nothing -- the crisis worker owns that');

@@ -10142,10 +10142,11 @@ const FN_TAB = {
   imprestRetire: ['impreq'],
   imprestPhotos: ['impreq', 'impappr', 'imprep'],
   imprestReport: ['imprep'], imprestFund: ['imprep'],
-  /* PHONE NOTIFICATIONS. The only topic so far is a new imprest request, so the switch is
-     offered to the approval pane's holders; a second topic adds its tab here and in
-     PUSH_TOPICS (_lib/push.js), which is what decides who hears what. */
-  pushKey: ['impappr'], pushSubscribe: ['impappr'], pushUnsubscribe: ['impappr'], pushTest: ['impappr'],
+  /* PHONE NOTIFICATIONS -- "all imprest processes send browser / device notifications". The
+     switch is offered to whoever holds any imprest pane; PUSH_TOPICS (_lib/push.js) decides
+     which steps each pane's holder hears. A topic for another screen adds its tab here too. */
+  pushKey: ['impreq', 'impappr', 'imprep'], pushSubscribe: ['impreq', 'impappr', 'imprep'],
+  pushUnsubscribe: ['impreq', 'impappr', 'imprep'], pushTest: ['impreq', 'impappr', 'imprep'],
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the

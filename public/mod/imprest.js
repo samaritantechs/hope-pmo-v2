@@ -250,7 +250,11 @@ function imprestDetailsDrawer_(r, opts){
   if (fs) fs.onclick = function(){
     var b = fs; b.disabled = true;
     srv('imprestFund', { id: fs.getAttribute('data-imf-id'), amount: $('#imfAmt').value })
-      .then(function(){ toast('Kimehifadhiwa / Saved'); closeDrawer(); render({ force:true }); })
+      .then(function(d){
+        toast('Kimehifadhiwa / Saved' + (d && d.pushed ? ' · simu ya mwombaji imearifiwa / requester\'s phone buzzed' : '')
+          + (d && d.pushNote ? ' · arifa ya simu: ' + d.pushNote : ''));
+        closeDrawer(); render({ force:true });
+      })
       .catch(function(e){ b.disabled = false; toast(String(e.message||e), true); });
   };
   var rb = $('#imRetireBtn'); if (rb) rb.onclick = function(){ imprestRetireDrawer_(r); };
@@ -331,7 +335,9 @@ function imprestRetireDrawer_(r){
       other1Actual:$('#irO1').value, other2Actual:$('#irO2').value, other3Actual:$('#irO3').value,
       notes:$('#irNotes').value, photos:got }).then(function(d){
         delete IMPREST_RETIRE_INFLIGHT[r.id];
-        toast('Retirement imewasilishwa · halisi '+money(d.total)+' · salio '+money(d.balance));
+        toast('Retirement imewasilishwa · halisi '+money(d.total)+' · salio '+money(d.balance)
+          + (d.pushed ? ' · simu ' + d.pushed + ' imearifiwa / phone(s) buzzed' : '')
+          + (d.pushNote ? ' · arifa ya simu: ' + d.pushNote : ''));
         closeDrawer(); render({ force:true });
       }, function(e){ delete IMPREST_RETIRE_INFLIGHT[r.id]; b.disabled=false; toast(String(e.message||e), true); });
   };
@@ -504,7 +510,10 @@ function imprestDecideDrawer_(r){
         var base = approve ? 'Imeidhinishwa / Approved' : 'Imekataliwa / Rejected';
         toast(base + (d && d.emailed && d.emailed.requester
           ? ' · mwombaji ameambiwa kwa email / requester was emailed'
-          : ' · ⚠️ mwombaji HAKUAMBIWA kwa email: ' + ((d && d.emailNote) || '')), !(d && d.emailed && d.emailed.requester));
+          : ' · ⚠️ mwombaji HAKUAMBIWA kwa email: ' + ((d && d.emailNote) || ''))
+          /* The phones that buzzed -- the requester's, and the accountant's on an approval (api/_lib/push.js). */
+          + (d && d.pushed ? ' · simu ' + d.pushed + ' imearifiwa / phone(s) buzzed' : '')
+          + (d && d.pushNote ? ' · arifa ya simu: ' + d.pushNote : ''), !(d && d.emailed && d.emailed.requester));
         closeDrawer(); render({ force:true });
       })
       .catch(function(e){ if (b) b.disabled=false; if (n) n.disabled=false; toast(String(e.message||e), true); });
