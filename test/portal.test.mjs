@@ -11366,7 +11366,7 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   await assert.rejects(() => portalApi(db, gmoD, 'advDecide', { updates: [{ id: made.id, approval: 'Pending' }] }, NOW), e => e.status === 400);
   await assert.rejects(() => portalApi(db, gmoD, 'advDecide', { updates: [] }, NOW), e => e.status === 400);
   const dec = await portalApi(db, gmoD, 'advDecide', { updates: [{ id: made.id, approval: 'approved', comment: 'sawa' }, { id: 'r-no', approval: 'Approved' }] }, NOW);
-  assert.equal(dec.approved, 1); assert.equal(dec.disapproved, 0); assert.deepEqual(dec.skipped, ['ASHA ALI AMANI: already Disapproved']);
+  assert.equal(dec.approved, 1); assert.equal(dec.disapproved, 0); assert.deepEqual(dec.skipped, ['ASHA ALI AMANI: already Disapproved -- a request is decided once']);
   const after = db._dump('advance_requests').find(r => r.id === made.id);
   assert.equal(after.approval, 'Approved'); assert.equal(after.comment, 'sawa'); assert.equal(after.decided_by, 'GMO D');
 
@@ -11512,6 +11512,80 @@ test('approval tab in the sidebar: only the people the routing makes approvers, 
   const noCols = fakeDb(tables(), { missingColumns: { roles: ['approver_role', 'approver_code'], access_codes: ['supervisor'] } });
   assert.deepEqual(await withoutIdleApprovalTab(noCols, { role: 'CREDIT', code: 'C9' }, tabs), tabs, 'a database without RUN-ME-045 hides nothing');
 });
+/* CLOSED MONTHS, FINALIZE AND THE TEMPORARY REOPEN -- "GMO cant decide twice, cant decide on final decision (we have to put [finalized
+   button at report for finance manager to finalize]) / closed [when its not current month, so previous months without even finalization
+   are automatic finalized]" and "so when finalize is clicked even requesting is closed for current month unless add a temp-reopen
+   button". The unit is the month a request was filed in; the state is one setting (no migration). */
+test('advance months: a decision is made once, past months are closed, Finalize closes this month (requests too) until a temporary reopen', async () => {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
+  t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' }, { role: 'GMO', tabs: ['advreq', 'advappr'], approver_role: 'GMO' });
+  t.access_codes.push({ code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  t.staff_registry = [
+    { id: 'AAA/001/2026', name: 'ASHA', role: 'Field Officer', zone: 'DAR EAST', status: 'Active', account: '0152000111', bank: 'NMB' },
+    { id: 'BBB/002/2026', name: 'BEN', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+    { id: 'CCC/003/2026', name: 'CHIKU', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+  ];
+  t.advance_requests = [
+    { id: 'r-june', submitted_at: '2026-06-20T08:00:00Z', staff_id: 'CCC/003/2026', staff_name: 'CHIKU', staff_role: 'Field Officer', zone: 'DAR EAST', amount: 50000, approval: 'Pending', app_date: '2026-06-20' },
+    { id: 'r-july', submitted_at: '2026-07-10T08:00:00Z', staff_id: 'BBB/002/2026', staff_name: 'BEN', staff_role: 'Field Officer', zone: 'DAR EAST', amount: 100000, approval: 'Pending', app_date: '2026-07-10', req_role: 'FIELD OFFICER', req_code: 'KON 123' },
+  ];
+  const db = fakeDb(t);
+  const gmo = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advreq', 'advappr'] };
+  const finance = { code: 'FIN', name: 'THE FINANCE MANAGER', role: 'MANAGEMENT', teams: null, tabs: ['advrep', 'advfinal'] };
+  const FO = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
+
+  // JUNE IS OVER: closed by itself -- off the pending list, shown as closed, and nobody decides it.
+  const q0 = await portalApi(db, gmo, 'advQueue', {}, NOW);
+  assert.deepEqual(q0.pending.map(r => r.staff_name), ['BEN']); assert.deepEqual(q0.closed.map(r => r.staff_name), ['CHIKU']); assert.equal(q0.closedCount, 1);
+  const old = await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-june', approval: 'Approved' }] }, NOW);
+  assert.equal(old.updated, 0); assert.match(old.skipped[0], /CHIKU: closed -- its month \(2026-06\) is over/);
+  assert.equal(db._dump('advance_requests').find(r => r.id === 'r-june').approval, 'Pending', 'nothing was written');
+
+  // A DECISION IS MADE ONCE: the desk cannot decide the same request twice.
+  assert.equal((await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-july', approval: 'Approved', comment: 'sawa' }] }, NOW)).approved, 1);
+  const twice = await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-july', approval: 'Disapproved' }] }, NOW);
+  assert.equal(twice.updated, 0); assert.match(twice.skipped[0], /already Approved -- a request is decided once/);
+  assert.equal(db._dump('advance_requests').find(r => r.id === 'r-july').approval, 'Approved');
+
+  // THE FINANCE MANAGER'S REPORT is the whole book, with each row's state; the GMO cannot finalize.
+  const rep = await portalApi(db, finance, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
+  assert.equal(rep.canFinalize, true); assert.deepEqual(rep.rows.map(r => [r.staff_name, r.finalState]).sort(), [['BEN', 'open'], ['CHIKU', 'closed']]);
+  assert.equal(rep.openDecided, 1); assert.equal(rep.monthState.finalized, false); assert.equal(rep.desk.finance, true);
+  assert.equal((await portalApi(db, { ...gmo, tabs: ['advreq', 'advappr', 'advrep'] }, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW)).canFinalize, false);
+  await assert.rejects(() => portalApi(db, gmo, 'advFinalize', {}, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, finance, 'advReopen', {}, NOW), e => e.status === 400 && /not finalized/.test(e.message), 'nothing to reopen yet');
+
+  // FINALIZE closes THIS month: no new request, no decision.
+  const done = await portalApi(db, finance, 'advFinalize', {}, NOW);
+  assert.equal(done.month, '2026-07'); assert.equal(done.by, 'THE FINANCE MANAGER'); assert.equal(done.approved, 1); assert.equal(done.approvedAmount, 100000);
+  const page = await portalApi(db, FO, 'advRequestPage', {}, NOW);
+  assert.equal(page.monthClosed.month, '2026-07'); assert.match(page.monthClosed.note, /finalized by the finance manager/);
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /finalized by the finance manager/.test(e.message));
+  assert.equal(db._dump('advance_requests').length, 2, 'nothing was filed');
+  const rep2 = await portalApi(db, finance, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
+  assert.deepEqual(rep2.rows.map(r => [r.staff_name, r.finalState]).sort(), [['BEN', 'finalized'], ['CHIKU', 'closed']]);
+
+  // THE TEMPORARY REOPEN: requests and decisions work again for 24 hours, then it closes by itself.
+  const re = await portalApi(db, finance, 'advReopen', {}, NOW);
+  assert.equal(re.hours, 24); assert.equal(re.reopenUntil, new Date(NOW + 24 * 3600 * 1000).toISOString());
+  assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).monthClosed, null);
+  const filed = await portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW);
+  assert.equal(filed.amount, 50000);
+  assert.equal((await portalApi(db, gmo, 'advDecide', { updates: [{ id: filed.id, approval: 'Approved' }] }, NOW)).approved, 1, 'a decision is possible while reopened');
+  const later = NOW + 25 * 3600 * 1000;
+  assert.equal((await portalApi(db, FO, 'advRequestPage', {}, later)).monthClosed.month, '2026-07', 'closed again by itself');
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'BBB/002/2026', amount: 50000 }, later), e => e.status === 400);
+  // Finalizing again, inside a reopen, closes it at once.
+  await portalApi(db, finance, 'advReopen', {}, later);
+  assert.equal((await portalApi(db, FO, 'advRequestPage', {}, later)).monthClosed, null);
+  await portalApi(db, finance, 'advFinalize', {}, later);
+  assert.ok((await portalApi(db, FO, 'advRequestPage', {}, later)).monthClosed, 'finalized again');
+  // An admin may do both; the month's state lives in ONE setting.
+  assert.ok(JSON.parse(db._dump('settings').find(r => r.key === 'ADV_FINALIZED').value)['2026-07'].at);
+  assert.equal((await portalApi(db, ADMIN, 'advReopen', {}, later)).hours, 24);
+});
+
 test('customer service on the advance request: one shared code, the names off the call-agents roster, a zone-less request reaching the approver role', async () => {
   const t = tables();
   t.teams[0] = { ...t.teams[0], zone: 'DAR EAST' };

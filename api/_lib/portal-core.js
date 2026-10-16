@@ -1697,6 +1697,35 @@ function advNextId_(rows, name, nowMs) {
   return id;
 }
 const advMonth_ = v => String(v == null ? '' : v).slice(0, 7);
+/* CLOSED MONTHS, FINALIZATION AND THE TEMPORARY REOPEN.
+
+     "GMO cant decide twice, cant decide on final decision (we have to put [finalized button at report for finance manager to
+      finalize]) / closed [when its not current month, so previous months without even finalization are automatic finalized]"
+     "so when finalize is clicked even requesting is closed for current month unless add a temp-reopen button"
+
+   The unit is the MONTH, and the month a request was filed in (East Africa time) decides:
+     - a request is decided ONCE, by its desk: a decided request is never decided again (advDecide skips it);
+     - a month that is over is CLOSED by itself: nothing in it is decided, a decided request counts as finalized, one never decided
+       stays as it was and shown as closed -- no write, nothing to migrate;
+     - the FINAL decision is the finance manager's: Finalize, on the report, closes THIS month the same way -- nothing in it is
+       decided AND no new request can be filed in it -- until a temporary reopen (advReopen) opens it again for ADV_REOPEN_HOURS
+       (24 by default), after which it closes by itself. Kept in ONE setting (ADV_FINALIZED, a JSON of months) rather than on every
+       request: no migration, and the request tab, the desk and the report read it with the settings they already read. */
+const ADV_MONTHS_KEY = 'ADV_FINALIZED';
+const advMonthEat_ = ts => { const t = Date.parse(ts); return Number.isNaN(t) ? advMonth_(ts) : new Date(t + 3 * 3600 * 1000).toISOString().slice(0, 7); };
+function advMonthsOf_(raw) { try { const o = JSON.parse(raw || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (e) { return {}; } }
+/** The state of the CURRENT month: finalized or not, and whether it is closed right now (finalized and not within a reopen). */
+function advMonthState_(raw, monthNow, nowMs) {
+  const m = advMonthsOf_(raw)[monthNow];
+  if (!m || !m.at) return { month: monthNow, finalized: false, closed: false, at: null, by: null, reopenUntil: null, reopenBy: null };
+  const until = m.reopenUntil ? Date.parse(m.reopenUntil) : NaN;
+  const reopened = !Number.isNaN(until) && until > nowMs;
+  return { month: monthNow, finalized: true, closed: !reopened, at: m.at, by: m.by || null, reopenUntil: reopened ? m.reopenUntil : null, reopenBy: reopened ? (m.reopenBy || null) : null };
+}
+/** A request is closed when its month is over, or it is this month's and the month is finalized and not reopened. */
+const advClosed_ = (r, ms) => { const m = advMonthEat_(r && r.submitted_at); return !!m && (m < ms.month || (m === ms.month && ms.closed)); };
+const advFinalState_ = (r, ms) => (advMonthEat_(r && r.submitted_at) < ms.month ? 'closed' : (ms.closed ? 'finalized' : 'open'));
+const ADV_MONTH_CLOSED = 'Mwezi huu umekamilishwa na Meneja wa Fedha: maombi mapya na maamuzi yamefungwa hadi afungue tena. / This month has been finalized by the finance manager: new requests and decisions are closed until it is reopened.';
 function advZoneList_(teamRows, regRows, zones) {
   const all = [...new Set(teamRows.map(t => K(t.zone)).concat((regRows || []).map(r => K(r.zone))).filter(Boolean))].sort();
   return zones === null ? all : all.filter(z => zones.includes(z));
@@ -2088,8 +2117,10 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
       monthTaken = hit ? { submitted_at: hit.submitted_at } : null;
     }
   }
+  const monthState = advMonthState_(cfg.get(ADV_MONTHS_KEY, ''), month, nowMs);
   return { on, note: on ? null : ADV_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, amounts: advAmounts_(cfg), month, chosen, monthTaken,
+    monthClosed: monthState.closed ? { month, by: monthState.by, at: monthState.at, note: ADV_MONTH_CLOSED } : null,
     role: admin ? null : (user.role || ''), roleNote, history: seesHistory ? history : [], canHistory: seesHistory, csAgents: cs,
     requester: user.name, teamCode: !!user.teamCode,
     route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
@@ -2105,6 +2136,8 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
   const cs = advCustomerService_(user);
   if (!staffId && !(cs && staffName)) throw badRequest('Chagua jina lako kwenye orodha. / Pick your name from the list.');
   const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY])]);
+  // A FINALIZED MONTH TAKES NO NEW REQUEST until the finance manager reopens it -- "even requesting is closed for current month".
+  if (advMonthState_(cfg.get(ADV_MONTHS_KEY, ''), todayKey(nowMs).slice(0, 7), nowMs).closed) throw badRequest(ADV_MONTH_CLOSED);
   const { zones } = advZones_(user, teamRows);
   let s;
   if (cs && !staffId) {
@@ -2166,7 +2199,7 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
 /** The GMO's desk: what is pending in their zone(s), oldest first, and what was decided in the
     last fourteen days so a decision can be checked without opening the report. */
 async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
-  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
+  const [teamRows, routing, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db), settingGet(db, ADV_MONTHS_KEY)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   /* NEWEST FIRST, AND THIS MONTH BY DEFAULT -- "always autosort latest/newest to oldest so
      that new requests are on top and the default rest is of current month not just landing
@@ -2174,6 +2207,7 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
      under it, rather than a fortnight that is empty most of the time. */
   const month = todayKey(nowMs).slice(0, 7);
   const since = month + '-01';
+  const ms = advMonthState_(monthsRaw, month, nowMs);
   /* THREE READS, ALL NARROWED AT THE DATABASE (advDeskOf_): the viewer's zones (what the role
      rule and the legacy rows reach them through); for a named supervisor, their people's
      requests by code, whatever zone those sit in; and by role, whatever the zone -- the roles
@@ -2194,8 +2228,11 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   const on = Array.isArray(pending0);
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
   const withRoute = r => { const rt = advRouteOf_(routing, r); return { ...r, route: advRouteLabel_(rt, r.zone), routeTo: rt.kind === 'role' ? rt.to : rt.kind === 'supervisor' ? rt.name : rt.kind === 'legacy' ? 'zone' : 'admin', routeKind: rt.kind }; };
-  const pending = advMerge_(pending0, pendS, pendR).filter(sees)
+  const pendingAll = advMerge_(pending0, pendS, pendR).filter(sees)
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
+  // Only THIS MONTH's pending is the desk's work; an older one is closed (read-only, below) -- it cannot be decided any more.
+  const pending = pendingAll.filter(r => !advClosed_(r, ms));
+  const closed = pendingAll.filter(r => advClosed_(r, ms));
   const recent = advMerge_(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
   // What this desk IS (advDeskOf_) -- and, for an admin, the pending requests that reach nobody else.
@@ -2205,7 +2242,7 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
     .filter(x => x.rt.kind === 'none' || (x.rt.kind === 'role' && !holds(x.rt.to, x.r.zone)))
     .map(x => ({ staff_name: x.r.staff_name, req_role: x.r.req_role || x.r.staff_role, zone: x.r.zone,
       why: x.rt.kind === 'none' ? 'no approver set' : 'no ' + x.rt.to + ' holds zone ' + (K(x.r.zone) || '?') })) : [];
-  return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length, month,
+  return { on, note: on ? null : ADV_NOTE, pending, recent, closed, count: pending.length, closedCount: closed.length, month, monthState: ms,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
     zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
     noZoneTeams, approvals: ADV_APPROVALS.slice(1),
@@ -2220,8 +2257,9 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
     comment: textOrNull(u && u.comment) })).filter(u => u.id);
   if (!updates.length) throw badRequest('Chagua angalau ombi moja. / Select at least one request.');
   if (updates.some(u => !u.approval || u.approval === 'Pending')) throw badRequest('Kila ombi lichaguliwe Approved au Disapproved. / Each request needs Approved or Disapproved.');
-  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
+  const [teamRows, routing, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db), settingGet(db, ADV_MONTHS_KEY)]);
   const { zones } = advZones_(user, teamRows);
+  const ms = advMonthState_(monthsRaw, todayKey(nowMs).slice(0, 7), nowMs);
   const rows = await advRead_(() => db.from('advance_requests').select('*').in('id', updates.map(u => u.id)));
   if (rows === null) throw badRequest(ADV_NOTE);
   const by = new Map(rows.map(r => [String(r.id), r]));
@@ -2239,7 +2277,8 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
     if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') why = forbidden(`You do not have access to zone ${r.zone}.`);
     else if (!advSees_(routing, user, zones, r)) why = forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
     if (why) { refused = refused || why; skipped.push(`${r.staff_name}: ${why.message}`); continue; }
-    if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval}`); continue; }
+    if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval} -- a request is decided once`); continue; }
+    if (advClosed_(r, ms)) { skipped.push(`${r.staff_name}: closed -- ${advMonthEat_(r.submitted_at) < ms.month ? 'its month (' + advMonthEat_(r.submitted_at) + ') is over' : 'this month is finalized'}`); continue; }
     const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
     if (error) throw new Error(error.message);
     if (u.approval === 'Approved') approved++; else disapproved++;
@@ -2258,11 +2297,16 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   const fromKey = advDate_(from) || today.slice(0, 8) + '01';
   const toKey = advDate_(to) || today;
   const want = approval == null || approval === '' ? 'Approved' : (K(approval) === 'ALL' ? 'ALL' : (ADV_APPROVALS.find(a => K(a) === K(approval)) || 'Approved'));
-  const admin = isAdminUser(user);
+  const admin0 = isAdminUser(user);
+  /* THE FINANCE MANAGER'S REPORT IS THE WHOLE BOOK, like an admin's: they finalize what payroll pays, whichever desk decided it
+     ("a finalized button at report for finance manager") -- the advfinal tab, granted on Roles & access or on their code. */
+  const canFinalize = admin0 || (user.tabs || []).includes('advfinal');
+  const admin = canFinalize;
   // An admin's report is every row of the window: no routing table to read for it.
-  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), admin ? null : advRouting_(db)]);
+  const [teamRows, routing, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), admin ? null : advRouting_(db), settingGet(db, ADV_MONTHS_KEY)]);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
-  const { mine, roleKeys, desk } = advDeskOf_(routing, user);
+  const { mine, roleKeys, desk: desk0 } = advDeskOf_(routing, user);
+  const desk = admin ? { ...desk0, admin: true, finance: !admin0 } : desk0;
   const winQ = () => {
     const q = db.from('advance_requests').select('*').gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
       .order('submitted_at', { ascending: false });               // newest first, like the desk
@@ -2280,7 +2324,9 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   const ids = [...new Set(rows.map(r => r.staff_id).filter(Boolean))];
   const reg = ids.length && ids.length <= 400 ? (await advRead_(() => db.from('staff_registry').select('id, bank, account, phone').in('id', ids))) || [] : [];
   const regBy = new Map(reg.map(r => [K(r.id), r]));
-  rows = rows.map(r => { const s = regBy.get(K(r.staff_id)) || {}; return { ...r, bank: s.bank || null, account: r.account || s.account || null, phone: s.phone || null }; });
+  const monthNow = today.slice(0, 7);
+  const ms = advMonthState_(monthsRaw, monthNow, nowMs);
+  rows = rows.map(r => { const s = regBy.get(K(r.staff_id)) || {}; return { ...r, bank: s.bank || null, account: r.account || s.account || null, phone: s.phone || null, finalState: advFinalState_(r, ms) }; });
   const byZone = new Map();
   for (const r of rows) {
     const z = K(r.zone) || '—';
@@ -2294,8 +2340,46 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
     amount: rows.reduce((s2, r) => s2 + num(r.amount), 0),
     approved: rows.filter(r => K(r.approval) === 'APPROVED').length,
     approvedAmount: rows.filter(r => K(r.approval) === 'APPROVED').reduce((s2, r) => s2 + num(r.amount), 0),
+    month: monthNow, monthState: ms, canFinalize,
+    // The decided requests of THIS month that Finalize would close (the report's own rows, so what is on screen is what is closed).
+    openDecided: rows.filter(r => r.finalState === 'open' && K(r.approval) !== 'PENDING').length,
     summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(ADV_APPROVALS),
     desk, routingOn: routing ? routing.on : true, routingNote: routing && !routing.on ? ADV_ROUTE_NOTE : null };
+}
+/** THE FINAL DECISION -- the finance manager's, from the report: "[finalized button at report for finance manager to finalize]".
+    Finalizes THIS month: nothing in it is decided and no new request is filed in it until a temporary reopen. Only the advfinal tab
+    (or an admin) may. Kept in the ADV_FINALIZED setting -- no migration. Finalizing again (after a reopen) closes it again. */
+async function advWriteMonths_(db, all) {
+  const { error } = await db.from('settings').upsert({ key: ADV_MONTHS_KEY, value: JSON.stringify(all) }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  noteSettingsWritten(db);
+}
+function advRequireFinance_(user) {
+  if (!isAdminUser(user) && !(user.tabs || []).includes('advfinal')) throw forbidden('Kukamilisha ni kwa Meneja wa Fedha. / Finalizing is for the finance manager.');
+}
+async function advFinalize(db, user, p, nowMs = Date.now()) {
+  advRequireFinance_(user);
+  const monthNow = todayKey(nowMs).slice(0, 7);
+  const all = advMonthsOf_(await settingGet(db, ADV_MONTHS_KEY));
+  all[monthNow] = { at: new Date(nowMs).toISOString(), by: user.name || user.code };    // a finalize clears any reopen
+  await advWriteMonths_(db, all);
+  // What it closed, said back: the decided requests of the month (and the ones still pending, which close undecided).
+  const rows = (await advRead_(() => db.from('advance_requests').select('amount, approval').gte('submitted_at', monthNow + '-01'))) || [];
+  const dec = rows.filter(r => K(r.approval) === 'APPROVED');
+  return { month: monthNow, at: all[monthNow].at, by: all[monthNow].by, requests: rows.length,
+    approved: dec.length, approvedAmount: dec.reduce((s2, r) => s2 + num(r.amount), 0), pendingClosed: rows.filter(r => K(r.approval) === 'PENDING').length };
+}
+/** THE TEMPORARY REOPEN -- "even requesting is closed for current month unless add a temp-reopen button": the finalized month opens
+    again, for requests and decisions, for ADV_REOPEN_HOURS (24 by default, 1 to 168), and closes by itself afterwards. */
+async function advReopen(db, user, p, nowMs = Date.now()) {
+  advRequireFinance_(user);
+  const monthNow = todayKey(nowMs).slice(0, 7);
+  const all = advMonthsOf_(await settingGet(db, ADV_MONTHS_KEY));
+  if (!all[monthNow] || !all[monthNow].at) throw badRequest('Mwezi huu haujakamilishwa. / This month is not finalized, so there is nothing to reopen.');
+  const hours = Math.min(168, Math.max(1, await settingNum(db, 'ADV_REOPEN_HOURS', 24)));
+  all[monthNow] = { ...all[monthNow], reopenUntil: new Date(nowMs + hours * 3600 * 1000).toISOString(), reopenBy: user.name || user.code, reopenAt: new Date(nowMs).toISOString() };
+  await advWriteMonths_(db, all);
+  return { month: monthNow, reopenUntil: all[monthNow].reopenUntil, hours, by: all[monthNow].reopenBy };
 }
 
 /** Loan restructuring. A restructure is a written offer: the customer pays something now, and
@@ -9619,7 +9703,7 @@ const FN = {
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
   deductions, addDeduction, hrDeduction,
-  advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport,
+  advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
@@ -10010,7 +10094,7 @@ const FN_TAB = {
   advStaff: ['advstaff'], advStaffSave: ['advstaff'], advStaffStatus: ['advstaff'],
   advRequestPage: ['advreq'], advRequest: ['advreq'],
   advQueue: ['advappr'], advDecide: ['advappr'],
-  advReport: ['advrep'],
+  advReport: ['advrep'], advFinalize: ['advfinal'], advReopen: ['advfinal'],
   /* The credit info report and its stats pane ride on the Credit Analysts tab rather than
      asking the admin to tick a new permission for a second view onto a book somebody already
      holds. The download page and the pane both come through here. */

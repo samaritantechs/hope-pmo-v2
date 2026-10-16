@@ -1218,7 +1218,7 @@ test('the sidebar has three divisions: HOPE Loan, HOPE PMO and HOPE Management, 
   assert.ok(/label: 'HOPE Loan'/.test(build) && /label: 'HOPE PMO'/.test(build) && /label: 'HOPE Management'/.test(build), 'three sections');
   assert.ok(/n\.div !== 'mgmt' && allowed\(n\.id\) && !n\.hidden/.test(build), 'HOPE PMO is everything not flagged');
   assert.ok(/MGMT_ORDER\.map\(/.test(build) && /if \(sections\.length > 1\)/.test(build), 'drawn in MGMT_ORDER, headings only when more than one division shows');
-  assert.ok(/function isMgmtTab_\(t\)\{ return !isLoanTab_\(t\) && isMgmtId_\(t\); \}/.test(page('admin')), 'Roles & access reads the same flag');
+  assert.ok(/function isMgmtTab_\(t\)\{ return !isLoanTab_\(t\) && \(isMgmtId_\(t\) \|\| t === 'advfinal'\); \}/.test(page('admin')), 'Roles & access reads the same flag (advfinal, a permission with no nav, sits with the advance ticks)');
 });
 
 /* "allow the pre-fillable info of loan recommendation at assessment plan and saving only -
@@ -1841,6 +1841,21 @@ test('advance routing: Roles & access takes the approver role, the code form the
   /* HOW TO REPORT A MISSING PERSON, said on the request tab -- "how must they report a missing person so that when those staff login they must see themselves". */
   assert.ok(/Jina lako halionekani\? Mwambie GMO wako au HR atume/.test(adv) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(adv), 'the request tab says what to send HR when a name is missing');
   assert.ok(/window\.wireAdvDesk/.test(appSrc()) && /function wireAdvDesk\(\)/.test(adv), 'the desk\'s bar buttons are wired after every paint');
+  /* CLOSED MONTHS, FINALIZE AND THE TEMPORARY REOPEN -- "GMO cant decide twice, cant decide on final decision (we have to put
+     [finalized button at report for finance manager to finalize]) / closed [when its not current month ...]" and "when finalize is
+     clicked even requesting is closed for current month unless add a temp-reopen button". */
+  const deskV = adv.slice(adv.indexOf('VIEWS.advappr'), adv.indexOf('VIEWS.advrep'));
+  assert.ok(/data-val="closed"[^>]*>Zimefungwa \/ Closed \(/.test(deskV) && /S\.rows = closed;/.test(deskV) && /advDecideDrawer_\(r, false, 'Imefungwa: mwezi wake umeisha au umekamilishwa/.test(deskV), 'the desk has a Closed pill: read-only rows of months that are over or finalized');
+  assert.ok(/advMonthNote_\(d\.month, mstate\)/.test(deskV) && /advMonthNote_\(d\.month, ms\)/.test(repView) && /function advMonthNote_\(month, ms\)/.test(adv), 'one note for the month\'s state on the desk and the report');
+  assert.ok(/id="advFinalizeBtn"/.test(repView) && /id="advReopenBtn"/.test(repView) && /d\.canFinalize\s*\?/.test(repView), 'Finalize and Reopen buttons on the report, for the advfinal holder only');
+  assert.ok(/ms\.closed\s*\?\s*'<button class="btn sm" id="advReopenBtn"/.test(repView) && /ms\.finalized \? 'Kamilisha tena \/ Finalize again'/.test(repView), 'Reopen while closed; Finalize (again) while open or reopened');
+  assert.ok(/key:'finalState', label:'Hali ya mwisho \/ Final', kind:'chip'/.test(repView), 'each report row says Open / Finalized / Closed');
+  assert.ok(/getElementById\('advFinalizeBtn'\)/.test(adv) && /getElementById\('advReopenBtn'\)/.test(adv) && /srv\('advFinalize', \{\}\)/.test(adv) && /srv\('advReopen', \{\}\)/.test(adv), 'wired by id after every paint; the two calls');
+  assert.ok(/closed undecided/.test(adv) && /Reopened for ' \+ money\(r\.hours\) \+ ' h/.test(adv), 'both say back what they did, in figures');
+  const reqV = adv.slice(adv.indexOf('VIEWS.advreq'), adv.indexOf('function advSubmit'));
+  assert.ok(/d\.monthClosed\s*\?\s*'<div class="note bad"/.test(reqV) && /: '<div class="cleanbox">'/.test(reqV), 'a finalized month shows the closed note instead of the form');
+  assert.ok(/eatDt_\(/.test(adv), 'the month\'s times are shown in East Africa time');
+  assert.ok(/t === 'advfinal'/.test(admin) && /Finalize the month on the Advance report/.test(admin), 'the advfinal tick says what it opens');
   const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
   for (const col of ['roles            add column if not exists approver_role', 'access_codes     add column if not exists supervisor', 'add column if not exists req_role', 'add column if not exists req_code']) {
     assert.ok(sql.includes(col), 'RUN-ME-045 adds ' + col);

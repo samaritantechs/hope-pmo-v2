@@ -91,9 +91,10 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    the start, and a role gets one when it is ticked. advreq is the ask (a field officer, on
    their team's code, picking their own name from their zone's list); advappr is the GMO's
    desk; advrep is the report with the bank accounts; advstaff is HR's staff registry.
+   advfinal is the finance manager's: the Finalize button on the report, and the whole book on it.
      "I decide what navs are to be accessed by team codes there" */
 export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff']);
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal']);
 /* `bonusplan` (the daily bonus plan preview) follows `audit`: admins hold it from the start and it
    is opened to a role by ticking it. It reads nothing from the server -- it is a page of example
    figures and boxes -- so there is no function behind it to gate, only the tab. */
@@ -103,7 +104,7 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff'];
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set
