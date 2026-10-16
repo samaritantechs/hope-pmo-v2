@@ -351,3 +351,115 @@ test('sendMail resolves without throwing, either way, and never talks to the rea
   const on = await sendMail(db, { to: 'x@y.com', subject: 'hi', html: '<p>hi</p>' });
   assert.equal(on.sent, true);
 });
+
+/* ===================================================================== PHONE NOTIFICATIONS
+   "GM needs phone notifications whenever there is an imprest even if he logs in via browser" */
+const { _setSend, vapidKeys, _resetKeys, topicsFor } = await import('../api/_lib/push.js');
+let pushes = [], pushGone = null;
+_setSend(async (sub, body, opts) => {
+  pushes.push({ endpoint: sub.endpoint, body: JSON.parse(body), opts });
+  if (pushGone && pushGone(sub.endpoint)) { const e = new Error('Gone'); e.statusCode = 410; throw e; }
+  return { statusCode: 201 };
+});
+const SUB = n => ({ endpoint: 'https://push.example/' + n, keys: { p256dh: 'BPp256dh-' + n + '-xxxxxxxxxx', auth: 'authauth' + n } });
+/* The fake copies its tables at construction, so the register is read back from the db itself. */
+const subsOf = (db, code) => { const r = db._dump('settings').find(x => x.key === 'PUSH_SUB_' + code); return r ? JSON.parse(r.value) : []; };
+test.beforeEach(() => { pushes = []; pushGone = null; });
+
+test('push keys: derived from the deployment when none are set -- stable, a P-256 point; the explicit pair wins when given', () => {
+  delete process.env.VAPID_PUBLIC_KEY; delete process.env.VAPID_PRIVATE_KEY; _resetKeys();
+  const k = vapidKeys();
+  assert.ok(k && k.source === 'derived');
+  assert.equal(Buffer.from(k.publicKey, 'base64url').length, 65, 'an uncompressed P-256 point');
+  assert.equal(Buffer.from(k.privateKey, 'base64url').length, 32);
+  assert.equal(vapidKeys().publicKey, k.publicKey, 'the same pair every time');
+  process.env.VAPID_PUBLIC_KEY = 'pub'; process.env.VAPID_PRIVATE_KEY = 'priv'; _resetKeys();
+  assert.equal(vapidKeys().source, 'env');
+  delete process.env.VAPID_PUBLIC_KEY; delete process.env.VAPID_PRIVATE_KEY; _resetKeys();
+  assert.deepEqual(topicsFor(GM), ['IMPREST']); assert.deepEqual(topicsFor(REP), []); assert.deepEqual(topicsFor(ADMIN), ['IMPREST']);
+});
+
+test('push: the approval pane holder subscribes from the bell; the requester and the accountant cannot', async () => {
+  const t = tables(); const db = db_(t);
+  await assert.rejects(portalApi(db, STAFF, 'pushSubscribe', { sub: SUB(1) }, NOW), /haujafunguliwa|not open to your role/);
+  await assert.rejects(portalApi(db, REP, 'pushKey', {}, NOW), /haujafunguliwa|not open to your role/);
+  const key = await portalApi(db, GM, 'pushKey', {}, NOW);
+  assert.ok(key.publicKey && key.devices === 0 && key.topics.includes('IMPREST') && key.note === '');
+  const r = await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1), topics: ['IMPREST'], ua: 'Chrome Android' }, NOW);
+  assert.equal(r.devices, 1); assert.deepEqual(r.topics, ['IMPREST']);
+  const rows = subsOf(db, 'GM1');
+  assert.equal(rows.length, 1); assert.equal(rows[0].endpoint, SUB(1).endpoint); assert.deepEqual(rows[0].topics, ['IMPREST']);
+  assert.equal(rows[0].ua, 'Chrome Android'); assert.ok(rows[0].at);
+  // the same phone again replaces itself; a second phone sits beside it
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(2) }, NOW);
+  assert.equal(subsOf(db, 'GM1').length, 2);
+  assert.equal((await portalApi(db, GM, 'pushKey', {}, NOW)).devices, 2);
+  // malformed: refused, nothing written
+  await assert.rejects(portalApi(db, GM, 'pushSubscribe', { sub: { endpoint: 'http://not-https', keys: {} } }, NOW), /haukueleweka|malformed/);
+  // a topic the code may not hear is dropped; none left = refused
+  await assert.rejects(portalApi(db, GM, 'pushSubscribe', { sub: SUB(3), topics: ['PAYROLL'] }, NOW), /Hakuna arifa|No notification topic/);
+  assert.equal(subsOf(db, 'GM1').length, 2);
+  // the view-only code may look, never switch
+  await assert.rejects(portalApi(db, AUDITOR, 'pushSubscribe', { sub: SUB(4) }, NOW), /kuangalia tu|view-only/);
+  // off again
+  const u = await portalApi(db, GM, 'pushUnsubscribe', { endpoint: SUB(1).endpoint }, NOW);
+  assert.equal(u.devices, 1);
+  await portalApi(db, GM, 'pushUnsubscribe', { endpoint: SUB(2).endpoint }, NOW);
+  assert.equal(subsOf(db, 'GM1').length, 0, 'the row goes when the last phone does');
+  assert.ok(!db._dump('settings').some(x => x.key === 'PUSH_SUB_GM1'));
+});
+
+test('push: a new request buzzes every approver phone that is on -- and only those', async () => {
+  const t = tables();
+  t.access_codes.push({ code: 'GM2', name: 'SECOND GM', role: 'GM', teams: null, tabs: ['impappr'] });
+  // a row subscribed to some other topic is never reached by this one
+  t.settings.push({ key: 'PUSH_SUB_AC1', value: JSON.stringify([{ ...SUB(9), topics: ['OTHER'] }]) });
+  const db = db_(t);
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(2) }, NOW);
+  await portalApi(db, { ...GM, code: 'GM2' }, 'pushSubscribe', { sub: SUB(3) }, NOW);
+  const r = await askOne(db, STAFF, { destination: 'Mtwara' });
+  assert.equal(r.pushed, 3); assert.equal(r.pushNote, '');
+  assert.equal(pushes.length, 3);
+  assert.deepEqual(pushes.map(p => p.endpoint).sort(), [SUB(1), SUB(2), SUB(3)].map(s => s.endpoint).sort());
+  const b = pushes[0].body;
+  assert.match(b.title, /imprest/i);
+  assert.match(b.body, /JOHN OFFICER/); assert.match(b.body, /20,000 TZS/); assert.match(b.body, /Mtwara/);
+  assert.equal(b.url, '/dashboard?imp=' + r.id, 'the tap lands on the request, as the email link does');
+  assert.equal(b.tag, 'imprest-' + r.id);
+  const v = pushes[0].opts.vapidDetails;
+  assert.ok(v.publicKey && v.privateKey && /^(https:|mailto:)/.test(v.subject), 'signed, with a contact the push service can reach');
+  assert.ok(pushes[0].opts.timeout <= 6000 && pushes[0].opts.TTL > 0, 'under a clock, with a shelf life');
+  assert.equal(r.emailed, true, 'the email still goes too');
+});
+
+test('push: nothing on = nothing sent, said in the answer; a phone the service says is gone is dropped', async () => {
+  const t = tables(); const db = db_(t);
+  const quiet = await askOne(db);
+  assert.equal(quiet.pushed, 0); assert.match(quiet.pushNote, /hakuna simu|no phone/);
+  assert.equal(pushes.length, 0);
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(2) }, NOW);
+  pushGone = ep => ep === SUB(1).endpoint;
+  const r = await askOne(db, STAFF2);
+  assert.equal(r.pushed, 1); assert.match(r.pushNote, /410/, 'one reached, one not -- and the answer says so');
+  assert.deepEqual(subsOf(db, 'GM1').map(s => s.endpoint), [SUB(2).endpoint], 'the gone phone is dropped, the live one kept');
+  // a push service that simply errors is reported, and the phone is kept
+  _setSend(async () => { const e = new Error('ECONNRESET'); throw e; });
+  const r2 = await askOne(db, { ...STAFF, code: 'S3', name: 'THIRD' });
+  assert.equal(r2.pushed, 0); assert.match(r2.pushNote, /ECONNRESET/);
+  assert.equal(subsOf(db, 'GM1').length, 1);
+  _setSend(async (sub, body, opts) => { pushes.push({ endpoint: sub.endpoint, body: JSON.parse(body), opts }); return { statusCode: 201 }; });
+});
+
+test('push: the test button reaches this code\'s own phones only', async () => {
+  const t = tables();
+  t.settings.push({ key: 'PUSH_SUB_GM2', value: JSON.stringify([{ ...SUB(2), topics: ['IMPREST'] }]) });
+  const db = db_(t);
+  await assert.rejects(portalApi(db, GM, 'pushTest', {}, NOW), /haijasajiliwa|not subscribed/);
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);
+  const r = await portalApi(db, GM, 'pushTest', {}, NOW);
+  assert.equal(r.sent, 1); assert.equal(pushes.length, 1);
+  assert.equal(pushes[0].endpoint, SUB(1).endpoint); assert.match(pushes[0].body.title, /jaribio|test/);
+});

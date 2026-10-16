@@ -751,7 +751,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-n';
+var BUILD = '2026-10-16-o';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1428,6 +1428,7 @@ function bellOpen(){
   drawer('<h3 style="margin:0 0 2px">Taarifa / Notifications</h3>'
     + '<div class="hint" style="margin-bottom:8px">Malalamiko na maoni ya ufuatiliaji ya timu zako.'
     + '<br>Complaints and follow-up comments from your own teams.</div>'
+    + (pushOffer_() ? pushBlock_(undefined, '') : '')
     + '<div id="notifList">' + (d.items.length ? d.items.map(function(i){
         return '<div class="nrow' + (i.unseen ? ' new' : '') + '">'
           + '<b>' + esc(i.kind === 'complaint' ? 'Lalamiko / Complaint' : 'Maoni / Follow-up') + '</b> — '
@@ -1439,11 +1440,132 @@ function bellOpen(){
       }).join('') : '<div class="hint">Hakuna kipya. / Nothing new.</div>') + '</div>'
     + (d.unseen ? '<button class="btn w" id="notifSeen" style="margin-top:10px">'
         + 'Nimesoma zote / Mark all read</button>' : ''));
+  if (pushOffer_()) pushState_();
   var b = $('#notifSeen');
   if (b) b.onclick = function(){
     srv('notifSeen', {}).then(function(){ closeDrawer(); bellRefresh(); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
+}
+
+/* ARIFA KWENYE SIMU -- the GM's phone buzzes when an imprest request lands.
+     "GM needs phone notifications whenever there is an imprest even if he logs in via browser"
+   Web Push: the browser keeps a subscription at its push service and the portal keeps a copy
+   (pushSubscribe, api/_lib/push.js); the worker at /push-sw.js draws the notification and
+   opens the request when it is tapped. Registered under its own scope (/push/) so it never
+   meets the call app's crisis worker at /, which is unregistered whenever the admin switches
+   offline mode off -- a notification subscription must not die with it.
+   Offered only where it can work: a browser with push, a code holding the approval pane. On an
+   iPhone the portal has to be on the Home Screen first (Safari's rule) and the block says so
+   rather than offering a switch that does nothing. The state shown is the PHONE's own -- the
+   browser's subscription, asked for each time the bell opens -- never a remembered flag. */
+var PUSH_SCOPE = '/push/';
+function pushOffer_(){
+  return !!(window.PushManager && navigator.serviceWorker && S.me && allowed('impappr'));
+}
+function pushReg_(){
+  return navigator.serviceWorker.register('/push-sw.js', { scope: PUSH_SCOPE }).then(function(reg){
+    if (reg.active) return reg;
+    // Not navigator.serviceWorker.ready: that waits for the worker controlling THIS page, and
+    // this one controls nothing on purpose. Wait for the registration's own worker instead.
+    return new Promise(function(res){
+      var w = reg.installing || reg.waiting;
+      if (!w) return res(reg);
+      w.addEventListener('statechange', function(){ if (w.state === 'activated') res(reg); });
+      setTimeout(function(){ res(reg); }, 8000);
+    });
+  });
+}
+function pushCurrent_(){
+  if (!pushOffer_()) return Promise.resolve(null);
+  return navigator.serviceWorker.getRegistration(PUSH_SCOPE).then(function(reg){
+    return reg ? reg.pushManager.getSubscription() : null;
+  }).catch(function(){ return null; });
+}
+function pushBlock_(sub, note){
+  var ios = /iPhone|iPad/.test(navigator.userAgent)
+    && !(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) && !navigator.standalone;
+  var state = sub === undefined ? '<span class="m">inakagua\u2026 / checking\u2026</span>'
+    : sub ? '<span style="color:#067647;font-weight:700">ZIMEWASHWA / ON</span>'
+          : '<span style="color:#B42318;font-weight:700">ZIMEZIMWA / OFF</span>';
+  return '<div class="hint" id="pushBlock" style="margin:0 0 10px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:8px">'
+    + '<b>Arifa za imprest kwenye simu hii / Imprest alerts on this phone:</b> ' + state
+    + (sub === undefined ? '' : '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'
+        + (sub ? '<button class="btn sm" id="pushOff">Zima / Turn off</button>'
+                 + '<button class="btn sm ghost" id="pushTest">Jaribu / Test</button>'
+               : '<button class="btn sm good" id="pushOn">Washa / Turn on</button>')
+        + '</div>')
+    + (ios ? '<div class="m" style="margin-top:6px">iPhone: weka portal kwenye Home Screen kwanza (Share \u2192 Add to Home Screen), kisha washa hapa. '
+           + '/ iPhone: add the portal to the Home Screen first, then turn this on from there.</div>' : '')
+    + (note ? '<div class="m" style="margin-top:6px">' + esc(note) + '</div>' : '')
+    + '</div>';
+}
+function pushRedraw_(sub, note){
+  var b = $('#pushBlock'); if (!b) return;
+  b.outerHTML = pushBlock_(sub, note);
+  var on = $('#pushOn'), off = $('#pushOff'), t = $('#pushTest');
+  if (on) on.onclick = pushOn_;
+  if (off) off.onclick = pushOff_;
+  if (t) t.onclick = function(){
+    t.disabled = true;
+    srv('pushTest', {}).then(function(r){
+      t.disabled = false;
+      toast(r.sent ? 'Imetumwa kwa simu ' + r.sent + ' \u2014 angalia arifa. / Sent to ' + r.sent + ' phone(s); check the tray.'
+                   : 'Haikufika: ' + (r.reason || ''), !r.sent);
+    }).catch(function(e){ t.disabled = false; toast(String(e.message||e), true); });
+  };
+}
+function pushState_(){ pushCurrent_().then(function(sub){ pushRedraw_(sub, ''); }); }
+function b64uToBytes_(s){
+  var pad = new Array((4 - s.length % 4) % 4 + 1).join('=');
+  var raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  var out = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
+function pushOn_(){
+  var btn = $('#pushOn'); if (btn) { btn.disabled = true; btn.textContent = 'Inawasha\u2026 / Turning on\u2026'; }
+  var fail = function(msg){ pushRedraw_(null, msg); };
+  // The permission prompt must come straight from the tap, before anything asynchronous.
+  Promise.resolve(window.Notification ? Notification.requestPermission() : 'denied').then(function(p){
+    if (p !== 'granted') {
+      fail('Ruhusa ya arifa imekataliwa \u2014 iruhusu kwenye mipangilio ya browser, kisha jaribu tena. '
+         + '/ Notification permission was refused; allow it in the browser settings and try again.');
+      return;
+    }
+    return srv('pushKey', {}).then(function(k){
+      if (!k || !k.publicKey) { fail((k && k.note) || 'Funguo za arifa hazipo. / Push keys missing.'); return; }
+      return pushReg_().then(function(reg){
+        return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes_(k.publicKey) });
+      }).then(function(sub){
+        return srv('pushSubscribe', { sub: sub.toJSON(), topics: ['IMPREST'], ua: navigator.userAgent.slice(0, 160) })
+          .then(function(){
+            pushRedraw_(sub, 'Simu hii itaarifiwa kila ombi la imprest linapoingia. Bonyeza Jaribu kuthibitisha. '
+              + '/ This phone is told of every new imprest request. Tap Test to prove it.');
+          });
+      });
+    });
+  }).catch(function(e){ fail(String((e && e.message) || e)); });
+}
+function pushOff_(){
+  pushCurrent_().then(function(sub){
+    var ep = sub ? sub.endpoint : '';
+    return Promise.resolve(sub ? sub.unsubscribe() : true).then(function(){
+      return ep ? srv('pushUnsubscribe', { endpoint: ep }) : null;
+    });
+  }).then(function(){ pushRedraw_(null, ''); })
+    .catch(function(e){ toast(String(e.message||e), true); });
+}
+/* A tap on the notification while the portal is already open: the worker brings this window
+   forward and names the item (push-sw.js); the item opens exactly as the email's deep link. */
+if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
+  navigator.serviceWorker.addEventListener('message', function(e){
+    var d = e.data || {};
+    if (d.type !== 'hope-open' || !d.url || !S.me) return;
+    var id = '';
+    try { id = new URL(d.url, location.origin).searchParams.get('imp') || ''; } catch (x) {}
+    if (id && allowed('impappr')) { IMPREST_DEEPLINK_ID = id; go('impappr'); }
+  });
 }
 
 /* THE PAGE THAT WAS OUT OF DATE AND SAID NOTHING.
@@ -6316,8 +6438,11 @@ function wireForms(){
         other1Desc: g('imqO1d'), other1Amount: g('imqO1a'), other2Desc: g('imqO2d'), other2Amount: g('imqO2a'),
         other3Desc: g('imqO3d'), other3Amount: g('imqO3a'), purpose: g('imqPurpose'),
       }).then(function(d){
+        /* The two nudges, reported side by side: the email, and the phones that buzzed (api/_lib/push.js). */
         say((d.emailed ? '✅ ' : '⚠️ ') + 'Ombi limetumwa · ' + money(d.total) + ' TZS'
-          + (d.emailed ? ' · GM ameambiwa kwa email / GM was emailed' : ' · email haikutumwa: ' + (d.emailNote||'')), !d.emailed);
+          + (d.emailed ? ' · GM ameambiwa kwa email / GM was emailed' : ' · email haikutumwa: ' + (d.emailNote||''))
+          + (d.pushed ? ' · simu ' + d.pushed + ' imearifiwa / phone(s) buzzed' : '')
+          + (d.pushNote ? ' · arifa ya simu: ' + d.pushNote : ''), !d.emailed);
         render({ force:true });
       }).catch(function(e){ b.disabled=false; say(String(e.message||e), true); });
     };

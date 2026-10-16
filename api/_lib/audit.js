@@ -67,6 +67,9 @@ export const AUDITED = new Set([
      same line every other write here gets. */
   'imprestRequest', 'imprestDecide', 'imprestRetire', 'imprestFund',
   'imprestRoleSave', 'imprestRoleDelete',
+  /* PHONE NOTIFICATIONS. Turning a handset on or off is a write under a code, so it is logged
+     like one -- and, being here, is refused to a view-only code like every other write. */
+  'pushSubscribe', 'pushUnsubscribe',
 ]);
 
 /** The ONLY argument fields that ever reach the table. Anything not named here is dropped --

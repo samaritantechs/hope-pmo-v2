@@ -38,6 +38,7 @@
 import { fetchAll, runQuery } from './supabase.js';
 import { num } from './recovery.js';
 import { sendMail, noticeHtml, noticeButton } from './mail.js';
+import { pushTopic } from './push.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 function bad(msg) { const e = new Error(msg); e.status = 400; throw e; }
@@ -311,7 +312,19 @@ export async function imprestRequest(db, user, args, nowMs) {
   const mail = await sendMail(db, { toKey: 'IMPREST_GM_EMAIL',
     subject: 'HOPE PMO — ombi la imprest / imprest request: ' + fullName + ' · ' + money0(total) + ' TZS',
     html });
-  return { ok: true, id, total, accomRate, emailed: mail.sent, emailNote: mail.sent ? '' : mail.reason };
+  /* THE SECOND NUDGE, TO THE PHONE -- "GM needs phone notifications whenever there is an
+     imprest even if he logs in via browser". Every handset whose code holds the approval pane
+     and has turned alerts on (the bell in the portal; api/_lib/push.js). Same standing as the
+     email: after the row, under a clock, reported rather than depended on. */
+  const push = await pushTopic(db, 'IMPREST', {
+    title: 'Ombi jipya la imprest / New imprest request',
+    body: fullName + ' · ' + money0(total) + ' TZS · ' + travelDate + (row.destination ? ' · ' + row.destination : ''),
+    url: '/dashboard?imp=' + encodeURIComponent(id),
+    tag: 'imprest-' + id,
+  }, { nowMs });
+  // pushNote says so whenever a phone was NOT reached -- even when another one was.
+  return { ok: true, id, total, accomRate, emailed: mail.sent, emailNote: mail.sent ? '' : mail.reason,
+    pushed: push.sent, pushNote: (push.failed || !push.sent) ? push.reason : '' };
 }
 
 /** The requester's own history, and only their own -- with the rate table so the form can
