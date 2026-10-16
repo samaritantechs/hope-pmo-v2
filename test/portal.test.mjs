@@ -327,6 +327,29 @@ test('the dashboard narrows to picked teams, never widens, and says what it offe
   // The month report takes the same pick.
   const m = await portalApi(db, ADMIN, 'monthReport', { teams: ['MBAGALA'] }, NOW);
   assert.deepEqual(m.teamsApplied, ['MBAGALA']);
+  /* THE RED LINE IS THE COMPANY'S FOR EVERYONE -- "the red conditional format from the whole company is what they see, and
+     for managers and gmo. Not their own pivot ... ONLY THE FORMAT, don't touch nothing else": the one-team officer's rows
+     stay their own, but the floors they are judged against are the grand cells of the whole company's Orodha -- the same
+     ones the admin's own screen gets, with or without a pick. */
+  // "They can't see company wide data": the dashboard sends no company figure and reads nothing more; the verdict is a
+  // second, small call made with the rows the screen already holds.
+  assert.equal(all.floorsScope, 'own', 'the whole book on screen: the screen\'s own JUMLA is the company\'s line');
+  assert.equal(mine.floorsScope, 'company'); assert.equal(one.floorsScope, 'company', 'an admin with a team pick asks too');
+  assert.equal('floors' in mine, false); assert.equal(mine.teamPerf[0].red, undefined, 'no company figure, no verdict, on the dashboard call itself');
+  assert.deepEqual(mine.teamPerf.map(r => r.team), ['KONGOWE'], 'and their rows are still theirs alone');
+  const ten = ['tSalesPct', 'mSalesPct', 'tEColPct', 'mEColPct', 'tColPct', 'mColPct', 'tRecPct', 'mRecPct', 'tAvg', 'mAvg'];
+  const sendRows = rows => rows.map(r => Object.fromEntries([['team', r.team]].concat(ten.map(k => [k, r[k]]))));
+  const j = await portalApi(db, GMO, 'orodhaJudge', { rows: sendRows(mine.teamPerf) }, NOW);
+  assert.equal(j.ok, true); assert.equal(j.scope, 'company'); assert.deepEqual(Object.keys(j.red), ['KONGOWE']);
+  assert.ok(Object.keys(j.red.KONGOWE).every(k => ten.includes(k)), 'verdicts only on the Orodha\'s ten');
+  // The verdict is the company's ratio-of-totals line -- the same grand cell the admin's JUMLA shows.
+  const kon = mine.teamPerf[0];
+  const sum = k => all.teamPerf.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const companyTCol = Math.round((sum('colBasis') / sum('expBasis')) * 1000) / 10;
+  assert.equal(typeof companyTCol, 'number');
+  assert.equal(j.red.KONGOWE.tColPct, Number(kon.tColPct) < companyTCol, 'T.Col judged against the company, not against KONGOWE itself');
+  assert.equal('floors' in j, false, 'the line itself never travels');
+  await assert.rejects(() => portalApi(db, { ...GMO, tabs: [] }, 'orodhaJudge', { rows: [] }, NOW), e => e.status === 403, 'the dashboard tab gates it');
 });
 
 /* "weekly Recovery cards at dashboard / widgets should be clickable to open list of those

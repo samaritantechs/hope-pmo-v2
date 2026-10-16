@@ -2013,6 +2013,15 @@ test('one sign-out for the system and HOPE Calls: either side signs out both', (
   assert.ok(/if \(!saved\) return;\s*\n\s*S\.code = saved;[^]*?\$\('#signin'\)\.classList\.add\('booting'\);\s*\n\s*fetch\('\/api\/me\?code='/.test(boot), 'the box is hidden before the server is asked');
   assert.ok(/\$\('#code'\)\.value=''; \$\('#signin'\)\.classList\.remove\('booting'\); \}/.test(boot) && /\.catch\(function\(\)\{ \$\('#signin'\)\.classList\.remove\('booting'\); \}\)/.test(boot), 'and shown again when the code is refused or nothing answers');
   assert.ok(/#signin\.booting \.box\{display:none\}/.test(app) && /#signin\.booting::after\{content:'Inafungua/.test(app), 'the brand ground and a word stay in its place');
+  /* THE RED LINE IS THE COMPANY'S, JUDGED ON THE SERVER -- "the red conditional format from the whole company is what they see
+     ... ONLY THE FORMAT" / "They can't see company wide data": a row's own verdict wins over the table's JUMLA, and the foot
+     says which line the red is on. */
+  assert.ok(/if \(r && r\.red && typeof r\.red\[c\.key\] === 'boolean'\) return r\.red\[c\.key\] \? 'bad' : '';\s*\n\s*if \(ctx\.judge\) return '';/.test(app), 'a server verdict colours the cell; while one is on its way, no red on the own line');
+  assert.ok(/ctx\.judge = !!S\.judging;/.test(app) && /S\.fit=false; S\.judging=false;/.test(app), 'the wait is the main list\'s alone and dies with the tab');
+  assert.ok(/S\.judging = d\.floorsScope === 'company' && S\.rows\.some\(function\(r\)\{ return !r\.red; \}\);/.test(app) && /if \(S\.judging\) orodhaJudge_\(\);/.test(app), 'the dashboard asks for the verdict when its rows have none');
+  assert.ok(/srv\('orodhaJudge', \{ weekOf: S\.args\.weekOf \|\| '', rows: sent \}\)/.test(app) && /orodhaJudge:1/.test(app), 'team and the ten percentages are sent, as a read');
+  assert.ok(/prevRed\[r\.team\]/.test(app), 'a verdict already held is kept across a quiet re-read');
+  assert.ok(/ORODHA_LINE_COMPANY = ' . nyekundu = chini ya wastani wa kampuni nzima/.test(app) && /company line not available just now/.test(app) && /red awaits the company line/.test(app), 'the foot names the line: company, waiting, or the own-line fallback');
   /* THE WORD ON THE CARDS IS MIAMALA -- "Rename rekebisho/adj into miamala it's the vocabulary all the staff are used to". */
   assert.ok(/\(miamala '\+\(n>0\?'\+':''\)\+money\(n\)\+'\)/.test(app) && !/rekebisho \/ adj/.test(app), 'the dashboard tag says miamala');
   assert.ok(/kpi\('Miamala \/ Adjustments'/.test(page('adjust')) && !/[Rr]ekebisho/.test(page('adjust')), 'and so does the adjustments screen');

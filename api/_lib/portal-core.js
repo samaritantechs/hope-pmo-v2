@@ -9721,7 +9721,7 @@ const FN = {
   deductions, addDeduction, hrDeduction,
   advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
-  dashboardFull, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
+  dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
@@ -10073,7 +10073,7 @@ const WRITE_FNS = new Set([...AUDITED, 'stampWeek', 'rebuildFollowup']);
      * findCustomer, reached from the top-bar magnifier rather than from a nav, and team-scoped
    A function not named here behaves exactly as it did before this existed. */
 const FN_TAB = {
-  dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'],
+  dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'], orodhaJudge: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
   recoveryByCredit: ['dashboard'],
   // The customers behind a recovery tile -- the tile's own screens, nothing more.
@@ -11178,9 +11178,90 @@ async function narrowToPickedTeams_(db, user, args, nowMs) {
 async function dashboardFull(db, user, args, nowMs) {
   const asOf0 = asOfWeek(nowMs, args && args.weekOf);
   const pick = await narrowToPickedTeams_(db, user, args, nowMs);
-  const out = await cachedAnswer(db, 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || ''),
-    pick.user, nowMs, () => dashboardFullCompute_(db, pick.user, args, nowMs));
-  return { ...out, teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied };
+  const key = 'dashboardFull|' + asOf0.weekOf + '|' + String((args && args.weekOf) || '');
+  const out = await cachedAnswer(db, key, pick.user, nowMs, () => dashboardFullCompute_(db, pick.user, args, nowMs));
+  /* A viewer with the whole book on screen refreshes the company line for everyone else -- nothing extra is read for it --
+     and is told the screen's own JUMLA is that line ('own'); anyone else is told to ask for the verdict ('company'). */
+  const own = !(user && Array.isArray(user.teams) && user.teams.length) && !(pick.user && pick.user.teams);
+  if (own) { const f = orodhaFloors_(out && out.teamPerf); if (f) FLOORS_MEMO.set(db, { key: key + '|' + todayKey(nowMs), at: nowMs, floors: f }); }
+  return { ...out, teamOptions: pick.teamOptions, teamsApplied: pick.teamsApplied, floorsScope: own ? 'own' : 'company' };
+}
+/* THE COMPANY'S LINE FOR THE ORODHA'S COLOURS -- APPLIED HERE, NEVER SENT, AND NEVER ON THE DASHBOARD'S OWN CLOCK.
+
+     "I granted the tab to teams too, so the red conditional format from the whole company is what they see, and for
+      managers and gmo. Not their own pivot. (Only the format should behave same allover the orodhas to all users - not
+      repivoting - ONLY THE FORMAT, don't touch nothing else please)" -- and then: "They can't see company wide data".
+
+   A scoped viewer's rows and their JUMLA stay their own. What changes is the LINE a cell is judged against: the grand cells
+   the whole company's Orodha would show -- worked out here (orodhaFloors_) from the same per-team parts, by the same
+   ratio-of-totals rule the screen's own JUMLA uses (fillPctTotals / PCT_AVG_OF in public/app.html; keep the two in step).
+   The screen sends its own rows' percentages to orodhaJudge AFTER the dashboard has painted, and gets back only which
+   cells sit under the company's line (`red`): the company's figures never travel to a screen that may not hold them, and
+   the dashboard call itself reads nothing more than before (its trip budget in test/speed.test.mjs is untouched). The
+   company's answer is the whole-book viewers' own cached dashboard when fresh, else computed under a budget and remembered
+   for a while (DASH_FLOORS_MEMO_MS), so three hundred team codes opening the dashboard in one morning cost the database
+   one company read, not three hundred. No answer in time: ok:false, the screen judges on its own line, and its foot says
+   so. */
+const DASH_FLOORS_BUDGET_MS = 8000, DASH_FLOORS_MEMO_MS = 10 * 60 * 1000;
+const dashFloorsBudget_ = () => Number(process.env.DASH_FLOORS_BUDGET_MS) || DASH_FLOORS_BUDGET_MS;
+const FLOORS_MEMO = new WeakMap();           // db -> { key, at, floors }: one company line per deployment, not per viewer
+const ORODHA_PARTS = {                       // percentage column -> [numerator, denominator] on the Orodha rows (PCT_FROM's pairs)
+  tSalesPct: ['tSalesAmt', 'tSalesTarget'], mSalesPct: ['mSalesAmt', 'mSalesTarget'],
+  tEColPct: ['colEarly', 'expEarly'], mEColPct: ['mEcol', 'mEexp'],
+  tColPct: ['colBasis', 'expBasis'], mColPct: ['mCol', 'mExp'],
+  tRecPct: ['tRecovered', 'tRecUncol'], mRecPct: ['mRec', 'mUncol'],
+};
+const ORODHA_AVG = { tAvg: ['tSalesPct', 'tEColPct', 'tColPct', 'tRecPct'], mAvg: ['mSalesPct', 'mEColPct', 'mColPct', 'mRecPct'] };
+/** The grand cells of an Orodha, as its JUMLA row shows them: each percentage the ratio of the company's two amounts; where a
+    part is missing (the month still filling) the plain average of the rows, rounded, as the screen's `~` cell is; the two
+    general averages the mean of the four exact cells, else the rows' average. Null for no rows. */
+function orodhaFloors_(rows) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const f = {}, exact = new Set();
+  const rowMean = k => { const v = rows.map(r => r[k]).filter(x => x != null && x !== '' && !isNaN(Number(x))).map(Number); return v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length) : null; };
+  for (const [k, [n, d]] of Object.entries(ORODHA_PARTS)) {
+    const num = rows.reduce((s, r) => s + (Number(r[n]) || 0), 0), den = rows.reduce((s, r) => s + (Number(r[d]) || 0), 0);
+    if (den > 0) { f[k] = Math.round((num / den) * 1000) / 10; exact.add(k); }
+    else { const m = rowMean(k); if (m != null) f[k] = m; }
+  }
+  for (const [k, four] of Object.entries(ORODHA_AVG)) {
+    const vals = four.filter(x => exact.has(x)).map(x => f[x]);
+    if (vals.length) f[k] = Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10;
+    else { const m = rowMean(k); if (m != null) f[k] = m; }
+  }
+  return Object.keys(f).length ? f : null;
+}
+/** One row judged against the company's floors: red[k] is true where the cell is a number under the line. A cell with no
+    line, or no value, carries no verdict and the screen leaves it as it is. */
+function orodhaRed_(row, floors) {
+  const red = {};
+  for (const k of Object.keys(floors)) { const v = row[k]; if (v != null && v !== '' && !isNaN(Number(v))) red[k] = Number(v) < floors[k]; }
+  return red;
+}
+/** The company's floors for this week: the memo when fresh, else the whole-book dashboard (the admins' own cached answer
+    when they have it) under a budget. Null when nothing answered in time. */
+async function companyFloors_(db, user, key, weekOf, nowMs) {
+  const memoKey = key + '|' + todayKey(nowMs);
+  const memo = FLOORS_MEMO.get(db);
+  if (memo && memo.key === memoKey && nowMs - memo.at >= 0 && nowMs - memo.at < DASH_FLOORS_MEMO_MS) return memo.floors;
+  const all = { ...user, teams: null };
+  const ans = await within_(cachedAnswer(db, key, all, nowMs, () => dashboardFullCompute_(db, all, { weekOf }, nowMs)), dashFloorsBudget_(), null);
+  const floors = orodhaFloors_(ans && ans.teamPerf);
+  if (floors) FLOORS_MEMO.set(db, { key: memoKey, at: nowMs, floors });
+  return floors;
+}
+/** The verdict for the rows a screen already holds -- team and the Orodha's ten percentages, nothing else is read off
+    them -- against the company's line. { ok, red: { team: { key: bool } } }. */
+async function orodhaJudge(db, user, p, nowMs = Date.now()) {
+  const weekOf = (p && p.weekOf) || '';
+  const asOf0 = asOfWeek(nowMs, weekOf);
+  const key = 'dashboardFull|' + asOf0.weekOf + '|' + String(weekOf || '');
+  const rows = (Array.isArray(p && p.rows) ? p.rows : []).slice(0, 400);
+  const floors = await companyFloors_(db, user, key, weekOf, nowMs);
+  if (!floors) return { ok: false, scope: null, red: {} };
+  const red = {};
+  for (const r of rows) { if (r && r.team != null && r.team !== '') red[String(r.team)] = orodhaRed_(r, floors); }
+  return { ok: true, scope: 'company', red };
 }
 /* THE CUSTOMERS BEHIND A RECOVERY TILE.
 
