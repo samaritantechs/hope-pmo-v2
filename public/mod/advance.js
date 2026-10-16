@@ -226,7 +226,9 @@ VIEWS.advrep = function(){
     S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_id','Staff ID'), col('staff_name','Staff'), col('staff_role','Wadhifa / Role'),
       col('zone','Zone'), col('app_date','Tarehe ya maombi / App date','date'), col('amount','Kiasi / Amount','money'),
       {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'),
-      col('bank','Benki / Bank'), col('account','Akaunti / Account'), col('code','Kupitia / Via')];
+      col('bank','Benki / Bank'), col('account','Akaunti / Account'),
+      // The last column is the approval date, in East Africa time like Submitted -- "remove kupitia/via ... replace with approval date".
+      col('decided_at','Tarehe ya idhini / Approval date','dt')];
     ONROW = null;
     S.foot = money(d.count) + ' maombi / requests · TZS ' + money(d.amount) + ' · approved TZS ' + money(d.approvedAmount);
   });
