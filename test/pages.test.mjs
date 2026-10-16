@@ -1856,6 +1856,13 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/d\.monthClosed\s*\?\s*'<div class="note bad"/.test(reqV) && /: '<div class="cleanbox">'/.test(reqV), 'a finalized month shows the closed note instead of the form');
   assert.ok(/eatDt_\(/.test(adv), 'the month\'s times are shown in East Africa time');
   assert.ok(/t === 'advfinal'/.test(admin) && /Finalize the month on the Advance report/.test(admin), 'the advfinal tick says what it opens');
+  /* HR'S LIST FITS THE SCREEN -- "the table should autofit width so that hr sees to status of active and inactive without
+     scrolling right": a tab sets S.fit, the main list wraps to the card's width on a laptop, and the flag dies with the tab. */
+  const staffV = adv.slice(adv.indexOf('VIEWS.advstaff'), adv.indexOf('function advStaffForm'));
+  assert.ok(/S\.fit = true;/.test(staffV), 'HR staff data asks for the fitted list');
+  assert.ok(/S\.foldDot=''; S\.fit=false;/.test(appSrc()), 'go() clears it, so no other tab inherits the wrap');
+  assert.ok(/'<div class="scroll'\+\(S\.fit\?' fit':''\)\+'"><table>/.test(appSrc()), 'the main list carries the class');
+  assert.ok(/@media \(min-width:900px\)\{\s*\.scroll\.fit th,\.scroll\.fit td\{white-space:normal;overflow-wrap:anywhere/.test(appSrc()), 'cells wrap on a laptop; a phone keeps the sideways scroll');
   const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
   for (const col of ['roles            add column if not exists approver_role', 'access_codes     add column if not exists supervisor', 'add column if not exists req_role', 'add column if not exists req_code']) {
     assert.ok(sql.includes(col), 'RUN-ME-045 adds ' + col);

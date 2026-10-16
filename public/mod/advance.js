@@ -397,6 +397,9 @@ VIEWS.advstaff = function(){
         /* newAdvStaff, not newStaff: Teams & Staff's own "+ Mpya / New" button carries that id, and
            wireForms wires both by id -- the later wiring won, and this button opened the wrong form. */
         + '<button class="btn sm" id="newAdvStaff">+ Staff mpya / New staff</button>');
+    /* Eleven columns: on a laptop the list wraps to the card's width so Status (the last one) is in sight without a
+       scroll right -- "the table should autofit width so that hr sees to status of active and inactive". */
+    S.fit = true;
     S.rows = d.rows || [];
     S.cols = [col('id','ID'), col('name','Jina / Name'), col('role','Wadhifa / Role'), col('zone','Zone'), col('phone','Simu / Phone'),
       col('bank','Benki / Bank'), col('account','Akaunti / Account'), col('reg_date','Usajili / Reg date','date'),
