@@ -8855,7 +8855,7 @@ async function adjustmentAmend(db, user, p = {}) {
   const { data: before, error: readErr } = await db.from('pmo_adjustments')
     .select('*').eq('id', id).maybeSingle();
   if (readErr) throw new Error(readErr.message);
-  if (!before) throw badRequest('Rekebisho halipo — huenda limefutwa. / That adjustment no longer exists.');
+  if (!before) throw badRequest('Muamala haupo — huenda umefutwa. / That adjustment no longer exists.');
 
   const patch = {};
   if (p.amount !== undefined) {

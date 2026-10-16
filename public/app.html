@@ -641,11 +641,13 @@ function money(n){ n = Number(n)||0; return Math.round(n).toLocaleString('en-US'
 /* THE AMOUNT, NOT A NOTE. "put no extra note, include the amount" -- when an Iliyonasia has
    moved a tile's own figure, this says by how much, signed, right beside it, instead of a
    sentence explaining that it moved. Empty string when nothing was registered, so an
-   untouched tile reads exactly as it always has. */
+   untouched tile reads exactly as it always has.
+   THE WORD IS MIAMALA -- "Rename rekebisho/adj into miamala it's the vocabulary all the staff
+   are used to.. to know right away what it means when they see it at dashboard cards". */
 function adjTag_(n){
   n = Number(n) || 0;
   if (!n) return '';
-  return ' <span class="mutl">(rekebisho / adj '+(n>0?'+':'')+money(n)+')</span>';
+  return ' <span class="mutl">(miamala '+(n>0?'+':'')+money(n)+')</span>';
 }
 /* "have J1 and J2 showing amount in 2.4m format single decimal" -- a weekend's recovery in the
    width of a day column, where the full figure would push the table off the screen. */
@@ -749,7 +751,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-l';
+var BUILD = '2026-10-16-m';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.

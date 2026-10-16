@@ -2013,5 +2013,8 @@ test('one sign-out for the system and HOPE Calls: either side signs out both', (
   assert.ok(/if \(!saved\) return;\s*\n\s*S\.code = saved;[^]*?\$\('#signin'\)\.classList\.add\('booting'\);\s*\n\s*fetch\('\/api\/me\?code='/.test(boot), 'the box is hidden before the server is asked');
   assert.ok(/\$\('#code'\)\.value=''; \$\('#signin'\)\.classList\.remove\('booting'\); \}/.test(boot) && /\.catch\(function\(\)\{ \$\('#signin'\)\.classList\.remove\('booting'\); \}\)/.test(boot), 'and shown again when the code is refused or nothing answers');
   assert.ok(/#signin\.booting \.box\{display:none\}/.test(app) && /#signin\.booting::after\{content:'Inafungua/.test(app), 'the brand ground and a word stay in its place');
+  /* THE WORD ON THE CARDS IS MIAMALA -- "Rename rekebisho/adj into miamala it's the vocabulary all the staff are used to". */
+  assert.ok(/\(miamala '\+\(n>0\?'\+':''\)\+money\(n\)\+'\)/.test(app) && !/rekebisho \/ adj/.test(app), 'the dashboard tag says miamala');
+  assert.ok(/kpi\('Miamala \/ Adjustments'/.test(page('adjust')) && !/[Rr]ekebisho/.test(page('adjust')), 'and so does the adjustments screen');
   assert.ok(/function signedOutElsewhere_\(\)\{[^]*?hcLoggedOut[^]*?if \(out && S\.entered\) doLogout\(\)/.test(call) && /addEventListener\('storage'/.test(call), 'Calls follows a sign-out made elsewhere');
 });
