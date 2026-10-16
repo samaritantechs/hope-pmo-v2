@@ -1871,6 +1871,15 @@ function advSees_(routing, user, zones, r) {
   if (route.kind === 'legacy') return advZoneOk_(zones, r.zone);
   return false;
 }
+/** Whether any access code of the approver ROLE holds the request's zone -- a request routed by role to a zone
+    where nobody holds that role is seen by nobody but an admin, and the admin's desk says so by name. A code
+    with no team list holds every zone; a request with no zone belongs to the role. No read: the codes are
+    already in the routing and the teams in the desk's own read. */
+function advHolds_(routing, teamRows) {
+  const holders = [...routing.codes.values()].map(c => ({ role: K(c.role), all: !Array.isArray(c.teams) || !c.teams.length,
+    zones: new Set(advZones_({ teams: c.teams }, teamRows).zones || []) }));
+  return (role, zone) => !zone || holders.some(h => h.role === K(role) && (h.all || h.zones.has(K(zone))));
+}
 /** The three ways requests reach ONE desk, for the queue and the report alike: the codes it
     supervises by name (read by req_code, whatever zone those sit in), the roles it supervises
     whole (RUN-ME-046) and the roles routed to it (both read by req_role, in one exact `in`;
@@ -2191,7 +2200,11 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
   // What this desk IS (advDeskOf_) -- and, for an admin, the pending requests that reach nobody else.
   const admin = desk.admin;
-  const unrouted = admin ? pending.filter(r => advRouteOf_(routing, r).kind === 'none').map(r => ({ staff_name: r.staff_name, req_role: r.req_role || r.staff_role, zone: r.zone })) : [];
+  const holds = admin ? advHolds_(routing, teamRows) : null;
+  const unrouted = admin ? pending.map(r => ({ r, rt: advRouteOf_(routing, r) }))
+    .filter(x => x.rt.kind === 'none' || (x.rt.kind === 'role' && !holds(x.rt.to, x.r.zone)))
+    .map(x => ({ staff_name: x.r.staff_name, req_role: x.r.req_role || x.r.staff_role, zone: x.r.zone,
+      why: x.rt.kind === 'none' ? 'no approver set' : 'no ' + x.rt.to + ' holds zone ' + (K(x.r.zone) || '?') })) : [];
   return { on, note: on ? null : ADV_NOTE, pending, recent, count: pending.length, month,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
     zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
@@ -2213,17 +2226,25 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
   if (rows === null) throw badRequest(ADV_NOTE);
   const by = new Map(rows.map(r => [String(r.id), r]));
   const at = new Date(nowMs).toISOString();
-  let approved = 0, disapproved = 0; const skipped = [];
+  let approved = 0, disapproved = 0; const skipped = []; let refused = null;
   for (const u of updates) {
     const r = by.get(u.id);
     if (!r) { skipped.push(u.id + ': no longer there'); continue; }
-    if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') throw forbidden(`You do not have access to zone ${r.zone}.`);
-    if (!advSees_(routing, user, zones, r)) throw forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
+    /* A request that is not this desk's is REFUSED, not fatal to the rest: "GMO ... still appears
+       Pending" -- one stray tick in a bulk save used to stop the loop after the rows before it and
+       leave every row after it undecided, with only a 403 to say so. The ones that are this
+       desk's are decided, the others are named in `skipped`; only when nothing at all could be
+       decided does the answer stay the refusal. */
+    let why = null;
+    if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') why = forbidden(`You do not have access to zone ${r.zone}.`);
+    else if (!advSees_(routing, user, zones, r)) why = forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
+    if (why) { refused = refused || why; skipped.push(`${r.staff_name}: ${why.message}`); continue; }
     if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval}`); continue; }
     const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
     if (error) throw new Error(error.message);
     if (u.approval === 'Approved') approved++; else disapproved++;
   }
+  if (refused && !(approved + disapproved) && updates.length === 1) throw refused;     // one request, not yours: the refusal itself
   return { updated: approved + disapproved, approved, disapproved, skipped };
 }
 /** The report the sheet exported: the requests of a window, Approved by default, by zone,

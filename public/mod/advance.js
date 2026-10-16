@@ -112,80 +112,137 @@ function advDeskLine_(desk){
   return bits.join(' · ');
 }
 
-/* THE GMO'S DESK: the sheet's bulk approval, with the zone enforced by the sign-in. Tick,
-   choose, comment, save; what was decided in the last fourteen days sits below. */
+/* THE APPROVAL DESK, in the app's own pattern -- "the advance approvals user interface is not aligning to our
+   app standard yet": KPI cards; Pending / Decided pills; ONE standard table (sort, search, zone box, S/N, Excel and
+   CSV like every other screen) with the ticks on the left for the bulk save, as the phone register has them; and a
+   drawer for ONE request, as the imprest approvals have it. The old screen was a hand-built table with a select and a
+   box on every row, wider than a phone, whose route text wrapped to eight lines.
+   The route is a chip (who decides it), the age is a chip (red past a month: the imported ones), and a request the
+   routing could not place is said on the screen in an admin's note, never in silence. */
+function advAgeDays_(r){ var t = Date.parse(r.submitted_at); return isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / 86400000)); }
+function advApprChip_(r){ return String(r.approval||'').toUpperCase() === 'APPROVED' ? 'ok' : String(r.approval||'').toUpperCase() === 'DISAPPROVED' ? 'bad' : 'mut'; }
 VIEWS.advappr = function(){
-  var zone = S.args.zone || '';
-  return srv('advQueue', { zone: zone }).then(function(d){
+  var state = S.args.state === 'decided' ? 'decided' : 'pending';
+  return srv('advQueue', {}).then(function(d){
     S.advQ = d;
-    var pend = d.pending || [];
-    /* WHAT THIS DESK IS (advRouteOf_ on the server): the roles routed to it and the people it
-       supervises -- or, plainly, that nothing is routed to it yet and where that is set. An
-       admin's desk shows every request and names the ones that reach nobody else. */
+    var pend = d.pending || [], rec = d.recent || [];
+    var monthStart = String(d.month || '') + '-01';
+    pend.forEach(function(r){ r.age = advAgeDays_(r); });
+    var older = pend.filter(function(r){ return String(r.submitted_at||'').slice(0,10) < monthStart; }).length;
+    /* WHAT THIS DESK IS (advRouteOf_ on the server): the roles routed to it and the people it supervises -- or, plainly,
+       that nothing is routed to it yet and where that is set. An admin's desk shows every request and names the ones that
+       reach nobody else. */
     var deskLine = advDeskLine_(d.desk || {});
+    var unr = d.unrouted || [];
     HEAD = '<div class="kpis">'
       + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
       + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')
-      + kpi('Yaliyoamuliwa mwezi huu / Decided this month', money((d.recent||[]).length), esc(d.month || ''))
+      + kpi('Ya miezi iliyopita / From earlier months', money(older), 'kabla ya ' + esc(d.month || '') + ' / before ' + esc(d.month || ''), older ? 'bad' : 'good')
+      + kpi('Yaliyoamuliwa mwezi huu / Decided this month', money(rec.length), esc(d.month || ''))
       + '</div>'
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
       + (d.routingOn === false
           ? '<div class="note">⚠ ' + esc(d.routingNote || '') + '</div>'
           : '<div class="note' + (deskLine ? '' : ' bad') + '">Dawati lako / Your desk: ' + (deskLine ? esc(deskLine)
               : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako bado — admin aweke mwidhinishaji kwenye Nafasi na ruhusa, au akuchague kama msimamizi kwenye msimbo. / nothing is routed to this desk yet: an admin sets the approver role on Roles & access, or names you as a supervisor on a code.') + '</div>')
-      + ((d.unrouted||[]).length
-          ? '<div class="note bad">⚠️ Maombi ' + d.unrouted.length + ' hayamfikii mtu isipokuwa admin — wadhifa wao hauna mwidhinishaji: '
-            + esc(d.unrouted.map(function(u){ return u.staff_name + ' (' + (u.req_role || '?') + ')'; }).join(', '))
-            + '. Weka mwidhinishaji kwenye Nafasi na ruhusa. / ' + d.unrouted.length + ' request(s) reach nobody but an admin — their role has no approver set, or an older request\'s role is not one role Roles & access knows. Set the approver on Roles & access.</div>'
+      + (unr.length
+          ? '<div class="note bad">⚠️ Maombi ' + unr.length + ' hayamfikii mtu isipokuwa admin / ' + unr.length + ' request(s) reach nobody but an admin: '
+            + esc(unr.map(function(u){ return u.staff_name + ' (' + (u.req_role || '?') + (u.zone ? ' · ' + u.zone : '') + ' — ' + (u.why || '') + ')'; }).join('; '))
+            + '. Weka mwidhinishaji au timu ya zone hiyo kwenye Nafasi na ruhusa / Misimbo. / Set an approver, or give a code of the approver role a team in that zone, on Roles & access / Access codes.</div>'
           : '')
       + (d.noZoneTeams && d.noZoneTeams.length
           ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(d.noZoneTeams.join(', '))
             + '. / Teams with no zone on Teams & Staff: their officers\' requests cannot reach this desk until the zone is set.</div>' : '')
-      + bar('<select data-arg="zone"><option value="">Zone zote / All zones</option>'
-          + (d.zones||[]).map(function(z){ return '<option' + (zone===z?' selected':'') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
-          + (pend.length ? '<button class="btn sm" id="advDecideSave" style="margin-left:auto">💾 Hifadhi maamuzi / Save decisions</button>' : ''))
-      + '<div class="card"><div class="card-h">✅ Idhinisha maombi ya advance / Approve advance requests'
-        + '<span class="sub">mapya juu / newest first · tiki · chagua · andika maoni · hifadhi / tick · choose · comment · save</span></div>'
-      + (pend.length
-          ? '<div class="scroll"><table><thead><tr><th>✔</th><th>Staff</th><th>Zone</th><th>Kwa / To</th><th class="r">Kiasi / Amount</th><th>Tarehe / App date</th><th>Imetumwa / Submitted</th><th>Idhini / Approval</th><th>Maoni / Comment</th></tr></thead><tbody>'
-            + pend.map(function(r, i){
-                return '<tr><td><input type="checkbox" class="advChk" data-i="' + i + '"></td>'
-                  + '<td><b>' + esc(r.staff_name||'') + '</b><br><span style="color:var(--mut);font-size:11px">' + esc(r.staff_id||'') + (r.staff_role ? ' · ' + esc(r.staff_role) : '') + '</span></td>'
-                  + '<td>' + esc(r.zone||'') + '</td>'
-                  + '<td style="white-space:normal;font-size:11px">' + esc(r.route||'') + '</td>'
-                  + '<td class="r">' + money(r.amount) + '</td>'
-                  + '<td>' + esc(String(r.app_date||'').slice(0,10)) + '</td><td>' + esc(String(r.submitted_at||'').replace('T',' ').slice(0,16)) + '</td>'
-                  + '<td><select class="advSel" data-i="' + i + '">' + (d.approvals||['Approved','Disapproved']).map(function(a){ return '<option>' + esc(a) + '</option>'; }).join('') + '</select></td>'
-                  + '<td><input class="advCom" data-i="' + i + '" placeholder="Maoni / Comment"></td></tr>';
-              }).join('')
-            + '</tbody></table></div>'
-          : '<div class="note">Hakuna ombi linalosubiri. / No pending requests.</div>')
-      + '</div>';
-    S.rows = d.recent || [];
-    S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Staff'), col('staff_id','Staff ID'), col('zone','Zone'), col('route','Kwa / To'),
-      col('amount','Kiasi / Amount','money'), {key:'approval', label:'Idhini / Approval', cls:advApprCls_}, col('comment','Maoni / Comment'),
-      col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')];
-    ONROW = null;
-    S.foot = 'Yaliyoamuliwa mwezi huu (' + esc(d.month || '') + ') / Decided this month: ' + money(S.rows.length) + ' · mapya juu / newest first';
+      + bar('<button class="btn sm' + (state === 'pending' ? '' : ' ghost') + '" data-arg="state" data-val="pending">Yanayosubiri / Pending (' + money(pend.length) + ')</button>'
+          + '<button class="btn sm' + (state === 'decided' ? '' : ' ghost') + '" data-arg="state" data-val="decided" style="margin-left:6px">Yaliyoamuliwa / Decided (' + money(rec.length) + ')</button>'
+          + '<select data-filter="zone" style="margin-left:8px"><option value="">Zone zote / All zones</option>'
+            + (d.zones || []).map(function(z){ return '<option' + (S.filters.zone === z ? ' selected' : '') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
+          + (state === 'pending' && pend.length
+              ? '<input id="advBulkCom" placeholder="Maoni kwa zilizochaguliwa / Comment for the ticked" style="margin-left:8px;min-width:200px">'
+                + '<button class="btn sm" id="advApproveMany" style="margin-left:6px">✅ Idhinisha zilizochaguliwa / Approve ticked</button>'
+                + '<button class="btn sm bad" id="advRejectMany" style="margin-left:6px">✖ Kataa zilizochaguliwa / Disapprove ticked</button>'
+                + '<span class="chip mut" data-pickcount="1" style="margin-left:8px">0</span><span class="mutl" style="font-size:12px">zimechaguliwa / ticked</span>'
+                + '<button class="btn sm ghost" id="advPickNone" style="margin-left:6px">Ondoa chaguo / Clear</button>'
+              : ''));
+    if (state === 'pending') {
+      S.pickKey = 'id';
+      S.rows = pend;
+      S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
+        {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
+        col('zone','Zone'), {key:'amount', label:'Kiasi / Amount', kind:'money'}, col('app_date','Tarehe ya ombi / App date','date'),
+        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age + ' d'; }, chip:function(r){ return r.age > 31 ? 'bad' : r.age > 7 ? 'warn' : 'mut'; }},
+        {key:'routeTo', label:'Kwa / To', kind:'chip', title:'Nani anaamua / who decides',
+         get:function(r){ return r.routeTo || ''; }, chip:function(r){ return r.routeKind === 'none' ? 'bad' : /not recognised/.test(r.route || '') ? 'warn' : 'mut'; }}];
+      ONROW = function(r){ advDecideDrawer_(r, true); };
+      S.foot = 'Yanayosubiri / Pending: ' + money(pend.length) + ' · TZS ' + money(d.amount) + ' · gusa safu kwa uamuzi mmoja, tiki kwa wengi / tap a row for one decision, tick for many';
+    } else {
+      S.pickKey = '';
+      S.rows = rec;
+      S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'), col('zone','Zone'),
+        {key:'amount', label:'Kiasi / Amount', kind:'money'},
+        {key:'approval', label:'Idhini / Approval', kind:'chip', get:function(r){ return r.approval || ''; }, chip:advApprChip_},
+        col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')];
+      ONROW = function(r){ advDecideDrawer_(r, false); };
+      S.foot = 'Yaliyoamuliwa mwezi huu (' + esc(d.month || '') + ') / Decided this month: ' + money(rec.length) + ' · mapya juu / newest first';
+    }
   });
 };
 
-function advDecideSave(){
-  var d = S.advQ || {}; var pend = d.pending || [];
-  var checked = Array.prototype.filter.call(document.querySelectorAll('.advChk'), function(c){ return c.checked; });
-  if (!checked.length){ toast('Tiki angalau ombi moja. / Tick at least one request.', true); return; }
-  var updates = checked.map(function(c){
-    var i = Number(c.getAttribute('data-i'));
-    return { id: pend[i].id, approval: document.querySelector('.advSel[data-i="' + i + '"]').value,
-      comment: document.querySelector('.advCom[data-i="' + i + '"]').value.trim() };
-  });
-  if (!confirm('Hifadhi maamuzi ' + updates.length + '? / Save ' + updates.length + ' decision(s)?')) return;
-  srv('advDecide', { updates: updates })
+/* ONE REQUEST, in a drawer: what it is, who decides it, then the comment and the two answers -- the imprest approvals'
+   pattern. A decided request opens the same drawer without the buttons. A comment is required to disapprove. */
+function advDecideDrawer_(r, decidable){
+  var row = function(k, v){ return '<div class="frow"><span>' + k + '</span><b>' + (v == null || v === '' ? '—' : esc(String(v))) + '</b></div>'; };
+  drawer('<h3>' + esc(r.staff_name || '—') + '</h3>'
+    + '<div class="sub">' + esc(r.staff_id || '') + ' · ' + esc(r.staff_role || r.req_role || '') + ' · ' + esc(r.zone || '') + '</div>'
+    + '<div class="facts">'
+      + row('Kiasi / Amount', 'TZS ' + money(r.amount)) + row('Tarehe ya ombi / App date', String(r.app_date || '').slice(0, 10))
+      + row('Imetumwa / Submitted', String(r.submitted_at || '').replace('T', ' ').slice(0, 16))
+      + row('Anayeamua / Who decides', r.route)
+      + (r.approval && String(r.approval).toUpperCase() !== 'PENDING' ? row('Idhini / Approval', r.approval) + row('Aliyeamua / Decided by', r.decided_by) + row('Maoni / Comment', r.comment) : '')
+    + '</div>'
+    + (decidable
+        ? '<div class="fld"><label>Maoni / Comment</label><textarea id="advdCmt" rows="3" placeholder="Lazima ukikataa. / Required when you disapprove."></textarea></div>'
+          + '<button class="btn w" id="advdOk" style="margin-top:8px">Idhinisha / Approve</button>'
+          + '<button class="btn w ghost danger" id="advdNo" style="margin-top:6px">Kataa / Disapprove</button>'
+        : ''));
+  if (!decidable) return;
+  var send = function(approval){
+    var com = ($('#advdCmt').value || '').trim();
+    if (approval === 'Disapproved' && !com){ toast('Andika sababu ya kukataa. / A reason is needed to disapprove.', true); return; }
+    var b = $('#advdOk'), n = $('#advdNo'); if (b) b.disabled = true; if (n) n.disabled = true;
+    srv('advDecide', { updates: [{ id: r.id, approval: approval, comment: com }] })
+      .then(function(x){
+        toast(approval === 'Approved' ? 'Imeidhinishwa / Approved' + (x.skipped && x.skipped.length ? ' · ' + x.skipped.join('; ') : '') : 'Imekataliwa / Disapproved');
+        closeDrawer(); render({ force:true }); })
+      .catch(function(e){ if (b) b.disabled = false; if (n) n.disabled = false; toast(String(e.message||e), true); });
+  };
+  $('#advdOk').onclick = function(){ send('Approved'); };
+  $('#advdNo').onclick = function(){ send('Disapproved'); };
+}
+
+/* THE BULK SAVE: the ticked rows, one answer, one comment -- the sheet's bulkUpdateAdvances. The buttons live on the
+   bar, which is rebuilt with every render, so they are wired after every paint (wireAdvDesk). */
+function advBulk_(approval){
+  var ids = pickList_();
+  if (!ids.length){ toast('Tiki angalau ombi moja. / Tick at least one request.', true); return; }
+  var com = (($('#advBulkCom') || {}).value || '').trim();
+  if (approval === 'Disapproved' && !com){ toast('Andika sababu ya kukataa kwenye kisanduku cha maoni. / Write the reason in the comment box to disapprove.', true); return; }
+  if (!confirm((approval === 'Approved' ? 'Idhinisha' : 'Kataa') + ' ' + ids.length + '? / ' + (approval === 'Approved' ? 'Approve' : 'Disapprove') + ' ' + ids.length + ' request(s)?')) return;
+  srv('advDecide', { updates: ids.map(function(id){ return { id: id, approval: approval, comment: com }; }) })
     .then(function(r){
       toast('Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved'
-        + (r.skipped && r.skipped.length ? ' · ' + r.skipped.join('; ') : '') + '.');
-      render({ force:true }); })
+        + (r.skipped && r.skipped.length ? ' · ' + r.skipped.join('; ') : '') + '.', !!(r.skipped && r.skipped.length));
+      pickClear_(); render({ force:true }); })
     .catch(function(e){ toast(String(e.message||e), true); });
+}
+/* Wired by wireForms (app.html) after every paint, like the devices module: the bar is rebuilt with each render. */
+function wireAdvDesk(){
+  var a = document.getElementById('advApproveMany');
+  if (a) a.onclick = function(){ advBulk_('Approved'); };
+  var r = document.getElementById('advRejectMany');
+  if (r) r.onclick = function(){ advBulk_('Disapproved'); };
+  var n = document.getElementById('advPickNone');
+  if (n) n.onclick = function(){ pickClear_(); paint(true); };
 }
 
 /* THE REPORT the sheet exported: a window, Approved by default, by zone, with the bank and

@@ -1749,12 +1749,18 @@ test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
   assert.ok(/localStorage\.setItem\('hopeCode', regRole === 'officer' \? pass : code\)/.test(call), 'registration keeps the code where the portal signs in from');
   assert.ok(/\$\('#swapBtn'\)\.onclick = function\(ev\)/.test(call) && /srv\('api_portalCode', DEV\)/.test(call) && /location\.href = '\/dashboard'/.test(call), 'the switch asks for the code it registered with, then goes');
   assert.ok(/monthTaken/.test(view) && /One request per month; the approver sees it/.test(view), 'the month rule is said on the form -- the date alone, the rest is the approver\'s');
-  assert.ok(/VIEWS\.advappr = function/.test(view) && /srv\('advQueue'/.test(view) && /class="advChk"/.test(view) && /id="advDecideSave"/.test(view) && /srv\('advDecide', \{ updates: updates \}\)/.test(view), 'the GMO\'s bulk decision');
+  /* THE APPROVAL DESK IS IN THE APP'S OWN PATTERN -- "the advance approvals user interface is not aligning to our app standard yet":
+     KPI cards, pills, the standard table with the standard ticks (S.pickKey), a drawer for one request, bulk buttons on the bar. */
+  const desk = view.slice(view.indexOf('VIEWS.advappr'), view.indexOf('VIEWS.advrep'));
+  assert.ok(/VIEWS\.advappr = function/.test(desk) && /srv\('advQueue'/.test(desk) && /S\.pickKey = 'id'/.test(desk) && /ONROW = function\(r\)\{ advDecideDrawer_\(r, true\); \}/.test(desk), 'the desk: standard table, ticks, a drawer per request');
+  assert.ok(/id="advApproveMany"/.test(desk) && /id="advRejectMany"/.test(desk) && /srv\('advDecide', \{ updates: ids\.map/.test(desk) && /kind:'chip'/.test(desk), 'the bulk buttons, and chips for age and route');
+  assert.ok(!/<input type="checkbox" class="advChk"|class="advSel"|class="advCom"/.test(desk), 'no hand-built table with a select and a box on every row');
+  assert.ok(/A reason is needed to disapprove/.test(desk) && /d\.unrouted/.test(desk) && /u\.why/.test(desk), 'a reason to disapprove; the unrouted are named with why');
   assert.ok(/VIEWS\.advrep = function/.test(view) && /srv\('advReport'/.test(view) && /col\('account','Akaunti \/ Account'\)/.test(view) && /board\('advRepZones'/.test(view), 'the report with the accounts, by zone');
   assert.ok(/VIEWS\.advstaff = function/.test(view) && /srv\('advStaff'/.test(view) && /id="newAdvStaff"/.test(view) && /function advStaffForm\(x\)/.test(view) && /srv\('advStaffSave'/.test(view) && /srv\('advStaffStatus'/.test(view), 'HR\'s registry, form and switch');
   assert.ok(/\$\('#asNida'\)\.oninput/.test(view) && /dg\.slice\(0,4\)/.test(view), 'the birth date follows the NIDA number as it is typed');
   assert.ok(/d\.on === false \? '<div class="note">⚠ ' \+ esc\(d\.note/.test(view), 'a database without RUN-ME-044 says so');
-  assert.ok(/getElementById\('advSubmit'\)/.test(app) && /getElementById\('advDecideSave'\)/.test(app) && /getElementById\('newAdvStaff'\)/.test(app), 'wired with the tabs');
+  assert.ok(/getElementById\('advSubmit'\)/.test(app) && /getElementById\('newAdvStaff'\)/.test(app), 'wired with the tabs');
   assert.ok(/r\.teamCodes \? ' <span class="chip mut">F\.O · misimbo ya timu \/ team codes<\/span>'/.test(app), 'Roles & access marks the team codes\' row');
   const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
   assert.ok(/<option value="staff-registry">/.test(up) && /<option value="advance-requests">/.test(up), 'the two upload kinds');
@@ -1831,7 +1837,8 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/Ombi lako litaenda kwa \/ Your request goes to: <b>' \+ esc\(d\.route\.label\)/.test(adv), 'the ask says who will see it');
   assert.ok(/d\.route\.kind === 'none' \? ' bad'/.test(adv), 'and says "nobody" in red');
   assert.ok(/Dawati lako \/ Your desk: /.test(adv) && /desk\.supervisees/.test(adv) && /d\.unrouted/.test(adv), 'the desk says what it is and names the unrouted');
-  assert.ok(/<th>Kwa \/ To<\/th>/.test(adv) && /esc\(r\.route\|\|''\)/.test(adv) && /col\('route','Kwa \/ To'\)/.test(adv), 'each row says where it went');
+  assert.ok(/key:'routeTo', label:'Kwa \/ To'/.test(adv) && /r\.route/.test(adv), 'each row says where it went (a chip; the full wording is in the drawer)');
+  assert.ok(/window\.wireAdvDesk/.test(appSrc()) && /function wireAdvDesk\(\)/.test(adv), 'the desk\'s bar buttons are wired after every paint');
   const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
   for (const col of ['roles            add column if not exists approver_role', 'access_codes     add column if not exists supervisor', 'add column if not exists req_role', 'add column if not exists req_code']) {
     assert.ok(sql.includes(col), 'RUN-ME-045 adds ' + col);
