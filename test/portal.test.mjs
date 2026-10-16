@@ -11380,9 +11380,11 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   assert.equal(all.count, 3); assert.equal(all.approved, 2);
   assert.deepEqual((await portalApi(db, gmoM, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW)).rows.map(r => r.id), ['r-old'], 'MARA only');
 
-  // HR'S REGISTRY: the ID generated (initials / running number / year), the birth date off the NIDA, the switch.
-  const hr = { code: 'H', name: 'HR PERSON', role: 'HR', teams: null, tabs: ['advstaff'] };
+  // THE REGISTRY: the ID generated (initials / running number / year), the birth date off the NIDA, the switch. Written by
+  // MANAGEMENT (ADV_STAFF_EDIT_ROLES, Settings) or an admin -- "only role MANAGEMENT and I can make the alterations".
+  const hr = { code: 'H', name: 'HR PERSON', role: 'MANAGEMENT', teams: null, tabs: ['advstaff'] };
   const reg = await portalApi(db, hr, 'advStaff', {}, NOW);
+  assert.equal(reg.canEdit, true); assert.equal(reg.readOnlyNote, null); assert.equal(reg.editRoles, 'MANAGEMENT');
   assert.equal(reg.total, 3); assert.equal(reg.active, 2); assert.deepEqual(reg.zones, ['DAR EAST', 'MARA']);
   assert.deepEqual(reg.noZoneTeams, [], 'an all-teams viewer has no team to be told about'); assert.equal(reg.nextSerial, 4);
   const saved = await portalApi(db, hr, 'advStaffSave', { name: 'jaffary mohamed markii', zone: 'dar east', phone: '677 111 910',
@@ -11400,12 +11402,27 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   const off = await portalApi(db, hr, 'advStaffStatus', { id: 'JMM/004/2026', status: 'Inactive' }, NOW);
   assert.equal(off.status, 'Inactive');
   assert.ok(!(await portalApi(db, FO, 'advRequestPage', {}, NOW)).staff.find(s => s.id === 'JMM/004/2026'), 'off the request list');
-  // A zone-scoped holder of the HR tab cannot write into another zone; a team with no zone is named to them.
+  // A GMO WITH THE TAB SEES ONLY THEIR ZONES' STAFF, READ-ONLY -- "grant gmos the staff db, so they see only staff of their
+  // zones/teams ... they cant open staff card = read only list": no save, no switch, even in their own zone; a team with no
+  // zone is named to them. A zone-scoped MANAGEMENT holder still cannot write into another zone.
   const scopedHr = { code: 'S', name: 'SCOPED', role: 'GMO', teams: ['KONGOWE', 'NOZONE'], tabs: ['advstaff'] };
+  const gReg = await portalApi(db, scopedHr, 'advStaff', {}, NOW);
+  assert.equal(gReg.canEdit, false); assert.match(gReg.readOnlyNote, /Read-only list: staff changes are made by MANAGEMENT or an admin/);
+  assert.deepEqual(gReg.noZoneTeams, ['NOZONE']);
+  assert.deepEqual(gReg.rows.map(r => r.zone), ['DAR EAST', 'DAR EAST', 'DAR EAST']);
+  await assert.rejects(() => portalApi(db, scopedHr, 'advStaffSave', { name: 'X Y', zone: 'DAR EAST' }, NOW), e => e.status === 403 && /Read-only/.test(e.message), 'own zone, still read-only');
   await assert.rejects(() => portalApi(db, scopedHr, 'advStaffSave', { name: 'X Y', zone: 'MARA' }, NOW), e => e.status === 403);
-  assert.deepEqual((await portalApi(db, scopedHr, 'advStaff', {}, NOW)).noZoneTeams, ['NOZONE']);
-  assert.deepEqual((await portalApi(db, scopedHr, 'advStaff', {}, NOW)).rows.map(r => r.zone), ['DAR EAST', 'DAR EAST', 'DAR EAST']);
-  await assert.rejects(() => portalApi(db, scopedHr, 'advStaffStatus', { id: 'CCC/003/2026', status: 'Inactive' }, NOW), e => e.status === 403);
+  await assert.rejects(() => portalApi(db, scopedHr, 'advStaffStatus', { id: 'CCC/003/2026', status: 'Inactive' }, NOW), e => e.status === 403 && /Read-only/.test(e.message));
+  assert.equal(db._dump('staff_registry').find(r => r.id === 'CCC/003/2026').status, 'Active', 'nothing was written');
+  const scopedMgmt = { ...scopedHr, role: 'MANAGEMENT' };
+  await assert.rejects(() => portalApi(db, scopedMgmt, 'advStaffSave', { name: 'X Y', zone: 'MARA' }, NOW), e => e.status === 403 && /access to zone MARA/.test(e.message));
+  // The editing roles are a setting (ADV_STAFF_EDIT_ROLES), matched whole: "HR" lets an HR role write; "PMO MANAGEMENT" does not make MANAGEMENT of it.
+  t.settings.push({ key: 'ADV_STAFF_EDIT_ROLES', value: 'MANAGEMENT, HR' });
+  const dbS = fakeDb(t);
+  assert.equal((await portalApi(dbS, { ...hr, role: 'HR' }, 'advStaff', {}, NOW)).canEdit, true);
+  assert.equal((await portalApi(dbS, { ...hr, role: 'PMO MANAGEMENT' }, 'advStaff', {}, NOW)).canEdit, false);
+  assert.equal((await portalApi(dbS, { ...hr, role: 'GMO' }, 'advStaff', {}, NOW)).canEdit, false);
+  assert.equal((await portalApi(dbS, ADMIN, 'advStaff', {}, NOW)).canEdit, true, 'an admin always');
   // The gates are the tabs, not the role.
   await assert.rejects(() => portalApi(db, { ...FO, tabs: [] }, 'advRequestPage', {}, NOW), e => e.status === 403);
   await assert.rejects(() => portalApi(db, FO, 'advQueue', {}, NOW), e => e.status === 403);

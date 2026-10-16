@@ -380,11 +380,18 @@ VIEWS.advrep = function(){
 VIEWS.advstaff = function(){
   return srv('advStaff', {}).then(function(d){
     S.advStaffMeta = d;
+    /* READ-ONLY FOR EVERYONE BUT MANAGEMENT AND AN ADMIN (advStaffCanEdit_ on the server) -- "grant gmos the staff db, so
+       they see only staff of their zones/teams - this will help them always say what to update - they cant open staff
+       card": the list of their zones, no New button, no card on a row, and the line that says what to send for a change. */
+    var edit = d.canEdit !== false;
     HEAD = '<div class="kpis">'
       + kpi('Wafanyakazi / Staff', money(d.total), money(d.active) + ' active')
       + kpi('Zone', money((d.zones||[]).length), (d.zones||[]).join(', '))
-      + kpi('ID inayofuata / Next serial', esc(String(d.nextSerial||'')), 'herufi za kwanza / ' + esc(String(d.nextSerial||'')).padStart(3, '0') + ' / ' + esc(String(d.year||'')))
+      + (edit ? kpi('ID inayofuata / Next serial', esc(String(d.nextSerial||'')), 'herufi za kwanza / ' + esc(String(d.nextSerial||'')).padStart(3, '0') + ' / ' + esc(String(d.year||''))) : '')
       + '</div>'
+      + (edit ? '' : '<div class="note">🔒 Orodha ya kusoma tu ya wafanyakazi wa zone zako (' + esc((d.zones||[]).join(', ') || '—') + '). Ukiona jina linalokosekana, wadhifa, timu, simu au benki isiyo sahihi, tuma kwa HR / admin: '
+          + '<b>JINA KAMILI (kama benki) · WADHIFA · TIMU · SIMU · BENKI + AKAUNTI · TIN</b>. Marekebisho hufanywa na ' + esc(d.editRoles || 'MANAGEMENT') + ' au admin.'
+          + ' / Read-only list of your zones\' staff. A missing name or a wrong role, team, phone or bank: send HR / admin <b>full name (as at the bank) · role · team · phone · bank + account · TIN</b>. Changes are made by ' + esc(d.editRoles || 'MANAGEMENT') + ' or an admin.</div>')
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
       + (d.noZoneTeams && d.noZoneTeams.length
           ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(d.noZoneTeams.join(', '))
@@ -396,7 +403,7 @@ VIEWS.advstaff = function(){
           + '<option value="INACTIVE"' + (S.filters.status==='INACTIVE'?' selected':'') + '>Inactive</option></select>'
         /* newAdvStaff, not newStaff: Teams & Staff's own "+ Mpya / New" button carries that id, and
            wireForms wires both by id -- the later wiring won, and this button opened the wrong form. */
-        + '<button class="btn sm" id="newAdvStaff">+ Staff mpya / New staff</button>');
+        + (edit ? '<button class="btn sm" id="newAdvStaff">+ Staff mpya / New staff</button>' : '<span class="chip mut">kusoma tu / read-only</span>'));
     /* Eleven columns: on a laptop the list wraps to the card's width so Status (the last one) is in sight without a
        scroll right -- "the table should autofit width so that hr sees to status of active and inactive". */
     S.fit = true;
@@ -405,8 +412,8 @@ VIEWS.advstaff = function(){
       col('bank','Benki / Bank'), col('account','Akaunti / Account'), col('reg_date','Usajili / Reg date','date'),
       col('birth_date','Kuzaliwa / Birth date','date'),
       {key:'status', label:'Status', cls:function(r){ return String(r.status||'').toUpperCase()==='INACTIVE' ? 'bad' : 'good'; }}];
-    ONROW = advStaffForm;
-    S.foot = money(d.count) + ' staff · ' + money(d.active) + ' active';
+    ONROW = edit ? advStaffForm : null;
+    S.foot = money(d.count) + ' staff · ' + money(d.active) + ' active' + (edit ? '' : ' · kusoma tu / read-only');
   });
 };
 

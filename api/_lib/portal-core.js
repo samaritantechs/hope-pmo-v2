@@ -1926,12 +1926,25 @@ function advDeskOf_(routing, user) {
 /** The zone read, the by-code read and the by-role read, as one list: a row the three brought
     twice is one row. */
 const advMerge_ = (...lists) => { const by = new Map(); for (const l of lists) for (const r of (l || [])) by.set(String(r.id), r); return [...by.values()]; };
+/* WHO MAY CHANGE THE REGISTRY -- "i need to grant gmos the staff db, so they see only staff of their zones/teams - this will
+   help them always say what to update - they cant open staff card = read only list and any other role. only role
+   "MANAGEMENT" and I can make the alterations". The advstaff tab opens the LIST, scoped to the viewer's zones as it always
+   was (advZones_: a GMO's code sees its teams' zones); the WRITES -- save and the Active/Inactive switch -- are an admin's and
+   the roles named in ADV_STAFF_EDIT_ROLES (Settings), MANAGEMENT alone by default, matched whole. The tab says which it is. */
+const ADV_STAFF_EDIT_KEY = 'ADV_STAFF_EDIT_ROLES', ADV_STAFF_EDIT_DEFAULT = 'MANAGEMENT';
+function advStaffCanEdit_(user, cfg) {
+  if (isAdminUser(user)) return true;
+  const r = dedWord_(user.role);
+  return !!r && String(cfg.get(ADV_STAFF_EDIT_KEY, ADV_STAFF_EDIT_DEFAULT)).split(',').map(dedWord_).filter(Boolean).some(w => w === r);
+}
+const ADV_STAFF_READONLY = 'Orodha ya kusoma tu: marekebisho ya wafanyakazi hufanywa na MANAGEMENT au admin. / Read-only list: staff changes are made by MANAGEMENT or an admin.';
 /** HR's registry: everybody in the zones the viewer may see, searchable; the zone list the
     form offers (Teams & Staff's zones plus any already in the registry); the next serial. */
 async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) {
   // The role names as Roles & access spells them, for the form's ROLE picker: the request
   // tab lists a name only under its own role (advRoleSame_), so the first words have to agree.
-  const [teamRows, roleRows] = await Promise.all([readTeamsAll(db, nowMs), fetchAll(() => db.from('roles').select('role'))]);
+  const [teamRows, roleRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), fetchAll(() => db.from('roles').select('role')), settingsMany(db, [ADV_STAFF_EDIT_KEY])]);
+  const canEdit = advStaffCanEdit_(user, cfg);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
   const rows0 = await advRead_(() => onZones_(db.from('staff_registry').select('*').order('name', { ascending: true }), zones));
   const on = Array.isArray(rows0);
@@ -1942,6 +1955,7 @@ async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) 
   if (needle) rows = rows.filter(r => [r.name, r.id, r.phone, r.role, r.zone, r.bank].some(v => K(v).includes(needle)));
   return { rows, count: rows.length, on, note: on ? null : ADV_NOTE,
     zones: advZoneList_(teamRows, rows0, zones), noZoneTeams,
+    canEdit, editRoles: cfg.get(ADV_STAFF_EDIT_KEY, ADV_STAFF_EDIT_DEFAULT), readOnlyNote: canEdit ? null : ADV_STAFF_READONLY,
     roleNames: [...new Set(roleRows.map(r => String(r.role || '').trim()).filter(Boolean))].sort(),
     active: (rows0 || []).filter(r => K(r.status) !== 'INACTIVE').length, total: (rows0 || []).length,
     nextSerial: (rows0 || []).length + 1, year: todayKey(nowMs).slice(0, 4) };
@@ -1950,6 +1964,7 @@ async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) 
     birth date is read off the NIDA number, as asked, else taken as typed. */
 async function advStaffSave(db, user, p, nowMs = Date.now()) {
   if (!p) throw badRequest('Nothing to save.');
+  if (!advStaffCanEdit_(user, await settingsMany(db, [ADV_STAFF_EDIT_KEY]))) throw forbidden(ADV_STAFF_READONLY);
   const name = advUpper_(p.name);
   if (!name) throw badRequest('Jina la staff linahitajika. / The staff name is required.');
   const zone = advUpper_(p.zone);
@@ -1990,6 +2005,7 @@ async function advStaffSave(db, user, p, nowMs = Date.now()) {
 /** The Active / Inactive switch. An inactive staff is off every request list and keeps their history. */
 async function advStaffStatus(db, user, p, nowMs = Date.now()) {
   if (!p || !p.id) throw badRequest('id is required');
+  if (!advStaffCanEdit_(user, await settingsMany(db, [ADV_STAFF_EDIT_KEY]))) throw forbidden(ADV_STAFF_READONLY);
   const { data: prev, error: rErr } = await db.from('staff_registry').select('id, zone, status').eq('id', String(p.id).trim()).maybeSingle();
   if (rErr) { if (advMissing_(rErr)) throw badRequest(ADV_NOTE); throw new Error(rErr.message); }
   if (!prev) throw badRequest('That staff is no longer in the registry.');
