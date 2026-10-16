@@ -726,7 +726,7 @@ var S = { code:'', me:null, view:'dashboard', data:null, rows:[], cols:[], q:'',
    numbers on any other, so it is never safe to keep showing what we had.
    Fails safe on purpose: a name nobody listed here is assumed to write, so the worst a
    forgotten entry can do is bring back the old behaviour of always asking the server. */
-var READ_FNS = { dashboardFull:1, dashboardProbe:1, officerBoards:1, expectedDay:1, expdfReport:1,
+var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards:1, expectedDay:1, expdfReport:1,
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
@@ -751,7 +751,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-16-m';
+var BUILD = '2026-10-16-n';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1313,7 +1313,7 @@ function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   /* args is only ever passed by a [data-go] button that CARRIES something across the switch
      (the month-report chip carries the chosen week); everything else still starts clean. */
-  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot=''; S.fit=false;
+  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot=''; S.fit=false; S.judging=false;
   /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
      mode left over from whatever was open before. Every request from here rides S.workspace to
      the server (see srv() below), which resolves it for real against this code's own tabs --
@@ -1813,6 +1813,13 @@ function pctClass_(r, c, ctx){
   v = Number(v);
   var tg = targetOf_(c);
   if (tg != null && v >= tg) return 'good';
+  /* A VERDICT MADE ON THE SERVER WINS -- the dashboard Orodha's rows are judged against the COMPANY's line (orodhaJudge in
+     portal-core.js: "the red conditional format from the whole company is what they see ... not their own pivot"), and the
+     company's figures themselves never come here. While that verdict is on its way (ctx.judge) the list shows no red at
+     all rather than a red on its own line that would flip a moment later. A row without one, on any other table, is
+     judged on that table's own JUMLA as always. */
+  if (r && r.red && typeof r.red[c.key] === 'boolean') return r.red[c.key] ? 'bad' : '';
+  if (ctx.judge) return '';
   if (ctx.floors[c.key] != null && v < ctx.floors[c.key]) return 'bad';
   return '';
 }
@@ -1963,6 +1970,7 @@ function tableHtml(rows, cols, onRow){
   var tot = autoTotals(rows, cols);
   // Green at target, red under the JUMLA line, names red with their row's average -- see cellCls_.
   var ctx = colourCtx_(cols, tot, rows);
+  ctx.judge = !!S.judging;                     // the dashboard Orodha, while the company's verdict is on its way
   var body = rows.map(function(r, i){
     return '<tr'+(onRow?' data-i="'+i+'" style="cursor:pointer"':'')+'>'
       + (pick ? '<td class="sn"><input type="checkbox" data-pick="'+esc(pickKeyOf_(r))+'"'
@@ -3609,6 +3617,16 @@ VIEWS.dashboard = function(){
       + '<span class="sub" style="margin-left:10px">Bodi za maafisa, wakala wa simu na urejeshaji wa credit hupakiwa ukibofya, ili dashibodi ifunguke haraka.'
       + ' / Officer boards, call agents and credit recovery load on request, so the dashboard opens fast.</span></div></div>';
     S.rows = d.teamPerf || [];
+    /* THE RED LINE IS THE COMPANY'S FOR EVERYONE -- "the red conditional format from the whole company is what they see,
+       and for managers and gmo. Not their own pivot ... ONLY THE FORMAT" / "They can't see company wide data". The rows and
+       the JUMLA are the viewer's own; the verdict (which cells sit under the whole company's line) comes from the server
+       (orodhaJudge) once this screen has painted, and the figures it was judged against never come here. A verdict already
+       held from a moment ago is kept across a quiet re-read, so the colours never flip while somebody is reading. A viewer
+       with the whole book on screen ('own') needs no verdict: their JUMLA is that line. */
+    var prevRed = {};
+    (S.rows || []).forEach(function(r){ if (r && r.red && r.team) prevRed[r.team] = r.red; });
+    S.rows.forEach(function(r){ if (!r.red && prevRed[r.team]) r.red = prevRed[r.team]; });
+    S.judging = d.floorsScope === 'company' && S.rows.some(function(r){ return !r.red; });
     /* THE ORODHA: the team, its four officers, then TODAY beside the MONTH for each of the
        four things a team is judged on, the two averages, and the two counts.
          "remove the 1st branch column, have officers columns --> credit analyst, early col,
@@ -3659,11 +3677,35 @@ VIEWS.dashboard = function(){
     S.foot = 'Teams: '+money(d.teamCount)+' · Recovered: TZS '+money(c.recovered)
       + ' · Sales: TZS '+money(c.salesWeek)+' · Uncollected today: TZS '+money(c.uncollectedToday)
       + ' · T. = leo / today · M. = mwezi huu / month to date'
+      // Which line the red is judged on: the company's, or -- while the verdict is on its way, or when it did not come --
+      // said so, so a quiet fallback is never mistaken for the rule (orodhaJudge_ swaps the phrase when the verdict lands).
+      + (S.judging ? ORODHA_LINE_WAIT : ORODHA_LINE_COMPANY)
       + (d.monthReady === false
           ? ' · M. bado zinajaza / month columns still filling — fungua tena / open again shortly'
           : '');
+    if (S.judging) orodhaJudge_();
   });
 };
+var ORODHA_PCTS = ['tSalesPct', 'mSalesPct', 'tEColPct', 'mEColPct', 'tColPct', 'mColPct', 'tRecPct', 'mRecPct', 'tAvg', 'mAvg'];
+var ORODHA_LINE_COMPANY = ' · nyekundu = chini ya wastani wa kampuni nzima / red = below the whole-company average';
+var ORODHA_LINE_WAIT = ' · nyekundu inasubiri mstari wa kampuni / red awaits the company line';
+var ORODHA_LINE_OWN = ' · nyekundu = chini ya wastani wa orodha hii (mstari wa kampuni haukupatikana sasa) / red = below this list\'s own average (company line not available just now)';
+/* ASKS FOR THE VERDICT on the rows this screen holds -- team and the ten percentages, nothing else is sent -- and paints it
+   in place (paint(true) keeps the scroll). A later read of the dashboard, or a tab switch, makes an older answer moot. */
+function orodhaJudge_(){
+  var rows = S.rows, my = (S.judgeRid = (S.judgeRid || 0) + 1);
+  var sent = rows.map(function(r){ var o = { team: r.team }; ORODHA_PCTS.forEach(function(k){ o[k] = r[k]; }); return o; });
+  var land = function(phrase){
+    if (my !== S.judgeRid || S.view !== 'dashboard' || S.rows !== rows) return;
+    S.judging = false;
+    S.foot = String(S.foot || '').replace(ORODHA_LINE_WAIT, phrase);
+    paint(true);
+  };
+  srv('orodhaJudge', { weekOf: S.args.weekOf || '', rows: sent }).then(function(j){
+    if (j && j.ok) { rows.forEach(function(r){ if (j.red && j.red[r.team]) r.red = j.red[r.team]; }); land(ORODHA_LINE_COMPANY); }
+    else land(ORODHA_LINE_OWN);
+  }).catch(function(){ land(ORODHA_LINE_OWN); });
+}
 
 /* MODULE: reports -- this screen lives in public/mod/reports.js and loads when its tab opens (modLoad_). */
 
