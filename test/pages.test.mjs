@@ -1838,6 +1838,8 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/d\.route\.kind === 'none' \? ' bad'/.test(adv), 'and says "nobody" in red');
   assert.ok(/Dawati lako \/ Your desk: /.test(adv) && /desk\.supervisees/.test(adv) && /d\.unrouted/.test(adv), 'the desk says what it is and names the unrouted');
   assert.ok(/key:'routeTo', label:'Kwa \/ To'/.test(adv) && /r\.route/.test(adv), 'each row says where it went (a chip; the full wording is in the drawer)');
+  /* HOW TO REPORT A MISSING PERSON, said on the request tab -- "how must they report a missing person so that when those staff login they must see themselves". */
+  assert.ok(/Jina lako halionekani\? Mwambie GMO wako au HR atume/.test(adv) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(adv), 'the request tab says what to send HR when a name is missing');
   assert.ok(/window\.wireAdvDesk/.test(appSrc()) && /function wireAdvDesk\(\)/.test(adv), 'the desk\'s bar buttons are wired after every paint');
   const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
   for (const col of ['roles            add column if not exists approver_role', 'access_codes     add column if not exists supervisor', 'add column if not exists req_role', 'add column if not exists req_code']) {
