@@ -386,6 +386,11 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
       Hii <b>haihusu</b> ujumbe, picha, wala sauti za simu — HOPE Calls haijawahi kusoma hivyo, na
       ruhusa hii haibadilishi hilo. Inahusu tu app hii kuendelea kufanya kazi ikiwa nyuma.
     </div>
+    <!-- Said here too, in the same breath: since this version the office also sees WHERE the phone
+         is while the app is open, and only that. An officer should read it before being asked. -->
+    <div style="font-size:12.5px;color:var(--mut);line-height:1.5;margin-bottom:10px">
+      Ofisi inaona mahali ulipo (eneo la simu) wakati HOPE Calls imefunguliwa. Si ujumbe, picha wala sauti.
+    </div>
     <div id="bgOemNote" class="hide" style="font-size:12.5px;color:var(--mut);line-height:1.5;margin-bottom:18px"></div>
     <div style="display:flex;gap:10px">
       <button type="button" class="btn btn-ghost" id="bgLater">Baadaye</button>
@@ -1091,8 +1096,81 @@ function crisisSave_(){
   });
 }
 
+/* =============================================================================================
+   WHERE THE OFFICER IS -- reported while the app is open, so the office can find a handset.
+
+     "A field officer has run with 567k today ... no any field officer appearing there in 300+
+      company handsets" / "Not using lock app but callapp"
+
+   The phone's last-known position goes to api_callBeat (api/_lib/call-core.js), which stores it on
+   the officer's own row; Settings > Officer locations lists it with how old it is. Built so the
+   call app can never be made slower or less reliable by it:
+     - its OWN request, sent after the first screen, never inside sync, boot or a list;
+     - at most every five minutes, only while the app is on screen, and a fix that has not moved
+       fifty metres is not sent again for fifteen;
+     - the page asks for a cheap fix (no GPS wake-up, up to two minutes old is fine);
+     - every failure is silent -- a refused permission, a dead network, a server that has not had
+       its migration yet all just stop the reporting for this session, never raise an error;
+     - the admin can switch it off for everybody with Settings > CALL_LOCATION = OFF (boot says so).
+   It reports nothing but the position and when it was taken: no messages, no photos, no calls. */
+var LOC_EVERY_MS = 5 * 60 * 1000, LOC_MIN_MOVE_M = 50, LOC_FORCE_MS = 15 * 60 * 1000;
+var LOC = { timer: 0, lookedAt: 0, sentAt: 0, lat: null, lng: null, stop: false, busy: false, told: false };
+function locMeters_(la1, lo1, la2, lo2){
+  var R = 6371000, r = Math.PI / 180, dLa = (la2 - la1) * r, dLo = (lo2 - lo1) * r;
+  var a = Math.sin(dLa/2) * Math.sin(dLa/2) + Math.cos(la1*r) * Math.cos(la2*r) * Math.sin(dLo/2) * Math.sin(dLo/2);
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+function locLook_(){
+  try {
+    if (LOC.stop || LOC.busy || !S.entered || S.locOn === false || !navigator.geolocation || document.hidden) return;
+    LOC.busy = true; LOC.lookedAt = Date.now();
+    navigator.geolocation.getCurrentPosition(function(p){
+      LOC.busy = false; locSend_(p);
+    }, function(err){
+      LOC.busy = false;
+      if (err && err.code === 1) LOC.stop = true;      // permission refused: not asked again this session
+    }, { enableHighAccuracy: false, maximumAge: 120000, timeout: 20000 });
+  } catch(e){ LOC.busy = false; }
+}
+function locSend_(p){
+  try {
+    var c = p && p.coords; if (!c || !isFinite(c.latitude) || !isFinite(c.longitude)) return;
+    var now = Date.now();
+    var moved = LOC.lat == null ? 1e9 : locMeters_(LOC.lat, LOC.lng, c.latitude, c.longitude);
+    if (LOC.sentAt && moved < LOC_MIN_MOVE_M && now - LOC.sentAt < LOC_FORCE_MS) return;
+    LOC.sentAt = now; LOC.lat = c.latitude; LOC.lng = c.longitude;
+    var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = setTimeout(function(){ if (ctl) ctl.abort(); }, 15000);
+    /* workspace 'hopepmo' on purpose: the officer's position belongs to the real book whatever
+       the HOPE Loan switch happens to be on. */
+    fetch((window.HC_API_BASE || '') + '/api/call', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fn: 'api_callBeat', workspace: 'hopepmo', code: '',
+        args: [DEV, { lat: c.latitude, lng: c.longitude, locAcc: c.accuracy, locAt: p.timestamp }] }),
+      signal: ctl ? ctl.signal : undefined
+    }).then(function(r){ clearTimeout(timer); return readJson_(r); })
+      .then(function(x){
+        var b = x && x.body;
+        if (b && (b.ok === false || b.pending)) LOC.stop = true;    // not registered, switched off, or no migration yet
+        else if (b && b.stored && !LOC.told){
+          LOC.told = true;
+          try { if (!localStorage.getItem('hcLocNote')) { localStorage.setItem('hcLocNote', '1');
+            toast('Ofisi inaona mahali ulipo wakati HOPE Calls imefunguliwa. / The office sees where you are while HOPE Calls is open.'); } } catch(e){}
+        }
+      }).catch(function(){ clearTimeout(timer); });
+  } catch(e){}
+}
+function locInit_(){
+  if (LOC.timer) return;
+  setTimeout(locLook_, 4000);                              // after the first screen, never before it
+  LOC.timer = setInterval(locLook_, LOC_EVERY_MS);
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && Date.now() - LOC.lookedAt > 60000) setTimeout(locLook_, 1500);   // back on screen: a fresh look
+  });
+}
 function enterApp(d){
   S.boot = d; S.syncEverySec = d.syncEverySec || 300;
+  S.locOn = d.locReport !== false;                          // Settings > CALL_LOCATION = OFF stops every handset
   $('#scrBoot').classList.add('hide'); $('#scrRegister').classList.add('hide');
   $('#scrApp').style.display = 'flex';
   $('#appName').textContent = d.name || '\u2014';
@@ -1209,6 +1287,7 @@ function enterApp(d){
      what the app is, rather than being met by a dialog on a blank screen. */
   setTimeout(function(){ if (S.entered) askBackground_(); }, 900);
   startSyncLoop();
+  locInit_();                                               // the officer's position, its own slow request (see LOC_EVERY_MS)
   loadDaySummary(true);                                     // team % strip -- load once on entry
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
   /* AND TAPPING THE FIGURES REFRESHES THEM. The one thing an officer can do when they doubt a

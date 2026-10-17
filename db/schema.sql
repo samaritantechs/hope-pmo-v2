@@ -527,7 +527,14 @@ create table if not exists call_users (
   phone text unique,
   registered_at timestamptz not null default now(),
   last_sync timestamptz,
-  last_ts bigint
+  last_ts bigint,
+  -- The officer's own last-known position, sent by HOPE Calls while the app is open (api_callBeat).
+  -- Same four columns, same meaning, as access_codes and devices carry; see
+  -- db/RUN-ME-2026-10-17-call-locations.sql for the ALTER an already-live database runs.
+  last_lat double precision,
+  last_lng double precision,
+  last_loc_acc integer,           -- metres, as the handset reported
+  last_loc_at timestamptz         -- when the FIX was taken, not when it was sent
 );
 
 create table if not exists call_logs (

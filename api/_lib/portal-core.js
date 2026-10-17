@@ -9703,14 +9703,41 @@ async function officerBeat(db, user, p) {
 /** The list this reports into -- gated the same as the rest of Settings (requireAdmin), since
     this is thirty officers' whereabouts, not a screen every code should be able to open. Only
     rows that have actually reported a fix are worth showing; a code that has never opened the
-    app since this shipped has nothing to say yet. */
-async function officerLocationsList(db, user) {
+    app since this shipped has nothing to say yet.
+
+    TWO SOURCES, ONE LIST. Portal access codes that reported from the Android shell, and -- the
+    three hundred who actually work all day -- HOPE Calls officers, whose phones now report
+    through api_callBeat (call-core.js) onto call_users. They are never merged by name: a call
+    user and an access code that happen to share a name are two rows, each labelled with where it
+    came from, because "which Juma is this" is exactly the question a name match gets wrong.
+    `callUsers7d` is how many call-app officers synced this week, so the screen itself says how
+    many it can and cannot see; `callsReady` is false until RUN-ME-2026-10-17-call-locations.sql
+    has run, and the screen says so rather than looking empty. */
+async function officerLocationsList(db, user, _args, nowMs = Date.now()) {
   requireAdmin(user);
   const rows = await fetchAll(() => db.from('access_codes')
     .select('code, name, role, teams, last_lat, last_lng, last_loc_acc, last_loc_at')
     .not('last_lat', 'is', null));
-  rows.sort((a, b) => String(b.last_loc_at || '').localeCompare(String(a.last_loc_at || '')));
-  return { rows };
+  let calls = [], callsReady = true;
+  try {
+    calls = await fetchAll(() => db.from('call_users')
+      .select('user_id, name, role, team, phone, last_sync, last_lat, last_lng, last_loc_acc, last_loc_at')
+      .not('last_lat', 'is', null));
+  } catch (e) { callsReady = false; }          // the columns are not there yet: access codes alone
+  let callUsers7d = null;
+  try {
+    const since = new Date(nowMs - 7 * 86400000).toISOString();
+    const r = await db.from('call_users').select('user_id', { count: 'exact', head: true }).gte('last_sync', since);
+    if (!r.error && typeof r.count === 'number') callUsers7d = r.count;
+  } catch (e) { /* the count is a courtesy */ }
+  const all = [
+    ...rows.map(r => ({ ...r, source: 'portal' })),
+    ...calls.map(c => ({ code: c.user_id, name: c.name, role: c.role, teams: c.team ? [c.team] : [],
+      phone: c.phone || '', last_sync: c.last_sync || null, source: 'calls',
+      last_lat: c.last_lat, last_lng: c.last_lng, last_loc_acc: c.last_loc_acc, last_loc_at: c.last_loc_at })),
+  ];
+  all.sort((a, b) => String(b.last_loc_at || '').localeCompare(String(a.last_loc_at || '')));
+  return { rows: all, callsReady, callUsers7d };
 }
 
 const FN = {

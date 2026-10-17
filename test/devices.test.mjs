@@ -984,3 +984,37 @@ test('officerLocationsList is gated the same as the rest of Settings', async () 
   const db = fakeDb(tables());
   await assert.rejects(() => run(db, NEITHER, 'officerLocationsList', {}), /settings/i);
 });
+
+/* =========================================================================================
+   CALL-APP OFFICERS ON THE SAME LIST -- "Not using lock app but callapp". The three hundred who
+   work HOPE Calls report through api_callBeat onto call_users; the Officer locations screen lists
+   them beside portal codes, never merged by name, and says how many it cannot see.
+   ========================================================================================= */
+test('Officer locations lists call-app officers beside portal codes, each labelled, never merged by name', async () => {
+  const t = tables();
+  t.access_codes = [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'], last_lat: -6.8, last_lng: 39.2, last_loc_at: new Date(NOW - 3600000).toISOString() }];
+  t.call_users = [
+    { user_id: 'U1', name: 'THE ADMIN', role: 'OFFICER', team: 'KONGOWE', phone: '712000111', last_sync: new Date(NOW - 600000).toISOString(),
+      last_lat: -6.79, last_lng: 39.21, last_loc_acc: 30, last_loc_at: new Date(NOW - 300000).toISOString() },
+    { user_id: 'U2', name: 'NO FIX YET', role: 'OFFICER', team: 'MBEZI', phone: '712000222', last_sync: new Date(NOW - 600000).toISOString() },
+    { user_id: 'U3', name: 'LONG GONE', role: 'OFFICER', team: 'MBEZI', phone: '712000333', last_sync: new Date(NOW - 30 * 86400000).toISOString() },
+  ];
+  const db = fakeDb(t);
+  const list = await run(db, ADMIN, 'officerLocationsList', {});
+  assert.equal(list.callsReady, true);
+  assert.deepEqual(list.rows.map(r => [r.source, r.code]), [['calls', 'U1'], ['portal', 'A']], 'newest fix first; same name, two rows');
+  const c = list.rows[0];
+  assert.deepEqual([c.name, c.role, c.teams, c.phone, c.last_loc_acc], ['THE ADMIN', 'OFFICER', ['KONGOWE'], '712000111', 30]);
+  assert.ok(c.last_sync, 'and when the phone last spoke');
+  assert.equal(list.callUsers7d, 2, 'the screen says how many call-app officers synced this week, so it says how many it cannot see');
+});
+
+test('Officer locations before the call_users migration: portal codes alone, and it says so', async () => {
+  const t = tables();
+  t.access_codes = [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings'], last_lat: -6.8, last_lng: 39.2, last_loc_at: new Date(NOW).toISOString() }];
+  t.call_users = [];
+  const db = fakeDb(t, { missingColumns: { call_users: ['last_lat', 'last_lng', 'last_loc_acc', 'last_loc_at'] } });
+  const list = await run(db, ADMIN, 'officerLocationsList', {});
+  assert.equal(list.callsReady, false);
+  assert.deepEqual(list.rows.map(r => r.source), ['portal']);
+});

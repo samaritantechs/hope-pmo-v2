@@ -2049,3 +2049,32 @@ test('phone notifications: the bell offers the switch to the approval pane, the 
   assert.ok(vercel.headers.some(h => h.source === '/push-sw.js' && h.headers.some(x => x.key === 'Cache-Control' && /no-cache/.test(x.value))), 'the worker file is never served stale');
   new Function(sw);
 });
+
+/* WHERE THE OFFICER IS -- "A field officer has run with 567k today ... no any field officer appearing there in 300+ company
+   handsets" / "Not using lock app but callapp". The call app reports a cheap, throttled, silent position; the screen lists them. */
+test('the call app reports the officer\'s position slowly, silently, on its own request -- never inside sync or boot', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  assert.ok(/var LOC_EVERY_MS = 5 \* 60 \* 1000, LOC_MIN_MOVE_M = 50, LOC_FORCE_MS = 15 \* 60 \* 1000;/.test(call), 'five minutes, fifty metres, fifteen when still');
+  assert.ok(/enableHighAccuracy: false, maximumAge: 120000, timeout: 20000/.test(call), 'a cheap fix: no GPS wake-up');
+  assert.ok(/document\.hidden\) return;/.test(call.slice(call.indexOf('function locLook_'))) && /S\.locOn === false/.test(call), 'not while the phone is off screen, and not when the admin switched it off');
+  assert.ok(/if \(err && err\.code === 1\) LOC\.stop = true;/.test(call), 'a refused permission is not asked again this session');
+  assert.ok(/fn: 'api_callBeat', workspace: 'hopepmo', code: ''/.test(call), 'its own request, to the real book whatever the HOPE Loan switch says');
+  assert.equal(call.split("'api_callBeat'").length - 1, 1, 'one sender, nowhere else');
+  const sync = call.slice(call.indexOf('function startSyncLoop'), call.indexOf('function startSyncLoop') + 3000);
+  assert.ok(!/locLook_|locSend_|api_callBeat/.test(sync), 'nothing is added to the sync loop');
+  assert.ok(/S\.locOn = d\.locReport !== false;/.test(call) && /startSyncLoop\(\);\s*\n\s*locInit_\(\);/.test(call), 'the switch rides boot; the reporter starts after the sync loop');
+  assert.ok(/\.catch\(function\(\)\{ clearTimeout\(timer\); \}\)/.test(call) && /if \(b && \(b\.ok === false \|\| b\.pending\)\) LOC\.stop = true;/.test(call), 'every failure is silent and stops the reporting');
+  assert.ok(/Ofisi inaona mahali ulipo \(eneo la simu\) wakati HOPE Calls imefunguliwa/.test(call) && /hcLocNote/.test(call), 'the officer is told, on the permission sheet and once on screen');
+});
+
+test('Officer locations lists both sources with a search box, says what it cannot see, and the migration is only four columns', () => {
+  const rep = page('reports');
+  assert.ok(/kpi\('HOPE Calls zenye mahali \/ Call-app officers located'/.test(rep) && /d\.callUsers7d != null/.test(rep), 'it counts the call-app officers it can and cannot see');
+  assert.ok(/d\.callsReady === false/.test(rep) && /RUN-ME-2026-10-17-call-locations\.sql/.test(rep), 'and says when the migration has not run');
+  assert.ok(/<th>Chanzo \/ Source<\/th>/.test(rep) && /r\.source === 'calls' \? 'HOPE Calls' : 'HOPE PMO'/.test(rep) && /<th>Simu \/ Phone<\/th>/.test(rep) && /Ilisawazisha \/ Last sync/.test(rep), 'each row says where it came from, the phone number and the last sync');
+  assert.ok(/id="olQ"[^>]*oninput="olFilter_\(this\.value\)"/.test(rep) && /function olFilter_\(q\)/.test(rep), 'three hundred rows have a search box');
+  const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-2026-10-17-call-locations.sql'), 'utf-8');
+  assert.ok(sql.split('\n').length < 100, 'under a hundred lines');
+  assert.equal((sql.match(/^alter table call_users add column if not exists last_(lat|lng|loc_acc|loc_at) /gm) || []).length, 4, 'four idempotent columns');
+  assert.ok(!/\b(drop|delete|truncate|update)\b/i.test(sql.replace(/--.*$/gm, '')), 'nothing destructive');
+});
