@@ -239,7 +239,7 @@ async function teamList(db) {
    The officer's app opens in one wait instead of ten, and a Monday-morning rush costs the
    database a third of the connections it used to. */
 async function boot(db, [dev], nowMs) {
-  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION', 'OFFLINE_PACK'];
+  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION', 'OFFLINE_PACK', 'CALL_LOCATION'];
   let cu = null, accountOff = false;
   const [teamRows, setting] = await Promise.all([
     fetchAll(() => db.from('teams').select('team, gmo, manager, bike')),
@@ -343,6 +343,9 @@ async function boot(db, [dev], nowMs) {
        handset drops the pack on its next successful boot. Same settings read as everything
        else here -- no extra journey. */
     offlinePack: ['YES', 'TRUE', '1', 'ON'].includes(K(setting('OFFLINE_PACK'))),
+    /* WHERE THE OFFICER IS (api_callBeat). On unless the admin writes CALL_LOCATION = OFF in Settings --
+       it rides the settings read this function already makes, so the switch costs nothing extra. */
+    locReport: !['NO', 'OFF', '0', 'FALSE'].includes(K(setting('CALL_LOCATION'))),
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
     today: callTotals(callRollupRows(logs, () => cu.user_id)),
@@ -2526,6 +2529,61 @@ async function portalCode(db, [dev], nowMs) {
     : { ok: false, error: mine.length ? 'AMBIGUOUS_NAME' : 'NO_CODE' };
 }
 
+/* =======================================================================================
+   WHERE THE OFFICER IS -- the call app's own position report.
+
+     "A field officer has run with 567k today ... no any field officer appearing there in 300+
+      company handsets" / "Not using lock app but callapp"
+
+   The Officer locations screen could see only portal access codes that signed in inside the
+   Android shell; the three hundred officers who work the call app all day reported nothing, and
+   the phone register holds a few handsets. The call app now sends the phone's last-known fix
+   while it is open, and this stores it on the officer's own call_users row.
+
+   READS ADDED TO /api/call: NONE, and nothing is added to sync, boot or any list. This is its
+   own request, sent by the page every five minutes at most and only while the app is on screen
+   (a fix that has not moved fifty metres is not sent for fifteen). It is ONE statement: an
+   UPDATE of the row that holds this device id. The device id is the credential every other call
+   here already rests on, so no separate lookup is needed -- a handset that is not registered, or
+   whose account was switched off, matches no row and is told so, which stops its reporting.
+
+   FALLS BACK, NEVER FAILS: before db/RUN-ME-2026-10-17-call-locations.sql has run the columns do
+   not exist; the answer is { ok: true, stored: false, pending: 'MIGRATION' } and the page stops
+   sending for the session. A fix that is not a position (0,0 is "no fix", out of range, not a
+   number) is dropped whole rather than stored.
+   ======================================================================================= */
+const LOC_COLS = /last_lat|last_lng|last_loc_acc|last_loc_at/;
+async function callBeat(db, [dev, fix], nowMs) {
+  const id = String(dev == null ? '' : dev).trim();
+  if (!id) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  const lat = Number(fix && fix.lat), lng = Number(fix && fix.lng);
+  if (!(Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90
+      && lng >= -180 && lng <= 180 && !(lat === 0 && lng === 0))) return { ok: true, stored: false };
+  const acc = Number(fix.locAcc), when = Number(fix.locAt);
+  const patch = {
+    last_lat: lat, last_lng: lng,
+    last_loc_acc: Number.isFinite(acc) && acc >= 0 ? Math.round(acc) : null,
+    /* WHEN THE FIX WAS TAKEN, not when it arrived: the handset reports its last-known position,
+       which can be minutes older than the request that carries it. */
+    last_loc_at: Number.isFinite(when) && when > 946684800000 && when <= nowMs + 86400000
+      ? new Date(when).toISOString() : new Date(nowMs).toISOString(),
+  };
+  const go = withActive => {
+    let q = db.from('call_users').update(patch).eq('device_id', id);
+    if (withActive) q = q.or('active.is.null,active.eq.true');          // a switched-off account does not report
+    return q.select('user_id');
+  };
+  let { data, error } = await go(true);
+  // A register without the `active` column predates account switching; the update still stands.
+  if (error && /active/.test(String(error.message || '')) && !LOC_COLS.test(String(error.message || ''))) ({ data, error } = await go(false));
+  if (error) {
+    if (LOC_COLS.test(String(error.message || ''))) return { ok: true, stored: false, pending: 'MIGRATION' };
+    throw new Error(error.message);
+  }
+  if (!data || !data.length) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  return { ok: true, stored: true };
+}
+
 const HANDLERS = {
   api_brand: brand,
   api_teamCode: teamCode,
@@ -2543,6 +2601,7 @@ const HANDLERS = {
   api_callReport: report,
   api_callNotifications: callNotifications,
   api_callNotifSeen: callNotifSeen,
+  api_callBeat: callBeat,
 };
 export async function callApi(db, fn, args, nowMs = Date.now()) {
   const h = HANDLERS[fn];

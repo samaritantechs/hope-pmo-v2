@@ -2521,3 +2521,51 @@ test('api_portalCode: the switch into the portal signs in with the code the hand
   db._dump('access_codes').push({ code: 'LEAD2', name: 'ASHA JUMA', role: 'GMO', teams: null, tabs: [] });
   assert.deepEqual(await callApi(db, 'api_portalCode', ['DEV-L'], NOW), { ok: false, error: 'AMBIGUOUS_NAME' });
 });
+
+/* =========================================================================================
+   WHERE THE OFFICER IS -- api_callBeat. "A field officer has run with 567k today ... no any
+   field officer appearing there in 300+ company handsets" / "Not using lock app but callapp".
+   One UPDATE of the row holding this device id: no reads, nothing added to sync or boot. */
+const FIX = { lat: -6.7924, lng: 39.2083, locAcc: 22, locAt: NOW - 120000 };
+
+test('api_callBeat stores the officer\'s own fix on their own row, with the fix\'s own time', async () => {
+  const db = await registeredDb();
+  const r = await callApi(db, 'api_callBeat', ['d1', FIX], NOW);
+  assert.deepEqual(r, { ok: true, stored: true });
+  const me = db._dump('call_users').find(u => u.device_id === 'd1');
+  assert.equal(me.last_lat, -6.7924); assert.equal(me.last_lng, 39.2083); assert.equal(me.last_loc_acc, 22);
+  assert.equal(Date.parse(me.last_loc_at), NOW - 120000, 'when the fix was taken, not when it arrived');
+  const other = db._dump('call_users').find(u => u.device_id === 'd2');
+  assert.equal(other.last_lat, undefined, 'nobody else\'s row is touched');
+});
+
+test('api_callBeat drops what is not a position, and refuses a handset nobody registered or switched off', async () => {
+  const db = await registeredDb();
+  for (const bad of [{ lat: -6.79 }, { lat: 0, lng: 0 }, { lat: 91, lng: 200 }, { lat: 'x', lng: 'y' }, null]) {
+    assert.deepEqual(await callApi(db, 'api_callBeat', ['d1', bad], NOW), { ok: true, stored: false });
+  }
+  assert.equal(db._dump('call_users').find(u => u.device_id === 'd1').last_lat, undefined);
+  assert.deepEqual(await callApi(db, 'api_callBeat', ['nobody', FIX], NOW), { ok: false, error: 'DEVICE_NOT_REGISTERED' });
+  assert.deepEqual(await callApi(db, 'api_callBeat', ['', FIX], NOW), { ok: false, error: 'DEVICE_NOT_REGISTERED' });
+  assert.deepEqual(await callApi(db, 'api_callBeat', [], NOW), { ok: false, error: 'DEVICE_NOT_REGISTERED' });
+  db._dump('call_users').find(u => u.device_id === 'd1').active = false;           // the admin switched this officer off
+  assert.deepEqual(await callApi(db, 'api_callBeat', ['d1', FIX], NOW), { ok: false, error: 'DEVICE_NOT_REGISTERED' },
+    'a switched-off account does not report, and is told so');
+  assert.equal(db._dump('call_users').find(u => u.device_id === 'd1').last_lat, undefined);
+});
+
+test('api_callBeat before the migration: accepted and dropped, said plainly, never an error', async () => {
+  const t = makeTables();
+  const db = fakeDb(t, { missingColumns: { call_users: ['last_lat', 'last_lng', 'last_loc_acc', 'last_loc_at'] } });
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  assert.deepEqual(await callApi(db, 'api_callBeat', ['d1', FIX], NOW), { ok: true, stored: false, pending: 'MIGRATION' });
+});
+
+test('boot carries the location switch on the settings read it already makes: on unless the admin says OFF', async () => {
+  let db = await registeredDb();
+  assert.equal((await callApi(db, 'api_callBoot', ['d1'], NOW)).locReport, true);
+  const t = makeTables(); t.settings.push({ key: 'CALL_LOCATION', value: 'off' });
+  db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  assert.equal((await callApi(db, 'api_callBoot', ['d1'], NOW)).locReport, false);
+});

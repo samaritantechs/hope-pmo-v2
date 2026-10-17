@@ -545,6 +545,11 @@ const PHONE = [
      falls back to that arithmetic with a note. */
   ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 32, 40000],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
+  /* THE OFFICER'S POSITION (db/RUN-ME-2026-10-17-call-locations.sql): its OWN request, sent by the page
+     at most every five minutes while the app is on screen -- never inside sync, boot or a list.
+     Rule 1, counted and written down: ONE trip, an UPDATE of the row holding this device id. It
+     reads nothing, because the device id is already the credential every call here rests on. */
+  ['Calls: location beat', 'api_callBeat', ['DEV1', { lat: -6.7924, lng: 39.2083, locAcc: 22, locAt: 0 }], 1, 10],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way
      would be two answers that could disagree on a wall in front of the company.

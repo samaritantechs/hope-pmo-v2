@@ -1330,7 +1330,17 @@ VIEWS.officerloc = function(){
     var rows = (d.rows || []).slice().sort(function(a, b){
       return String(b.last_loc_at || '').localeCompare(String(a.last_loc_at || ''));
     });
-    HEAD = '<div class="kpis">' + kpi('Wenye mahali / Reporting', money(rows.length)) + '</div>'
+    var calls = rows.filter(function(r){ return r.source === 'calls'; }).length;
+    /* THE SCREEN SAYS HOW MUCH IT CANNOT SEE: the officers who synced HOPE Calls this week, beside
+       the ones that have reported a position. A list that looks complete and is not is how an
+       officer ran off with 567k and nobody could be found. */
+    HEAD = '<div class="kpis">' + kpi('Wenye mahali / Reporting', money(rows.length))
+      + kpi('HOPE Calls zenye mahali / Call-app officers located', money(calls))
+      + (d.callUsers7d != null ? kpi('Maafisa wa HOPE Calls wiki hii / Call-app officers, 7 days', money(d.callUsers7d)) : '') + '</div>'
+      + (d.callsReady === false
+        ? '<div class="note bad">Maafisa wa HOPE Calls hawajaanza kuripoti: endesha db/RUN-ME-2026-10-17-call-locations.sql kwenye Supabase. / '
+          + 'Call-app officers cannot report yet: run db/RUN-ME-2026-10-17-call-locations.sql in Supabase. Until then this list is portal codes only.</div>'
+        : '')
       + '<div class="card"><div class="card-h">Mahali walipo maafisa / Officer locations'
       + '<span class="sub">Ramani inafunguliwa kwenye kivinjari / Maps opens in the browser</span></div>'
       + (!rows.length
@@ -1339,16 +1349,22 @@ VIEWS.officerloc = function(){
         /* "am not seeing location link at locations" -- it was there, as the LAST of six
            columns, in a table with no scroll box: on a phone that column sat past the right
            edge, clipped. The link is now the officer's own name in the FIRST column, so it
-           is on screen whatever the width, and the table scrolls like every other one here. */
-        : '<div class="scroll"><table><thead><tr><th>Jina / Name (bonyeza = ramani / tap = map)</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
-          + '<th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th></tr></thead><tbody>'
+           is on screen whatever the width, and the table scrolls like every other one here.
+           With three hundred rows the list also has a search box: a name, a team or a number. */
+        : '<div class="fld" style="margin:8px 14px"><input id="olQ" placeholder="Tafuta jina, timu au namba / Search name, team or number" '
+          + 'oninput="olFilter_(this.value)" autocomplete="off"></div>'
+          + '<div class="scroll"><table id="olTable"><thead><tr><th>Jina / Name (bonyeza = ramani / tap = map)</th><th>Chanzo / Source</th><th>Wadhifa / Role</th><th>Timu / Team</th>'
+          + '<th>Simu / Phone</th><th>Usahihi / Accuracy</th><th>Ilipimwa / Fix taken</th><th>Ilisawazisha / Last sync</th></tr></thead><tbody>'
           + rows.map(function(r){
               var teams = (r.teams || []).join(', ') || 'zote / all';
               var mapUrl = 'https://www.google.com/maps?q=' + encodeURIComponent(r.last_lat) + ',' + encodeURIComponent(r.last_lng);
               return '<tr><td><a href="' + esc(mapUrl) + '" target="_blank" rel="noopener" class="btn sm ghost">📍 ' + esc(r.name) + '</a></td>'
+                + '<td>' + (r.source === 'calls' ? 'HOPE Calls' : 'HOPE PMO') + '</td>'
                 + '<td>' + esc(r.role) + '</td><td>' + esc(teams) + '</td>'
+                + '<td>' + esc(r.phone || '—') + '</td>'
                 + '<td>' + (r.last_loc_acc != null ? '±' + esc(r.last_loc_acc) + 'm' : '—') + '</td>'
-                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td></tr>';
+                + '<td>' + esc(devAgo_(r.last_loc_at)) + '</td>'
+                + '<td>' + (r.last_sync ? esc(devAgo_(r.last_sync)) : '—') + '</td></tr>';
             }).join('')
           + '</tbody></table></div>')
       + '</div>';
@@ -1356,3 +1372,13 @@ VIEWS.officerloc = function(){
     ONROW = null;
   });
 };
+/* The search box on that list: hides rows whose text does not contain what was typed. Plain DOM,
+   no server round trip -- the whole list is already on the page. */
+function olFilter_(q){
+  var t = document.getElementById('olTable'); if (!t) return;
+  var needle = String(q || '').trim().toLowerCase();
+  Array.prototype.forEach.call(t.tBodies[0].rows, function(tr){
+    tr.style.display = !needle || tr.textContent.toLowerCase().indexOf(needle) >= 0 ? '' : 'none';
+  });
+}
+
