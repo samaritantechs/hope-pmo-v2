@@ -179,23 +179,56 @@ async function buildDashboardUncached(db, user, nowMs) {
      per-scope-per-minute cache, so forty handsets on a scope ask the database once. It is
      asked AFTER the wave above because it replaces its answer, not beside it; a missing
      function answers null in one round trip and the pairing stands, with a note. */
-  const stand0 = await recoveryStanding(db, { periods: [today], teams: user.teams });
+  /* ON A WEEKEND, REC IS THE WEEK AND REC LEO IS TODAY'S -- two numbers, not one.
+       "On Sat, and sunday.. the rec% and amounts on app is the same as rec leo yet it should be
+        of week and of leo today's."
+     This used to ask for ONE standing, as of today, and hand it to BOTH `recovered` (which on a
+     weekend is the whole week, and is divided by the week's uncollected below) and `latest` (the
+     newest day on its own). They were the same number by construction.
+     The week is what the portal's weekly screens already say it is: the SUM OF EACH FILED DAY'S
+     OWN standing -- see sumRangeStand_ in portal-core.js, "a week total is just a sum from the
+     sums of each day". The days are the ones that actually had a current deck this week
+     (`decks.dates`, Monday to today); a day nobody filed contributes nothing. Today's own standing
+     is still asked for, because that is Rec leo.
+     RULE 1, COUNTED: NO extra round trip. recoveryStanding takes every period in ONE call, so a
+     weekend asks for up to seven periods where it asked for one. It is still one RPC, behind this
+     function's per-scope per-minute cache and the phone's single flight, and only at the weekend. */
+  const weekDays_ = weekend
+    ? [...new Set(Object.values(decks.dates || {}).map(d => String(d).slice(0, 10)).filter(Boolean))].sort()
+    : [];
+  const stand0 = await recoveryStanding(db, { periods: [today, ...weekDays_], teams: user.teams });
   const todayKeyed = standingKey(today, today);
   const standToday = stand0 && stand0.get(todayKeyed) ? standingWithAdj(stand0.get(todayKeyed), adj) : null;
   let recoveryRule = 'pairing';
   if (stand0) {
     recoveryRule = 'latest';
     const sum = standingSum(standToday);
-    recovered = sum.recovered;
-    for (const k of Object.keys(recoveredByTeam)) delete recoveredByTeam[k];
     let curDeck = null;
     for (const e of (standToday ? standToday.values() : [])) {
-      if (!teamAllowed(user, e.team)) continue;
-      bump(recoveredByTeam, e.team, e.recovered);
       if (e.currentDeck && (!curDeck || e.currentDeck > curDeck)) curDeck = e.currentDeck;
     }
-    // The newest side of the standing is the current deck; that is the day "latest" names.
-    latest = curDeck ? { day: null, date: curDeck, recovered: sum.recovered } : null;
+    for (const k of Object.keys(recoveredByTeam)) delete recoveredByTeam[k];
+    if (weekend) {
+      // THE WEEK: each filed day's own grand total, added.
+      recovered = 0;
+      for (const d of weekDays_) {
+        const m = stand0.get(standingKey(d, d));
+        if (!m) continue;
+        const day = standingWithAdj(m, adj);
+        recovered += standingSum(day).recovered;
+        for (const e of day.values()) if (teamAllowed(user, e.team)) bump(recoveredByTeam, e.team, e.recovered);
+      }
+    } else {
+      recovered = sum.recovered;
+      for (const e of (standToday ? standToday.values() : [])) {
+        if (teamAllowed(user, e.team)) bump(recoveredByTeam, e.team, e.recovered);
+      }
+    }
+    /* THE NEWEST SIDE OF TODAY'S STANDING IS THE CURRENT DECK; THAT IS THE DAY "latest" NAMES. It
+       carries its weekday so the phone can say "Rec Fri" rather than a bare "Rec" -- on a Saturday
+       with no deck of its own this is Friday's money, and it must not be called leo. */
+    const dayName = d => ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][new Date(d + 'T12:00:00Z').getUTCDay()];
+    latest = curDeck ? { day: dayName(curDeck), date: curDeck, recovered: sum.recovered } : null;
   } else if (!decks.note) {
     decks.note = recoveryRuleNote(db);
   }

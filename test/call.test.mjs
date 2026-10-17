@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC } from './snapshot-totals-rpc.mjs';
+import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC, SNAPSHOT_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -2568,4 +2568,77 @@ test('boot carries the location switch on the settings read it already makes: on
   db = fakeDb(t);
   await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
   assert.equal((await callApi(db, 'api_callBoot', ['d1'], NOW)).locReport, false);
+});
+
+
+/* =========================================================================================
+   REC ON THE WEEKEND, UNDER THE ONE RULE (recovery_standing, RUN-ME-032 -- the book as it really is).
+     "On Sat, and sunday.. the rec% and amounts on app is the same as rec leo yet it should be of
+      week and of leo today's."
+   With the standing function installed the shared dashboard read ONE standing, as of today, and
+   gave it to BOTH figures: Rec (which on a weekend is the whole week) and Rec leo (the newest day).
+   So on Saturday and Sunday they were the same number, and the percentage divided one day's money
+   by the whole week's uncollected. The tests above ran without the function, in the pairing path,
+   which was already right -- which is how this stayed hidden. */
+const standingDb_ = t => fakeDb(t, { rpc: { recovery_standing: SNAPSHOT_TOTALS_RPC.recovery_standing } });
+
+test('weekend with the standing rule: Rec is the WEEK, Rec leo is the newest day, and they differ', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  t.defaulter_snapshots.push(                                  // THU: 300 -> 250 = 50; FRI (fixture): 500 -> 350 = 150
+    { ref: '556', team: 'KONGOWE', arrears: 300, snapshot_type: 'initial', weekday: 'THU', snapshot_date: '2026-07-23', upload_batch: 'ti', created_at: '2026-07-23T04:00:00Z' },
+    { ref: '556', team: 'KONGOWE', arrears: 250, snapshot_type: 'current', weekday: 'THU', snapshot_date: '2026-07-23', upload_batch: 'tc', created_at: '2026-07-23T04:00:00Z' },
+  );
+  const db = standingDb_(t);
+  await callApi(db, 'api_callRegister', ['dST', 'JUMA ISSA', '', '', '0712999770', 'KON123'], NOW);
+  const sat = Date.parse('2026-07-25T09:00:00Z');
+  const d = await callApi(db, 'api_callDailySummary', ['dST'], sat);
+  assert.equal(d.period, 'week');
+  assert.equal(d.recovery.basis, 'week');
+  assert.equal(d.recovery.num, 200, 'Rec is the week: THU 50 + FRI 150, not one day\'s standing');
+  assert.equal(d.recToday.num, 150, 'Rec leo is the newest day alone');
+  assert.notEqual(d.recovery.num, d.recToday.num, 'the two are never the same figure on a weekend');
+  assert.equal(d.recToday.day, 'FRI', 'and it names its day, so the phone does not print a bare "Rec"');
+  assert.equal(d.recToday.isToday, false);
+  assert.ok(d.recovery.den > 0 && Math.abs(d.recovery.pct - 200 / d.recovery.den) < 1e-9,
+    'the percentage is the WEEK\'s money over the week\'s uncollected (den ' + d.recovery.den + ', pct ' + d.recovery.pct + ')');
+
+  // Sunday: no deck of its own either, the week is the same week.
+  _clearSummaryCache(); _clearWidgetCache();
+  const dbSun = standingDb_(t);
+  await callApi(dbSun, 'api_callRegister', ['dST2', 'JUMA ISSA', '', '', '0712999771', 'KON123'], NOW);
+  const sun = await callApi(dbSun, 'api_callDailySummary', ['dST2'], Date.parse('2026-07-26T09:00:00Z'));
+  assert.equal(sun.recovery.num, 200);
+  assert.equal(sun.recToday.num, 150);
+});
+
+test('weekend with the standing rule and a Saturday deck: the week includes Saturday, Rec leo is Saturday alone', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  const SATDAY = '2026-07-25';
+  t.defaulter_snapshots.push(
+    { ref: '557', team: 'KONGOWE', arrears: 900, snapshot_type: 'initial', weekday: 'SAT', snapshot_date: SATDAY, upload_batch: 'si', created_at: SATDAY + 'T04:00:00Z' },
+    { ref: '557', team: 'KONGOWE', arrears: 600, snapshot_type: 'current', weekday: 'SAT', snapshot_date: SATDAY, upload_batch: 'sc', created_at: SATDAY + 'T04:00:00Z' },
+  );
+  const db = standingDb_(t);
+  await callApi(db, 'api_callRegister', ['dST3', 'JUMA ISSA', '', '', '0712999772', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callDailySummary', ['dST3'], Date.parse(SATDAY + 'T09:00:00Z'));
+  assert.equal(d.recovery.num, 450, 'FRI 150 + SAT 300');
+  assert.equal(d.recToday.num, 300, 'Saturday alone');
+  assert.equal(d.recToday.day, 'SAT');
+  assert.equal(d.recToday.isToday, true);
+});
+
+test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const db = standingDb_(makeTables());
+  await callApi(db, 'api_callRegister', ['dST4', 'JUMA ISSA', '', '', '0712999773', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callDailySummary', ['dST4'], NOW);
+  assert.equal(d.period, 'day');
+  assert.equal(d.recovery.num, 150);
+  assert.equal(d.recToday.num, 150);
+  assert.equal(d.recToday.isToday, true);
 });
