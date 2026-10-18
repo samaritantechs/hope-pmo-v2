@@ -572,6 +572,9 @@ create table if not exists customer_locations (
   acc integer,                    -- metres, as the handset reported
   saved_by text,
   saved_at timestamptz not null default now(),
+  -- Every point this row replaced, oldest first: [{lat, lng, acc, by, at}] -- so a fake pin cannot erase the
+  -- real one. See db/RUN-ME-2026-10-18c-location-history.sql.
+  hist jsonb not null default '[]'::jsonb,
   primary key (ref, party)
 );
 

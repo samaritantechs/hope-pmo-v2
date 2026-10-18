@@ -163,6 +163,13 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 .locbtn:disabled{opacity:.55}
 .locnote{font-size:12px;color:var(--mut);margin-top:6px}
 .locnote:empty{display:none}
+.linkbtn{background:none;border:0;padding:0;color:var(--b700);font:inherit;text-decoration:underline;cursor:pointer}
+.histpanel{border:1.5px solid var(--line);border-radius:12px;padding:10px;background:var(--bg);color:var(--ink)}
+.histwarn{margin:8px 0;padding:8px 10px;border-radius:10px;background:#FDECEC;border:1px solid #F5C6C6;color:#9B1C1C;font-weight:600}
+.histlist{max-height:270px;overflow-y:auto;margin-top:6px}
+.histrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:12px;line-height:1.45}
+.histrow.cur{font-weight:600}
+.histrow .histtxt{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
 .partyrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
 .partyrow .ptxt{flex:1 1 auto;min-width:0}
 .partyrow .plab{display:block;color:var(--mut)}
@@ -2213,9 +2220,16 @@ function wireSheetForm(r){
    outside a house they pinned last week. The customer's keeps the plain ref as its key -- what
    the first release already stored -- and the guarantor's is ref|G. Signing out forgets all of them.
 
+   HISTORY: pinning again replaces the point, which is what somebody hiding the real door would do,
+   so the server keeps every point it replaced on the same row (who, when, how accurate) and sends
+   it with the point. A person with more than one location gets a "view history" line under the
+   icons, and the Map icon opens that history instead of going straight to the latest point: the
+   current point and each earlier one, how far each is from the current, a red warning when they
+   differ by 100 m or more, and a Map icon on every entry. One location: Map goes straight there.
+
    Nothing here runs unless an icon is pressed; nothing is added to sync or any list. */
 var LOCPIN_ICON = '\uD83D\uDCCD', LOCMAP_ICON = '\uD83D\uDDFA\uFE0F';
-var LOCPIN_GOOD_M = 25, LOCPIN_OK_M = 100, LOCPIN_WAIT_MS = 20000;
+var LOCPIN_GOOD_M = 25, LOCPIN_OK_M = 100, LOCPIN_WAIT_MS = 20000, LOCHIST_WARN_M = 100;
 var CUSTLOC_LS = 'hcCustLoc', CUSTLOC_KEEP = 300;
 function locWho_(party){ return party === 'G' ? { sw: 'mdhamini', en: 'guarantor' } : { sw: 'mteja', en: 'customer' }; }
 function locIcons_(party){
@@ -2244,7 +2258,10 @@ function custLocPut_(ref, party, loc){
 function locNoteHtml_(loc, party){
   var w = locWho_(party);
   return '\uD83D\uDCCD Eneo la ' + w.sw + ' limehifadhiwa / Saved: <b>' + Number(loc.lat).toFixed(5) + ', ' + Number(loc.lng).toFixed(5) + '</b>'
-    + (loc.acc != null ? ' \u00B1' + esc(loc.acc) + ' m' : '') + (loc.by ? ' \u00B7 ' + esc(loc.by) : '') + (loc.at ? ' \u00B7 ' + esc(loc.at) : '');
+    + (loc.acc != null ? ' \u00B1' + esc(loc.acc) + ' m' : '') + (loc.by ? ' \u00B7 ' + esc(loc.by) : '') + (loc.at ? ' \u00B7 ' + esc(loc.at) : '')
+    + (loc.hist && loc.hist.length
+        ? '<div style="margin-top:4px">\u26A0 Maeneo ' + (loc.hist.length + 1) + ' \u2014 <button type="button" class="linkbtn" id="locHist_' + party + '">angalia historia / view history</button></div>'
+        : '');
 }
 /* A person with no point yet has an empty note line (it takes no room); one with a point has the
    coordinates, who pinned it and when, and the Map icon tinted ready. */
@@ -2253,6 +2270,7 @@ function locPaint_(ref, party){
   var n = $('#locNote_' + party), m = $('#locMap_' + party); if (!n) return;
   var loc = custLocGet_(ref, party);
   n.innerHTML = loc ? locNoteHtml_(loc, party) : '';
+  var hb = $('#locHist_' + party); if (hb) hb.onclick = function(){ locHistory_(ref, party); };
   if (m) m.className = 'locbtn' + (loc ? ' on' : '');
 }
 /* A question asked in the card's own note line, not a browser dialog: the WebView's confirm() is
@@ -2281,6 +2299,10 @@ function wireLoc_(r){
     locPaint_(r.ref, party);                                    // whatever this phone already holds, before the answer comes
   });
 }
+/* MAP goes straight to the point when a person has ONE location, and opens the history when there is
+   more than one: a replaced point is kept (api_callCustPin), and "someone fraudulent could update real
+   location into fake" is only caught by an officer who can SEE that the place was changed, by whom and
+   how far. */
 function locMap_(r, party){
   var w = locWho_(party), loc = custLocGet_(r.ref, party);
   if (!loc){
@@ -2289,12 +2311,42 @@ function locMap_(r, party){
       : 'Hakuna eneo lililohifadhiwa la ' + w.sw + ' huyu. / No point is saved for this ' + w.en + ' yet.', true);
     return;
   }
-  var url = 'https://www.google.com/maps/dir/?api=1&destination=' + loc.lat + ',' + loc.lng + '&travelmode=driving';
+  if (loc.hist && loc.hist.length){ locHistory_(r.ref, party); return; }
+  locOpenMap_(loc.lat, loc.lng, party);
+}
+function locOpenMap_(lat, lng, party){
+  var url = 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving';
   var win = null; try { win = window.open(url, '_blank'); } catch(e){}
   if (!win){                                                    // a browser that blocks pop-ups: give the officer the link to press
     var n = $('#locNote_' + party);
-    if (n) n.innerHTML = locNoteHtml_(loc, party) + '<div style="margin-top:6px"><a class="btn btn-pri" target="_blank" rel="noopener" href="' + esc(url) + '">' + LOCMAP_ICON + ' Fungua ramani / Open the map</a></div>';
+    if (n) n.insertAdjacentHTML('beforeend', '<div style="margin-top:6px"><a class="btn btn-pri" target="_blank" rel="noopener" href="' + esc(url) + '">' + LOCMAP_ICON + ' Fungua ramani / Open the map</a></div>');
   }
+}
+function fmtDist_(m){ return m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km'; }
+function locHistory_(ref, party){
+  var n = $('#locNote_' + party), loc = custLocGet_(ref, party); if (!n || !loc) return;
+  var w = locWho_(party), spread = 0;
+  // Newest first: the point in force now, then each point it replaced, with how far each is from it.
+  var all = [{ lat: loc.lat, lng: loc.lng, acc: loc.acc, by: loc.by, at: loc.at, cur: true }].concat((loc.hist || []).slice().reverse());
+  all.forEach(function(e){ e.d = locMeters_(loc.lat, loc.lng, e.lat, e.lng); if (e.d > spread) spread = e.d; });
+  n.innerHTML = '<div class="histpanel">'
+    + '<b>Historia ya maeneo ya ' + w.sw + ' / The ' + w.en + '\'s location history (' + all.length + ')</b>'
+    + (spread >= LOCHIST_WARN_M
+        ? '<div class="histwarn">\u26A0 Maeneo yanatofautiana hadi ' + fmtDist_(spread) + ' \u2014 hakiki kabla ya kwenda. / Locations differ by up to ' + fmtDist_(spread) + ' \u2014 check before you go.</div>'
+        : '')
+    + '<div class="histlist">' + all.map(function(e, i){
+        return '<div class="histrow' + (e.cur ? ' cur' : '') + '"><div class="histtxt">'
+          + (e.cur ? 'Sasa / Current' : 'Kabla / Earlier') + ' \u00B7 ' + esc(e.at || '') + '<br>'
+          + esc(e.by || '\u2014') + (e.acc != null ? ' \u00B7 \u00B1' + esc(e.acc) + ' m' : '')
+          + (e.cur ? '' : ' \u00B7 ' + fmtDist_(e.d) + ' kutoka sasa / from the current point') + '<br>'
+          + Number(e.lat).toFixed(5) + ', ' + Number(e.lng).toFixed(5) + '</div>'
+          + '<button type="button" class="locbtn' + (e.cur ? ' on' : '') + '" data-i="' + i + '" title="Ramani / Directions" aria-label="Ramani / Directions">' + LOCMAP_ICON + '</button></div>';
+      }).join('') + '</div>'
+    + '<div class="callrow"><button type="button" class="btn btn-ghost" id="locHistClose">Funga / Close</button></div></div>';
+  Array.prototype.forEach.call(n.querySelectorAll('.histrow .locbtn'), function(btn){
+    btn.onclick = function(){ var e = all[Number(btn.getAttribute('data-i'))]; locOpenMap_(e.lat, e.lng, party); };
+  });
+  $('#locHistClose').onclick = function(){ locPaint_(ref, party); };
 }
 function locPin_(r, party){
   var b = $('#locPin_' + party); if (!b || b.disabled) return;

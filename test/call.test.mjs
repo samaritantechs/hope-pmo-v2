@@ -2794,3 +2794,89 @@ test('before the party migration (the first file ran, this one has not): the car
   assert.equal(c.ok, true, 'the history still loads'); assert.equal(c.locReady, false); assert.deepEqual([c.loc, c.gloc], [null, null]);
   assert.equal(db._dump('customer_locations').length, 0);
 });
+
+/* LOCATION HISTORY -- "Someone fraudulent could update real location into fake, so if there is more than one
+   location, open location history once the button is clicked." A replaced point is kept, with who and when. */
+const FAKE = { ...DOOR, lat: -6.8500, lng: 39.3000, acc: 5, replace: true };   // about 10 km from the door
+
+test('History: replacing a point keeps the real one -- who pinned it, when, how accurate -- and the card gets it with the point', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);                       // the real door, pinned by JUMA ISSA
+  let c = await callApi(db, 'api_callComments', ['d1', '111'], NOW);
+  assert.deepEqual(c.loc.hist, [], 'one location: no history yet');
+  const r = await callApi(db, 'api_callCustPin', ['d2', FAKE], NOW + 3600000);   // somebody else replaces it, an hour later
+  assert.equal(r.replaced, true); assert.equal(r.loc.lat, -6.85);
+  assert.equal(r.loc.hist.length, 1, 'the answer to the pin already carries the history');
+  c = await callApi(db, 'api_callComments', ['d1', '111'], NOW + 3700000);
+  assert.equal(c.loc.lat, -6.85, 'the latest point is the current one');
+  assert.equal(c.loc.hist.length, 1);
+  const h = c.loc.hist[0];
+  assert.deepEqual({ lat: h.lat, lng: h.lng, acc: h.acc, by: h.by }, { lat: -6.7924, lng: 39.2083, acc: 12, by: 'JUMA ISSA' }, 'the real door, with who pinned it');
+  assert.match(h.at, /^2026-07-24 \d\d:\d\d$/, 'and when, on the EAT clock like everything beside it');
+  assert.equal(c.loc.by, 'ASHA JUMA', 'the replacement is attributed to who made it');
+  assert.deepEqual(c.gloc, null, 'the guarantor\'s record is a separate thing');
+});
+
+test('History: the first pin is never the one dropped, however many times somebody re-pins', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  for (let i = 1; i <= 30; i++) {
+    const far = { ...DOOR, lat: -6.7924 - i * 0.01, replace: true };
+    await callApi(db, 'api_callCustPin', [i % 2 ? 'd2' : 'd1', far], NOW + i * 60000);
+  }
+  const c = await callApi(db, 'api_callComments', ['d1', '111'], NOW + 3600000);
+  assert.equal(c.loc.hist.length, 20, 'bounded');
+  assert.equal(c.loc.hist[0].lat, -6.7924, 'the original pin is still the first entry');
+  assert.equal(c.loc.hist[0].by, 'JUMA ISSA');
+  assert.equal(c.loc.hist[19].lat, -6.7924 - 29 * 0.01, 'and the newest replaced point is the last');
+});
+
+test('History: the same door measured again by the same officer is not a second location; somebody else confirming it is recorded', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  await callApi(db, 'api_callCustPin', ['d1', { ...DOOR, lat: -6.79241 }], NOW + 60000);       // about 1 m away, same officer
+  assert.deepEqual(db._dump('customer_locations')[0].hist, [], 'nothing added: it is the same door');
+  assert.equal(db._dump('customer_locations')[0].lat, -6.79241, 'but the point is refreshed');
+  await callApi(db, 'api_callCustPin', ['d2', { ...DOOR, lat: -6.79241 }], NOW + 120000);      // the same spot, a different officer
+  assert.equal(db._dump('customer_locations')[0].hist.length, 1, 'a different officer is on the record');
+  assert.equal(db._dump('customer_locations')[0].hist[0].by, 'JUMA ISSA');
+});
+
+test('History: the guarantor keeps a history of their own, apart from the customer\'s', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  await callApi(db, 'api_callCustPin', ['d1', GDOOR], NOW);
+  await callApi(db, 'api_callCustPin', ['d2', { ...GDOOR, lat: -6.9, replace: true }], NOW + 60000);
+  const c = await callApi(db, 'api_callComments', ['d1', '111'], NOW + 120000);
+  assert.equal(c.loc.hist.length, 0, 'the customer\'s point was never replaced');
+  assert.equal(c.gloc.hist.length, 1); assert.equal(c.gloc.hist[0].lat, -6.801);
+});
+
+test('History before its migration: pinning, replacing and Map work as before, nothing is recorded, and the column is only retried after five minutes', async () => {
+  const t = makeTables();
+  const db = fakeDb(t, { missingColumns: { customer_locations: ['hist'] } });
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  assert.equal((await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW)).stored, true, 'a first pin still works');
+  const r = await callApi(db, 'api_callCustPin', ['d1', FAKE], NOW + 60000);
+  assert.equal(r.stored, true); assert.equal(r.replaced, true); assert.deepEqual(r.loc.hist, [], 'nothing was recorded, and it says so');
+  assert.equal(db._dump('customer_locations')[0].lat, -6.85, 'the point itself was replaced as before');
+  assert.equal(db._dump('customer_locations')[0].hist, undefined, 'the column was never written');
+  const c = await callApi(db, 'api_callComments', ['d1', '111'], NOW + 90000);
+  assert.equal(c.ok, true); assert.equal(c.locReady, true, 'the feature is NOT switched off for want of the history column');
+  assert.equal(c.loc.lat, -6.85); assert.deepEqual(c.loc.hist, []);
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  await callApi(db, 'api_callComments', ['d1', '111'], NOW + 120000);
+  assert.equal(asked.filter(n => n === 'customer_locations').length, 1, 'inside five minutes: one read, no retry dance');
+  await callApi(db, 'api_callComments', ['d1', '111'], NOW + 7 * 60000);
+  assert.equal(asked.filter(n => n === 'customer_locations').length, 3, 'after five minutes it tries the column again (one failed read, one fallback), so the migration is noticed');
+});
+
+test('History once the column exists: the happy path is still ONE read of customer_locations per card', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  await callApi(db, 'api_callComments', ['d1', '111'], NOW + 1000);
+  assert.equal(asked.filter(n => n === 'customer_locations').length, 1);
+});
