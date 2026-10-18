@@ -501,7 +501,7 @@ const PHONE = [
   ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 9, 6000],
   ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 9, 6000],
   /* 6 -> 4 ON 2026-10-18, tightened as the customer's pinned point is added. The point is ONE keyed
-     read run beside the history and the complaints (db/RUN-ME-2026-10-18-customer-locations.sql),
+     read run beside the history and the complaints (db/RUN-ME-2026-10-18b-location-party.sql),
      so a card now takes four trips (device, history, complaints, point), up from three. The old
      ceiling of six hid that: it had three trips of slack, which is exactly where a fifth read
      would have gone unnoticed. Rule 1, counted and written down in call-core.js beside comments. */
@@ -555,7 +555,7 @@ const PHONE = [
      Rule 1, counted and written down: ONE trip, an UPDATE of the row holding this device id. It
      reads nothing, because the device id is already the credential every call here rests on. */
   ['Calls: location beat', 'api_callBeat', ['DEV1', { lat: -6.7924, lng: 39.2083, locAcc: 22, locAt: 0 }], 1, 10],
-  /* THE CUSTOMER'S POINT (db/RUN-ME-2026-10-18-customer-locations.sql), pressed Location on a card:
+  /* THE CUSTOMER'S POINT (db/RUN-ME-2026-10-18b-location-party.sql), pressed Location on a card:
      its OWN request, a few a day per officer, never inside sync, boot or a list. Rule 1, counted
      and written down: the device lookup every call here makes, the team scope (the registry read
      is cached a minute per instance, so only the first of a minute pays it), one keyed read of

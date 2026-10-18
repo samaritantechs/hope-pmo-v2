@@ -28,9 +28,12 @@ const PAGE = fs.readFileSync(path.join(ROOT, 'public/call.html'), 'utf8');
 const pins = [];                      // every api_callCustPin body the page sent
 let offline = false;                  // flip to simulate no signal
 let pinMode = 'store';                // store | exists | pending | notmine
-let savedLoc = null;                  // what the server holds for R1
+const saved = { C: null, G: null };   // what the server holds for R1, per party
 const ROWS = [
-  { ref: 'R1', name: 'AMINA JUMA', contact: '0712000001', team: 'KONGOWE', amt: 1000, installment: 1000, custStatus: 'UNPAID', fuStatus: '', ds: '2/6' },
+  { ref: 'R1', name: 'AMINA JUMA', contact: '0712000001', team: 'KONGOWE', amt: 1000, installment: 1000, custStatus: 'UNPAID', fuStatus: '', ds: '2/6',
+    gName: 'BABA JUMA', gContact: '0713000001' },
+  { ref: 'R2', name: 'PILI SALUM', contact: '0714000001', team: 'KONGOWE', amt: 2000, installment: 500, custStatus: 'UNPAID', fuStatus: '', ds: '3/6',
+    gName: '', gContact: '' },                                   // a loan with no guarantor
 ];
 const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', leader: false, expdfLeader: false,
                logoutEnabled: true, syncEverySec: 300, brand: 'HOPE', fuStatuses: ['ANALIPA LEO'], fuNeedDate: [],
@@ -39,15 +42,15 @@ const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', le
 function answer(fn, args) {
   if (fn === 'api_callBoot') return BOOT;
   if (fn === 'api_callList') return { ok: true, rows: ROWS, asOf: '2026-08-01', stale: false };
-  if (fn === 'api_callComments') return { ok: true, items: [], complaints: [], loc: savedLoc, locReady: true };
+  if (fn === 'api_callComments') return { ok: true, items: [], complaints: [], loc: args[1] === 'R1' ? saved.C : null, gloc: args[1] === 'R1' ? saved.G : null, locReady: true };
   if (fn === 'api_callCustPin') {
     const p = args[1];
     pins.push(p);
     if (pinMode === 'pending') return { ok: true, stored: false, pending: 'MIGRATION' };
     if (pinMode === 'notmine') return { ok: false, error: 'NOT_YOUR_TEAM' };
     if (pinMode === 'exists' && !p.replace) return { ok: true, stored: false, exists: { by: 'ASHA JUMA', at: '2026-08-01 10:00', distM: 340 } };
-    savedLoc = { lat: p.lat, lng: p.lng, acc: Math.round(p.acc), by: 'JUMA ISSA', at: '2026-08-02 11:00' };
-    return { ok: true, stored: true, replaced: pinMode === 'exists', loc: savedLoc };
+    saved[p.party] = { lat: p.lat, lng: p.lng, acc: Math.round(p.acc), by: 'JUMA ISSA', at: '2026-08-02 11:00' };
+    return { ok: true, stored: true, party: p.party, replaced: pinMode === 'exists', loc: saved[p.party] };
   }
   return { ok: true };
 }
@@ -83,87 +86,126 @@ const text = sel => page.evaluate(s => (document.querySelector(s) || {}).textCon
 const toastText = () => page.evaluate(() => { const t = document.getElementById('toast'); return t.style.display === 'none' ? '' : t.textContent; });
 /* A page that comes back after being thrown away reopens the card the officer was on (tryRestoreUi_),
    so the card may already be open; tap the row only when it is not. */
-const openCard = async () => {
-  await page.waitForSelector('#body [data-ref]');
-  await page.waitForTimeout(400);
-  if (!(await page.evaluate(() => document.getElementById('sheet').style.display === 'flex'))) await page.click('#body [data-ref="R1"]');
-  await page.waitForSelector('#locPin'); await page.waitForTimeout(250);
+const openCard = async (ref = 'R1', pg = page) => {
+  await pg.waitForSelector('#body [data-ref]');
+  await pg.waitForTimeout(400);
+  if (!(await pg.evaluate(() => document.getElementById('sheet').style.display === 'flex'))) await pg.click('#body [data-ref="' + ref + '"]');
+  await pg.waitForSelector('#locPin_C'); await pg.waitForTimeout(250);
 };
+const box = sel => page.evaluate(s => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom, w: r.width, h: r.height }; }, sel);
 
 await page.goto(base + '/');
 await openCard();
 
-// --- 1. the two buttons are on the card, and a customer with no point says so
-check('Location and Map are both on the card', (await text('#locPin')).includes('Location') && (await text('#locMap')).includes('Map'));
-check('a card with no point says none is saved', /Bado hakuna eneo/.test(await text('#locNote')), await text('#locNote'));
-check('and Map is the quiet button until there is a point to go to', await page.evaluate(() => document.getElementById('locMap').classList.contains('btn-ghost')));
+// --- 1. LAYOUT: the customer's two icons at the right of the name and the team + REF lines, side by side
+const title = await box('.sheet-card .sheet-title'), sub = await box('.sheet-card .sheet-sub');
+const cp = await box('#locPin_C'), cm = await box('#locMap_C');
+check('the customer has a Location icon and a Map icon', !!cp && !!cm);
+check('both icons are to the right of the name and the team + REF line, not under them',
+  cp.l > title.l + 40 && cp.l > sub.l + 40 && cp.l > Math.min(title.r, sub.r) - 120, JSON.stringify({ title, sub, cp }));
+check('side by side, on one line, round and finger-sized',
+  Math.abs(cp.t - cm.t) < 1 && cm.l > cp.r && cp.w >= 36 && cp.h >= 36 && Math.abs(cp.w - cp.h) < 1, JSON.stringify({ cp, cm }));
+check('and level with the name and team + REF block (the two lines they sit beside)', cp.t >= title.t - 4 && cp.b <= sub.b + 40, JSON.stringify({ cp, title, sub }));
+check('the old wide buttons are gone', !(await page.evaluate(() => !!document.getElementById('locPin') || !!document.getElementById('locMap'))));
+check('a card with no point has no note line taking room', (await box('#locNote_C')).h === 0, JSON.stringify(await box('#locNote_C')));
+check('and Map is not tinted ready until there is a point', await page.evaluate(() => !document.getElementById('locMap_C').classList.contains('on')));
+
+// --- 2. the guarantor has a row of their own with their own pair, to the right of the name
+const gname = await box('.partyrow .pname'), gp = await box('#locPin_G'), gm = await box('#locMap_G');
+check('the guarantor\'s row shows the guarantor\'s name', /BABA JUMA/.test(await text('.partyrow .pname')) && /Mdhamini/.test(await text('.partyrow .plab')));
+check('with a second pair of icons at its right, side by side', !!gp && !!gm && gp.l > gname.l + 40 && Math.abs(gp.t - gm.t) < 1 && gm.l > gp.r, JSON.stringify({ gname, gp, gm }));
+check('below the customer\'s pair, never mixed with it', gp.t > cm.b);
+check('titled for the right person', /mdhamini/i.test(await page.evaluate(() => document.getElementById('locPin_G').title)) && /mteja/i.test(await page.evaluate(() => document.getElementById('locPin_C').title)));
+
+// --- 3. Map with no point opens nothing and says why, per person
 if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT + '-before.png' });   // SHOT=/some/dir/card to look at it
-await page.click('#locMap');
+await page.click('#locMap_C');
 check('Map with no point opens nothing and says why', (await page.evaluate(() => window.__opened.length)) === 0 && /Hakuna eneo/.test(await toastText()), await toastText());
+await page.click('#locMap_G');
+check('and for the guarantor it says the guarantor', /mdhamini/.test(await toastText()), await toastText());
 
-// --- 2. Location reads the phone and sends it with the card's own ref and team
-await page.click('#locPin');
-await page.waitForFunction(() => /Saved:/.test(document.getElementById('locNote').textContent), null, { timeout: 8000 });
+// --- 4. Location for the CUSTOMER reads the phone and sends it with the card's own ref, team, name and party C
+await page.click('#locPin_C');
+await page.waitForFunction(() => /Saved:/.test(document.getElementById('locNote_C').textContent), null, { timeout: 8000 });
 check('Location sent one pin', pins.length === 1, JSON.stringify(pins));
-check('with the card\'s own ref and team', pins[0] && pins[0].ref === 'R1' && pins[0].team === 'KONGOWE' && pins[0].name === 'AMINA JUMA', JSON.stringify(pins[0]));
-check('and the phone\'s position', pins[0] && Math.abs(pins[0].lat + 6.7924) < 1e-6 && Math.abs(pins[0].lng - 39.2083) < 1e-6 && pins[0].acc <= 25, JSON.stringify(pins[0]));
-check('the card now shows the saved point, who saved it and when', /-6\.79240, 39\.20830/.test(await text('#locNote')) && /JUMA ISSA/.test(await text('#locNote')), await text('#locNote'));
-check('Map becomes the main button', await page.evaluate(() => document.getElementById('locMap').classList.contains('btn-pri')));
-check('and the Location button is back to its label', (await text('#locPin')).includes('Location') && !(await page.evaluate(() => document.getElementById('locPin').disabled)));
+check('for the customer: the card\'s own ref, team and name, party C',
+  pins[0].ref === 'R1' && pins[0].team === 'KONGOWE' && pins[0].name === 'AMINA JUMA' && pins[0].party === 'C', JSON.stringify(pins[0]));
+check('and the phone\'s position', Math.abs(pins[0].lat + 6.7924) < 1e-6 && Math.abs(pins[0].lng - 39.2083) < 1e-6 && pins[0].acc <= 25, JSON.stringify(pins[0]));
+check('the customer\'s note shows the point, who saved it and when', /-6\.79240, 39\.20830/.test(await text('#locNote_C')) && /JUMA ISSA/.test(await text('#locNote_C')) && /mteja/.test(await text('#locNote_C')), await text('#locNote_C'));
+check('the customer\'s Map icon is tinted ready, the guarantor\'s is not',
+  await page.evaluate(() => document.getElementById('locMap_C').classList.contains('on') && !document.getElementById('locMap_G').classList.contains('on')));
+check('and the icon is pressable again', !(await page.evaluate(() => document.getElementById('locPin_C').disabled)));
 
+// --- 5. Location for the GUARANTOR, from where the guarantor lives: the same ref, party G, the guarantor\'s own name and point
+await ctx.setGeolocation({ latitude: -6.8010, longitude: 39.2150, accuracy: 9 });
+await page.click('#locPin_G');
+await page.waitForFunction(() => /Saved:/.test(document.getElementById('locNote_G').textContent), null, { timeout: 8000 });
+check('a second pin for the same ref', pins.length === 2 && pins[1].ref === 'R1', JSON.stringify(pins));
+check('as the guarantor, under the guarantor\'s own name', pins[1].party === 'G' && pins[1].name === 'BABA JUMA' && Math.abs(pins[1].lat + 6.8010) < 1e-6, JSON.stringify(pins[1]));
+check('the guarantor\'s note says guarantor, the customer\'s is unchanged', /mdhamini/.test(await text('#locNote_G')) && /-6\.80100, 39\.21500/.test(await text('#locNote_G')) && /-6\.79240/.test(await text('#locNote_C')));
+
+// --- 6. Map opens directions to THAT person's point in the Maps app (the shell hands window.open to the phone)
+await page.click('#locMap_C');
+await page.click('#locMap_G');
+const opened = await page.evaluate(() => window.__opened.slice());
+check('the customer\'s Map goes to the customer\'s point',
+  opened[0] === 'https://www.google.com/maps/dir/?api=1&destination=-6.7924,39.2083&travelmode=driving', JSON.stringify(opened));
+check('and the guarantor\'s to the guarantor\'s', opened[1] === 'https://www.google.com/maps/dir/?api=1&destination=-6.801,39.215&travelmode=driving', JSON.stringify(opened));
 if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT + '-after.png' });
 
-// --- 3. Map opens directions to that point in the Maps app (the shell hands window.open to the phone)
-await page.click('#locMap');
-const opened = await page.evaluate(() => window.__opened.slice());
-check('Map opens Google Maps directions to the saved point',
-  opened.length === 1 && opened[0] === 'https://www.google.com/maps/dir/?api=1&destination=-6.7924,39.2083&travelmode=driving', JSON.stringify(opened));
-
-// --- 4. the point survives the app being thrown away, and works with NO SIGNAL
+// --- 7. both points survive the app being thrown away, and work with NO SIGNAL
 offline = true;
 await page.goto(base + '/');
 await openCard();
-check('with no signal the card still shows the point kept on the phone', /-6\.79240, 39\.20830/.test(await text('#locNote')), await text('#locNote'));
+check('with no signal the card still shows both points kept on the phone', /-6\.79240/.test(await text('#locNote_C')) && /-6\.80100/.test(await text('#locNote_G')), await text('#locNote_C') + ' | ' + await text('#locNote_G'));
 await page.evaluate(() => { window.__opened = []; });
-await page.click('#locMap');
-check('and Map still opens', (await page.evaluate(() => window.__opened.length)) === 1);
+await page.click('#locMap_G');
+check('and the guarantor\'s Map still opens', (await page.evaluate(() => window.__opened.length)) === 1);
 offline = false;
 
-// --- 5. a point already on file from somewhere else is a question, never an overwrite
+// --- 8. a point already on file is a question, never an overwrite -- for the guarantor too
+await ctx.setGeolocation({ latitude: -6.7924, longitude: 39.2083, accuracy: 8 });
 pinMode = 'exists'; pins.length = 0;
 await page.reload(); await openCard();
-await page.click('#locPin');
+await page.click('#locPin_G');
 await page.waitForSelector('#locYes', { timeout: 8000 });
-check('an existing point is put to the officer, with who and how far', /ASHA JUMA/.test(await text('#locNote')) && /340/.test(await text('#locNote')), await text('#locNote'));
-check('and nothing was replaced yet', pins.length === 1 && !pins[0].replace);
+check('an existing point is put to the officer, with who and how far', /ASHA JUMA/.test(await text('#locNote_G')) && /340/.test(await text('#locNote_G')) && /mdhamini/.test(await text('#locNote_G')), await text('#locNote_G'));
+check('and nothing was replaced yet', pins.length === 1 && !pins[0].replace && pins[0].party === 'G');
 await page.click('#locYes');
 await page.waitForTimeout(500);
-check('saying yes sends it again, marked as a replacement', pins.length === 2 && pins[1].replace === true, JSON.stringify(pins.map(p => p.replace)));
+check('saying yes sends it again, marked as a replacement', pins.length === 2 && pins[1].replace === true && pins[1].party === 'G', JSON.stringify(pins.map(p => p.replace)));
 pins.length = 0;
-await page.click('#locPin');
+await page.click('#locPin_G');
 await page.waitForSelector('#locNo', { timeout: 8000 });
 await page.click('#locNo');
 await page.waitForTimeout(300);
-check('saying no keeps the old point and sends nothing more', pins.length === 1 && !/locYes/.test(await page.evaluate(() => document.getElementById('locNote').innerHTML)));
+check('saying no keeps the old point and sends nothing more', pins.length === 1 && !/locYes/.test(await page.evaluate(() => document.getElementById('locNote_G').innerHTML)));
 
-// --- 6. before the migration, and a customer who is not this officer's, each say so
-pinMode = 'pending'; await page.click('#locPin'); await page.waitForTimeout(500);
+// --- 9. before the migration, and a customer who is not this officer's, each say so
+pinMode = 'pending'; await page.click('#locPin_C'); await page.waitForTimeout(500);
 check('before the migration the officer is told the office has not switched it on', /haijawasha/.test(await toastText()), await toastText());
-pinMode = 'notmine'; await page.click('#locPin'); await page.waitForTimeout(500);
+pinMode = 'notmine'; await page.click('#locPin_C'); await page.waitForTimeout(500);
 check('a customer of another team is refused in words', /si wa timu yako/.test(await toastText()), await toastText());
 
-// --- 7. a phone with no GPS permission is told how to fix it
+// --- 10. a loan with NO guarantor has the customer's pair only
+await page.evaluate(() => sheetHide());
+await page.click('#body [data-ref="R2"]');
+await page.waitForSelector('#locPin_C'); await page.waitForTimeout(250);
+check('no guarantor, no second pair', await page.evaluate(() => !document.getElementById('locPin_G') && !document.getElementById('locMap_G') && !document.querySelector('.partyrow')));
+check('and the customer\'s pair is there and does not carry R1\'s point', !!(await box('#locPin_C')) && (await text('#locNote_C')) === '' && await page.evaluate(() => !document.getElementById('locMap_C').classList.contains('on')));
+
+// --- 11. a phone with no GPS permission is told how to fix it
 const ctx2 = await browser.newContext();                      // no geolocation permission granted
 await ctx2.addInitScript(() => { window.__opened = []; window.open = u => { window.__opened.push(u); return {}; }; });
 const p2 = await ctx2.newPage();
-await p2.goto(base + '/'); await p2.waitForSelector('#body [data-ref]'); await p2.click('#body [data-ref="R1"]'); await p2.waitForSelector('#locPin');
+await p2.goto(base + '/'); await openCard('R1', p2);
 pinMode = 'store';
-await p2.click('#locPin');
+await p2.click('#locPin_G');
 await p2.waitForFunction(() => { const t = document.getElementById('toast'); return t.style.display !== 'none' && /Location|mahali|GPS/i.test(t.textContent); }, null, { timeout: 25000 }).catch(() => {});
-check('a refused permission is explained and the button comes back', /ruhusa|permission|mahali|GPS/i.test(await p2.evaluate(() => document.getElementById('toast').textContent))
-  && !(await p2.evaluate(() => document.getElementById('locPin').disabled)));
+check('a refused permission is explained and the icon comes back', /ruhusa|permission|mahali|GPS/i.test(await p2.evaluate(() => document.getElementById('toast').textContent))
+  && !(await p2.evaluate(() => document.getElementById('locPin_G').disabled)));
 
-// --- 8. signing out forgets every customer's point
+// --- 12. signing out forgets every point
 await page.evaluate(() => doLogout());
 await page.waitForTimeout(300);
 check('signing out forgets the points kept on the phone', await page.evaluate(() => localStorage.getItem('hcCustLoc') === null));

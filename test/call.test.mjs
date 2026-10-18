@@ -2736,3 +2736,61 @@ test('the customer\'s point costs sync, boot and every list NOTHING -- it rides 
   await callApi(db, 'api_callComments', ['d1', '111'], NOW);
   assert.equal(asked.filter(n => n === 'customer_locations').length, 1, 'one keyed read per card opening');
 });
+
+/* THE GUARANTOR'S POINT -- "two rows map icons for both customer and guarantor. All tied to ref no."
+   One loan, one REF NO, two places to go: customer (party 'C', the default) and guarantor ('G'). */
+const GDOOR = { ...DOOR, party: 'G', name: 'G ONE', lat: -6.8010, lng: 39.2150, acc: 15 };
+
+test('Location for the guarantor: a second point on the same REF NO, apart from the customer\'s, both back with the one history read', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);                          // no party sent: the customer, as the first release did
+  const g = await callApi(db, 'api_callCustPin', ['d1', GDOOR], NOW + 1000);
+  assert.equal(g.stored, true); assert.equal(g.party, 'G'); assert.equal(g.replaced, false, 'the customer\'s point is not the guarantor\'s');
+  const rows = db._dump('customer_locations').filter(x => x.ref === '111');
+  assert.deepEqual(rows.map(x => x.party).sort(), ['C', 'G'], 'one ref, two rows');
+  assert.equal(rows.find(x => x.party === 'G').full_name, 'G ONE', 'the guarantor\'s own name');
+  assert.equal(rows.find(x => x.party === 'C').lat, -6.7924, 'the customer\'s is untouched');
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  const c = await callApi(db, 'api_callComments', ['d1', '111'], NOW + 2000);
+  assert.equal(asked.filter(n => n === 'customer_locations').length, 1, 'both points come back in ONE read, not two');
+  assert.equal(c.loc.lat, -6.7924); assert.equal(c.gloc.lat, -6.801); assert.equal(c.gloc.by, 'JUMA ISSA');
+  const other = await callApi(db, 'api_callComments', ['d1', '222'], NOW + 3000);
+  assert.deepEqual([other.loc, other.gloc], [null, null], 'another loan has neither');
+});
+
+test('Location for the guarantor: replacing the guarantor\'s point asks first and never touches the customer\'s; a made-up party is read as the customer', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  await callApi(db, 'api_callCustPin', ['d1', GDOOR], NOW);
+  const far = { ...GDOOR, lat: -6.8100 };
+  const ask = await callApi(db, 'api_callCustPin', ['d1', far], NOW + 60000);
+  assert.equal(ask.stored, false); assert.ok(ask.exists.distM > 900, 'how far the old pin is: ' + ask.exists.distM);
+  assert.equal(db._dump('customer_locations').find(x => x.party === 'G').lat, -6.801, 'the guarantor\'s old point stands');
+  const yes = await callApi(db, 'api_callCustPin', ['d1', { ...far, replace: true }], NOW + 120000);
+  assert.equal(yes.replaced, true);
+  const rows = db._dump('customer_locations');
+  assert.equal(rows.length, 2, 'still one row per party');
+  assert.equal(rows.find(x => x.party === 'G').lat, -6.81); assert.equal(rows.find(x => x.party === 'C').lat, -6.7924);
+  const odd = await callApi(db, 'api_callCustPin', ['d1', { ...DOOR, party: 'X', lat: -6.7925 }], NOW + 180000);
+  assert.equal(odd.party, 'C', 'nothing but C and G is ever stored');
+  assert.equal(db._dump('customer_locations').length, 2);
+});
+
+test('the guarantor\'s point obeys the same guards: a real position, the officer\'s own team', async () => {
+  const db = await registeredDb();
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', { ...GDOOR, lat: 0, lng: 0 }], NOW), { ok: false, error: 'BAD_FIX' });
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', { ...GDOOR, ref: '333', team: 'MBAGALA' }], NOW), { ok: false, error: 'NOT_YOUR_TEAM' });
+  assert.equal(db._dump('customer_locations').length, 0);
+});
+
+test('before the party migration (the first file ran, this one has not): the card opens, both icons say pending, nothing is stored wrongly', async () => {
+  const t = makeTables();
+  const db = fakeDb(t, { missingColumns: { customer_locations: ['party'] } });
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', GDOOR], NOW), { ok: true, stored: false, pending: 'MIGRATION' });
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW), { ok: true, stored: false, pending: 'MIGRATION' });
+  const c = await callApi(db, 'api_callComments', ['d1', '111'], NOW);
+  assert.equal(c.ok, true, 'the history still loads'); assert.equal(c.locReady, false); assert.deepEqual([c.loc, c.gloc], [null, null]);
+  assert.equal(db._dump('customer_locations').length, 0);
+});
