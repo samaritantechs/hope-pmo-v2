@@ -2880,3 +2880,82 @@ test('History once the column exists: the happy path is still ONE read of custom
   await callApi(db, 'api_callComments', ['d1', '111'], NOW + 1000);
   assert.equal(asked.filter(n => n === 'customer_locations').length, 1);
 });
+
+/* =========================================================================================
+   T.DEF -- TOTAL DEFAULT ON THE SUMMARY STRIP, after the recovery.
+     "Add total default after recovery on the call app summary line. In figures e.g. T.Def
+      34.6m or 378k or 3.2b"
+   The defaulters' arrears as the NEWEST current deck leaves them -- one deck, never the sum of
+   the week's decks -- for the handset's own scope. A field of the answer the strip already builds. */
+const clearSummaries_ = async () => { const m = await import('../api/_lib/call-core.js'); m._clearSummaryCache(); m._clearWidgetCache(); };
+
+test('T.Def on a weekday is the defaulters\' arrears on today\'s current deck, with the day it belongs to', async () => {
+  await clearSummaries_();
+  const db = await registeredDb();
+  const d = await callApi(db, 'api_callDailySummary', ['d1'], NOW);
+  assert.deepEqual({ num: d.totalDef.num, customers: d.totalDef.customers, day: d.totalDef.day, date: d.totalDef.date, isToday: d.totalDef.isToday },
+    { num: 350, customers: 1, day: 'FRI', date: '2026-07-24', isToday: true }, 'the fixture\'s Friday current deck: one defaulter owing 350');
+});
+
+test('T.Def on a weekend is the NEWEST deck alone -- not Monday plus Tuesday plus Friday of the same defaulters', async () => {
+  await clearSummaries_();
+  const t = makeTables();
+  t.defaulter_snapshots.push(
+    { ref: '556', team: 'KONGOWE', arrears: 300, snapshot_type: 'initial', weekday: 'THU', snapshot_date: '2026-07-23', upload_batch: 'ti', created_at: '2026-07-23T04:00:00Z' },
+    { ref: '556', team: 'KONGOWE', arrears: 250, snapshot_type: 'current', weekday: 'THU', snapshot_date: '2026-07-23', upload_batch: 'tc', created_at: '2026-07-23T04:00:00Z' },
+  );
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dTD1', 'JUMA ISSA', '', '', '0712999780', 'KON123'], NOW);
+  const sat = await callApi(db, 'api_callDailySummary', ['dTD1'], Date.parse('2026-07-25T09:00:00Z'));
+  assert.equal(sat.period, 'week');
+  assert.equal(sat.totalDef.num, 350, 'Friday\'s deck (350), not Thursday\'s 250 added to it (600)');
+  assert.equal(sat.totalDef.day, 'FRI'); assert.equal(sat.totalDef.isToday, false, 'and it says it is Friday\'s, not today\'s');
+});
+
+test('T.Def with a Saturday deck is that deck, and says it is today\'s', async () => {
+  await clearSummaries_();
+  const t = makeTables();
+  t.defaulter_snapshots.push(
+    { ref: '557', team: 'KONGOWE', arrears: 900, snapshot_type: 'initial', weekday: 'SAT', snapshot_date: '2026-07-25', upload_batch: 'si', created_at: '2026-07-25T04:00:00Z' },
+    { ref: '557', team: 'KONGOWE', arrears: 600, snapshot_type: 'current', weekday: 'SAT', snapshot_date: '2026-07-25', upload_batch: 'sc', created_at: '2026-07-25T04:00:00Z' },
+  );
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dTD2', 'JUMA ISSA', '', '', '0712999781', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callDailySummary', ['dTD2'], Date.parse('2026-07-25T09:00:00Z'));
+  assert.equal(d.totalDef.num, 600); assert.equal(d.totalDef.day, 'SAT'); assert.equal(d.totalDef.isToday, true);
+});
+
+test('T.Def is the handset\'s own scope: a team officer never gets another team\'s arrears, an all-teams code gets both', async () => {
+  await clearSummaries_();
+  const t = makeTables();
+  t.defaulter_snapshots.push(
+    { ref: '901', team: 'MBAGALA', arrears: 9000, snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'mi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: '901', team: 'MBAGALA', arrears: 8000, snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'mc', created_at: '2026-07-24T04:00:00Z' },
+  );
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dTD3', 'JUMA ISSA', '', '', '0712999782', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['dTD4', '', '', 'ADMIN1', '0788111299'], NOW);
+  const mine = await callApi(db, 'api_callDailySummary', ['dTD3'], NOW);
+  assert.equal(mine.totalDef.num, 350, 'KONGOWE\'s defaulters only');
+  assert.equal(mine.totalDef.customers, 1);
+  const all = await callApi(db, 'api_callDailySummary', ['dTD4'], NOW);
+  assert.equal(all.totalDef.num, 8350, 'an all-teams code sees the company: 350 + 8000');
+  assert.equal(all.totalDef.customers, 2);
+});
+
+test('T.Def with no current deck uploaded is null (a dash on the phone), never a total of nothing', async () => {
+  await clearSummaries_();
+  const t = makeTables(); t.defaulter_snapshots.length = 0;
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dTD5', 'JUMA ISSA', '', '', '0712999783', 'KON123'], NOW);
+  const d = await callApi(db, 'api_callDailySummary', ['dTD5'], NOW);
+  assert.equal(d.ok, true); assert.equal(d.totalDef, null);
+});
+
+test('T.Def is on the dashboard answer too, so the portal and the phone can never quote two totals', async () => {
+  const { buildDashboard } = await import('../api/_lib/dashboard-core.js');
+  const db = fakeDb(makeTables());
+  const dash = await buildDashboard(db, { name: 'X', role: 'ADMIN', teams: null }, NOW);
+  assert.equal(dash.totals.defaulterLatest.arrears, 350);
+  assert.equal(dash.totals.defaulterLatest.date, '2026-07-24');
+});

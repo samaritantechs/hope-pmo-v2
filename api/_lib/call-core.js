@@ -1392,6 +1392,20 @@ async function summaryCompute(db, user, nowMs) {
     recToday: rec.latest
       ? { num: rec.latest.recovered, day: rec.latest.day, date: rec.latest.date, isToday: rec.latest.isToday }
       : null,
+    /* T.DEF -- TOTAL DEFAULT, after the recovery on the strip.
+         "Add total default after recovery on the call app summary line. In figures e.g.
+          T.Def 34.6m or 378k or 3.2b"
+       The defaulters' arrears as the newest current deck leaves them (see defaulterLatest in
+       dashboard-core.js: one deck, not a sum of the week's), for this handset's own scope --
+       the dashboard answer is already narrowed at the database to the teams it may see and is
+       cached per scope, so a team officer's figure is their team's and never the company's.
+       RULE 1, COUNTED: NO read is added. It is a field of the dashboard answer this function
+       already builds, so it costs the phone nothing. Null when no current deck has been
+       uploaded, which the phone draws as a dash -- never as a total of nothing. */
+    totalDef: d.totals.defaulterLatest
+      ? { num: d.totals.defaulterLatest.arrears, customers: d.totals.defaulterLatest.customers,
+          day: d.totals.defaulterLatest.day, date: d.totals.defaulterLatest.date, isToday: d.totals.defaulterLatest.isToday }
+      : null,
     /* WHICH UPLOAD THESE FIGURES ARE. The phone keeps the strip on screen across restarts, so
        it has to know what it is holding: it stores this beside the numbers and asks again only
        when a sync reports a different one. Sent by the figures themselves rather than assumed
