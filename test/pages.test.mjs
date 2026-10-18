@@ -2079,34 +2079,52 @@ test('Officer locations lists both sources with a search box, says what it canno
   assert.ok(!/\b(drop|delete|truncate|update)\b/i.test(sql.replace(/--.*$/gm, '')), 'nothing destructive');
 });
 
-/* WHERE THE CUSTOMER IS -- "We need to add two buttons in customer cards: Location and Map. An officer can pinpoint
-   coordinates of the customer during visitation, and pressing map later will open maps app in phone or browser." */
-test('the customer card has Location and Map: a real GPS reading, asked before an old point is replaced, a maps link that needs no signal', () => {
+/* WHERE THE CUSTOMER AND THE GUARANTOR ARE -- "We need to add two buttons in customer cards: Location and Map. An officer
+   can pinpoint coordinates of the customer during visitation, and pressing map later will open maps app in phone or browser."
+   / "Add them as two icons on the right side of name and team+refno ... two rows map icons for both customer and guarantor.
+   All tied to ref no." */
+test('the customer card has Location and Map icons beside the name and a second pair on the guarantor\'s row, all on the one REF NO', () => {
   const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
   const card = call.slice(call.indexOf('function sheetSkeleton'), call.indexOf('function historyHtml'));
-  assert.ok(/id="locPin">' \+ LOCPIN_LABEL/.test(card) && /id="locMap">' \+ LOCMAP_LABEL/.test(card) && /id="locNote"/.test(card), 'both buttons, and the line that says what is saved');
-  assert.ok(/LOCPIN_LABEL = '\\uD83D\\uDCCD Location', LOCMAP_LABEL = '\\uD83D\\uDDFA\\uFE0F Map'/.test(call), 'named Location and Map, with their pictures');
+  assert.ok(/<div class="sheet-head"><div class="sheet-headtxt">/.test(card) && /esc\(r\.team\) \+ ' \\u00B7 REF ' \+ esc\(r\.ref\) \+ '<\/div><\/div>'\s*\n\s*\+ locIcons_\('C'\) \+ '<\/div>'/.test(card),
+    'the customer\'s pair sits at the right of the name and the team + REF lines, which stay together on the left');
+  assert.ok(/<div class="partyrow"><div class="ptxt">[^\n]*locIcons_\('G'\) \+ '<\/div>'/.test(card) && /id="locNote_G"/.test(card) && /id="locNote_C"/.test(card),
+    'the guarantor has a row of their own with a second pair, and each pair has its own note line');
+  assert.ok(/var hasG = !!\(String\(r\.gName/.test(card) && /: '<div class="factrow"><span>Mdhamini \/ Guarantor<\/span><span>\\u2014<\/span><\/div>'/.test(card), 'a loan with no guarantor has no second pair');
+  assert.ok(!/id="locPin"|id="locMap"|btn btn-ghost" id="loc/.test(card), 'the old wide buttons are gone');
+  assert.ok(/'" id="locPin_' \+ party|id="locPin_' \+ party \+ '"/.test(call) && /id="locMap_' \+ party \+ '"/.test(call), 'one pair per party, ids carry the party');
+  assert.ok(/LOCPIN_ICON = '\\uD83D\\uDCCD', LOCMAP_ICON = '\\uD83D\\uDDFA\\uFE0F'/.test(call), 'a pin and a map');
   assert.ok(/enableHighAccuracy: true, maximumAge: 0, timeout: LOCPIN_WAIT_MS/.test(call) && /watchPosition/.test(call), 'a fresh, high-accuracy reading, the best of twenty seconds');
   assert.ok(/LOCPIN_GOOD_M = 25, LOCPIN_OK_M = 100, LOCPIN_WAIT_MS = 20000/.test(call) && /best\.accuracy > LOCPIN_OK_M/.test(call), 'stops early at 25 m; a reading worse than 100 m is not saved without a question');
-  assert.ok(/fn: 'api_callCustPin'/.test(call) === false && /srv\('api_callCustPin', DEV, \{ ref: r\.ref, team: r\.team/.test(call), 'saved through the ordinary call transport, with the card\'s own ref and team');
-  assert.ok(/d\.exists/.test(call) && /locSave_\(r, fix, true\)/.test(call), 'an existing point is replaced only when the officer says yes');
-  assert.ok(/d\.pending/.test(call) && /Ofisi bado haijawasha huduma ya eneo la mteja/.test(call), 'before the migration the officer is told, not left guessing');
+  assert.ok(/srv\('api_callCustPin', DEV, \{ ref: r\.ref, party: party, team: r\.team, name: party === 'G' \? r\.gName : r\.name,/.test(call),
+    'saved through the ordinary call transport with the card\'s own ref and team, the party, and that person\'s own name');
+  assert.ok(/d\.exists/.test(call) && /locSave_\(r, party, fix, true\)/.test(call), 'an existing point is replaced only when the officer says yes');
+  assert.ok(/d\.pending/.test(call) && /Ofisi bado haijawasha huduma ya eneo\./.test(call), 'before the migration the officer is told, not left guessing');
   assert.ok(/https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=' \+ loc\.lat \+ ',' \+ loc\.lng/.test(call) && /window\.open\(url, '_blank'\)/.test(call), 'Map opens directions to the point in the Maps app or the browser');
-  assert.ok(/localStorage\.setItem\(CUSTLOC_LS/.test(call) && /localStorage\.removeItem\(CUSTLOC_LS\)/.test(call), 'the point is kept on the phone for no-signal use, and forgotten at sign-out');
-  assert.ok(/custLocPut_\(r\.ref, d\.loc \|\| null\)/.test(call) && call.split("'api_callCustPin'").length - 1 === 1, 'the point arrives with the history; the only sender of a pin is the Location button');
+  assert.ok(/function custLocKey_\(ref, party\)\{ return party === 'G' \? String\(ref\) \+ '\|G' : String\(ref\); \}/.test(call), 'the customer keeps the key the first release stored; the guarantor is ref|G');
+  assert.ok(/localStorage\.setItem\(CUSTLOC_LS/.test(call) && /localStorage\.removeItem\(CUSTLOC_LS\)/.test(call), 'the points are kept on the phone for no-signal use, and forgotten at sign-out');
+  assert.ok(/custLocPut_\(r\.ref, 'C', d\.loc \|\| null\); custLocPut_\(r\.ref, 'G', d\.gloc \|\| null\);/.test(call) && call.split("'api_callCustPin'").length - 1 === 1,
+    'both points arrive with the history; the only sender of a pin is the Location icon');
+  assert.ok(/S\.locBusy/.test(call), 'one reading at a time, so the two pairs cannot fight over the GPS');
   const sync = call.slice(call.indexOf('function startSyncLoop'), call.indexOf('function startSyncLoop') + 3000);
   assert.ok(!/custLoc|locPin_|api_callCustPin/.test(sync), 'nothing is added to the sync loop');
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
-  assert.ok(!/var BUILD = '2026-10-17-a'/.test(src), 'the front end was changed, so BUILD moved');
+  assert.ok(!/var BUILD = '2026-10-18-a'/.test(src), 'the front end was changed again, so BUILD moved again');
 });
 
-test('the customer-location migration is one small table, under a hundred lines, nothing destructive, and schema.sql declares it', () => {
+test('the customer-location migrations are small, idempotent and non-destructive; the second widens the key to (ref, party) only while it is still one column', () => {
   const dbDir = join(PUBLIC, '..', 'db');
-  const sql = readFileSync(join(dbDir, 'RUN-ME-2026-10-18-customer-locations.sql'), 'utf-8');
+  const first = readFileSync(join(dbDir, 'RUN-ME-2026-10-18-customer-locations.sql'), 'utf-8');
+  assert.ok(first.split('\n').length < 100 && /ref\s+text primary key/.test(first), 'the first file, as it shipped: one table keyed by ref');
+  const sql = readFileSync(join(dbDir, 'RUN-ME-2026-10-18b-location-party.sql'), 'utf-8');
+  const code = sql.replace(/--.*$/gm, '');
   assert.ok(sql.split('\n').length < 100, 'under a hundred lines');
-  assert.equal((sql.match(/^create table if not exists public\.customer_locations \(/gm) || []).length, 1, 'one idempotent table');
-  assert.ok(/ref\s+text primary key/.test(sql) && /lat\s+double precision not null/.test(sql) && /lng\s+double precision not null/.test(sql), 'keyed by REF NO, a point is both numbers or nothing');
-  assert.ok(!/\b(drop|delete|truncate|update|alter)\b/i.test(sql.replace(/--.*$/gm, '')), 'nothing destructive, nothing existing touched');
+  assert.equal((code.match(/create table if not exists public\.customer_locations \(/g) || []).length, 1, 'works when the table is not there yet');
+  assert.ok(/party\s+text not null default 'C' check \(party in \('C', 'G'\)\)/.test(code) && /primary key \(ref, party\)/.test(code), 'party is C or G; a loan\'s ref carries both');
+  assert.ok(/add column if not exists party text not null default 'C'/.test(code), 'works when the first file already ran: every point already pinned becomes the customer\'s');
+  assert.ok(/i\.indisprimary and i\.indnatts = 1/.test(code), 'the key is only touched while it is still the one-column key, so a re-run changes nothing');
+  assert.equal((code.match(/\bdrop\b/gi) || []).length, 1, 'the only drop is that guarded key');
+  assert.ok(!/\b(delete|truncate|update)\b/i.test(code), 'no row is deleted or rewritten');
   const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
-  assert.ok(/create table if not exists customer_locations \(/.test(schema), 'schema.sql carries it for a fresh database');
+  assert.ok(/create table if not exists customer_locations \([\s\S]*?primary key \(ref, party\)\s*\);/.test(schema), 'schema.sql carries the final shape for a fresh database');
 });

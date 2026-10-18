@@ -154,6 +154,19 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 .sheet-card{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:14px;margin-bottom:12px}
 .sheet-title{font-size:17px;font-weight:800}
 .sheet-sub{font-size:12.5px;color:var(--mut);margin-top:2px}
+.sheet-head{display:flex;align-items:flex-start;gap:10px}
+.sheet-headtxt{flex:1 1 auto;min-width:0}
+.locicons{display:flex;gap:8px;flex:0 0 auto}
+.locbtn{width:40px;height:40px;padding:0;border-radius:50%;background:var(--card);border:1.5px solid var(--line);font-size:18px;line-height:1;
+  display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.locbtn.on{background:var(--okbg);border-color:var(--okline)}
+.locbtn:disabled{opacity:.55}
+.locnote{font-size:12px;color:var(--mut);margin-top:6px}
+.locnote:empty{display:none}
+.partyrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
+.partyrow .ptxt{flex:1 1 auto;min-width:0}
+.partyrow .plab{display:block;color:var(--mut)}
+.partyrow .pname{display:block;font-weight:700;overflow-wrap:anywhere}
 .factrow{display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13.5px}
 .factrow:last-child{border-bottom:0}
 .factrow span:first-child{color:var(--mut)}
@@ -2044,9 +2057,9 @@ function openSheet(ref){
   saveUi_();                     // dialling happens from this card -- remember it NOW
   S.locWait = String(r.ref);     // the point arrives with the history; Map says "loading" until then
   srv('api_callComments', DEV, r.ref).then(function(d){
-    if (d && d.ok !== false && d.locReady !== false) custLocPut_(r.ref, d.loc || null);
+    if (d && d.ok !== false && d.locReady !== false){ custLocPut_(r.ref, 'C', d.loc || null); custLocPut_(r.ref, 'G', d.gloc || null); }
     if (S.locWait === String(r.ref)) S.locWait = null;
-    locPaint_(r.ref);
+    locPaint_(r.ref, 'C'); locPaint_(r.ref, 'G');
     S.comments = (d && d.items) || [];
     var h = $('#histBox'); if (h) h.innerHTML = historyHtml(S.comments);
     /* The customer's registered complaints, ABOVE the history -- the officer must see an
@@ -2065,9 +2078,13 @@ function openSheet(ref){
 }
 function sheetSkeleton(r){
   var cHref = telHref(r.contact), gHref = telHref(r.gContact);
+  var hasG = !!(String(r.gName || '').trim() || String(r.gContact || '').trim());    // a loan with no guarantor has no second pair of icons
   return '<div class="sheet-card">'
+    + '<div class="sheet-head"><div class="sheet-headtxt">'
     + '<div class="sheet-title">' + esc(r.name) + '</div>'
-    + '<div class="sheet-sub">' + esc(r.team) + ' \u00B7 REF ' + esc(r.ref) + '</div>'
+    + '<div class="sheet-sub">' + esc(r.team) + ' \u00B7 REF ' + esc(r.ref) + '</div></div>'
+    + locIcons_('C') + '</div>'
+    + '<div id="locNote_C" class="locnote"></div>'
     + '<div class="factrow"><span>Deni / Arrears</span><b>TZS ' + money(r.amt) + '</b></div>'
     + (r.installment !== '' && r.installment != null ? '<div class="factrow"><span>Rejesho</span><span>TZS ' + money(r.installment) + '</span></div>' : '')
     + (r.custStatus ? '<div class="factrow"><span>Hali ya mteja / Customer status</span>' + statusChip(r.custStatus) + '</div>' : '')
@@ -2076,16 +2093,14 @@ function sheetSkeleton(r){
     + (r.role ? '<div class="factrow"><span>Kiongozi / Follow-up leader</span><span>' + esc(r.role)
         + ' \u00B7 ' + esc(r.leader && r.leader !== '(unassigned)' ? r.leader : 'hajapangwa / unassigned')
         + '</span></div>' : '')
-    + '<div class="factrow"><span>Mdhamini / Guarantor</span><span>' + esc(r.gName||'\u2014') + '</span></div>'
+    + (hasG
+        ? '<div class="partyrow"><div class="ptxt"><span class="plab">Mdhamini / Guarantor</span><b class="pname">' + esc(r.gName || '\u2014') + '</b></div>' + locIcons_('G') + '</div>'
+          + '<div id="locNote_G" class="locnote"></div>'
+        : '<div class="factrow"><span>Mdhamini / Guarantor</span><span>\u2014</span></div>')
     + '<div class="callrow">'
     + (cHref!=='#' ? '<a class="btn btn-pri" href="tel:'+cHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mteja \u00B7 ' + esc(r.contact) + '</a>' : '<span class="btn btn-ghost">Hana namba</span>')
     + '</div>'
     + (gHref!=='#' ? '<div class="callrow"><a class="btn btn-ghost" href="tel:'+gHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mdhamini \u00B7 ' + esc(r.gContact) + '</a></div>' : '')
-    + '<div class="callrow">'
-    + '<button type="button" class="btn btn-ghost" id="locPin">' + LOCPIN_LABEL + '</button>'
-    + '<button type="button" class="btn btn-ghost" id="locMap">' + LOCMAP_LABEL + '</button>'
-    + '</div>'
-    + '<div id="locNote" class="hint" style="font-size:12px;color:var(--mut);margin-top:6px"></div>'
     + '</div>'
     + '<div class="sheet-card"><div class="sheet-title" style="font-size:14px">Historia / History</div>'
     + '<div id="histBox" style="margin-top:6px"><div class="center" style="padding:16px"><div class="sk"></div></div></div></div>'
@@ -2172,12 +2187,19 @@ function wireSheetForm(r){
 }
 
 /* =====================================================================================
-   WHERE THE CUSTOMER IS -- the Location and Map buttons on the customer card.
+   WHERE THE CUSTOMER AND THE GUARANTOR ARE -- the Location and Map icons on the customer card.
 
      "An officer can pinpoint coordinates of the customer during visitation. And pressing map
       later will open maps app in phone or browser to direct us towards that customer."
+     "Add them as two icons on the right side of name and team+refno ... we should have the two
+      rows map icons for both customer and guarantor. All tied to ref no."
 
-   LOCATION is pressed at the customer's door. It asks the phone for a real GPS reading (not the
+   Two pairs of icons, one pair per person, both on the same card and the same REF NO: the
+   customer's sit at the right of the name and the team + REF lines, the guarantor's at the right
+   of the guarantor's own row. Each pair is a pin (Location) and a map (Map); the server keeps one point per
+   (ref, party), party 'C' for the customer and 'G' for the guarantor.
+
+   LOCATION is pressed at that person's door. It asks the phone for a real GPS reading (not the
    cheap last-known fix the officer-position report uses), watches for up to twenty seconds and
    keeps the most accurate reading it saw, stopping early at 25 m. A reading worse than 100 m is
    not saved quietly -- the officer is asked to save it anyway or try again outside. The server
@@ -2186,50 +2208,62 @@ function wireSheetForm(r){
 
    MAP opens https://www.google.com/maps/dir/?api=1&destination=lat,lng: the Maps app where it
    is installed (the Android shell hands every window.open to the phone), otherwise the
-   browser. The point is the one that came with the card's history, kept on the phone as well
-   (CUSTLOC_LS, newest 300) so the button still works with no signal when the officer is
-   standing outside a house they pinned last week. Signing out forgets all of them.
+   browser. The points are the ones that came with the card's history, kept on the phone as well
+   (CUSTLOC_LS, newest 300) so the icon still works with no signal when the officer is standing
+   outside a house they pinned last week. The customer's keeps the plain ref as its key -- what
+   the first release already stored -- and the guarantor's is ref|G. Signing out forgets all of them.
 
-   Nothing here runs unless a button is pressed; nothing is added to sync or any list. */
-var LOCPIN_LABEL = '\uD83D\uDCCD Location', LOCMAP_LABEL = '\uD83D\uDDFA\uFE0F Map';
+   Nothing here runs unless an icon is pressed; nothing is added to sync or any list. */
+var LOCPIN_ICON = '\uD83D\uDCCD', LOCMAP_ICON = '\uD83D\uDDFA\uFE0F';
 var LOCPIN_GOOD_M = 25, LOCPIN_OK_M = 100, LOCPIN_WAIT_MS = 20000;
 var CUSTLOC_LS = 'hcCustLoc', CUSTLOC_KEEP = 300;
-function custLocGet_(ref){
-  ref = String(ref);
-  if (S.custLoc && S.custLoc[ref]) return S.custLoc[ref];
-  try { var m = JSON.parse(localStorage.getItem(CUSTLOC_LS) || '{}'); return m[ref] || null; } catch(e){ return null; }
+function locWho_(party){ return party === 'G' ? { sw: 'mdhamini', en: 'guarantor' } : { sw: 'mteja', en: 'customer' }; }
+function locIcons_(party){
+  var w = locWho_(party);
+  return '<span class="locicons">'
+    + '<button type="button" class="locbtn" id="locPin_' + party + '" title="Weka eneo la ' + w.sw + ' / Pin the ' + w.en + '\'s location" aria-label="Weka eneo la ' + w.sw + ' / Pin the ' + w.en + '\'s location">' + LOCPIN_ICON + '</button>'
+    + '<button type="button" class="locbtn" id="locMap_' + party + '" title="Ramani kwa ' + w.sw + ' / Directions to the ' + w.en + '" aria-label="Ramani kwa ' + w.sw + ' / Directions to the ' + w.en + '">' + LOCMAP_ICON + '</button>'
+    + '</span>';
 }
-function custLocPut_(ref, loc){
-  ref = String(ref); S.custLoc = S.custLoc || {};
-  if (loc) S.custLoc[ref] = loc; else delete S.custLoc[ref];
+function custLocKey_(ref, party){ return party === 'G' ? String(ref) + '|G' : String(ref); }
+function custLocGet_(ref, party){
+  var k = custLocKey_(ref, party);
+  if (S.custLoc && S.custLoc[k]) return S.custLoc[k];
+  try { var m = JSON.parse(localStorage.getItem(CUSTLOC_LS) || '{}'); return m[k] || null; } catch(e){ return null; }
+}
+function custLocPut_(ref, party, loc){
+  var k = custLocKey_(ref, party); S.custLoc = S.custLoc || {};
+  if (loc) S.custLoc[k] = loc; else delete S.custLoc[k];
   try {
     var m = JSON.parse(localStorage.getItem(CUSTLOC_LS) || '{}');
-    delete m[ref]; if (loc) m[ref] = loc;                       // re-inserted last: the oldest go first
+    delete m[k]; if (loc) m[k] = loc;                           // re-inserted last: the oldest go first
     var ks = Object.keys(m); while (ks.length > CUSTLOC_KEEP) delete m[ks.shift()];
     localStorage.setItem(CUSTLOC_LS, JSON.stringify(m));
   } catch(e){}
 }
-function locNoteHtml_(loc){
-  if (!loc) return 'Bado hakuna eneo la mteja. Ukiwa kwake bonyeza \uD83D\uDCCD Location. / No point saved yet \u2014 press Location when you are at the customer.';
-  return '\uD83D\uDCCD Eneo limehifadhiwa / Saved: <b>' + Number(loc.lat).toFixed(5) + ', ' + Number(loc.lng).toFixed(5) + '</b>'
+function locNoteHtml_(loc, party){
+  var w = locWho_(party);
+  return '\uD83D\uDCCD Eneo la ' + w.sw + ' limehifadhiwa / Saved: <b>' + Number(loc.lat).toFixed(5) + ', ' + Number(loc.lng).toFixed(5) + '</b>'
     + (loc.acc != null ? ' \u00B1' + esc(loc.acc) + ' m' : '') + (loc.by ? ' \u00B7 ' + esc(loc.by) : '') + (loc.at ? ' \u00B7 ' + esc(loc.at) : '');
 }
-function locPaint_(ref){
+/* A person with no point yet has an empty note line (it takes no room); one with a point has the
+   coordinates, who pinned it and when, and the Map icon tinted ready. */
+function locPaint_(ref, party){
   if (String(S.curRef) !== String(ref)) return;                 // the officer has moved on to another card
-  var n = $('#locNote'), m = $('#locMap'); if (!n) return;
-  var loc = custLocGet_(ref);
-  n.innerHTML = locNoteHtml_(loc);
-  if (m) m.className = 'btn ' + (loc ? 'btn-pri' : 'btn-ghost');
+  var n = $('#locNote_' + party), m = $('#locMap_' + party); if (!n) return;
+  var loc = custLocGet_(ref, party);
+  n.innerHTML = loc ? locNoteHtml_(loc, party) : '';
+  if (m) m.className = 'locbtn' + (loc ? ' on' : '');
 }
 /* A question asked in the card's own note line, not a browser dialog: the WebView's confirm() is
    only as good as the shell's WebChromeClient, and a card is where the officer is looking. */
-function locAsk_(ref, msg, yes, no, onYes, onNo){
-  var n = $('#locNote'); if (!n || String(S.curRef) !== String(ref)) return;
+function locAsk_(ref, party, msg, yes, no, onYes, onNo){
+  var n = $('#locNote_' + party); if (!n || String(S.curRef) !== String(ref)) return;
   n.innerHTML = '<div style="color:var(--ink);margin-bottom:6px">' + esc(msg) + '</div>'
     + '<div class="callrow"><button type="button" class="btn btn-pri" id="locYes">' + esc(yes) + '</button>'
     + '<button type="button" class="btn btn-ghost" id="locNo">' + esc(no) + '</button></div>';
-  $('#locYes').onclick = function(){ locPaint_(ref); onYes(); };
-  $('#locNo').onclick = function(){ locPaint_(ref); if (onNo) onNo(); };
+  $('#locYes').onclick = function(){ locPaint_(ref, party); onYes(); };
+  $('#locNo').onclick = function(){ locPaint_(ref, party); if (onNo) onNo(); };
 }
 function locErr_(code){
   return ({
@@ -2239,47 +2273,55 @@ function locErr_(code){
   })[code] || 'Eneo halikuhifadhiwa. / The location was not saved.';
 }
 function wireLoc_(r){
-  $('#locPin').onclick = function(){ locPin_(r); };
-  $('#locMap').onclick = function(){ locMap_(r); };
-  locPaint_(r.ref);                                             // whatever this phone already holds, before the answer comes
+  ['C', 'G'].forEach(function(party){
+    var pb = $('#locPin_' + party), mb = $('#locMap_' + party);
+    if (!pb || !mb) return;                                     // a loan with no guarantor has no second pair
+    pb.onclick = function(){ locPin_(r, party); };
+    mb.onclick = function(){ locMap_(r, party); };
+    locPaint_(r.ref, party);                                    // whatever this phone already holds, before the answer comes
+  });
 }
-function locMap_(r){
-  var loc = custLocGet_(r.ref);
+function locMap_(r, party){
+  var w = locWho_(party), loc = custLocGet_(r.ref, party);
   if (!loc){
     toast(S.locWait === String(r.ref)
       ? 'Inapakia\u2026 jaribu tena baada ya sekunde chache. / Loading \u2014 try again in a moment.'
-      : 'Hakuna eneo lililohifadhiwa kwa mteja huyu. / No point is saved for this customer yet.', true);
+      : 'Hakuna eneo lililohifadhiwa la ' + w.sw + ' huyu. / No point is saved for this ' + w.en + ' yet.', true);
     return;
   }
   var url = 'https://www.google.com/maps/dir/?api=1&destination=' + loc.lat + ',' + loc.lng + '&travelmode=driving';
-  var w = null; try { w = window.open(url, '_blank'); } catch(e){}
-  if (!w){                                                      // a browser that blocks pop-ups: give the officer the link to press
-    var n = $('#locNote');
-    if (n) n.innerHTML = locNoteHtml_(loc) + '<div style="margin-top:6px"><a class="btn btn-pri" target="_blank" rel="noopener" href="' + esc(url) + '">\uD83D\uDDFA\uFE0F Fungua ramani / Open the map</a></div>';
+  var win = null; try { win = window.open(url, '_blank'); } catch(e){}
+  if (!win){                                                    // a browser that blocks pop-ups: give the officer the link to press
+    var n = $('#locNote_' + party);
+    if (n) n.innerHTML = locNoteHtml_(loc, party) + '<div style="margin-top:6px"><a class="btn btn-pri" target="_blank" rel="noopener" href="' + esc(url) + '">' + LOCMAP_ICON + ' Fungua ramani / Open the map</a></div>';
   }
 }
-function locPin_(r){
-  var b = $('#locPin'); if (!b || b.disabled) return;
+function locPin_(r, party){
+  var b = $('#locPin_' + party); if (!b || b.disabled) return;
+  if (S.locBusy){ toast('Subiri eneo lingine likamilike. / Wait \u2014 another location is being taken.', true); return; }
   if (!navigator.geolocation){ toast('Simu hii haina GPS. / This device has no GPS.', true); return; }
   var ref = String(r.ref), best = null, done = false, wid = null, hard = 0;
-  b.disabled = true;
-  function say(){ b.textContent = '\uD83D\uDCCD Inatafuta\u2026' + (best ? ' \u00B1' + Math.round(best.accuracy) + ' m' : ''); }
+  S.locBusy = true; b.disabled = true;
+  function say(){
+    var n = $('#locNote_' + party);
+    if (n && String(S.curRef) === ref) n.textContent = '\uD83D\uDCCD Inatafuta\u2026' + (best ? ' \u00B1' + Math.round(best.accuracy) + ' m' : '');
+  }
   function stop(){
-    done = true; clearTimeout(hard);
+    done = true; clearTimeout(hard); S.locBusy = false;
     try { navigator.geolocation.clearWatch(wid); } catch(e){}
-    b.disabled = false; b.textContent = LOCPIN_LABEL;
+    b.disabled = false; locPaint_(ref, party);
   }
   function finish(){
     if (done) return;
     stop();
     if (!best){ toast('Imeshindikana kupata mahali. Washa GPS ujaribu tena nje. / Could not get a position \u2014 switch GPS on and try outside.', true); return; }
     if (best.accuracy > LOCPIN_OK_M){
-      locAsk_(ref, 'Usahihi ni \u00B1' + Math.round(best.accuracy) + ' m tu (GPS dhaifu). Hifadhi hivyo, au jaribu tena ukiwa nje? / Accuracy is only \u00B1'
+      locAsk_(ref, party, 'Usahihi ni \u00B1' + Math.round(best.accuracy) + ' m tu (GPS dhaifu). Hifadhi hivyo, au jaribu tena ukiwa nje? / Accuracy is only \u00B1'
         + Math.round(best.accuracy) + ' m \u2014 save it anyway, or retry outside?',
-        'Hifadhi / Save', 'Jaribu tena / Retry', function(){ locSave_(r, best, false); }, function(){ locPin_(r); });
+        'Hifadhi / Save', 'Jaribu tena / Retry', function(){ locSave_(r, party, best, false); }, function(){ locPin_(r, party); });
       return;
     }
-    locSave_(r, best, false);
+    locSave_(r, party, best, false);
   }
   say();
   hard = setTimeout(finish, LOCPIN_WAIT_MS);
@@ -2296,22 +2338,25 @@ function locPin_(r){
     }                                                           // a timeout or no signal yet: the twenty-second timer decides
   }, { enableHighAccuracy: true, maximumAge: 0, timeout: LOCPIN_WAIT_MS });
 }
-function locSave_(r, fix, replace){
-  var b = $('#locPin'); if (b){ b.disabled = true; b.textContent = '\uD83D\uDCCD Inahifadhi\u2026'; }
-  function back(){ var x = $('#locPin'); if (x){ x.disabled = false; x.textContent = LOCPIN_LABEL; } }
-  srv('api_callCustPin', DEV, { ref: r.ref, team: r.team, name: r.name, lat: fix.lat, lng: fix.lng, acc: fix.accuracy, replace: !!replace }).then(function(d){
+function locSave_(r, party, fix, replace){
+  var w = locWho_(party), b = $('#locPin_' + party), n = $('#locNote_' + party);
+  S.locBusy = true; if (b) b.disabled = true;
+  if (n && String(S.curRef) === String(r.ref)) n.textContent = '\uD83D\uDCCD Inahifadhi\u2026';
+  function back(){ S.locBusy = false; var x = $('#locPin_' + party); if (x) x.disabled = false; locPaint_(r.ref, party); }
+  srv('api_callCustPin', DEV, { ref: r.ref, party: party, team: r.team, name: party === 'G' ? r.gName : r.name,
+      lat: fix.lat, lng: fix.lng, acc: fix.accuracy, replace: !!replace }).then(function(d){
     back();
     if (!d || d.ok === false){ toast(locErr_(d && d.error), true); return; }
-    if (d.pending){ toast('Ofisi bado haijawasha huduma ya eneo la mteja. / The office has not switched customer locations on yet.', true); return; }
+    if (d.pending){ toast('Ofisi bado haijawasha huduma ya eneo. / The office has not switched locations on yet.', true); return; }
     if (d.exists){
-      locAsk_(r.ref, 'Mteja huyu ana eneo lililohifadhiwa tayari' + (d.exists.by ? ' (na ' + d.exists.by + (d.exists.at ? ', ' + d.exists.at : '') + ')' : '')
-        + ' \u2014 mita ' + d.exists.distM + ' kutoka ulipo sasa. Libadilishe? / This customer already has a saved point, ' + d.exists.distM
-        + ' m from where you stand. Replace it?', 'Badilisha / Replace', 'Acha / Keep', function(){ locSave_(r, fix, true); }, null);
+      locAsk_(r.ref, party, 'Eneo la ' + w.sw + ' lipo tayari' + (d.exists.by ? ' (na ' + d.exists.by + (d.exists.at ? ', ' + d.exists.at : '') + ')' : '')
+        + ' \u2014 mita ' + d.exists.distM + ' kutoka ulipo sasa. Libadilishe? / The ' + w.en + '\'s point is already saved, ' + d.exists.distM
+        + ' m from where you stand. Replace it?', 'Badilisha / Replace', 'Acha / Keep', function(){ locSave_(r, party, fix, true); }, null);
       return;
     }
     if (d.stored){
-      custLocPut_(r.ref, d.loc); locPaint_(r.ref);
-      toast((d.replaced ? 'Eneo limebadilishwa' : 'Eneo la mteja limehifadhiwa') + (d.loc && d.loc.acc != null ? ' (\u00B1' + d.loc.acc + ' m)' : '') + '. / Customer location saved.');
+      custLocPut_(r.ref, party, d.loc); locPaint_(r.ref, party);
+      toast((d.replaced ? 'Eneo la ' + w.sw + ' limebadilishwa' : 'Eneo la ' + w.sw + ' limehifadhiwa') + (d.loc && d.loc.acc != null ? ' (\u00B1' + d.loc.acc + ' m)' : '') + '. / ' + w.en.charAt(0).toUpperCase() + w.en.slice(1) + ' location saved.');
     }
   }).catch(function(e){
     back();
