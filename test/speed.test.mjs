@@ -500,7 +500,12 @@ const PHONE = [
      a budget that quietly grows back is the failure this file exists to stop. */
   ['Calls: today list',  'api_callList',          ['DEV1', 'today'], 9, 6000],
   ['Calls: defaulters',  'api_callList',          ['DEV1', 'defaulters'], 9, 6000],
-  ['Calls: one customer\'s comments', 'api_callComments', ['DEV1', 'R1'], 6, 200],
+  /* 6 -> 4 ON 2026-10-18, tightened as the customer's pinned point is added. The point is ONE keyed
+     read run beside the history and the complaints (db/RUN-ME-2026-10-18-customer-locations.sql),
+     so a card now takes four trips (device, history, complaints, point), up from three. The old
+     ceiling of six hid that: it had three trips of slack, which is exactly where a fifth read
+     would have gone unnoticed. Rule 1, counted and written down in call-core.js beside comments. */
+  ['Calls: one customer\'s comments', 'api_callComments', ['DEV1', 'R1'], 4, 200],
   /* The phone's search index. It used to read EVERY comment ever written to find the few
      hundred carrying a replacement phone number -- the portal's copy of this was fixed weeks
      ago and the phone's was not, which is why the app felt slower than the portal on the same
@@ -550,6 +555,12 @@ const PHONE = [
      Rule 1, counted and written down: ONE trip, an UPDATE of the row holding this device id. It
      reads nothing, because the device id is already the credential every call here rests on. */
   ['Calls: location beat', 'api_callBeat', ['DEV1', { lat: -6.7924, lng: 39.2083, locAcc: 22, locAt: 0 }], 1, 10],
+  /* THE CUSTOMER'S POINT (db/RUN-ME-2026-10-18-customer-locations.sql), pressed Location on a card:
+     its OWN request, a few a day per officer, never inside sync, boot or a list. Rule 1, counted
+     and written down: the device lookup every call here makes, the team scope (the registry read
+     is cached a minute per instance, so only the first of a minute pays it), one keyed read of
+     the point already on file, one upsert. The ref and team are the card's own. */
+  ['Calls: pin a customer', 'api_callCustPin', ['DEV1', { ref: 'R1', team: TEAMS[0], name: 'MTEJA', lat: -6.7924, lng: 39.2083, acc: 12 }], 4, 200],
   /* The highest budget here, deliberately. HOPE Live works out the WHOLE dashboard -- the six
      figures on it are the dashboard's own figures, and computing them a second, cheaper way
      would be two answers that could disagree on a wall in front of the company.

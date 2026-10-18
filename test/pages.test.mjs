@@ -2078,3 +2078,35 @@ test('Officer locations lists both sources with a search box, says what it canno
   assert.equal((sql.match(/^alter table call_users add column if not exists last_(lat|lng|loc_acc|loc_at) /gm) || []).length, 4, 'four idempotent columns');
   assert.ok(!/\b(drop|delete|truncate|update)\b/i.test(sql.replace(/--.*$/gm, '')), 'nothing destructive');
 });
+
+/* WHERE THE CUSTOMER IS -- "We need to add two buttons in customer cards: Location and Map. An officer can pinpoint
+   coordinates of the customer during visitation, and pressing map later will open maps app in phone or browser." */
+test('the customer card has Location and Map: a real GPS reading, asked before an old point is replaced, a maps link that needs no signal', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  const card = call.slice(call.indexOf('function sheetSkeleton'), call.indexOf('function historyHtml'));
+  assert.ok(/id="locPin">' \+ LOCPIN_LABEL/.test(card) && /id="locMap">' \+ LOCMAP_LABEL/.test(card) && /id="locNote"/.test(card), 'both buttons, and the line that says what is saved');
+  assert.ok(/LOCPIN_LABEL = '\\uD83D\\uDCCD Location', LOCMAP_LABEL = '\\uD83D\\uDDFA\\uFE0F Map'/.test(call), 'named Location and Map, with their pictures');
+  assert.ok(/enableHighAccuracy: true, maximumAge: 0, timeout: LOCPIN_WAIT_MS/.test(call) && /watchPosition/.test(call), 'a fresh, high-accuracy reading, the best of twenty seconds');
+  assert.ok(/LOCPIN_GOOD_M = 25, LOCPIN_OK_M = 100, LOCPIN_WAIT_MS = 20000/.test(call) && /best\.accuracy > LOCPIN_OK_M/.test(call), 'stops early at 25 m; a reading worse than 100 m is not saved without a question');
+  assert.ok(/fn: 'api_callCustPin'/.test(call) === false && /srv\('api_callCustPin', DEV, \{ ref: r\.ref, team: r\.team/.test(call), 'saved through the ordinary call transport, with the card\'s own ref and team');
+  assert.ok(/d\.exists/.test(call) && /locSave_\(r, fix, true\)/.test(call), 'an existing point is replaced only when the officer says yes');
+  assert.ok(/d\.pending/.test(call) && /Ofisi bado haijawasha huduma ya eneo la mteja/.test(call), 'before the migration the officer is told, not left guessing');
+  assert.ok(/https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=' \+ loc\.lat \+ ',' \+ loc\.lng/.test(call) && /window\.open\(url, '_blank'\)/.test(call), 'Map opens directions to the point in the Maps app or the browser');
+  assert.ok(/localStorage\.setItem\(CUSTLOC_LS/.test(call) && /localStorage\.removeItem\(CUSTLOC_LS\)/.test(call), 'the point is kept on the phone for no-signal use, and forgotten at sign-out');
+  assert.ok(/custLocPut_\(r\.ref, d\.loc \|\| null\)/.test(call) && call.split("'api_callCustPin'").length - 1 === 1, 'the point arrives with the history; the only sender of a pin is the Location button');
+  const sync = call.slice(call.indexOf('function startSyncLoop'), call.indexOf('function startSyncLoop') + 3000);
+  assert.ok(!/custLoc|locPin_|api_callCustPin/.test(sync), 'nothing is added to the sync loop');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-17-a'/.test(src), 'the front end was changed, so BUILD moved');
+});
+
+test('the customer-location migration is one small table, under a hundred lines, nothing destructive, and schema.sql declares it', () => {
+  const dbDir = join(PUBLIC, '..', 'db');
+  const sql = readFileSync(join(dbDir, 'RUN-ME-2026-10-18-customer-locations.sql'), 'utf-8');
+  assert.ok(sql.split('\n').length < 100, 'under a hundred lines');
+  assert.equal((sql.match(/^create table if not exists public\.customer_locations \(/gm) || []).length, 1, 'one idempotent table');
+  assert.ok(/ref\s+text primary key/.test(sql) && /lat\s+double precision not null/.test(sql) && /lng\s+double precision not null/.test(sql), 'keyed by REF NO, a point is both numbers or nothing');
+  assert.ok(!/\b(drop|delete|truncate|update|alter)\b/i.test(sql.replace(/--.*$/gm, '')), 'nothing destructive, nothing existing touched');
+  const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
+  assert.ok(/create table if not exists customer_locations \(/.test(schema), 'schema.sql carries it for a fresh database');
+});

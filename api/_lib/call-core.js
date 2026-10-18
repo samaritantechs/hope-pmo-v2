@@ -1644,9 +1644,26 @@ async function sync(db, [dev, calls], nowMs) {
 /* How much of one customer's history the phone asks for. Deliberately generous -- an officer
    scrolling back through a year of notes is doing their job -- but not unbounded. */
 const COMMENT_LIMIT = 100;
-async function comments(db, [dev, ref]) {
+/* THE CUSTOMER'S PINNED POINT RIDES WITH HIS HISTORY -- ONE KEYED READ, ADDED ON PURPOSE.
+     "Pressing map later will open maps app in phone or browser to direct us towards that customer"
+   The card already asks for this customer's comments the moment it opens; the point travels in
+   that same answer so that (a) the card can say a point is saved before anyone presses
+   anything, and (b) MAP WORKS WITH NO SIGNAL -- an officer on a dirt road with one bar has the
+   coordinates already on the phone instead of needing another round trip at the one moment the
+   network is worst. It is the third read of a card opening that already runs three at once, run
+   beside the other two (no extra wait), by primary key, ONE try (never the retries the
+   complaints read gets -- a slow database must not hold a card open for a side-dish), allowed
+   to fail quietly, and NOT ASKED AT ALL for five minutes once the table is known to be absent
+   (before db/RUN-ME-2026-10-18-customer-locations.sql the card pays nothing for it). Nothing
+   is added to sync, boot or any list. Same standing as the history beside it: the ref is what
+   the officer already holds from their own list. */
+const custLocGone_ = new WeakMap();              // db client -> ms until which the table is known absent
+const CUSTLOC_RETRY_MS = 5 * 60 * 1000;
+const custLocMissing_ = e => /customer_locations|does not exist|schema cache|42P01|PGRST205/i.test(String((e && (e.message || e.code)) || e || ''));
+async function comments(db, [dev, ref], nowMs = Date.now()) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  const skipLoc = (custLocGone_.get(db) || 0) > nowMs;
   /* The four columns this list draws, newest first, capped. A customer with three years of
      imported history has hundreds of notes and nobody scrolls past the last few dozen -- and
      select('*') carried the promise dates, docket numbers and phone numbers the screen never
@@ -1654,13 +1671,15 @@ async function comments(db, [dev, ref]) {
   /* The customer's registered complaints come back with their history -- the officer about to
      ring somebody must know there is an open complaint BEFORE the call. One keyed read,
      allowed to fail quietly so the history never stops loading over its side-dish. */
-  const [{ data, error }, compRes] = await Promise.all([
+  const [{ data, error }, compRes, locRes] = await Promise.all([
     db.from('followup_comments')
       .select('comment, fu_status, created_by, created_at, new_number, promise_date, promise_amt')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT),
     runQuery(() => db.from('complaints')
       .select('complainant, category, details, status, created_at')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(10)),
+    skipLoc ? null : runQuery(() => db.from('customer_locations')
+      .select('lat, lng, acc, saved_by, saved_at').eq('ref', String(ref)).limit(1), 1),
   ]);
   if (error) throw new Error(error.message);
   const items = (data || []).map(c => ({
@@ -1678,7 +1697,88 @@ async function comments(db, [dev, ref]) {
     who: c.complainant || '', what: String(c.details || c.category || '').slice(0, 200),
     status: c.status || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
   }));
-  return { ok: true, items, complaints, capped: items.length >= COMMENT_LIMIT };
+  let locReady = true, loc = null;
+  if (skipLoc) locReady = false;
+  else if (locRes && locRes.error) {
+    if (custLocMissing_(locRes.error)) { custLocGone_.set(db, nowMs + CUSTLOC_RETRY_MS); locReady = false; }
+  } else {
+    const lr = locRes && locRes.data && locRes.data[0];
+    if (lr && Number.isFinite(Number(lr.lat)) && Number.isFinite(Number(lr.lng))) {
+      loc = { lat: Number(lr.lat), lng: Number(lr.lng), acc: lr.acc == null ? null : num(lr.acc),
+        by: lr.saved_by || '', at: lr.saved_at ? eatStamp(Date.parse(lr.saved_at)) : '' };
+    }
+  }
+  return { ok: true, items, complaints, capped: items.length >= COMMENT_LIMIT, loc, locReady };
+}
+
+/* =======================================================================================
+   WHERE THE CUSTOMER IS -- the officer pins the point while standing at the door.
+
+     "An officer can pinpoint coordinates of the customer during visitation"
+
+   api_callCustPin([dev, { ref, team, name, lat, lng, acc, replace }]) -> customer_locations.
+   READS ADDED TO /api/call: NONE on the hot paths. This is its own request, sent when an
+   officer presses Location on a card -- a few a day per officer, never inside sync, boot or a
+   list. It spends: the device lookup every call here makes, the team scope (the registry read
+   is cached a minute per instance), one keyed read of the existing point, one upsert.
+
+   THREE GUARDS, because a wrong pin sends the next officer to the wrong door:
+     - the fix must be a position (finite, in range, not 0,0) -- else BAD_FIX, nothing stored;
+     - the team the card claims must be one this officer may work -- else NOT_YOUR_TEAM (a
+       team code officer pins their own team; a leader pins the teams on their code);
+     - a point already on file is never silently replaced from somewhere else: if the new fix is
+       25 m or more from it the answer is { stored:false, exists:{by, at, distM} } and the page
+       asks; only replace:true overwrites. A fix within 25 m just refreshes the same door.
+
+   FALLS BACK, NEVER FAILS: before the table exists the answer is { stored:false,
+   pending:'MIGRATION' } and the page says the office has not switched this on.
+   ======================================================================================= */
+const PIN_SAME_DOOR_M = 25;
+const metersBetween_ = (la1, lo1, la2, lo2) => {
+  const r = Math.PI / 180, dLa = (la2 - la1) * r, dLo = (lo2 - lo1) * r;
+  const a = Math.sin(dLa / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(a)));
+};
+async function custPin(db, [dev, p], nowMs) {
+  const cu = await userByDeviceSoft(db, dev);
+  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  p = p || {};
+  const ref = String(p.ref == null ? '' : p.ref).trim();
+  if (!ref) return { ok: false, error: 'NO_REF' };
+  const lat = Number(p.lat), lng = Number(p.lng);
+  if (!(Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90
+      && lng >= -180 && lng <= 180 && !(lat === 0 && lng === 0))) return { ok: false, error: 'BAD_FIX' };
+  const acc = Number(p.acc);
+  const team = String(p.team == null ? '' : p.team).trim();
+  const me = await scopedUser(db, cu, nowMs);
+  if (me.teams && (!team || !teamAllowed(me, team))) return { ok: false, error: 'NOT_YOUR_TEAM' };
+  const { data: had, error: hErr } = await db.from('customer_locations')
+    .select('lat, lng, acc, saved_by, saved_at').eq('ref', ref).limit(1);
+  if (hErr) {
+    if (custLocMissing_(hErr)) return { ok: true, stored: false, pending: 'MIGRATION' };
+    throw new Error(hErr.message);
+  }
+  const old = had && had[0];
+  if (old && p.replace !== true) {
+    const distM = metersBetween_(Number(old.lat), Number(old.lng), lat, lng);
+    if (distM >= PIN_SAME_DOOR_M) {
+      return { ok: true, stored: false, exists: { by: old.saved_by || '', distM: Math.round(distM),
+        at: old.saved_at ? eatStamp(Date.parse(old.saved_at)) : '' } };
+    }
+  }
+  const row = {
+    ref, team: team || null, full_name: String(p.name == null ? '' : p.name).trim() || null,
+    lat, lng, acc: Number.isFinite(acc) && acc >= 0 ? Math.round(acc) : null,
+    saved_by: cu.name, saved_at: new Date(nowMs).toISOString(),
+  };
+  const { error: wErr } = await db.from('customer_locations').upsert(row, { onConflict: 'ref' });
+  if (wErr) {
+    if (custLocMissing_(wErr)) return { ok: true, stored: false, pending: 'MIGRATION' };
+    throw new Error(wErr.message);
+  }
+  custLocGone_.delete(db);
+  return { ok: true, stored: true, replaced: !!old,
+    loc: { lat, lng, acc: row.acc, by: cu.name, at: eatStamp(nowMs) } };
 }
 async function addComment(db, [dev, p], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
@@ -2602,6 +2702,7 @@ const HANDLERS = {
   api_callNotifications: callNotifications,
   api_callNotifSeen: callNotifSeen,
   api_callBeat: callBeat,
+  api_callCustPin: custPin,
 };
 export async function callApi(db, fn, args, nowMs = Date.now()) {
   const h = HANDLERS[fn];
